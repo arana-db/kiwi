@@ -5,8 +5,8 @@
 
 
 #include "cache/cache.h"
-#include "pstd/include/pstd_string.h"
-#include "pstd_defer.h"
+#include "pstd/pstd_string.h"
+#include "pstd/pstd_defer.h"
 
 namespace cache {
 
@@ -262,7 +262,7 @@ void RedisCache::ConvertObjectToString(robj *obj, std::string *value) {
     value->assign((char *)obj->ptr, sdslen((sds)obj->ptr));
   } else if (obj->encoding == OBJ_ENCODING_INT) {
     char buf[64];
-    int len = pstd::ll2string(buf, 64, (long)obj->ptr);
+    int len = pstd::Ll2string(buf, 64, (long)obj->ptr);
     value->assign(buf, len);
   }
 }

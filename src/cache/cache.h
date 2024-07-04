@@ -3,9 +3,7 @@
 // LICENSE file in the root directory of this source tree. An additional grant
 // of patent rights can be found in the PATENTS file in the same directory.
 
-
-#ifndef __CACHE_H__
-#define __CACHE_H__
+#pragma once
 
 #include <unistd.h>
 
@@ -18,7 +16,7 @@
 
 #include "rediscache/redis.h"
 #include "config.h"
-#include "pstd_status.h"
+#include "pstd/pstd_status.h"
 #include "storage/storage.h"
 
 namespace cache {
@@ -168,9 +166,4 @@ private:
 private:
   redisCache cache_;
 };
-
 } // namespace cache
-
-#endif
-
-/* EOF */
