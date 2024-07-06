@@ -20,7 +20,10 @@ extern kiwi::PConfig g_config;
 namespace kiwi {
 
 DB::DB(int db_index, const std::string& db_path)
-    : db_index_(db_index), db_path_(db_path + std::to_string(db_index_) + '/') {}
+    : db_index_(db_index), db_path_(db_path + std::to_string(db_index_) + '/') 
+    {
+      
+    }
 
 DB::~DB() { INFO("DB{} is closing...", db_index_); }
 
@@ -63,6 +66,14 @@ rocksdb::Status DB::Open() {
 
   opened_ = true;
   INFO("Open DB{} success!", db_index_);
+  // cache_ = std::make_shared<PCache>(0,0);
+  // // Create cache
+  // cache::CacheConfig cache_cfg;
+  // //CacheConfigInit(cache_cfg);
+  // cache_->Init(1, &cache_cfg);
+  // cache_load_thread_ = std::make_unique<PCacheLoadThread> (0, 0);
+  // //cache_load_thread_ = std::make_unique<PCacheLoadThread> (zset_cache_start_direction_, zset_cache_field_num_per_key_);
+  // cache_load_thread_->StartThread();
   return rocksdb::Status::OK();
 }
 

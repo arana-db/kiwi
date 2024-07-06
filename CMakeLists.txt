@@ -181,6 +181,7 @@ INCLUDE(cmake/brpc.cmake)
 INCLUDE(cmake/rocksdb.cmake)
 INCLUDE(cmake/braft.cmake)
 INCLUDE(cmake/rediscache.cmake)
+INCLUDE(cmake/jemalloc.cmake)
 
 SET(PROTO_OUTPUT_DIR "${CMAKE_BINARY_DIR}/generated_pb")
 FILE(MAKE_DIRECTORY "${PROTO_OUTPUT_DIR}")

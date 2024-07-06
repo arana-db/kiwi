@@ -3,30 +3,22 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-FILE(GLOB CACHE_SRC
+FILE(GLOB PCACHE_SRC
     "${CMAKE_CURRENT_SOURCE_DIR}/*.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cc"
 )
-SET(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
-ADD_LIBRARY(cache ${CACHE_SRC})
+SET(LIBRARY_OUTPUT_PATH ${PLIB_INSTALL_DIR})
 
-add_dependencies(cache net protobuf gflags rediscache)
+ADD_LIBRARY(pcache ${PCACHE_SRC})
 
-TARGET_INCLUDE_DIRECTORIES(cache
+TARGET_INCLUDE_DIRECTORIES(pcache
         PRIVATE ${PROJECT_SOURCE_DIR}/src
         PRIVATE ${rocksdb_SOURCE_DIR}/include
         PRIVATE ${REDISCACHE_INCLUDE_DIR}
+        PRIVATE ${PROJECT_SOURCE_DIR}/src/pstd
+        PRIVATE ${PROJECT_SOURCE_DIR}/src/storage/include
 )
-
-target_link_libraries(cache
-        PUBLIC ${GTEST_LIBRARY}
-        PUBLIC pstd
-        PUBLIC ${ROCKSDB_LIBRARY}
-        PUBLIC storage
-        PUBLIC ${GFLAGS_LIBRARY}
-        PUBLIC ${REDISCACHE_LIBRARY}
-        )
              
-TARGET_LINK_LIBRARIES(praft;storage; pstd rediscache gflags rocksdb)
+TARGET_LINK_LIBRARIES(pcache pstd rediscache gflags rocksdb)
         
-SET_TARGET_PROPERTIES(cache PROPERTIES LINKER_LANGUAGE CXX)
+SET_TARGET_PROPERTIES(pcache PROPERTIES LINKER_LANGUAGE CXX)
