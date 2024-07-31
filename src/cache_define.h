@@ -6,6 +6,11 @@
 #pragma once
 
 namespace pikiwidb{
+/*
+ * cache mode
+ */
+constexpr int PCACHE_NONE = 0;
+constexpr int PCACHE_READ = 1;
 
 /*
  * cache status

@@ -23,6 +23,9 @@ class GetCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  // void DoThroughDB(PClient *client) override;
+  // void DoUpdateCache(PClient *client) override;
+  // void ReadCache(PClient *client) override;
 };
 
 class SetCmd : public BaseCmd {
@@ -35,6 +38,9 @@ class SetCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  // void DoThroughDB(PClient *client) override;
+  // void DoUpdateCache(PClient *client) override;
+  // void ReadCache(PClient *client) override;
 
   std::string value_;
   std::string target_;

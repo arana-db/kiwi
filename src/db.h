@@ -45,6 +45,8 @@ class DB {
 
   std::unique_ptr<PCache>& GetCache(){return cache_;}
 
+  void CacheConfigInit(cache::CacheConfig& cache_cfg);
+
  private:
   const int db_index_ = 0;
   const std::string db_path_;

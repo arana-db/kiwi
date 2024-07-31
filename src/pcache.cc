@@ -30,7 +30,8 @@ PCache::PCache(int zset_cache_start_direction, int zset_cache_field_num_per_key)
       cache_num_(0),
       zset_cache_start_direction_(zset_cache_start_direction),
       zset_cache_field_num_per_key_(EXTEND_CACHE_SIZE(zset_cache_field_num_per_key)) {
-        cache_load_thread_ = std::make_unique<PCacheLoadThread> (zset_cache_start_direction_, zset_cache_field_num_per_key_);
+  
+  cache_load_thread_ = std::make_unique<PCacheLoadThread> (zset_cache_start_direction_, zset_cache_field_num_per_key_);
   cache_load_thread_->StartThread();
   
 }

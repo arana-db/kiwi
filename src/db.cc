@@ -66,15 +66,21 @@ rocksdb::Status DB::Open() {
 
   opened_ = true;
   INFO("Open DB{} success!", db_index_);
-  // cache_ = std::make_shared<PCache>(0,0);
-  // // Create cache
-  // cache::CacheConfig cache_cfg;
-  // //CacheConfigInit(cache_cfg);
-  // cache_->Init(1, &cache_cfg);
-  // cache_load_thread_ = std::make_unique<PCacheLoadThread> (0, 0);
-  // //cache_load_thread_ = std::make_unique<PCacheLoadThread> (zset_cache_start_direction_, zset_cache_field_num_per_key_);
-  // cache_load_thread_->StartThread();
+
+  // Cache should not influence the project running states, so cache init code is put after varibale opened_ assignment.
+  cache_ = std::make_unique<PCache>(g_config.zset_cache_start_direction.load(), g_config.zset_cache_field_num_per_key.load());
+  // Create cache
+  cache::CacheConfig cache_cfg;
+  CacheConfigInit(cache_cfg);
+  cache_->Init(g_config.cache_num.load(), &cache_cfg);
   return rocksdb::Status::OK();
+}
+
+void DB::CacheConfigInit(cache::CacheConfig& cache_cfg) {
+  cache_cfg.maxmemory = g_config.cache_maxmemory.load();
+  cache_cfg.maxmemory_policy = g_config.cache_maxmemory_policy.load();
+  cache_cfg.maxmemory_samples = g_config.cache_maxmemory_samples.load();
+  cache_cfg.lfu_decay_time = g_config.cache_lfu_decay_time.load();
 }
 
 void DB::CreateCheckpoint(const std::string& checkpoint_path, bool sync) {
