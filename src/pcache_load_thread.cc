@@ -59,8 +59,7 @@ void PCacheLoadThread::Push(const char key_type, std::string& key, const std::sh
 
 bool PCacheLoadThread::LoadKV(std::string& key, const std::shared_ptr<DB>& db) {
   std::string value;
-  // @tobeCheckd PIKA处为-1,只要不是0，应该都与原逻辑一致
-  uint64_t ttl = 1;
+  int64_t ttl = -1;
   rocksdb::Status s = db->GetStorage()->GetWithTTL(key, &value, &ttl);
   if (!s.ok()) {
     WARN("load kv failed, key={}",key);

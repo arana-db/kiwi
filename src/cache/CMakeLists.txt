@@ -18,7 +18,9 @@ TARGET_INCLUDE_DIRECTORIES(pcache
         PRIVATE ${PROJECT_SOURCE_DIR}/src/pstd
         PRIVATE ${PROJECT_SOURCE_DIR}/src/storage/include
 )
+
+ADD_DEPENDENCIES(pcache rediscache storage )
              
-TARGET_LINK_LIBRARIES(pcache pstd rediscache gflags rocksdb)
+TARGET_LINK_LIBRARIES(pcache pstd rediscache gflags rocksdb storage)
         
 SET_TARGET_PROPERTIES(pcache PROPERTIES LINKER_LANGUAGE CXX)
