@@ -94,10 +94,6 @@ void BaseCmd::Execute(PClient* client) {
   } else {
     DoCmd(client);
   }
-
-  if (!HasFlag(kCmdFlagsExclusive)) {
-    PSTORE.GetBackend(dbIndex)->UnLockShared();
-  }
 }
 
 bool BaseCmd::IsNeedReadCache() const { return HasFlag(kCmdFlagsReadCache); }

@@ -89,7 +89,7 @@ void ExistsCmd::DoThroughDB(PClient* client) {
 }
 
 TypeCmd::TypeCmd(const std::string& name, int16_t arity)
-    : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryKeyspace) {}
+    : BaseCmd(name, arity, kCmdFlagsReadonly|kCmdFlagsDoThroughDB | kCmdFlagsReadCache, kAclCategoryRead | kAclCategoryKeyspace) {}
 
 bool TypeCmd::DoInitial(PClient* client) {
   client->SetKey(client->argv_[1]);
@@ -104,6 +104,22 @@ void TypeCmd::DoCmd(PClient* client) {
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
+}
+
+void TypeCmd::ReadCache(PClient* client) {
+  std::string key_type;
+  auto key=client->Key();
+  rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetCache()->Type(key, key_type);
+  if (s.ok()) {
+    client->AppendContent(key_type);
+  } else {
+    client->SetRes(CmdRes::kCacheMiss, s.ToString());
+  }
+}
+
+void TypeCmd::DoThroughDB(PClient* client) {
+  client->Clear();
+  DoCmd(client);
 }
 
 ExpireCmd::ExpireCmd(const std::string& name, int16_t arity)
@@ -282,7 +298,7 @@ void PExpireatCmd::DoUpdateCache(PClient* client) {
 }
 
 PersistCmd::PersistCmd(const std::string& name, int16_t arity)
-    : BaseCmd(name, arity, kCmdFlagsWrite, kAclCategoryWrite | kAclCategoryKeyspace) {}
+    : BaseCmd(name, arity, kCmdFlagsWrite|kCmdFlagsDoThroughDB | kCmdFlagsUpdateCache, kAclCategoryWrite | kAclCategoryKeyspace) {}
 
 bool PersistCmd::DoInitial(PClient* client) {
   client->SetKey(client->argv_[1]);
@@ -293,8 +309,21 @@ void PersistCmd::DoCmd(PClient* client) {
   auto res = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Persist(client->Key());
   if (res != -1) {
     client->AppendInteger(res);
+    s_ = rocksdb::Status::OK();
   } else {
     client->SetRes(CmdRes::kErrOther, "persist internal error");
+    s_ = rocksdb::Status::Corruption("persist internal error");
+  }
+}
+
+void PersistCmd::DoThroughDB(PClient* client) {
+  DoCmd(client);
+}
+
+void PersistCmd::DoUpdateCache(PClient* client) {
+  if (s_.ok()) {
+    auto key=client->Key();
+    PSTORE.GetBackend(client->GetCurrentDB())->GetCache()->Persist(key);
   }
 }
 
