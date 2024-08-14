@@ -20,10 +20,7 @@ extern kiwi::PConfig g_config;
 namespace kiwi {
 
 DB::DB(int db_index, const std::string& db_path)
-    : db_index_(db_index), db_path_(db_path + std::to_string(db_index_) + '/') 
-    {
-      
-    }
+    : db_index_(db_index), db_path_(db_path + std::to_string(db_index_) + '/') {}
 
 DB::~DB() { INFO("DB{} is closing...", db_index_); }
 
@@ -68,7 +65,8 @@ rocksdb::Status DB::Open() {
   INFO("Open DB{} success!", db_index_);
 
   // Cache should not influence the project running states, so cache init code is put after varibale opened_ assignment.
-  cache_ = std::make_unique<PCache>(g_config.zset_cache_start_direction.load(), g_config.zset_cache_field_num_per_key.load());
+  cache_ = std::make_unique<PCache>(g_config.zset_cache_start_direction.load(),
+                                    g_config.zset_cache_field_num_per_key.load());
   // Create cache
   cache::CacheConfig cache_cfg;
   CacheConfigInit(cache_cfg);

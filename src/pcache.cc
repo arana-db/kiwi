@@ -3,24 +3,18 @@
 // LICENSE file in the root directory of this source tree. An additional grant
 // of patent rights can be found in the PATENTS file in the same directory.
 
-
-#include <ctime>
-#include <unordered_set>
-#include <thread>
 #include <zlib.h>
+#include <ctime>
+#include <thread>
+#include <unordered_set>
 
-#include "db.h"
+#include "cache/config.h"
+#include "cache/redisCache.h"
 #include "pcache.h"
 #include "pcache_load_thread.h"
-// #include "include/pika_server.h"
-// #include "include/pika_slot_command.h"
-// #include "pstd/include/pika_codis_slot.h"
-#include "cache/redisCache.h"
-#include "cache/config.h"
 #include "pstd/log.h"
 
-// extern PikaServer* g_pika_server;
-namespace pikiwidb{
+namespace pikiwidb {
 
 #define EXTEND_CACHE_SIZE(N) (N * 12 / 10)
 using rocksdb::Status;
@@ -30,10 +24,8 @@ PCache::PCache(int zset_cache_start_direction, int zset_cache_field_num_per_key)
       cache_num_(0),
       zset_cache_start_direction_(zset_cache_start_direction),
       zset_cache_field_num_per_key_(EXTEND_CACHE_SIZE(zset_cache_field_num_per_key)) {
-  
-  cache_load_thread_ = std::make_unique<PCacheLoadThread> (zset_cache_start_direction_, zset_cache_field_num_per_key_);
+  cache_load_thread_ = std::make_unique<PCacheLoadThread>(zset_cache_start_direction_, zset_cache_field_num_per_key_);
   cache_load_thread_->StartThread();
-  
 }
 
 PCache::~PCache() {
@@ -71,7 +63,8 @@ void PCache::ResetConfig(cache::CacheConfig *cache_cfg) {
   std::lock_guard l(rwlock_);
   zset_cache_start_direction_ = cache_cfg->zset_cache_start_direction;
   zset_cache_field_num_per_key_ = EXTEND_CACHE_SIZE(cache_cfg->zset_cache_field_num_per_key);
-  WARN("zset-cache-start-direction: {} , zset_cache_field_num_per_key: {} ",zset_cache_start_direction_, zset_cache_field_num_per_key_);
+  WARN("zset-cache-start-direction: {} , zset_cache_field_num_per_key: {} ", zset_cache_start_direction_,
+       zset_cache_field_num_per_key_);
   cache::RedisCache::SetConfig(cache_cfg);
 }
 
@@ -93,8 +86,8 @@ void PCache::Info(CacheInfo &info) {
   info.status = cache_status_;
   info.cache_num = cache_num_;
   info.used_memory = cache::RedisCache::GetUsedMemory();
-  //info.async_load_keys_num = cache_load_thread_->AsyncLoadKeysNum();
-//   info.waitting_load_keys_num = cache_load_thread_->WaittingLoadKeysNum();
+  // info.async_load_keys_num = cache_load_thread_->AsyncLoadKeysNum();
+  //   info.waitting_load_keys_num = cache_load_thread_->WaittingLoadKeysNum();
   cache::RedisCache::GetHitAndMissNum(&info.hits, &info.misses);
   for (uint32_t i = 0; i < caches_.size(); ++i) {
     std::lock_guard lm(*cache_mutexs_[i]);
@@ -102,7 +95,7 @@ void PCache::Info(CacheInfo &info) {
   }
 }
 
-bool PCache::Exists(std::string& key) {
+bool PCache::Exists(std::string &key) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->Exists(key);
@@ -126,19 +119,19 @@ Status PCache::Del(const std::vector<std::string> &keys) {
   return s;
 }
 
-Status PCache::Expire(std::string& key, int64_t ttl) {
+Status PCache::Expire(std::string &key, int64_t ttl) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->Expire(key, ttl);
 }
 
-Status PCache::Expireat(std::string& key, int64_t ttl) {
+Status PCache::Expireat(std::string &key, int64_t ttl) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->Expireat(key, ttl);
 }
 
-Status PCache::TTL(std::string& key, int64_t *ttl) {
+Status PCache::TTL(std::string &key, int64_t *ttl) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->TTL(key, ttl);
@@ -163,7 +156,7 @@ Status PCache::Persist(std::string &key) {
   return caches_[cache_index]->Persist(key);
 }
 
-Status PCache::Type(std::string& key, std::string *value) {
+Status PCache::Type(std::string &key, std::string *value) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->Type(key, value);
@@ -188,37 +181,37 @@ Status PCache::RandomKey(std::string *key) {
 /*-----------------------------------------------------------------------------
  * String Commands
  *----------------------------------------------------------------------------*/
-Status PCache::Set(std::string& key, std::string &value, int64_t ttl) {
+Status PCache::Set(std::string &key, std::string &value, int64_t ttl) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->Set(key, value, ttl);
 }
 
-Status PCache::Setnx(std::string& key, std::string &value, int64_t ttl) {
+Status PCache::Setnx(std::string &key, std::string &value, int64_t ttl) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->Setnx(key, value, ttl);
 }
 
-Status PCache::SetnxWithoutTTL(std::string& key, std::string &value) {
+Status PCache::SetnxWithoutTTL(std::string &key, std::string &value) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->SetnxWithoutTTL(key, value);
 }
 
-Status PCache::Setxx(std::string& key, std::string &value, int64_t ttl) {
+Status PCache::Setxx(std::string &key, std::string &value, int64_t ttl) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->Setxx(key, value, ttl);
 }
 
-Status PCache::SetxxWithoutTTL(std::string& key, std::string &value) {
+Status PCache::SetxxWithoutTTL(std::string &key, std::string &value) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->SetxxWithoutTTL(key, value);
 }
 
-Status PCache::Get(std::string& key, std::string *value) {
+Status PCache::Get(std::string &key, std::string *value) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->Get(key, value);
@@ -249,7 +242,7 @@ Status PCache::MGet(const std::vector<std::string> &keys, std::vector<storage::V
   return ret;
 }
 
-Status PCache::Incrxx(std::string& key) {
+Status PCache::Incrxx(std::string &key) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   if (caches_[cache_index]->Exists(key)) {
@@ -258,7 +251,7 @@ Status PCache::Incrxx(std::string& key) {
   return Status::NotFound("key not exist");
 }
 
-Status PCache::Decrxx(std::string& key) {
+Status PCache::Decrxx(std::string &key) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   if (caches_[cache_index]->Exists(key)) {
@@ -267,7 +260,7 @@ Status PCache::Decrxx(std::string& key) {
   return Status::NotFound("key not exist");
 }
 
-Status PCache::IncrByxx(std::string& key, uint64_t incr) {
+Status PCache::IncrByxx(std::string &key, uint64_t incr) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   if (caches_[cache_index]->Exists(key)) {
@@ -276,7 +269,7 @@ Status PCache::IncrByxx(std::string& key, uint64_t incr) {
   return Status::NotFound("key not exist");
 }
 
-Status PCache::DecrByxx(std::string& key, uint64_t incr) {
+Status PCache::DecrByxx(std::string &key, uint64_t incr) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   if (caches_[cache_index]->Exists(key)) {
@@ -285,7 +278,7 @@ Status PCache::DecrByxx(std::string& key, uint64_t incr) {
   return Status::NotFound("key not exist");
 }
 
-Status PCache::Incrbyfloatxx(std::string& key, long double incr) {
+Status PCache::Incrbyfloatxx(std::string &key, long double incr) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   if (caches_[cache_index]->Exists(key)) {
@@ -294,7 +287,7 @@ Status PCache::Incrbyfloatxx(std::string& key, long double incr) {
   return Status::NotFound("key not exist");
 }
 
-Status PCache::Appendxx(std::string& key, std::string &value) {
+Status PCache::Appendxx(std::string &key, std::string &value) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   if (caches_[cache_index]->Exists(key)) {
@@ -303,13 +296,13 @@ Status PCache::Appendxx(std::string& key, std::string &value) {
   return Status::NotFound("key not exist");
 }
 
-Status PCache::GetRange(std::string& key, int64_t start, int64_t end, std::string *value) {
+Status PCache::GetRange(std::string &key, int64_t start, int64_t end, std::string *value) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->GetRange(key, start, end, value);
 }
 
-Status PCache::SetRangexx(std::string& key, int64_t start, std::string &value) {
+Status PCache::SetRangexx(std::string &key, int64_t start, std::string &value) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   if (caches_[cache_index]->Exists(key)) {
@@ -318,7 +311,7 @@ Status PCache::SetRangexx(std::string& key, int64_t start, std::string &value) {
   return Status::NotFound("key not exist");
 }
 
-Status PCache::Strlen(std::string& key, int32_t *len) {
+Status PCache::Strlen(std::string &key, int32_t *len) {
   int cache_index = CacheIndex(key);
   std::lock_guard lm(*cache_mutexs_[cache_index]);
   return caches_[cache_index]->Strlen(key, len);
@@ -463,110 +456,110 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //   return caches_[cache_index]->HStrlen(key, field, len);
 // }
 
-// /*-----------------------------------------------------------------------------
-//  * List Commands
-//  *----------------------------------------------------------------------------*/
-// Status PCache::LIndex(std::string& key, int64_t index, std::string *element) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->LIndex(key, index, element);
-// }
+/*-----------------------------------------------------------------------------
+ * List Commands
+ *----------------------------------------------------------------------------*/
+Status PCache::LIndex(std::string &key, int64_t index, std::string *element) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->LIndex(key, index, element);
+}
 
-// Status PCache::LInsert(std::string& key, storage::BeforeOrAfter &before_or_after, std::string &pivot,
-//                           std::string &value) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->LInsert(key, before_or_after, pivot, value);
-// }
+Status PCache::LInsert(std::string &key, storage::BeforeOrAfter &before_or_after, std::string &pivot,
+                       std::string &value) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->LInsert(key, before_or_after, pivot, value);
+}
 
-// Status PCache::LLen(std::string& key, uint64_t *len) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->LLen(key, len);
-// }
+Status PCache::LLen(std::string &key, uint64_t *len) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->LLen(key, len);
+}
 
-// Status PCache::LPop(std::string& key, std::string *element) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->LPop(key, element);
-// }
+Status PCache::LPop(std::string &key, std::string *element) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->LPop(key, element);
+}
 
-// Status PCache::LPush(std::string& key, std::vector<std::string> &values) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->LPush(key, values);
-// }
+Status PCache::LPush(std::string &key, std::vector<std::string> &values) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->LPush(key, values);
+}
 
-// Status PCache::LPushx(std::string& key, std::vector<std::string> &values) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->LPushx(key, values);
-// }
+Status PCache::LPushx(std::string &key, std::vector<std::string> &values) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->LPushx(key, values);
+}
 
-// Status PCache::LRange(std::string& key, int64_t start, int64_t stop, std::vector<std::string> *values) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->LRange(key, start, stop, values);
-// }
+Status PCache::LRange(std::string &key, int64_t start, int64_t stop, std::vector<std::string> *values) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->LRange(key, start, stop, values);
+}
 
-// Status PCache::LRem(std::string& key, int64_t count, std::string &value) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->LRem(key, count, value);
-// }
+Status PCache::LRem(std::string &key, int64_t count, std::string &value) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->LRem(key, count, value);
+}
 
-// Status PCache::LSet(std::string& key, int64_t index, std::string &value) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->LSet(key, index, value);
-// }
+Status PCache::LSet(std::string &key, int64_t index, std::string &value) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->LSet(key, index, value);
+}
 
-// Status PCache::LTrim(std::string& key, int64_t start, int64_t stop) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->LTrim(key, start, stop);
-// }
+Status PCache::LTrim(std::string &key, int64_t start, int64_t stop) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->LTrim(key, start, stop);
+}
 
-// Status PCache::RPop(std::string& key, std::string *element) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->RPop(key, element);
-// }
+Status PCache::RPop(std::string &key, std::string *element) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->RPop(key, element);
+}
 
-// Status PCache::RPush(std::string& key, std::vector<std::string> &values) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->RPush(key, values);
-// }
+Status PCache::RPush(std::string &key, std::vector<std::string> &values) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->RPush(key, values);
+}
 
-// Status PCache::RPushx(std::string& key, std::vector<std::string> &values) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->RPushx(key, values);
-// }
+Status PCache::RPushx(std::string &key, std::vector<std::string> &values) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->RPushx(key, values);
+}
 
-// Status PCache::RPushnx(std::string& key, std::vector<std::string> &values, int64_t ttl) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (!caches_[cache_index]->Exists(key)) {
-//     caches_[cache_index]->RPush(key, values);
-//     caches_[cache_index]->Expire(key, ttl);
-//     return Status::OK();
-//   } else {
-//     return Status::NotFound("key exist");
-//   }
-// }
+Status PCache::RPushnx(std::string &key, std::vector<std::string> &values, int64_t ttl) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (!caches_[cache_index]->Exists(key)) {
+    caches_[cache_index]->RPush(key, values);
+    caches_[cache_index]->Expire(key, ttl);
+    return Status::OK();
+  } else {
+    return Status::NotFound("key exist");
+  }
+}
 
-// Status PCache::RPushnxWithoutTTL(std::string& key, std::vector<std::string> &values) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (!caches_[cache_index]->Exists(key)) {
-//     caches_[cache_index]->RPush(key, values);
-//     return Status::OK();
-//   } else {
-//     return Status::NotFound("key exist");
-//   }
-// }
+Status PCache::RPushnxWithoutTTL(std::string &key, std::vector<std::string> &values) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (!caches_[cache_index]->Exists(key)) {
+    caches_[cache_index]->RPush(key, values);
+    return Status::OK();
+  } else {
+    return Status::NotFound("key exist");
+  }
+}
 
 // /*-----------------------------------------------------------------------------
 //  * Set Commands
@@ -667,7 +660,6 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //                                  storage::ScoreMember &max_m) {
 //   if (cache_obj) {
 //     std::vector<storage::ScoreMember> score_members;
-//     // 获取第一个成员
 //     auto s = cache_obj->ZRange(key, 0, 0, &score_members);
 //     if (!s.ok() || score_members.empty()) {
 //       return false;
@@ -675,7 +667,6 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //     min_m = score_members.front();
 //     score_members.clear();
 
-//     // 获取最后一个成员
 //     s = cache_obj->ZRange(key, -1, -1, &score_members);
 //     if (!s.ok() || score_members.empty()) {
 //       return false;
@@ -694,7 +685,6 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //   if (cache_obj->Exists(key)) {
 //     std::unordered_set<std::string> unique;
 //     std::list<storage::ScoreMember> filtered_score_members;
-//     // 去除重复元素
 //     for (auto it = score_members.rbegin(); it != score_members.rend(); ++it) {
 //       if (unique.find(it->member) == unique.end()) {
 //         unique.insert(it->member);
@@ -712,7 +702,6 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 
 //     storage::ScoreMember cache_min_sm;
 //     storage::ScoreMember cache_max_sm;
-//     // 获取cache里面该集合的最大值和最小值
 //     if (!GetCacheMinMaxSM(cache_obj, key, cache_min_sm, cache_max_sm)) {
 //       return Status::NotFound("key not exist");
 //     }
@@ -901,18 +890,17 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 // }
 
 // Status PCache::ZCount(std::string& key, std::string &min, std::string &max, uint64_t *len, ZCountCmd *cmd) {
-//   std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//   int cache_index = CacheIndex(CachePrefixKeyZ);
+//   int cache_index = CacheIndex(key);
 //   std::lock_guard lm(*cache_mutexs_[cache_index]);
 //   auto cache_obj = caches_[cache_index];
 //   uint64_t cache_len = 0;
-//   cache_obj->ZCard(CachePrefixKeyZ, &cache_len);
+//   cache_obj->ZCard(key, &cache_len);
 //   if (cache_len <= 0) {
 //     return Status::NotFound("key not in cache");
 //   } else {
 //     storage::ScoreMember cache_min_sm;
 //     storage::ScoreMember cache_max_sm;
-//     if (!GetCacheMinMaxSM(cache_obj, CachePrefixKeyZ, cache_min_sm, cache_max_sm)) {
+//     if (!GetCacheMinMaxSM(cache_obj, key, cache_min_sm, cache_max_sm)) {
 //       return Status::NotFound("key not exist");
 //     }
 //     auto cache_min_score = cache_min_sm.score;
@@ -920,7 +908,7 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 
 //     if (RangeStatus::RangeHit == CheckCacheRangeByScore(cache_len, cache_min_score, cache_max_score, cmd->MinScore(),
 //                                                         cmd->MaxScore(), cmd->LeftClose(), cmd->RightClose())) {
-//       auto s = cache_obj->ZCount(CachePrefixKeyZ, min, max, len);
+//       auto s = cache_obj->ZCount(key, min, max, len);
 //       return s;
 //     } else {
 //       return Status::NotFound("key not in cache");
@@ -936,10 +924,9 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 
 // bool PCache::ReloadCacheKeyIfNeeded(cache::RedisCache *cache_obj, std::string& key, int mem_len, int db_len,
 //                                        const std::shared_ptr<DB>& db) {
-//   std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
 //   if (mem_len == -1) {
 //     uint64_t cache_len = 0;
-//     cache_obj->ZCard(CachePrefixKeyZ, &cache_len);
+//     cache_obj->ZCard(key, &cache_len);
 //     mem_len = cache_len;
 //   }
 //   if (db_len == -1) {
@@ -951,7 +938,7 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //   }
 //   if (db_len < zset_cache_field_num_per_key_) {
 //     if (mem_len * 2 < db_len) {
-//       cache_obj->Del(CachePrefixKeyZ);
+//       cache_obj->Del(key);
 //       PushKeyToAsyncLoadQueue(PIKA_KEY_TYPE_ZSET, key, db);
 //       return true;
 //     } else {
@@ -959,7 +946,7 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //     }
 //   } else {
 //     if (zset_cache_field_num_per_key_ && mem_len * 2 < zset_cache_field_num_per_key_) {
-//       cache_obj->Del(CachePrefixKeyZ);
+//       cache_obj->Del(key);
 //       PushKeyToAsyncLoadQueue(PIKA_KEY_TYPE_ZSET, key, db);
 //       return true;
 //     } else {
@@ -968,7 +955,8 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //   }
 // }
 
-// Status PCache::ZIncrbyIfKeyExist(std::string& key, std::string& member, double increment, ZIncrbyCmd *cmd, const std::shared_ptr<DB>& db) {
+// Status PCache::ZIncrbyIfKeyExist(std::string& key, std::string& member, double increment, ZIncrbyCmd *cmd, const
+// std::shared_ptr<DB>& db) {
 //   auto eps = std::numeric_limits<double>::epsilon();
 //   if (-eps < increment && increment < eps) {
 //     return Status::NotFound("icrement is 0, nothing to be done");
@@ -1035,7 +1023,8 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //   return Status::NotFound("key not exist");
 // }
 
-// RangeStatus PCache::CheckCacheRange(int32_t cache_len, int32_t db_len, int64_t start, int64_t stop, int64_t &out_start,
+// RangeStatus PCache::CheckCacheRange(int32_t cache_len, int32_t db_len, int64_t start, int64_t stop, int64_t
+// &out_start,
 //                                        int64_t &out_stop) {
 //   out_start = start >= 0 ? start : db_len + start;
 //   out_stop = stop >= 0 ? stop : db_len + stop;
@@ -1064,7 +1053,8 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //   }
 // }
 
-// RangeStatus PCache::CheckCacheRevRange(int32_t cache_len, int32_t db_len, int64_t start, int64_t stop, int64_t &out_start,
+// RangeStatus PCache::CheckCacheRevRange(int32_t cache_len, int32_t db_len, int64_t start, int64_t stop, int64_t
+// &out_start,
 //                                           int64_t &out_stop) {
 //   int64_t start_index = stop >= 0 ? db_len - stop - 1 : -stop - 1;
 //   int64_t stop_index = start >= 0 ? db_len - start - 1 : -start - 1;
@@ -1099,25 +1089,25 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //   }
 // }
 
-// Status PCache::ZRange(std::string& key, int64_t start, int64_t stop, std::vector<storage::ScoreMember> *score_members,
+// Status PCache::ZRange(std::string& key, int64_t start, int64_t stop, std::vector<storage::ScoreMember>
+// *score_members,
 //                          const std::shared_ptr<DB>& db) {
-//   std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//   int cache_index = CacheIndex(CachePrefixKeyZ);
+//   int cache_index = CacheIndex(key);
 //   std::lock_guard lm(*cache_mutexs_[cache_index]);
 
 //   auto cache_obj = caches_[cache_index];
 //   auto db_obj = db->storage();
 //   Status s;
-//   if (cache_obj->Exists(CachePrefixKeyZ)) {
+//   if (cache_obj->Exists(key)) {
 //     uint64_t cache_len = 0;
-//     cache_obj->ZCard(CachePrefixKeyZ, &cache_len);
+//     cache_obj->ZCard(key, &cache_len);
 //     int32_t db_len = 0;
 //     db_obj->ZCard(key, &db_len);
 //     int64_t out_start = 0;
 //     int64_t out_stop = 0;
 //     RangeStatus rs = CheckCacheRange(cache_len, db_len, start, stop, out_start, out_stop);
 //     if (rs == RangeStatus::RangeHit) {
-//       return cache_obj->ZRange(CachePrefixKeyZ, out_start, out_stop, score_members);
+//       return cache_obj->ZRange(key, out_start, out_stop, score_members);
 //     } else if (rs == RangeStatus::RangeMiss) {
 //       ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, db_len, db);
 //       return Status::NotFound("key not in cache");
@@ -1133,26 +1123,25 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 
 // Status PCache::ZRangebyscore(std::string& key, std::string &min, std::string &max,
 //                                 std::vector<storage::ScoreMember> *score_members, ZRangebyscoreCmd *cmd) {
-//   std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//   int cache_index = CacheIndex(CachePrefixKeyZ);
+//   int cache_index = CacheIndex(key);
 //   std::lock_guard lm(*cache_mutexs_[cache_index]);
 
 //   auto cache_obj = caches_[cache_index];
 //   uint64_t cache_len = 0;
-//   cache_obj->ZCard(CachePrefixKeyZ, &cache_len);
+//   cache_obj->ZCard(key, &cache_len);
 //   if (cache_len <= 0) {
 //     return Status::NotFound("key not in cache");
 //   } else {
 //     storage::ScoreMember cache_min_sm;
 //     storage::ScoreMember cache_max_sm;
-//     if (!GetCacheMinMaxSM(cache_obj, CachePrefixKeyZ, cache_min_sm, cache_max_sm)) {
+//     if (!GetCacheMinMaxSM(cache_obj, key, cache_min_sm, cache_max_sm)) {
 //       return Status::NotFound("key not exist");
 //     }
 
 //     if (RangeStatus::RangeHit == CheckCacheRangeByScore(cache_len, cache_min_sm.score, cache_max_sm.score,
 //                                                         cmd->MinScore(), cmd->MaxScore(), cmd->LeftClose(),
 //                                                         cmd->RightClose())) {
-//       return cache_obj->ZRangebyscore(CachePrefixKeyZ, min, max, score_members, cmd->Offset(), cmd->Count());
+//       return cache_obj->ZRangebyscore(key, min, max, score_members, cmd->Offset(), cmd->Count());
 //     } else {
 //       return Status::NotFound("key not in cache");
 //     }
@@ -1160,17 +1149,16 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 // }
 
 // Status PCache::ZRank(std::string& key, std::string& member, int64_t *rank, const std::shared_ptr<DB>& db) {
-//   std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//   int cache_index = CacheIndex(CachePrefixKeyZ);
+//   int cache_index = CacheIndex(key);
 //   std::lock_guard lm(*cache_mutexs_[cache_index]);
 
 //   auto cache_obj = caches_[cache_index];
 //   uint64_t cache_len = 0;
-//   cache_obj->ZCard(CachePrefixKeyZ, &cache_len);
+//   cache_obj->ZCard(key, &cache_len);
 //   if (cache_len <= 0) {
 //     return Status::NotFound("key not in cache");
 //   } else {
-//     auto s = cache_obj->ZRank(CachePrefixKeyZ, member, rank);
+//     auto s = cache_obj->ZRank(key, member, rank);
 //     if (s.ok()) {
 //       if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
 //         int32_t db_len = 0;
@@ -1259,25 +1247,25 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //   return s;
 // }
 
-// Status PCache::ZRevrange(std::string& key, int64_t start, int64_t stop, std::vector<storage::ScoreMember> *score_members,
+// Status PCache::ZRevrange(std::string& key, int64_t start, int64_t stop, std::vector<storage::ScoreMember>
+// *score_members,
 //                             const std::shared_ptr<DB>& db) {
-//   std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//   int cache_index = CacheIndex(CachePrefixKeyZ);
+//   int cache_index = CacheIndex(key);
 //   std::lock_guard lm(*cache_mutexs_[cache_index]);
 
 //   auto cache_obj = caches_[cache_index];
 //   auto db_obj = db->storage();
 //   Status s;
-//   if (cache_obj->Exists(CachePrefixKeyZ)) {
+//   if (cache_obj->Exists(key)) {
 //     uint64_t cache_len = 0;
-//     cache_obj->ZCard(CachePrefixKeyZ, &cache_len);
+//     cache_obj->ZCard(key, &cache_len);
 //     int32_t db_len = 0;
 //     db_obj->ZCard(key, &db_len);
 //     int64_t out_start = 0;
 //     int64_t out_stop = 0;
 //     RangeStatus rs = CheckCacheRevRange(cache_len, db_len, start, stop, out_start, out_stop);
 //     if (rs == RangeStatus::RangeHit) {
-//       return cache_obj->ZRevrange(CachePrefixKeyZ, out_start, out_stop, score_members);
+//       return cache_obj->ZRevrange(key, out_start, out_stop, score_members);
 //     } else if (rs == RangeStatus::RangeMiss) {
 //       ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, db_len, db);
 //       return Status::NotFound("key not in cache");
@@ -1294,19 +1282,18 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 // Status PCache::ZRevrangebyscore(std::string& key, std::string &min, std::string &max,
 //                                    std::vector<storage::ScoreMember> *score_members, ZRevrangebyscoreCmd *cmd,
 //                                    const std::shared_ptr<DB>& db) {
-//   std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//   int cache_index = CacheIndex(CachePrefixKeyZ);
+//   int cache_index = CacheIndex(key);
 //   std::lock_guard lm(*cache_mutexs_[cache_index]);
 
 //   auto cache_obj = caches_[cache_index];
 //   uint64_t cache_len = 0;
-//   cache_obj->ZCard(CachePrefixKeyZ, &cache_len);
+//   cache_obj->ZCard(key, &cache_len);
 //   if (cache_len <= 0) {
 //     return Status::NotFound("key not in cache");
 //   } else {
 //     storage::ScoreMember cache_min_sm;
 //     storage::ScoreMember cache_max_sm;
-//     if (!GetCacheMinMaxSM(cache_obj, CachePrefixKeyZ, cache_min_sm, cache_max_sm)) {
+//     if (!GetCacheMinMaxSM(cache_obj, key, cache_min_sm, cache_max_sm)) {
 //       return Status::NotFound("key not exist");
 //     }
 //     auto cache_min_score = cache_min_sm.score;
@@ -1315,7 +1302,7 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //     auto rs = CheckCacheRangeByScore(cache_len, cache_min_score, cache_max_score, cmd->MinScore(), cmd->MaxScore(),
 //                                      cmd->LeftClose(), cmd->RightClose());
 //     if (RangeStatus::RangeHit == rs) {
-//       return cache_obj->ZRevrangebyscore(CachePrefixKeyZ, min, max, score_members, cmd->Offset(), cmd->Count());
+//       return cache_obj->ZRevrangebyscore(key, min, max, score_members, cmd->Offset(), cmd->Count());
 //     } else if (RangeStatus::RangeMiss == rs) {
 //       ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, -1, db);
 //       return Status::NotFound("score range miss");
@@ -1330,37 +1317,34 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 //   db->storage()->ZCard(key, &db_len);
 
 //   std::lock_guard l(rwlock_);
-//   std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//   int cache_index = CacheIndex(CachePrefixKeyZ);
+//   int cache_index = CacheIndex(key);
 //   std::lock_guard lm(*cache_mutexs_[cache_index]);
 //   uint64_t cache_len = 0;
-//   caches_[cache_index]->ZCard(CachePrefixKeyZ, &cache_len);
+//   caches_[cache_index]->ZCard(key, &cache_len);
 //   return (db_len == (int32_t)cache_len) && cache_len;
 // }
 
 // Status PCache::ZRevrangebylex(std::string& key, std::string &min, std::string &max,
 //                                  std::vector<std::string> *members, const std::shared_ptr<DB>& db) {
 //   if (CacheSizeEqsDB(key, db)) {
-//     std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//     int cache_index = CacheIndex(CachePrefixKeyZ);
+//     int cache_index = CacheIndex(key);
 //     std::lock_guard lm(*cache_mutexs_[cache_index]);
-//     return caches_[cache_index]->ZRevrangebylex(CachePrefixKeyZ, min, max, members);
+//     return caches_[cache_index]->ZRevrangebylex(key, min, max, members);
 //   } else {
 //     return Status::NotFound("key not in cache");
 //   }
 // }
 
 // Status PCache::ZRevrank(std::string& key, std::string& member, int64_t *rank, const std::shared_ptr<DB>& db) {
-//   std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//   int cache_index = CacheIndex(CachePrefixKeyZ);
+//   int cache_index = CacheIndex(key);
 //   std::lock_guard lm(*cache_mutexs_[cache_index]);
 //   auto cache_obj = caches_[cache_index];
 //   uint64_t cache_len = 0;
-//   cache_obj->ZCard(CachePrefixKeyZ, &cache_len);
+//   cache_obj->ZCard(key, &cache_len);
 //   if (cache_len <= 0) {
 //     return Status::NotFound("key not in cache");
 //   } else {
-//     auto s = cache_obj->ZRevrank(CachePrefixKeyZ, member, rank);
+//     auto s = cache_obj->ZRevrank(key, member, rank);
 //     if (s.ok()) {
 //       if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
 //         int32_t db_len = 0;
@@ -1386,10 +1370,9 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 // Status PCache::ZRangebylex(std::string& key, std::string &min, std::string &max, std::vector<std::string> *members,
 //                               const std::shared_ptr<DB>& db) {
 //   if (CacheSizeEqsDB(key, db)) {
-//     std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//     int cache_index = CacheIndex(CachePrefixKeyZ);
+//     int cache_index = CacheIndex(key);
 //     std::lock_guard lm(*cache_mutexs_[cache_index]);
-//     return caches_[cache_index]->ZRangebylex(CachePrefixKeyZ, min, max, members);
+//     return caches_[cache_index]->ZRangebylex(key, min, max, members);
 //   } else {
 //     return Status::NotFound("key not in cache");
 //   }
@@ -1398,11 +1381,10 @@ Status PCache::Strlen(std::string& key, int32_t *len) {
 // Status PCache::ZLexcount(std::string& key, std::string &min, std::string &max, uint64_t *len,
 //                             const std::shared_ptr<DB>& db) {
 //   if (CacheSizeEqsDB(key, db)) {
-//     std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//     int cache_index = CacheIndex(CachePrefixKeyZ);
+//     int cache_index = CacheIndex(key);
 //     std::lock_guard lm(*cache_mutexs_[cache_index]);
 
-//     return caches_[cache_index]->ZLexcount(CachePrefixKeyZ, min, max, len);
+//     return caches_[cache_index]->ZLexcount(key, min, max, len);
 //   } else {
 //     return Status::NotFound("key not in cache");
 //   }
@@ -1492,8 +1474,7 @@ Status PCache::InitWithoutLock(uint32_t cache_num, cache::CacheConfig *cache_cfg
   return Status::OK();
 }
 
-void PCache::DestroyWithoutLock(void)
-{
+void PCache::DestroyWithoutLock(void) {
   cache_status_ = PCACHE_STATUS_DESTROY;
 
   for (auto iter = caches_.begin(); iter != caches_.end(); ++iter) {
@@ -1503,12 +1484,12 @@ void PCache::DestroyWithoutLock(void)
   cache_mutexs_.clear();
 }
 
-int PCache::CacheIndex(const std::string& key) {
-  auto crc = crc32(0L, (const Bytef*)key.data(), (int)key.size());
+int PCache::CacheIndex(const std::string &key) {
+  auto crc = crc32(0L, (const Bytef *)key.data(), (int)key.size());
   return (int)(crc % caches_.size());
 }
 
-Status PCache::WriteKVToCache(std::string& key, std::string &value, int64_t ttl) {
+Status PCache::WriteKVToCache(std::string &key, std::string &value, int64_t ttl) {
   if (0 >= ttl) {
     if (PCache_TTL_NONE == ttl) {
       return SetnxWithoutTTL(key, value);
@@ -1534,18 +1515,18 @@ Status PCache::WriteKVToCache(std::string& key, std::string &value, int64_t ttl)
 //   return Status::OK();
 // }
 
-// Status PCache::WriteListToCache(std::string& key, std::vector<std::string> &values, int64_t ttl) {
-//   if (0 >= ttl) {
-//     if (PIKA_TTL_NONE == ttl) {
-//       return RPushnxWithoutTTL(key, values);
-//     } else {
-//       return Del({key});
-//     }
-//   } else {
-//     return RPushnx(key, values, ttl);
-//   }
-//   return Status::OK();
-// }
+Status PCache::WriteListToCache(std::string &key, std::vector<std::string> &values, int64_t ttl) {
+  if (0 >= ttl) {
+    if (PCache_TTL_NONE == ttl) {
+      return RPushnxWithoutTTL(key, values);
+    } else {
+      return Del({key});
+    }
+  } else {
+    return RPushnx(key, values, ttl);
+  }
+  return Status::OK();
+}
 
 // Status PCache::WriteSetToCache(std::string& key, std::vector<std::string> &members, int64_t ttl) {
 //   if (0 >= ttl) {
@@ -1573,12 +1554,12 @@ Status PCache::WriteKVToCache(std::string& key, std::string &value, int64_t ttl)
 //   return Status::OK();
 // }
 
-void PCache::PushKeyToAsyncLoadQueue(const char key_type, std::string& key, const std::shared_ptr<pikiwidb::DB>& db) {
-  cache_load_thread_->Push(key_type, key, db);
+void PCache::PushKeyToAsyncLoadQueue(const char key_type, std::string &key, PClient *client) {
+  cache_load_thread_->Push(key_type, key, client);
 }
 
 void PCache::ClearHitRatio(void) {
   std::unique_lock l(rwlock_);
   cache::RedisCache::ResetHitAndMissNum();
 }
-} // namespace pikiwidb
+}  // namespace pikiwidb

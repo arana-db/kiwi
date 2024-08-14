@@ -4,25 +4,22 @@
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
-// #include <glog/logging.h>
 
 #include "pcache_load_thread.h"
-// #include "include/pika_server.h"
 #include "pcache.h"
 #include "pstd/log.h"
 #include "pstd/scope_record_lock.h"
+#include "store.h"
 
-// extern PikaServer* g_pika_server;
-namespace pikiwidb{
+namespace pikiwidb {
 
 PCacheLoadThread::PCacheLoadThread(int zset_cache_start_direction, int zset_cache_field_num_per_key)
-    : should_exit_(false)
-      , loadkeys_cond_()
-      , async_load_keys_num_(0)
-      , waitting_load_keys_num_(0)
-      , zset_cache_start_direction_(zset_cache_start_direction)
-      , zset_cache_field_num_per_key_(zset_cache_field_num_per_key)
-{
+    : should_exit_(false),
+      loadkeys_cond_(),
+      async_load_keys_num_(0),
+      waitting_load_keys_num_(0),
+      zset_cache_start_direction_(zset_cache_start_direction),
+      zset_cache_field_num_per_key_(zset_cache_field_num_per_key) {
   set_thread_name("PCacheLoadThread");
 }
 
@@ -36,45 +33,43 @@ PCacheLoadThread::~PCacheLoadThread() {
   StopThread();
 }
 
-void PCacheLoadThread::Push(const char key_type, std::string& key, const std::shared_ptr<pikiwidb::DB>& db) {
+void PCacheLoadThread::Push(const char key_type, std::string& key, PClient* client) {
   std::unique_lock lq(loadkeys_mutex_);
   std::unique_lock lm(loadkeys_map_mutex_);
   if (CACHE_LOAD_QUEUE_MAX_SIZE < loadkeys_queue_.size()) {
     // 5s to print logs once
     static uint64_t last_log_time_us = 0;
     if (pstd::NowMicros() - last_log_time_us > 5000000) {
-       WARN("PCacheLoadThread::Push waiting... ");
+      WARN("PCacheLoadThread::Push waiting... ");
       last_log_time_us = pstd::NowMicros();
     }
     return;
   }
 
   if (loadkeys_map_.find(key) == loadkeys_map_.end()) {
-    std::tuple<const char, std::string, const std::shared_ptr<pikiwidb::DB>> ktuple = std::make_tuple(key_type, key, db);
+    std::tuple<const char, std::string, PClient*> ktuple = std::make_tuple(key_type, key, client);
     loadkeys_queue_.push_back(ktuple);
     loadkeys_map_[key] = std::string("");
     loadkeys_cond_.notify_all();
   }
 }
 
-bool PCacheLoadThread::LoadKV(std::string& key, const std::shared_ptr<DB>& db) {
+bool PCacheLoadThread::LoadKV(std::string& key, PClient* client) {
   std::string value;
   int64_t ttl = -1;
-  rocksdb::Status s = db->GetStorage()->GetWithTTL(key, &value, &ttl);
+  rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->GetWithTTL(key, &value, &ttl);
   if (!s.ok()) {
-    WARN("load kv failed, key={}",key);
+    WARN("load kv failed, key={}", key);
     return false;
   }
-  std::string CachePrefixKeyK = PCacheKeyPrefixK + key;
-  db->GetCache()->WriteKVToCache(CachePrefixKeyK, value, ttl);
+  PSTORE.GetBackend(client->GetCurrentDB())->GetCache()->WriteKVToCache(key, value, ttl);
   return true;
 }
 
-// bool PCacheLoadThread::LoadHash(std::string& key, const std::shared_ptr<pikiwidb::DB>& db) {
+// bool PCacheLoadThread::LoadHash(std::string& key, PClient* client) {
 //   int32_t len = 0;
 //   db->storage()->HLen(key, &len);
 //   if (0 >= len || CACHE_VALUE_ITEM_MAX_SIZE < len) {
-//     WARN("can not load key, because item size:{} beyond max item size:",len,CACHE_VALUE_ITEM_MAX_SIZE);
 //     return false;
 //   }
 
@@ -82,37 +77,33 @@ bool PCacheLoadThread::LoadKV(std::string& key, const std::shared_ptr<DB>& db) {
 //   int64_t ttl = -1;
 //   rocksdb::Status s = db->storage()->HGetallWithTTL(key, &fvs, &ttl);
 //   if (!s.ok()) {
-//     WARN("load hash failed, key={}",key);
-
+//     LOG(WARNING) << "load hash failed, key=" << key;
 //     return false;
 //   }
-//   std::string CachePrefixKeyH = PCacheKeyPrefixH + key;
-//   db->cache()->WriteHashToCache(CachePrefixKeyH, fvs, ttl);
+//   db->cache()->WriteHashToCache(key, fvs, ttl);
 //   return true;
 // }
 
-// bool PCacheLoadThread::LoadList(std::string& key, const std::shared_ptr<DB>& db) {
-//   uint64_t len = 0;
-//   db->storage()->LLen(key, &len);
-//   if (len <= 0 || CACHE_VALUE_ITEM_MAX_SIZE < len) {
-//     LOG(WARNING) << "can not load key, because item size:" << len
-//                  << " beyond max item size:" << CACHE_VALUE_ITEM_MAX_SIZE;
-//     return false;
-//   }
+bool PCacheLoadThread::LoadList(std::string& key, PClient* client) {
+  uint64_t len = 0;
+  PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LLen(key, &len);
+  if (len <= 0 || CACHE_VALUE_ITEM_MAX_SIZE < len) {
+    WARN("can not load key, because item size: {} , beyond max item size: {} ", len, CACHE_VALUE_ITEM_MAX_SIZE);
+    return false;
+  }
 
-//   std::vector<std::string> values;
-//   int64_t ttl = -1;
-//   rocksdb::Status s = db->storage()->LRangeWithTTL(key, 0, -1, &values, &ttl);
-//   if (!s.ok()) {
-//     LOG(WARNING) << "load list failed, key=" << key;
-//     return false;
-//   }
-//   std::string CachePrefixKeyL = PCacheKeyPrefixL + key;
-//   db->cache()->WriteListToCache(CachePrefixKeyL, values, ttl);
-//   return true;
-// }
+  std::vector<std::string> values;
+  int64_t ttl = -1;
+  rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LRangeWithTTL(key, 0, -1, &values, &ttl);
+  if (!s.ok()) {
+    WARN("load list failed, key= {}", key);
+    return false;
+  }
+  PSTORE.GetBackend(client->GetCurrentDB())->GetCache()->WriteListToCache(key, values, ttl);
+  return true;
+}
 
-// bool PCacheLoadThread::LoadSet(std::string& key, const std::shared_ptr<DB>& db) {
+// bool PCacheLoadThread::LoadSet(std::string& key,PClient* client) {
 //   int32_t len = 0;
 //   db->storage()->SCard(key, &len);
 //   if (0 >= len || CACHE_VALUE_ITEM_MAX_SIZE < len) {
@@ -128,12 +119,11 @@ bool PCacheLoadThread::LoadKV(std::string& key, const std::shared_ptr<DB>& db) {
 //     LOG(WARNING) << "load set failed, key=" << key;
 //     return false;
 //   }
-//   std::string CachePrefixKeyS = PCacheKeyPrefixS + key;
-//   db->cache()->WriteSetToCache(CachePrefixKeyS, values, ttl);
+//   db->cache()->WriteSetToCache(key, values, ttl);
 //   return true;
 // }
 
-// bool PCacheLoadThread::LoadZset(std::string& key, const std::shared_ptr<DB>& db) {
+// bool PCacheLoadThread::LoadZset(std::string& key, PClient* client) {
 //   int32_t len = 0;
 //   int start_index = 0;
 //   int stop_index = -1;
@@ -143,8 +133,7 @@ bool PCacheLoadThread::LoadKV(std::string& key, const std::shared_ptr<DB>& db) {
 //   }
 
 //   uint64_t cache_len = 0;
-//   std::string CachePrefixKeyZ = PCacheKeyPrefixZ + key;
-//   db->cache()->CacheZCard(CachePrefixKeyZ, &cache_len);
+//   db->cache()->CacheZCard(key, &cache_len);
 //   if (cache_len != 0) {
 //     return true;
 //   }
@@ -165,35 +154,36 @@ bool PCacheLoadThread::LoadKV(std::string& key, const std::shared_ptr<DB>& db) {
 //     LOG(WARNING) << "load zset failed, key=" << key;
 //     return false;
 //   }
-//   db->cache()->WriteZSetToCache(CachePrefixKeyZ, score_members, ttl);
+//   db->cache()->WriteZSetToCache(key, score_members, ttl);
 //   return true;
 // }
 
-bool PCacheLoadThread::LoadKey(const char key_type, std::string& key, const std::shared_ptr<pikiwidb::DB>& db) {
-  // @tobeChecked 下面这行代码是pika实现中，分析pikiwidb中不再需要对DB上key锁，由Storage层来进行上锁（该两行留存，待确认无误后删除）
+bool PCacheLoadThread::LoadKey(const char key_type, std::string& key, PClient* client) {
+  // @tobeChecked
+  // 下面这行代码是pika实现中，分析pikiwidb中不再需要对DB上key锁，由Storage层来进行上锁（该两行留存，待确认无误后删除）
   // pstd::lock::ScopeRecordLock record_lock(db->LockMgr(), key);
   switch (key_type) {
     case 'k':
-      return LoadKV(key, db);
+      return LoadKV(key, client);
     // case 'h':
-    //   return LoadHash(key, db);
-    // case 'l':
-    //   return LoadList(key, db);
+    //   return LoadHash(key, client);
+    case 'l':
+      return LoadList(key, client);
     // case 's':
-    //   return LoadSet(key, db);
+    //   return LoadSet(key, client);
     // case 'z':
-    //   return LoadZset(key, db);
+    //   return LoadZset(key, client);
     default:
-        WARN("PCacheLoadThread::LoadKey invalid key type : {}",key_type);
+      WARN("PCacheLoadThread::LoadKey invalid key type : {}", key_type);
       return false;
   }
 }
 
-void *PCacheLoadThread::ThreadMain() {
-    INFO("PCacheLoadThread::ThreadMain Start");
+void* PCacheLoadThread::ThreadMain() {
+  INFO("PCacheLoadThread::ThreadMain Start");
 
   while (!should_exit_) {
-    std::deque<std::tuple<const char, std::string, const std::shared_ptr<pikiwidb::DB>>> load_keys;
+    std::deque<std::tuple<const char, std::string, PClient*>> load_keys;
     {
       std::unique_lock lq(loadkeys_mutex_);
       waitting_load_keys_num_ = loadkeys_queue_.size();
@@ -212,17 +202,16 @@ void *PCacheLoadThread::ThreadMain() {
         }
       }
     }
-    for (auto iter = load_keys.begin(); iter != load_keys.end(); ++iter) {
-      if (LoadKey(std::get<0>(*iter), std::get<1>(*iter), std::get<2>(*iter))) {
+    for (auto& load_key : load_keys) {
+      if (LoadKey(std::get<0>(load_key), std::get<1>(load_key), std::get<2>(load_key))) {
         ++async_load_keys_num_;
-      } else {
-        WARN("PCacheLoadThread::ThreadMain LoadKey: {} failed!!!",std::get<1>(*iter));
       }
+
       std::unique_lock lm(loadkeys_map_mutex_);
-      loadkeys_map_.erase(std::get<1>(*iter));
+      loadkeys_map_.erase(std::get<1>(load_key));
     }
   }
 
   return nullptr;
 }
-}  // namespace cache
+}  // namespace pikiwidb

@@ -144,15 +144,14 @@ PConfig::PConfig() {
 
   // cache config
   //@tobechecked:rewritable
-  AddNumberWihLimit("cache-num",true,&cache_num,1,48);
-  AddNumberWihLimit("cache-mode",true,&cache_mode,0,1);
-  AddNumber("zset-cache-field-num-per-key",true,&zset_cache_field_num_per_key);
-  AddNumber("zset-cache-start-direction",true,&zset_cache_start_direction);
-  AddNumber("cache-maxmemory",true,&cache_maxmemory);
-  AddNumber("cache-maxmemory-policy",true,&cache_maxmemory_policy);
-  AddNumber("cache-maxmemory-samples",true,&cache_maxmemory_samples);
-  AddNumber("cache-lfu-decay-time",true,&cache_lfu_decay_time);
-
+  AddNumberWihLimit("cache-num", true, &cache_num, 1, 48);
+  AddNumberWihLimit("cache-mode", true, &cache_mode, 0, 1);
+  AddNumber("zset-cache-field-num-per-key", true, &zset_cache_field_num_per_key);
+  AddNumber("zset-cache-start-direction", true, &zset_cache_start_direction);
+  AddNumber("cache-maxmemory", true, &cache_maxmemory);
+  AddNumber("cache-maxmemory-policy", true, &cache_maxmemory_policy);
+  AddNumber("cache-maxmemory-samples", true, &cache_maxmemory_samples);
+  AddNumber("cache-lfu-decay-time", true, &cache_lfu_decay_time);
 }
 
 bool PConfig::LoadFromFile(const std::string& file_name) {
@@ -189,7 +188,7 @@ bool PConfig::LoadFromFile(const std::string& file_name) {
   }
 
   std::string all_cache_type_str;
-  all_cache_type_str=parser_.GetData<PString>("cache-type");
+  all_cache_type_str = parser_.GetData<PString>("cache-type");
   SetCacheType(all_cache_type_str);
 
   return true;
@@ -200,7 +199,7 @@ void PConfig::SetCacheType(const std::string& value) {
   if (value == "") {
     return;
   }
-  
+
   std::string lower_value = value;
   pstd::StringToLower(lower_value);
   lower_value.erase(remove_if(lower_value.begin(), lower_value.end(), isspace), lower_value.end());

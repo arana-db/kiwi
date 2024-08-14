@@ -11,8 +11,8 @@
 #include <atomic>
 #include <string>
 
-#include "pstd/pstd_mutex.h"
 #include "pstd/noncopyable.h"
+#include "pstd/pstd_mutex.h"
 
 namespace pikiwidb {
 

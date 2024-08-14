@@ -5,12 +5,12 @@
 
 #include <cstdlib>
 
-#include "redisCache.h"
 #include "pstd/pstd_defer.h"
+#include "redisCache.h"
 
 namespace cache {
 
-Status RedisCache::Set(std::string& key, std::string &value, int64_t ttl) {
+Status RedisCache::Set(std::string &key, std::string &value, int64_t ttl) {
   int res = RcFreeMemoryIfNeeded(cache_);
   if (C_OK != res) {
     return Status::Corruption("[error] Free memory faild !");
@@ -19,9 +19,7 @@ Status RedisCache::Set(std::string& key, std::string &value, int64_t ttl) {
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
   robj *vobj = createObject(OBJ_STRING, sdsnewlen(value.data(), value.size()));
   robj *tobj = createStringObjectFromLongLong(ttl);
-  DEFER {
-    DecrObjectsRefCount(kobj, vobj, tobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj, vobj, tobj); };
   int ret = RcSet(cache_, kobj, vobj, tobj);
   if (C_OK != ret) {
     return Status::Corruption("RcSet failed");
@@ -30,7 +28,7 @@ Status RedisCache::Set(std::string& key, std::string &value, int64_t ttl) {
   return Status::OK();
 }
 
-Status RedisCache::SetWithoutTTL(std::string& key, std::string &value) {
+Status RedisCache::SetWithoutTTL(std::string &key, std::string &value) {
   int ret = RcFreeMemoryIfNeeded(cache_);
   if (C_OK != ret) {
     return Status::Corruption("[error] Free memory faild !");
@@ -38,9 +36,7 @@ Status RedisCache::SetWithoutTTL(std::string& key, std::string &value) {
 
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
   robj *vobj = createObject(OBJ_STRING, sdsnewlen(value.data(), value.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj, vobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj, vobj); };
   int res = RcSet(cache_, kobj, vobj, nullptr);
   if (C_OK != res) {
     return Status::Corruption("RcSetnx failed, key exists!");
@@ -49,7 +45,7 @@ Status RedisCache::SetWithoutTTL(std::string& key, std::string &value) {
   return Status::OK();
 }
 
-Status RedisCache::Setnx(std::string& key, std::string &value, int64_t ttl) {
+Status RedisCache::Setnx(std::string &key, std::string &value, int64_t ttl) {
   int ret = RcFreeMemoryIfNeeded(cache_);
   if (C_OK != ret) {
     return Status::Corruption("[error] Free memory faild !");
@@ -58,9 +54,7 @@ Status RedisCache::Setnx(std::string& key, std::string &value, int64_t ttl) {
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
   robj *vobj = createObject(OBJ_STRING, sdsnewlen(value.data(), value.size()));
   robj *tobj = createStringObjectFromLongLong(ttl);
-  DEFER {
-    DecrObjectsRefCount(kobj, vobj, tobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj, vobj, tobj); };
   int res = RcSetnx(cache_, kobj, vobj, tobj);
   if (C_OK != res) {
     return Status::Corruption("RcSetnx failed, key exists!");
@@ -69,7 +63,7 @@ Status RedisCache::Setnx(std::string& key, std::string &value, int64_t ttl) {
   return Status::OK();
 }
 
-Status RedisCache::SetnxWithoutTTL(std::string& key, std::string &value) {
+Status RedisCache::SetnxWithoutTTL(std::string &key, std::string &value) {
   int res = RcFreeMemoryIfNeeded(cache_);
   if (C_OK != res) {
     return Status::Corruption("[error] Free memory faild !");
@@ -77,9 +71,7 @@ Status RedisCache::SetnxWithoutTTL(std::string& key, std::string &value) {
 
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
   robj *vobj = createObject(OBJ_STRING, sdsnewlen(value.data(), value.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj, vobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj, vobj); };
   int ret = RcSetnx(cache_, kobj, vobj, nullptr);
   if (C_OK != ret) {
     return Status::Corruption("RcSetnx failed, key exists!");
@@ -88,7 +80,7 @@ Status RedisCache::SetnxWithoutTTL(std::string& key, std::string &value) {
   return Status::OK();
 }
 
-Status RedisCache::Setxx(std::string& key, std::string &value, int64_t ttl) {
+Status RedisCache::Setxx(std::string &key, std::string &value, int64_t ttl) {
   int ret = RcFreeMemoryIfNeeded(cache_);
   if (C_OK != ret) {
     return Status::Corruption("[error] Free memory faild !");
@@ -97,9 +89,7 @@ Status RedisCache::Setxx(std::string& key, std::string &value, int64_t ttl) {
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
   robj *vobj = createObject(OBJ_STRING, sdsnewlen(value.data(), value.size()));
   robj *tobj = createStringObjectFromLongLong(ttl);
-  DEFER {
-    DecrObjectsRefCount(kobj, vobj, tobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj, vobj, tobj); };
   int res = RcSetxx(cache_, kobj, vobj, tobj);
   if (C_OK != res) {
     return Status::Corruption("RcSetxx failed, key not exists!");
@@ -108,7 +98,7 @@ Status RedisCache::Setxx(std::string& key, std::string &value, int64_t ttl) {
   return Status::OK();
 }
 
-Status RedisCache::SetxxWithoutTTL(std::string& key, std::string &value) {
+Status RedisCache::SetxxWithoutTTL(std::string &key, std::string &value) {
   int res = RcFreeMemoryIfNeeded(cache_);
   if (C_OK != res) {
     return Status::Corruption("[error] Free memory faild !");
@@ -116,9 +106,7 @@ Status RedisCache::SetxxWithoutTTL(std::string& key, std::string &value) {
 
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
   robj *vobj = createObject(OBJ_STRING, sdsnewlen(value.data(), value.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj, vobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj, vobj); };
   int ret = RcSetxx(cache_, kobj, vobj, nullptr);
   if (C_OK != ret) {
     return Status::Corruption("RcSetxx failed, key not exists!");
@@ -127,12 +115,10 @@ Status RedisCache::SetxxWithoutTTL(std::string& key, std::string &value) {
   return Status::OK();
 }
 
-Status RedisCache::Get(const std::string& key, std::string *value) {
+Status RedisCache::Get(const std::string &key, std::string *value) {
   robj *val;
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj); };
   int ret = RcGet(cache_, kobj, &val);
   if (C_OK != ret) {
     if (REDIS_KEY_NOT_EXIST == ret) {
@@ -148,11 +134,9 @@ Status RedisCache::Get(const std::string& key, std::string *value) {
   return Status::OK();
 }
 
-Status RedisCache::Incr(std::string& key) {
+Status RedisCache::Incr(std::string &key) {
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj); };
   long long int ret;
   int res = RcIncr(cache_, kobj, &ret);
   if (C_OK != res) {
@@ -162,13 +146,11 @@ Status RedisCache::Incr(std::string& key) {
   return Status::OK();
 }
 
-Status RedisCache::Decr(std::string& key) {
+Status RedisCache::Decr(std::string &key) {
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj); };
   long long int ret;
-  int res =  RcDecr(cache_, kobj, &ret);
+  int res = RcDecr(cache_, kobj, &ret);
   if (C_OK != res) {
     return Status::Corruption("RcDecr failed!");
   }
@@ -176,11 +158,9 @@ Status RedisCache::Decr(std::string& key) {
   return Status::OK();
 }
 
-Status RedisCache::IncrBy(std::string& key, int64_t incr) {
+Status RedisCache::IncrBy(std::string &key, int64_t incr) {
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj); };
   long long int ret;
   int res = RcIncrBy(cache_, kobj, incr, &ret);
   if (C_OK != res) {
@@ -190,11 +170,9 @@ Status RedisCache::IncrBy(std::string& key, int64_t incr) {
   return Status::OK();
 }
 
-Status RedisCache::DecrBy(std::string& key, int64_t incr) {
+Status RedisCache::DecrBy(std::string &key, int64_t incr) {
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj); };
   long long int ret;
   int res = RcDecrBy(cache_, kobj, incr, &ret);
   if (C_OK != res) {
@@ -204,12 +182,10 @@ Status RedisCache::DecrBy(std::string& key, int64_t incr) {
   return Status::OK();
 }
 
-Status RedisCache::Incrbyfloat(std::string& key, double incr) {
+Status RedisCache::Incrbyfloat(std::string &key, double incr) {
   long double ret = .0f;
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj); };
   int res = RcIncrByFloat(cache_, kobj, incr, &ret);
   if (C_OK != res) {
     return Status::Corruption("RcIncrByFloat failed!");
@@ -218,13 +194,11 @@ Status RedisCache::Incrbyfloat(std::string& key, double incr) {
   return Status::OK();
 }
 
-Status RedisCache::Append(std::string& key, std::string &value) {
+Status RedisCache::Append(std::string &key, std::string &value) {
   uint64_t ret = 0;
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
   robj *vobj = createObject(OBJ_STRING, sdsnewlen(value.data(), value.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj, vobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj, vobj); };
   int res = RcAppend(cache_, kobj, vobj, reinterpret_cast<unsigned long *>(&ret));
   if (C_OK != res) {
     return Status::Corruption("RcAppend failed!");
@@ -233,12 +207,10 @@ Status RedisCache::Append(std::string& key, std::string &value) {
   return Status::OK();
 }
 
-Status RedisCache::GetRange(std::string& key, int64_t start, int64_t end, std::string *value) {
+Status RedisCache::GetRange(std::string &key, int64_t start, int64_t end, std::string *value) {
   sds val;
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj); };
   int ret = RcGetRange(cache_, kobj, start, end, &val);
   if (C_OK != ret) {
     if (REDIS_KEY_NOT_EXIST == ret) {
@@ -255,7 +227,7 @@ Status RedisCache::GetRange(std::string& key, int64_t start, int64_t end, std::s
   return Status::OK();
 }
 
-Status RedisCache::SetRange(std::string& key, int64_t start, std::string &value) {
+Status RedisCache::SetRange(std::string &key, int64_t start, std::string &value) {
   if (C_OK != RcFreeMemoryIfNeeded(cache_)) {
     return Status::Corruption("[error] Free memory faild !");
   }
@@ -263,9 +235,7 @@ Status RedisCache::SetRange(std::string& key, int64_t start, std::string &value)
   uint64_t ret = 0;
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
   robj *vobj = createObject(OBJ_STRING, sdsnewlen(value.data(), value.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj, vobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj, vobj); };
   int res = RcSetRange(cache_, kobj, start, vobj, reinterpret_cast<unsigned long *>(&ret));
   if (C_OK != res) {
     return Status::Corruption("SetRange failed!");
@@ -274,11 +244,9 @@ Status RedisCache::SetRange(std::string& key, int64_t start, std::string &value)
   return Status::OK();
 }
 
-Status RedisCache::Strlen(std::string& key, int32_t *len) {
+Status RedisCache::Strlen(std::string &key, int32_t *len) {
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj); };
   int ret = RcStrlen(cache_, kobj, len);
   if (C_OK != ret) {
     if (REDIS_KEY_NOT_EXIST == ret) {

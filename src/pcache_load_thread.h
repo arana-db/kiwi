@@ -5,7 +5,6 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-
 #pragma once
 
 #include <atomic>
@@ -13,13 +12,11 @@
 #include <unordered_map>
 #include <vector>
 
+#include "client.h"
 #include "pcache.h"
-// #include "include/pika_define.h"
 #include "thread.h"
-#include "db.h"
-// #include "storage/storage.h"
 
-namespace pikiwidb{
+namespace pikiwidb {
 
 class PCacheLoadThread : public Thread {
  public:
@@ -28,20 +25,20 @@ class PCacheLoadThread : public Thread {
 
   uint64_t AsyncLoadKeysNum(void) { return async_load_keys_num_; }
   uint32_t WaittingLoadKeysNum(void) { return waitting_load_keys_num_; }
-  void Push(const char key_type, std::string& key, const std::shared_ptr<DB>& db);
+  void Push(const char key_type, std::string& key, PClient* client);
 
  private:
-  bool LoadKV(std::string& key, const std::shared_ptr<DB>& db);
-  bool LoadHash(std::string& key, const std::shared_ptr<DB>& db);
-  bool LoadList(std::string& key, const std::shared_ptr<DB>& db);
-  bool LoadSet(std::string& key, const std::shared_ptr<DB>& db);
-  bool LoadZset(std::string& key, const std::shared_ptr<DB>& db);
-  bool LoadKey(const char key_type, std::string& key, const std::shared_ptr<DB>& db);
+  bool LoadKV(std::string& key, PClient* client);
+  // bool LoadHash(std::string& key, PClient* client);
+  bool LoadList(std::string& key, PClient* client);
+  // bool LoadSet(std::string& key, PClient* client);
+  // bool LoadZset(std::string& key, PClient* client);
+  bool LoadKey(const char key_type, std::string& key, PClient* client);
   virtual void* ThreadMain() override;
 
  private:
   std::atomic_bool should_exit_;
-  std::deque<std::tuple<const char, std::string, const std::shared_ptr<pikiwidb::DB>>> loadkeys_queue_;
+  std::deque<std::tuple<const char, std::string, PClient*>> loadkeys_queue_;
 
   pstd::CondVar loadkeys_cond_;
   pstd::Mutex loadkeys_mutex_;
@@ -54,6 +51,5 @@ class PCacheLoadThread : public Thread {
   // currently only take effects to zset
   int zset_cache_start_direction_;
   int zset_cache_field_num_per_key_;
-  
 };
-}  // namespace cache
+}  // namespace pikiwidb

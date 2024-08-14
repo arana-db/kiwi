@@ -8,14 +8,14 @@
 #include <unistd.h>
 
 #include <cstdint>
-#include <string>
-#include <map>
 #include <list>
+#include <map>
 #include <queue>
+#include <string>
 #include <vector>
 
 extern "C" {
-  #include "rediscache/redis.h"
+#include "rediscache/redis.h"
 }
 
 //#include "rediscache/redis.h"
@@ -28,7 +28,7 @@ namespace cache {
 using Status = rocksdb::Status;
 
 class RedisCache {
-public:
+ public:
   RedisCache();
   ~RedisCache();
 
@@ -41,35 +41,35 @@ public:
   int32_t ActiveExpireCycle(void);
 
   // Normal Commands
-  bool Exists(std::string& key);
+  bool Exists(std::string &key);
   int64_t DbSize(void);
-  void FlushCache(void); // 清空cache
+  void FlushCache(void);  // 清空cache
 
-  Status Del(const std::string& key); // 删除某个key
-  Status Expire(std::string& key, int64_t ttl);// 设置键的TTL
-  Status Expireat(std::string& key, int64_t ttl);
-  Status TTL(std::string& key, int64_t *ttl);
-  Status Persist(std::string& key);
-  Status Type(std::string& key, std::string *value);
+  Status Del(const std::string &key);            // 删除某个key
+  Status Expire(std::string &key, int64_t ttl);  // 设置键的TTL
+  Status Expireat(std::string &key, int64_t ttl);
+  Status TTL(std::string &key, int64_t *ttl);
+  Status Persist(std::string &key);
+  Status Type(std::string &key, std::string *value);
   Status RandomKey(std::string *key);
 
   // String Commands
-  Status Set(std::string& key, std::string &value, int64_t ttl);
-  Status SetWithoutTTL(std::string& key, std::string &value);
-  Status Setnx(std::string& key, std::string &value, int64_t ttl);
-  Status SetnxWithoutTTL(std::string& key, std::string &value);
-  Status Setxx(std::string& key, std::string &value, int64_t ttl);
-  Status SetxxWithoutTTL(std::string& key, std::string &value);
-  Status Get(const std::string& key, std::string *value);
-  Status Incr(std::string& key);
-  Status Decr(std::string& key);
-  Status IncrBy(std::string& key, int64_t incr);
-  Status DecrBy(std::string& key, int64_t incr);
-  Status Incrbyfloat(std::string& key, double incr);
-  Status Append(std::string& key, std::string &value);
-  Status GetRange(std::string& key, int64_t start, int64_t end, std::string *value);
-  Status SetRange(std::string& key, int64_t start, std::string &value);
-  Status Strlen(std::string& key, int32_t *len);
+  Status Set(std::string &key, std::string &value, int64_t ttl);
+  Status SetWithoutTTL(std::string &key, std::string &value);
+  Status Setnx(std::string &key, std::string &value, int64_t ttl);
+  Status SetnxWithoutTTL(std::string &key, std::string &value);
+  Status Setxx(std::string &key, std::string &value, int64_t ttl);
+  Status SetxxWithoutTTL(std::string &key, std::string &value);
+  Status Get(const std::string &key, std::string *value);
+  Status Incr(std::string &key);
+  Status Decr(std::string &key);
+  Status IncrBy(std::string &key, int64_t incr);
+  Status DecrBy(std::string &key, int64_t incr);
+  Status Incrbyfloat(std::string &key, double incr);
+  Status Append(std::string &key, std::string &value);
+  Status GetRange(std::string &key, int64_t start, int64_t end, std::string *value);
+  Status SetRange(std::string &key, int64_t start, std::string &value);
+  Status Strlen(std::string &key, int32_t *len);
 
   // Hash Commands
   // Status HDel(std::string& key, std::vector<std::string> &fields);
@@ -86,28 +86,27 @@ public:
   // Status HExists(std::string& key, std::string &field);
   // Status HIncrby(std::string& key, std::string &field, int64_t value);
   // Status HIncrbyfloat(std::string& key, std::string &field, double value);
-  // Status HLen(std::string& key, uint64_t *len);
+  // Status HLen(const std::string& key, uint64_t *len);
   // Status HStrlen(std::string& key, std::string &field, uint64_t *len);
 
-  // // List Commands
-  // Status LIndex(std::string& key, int64_t index, std::string *element);
-  // Status LInsert(std::string& key, storage::BeforeOrAfter &before_or_after,
-  //                std::string &pivot, std::string &value);
-  // Status LLen(std::string& key, uint64_t *len);
-  // Status LPop(std::string& key, std::string *element);
-  // Status LPush(std::string& key, std::vector<std::string> &values);
-  // Status LPushx(std::string& key, std::vector<std::string> &values);
-  // Status LRange(std::string& key, int64_t start, int64_t stop, std::vector<std::string> *values);
-  // Status LRem(std::string& key, int64_t count, std::string &value);
-  // Status LSet(std::string& key, int64_t index, std::string &value);
-  // Status LTrim(std::string& key, int64_t start, int64_t stop);
-  // Status RPop(std::string& key, std::string *element);
-  // Status RPush(std::string& key, std::vector<std::string> &values);
-  // Status RPushx(std::string& key, std::vector<std::string> &values);
+  // List Commands
+  Status LIndex(std::string &key, int64_t index, std::string *element);
+  Status LInsert(std::string &key, storage::BeforeOrAfter &before_or_after, std::string &pivot, std::string &value);
+  Status LLen(const std::string &key, uint64_t *len);
+  Status LPop(std::string &key, std::string *element);
+  Status LPush(std::string &key, std::vector<std::string> &values);
+  Status LPushx(std::string &key, std::vector<std::string> &values);
+  Status LRange(std::string &key, int64_t start, int64_t stop, std::vector<std::string> *values);
+  Status LRem(std::string &key, int64_t count, std::string &value);
+  Status LSet(std::string &key, int64_t index, std::string &value);
+  Status LTrim(std::string &key, int64_t start, int64_t stop);
+  Status RPop(std::string &key, std::string *element);
+  Status RPush(std::string &key, std::vector<std::string> &values);
+  Status RPushx(std::string &key, std::vector<std::string> &values);
 
   // // Set Commands
   // Status SAdd(std::string& key, std::vector<std::string> &members);
-  // Status SCard(std::string& key, uint64_t *len);
+  // Status SCard(const std::string& key, uint64_t *len);
   // Status SIsmember(std::string& key, std::string& member);
   // Status SMembers(std::string& key, std::vector<std::string> *members);
   // Status SRem(std::string& key, std::vector<std::string> &members);
@@ -115,7 +114,7 @@ public:
 
   // // Zset Commands
   // Status ZAdd(std::string& key, std::vector<storage::ScoreMember> &score_members);
-  // Status ZCard(std::string& key, uint64_t *len);
+  // Status ZCard(const std::string& key, uint64_t *len);
   // Status ZCount(std::string& key, std::string &min, std::string &max, uint64_t *len);
   // Status ZIncrby(std::string& key, std::string& member, double increment);
   // Status ZRange(std::string& key,
@@ -155,7 +154,7 @@ public:
   // Status BitPos(std::string& key, int64_t bit, int64_t start, int64_t *value);
   // Status BitPos(std::string& key, int64_t bit, int64_t start, int64_t end, int64_t *value);
 
-protected:
+ protected:
   void DecrObjectsRefCount(robj *argv1, robj *argv2 = nullptr, robj *argv3 = nullptr);
   void FreeSdsList(sds *items, uint32_t size);
   void FreeObjectList(robj **items, uint32_t size);
@@ -163,11 +162,11 @@ protected:
   void FreeZitemList(zitem *items, uint32_t size);
   void ConvertObjectToString(robj *obj, std::string *value);
 
-private:
-  RedisCache(const RedisCache&);
-  RedisCache& operator=(const RedisCache&);
+ private:
+  RedisCache(const RedisCache &);
+  RedisCache &operator=(const RedisCache &);
 
-private:
+ private:
   redisCache cache_;
 };
-} // namespace cache
+}  // namespace cache

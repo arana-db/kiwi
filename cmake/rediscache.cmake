@@ -11,17 +11,18 @@ SET(REDISCACHE_LIBRARIES "${LIB_INSTALL_DIR}/librediscache.a" CACHE FILEPATH "re
 ExternalProject_Add(
   extern_rediscache
   ${EXTERNAL_PROJECT_LOG_ARGS}
-  URL https://github.com/pikiwidb/rediscache/archive/refs/tags/v1.0.7.tar.gz
-  URL_HASH MD5=02c8aadc018dd8d4d3803cc420d1d75b
+  #URL https://github.com/pikiwidb/rediscache/archive/refs/tags/v1.0.7.tar.gz
+  #URL_HASH MD5=02c8aadc018dd8d4d3803cc420d1d75b
+  #temp used
+  GIT_REPOSITORY git@github.com:hahahashen/rediscache.git
+  GIT_TAG feat/removeUseTcMallocMacroDefinition
   CMAKE_ARGS 
-  -DCMAKE_BUILD_TYPE=${LIB_BUILD_TYPE}
+  -DCMAKE_BUILD_TYPE=Debug
   -DCMAKE_INSTALL_PREFIX=${LIB_INSTALL_PREFIX}
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON
   -DPROJECT_BINARY_DIR=${LIB_INSTALL_PREFIX}
   -DCMAKE_FIND_LIBRARY_SUFFIXES=${LIB_INSTALL_PREFIX}
   -DSNAPPY_BUILD_TESTS=OFF
-  #-DWITH_JEMALLOC=${JEMALLOC_ON}
-  #rediscache 通过这个变量设置安装后，头文件的目录 设置这个变量后，deps-release/include路径下就有rediscache了，很神奇
   -DCMAKE_INSTALL_INCLUDEDIR=${REDISCACHE_INCLUDE_DIR}
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON
   BUILD_COMMAND make -j${CPU_CORE}

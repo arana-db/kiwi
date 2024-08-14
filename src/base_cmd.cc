@@ -71,16 +71,15 @@ void BaseCmd::Execute(PClient* client) {
     return;
   }
 
-  if (IsNeedCacheDo()
-      && PCACHE_NONE != g_config.cache_mode.load()
-      && PSTORE.GetBackend(dbIndex)->GetCache()->CacheStatus() == PCACHE_STATUS_OK) {
+  if (IsNeedCacheDo() && PCACHE_NONE != g_config.cache_mode.load() &&
+      PSTORE.GetBackend(dbIndex)->GetCache()->CacheStatus() == PCACHE_STATUS_OK) {
     if (IsNeedReadCache()) {
       ReadCache(client);
     }
-    if ( HasFlag(kCmdFlagsReadonly)&& client->CacheMiss()) {
+    if (HasFlag(kCmdFlagsReadonly) && client->CacheMiss()) {
       //@tobechecked 下面这行是pika实现中会用到的，pikiwidb中cmd层不用上key锁，因为storage层上了
       //所以不需要加上这行，但是涉及锁所以再次确认比较好
-      //pstd::lock::MultiScopeRecordLock record_lock(db_->LockMgr(), current_key());
+      // pstd::lock::MultiScopeRecordLock record_lock(db_->LockMgr(), current_key());
       DoThroughDB(client);
       if (IsNeedUpdateCache()) {
         DoUpdateCache(client);
