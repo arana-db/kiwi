@@ -6,9 +6,6 @@
  */
 
 #include "thread.h"
-// #include "net/include/net_define.h"
-// #include "net/src/net_thread_name.h"
-// #include "pstd/xdebug.h"
 
 namespace pikiwidb {
 

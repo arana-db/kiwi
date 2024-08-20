@@ -18,7 +18,6 @@ extern "C" {
 #include "rediscache/redis.h"
 }
 
-//#include "rediscache/redis.h"
 #include "config.h"
 #include "pstd/pstd_status.h"
 #include "storage/storage.h"
@@ -43,10 +42,10 @@ class RedisCache {
   // Normal Commands
   bool Exists(std::string &key);
   int64_t DbSize(void);
-  void FlushCache(void);  // 清空cache
+  void FlushCache(void);
 
-  Status Del(const std::string &key);            // 删除某个key
-  Status Expire(std::string &key, int64_t ttl);  // 设置键的TTL
+  Status Del(const std::string &key);
+  Status Expire(std::string &key, int64_t ttl);
   Status Expireat(std::string &key, int64_t ttl);
   Status TTL(std::string &key, int64_t *ttl);
   Status Persist(std::string &key);
