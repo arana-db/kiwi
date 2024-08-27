@@ -14,7 +14,7 @@
 #include "pstd_util.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 GetCmd::GetCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryString) {}
@@ -261,12 +261,12 @@ void BitCountCmd::DoCmd(PClient* client) {
 DecrCmd::DecrCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryString) {}
 
-bool DecrCmd::DoInitial(pikiwidb::PClient* client) {
+bool DecrCmd::DoInitial(kiwi::PClient* client) {
   client->SetKey(client->argv_[1]);
   return true;
 }
 
-void DecrCmd::DoCmd(pikiwidb::PClient* client) {
+void DecrCmd::DoCmd(kiwi::PClient* client) {
   int64_t ret = 0;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Decrby(client->Key(), 1, &ret);
   if (s.ok()) {
@@ -283,12 +283,12 @@ void DecrCmd::DoCmd(pikiwidb::PClient* client) {
 IncrCmd::IncrCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryString) {}
 
-bool IncrCmd::DoInitial(pikiwidb::PClient* client) {
+bool IncrCmd::DoInitial(kiwi::PClient* client) {
   client->SetKey(client->argv_[1]);
   return true;
 }
 
-void IncrCmd::DoCmd(pikiwidb::PClient* client) {
+void IncrCmd::DoCmd(kiwi::PClient* client) {
   int64_t ret = 0;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Incrby(client->Key(), 1, &ret);
   if (s.ok()) {
@@ -726,4 +726,4 @@ void MSetnxCmd::DoCmd(PClient* client) {
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

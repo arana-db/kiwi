@@ -14,7 +14,7 @@
 
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 DelCmd::DelCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsWrite, kAclCategoryWrite | kAclCategoryKeyspace) {}
@@ -279,4 +279,4 @@ void RenameNXCmd::DoCmd(PClient* client) {
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -1,5 +1,5 @@
 syntax="proto3";
-package pikiwidb;
+package kiwi;
 option cc_generic_services = true;
 
 message DummyRequest  {

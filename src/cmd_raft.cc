@@ -7,7 +7,7 @@
   A set of instructions and functions related to Raft.
 
   Defined a set of functions and instructions related to the
-  implementation of Raft, which is key to the distributed cluster implementation of PikiwiDB.
+  implementation of Raft, which is key to the distributed cluster implementation of kiwi.
  */
 
 #include "cmd_raft.h"
@@ -23,10 +23,10 @@
 
 #include "client.h"
 #include "config.h"
-#include "pikiwidb.h"
+#include "kiwi.h"
 #include "replication.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 RaftNodeCmd::RaftNodeCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsRaft, kAclCategoryRaft) {}
@@ -103,7 +103,7 @@ void RaftNodeCmd::DoCmdRemove(PClient* client) {
 
     // Connect target
     std::string peer_ip = butil::ip2str(leader_peer_id.addr.ip).c_str();
-    auto port = leader_peer_id.addr.port - pikiwidb::g_config.raft_port_offset;
+    auto port = leader_peer_id.addr.port - kiwi::g_config.raft_port_offset;
     auto peer_id = client->argv_[2];
     auto ret =
         PRAFT.GetClusterCmdCtx().Set(ClusterCmdType::kRemove, client, std::move(peer_ip), port, std::move(peer_id));
@@ -235,4 +235,4 @@ void RaftClusterCmd::DoCmdJoin(PClient* client) {
   client->Clear();
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

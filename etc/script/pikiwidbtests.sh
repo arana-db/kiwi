@@ -22,15 +22,15 @@ function setup_build_dir {
     echo "BUILD_DIR: $BUILD_DIR"
 }
 
-# setup pikiwidb bin and conf
-function setup_pikiwidb_bin {
-    PIKIWIDB_BIN="./$BUILD_DIR/pikiwidb"
-    if [ ! -f "$PIKIWIDB_BIN" ]; then
-        echo "pikiwidb bin not found"
+# setup kiwi bin and conf
+function setup_kiwi_bin {
+    kiwi_BIN="./$BUILD_DIR/kiwi"
+    if [ ! -f "$kiwi_BIN" ]; then
+        echo "kiwi bin not found"
         exit 1
     fi
-    cp $PIKIWIDB_BIN src/redis-server
-    cp ./etc/conf/pikiwidb.conf tests/assets/default.conf
+    cp $kiwi_BIN src/redis-server
+    cp ./etc/conf/kiwi.conf tests/assets/default.conf
 }
 
 
@@ -40,9 +40,9 @@ check_tcl
 
 setup_build_dir
 
-setup_pikiwidb_bin
+setup_kiwi_bin
 
-echo "run pikiwidb tests $1"
+echo "run kiwi tests $1"
 
 if [ "$1" == "all" ]; then
     tclsh tests/test_helper.tcl --clients 1
@@ -51,12 +51,12 @@ else
 fi
 
 if [ $? -ne 0 ]; then
-    echo "pikiwidb tests failed"
+    echo "kiwi tests failed"
     cleanup
     exit 1
 fi
 
-# You can use './pikiwidb.sh all clean 'to ensure that the
+# You can use './kiwi.sh all clean 'to ensure that the
 # data can be deleted immediately after the test
 if [ "$2" == "clean" ]; then
    cleanup

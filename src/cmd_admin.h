@@ -22,7 +22,7 @@ const std::vector<std::string> debugHelps = {"DEBUG <subcommand> [<arg> [value] 
                                              "OOM",
                                              "    Crash the server simulating an out-of-memory error."};
 
-namespace pikiwidb {
+namespace kiwi {
 const std::string kCmdNameMonitor = "monitor";
 
 class CmdConfig : public BaseCmdGroup {
@@ -332,4 +332,4 @@ class SortCmd : public BaseCmd {
   std::vector<std::string> ret_;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

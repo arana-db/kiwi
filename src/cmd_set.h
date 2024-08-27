@@ -11,7 +11,7 @@
 #pragma once
 #include "base_cmd.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class SIsMemberCmd : public BaseCmd {
  public:
@@ -182,4 +182,4 @@ class SScanCmd : public BaseCmd {
   static constexpr const char *kCountSymbol = "count";
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -1,4 +1,4 @@
-# Pikiwidb does not support the pfadd command
+# kiwi does not support the pfadd command
 
 start_server {tags {"hll"}} {
 #    test {HyperLogLog self test passes} {

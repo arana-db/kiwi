@@ -20,7 +20,7 @@ PREFIX="cmake-build"
 
 PWD=`pwd`
 PROJECT_HOME="${PWD}/"
-CONF="${PROJECT_HOME}/etc/conf/pikiwidb.conf"
+CONF="${PROJECT_HOME}/etc/conf/kiwi.conf"
 
 function build() {
   if [ ! -f "/proc/cpuinfo" ];then
@@ -48,10 +48,10 @@ function build() {
   cmake --build ${PREFIX} -- ${MAKE_FLAGS} -j ${CPU_CORE}
 
   if [ $? -eq 0 ]; then
-    # echo -e "pikiwidb compile complete, output file ${C_GREEN} ${PREFIX}/bin/pikiwidb ${C_END}"
-    echo -e "pikiwidb compile complete, output file ${C_GREEN} ./bin/pikiwidb ${C_END}"
+    # echo -e "kiwi compile complete, output file ${C_GREEN} ${PREFIX}/bin/kiwi ${C_END}"
+    echo -e "kiwi compile complete, output file ${C_GREEN} ./bin/kiwi ${C_END}"
   else
-    echo -e "${C_RED} pikiwidb compile fail ${C_END}"
+    echo -e "${C_RED} kiwi compile fail ${C_END}"
     exit 1
   fi
 }

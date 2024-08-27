@@ -4,7 +4,7 @@
 // of patent rights can be found in the PATENTS file in the same directory
 
 /*
-  Defined a command table, because PikiwiDB needs to manage
+  Defined a command table, because kiwi needs to manage
   commands in an integrated way.
  */
 
@@ -19,7 +19,7 @@
 
 #include "base_cmd.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 using CmdTable = std::unordered_map<std::string, std::unique_ptr<BaseCmd>>;
 
@@ -43,4 +43,4 @@ class CmdTableManager {
   mutable std::shared_mutex mutex_;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

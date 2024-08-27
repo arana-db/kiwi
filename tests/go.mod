@@ -1,4 +1,4 @@
-module github.com/OpenAtomFoundation/pikiwidb/tests
+module github.com/OpenAtomFoundation/kiwi/tests
 
 go 1.20
 

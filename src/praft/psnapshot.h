@@ -17,7 +17,7 @@
 #define PRAFT_SNAPSHOT_PATH "snapshot/snapshot_"
 #define IS_RDONLY 0x01
 
-namespace pikiwidb {
+namespace kiwi {
 
 class PPosixFileSystemAdaptor : public braft::PosixFileSystemAdaptor {
  public:
@@ -33,4 +33,4 @@ class PPosixFileSystemAdaptor : public braft::PosixFileSystemAdaptor {
   braft::raft_mutex_t mutex_;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

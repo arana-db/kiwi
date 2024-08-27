@@ -4,13 +4,13 @@
 // of patent rights can be found in the PATENTS file in the same directory
 
 /*
-  Stub main() routine for the pikiwidb executable.
+  Stub main() routine for the kiwi executable.
 
-  This does some essential startup tasks for pikiwidb, and then dispatches to the proper FooMain() routine for the
+  This does some essential startup tasks for kiwi, and then dispatches to the proper FooMain() routine for the
   incarnation.
  */
 
-#include "pikiwidb.h"
+#include "kiwi.h"
 
 #include <getopt.h>
 #include <sys/fcntl.h>
@@ -30,22 +30,22 @@
 #include "client_map.h"
 #include "config.h"
 #include "helper.h"
-#include "pikiwidb_logo.h"
+#include "kiwi_logo.h"
 #include "slow_log.h"
 #include "store.h"
 
-// g_pikiwidb is a global abstraction of the server-side process
-std::unique_ptr<PikiwiDB> g_pikiwidb;
+// g_kiwi is a global abstraction of the server-side process
+std::unique_ptr<KiwiDB> g_kiwi;
 
-using namespace pikiwidb;
+using namespace kiwi;
 
 /*
- * set up a handler to be called if the PikiwiDB crashes
+ * set up a handler to be called if the kiwi crashes
  * with a fatal signal or exception.
  */
 static void IntSigHandle(const int sig) {
   INFO("Catch Signal {}, cleanup...", sig);
-  g_pikiwidb->Stop();
+  g_kiwi->Stop();
 }
 
 static void SignalSetup() {
@@ -56,13 +56,13 @@ static void SignalSetup() {
   signal(SIGTERM, &IntSigHandle);
 }
 
-const uint32_t PikiwiDB::kRunidSize = 40;
+const uint32_t KiwiDB::kRunidSize = 40;
 
 static void Usage() {
-  std::cerr << "pikiwidb is the PikiwiDB server.\n";
+  std::cerr << "kiwi is the kiwi server.\n";
   std::cerr << "\n";
   std::cerr << "Usage:\n";
-  std::cerr << "  pikiwidb [/path/to/pikiwidb.conf] [options]\n";
+  std::cerr << "  kiwi [/path/to/kiwi.conf] [options]\n";
   std::cerr << "\n";
   std::cerr << "Options:\n";
   std::cerr << "  -v, --version                  output version information, then exit\n";
@@ -71,20 +71,20 @@ static void Usage() {
   std::cerr << "  -l LEVEL, --loglevel LEVEL     Set the log level\n";
   std::cerr << "  -s ADDRESS, --slaveof ADDRESS  Set the slave address\n";
   std::cerr << "Examples:\n";
-  std::cerr << "  pikiwidb /path/pikiwidb.conf\n";
-  std::cerr << "  pikiwidb /path/pikiwidb.conf --loglevel verbose\n";
-  std::cerr << "  pikiwidb --port 7777\n";
-  std::cerr << "  pikiwidb --port 7777 --slaveof 127.0.0.1:8888\n";
+  std::cerr << "  kiwi /path/kiwi.conf\n";
+  std::cerr << "  kiwi /path/kiwi.conf --loglevel verbose\n";
+  std::cerr << "  kiwi --port 7777\n";
+  std::cerr << "  kiwi --port 7777 --slaveof 127.0.0.1:8888\n";
 }
 
 // Handle the argc & argv
-bool PikiwiDB::ParseArgs(int argc, char* argv[]) {
+bool KiwiDB::ParseArgs(int argc, char* argv[]) {
   static struct option long_options[] = {
       {"version", no_argument, 0, 'v'},       {"help", no_argument, 0, 'h'},
       {"port", required_argument, 0, 'p'},    {"loglevel", required_argument, 0, 'l'},
       {"slaveof", required_argument, 0, 's'},
   };
-  // pikiwidb [/path/to/pikiwidb.conf] [options]
+  // kiwi [/path/to/kiwi.conf] [options]
   if (cfg_file_.empty() && argc > 1 && ::access(argv[1], R_OK) == 0) {
     cfg_file_ = argv[1];
     argc = argc - 1;
@@ -101,14 +101,14 @@ bool PikiwiDB::ParseArgs(int argc, char* argv[]) {
 
     switch (c) {
       case 'v': {
-        std::cerr << "PikiwiDB Server version: " << KPIKIWIDB_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32)
+        std::cerr << "kiwi Server version: " << Kkiwi_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32)
                   << std::endl;
-        std::cerr << "PikiwiDB Server Build Type: " << KPIKIWIDB_BUILD_TYPE << std::endl;
-#if defined(KPIKIWIDB_BUILD_DATE)
-        std::cerr << "PikiwiDB Server Build Date: " << KPIKIWIDB_BUILD_DATE << std::endl;
+        std::cerr << "kiwi Server Build Type: " << Kkiwi_BUILD_TYPE << std::endl;
+#if defined(Kkiwi_BUILD_DATE)
+        std::cerr << "kiwi Server Build Date: " << Kkiwi_BUILD_DATE << std::endl;
 #endif
-#if defined(KPIKIWIDB_GIT_COMMIT_ID)
-        std::cerr << "PikiwiDB Server Build GIT SHA: " << KPIKIWIDB_GIT_COMMIT_ID << std::endl;
+#if defined(Kkiwi_GIT_COMMIT_ID)
+        std::cerr << "kiwi Server Build GIT SHA: " << Kkiwi_GIT_COMMIT_ID << std::endl;
 #endif
 
         exit(0);
@@ -153,7 +153,7 @@ bool PikiwiDB::ParseArgs(int argc, char* argv[]) {
   return true;
 }
 
-void PikiwiDB::OnNewConnection(uint64_t connId, std::shared_ptr<pikiwidb::PClient>& client,
+void KiwiDB::OnNewConnection(uint64_t connId, std::shared_ptr<kiwi::PClient>& client,
                                const net::SocketAddr& addr) {
   INFO("New connection from {}:{}", addr.GetIP(), addr.GetPort());
   client->SetSocketAddr(addr);
@@ -162,7 +162,7 @@ void PikiwiDB::OnNewConnection(uint64_t connId, std::shared_ptr<pikiwidb::PClien
   ClientMap::getInstance().AddClient(client->GetUniqueID(), client);
 }
 
-bool PikiwiDB::Init() {
+bool KiwiDB::Init() {
   char runid[kRunidSize + 1] = "";
   getRandomHexChars(runid, kRunidSize);
   g_config.Set("runid", {runid, kRunidSize}, true);
@@ -178,7 +178,7 @@ bool PikiwiDB::Init() {
   auto num = g_config.worker_threads_num.load() + g_config.slave_threads_num.load();
 
   // now we only use fast cmd thread pool
-  auto status = cmd_threads_.Init(g_config.fast_cmd_threads_num.load(), 0, "pikiwidb-cmd");
+  auto status = cmd_threads_.Init(g_config.fast_cmd_threads_num.load(), 0, "kiwi-cmd");
   if (!status.ok()) {
     ERROR("init cmd thread pool failed: {}", status.ToString());
     return false;
@@ -232,7 +232,7 @@ bool PikiwiDB::Init() {
   return true;
 }
 
-void PikiwiDB::Run() {
+void KiwiDB::Run() {
   auto [ret, err] = event_server_->StartServer();
   if (!ret) {
     ERROR("start server failed: {}", err);
@@ -244,24 +244,24 @@ void PikiwiDB::Run() {
   INFO("server exit running");
 }
 
-void PikiwiDB::Stop() {
-  pikiwidb::PRAFT.ShutDown();
-  pikiwidb::PRAFT.Join();
-  pikiwidb::PRAFT.Clear();
+void KiwiDB::Stop() {
+  kiwi::PRAFT.ShutDown();
+  kiwi::PRAFT.Join();
+  kiwi::PRAFT.Clear();
   cmd_threads_.Stop();
   event_server_->StopServer();
 }
 
-void PikiwiDB::TCPConnect(
+void KiwiDB::TCPConnect(
     const net::SocketAddr& addr,
-    const std::function<void(uint64_t, std::shared_ptr<pikiwidb::PClient>&, const net::SocketAddr&)>& onConnect,
+    const std::function<void(uint64_t, std::shared_ptr<kiwi::PClient>&, const net::SocketAddr&)>& onConnect,
     const std::function<void(std::string)>& cb) {
   INFO("Connect to {}:{}", addr.GetIP(), addr.GetPort());
   event_server_->TCPConnect(addr, onConnect, cb);
 }
 
 static void InitLogs() {
-  logger::Init("logs/pikiwidb_server.log");
+  logger::Init("logs/kiwi_server.log");
 
 #if BUILD_DEBUG
   spdlog::set_level(spdlog::level::debug);
@@ -280,12 +280,12 @@ static int InitLimit() {
     limit.rlim_cur = maxfiles;
     limit.rlim_max = maxfiles;
     if (setrlimit(RLIMIT_NOFILE, &limit) != -1) {
-      WARN("your 'limit -n' of {} is not enough for PikiwiDB to start. PikiwiDB has successfully reconfig it to {}",
+      WARN("your 'limit -n' of {} is not enough for kiwi to start. kiwi has successfully reconfig it to {}",
            old_limit, limit.rlim_cur);
     } else {
       ERROR(
-          "your 'limit -n ' of {} is not enough for PikiwiDB to start."
-          " PikiwiDB can not reconfig it({}), do it by yourself",
+          "your 'limit -n ' of {} is not enough for kiwi to start."
+          " kiwi can not reconfig it({}), do it by yourself",
           old_limit, strerror(errno));
       return -1;
     }
@@ -314,17 +314,17 @@ static void closeStd() {
   }
 }
 
-// Any PikiwiDB server process begins execution here.
+// Any kiwi server process begins execution here.
 int main(int argc, char* argv[]) {
-  g_pikiwidb = std::make_unique<PikiwiDB>();
-  if (!g_pikiwidb->ParseArgs(argc, argv)) {
+  g_kiwi = std::make_unique<KiwiDB>();
+  if (!g_kiwi->ParseArgs(argc, argv)) {
     Usage();
     return -1;
   }
 
-  if (!g_pikiwidb->GetConfigName().empty()) {
-    if (!g_config.LoadFromFile(g_pikiwidb->GetConfigName())) {
-      std::cerr << "Load config file [" << g_pikiwidb->GetConfigName() << "] failed!\n";
+  if (!g_kiwi->GetConfigName().empty()) {
+    if (!g_config.LoadFromFile(g_kiwi->GetConfigName())) {
+      std::cerr << "Load config file [" << g_kiwi->GetConfigName() << "] failed!\n";
       return -1;
     }
   }
@@ -342,16 +342,16 @@ int main(int argc, char* argv[]) {
     closeStd();
   }
 
-  if (g_pikiwidb->Init()) {
+  if (g_kiwi->Init()) {
     // output logo to console
     char logo[512] = "";
-    snprintf(logo, sizeof logo - 1, pikiwidbLogo, KPIKIWIDB_VERSION, static_cast<int>(sizeof(void*)) * 8,
+    snprintf(logo, sizeof logo - 1, kiwiLogo, Kkiwi_VERSION, static_cast<int>(sizeof(void*)) * 8,
              static_cast<int>(g_config.port));
     std::cout << logo;
-    g_pikiwidb->Run();
+    g_kiwi->Run();
   }
 
-  // When PikiwiDB exit, flush log
+  // When kiwi exit, flush log
   spdlog::get(logger::Logger::Instance().Name())->flush();
   return 0;
 }

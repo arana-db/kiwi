@@ -1,5 +1,5 @@
-# PikiwiDB
-![](docs/images/pikiwidb-logo.png)
+# Kiwi
+![](docs/images/Kiwi-logo.png)
 [中文](README_CN.md)
 
 A C++20 implementation of Redis Server, use RocksDB for persist storage.(not including cluster yet)
@@ -8,27 +8,25 @@ A C++20 implementation of Redis Server, use RocksDB for persist storage.(not inc
 
 * Linux or OS X or FreeBSD
 
-## Compile
-
-**It is recommended to use the latest version of Ubuntu or Debian for Linux systems**
-
-Execute compilation
-
-Execute the following commands on Rocky Linux:
-
-```bash
+```shell
+# Rocky Linux, Fedora Linux, CentOS
 sudo dnf groupinstall -y 'Development Tools'
 sudo dnf install cmake g++ autoconf perl -y
 git config --global http.version HTTP/1.1
+# Ubuntu
+sudo apt install cmake g++ autoconf perl -y
+git config --global http.version HTTP/1.1
 ```
 
-Execute this command to start compiling Pikiwidb:
+## Compile
+
+Execute this command to start compiling Kiwi:
 
 ```bash
 ./etc/script/build.sh 
 ```
 
-Pikiwidb is compiled by default in release mode, which does not support debugging. If debugging is needed, compile in debug mode.
+Kiwi is compiled by default in release mode, which does not support debugging. If debugging is needed, compile in debug mode.
 
 ```bash
 ./etc/script/build.sh --clear
@@ -38,21 +36,21 @@ Pikiwidb is compiled by default in release mode, which does not support debuggin
 ## Run
 
 ```bash
-./bin/pikiwidb ./etc/conf/pikiwidb.conf
+./bin/kiwi ./etc/conf/Kiwi.conf
 ```
 
 ## Support module for write your own extensions
- PikiwiDB supports module now, still in progress, much work to do.
+ Kiwi supports module now, still in progress, much work to do.
  I added three commands(ldel, skeys, hgets) for demonstration.
 
 ## Persistence: Not limited to memory
- RocksDB can be configured as backend for PikiwiDB.
+ RocksDB can be configured as backend for Kiwi.
 
 ## Fully compatible with redis
- You can test PikiwiDB with redis-cli, redis-benchmark, or use redis as master with PikiwiDB as slave or conversely, it also can work with redis sentinel.
+ You can test Kiwi with redis-cli, redis-benchmark, or use redis as master with Kiwi as slave or conversely, it also can work with redis sentinel.
 
 ## High Performance
-- PikiwiDB is approximately 20-25% faster than redis if run benchmark with pipeline requests(set -P = 50 or higher).
+- Kiwi is approximately 20-25% faster than redis if run benchmark with pipeline requests(set -P = 50 or higher).
 - Average 80K requests per seconds for write, and 90K requests per seconds for read.
 - Before run test, please ensure that std::list::size() is O(1), obey the C++11 standards.
 
@@ -97,5 +95,5 @@ Run this command, compare with redis use pipeline commands, try it.
 
 ## Contact Us
 
-![](docs/images/pikiwidb-wechat.png)
+![](docs/images/Kiwi-wechat.png)
 

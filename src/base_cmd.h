@@ -4,7 +4,7 @@
 // of patent rights can be found in the PATENTS file in the same directory
 
 /*
-  Defined the open commands of PikiwiDB to the outside, the setting of permissions, and other aspects.
+  Defined the open commands of kiwi to the outside, the setting of permissions, and other aspects.
  */
 
 #pragma once
@@ -21,7 +21,7 @@
 #include "client.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 // command definition
 // base cmd
@@ -372,4 +372,4 @@ class BaseCmdGroup : public BaseCmd {
  private:
   std::map<std::string, std::unique_ptr<BaseCmd>> subCmds_;
 };
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -4,7 +4,7 @@
 // of patent rights can be found in the PATENTS file in the same directory
 
 /*
-  A set of general functions designed for other modules of PikiwiDB.
+  A set of general functions designed for other modules of kiwi.
  */
 
 #include "common.h"
@@ -19,7 +19,7 @@
 #include <sstream>
 #include "unbounded_buffer.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 struct PErrorInfo g_errorInfo[] = {
     {sizeof "+OK\r\n" - 1, "+OK\r\n"},
@@ -220,4 +220,4 @@ std::string MergeString(const std::vector<AtomicString*>& values, char delimiter
   return result;
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

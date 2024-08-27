@@ -14,7 +14,7 @@ PREFIX="build"
 
 if [ -z "$SHORT_COMMIT_ID" ]; then
     echo "no git commit id"
-    SHORT_COMMIT_ID="pikiwidb"
+    SHORT_COMMIT_ID="kiwi"
 fi
 
 echo "BUILD_TIME:" $BUILD_TIME

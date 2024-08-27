@@ -1,4 +1,4 @@
-# Pikiwidb does not support the client command
+# kiwi does not support the client command
 
 start_server {tags {"introspection"}} {
     test {CLIENT LIST} {

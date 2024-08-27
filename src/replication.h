@@ -19,7 +19,7 @@
 #include "net/socket_addr.h"
 #include "pstd/memory_file.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 template <typename DEST>
 inline void WriteBulkString(const char* str, size_t strLen, DEST& dst) {
@@ -161,6 +161,6 @@ class PReplication {
   std::function<void(std::string)> on_fail_ = nullptr;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi
 
-#define PREPL pikiwidb::PReplication::Instance()
+#define PREPL kiwi::PReplication::Instance()

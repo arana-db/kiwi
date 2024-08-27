@@ -1,4 +1,4 @@
-name: Pikiwidb
+name: kiwi
 
 on:
   push:
@@ -41,7 +41,7 @@ jobs:
       - name: Run TCL E2e Tests
         working-directory: ${{ github.workspace }}
         run:
-          ./etc/script/pikiwidbtests.sh all
+          ./etc/script/kiwitests.sh all
 
       - name: Run Go E2E Tests
         working-directory: ${{ github.workspace }}/build-release
@@ -72,7 +72,7 @@ jobs:
       - name: Run TCL E2e Tests
         working-directory: ${{ github.workspace }}
         run:
-          ./etc/script/pikiwidbtests.sh all
+          ./etc/script/kiwitests.sh all
 
       - name: Run Go E2E Tests
         working-directory: ${{ github.workspace }}/build-release

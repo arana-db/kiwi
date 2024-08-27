@@ -205,7 +205,7 @@ start_server {tags {"bitops"}} {
         r bitop or x a b
     } {32}
 
-# Pikiwidb does not support the BITPOS command
+# kiwi does not support the BITPOS command
 #    test {BITPOS bit=0 with empty key returns 0} {
 #        r del str
 #        r bitpos str 0

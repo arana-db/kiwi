@@ -1,6 +1,6 @@
 start_server {tags {"basic"}} {
 
-# Pikiwidb does not support the dbsize command
+# kiwi does not support the dbsize command
 #    test {DEL all keys to start with a clean DB} {
 #        foreach key [r keys *] {r del $key}
 #        r dbsize
@@ -39,14 +39,14 @@ start_server {tags {"basic"}} {
         lsort [r keys *]
     } {foo_a foo_b foo_c key_x key_y key_z}
 
-# Pikiwidb does not support the dbsize command
+# kiwi does not support the dbsize command
 #    test {DBSIZE} {
 #        r info keyspace 1
 #        after 1000
 #        r dbsize
 #    } {6}
 
-# Pikiwidb does not support the dbsize command
+# kiwi does not support the dbsize command
 #    test {DEL all keys} {
 #        foreach key [r keys *] {r del $key}
 #        r info keyspace 1
@@ -54,7 +54,7 @@ start_server {tags {"basic"}} {
 #        r dbsize
 #    } {0}
 
-    # TODO bug will repaired in issue: https://github.com/OpenAtomFoundation/pikiwidb/issues/424
+    # TODO bug will repaired in issue: https://github.com/OpenAtomFoundation/kiwi/issues/424
     # test {Very big payload in GET/SET} {
     #     set buf [string repeat "abcd" 1000000]
     #     r set foo $buf
@@ -99,7 +99,7 @@ start_server {tags {"basic"}} {
             set _ $err
         } {}
 
-# Pikiwidb does not support the dbsize command
+# kiwi does not support the dbsize command
 #        test {DBSIZE should be 10101 now} {
 #            r info keyspace 1
 #            after 1000
@@ -151,7 +151,7 @@ start_server {tags {"basic"}} {
         format $err
     } {ERR*}
 
-# TODO wait util pikiwidb compatibled redis error code specification, ref issue: https://github.com/OpenAtomFoundation/pikiwidb/issues/382
+# TODO wait util kiwi compatibled redis error code specification, ref issue: https://github.com/OpenAtomFoundation/kiwi/issues/382
 #    test {INCR fails against a key holding a list} {
 #        r rpush mylist 1
 #        catch {r incr mylist} err
@@ -208,7 +208,7 @@ start_server {tags {"basic"}} {
         format $err
     } {ERR*valid*}
 
-# TODO wait util pikiwidb compatibled redis error code specification, ref issue: https://github.com/OpenAtomFoundation/pikiwidb/issues/382
+# TODO wait util kiwi compatibled redis error code specification, ref issue: https://github.com/OpenAtomFoundation/kiwi/issues/382
 #    test {INCRBYFLOAT fails against a key holding a list} {
 #        r del mylist
 #        set err {}
@@ -278,7 +278,7 @@ start_server {tags {"basic"}} {
         assert_equal 20 [r get x]
     }
 
-# Pikiwidb does not support the set-active-expire command
+# kiwi does not support the set-active-expire command
 #     test "DEL against expired key" {
 #         r debug set-active-expire 0
 #         r setex keyExpire 1 valExpire
@@ -303,7 +303,7 @@ start_server {tags {"basic"}} {
         append res [r exists emptykey]
     } {10}
 
-# Pikiwidb does not support the read command
+# kiwi does not support the read command
 #    test {Commands pipelining} {
 #        set fd [r channel]
 #        puts -nonewline $fd "SET k1 xyzk\r\nGET k1\r\nPING\r\n"
@@ -404,7 +404,7 @@ start_server {tags {"basic"}} {
         r ttl mykey2
     } {-1}
 
-# Pikiwidb does not support the dbsize command
+# kiwi does not support the dbsize command
 #    test {DEL all keys again (DB 0)} {
 #        foreach key [r keys *] {
 #            r del $key
@@ -412,7 +412,7 @@ start_server {tags {"basic"}} {
 #        r dbsize
 #    } {0}
 
-# Pikiwidb does not support the dbsize command
+# kiwi does not support the dbsize command
 #    test {DEL all keys again (DB 1)} {
 #        r select 10
 #        foreach key [r keys *] {
@@ -423,7 +423,7 @@ start_server {tags {"basic"}} {
 #        format $res
 #    } {0}
 
-# Pikiwidb does not support the dbsize command
+# kiwi does not support the dbsize command
 #    test {MOVE basic usage} {
 #        r set mykey foobar
 #        r move mykey 10
@@ -437,13 +437,13 @@ start_server {tags {"basic"}} {
 #        format $res
 #    } [list 0 0 foobar 1]
 
-# Pikiwidb does not support the move command
+# kiwi does not support the move command
 #    test {MOVE against key existing in the target DB} {
 #        r set mykey hello
 #        r move mykey 10
 #    } {0}
 
-# Pikiwidb does not support the move command
+# kiwi does not support the move command
 #   test {MOVE against non-integer DB (#1428)} {
 #        r set mykey hello
 #        catch {r move mykey notanumber} e

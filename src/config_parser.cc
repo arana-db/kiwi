@@ -11,7 +11,7 @@
 #include <vector>
 #include "memory_file.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 static const int SPACE = ' ';
 static const int TAB = '\t';
@@ -121,4 +121,4 @@ int main() {
 }
 #endif
 
-}  // namespace pikiwidb
+}  // namespace kiwi

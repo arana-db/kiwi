@@ -11,7 +11,7 @@
 #include "pstd_string.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 LPushCmd::LPushCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsWrite, kAclCategoryWrite | kAclCategoryList) {}
 
@@ -372,4 +372,4 @@ void LLenCmd::DoCmd(PClient* client) {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
 }
-}  // namespace pikiwidb
+}  // namespace kiwi

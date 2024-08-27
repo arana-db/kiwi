@@ -19,7 +19,7 @@
 // 5 strlen -> $ number crlf
 // 6 strval -> string crlf
 
-namespace pikiwidb {
+namespace kiwi {
 void PProtoParser::Reset() {
   multi_ = -1;
   paramLen_ = -1;
@@ -132,4 +132,4 @@ PParseResult PProtoParser::parseStrlen(const char*& ptr, const char* end, int& r
   return ret;
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

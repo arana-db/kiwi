@@ -13,7 +13,7 @@
 #include "binlog.pb.h"
 #include "config.h"
 #include "pstd/log.h"
-#include "pstd/pikiwidb_slot.h"
+#include "pstd/kiwi_slot.h"
 #include "pstd/pstd_string.h"
 #include "rocksdb/utilities/checkpoint.h"
 #include "scope_snapshot.h"
@@ -2004,7 +2004,7 @@ void Storage::DisableWal(const bool is_wal_disable) {
   }
 }
 
-Status Storage::OnBinlogWrite(const pikiwidb::Binlog& log, LogIndex log_idx) {
+Status Storage::OnBinlogWrite(const kiwi::Binlog& log, LogIndex log_idx) {
   auto& inst = insts_[log.slot_idx()];
 
   rocksdb::WriteBatch batch;
@@ -2020,11 +2020,11 @@ Status Storage::OnBinlogWrite(const pikiwidb::Binlog& log, LogIndex log_idx) {
     }
 
     switch (entry.op_type()) {
-      case pikiwidb::OperateType::kPut: {
+      case kiwi::OperateType::kPut: {
         assert(entry.has_value());
         batch.Put(inst->GetColumnFamilyHandles()[entry.cf_idx()], entry.key(), entry.value());
       } break;
-      case pikiwidb::OperateType::kDelete: {
+      case kiwi::OperateType::kDelete: {
         assert(!entry.has_value());
         batch.Delete(inst->GetColumnFamilyHandles()[entry.cf_idx()], entry.key());
       } break;

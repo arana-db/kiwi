@@ -13,7 +13,7 @@
 #include <string_view>
 #include "base_cmd.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class HSetCmd : public BaseCmd {
  public:
@@ -195,4 +195,4 @@ class HExistsCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

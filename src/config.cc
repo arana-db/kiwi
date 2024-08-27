@@ -4,7 +4,7 @@
 // of patent rights can be found in the PATENTS file in the same directory
 
 /*
-  Responsible for managing the runtime configuration information of PikiwiDB.
+  Responsible for managing the runtime configuration information of kiwi.
  */
 
 #include <string>
@@ -15,7 +15,7 @@
 #include "pstd/pstd_string.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 constexpr uint16_t PORT_LIMIT_MAX = 65535;
 constexpr uint16_t PORT_LIMIT_MIN = 1;
@@ -219,4 +219,4 @@ rocksdb::BlockBasedTableOptions PConfig::GetRocksDBBlockBasedTableOptions() {
   return options;
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

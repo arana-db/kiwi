@@ -10,7 +10,7 @@
 #pragma once
 #include "base_cmd.h"
 
-namespace pikiwidb {
+namespace kiwi {
 class LPushCmd : public BaseCmd {
  public:
   LPushCmd(const std::string& name, int16_t arity);
@@ -168,4 +168,4 @@ class LLenCmd : public BaseCmd {
  private:
   void DoCmd(PClient* client) override;
 };
-}  // namespace pikiwidb
+}  // namespace kiwi

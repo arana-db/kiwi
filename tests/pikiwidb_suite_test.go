@@ -5,7 +5,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-package pikiwidb_test
+package kiwi_test
 
 import (
 	"math"
@@ -34,7 +34,7 @@ const (
 	kInvalidIndex = "ERR invalid DB index for 'select DB index is out of range'"
 )
 
-func TestPikiwidb(t *testing.T) {
+func Testkiwi(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Tests Suite")
 }

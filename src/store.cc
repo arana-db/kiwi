@@ -18,7 +18,7 @@
 #include "pstd/log.h"
 #include "pstd/pstd_string.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 PStore::~PStore() { INFO("STORE is closing..."); }
 
@@ -76,4 +76,4 @@ void PStore::HandleTaskSpecificDB(const TasksVector& tasks) {
     }
   });
 }
-}  // namespace pikiwidb
+}  // namespace kiwi
