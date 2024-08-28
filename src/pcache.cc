@@ -320,141 +320,141 @@ Status PCache::Strlen(std::string &key, int32_t *len) {
 /*-----------------------------------------------------------------------------
  * Hash Commands
  *----------------------------------------------------------------------------*/
-// Status PCache::HDel(std::string& key, std::vector<std::string> &fields) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->HDel(key, fields);
-// }
+Status PCache::HDel(std::string& key, std::vector<std::string> &fields) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->HDel(key, fields);
+}
 
-// Status PCache::HSet(std::string& key, std::string &field, std::string &value) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->HSet(key, field, value);
-// }
+Status PCache::HSet(std::string& key, std::string &field, std::string &value) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->HSet(key, field, value);
+}
 
-// Status PCache::HSetIfKeyExist(std::string& key, std::string &field, std::string &value) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (caches_[cache_index]->Exists(key)) {
-//     return caches_[cache_index]->HSet(key, field, value);
-//   }
-//   return Status::NotFound("key not exist");
-// }
+Status PCache::HSetIfKeyExist(std::string& key, std::string &field, std::string &value) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (caches_[cache_index]->Exists(key)) {
+    return caches_[cache_index]->HSet(key, field, value);
+  }
+  return Status::NotFound("key not exist");
+}
 
-// Status PCache::HSetIfKeyExistAndFieldNotExist(std::string& key, std::string &field, std::string &value) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (caches_[cache_index]->Exists(key)) {
-//     return caches_[cache_index]->HSetnx(key, field, value);
-//   }
-//   return Status::NotFound("key not exist");
-// }
+Status PCache::HSetIfKeyExistAndFieldNotExist(std::string& key, std::string &field, std::string &value) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (caches_[cache_index]->Exists(key)) {
+    return caches_[cache_index]->HSetnx(key, field, value);
+  }
+  return Status::NotFound("key not exist");
+}
 
-// Status PCache::HMSet(std::string& key, std::vector<storage::FieldValue> &fvs) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->HMSet(key, fvs);
-// }
+Status PCache::HMSet(std::string& key, std::vector<storage::FieldValue> &fvs) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->HMSet(key, fvs);
+}
 
-// Status PCache::HMSetnx(std::string& key, std::vector<storage::FieldValue> &fvs, int64_t ttl) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (!caches_[cache_index]->Exists(key)) {
-//     caches_[cache_index]->HMSet(key, fvs);
-//     caches_[cache_index]->Expire(key, ttl);
-//     return Status::OK();
-//   } else {
-//     return Status::NotFound("key exist");
-//   }
-// }
+Status PCache::HMSetnx(std::string& key, std::vector<storage::FieldValue> &fvs, int64_t ttl) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (!caches_[cache_index]->Exists(key)) {
+    caches_[cache_index]->HMSet(key, fvs);
+    caches_[cache_index]->Expire(key, ttl);
+    return Status::OK();
+  } else {
+    return Status::NotFound("key exist");
+  }
+}
 
-// Status PCache::HMSetnxWithoutTTL(std::string& key, std::vector<storage::FieldValue> &fvs) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (!caches_[cache_index]->Exists(key)) {
-//     caches_[cache_index]->HMSet(key, fvs);
-//     return Status::OK();
-//   } else {
-//     return Status::NotFound("key exist");
-//   }
-// }
+Status PCache::HMSetnxWithoutTTL(std::string& key, std::vector<storage::FieldValue> &fvs) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (!caches_[cache_index]->Exists(key)) {
+    caches_[cache_index]->HMSet(key, fvs);
+    return Status::OK();
+  } else {
+    return Status::NotFound("key exist");
+  }
+}
 
-// Status PCache::HMSetxx(std::string& key, std::vector<storage::FieldValue> &fvs) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (caches_[cache_index]->Exists(key)) {
-//     return caches_[cache_index]->HMSet(key, fvs);
-//   } else {
-//     return Status::NotFound("key not exist");
-//   }
-// }
+Status PCache::HMSetxx(std::string& key, std::vector<storage::FieldValue> &fvs) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (caches_[cache_index]->Exists(key)) {
+    return caches_[cache_index]->HMSet(key, fvs);
+  } else {
+    return Status::NotFound("key not exist");
+  }
+}
 
-// Status PCache::HGet(std::string& key, std::string &field, std::string *value) {
+Status PCache::HGet(std::string& key, std::string &field, std::string *value) {
 
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->HGet(key, field, value);
-// }
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->HGet(key, field, value);
+}
 
-// Status PCache::HMGet(std::string& key, std::vector<std::string> &fields, std::vector<storage::ValueStatus> *vss) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->HMGet(key, fields, vss);
-// }
+Status PCache::HMGet(std::string& key, std::vector<std::string> &fields, std::vector<storage::ValueStatus> *vss) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->HMGet(key, fields, vss);
+}
 
-// Status PCache::HGetall(std::string& key, std::vector<storage::FieldValue> *fvs) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->HGetall(key, fvs);
-// }
+Status PCache::HGetall(std::string& key, std::vector<storage::FieldValue> *fvs) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->HGetall(key, fvs);
+}
 
-// Status PCache::HKeys(std::string& key, std::vector<std::string> *fields) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->HKeys(key, fields);
-// }
+Status PCache::HKeys(std::string& key, std::vector<std::string> *fields) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->HKeys(key, fields);
+}
 
-// Status PCache::HVals(std::string& key, std::vector<std::string> *values) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->HVals(key, values);
-// }
+Status PCache::HVals(std::string& key, std::vector<std::string> *values) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->HVals(key, values);
+}
 
-// Status PCache::HExists(std::string& key, std::string &field) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->HExists(key, field);
-// }
+Status PCache::HExists(std::string& key, std::string &field) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->HExists(key, field);
+}
 
-// Status PCache::HIncrbyxx(std::string& key, std::string &field, int64_t value) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (caches_[cache_index]->Exists(key)) {
-//     return caches_[cache_index]->HIncrby(key, field, value);
-//   }
-//   return Status::NotFound("key not exist");
-// }
+Status PCache::HIncrbyxx(std::string& key, std::string &field, int64_t value) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (caches_[cache_index]->Exists(key)) {
+    return caches_[cache_index]->HIncrby(key, field, value);
+  }
+  return Status::NotFound("key not exist");
+}
 
-// Status PCache::HIncrbyfloatxx(std::string& key, std::string &field, long double value) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (caches_[cache_index]->Exists(key)) {
-//     return caches_[cache_index]->HIncrbyfloat(key, field, value);
-//   }
-//   return Status::NotFound("key not exist");
-// }
+Status PCache::HIncrbyfloatxx(std::string& key, std::string &field, long double value) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (caches_[cache_index]->Exists(key)) {
+    return caches_[cache_index]->HIncrbyfloat(key, field, value);
+  }
+  return Status::NotFound("key not exist");
+}
 
-// Status PCache::HLen(std::string& key, uint64_t *len) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->HLen(key, len);
-// }
+Status PCache::HLen(std::string& key, uint64_t *len) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->HLen(key, len);
+}
 
-// Status PCache::HStrlen(std::string& key, std::string &field, uint64_t *len) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->HStrlen(key, field, len);
-// }
+Status PCache::HStrlen(std::string& key, std::string &field, uint64_t *len) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->HStrlen(key, field, len);
+}
 
 /*-----------------------------------------------------------------------------
  * List Commands
@@ -1502,18 +1502,18 @@ Status PCache::WriteKVToCache(std::string &key, std::string &value, int64_t ttl)
   return Status::OK();
 }
 
-// Status PCache::WriteHashToCache(std::string& key, std::vector<storage::FieldValue> &fvs, int64_t ttl) {
-//   if (0 >= ttl) {
-//     if (PIKA_TTL_NONE == ttl) {
-//       return HMSetnxWithoutTTL(key, fvs);
-//     } else {
-//       return Del({key});
-//     }
-//   } else {
-//     return HMSetnx(key, fvs, ttl);
-//   }
-//   return Status::OK();
-// }
+Status PCache::WriteHashToCache(std::string& key, std::vector<storage::FieldValue> &fvs, int64_t ttl) {
+  if (0 >= ttl) {
+    if (PCache_TTL_NONE == ttl) {
+      return HMSetnxWithoutTTL(key, fvs);
+    } else {
+      return Del({key});
+    }
+  } else {
+    return HMSetnx(key, fvs, ttl);
+  }
+  return Status::OK();
+}
 
 Status PCache::WriteListToCache(std::string &key, std::vector<std::string> &values, int64_t ttl) {
   if (0 >= ttl) {

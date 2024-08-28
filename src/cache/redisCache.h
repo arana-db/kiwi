@@ -71,22 +71,22 @@ class RedisCache {
   Status Strlen(std::string &key, int32_t *len);
 
   // Hash Commands
-  // Status HDel(std::string& key, std::vector<std::string> &fields);
-  // Status HSet(std::string& key, std::string &field, std::string &value);
-  // Status HSetnx(std::string& key, std::string &field, std::string &value);
-  // Status HMSet(std::string& key, std::vector<storage::FieldValue> &fvs);
-  // Status HGet(std::string& key, std::string &field, std::string *value);
-  // Status HMGet(std::string& key,
-  //              std::vector<std::string> &fields,
-  //              std::vector<storage::ValueStatus>* vss);
-  // Status HGetall(std::string& key, std::vector<storage::FieldValue> *fvs);
-  // Status HKeys(std::string& key, std::vector<std::string> *fields);
-  // Status HVals(std::string& key, std::vector<std::string> *values);
-  // Status HExists(std::string& key, std::string &field);
-  // Status HIncrby(std::string& key, std::string &field, int64_t value);
-  // Status HIncrbyfloat(std::string& key, std::string &field, double value);
-  // Status HLen(const std::string& key, uint64_t *len);
-  // Status HStrlen(std::string& key, std::string &field, uint64_t *len);
+  Status HDel(std::string& key, std::vector<std::string> &fields);
+  Status HSet(std::string& key, std::string &field, std::string &value);
+  Status HSetnx(std::string& key, std::string &field, std::string &value);
+  Status HMSet(std::string& key, std::vector<storage::FieldValue> &fvs);
+  Status HGet(std::string& key, std::string &field, std::string *value);
+  Status HMGet(std::string& key,
+               std::vector<std::string> &fields,
+               std::vector<storage::ValueStatus>* vss);
+  Status HGetall(std::string& key, std::vector<storage::FieldValue> *fvs);
+  Status HKeys(std::string& key, std::vector<std::string> *fields);
+  Status HVals(std::string& key, std::vector<std::string> *values);
+  Status HExists(std::string& key, std::string &field);
+  Status HIncrby(std::string& key, std::string &field, int64_t value);
+  Status HIncrbyfloat(std::string& key, std::string &field, double value);
+  Status HLen(const std::string& key, uint64_t *len);
+  Status HStrlen(std::string& key, std::string &field, uint64_t *len);
 
   // List Commands
   Status LIndex(std::string &key, int64_t index, std::string *element);
