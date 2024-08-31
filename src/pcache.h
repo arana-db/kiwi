@@ -124,15 +124,15 @@ class PCache : public pstd::noncopyable, public std::enable_shared_from_this<PCa
   rocksdb::Status RPushnxWithoutTTL(std::string& key, std::vector<std::string>& values);
 
   // Set Commands
-  //   rocksdb::Status SAdd(std::string& key, std::vector<std::string>& members);
-  //   rocksdb::Status SAddIfKeyExist(std::string& key, std::vector<std::string>& members);
-  //   rocksdb::Status SAddnx(std::string& key, std::vector<std::string>& members, int64_t ttl);
-  //   rocksdb::Status SAddnxWithoutTTL(std::string& key, std::vector<std::string>& members);
-  //   rocksdb::Status SCard(std::string& key, uint64_t* len);
-  //   rocksdb::Status SIsmember(std::string& key, std::string& member);
-  //   rocksdb::Status SMembers(std::string& key, std::vector<std::string>* members);
-  //   rocksdb::Status SRem(std::string& key, std::vector<std::string>& members);
-  //   rocksdb::Status SRandmember(std::string& key, int64_t count, std::vector<std::string>* members);
+    rocksdb::Status SAdd(std::string& key, std::vector<std::string>& members);
+    rocksdb::Status SAddIfKeyExist(std::string& key, std::vector<std::string>& members);
+    rocksdb::Status SAddnx(std::string& key, std::vector<std::string>& members, int64_t ttl);
+    rocksdb::Status SAddnxWithoutTTL(std::string& key, std::vector<std::string>& members);
+    rocksdb::Status SCard(std::string& key, uint64_t* len);
+    rocksdb::Status SIsmember(std::string& key, std::string& member);
+    rocksdb::Status SMembers(std::string& key, std::vector<std::string>* members);
+    rocksdb::Status SRem(std::string& key, std::vector<std::string>& members);
+    rocksdb::Status SRandmember(std::string& key, int64_t count, std::vector<std::string>* members);
 
   // ZSet Commands
   //   rocksdb::Status ZAdd(std::string& key, std::vector<storage::ScoreMember>& score_members);

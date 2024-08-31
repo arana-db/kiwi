@@ -66,23 +66,23 @@ bool PCacheLoadThread::LoadKV(std::string& key, PClient* client) {
   return true;
 }
 
-// bool PCacheLoadThread::LoadHash(std::string& key, PClient* client) {
-//   int32_t len = 0;
-//   db->storage()->HLen(key, &len);
-//   if (0 >= len || CACHE_VALUE_ITEM_MAX_SIZE < len) {
-//     return false;
-//   }
+bool PCacheLoadThread::LoadHash(std::string& key, PClient* client) {
+  int32_t len = 0;
+  PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->HLen(key, &len);
+  if (0 >= len || CACHE_VALUE_ITEM_MAX_SIZE < len) {
+    return false;
+  }
 
-//   std::vector<storage::FieldValue> fvs;
-//   int64_t ttl = -1;
-//   rocksdb::Status s = db->storage()->HGetallWithTTL(key, &fvs, &ttl);
-//   if (!s.ok()) {
-//     LOG(WARNING) << "load hash failed, key=" << key;
-//     return false;
-//   }
-//   db->cache()->WriteHashToCache(key, fvs, ttl);
-//   return true;
-// }
+  std::vector<storage::FieldValue> fvs;
+  int64_t ttl = -1;
+  rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->HGetallWithTTL(key, &fvs, &ttl);
+  if (!s.ok()) {
+    WARN("load hash failed, key={}",key);
+    return false;
+  }
+  PSTORE.GetBackend(client->GetCurrentDB())->GetCache()->WriteHashToCache(key, fvs, ttl);
+  return true;
+}
 
 bool PCacheLoadThread::LoadList(std::string& key, PClient* client) {
   uint64_t len = 0;
@@ -103,31 +103,30 @@ bool PCacheLoadThread::LoadList(std::string& key, PClient* client) {
   return true;
 }
 
-// bool PCacheLoadThread::LoadSet(std::string& key,PClient* client) {
-//   int32_t len = 0;
-//   db->storage()->SCard(key, &len);
-//   if (0 >= len || CACHE_VALUE_ITEM_MAX_SIZE < len) {
-//     LOG(WARNING) << "can not load key, because item size:" << len
-//                  << " beyond max item size:" << CACHE_VALUE_ITEM_MAX_SIZE;
-//     return false;
-//   }
+bool PCacheLoadThread::LoadSet(std::string& key,PClient* client) {
+  int32_t len = 0;
+  PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SCard(key, &len);
+  if (0 >= len || CACHE_VALUE_ITEM_MAX_SIZE < len) {
+    WARN("can not load key, because item size:{} beyond max item size:{}",len,CACHE_VALUE_ITEM_MAX_SIZE);
+    return false;
+  }
 
-//   std::vector<std::string> values;
-//   int64_t ttl = -1;
-//   rocksdb::Status s = db->storage()->SMembersWithTTL(key, &values, &ttl);
-//   if (!s.ok()) {
-//     LOG(WARNING) << "load set failed, key=" << key;
-//     return false;
-//   }
-//   db->cache()->WriteSetToCache(key, values, ttl);
-//   return true;
-// }
+  std::vector<std::string> values;
+  int64_t ttl = -1;
+  rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SMembersWithTTL(key, &values, &ttl);
+  if (!s.ok()) {
+    WARN("load set failed, key={}",key);
+    return false;
+  }
+  PSTORE.GetBackend(client->GetCurrentDB())->GetCache()->WriteSetToCache(key, values, ttl);
+  return true;
+}
 
 // bool PCacheLoadThread::LoadZset(std::string& key, PClient* client) {
 //   int32_t len = 0;
 //   int start_index = 0;
 //   int stop_index = -1;
-//   db->storage()->ZCard(key, &len);
+//   PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(key, &len);
 //   if (0 >= len) {
 //     return false;
 //   }
@@ -165,12 +164,12 @@ bool PCacheLoadThread::LoadKey(const char key_type, std::string& key, PClient* c
   switch (key_type) {
     case 'k':
       return LoadKV(key, client);
-    // case 'h':
-    //   return LoadHash(key, client);
+    case 'h':
+      return LoadHash(key, client);
     case 'l':
       return LoadList(key, client);
-    // case 's':
-    //   return LoadSet(key, client);
+    case 's':
+      return LoadSet(key, client);
     // case 'z':
     //   return LoadZset(key, client);
     default:

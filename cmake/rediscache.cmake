@@ -14,7 +14,7 @@ ExternalProject_Add(
   #URL https://github.com/pikiwidb/rediscache/archive/refs/tags/v1.0.7.tar.gz
   #URL_HASH MD5=02c8aadc018dd8d4d3803cc420d1d75b
   #temp used
-  GIT_REPOSITORY git@github.com:hahahashen/rediscache.git
+  GIT_REPOSITORY https://github.com/hahahashen/rediscache.git
   GIT_TAG feat/removeUseTcMallocMacroDefinition
   CMAKE_ARGS 
   -DCMAKE_BUILD_TYPE=Debug

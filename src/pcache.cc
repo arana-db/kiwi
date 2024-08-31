@@ -564,73 +564,73 @@ Status PCache::RPushnxWithoutTTL(std::string &key, std::vector<std::string> &val
 // /*-----------------------------------------------------------------------------
 //  * Set Commands
 //  *----------------------------------------------------------------------------*/
-// Status PCache::SAdd(std::string& key, std::vector<std::string> &members) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->SAdd(key, members);
-// }
+Status PCache::SAdd(std::string& key, std::vector<std::string> &members) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->SAdd(key, members);
+}
 
-// Status PCache::SAddIfKeyExist(std::string& key, std::vector<std::string> &members) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (caches_[cache_index]->Exists(key)) {
-//     return caches_[cache_index]->SAdd(key, members);
-//   }
-//   return Status::NotFound("key not exist");
-// }
+Status PCache::SAddIfKeyExist(std::string& key, std::vector<std::string> &members) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (caches_[cache_index]->Exists(key)) {
+    return caches_[cache_index]->SAdd(key, members);
+  }
+  return Status::NotFound("key not exist");
+}
 
-// Status PCache::SAddnx(std::string& key, std::vector<std::string> &members, int64_t ttl) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (!caches_[cache_index]->Exists(key)) {
-//     caches_[cache_index]->SAdd(key, members);
-//     caches_[cache_index]->Expire(key, ttl);
-//     return Status::OK();
-//   } else {
-//     return Status::NotFound("key exist");
-//   }
-// }
+Status PCache::SAddnx(std::string& key, std::vector<std::string> &members, int64_t ttl) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (!caches_[cache_index]->Exists(key)) {
+    caches_[cache_index]->SAdd(key, members);
+    caches_[cache_index]->Expire(key, ttl);
+    return Status::OK();
+  } else {
+    return Status::NotFound("key exist");
+  }
+}
 
-// Status PCache::SAddnxWithoutTTL(std::string& key, std::vector<std::string> &members) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (!caches_[cache_index]->Exists(key)) {
-//     caches_[cache_index]->SAdd(key, members);
-//     return Status::OK();
-//   } else {
-//     return Status::NotFound("key exist");
-//   }
-// }
+Status PCache::SAddnxWithoutTTL(std::string& key, std::vector<std::string> &members) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (!caches_[cache_index]->Exists(key)) {
+    caches_[cache_index]->SAdd(key, members);
+    return Status::OK();
+  } else {
+    return Status::NotFound("key exist");
+  }
+}
 
-// Status PCache::SCard(std::string& key, uint64_t *len) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->SCard(key, len);
-// }
+Status PCache::SCard(std::string& key, uint64_t *len) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->SCard(key, len);
+}
 
-// Status PCache::SIsmember(std::string& key, std::string& member) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->SIsmember(key, member);
-// }
+Status PCache::SIsmember(std::string& key, std::string& member) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->SIsmember(key, member);
+}
 
-// Status PCache::SMembers(std::string& key, std::vector<std::string> *members) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->SMembers(key, members);
-// }
+Status PCache::SMembers(std::string& key, std::vector<std::string> *members) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->SMembers(key, members);
+}
 
-// Status PCache::SRem(std::string& key, std::vector<std::string> &members) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->SRem(key, members);
-// }
+Status PCache::SRem(std::string& key, std::vector<std::string> &members) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->SRem(key, members);
+}
 
-// Status PCache::SRandmember(std::string& key, int64_t count, std::vector<std::string> *members) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   return caches_[cache_index]->SRandmember(key, count, members);
-// }
+Status PCache::SRandmember(std::string& key, int64_t count, std::vector<std::string> *members) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  return caches_[cache_index]->SRandmember(key, count, members);
+}
 
 // /*-----------------------------------------------------------------------------
 //  * ZSet Commands
@@ -1528,18 +1528,18 @@ Status PCache::WriteListToCache(std::string &key, std::vector<std::string> &valu
   return Status::OK();
 }
 
-// Status PCache::WriteSetToCache(std::string& key, std::vector<std::string> &members, int64_t ttl) {
-//   if (0 >= ttl) {
-//     if (PIKA_TTL_NONE == ttl) {
-//       return SAddnxWithoutTTL(key, members);
-//     } else {
-//       return Del({key});
-//     }
-//   } else {
-//     return SAddnx(key, members, ttl);
-//   }
-//   return Status::OK();
-// }
+Status PCache::WriteSetToCache(std::string& key, std::vector<std::string> &members, int64_t ttl) {
+  if (0 >= ttl) {
+    if (PCache_TTL_NONE == ttl) {
+      return SAddnxWithoutTTL(key, members);
+    } else {
+      return Del({key});
+    }
+  } else {
+    return SAddnx(key, members, ttl);
+  }
+  return Status::OK();
+}
 
 // Status PCache::WriteZSetToCache(std::string& key, std::vector<storage::ScoreMember> &score_members, int64_t ttl) {
 //   if (0 >= ttl) {

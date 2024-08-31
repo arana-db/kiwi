@@ -104,46 +104,46 @@ class RedisCache {
   Status RPushx(std::string &key, std::vector<std::string> &values);
 
   // // Set Commands
-  // Status SAdd(std::string& key, std::vector<std::string> &members);
-  // Status SCard(const std::string& key, uint64_t *len);
-  // Status SIsmember(std::string& key, std::string& member);
-  // Status SMembers(std::string& key, std::vector<std::string> *members);
-  // Status SRem(std::string& key, std::vector<std::string> &members);
-  // Status SRandmember(std::string& key, int64_t count, std::vector<std::string> *members);
+  Status SAdd(std::string& key, std::vector<std::string> &members);
+  Status SCard(const std::string& key, uint64_t *len);
+  Status SIsmember(std::string& key, std::string& member);
+  Status SMembers(std::string& key, std::vector<std::string> *members);
+  Status SRem(std::string& key, std::vector<std::string> &members);
+  Status SRandmember(std::string& key, int64_t count, std::vector<std::string> *members);
 
-  // // Zset Commands
-  // Status ZAdd(std::string& key, std::vector<storage::ScoreMember> &score_members);
-  // Status ZCard(const std::string& key, uint64_t *len);
-  // Status ZCount(std::string& key, std::string &min, std::string &max, uint64_t *len);
-  // Status ZIncrby(std::string& key, std::string& member, double increment);
-  // Status ZRange(std::string& key,
-  //               int64_t start, int64_t stop,
-  //               std::vector<storage::ScoreMember> *score_members);
-  // Status ZRangebyscore(std::string& key,
-  //                      std::string &min, std::string &max,
-  //                      std::vector<storage::ScoreMember> *score_members,
-  //                      int64_t offset = 0, int64_t count = -1);
-  // Status ZRank(std::string& key, std::string& member, int64_t *rank);
-  // Status ZRem(std::string& key, std::vector<std::string> &members);
-  // Status ZRemrangebyrank(std::string& key, std::string &min, std::string &max);
-  // Status ZRemrangebyscore(std::string& key, std::string &min, std::string &max);
-  // Status ZRevrange(std::string& key,
-  //                  int64_t start, int64_t stop,
-  //                  std::vector<storage::ScoreMember> *score_members);
-  // Status ZRevrangebyscore(std::string& key,
-  //                         std::string &min, std::string &max,
-  //                         std::vector<storage::ScoreMember> *score_members,
-  //                         int64_t offset = 0, int64_t count = -1);
-  // Status ZRevrangebylex(std::string& key,
-  //                       std::string &min, std::string &max,
-  //                       std::vector<std::string> *members);
-  // Status ZRevrank(std::string& key, std::string& member, int64_t *rank);
-  // Status ZScore(std::string& key, std::string& member, double *score);
-  // Status ZRangebylex(std::string& key,
-  //                    std::string &min, std::string &max,
-  //                    std::vector<std::string> *members);
-  // Status ZLexcount(std::string& key, std::string &min, std::string &max, uint64_t *len);
-  // Status ZRemrangebylex(std::string& key, std::string &min, std::string &max);
+  // Zset Commands
+  Status ZAdd(std::string& key, std::vector<storage::ScoreMember> &score_members);
+  Status ZCard(const std::string& key, uint64_t *len);
+  Status ZCount(std::string& key, std::string &min, std::string &max, uint64_t *len);
+  Status ZIncrby(std::string& key, std::string& member, double increment);
+  Status ZRange(std::string& key,
+                int64_t start, int64_t stop,
+                std::vector<storage::ScoreMember> *score_members);
+  Status ZRangebyscore(std::string& key,
+                       std::string &min, std::string &max,
+                       std::vector<storage::ScoreMember> *score_members,
+                       int64_t offset = 0, int64_t count = -1);
+  Status ZRank(std::string& key, std::string& member, int64_t *rank);
+  Status ZRem(std::string& key, std::vector<std::string> &members);
+  Status ZRemrangebyrank(std::string& key, std::string &min, std::string &max);
+  Status ZRemrangebyscore(std::string& key, std::string &min, std::string &max);
+  Status ZRevrange(std::string& key,
+                   int64_t start, int64_t stop,
+                   std::vector<storage::ScoreMember> *score_members);
+  Status ZRevrangebyscore(std::string& key,
+                          std::string &min, std::string &max,
+                          std::vector<storage::ScoreMember> *score_members,
+                          int64_t offset = 0, int64_t count = -1);
+  Status ZRevrangebylex(std::string& key,
+                        std::string &min, std::string &max,
+                        std::vector<std::string> *members);
+  Status ZRevrank(std::string& key, std::string& member, int64_t *rank);
+  Status ZScore(std::string& key, std::string& member, double *score);
+  Status ZRangebylex(std::string& key,
+                     std::string &min, std::string &max,
+                     std::vector<std::string> *members);
+  Status ZLexcount(std::string& key, std::string &min, std::string &max, uint64_t *len);
+  Status ZRemrangebylex(std::string& key, std::string &min, std::string &max);
 
   // // Bit Commands
   // Status SetBit(std::string& key, size_t offset, int64_t value);
