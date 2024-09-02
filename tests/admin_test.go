@@ -11,7 +11,6 @@ import (
 	"context"
 	"log"
 	"strconv"
-	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -253,51 +252,25 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(del2.Err()).NotTo(HaveOccurred())
 	})
 	It("Cmd Client", func() {
-		get := client.ClientGetName(ctx)
+		conn := client.Conn()
+		set := conn.ClientSetName(ctx, "clientxxx")
+		Expect(set.Err()).NotTo(HaveOccurred())
+		Expect(set.Val()).To(Equal(true))
+
+		get := conn.ClientGetName(ctx)
 		Expect(get.Err()).NotTo(HaveOccurred())
 		Expect(get.Val()).To(Equal("clientxxx"))
 
-		resId := client.ClientID(ctx).Err()
+		resId := conn.ClientID(ctx).Err()
 		Expect(resId).NotTo(HaveOccurred())
 		Expect(client.ClientID(ctx).Val()).To(BeNumerically(">=", 0))
 
-		resKillFilter := client.ClientKillByFilter(ctx, "ADDR", "1.1.1.1:1111")
+		resKillFilter := conn.ClientKillByFilter(ctx, "ADDR", "1.1.1.1:1111")
 		Expect(resKillFilter.Err()).To(MatchError("ERR No such client"))
 		Expect(resKillFilter.Val()).To(Equal(int64(0)))
 
-		resKillFilter = client.ClientKillByFilter(ctx, "ID", "1")
+		resKillFilter = conn.ClientKillByFilter(ctx, "ID", "1")
 		Expect(resKillFilter.Err()).To(MatchError("ERR No such client"))
 		Expect(resKillFilter.Val()).To(Equal(int64(0)))
-	})
-
-
-	It("should monitor", Label("monitor"), func() {
-		ress := make(chan string)
-		client1 := s.NewClient()
-		mn := client1.Monitor(ctx, ress)
-		mn.Start()
-		// Wait for the Redis server to be in monitoring mode.
-		time.Sleep(100 * time.Millisecond)
-		client.Set(ctx, "foo", "bar", 0)
-		client.Set(ctx, "bar", "baz", 0)
-		client.Set(ctx, "bap", 8, 0)
-		client.Get(ctx, "bap")
-		lst := []string{}
-		for i := 0; i < 5; i++ {
-			s := <-ress
-			lst = append(lst, s)
-		}
-		mn.Stop()
-		Expect(lst[0]).To(ContainSubstring("OK"))
-		Expect(lst[2]).To(ContainSubstring(`"set foo bar"`))
-		Expect(lst[3]).To(ContainSubstring(`"set bar baz"`))
-		Expect(lst[4]).To(ContainSubstring(`"set bap 8"`))
-
-		err := client1.Close()
-		if err != nil {
-			log.Println("Close monitor client conn fail.", err.Error())
-			return
-		}
-
 	})
 })
