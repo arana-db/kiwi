@@ -6,7 +6,7 @@
 #include <string>
 #include "client.h"
 
-namespace pikiwidb {
+namespace kiwi {
 class ClientMap {
  private:
   ClientMap() = default;
@@ -26,7 +26,7 @@ class ClientMap {
   ClientMap& operator=(const ClientMap&) = delete;
 
   // client info function
-  pikiwidb::ClientInfo GetClientsInfoById(int id);
+  kiwi::ClientInfo GetClientsInfoById(int id);
   uint32_t GetAllClientInfos(std::vector<ClientInfo>& results);
 
   bool AddClient(int id, std::weak_ptr<PClient>);
@@ -38,4 +38,4 @@ class ClientMap {
   bool KillClientByAddrPort(const std::string& addr_port);
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

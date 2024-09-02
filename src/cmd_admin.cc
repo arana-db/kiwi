@@ -662,7 +662,7 @@ CmdClientSetname::CmdClientSetname(const std::string& name, int16_t arity)
 
 bool CmdClientSetname::DoInitial(PClient* client) { return true; }
 
-void pikiwidb::CmdClientSetname::DoCmd(PClient* client) {
+void kiwi::CmdClientSetname::DoCmd(PClient* client) {
   client->SetName(client->argv_[2]);
   client->SetRes(CmdRes::kOK);
 }
@@ -695,7 +695,7 @@ bool CmdClientKill::DoInitial(PClient* client) {
 
 void CmdClientKill::DoCmd(PClient* client) {
   bool ret;
-  auto& client_map = pikiwidb::ClientMap::getInstance();
+  auto& client_map = kiwi::ClientMap::getInstance();
   switch (kill_type_) {
     case Type::ALL: {
       ret = client_map.KillAllClients();
@@ -740,7 +740,7 @@ void CmdClientList::DoCmd(PClient* client) {
   auto& client_map = ClientMap::getInstance();
   switch (list_type_) {
     case Type::DEFAULT: {
-      std::vector<pikiwidb::ClientInfo> client_infos;
+      std::vector<kiwi::ClientInfo> client_infos;
       client_map.GetAllClientInfos(client_infos);
       client->AppendArrayLen(client_infos.size());
       if (client_infos.size() == 0) {
@@ -766,10 +766,9 @@ void CmdClientList::DoCmd(PClient* client) {
             client->SetRes(CmdRes::kErrOther, "Invalid client id");
             return;
           }
-          char buf[128];
-          snprintf(buf, sizeof(buf), "ID=%ld IP=%s PORT=%d\n", client_info.client_id, client_info.ip.c_str(),
-                   client_info.port);
-          client->AppendString(std::string(buf));
+          std::string result =
+              fmt::format("ID={} IP={} PORT={}\n", client_info.client_id, client_info.ip, client_info.port);
+          client->AppendString(result);
         } catch (const std::exception& e) {
           client->SetRes(CmdRes::kErrOther, "Invalid client id");
           return;

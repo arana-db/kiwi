@@ -1,7 +1,7 @@
 #include "client_map.h"
 #include "log.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 uint32_t ClientMap::GetAllClientInfos(std::vector<ClientInfo>& results) {
   // client info string type: ip, port, fd.
@@ -100,4 +100,4 @@ bool ClientMap::KillClientById(int client_id) {
   return false;
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi
