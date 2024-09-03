@@ -25,10 +25,8 @@ void PProtoParser::Reset() {
   paramLen_ = -1;
   numOfParam_ = 0;
 
-  // Optimize: Most redis command has 3 args
-  while (params_.size() > 3) {
-    params_.pop_back();
-  }
+  params_.clear();
+  
 }
 
 PParseResult PProtoParser::ParseRequest(const char*& ptr, const char* end) {
@@ -98,6 +96,8 @@ PParseResult PProtoParser::parseStrval(const char*& ptr, const char* end, PStrin
   assert(paramLen_ >= 0);
 
   if (static_cast<int>(end - ptr) < paramLen_ + 2) {
+    paramLen_-=(end-ptr);
+    result.append(ptr, end - ptr);
     return PParseResult::kWait;
   }
 
@@ -106,7 +106,7 @@ PParseResult PProtoParser::parseStrval(const char*& ptr, const char* end, PStrin
     return PParseResult::kError;
   }
 
-  result.assign(ptr, tail - ptr);
+  result.append(ptr, tail - ptr);
   ptr = tail + 2;
   paramLen_ = -1;
 
