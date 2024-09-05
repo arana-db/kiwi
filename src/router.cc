@@ -18,7 +18,17 @@ Router& Router::Instance() {
 void Router::Init() {
   // TODO: config.cc main()...
   // TODO: register brpc_redis from cfg_file_
-  brpc_redis_.push_back();
+  vector<PString> ip_group = SplitString(g_config.proxy_ip.ToString(), ';');
+  
+  for (auto &ip : ip_group) {
+    BrpcRedis brpc_redis;
+    if (brpc_redis.GetChannel().Init(ip, &brpc_redis.GetOptions()) != 0) {
+      LOG(ERROR) << "Fail to init channel to pikiwidb, ip " << ip; 
+      continue;
+    }
+    brpc_redis_.push_back(brpc_redis);
+  }
+
   brpc_redis_num_ = brpc_redis_.size();
   timer_wheel_ = new TimerWheel(10, 1000);
   for (auto &brpc : brpc_redis_) {

@@ -140,6 +140,9 @@ PConfig::PConfig() {
   AddNumber("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
   AddNumber("rocksdb-level0-stop-writes-trigger", false, &rocksdb_level0_stop_writes_trigger);
   AddNumber("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
+
+  // proxy config
+  AddString("proxy_ip", false, {&proxy_ip});
 }
 
 bool PConfig::LoadFromFile(const std::string& file_name) {

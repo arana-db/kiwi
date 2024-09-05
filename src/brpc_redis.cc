@@ -6,6 +6,7 @@
 #include <memory>
 #include <utility>
 #include <vector>
+#include "config.h"
 #include "proxy_base_cmd.h"
 
 namespace pikiwidb {
@@ -15,6 +16,10 @@ void* thread_entry(void* arg) {
   (*func)();
   delete func;
   return nullptr;
+}
+
+void BrpcRedis::Open() {
+
 }
 
 void BrpcRedis::PushRedisTask(const std::shared_ptr<ProxyBaseCmd>& task) {

@@ -333,6 +333,8 @@ class PConfig {
 
   rocksdb::BlockBasedTableOptions GetRocksDBBlockBasedTableOptions();
 
+  AtomicString proxy_ip = "127.0.0.1";
+
  private:
   // Some functions and variables set up for internal work.
 

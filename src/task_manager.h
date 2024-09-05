@@ -10,8 +10,6 @@
 #include "proxy_base_cmd.h"
 #include "cmd_thread_pool.h"
 #include "net/event_loop.h"
-#include "net/http_client.h"
-#include "net/http_server.h"
 #include "base_cmd.h"
 #include "cmd_table_manager.h"
 

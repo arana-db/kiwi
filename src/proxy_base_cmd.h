@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "base_cmd.h"
+#include "proxy_base_cmd.h"
 #include "client.h"
 #include "store.h"
 
