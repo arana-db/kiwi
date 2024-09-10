@@ -284,7 +284,7 @@ class BaseCmd : public std::enable_shared_from_this<BaseCmd> {
 
   bool IsNeedUpdateCache() const;
   bool IsNeedReadCache() const;
-  bool IsNeedCacheDo() const;
+  bool IsNeedCacheDo(PClient* client) const;
 
  protected:
   // Execute a specific command

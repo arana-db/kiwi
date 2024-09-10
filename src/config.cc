@@ -143,7 +143,6 @@ PConfig::PConfig() {
   AddNumber("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
 
   // cache config
-  //@tobechecked:rewritable
   AddNumberWihLimit("cache-num", true, &cache_num, 1, 48);
   AddNumberWihLimit("cache-mode", true, &cache_mode, 0, 1);
   AddNumber("zset-cache-field-num-per-key", true, &zset_cache_field_num_per_key);

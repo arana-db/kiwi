@@ -10,6 +10,7 @@
 #include "pstd/log.h"
 #include "pstd/scope_record_lock.h"
 #include "store.h"
+#include "config.h"
 
 namespace pikiwidb {
 
@@ -122,45 +123,28 @@ bool PCacheLoadThread::LoadSet(std::string& key,PClient* client) {
   return true;
 }
 
-// bool PCacheLoadThread::LoadZset(std::string& key, PClient* client) {
-//   int32_t len = 0;
-//   int start_index = 0;
-//   int stop_index = -1;
-//   PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(key, &len);
-//   if (0 >= len) {
-//     return false;
-//   }
+bool PCacheLoadThread::LoadZset(std::string& key, PClient* client) {
+  int32_t len = 0;
+  PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(key, &len);
+  auto zset_cache_field_num_per_key=g_config.zset_cache_field_num_per_key.load();
+  if (0 >= len || len>zset_cache_field_num_per_key) {
+    return false;
+  }
 
-//   uint64_t cache_len = 0;
-//   db->cache()->CacheZCard(key, &cache_len);
-//   if (cache_len != 0) {
-//     return true;
-//   }
-//   if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
-//     if (zset_cache_field_num_per_key_ <= len) {
-//       stop_index = zset_cache_field_num_per_key_ - 1;
-//     }
-//   } else if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
-//     if (zset_cache_field_num_per_key_ <= len) {
-//       start_index = len - zset_cache_field_num_per_key_;
-//     }
-//   }
-
-//   std::vector<storage::ScoreMember> score_members;
-//   int64_t ttl = -1;
-//   rocksdb::Status s = db->storage()->ZRangeWithTTL(key, start_index, stop_index, &score_members, &ttl);
-//   if (!s.ok()) {
-//     LOG(WARNING) << "load zset failed, key=" << key;
-//     return false;
-//   }
-//   db->cache()->WriteZSetToCache(key, score_members, ttl);
-//   return true;
-// }
+int start_index = 0;
+  int stop_index = -1;
+  std::vector<storage::ScoreMember> score_members;
+  int64_t ttl = -1;
+  rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZRangeWithTTL(key, start_index, stop_index, &score_members, &ttl);
+  if (!s.ok()) {
+    WARN("load zset failed, key={}",key);
+    return false;
+  }
+  PSTORE.GetBackend(client->GetCurrentDB())->GetCache()->WriteZSetToCache(key, score_members, ttl);
+  return true;
+}
 
 bool PCacheLoadThread::LoadKey(const char key_type, std::string& key, PClient* client) {
-  // @tobeChecked
-  // 下面这行代码是pika实现中，分析pikiwidb中不再需要对DB上key锁，由Storage层来进行上锁（该两行留存，待确认无误后删除）
-  // pstd::lock::ScopeRecordLock record_lock(db->LockMgr(), key);
   switch (key_type) {
     case 'k':
       return LoadKV(key, client);
@@ -170,8 +154,8 @@ bool PCacheLoadThread::LoadKey(const char key_type, std::string& key, PClient* c
       return LoadList(key, client);
     case 's':
       return LoadSet(key, client);
-    // case 'z':
-    //   return LoadZset(key, client);
+    case 'z':
+      return LoadZset(key, client);
     default:
       WARN("PCacheLoadThread::LoadKey invalid key type : {}", key_type);
       return false;

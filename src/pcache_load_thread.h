@@ -32,7 +32,7 @@ class PCacheLoadThread : public Thread {
   bool LoadHash(std::string& key, PClient* client);
   bool LoadList(std::string& key, PClient* client);
   bool LoadSet(std::string& key, PClient* client);
-  // bool LoadZset(std::string& key, PClient* client);
+  bool LoadZset(std::string& key, PClient* client);
   bool LoadKey(const char key_type, std::string& key, PClient* client);
   virtual void* ThreadMain() override;
 

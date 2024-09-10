@@ -3,8 +3,8 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(REDISCACHE_SOURCES_DIR "${LIB_INSTALL_PREFIX}" CACHE PATH "rediscache source directory.")
-SET(REDISCACHE_INSTALL_DIR "${LIB_INSTALL_PREFIX}" CACHE PATH "rediscache install directory.")
+SET(REDISCACHE_SOURCES_DIR "${LIB_INSTALL_PREFIX}" CACHE PATH "rediscache source directory." FORCE)
+SET(REDISCACHE_INSTALL_DIR "${LIB_INSTALL_PREFIX}" CACHE PATH "rediscache install directory." FORCE)
 SET(REDISCACHE_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "rediscache include directory." FORCE)
 SET(REDISCACHE_LIBRARIES "${LIB_INSTALL_DIR}/librediscache.a" CACHE FILEPATH "rediscache library." FORCE)
 

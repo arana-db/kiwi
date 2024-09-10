@@ -13,6 +13,8 @@
 #include "pcache.h"
 #include "pcache_load_thread.h"
 #include "pstd/log.h"
+#include "store.h"
+#include "cmd_zset.h"
 
 namespace pikiwidb {
 
@@ -641,253 +643,284 @@ Status PCache::SRandmember(std::string& key, int64_t count, std::vector<std::str
 //   return caches_[cache_index]->ZAdd(key, score_members);
 // }
 
-// void PCache::GetMinMaxScore(std::vector<storage::ScoreMember> &score_members, double &min, double &max) {
-//   if (score_members.empty()) {
-//     return;
-//   }
-//   min = max = score_members.front().score;
-//   for (auto &item : score_members) {
-//     if (item.score < min) {
-//       min = item.score;
-//     }
-//     if (item.score > max) {
-//       max = item.score;
-//     }
-//   }
-// }
+void PCache::GetMinMaxScore(std::vector<storage::ScoreMember> &score_members, double &min, double &max) {
+  if (score_members.empty()) {
+    return;
+  }
+  min = max = score_members.front().score;
+  for (auto &item : score_members) {
+    if (item.score < min) {
+      min = item.score;
+    }
+    if (item.score > max) {
+      max = item.score;
+    }
+  }
+}
 
-// bool PCache::GetCacheMinMaxSM(cache::RedisCache *cache_obj, std::string& key, storage::ScoreMember &min_m,
-//                                  storage::ScoreMember &max_m) {
-//   if (cache_obj) {
-//     std::vector<storage::ScoreMember> score_members;
-//     auto s = cache_obj->ZRange(key, 0, 0, &score_members);
-//     if (!s.ok() || score_members.empty()) {
-//       return false;
-//     }
-//     min_m = score_members.front();
-//     score_members.clear();
+bool PCache::GetCacheMinMaxSM(cache::RedisCache *cache_obj, std::string& key, storage::ScoreMember &min_m,
+                                 storage::ScoreMember &max_m) {
+  if (cache_obj) {
+    std::vector<storage::ScoreMember> score_members;
+    auto s = cache_obj->ZRange(key, 0, 0, &score_members);
+    if (!s.ok() || score_members.empty()) {
+      return false;
+    }
+    min_m = score_members.front();
+    score_members.clear();
 
-//     s = cache_obj->ZRange(key, -1, -1, &score_members);
-//     if (!s.ok() || score_members.empty()) {
-//       return false;
-//     }
-//     max_m = score_members.front();
-//     return true;
-//   }
-//   return false;
-// }
+    s = cache_obj->ZRange(key, -1, -1, &score_members);
+    if (!s.ok() || score_members.empty()) {
+      return false;
+    }
+    max_m = score_members.front();
+    return true;
+  }
+  return false;
+}
 
-// Status PCache::ZAddIfKeyExist(std::string& key, std::vector<storage::ScoreMember> &score_members) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   auto cache_obj = caches_[cache_index];
-//   Status s;
-//   if (cache_obj->Exists(key)) {
-//     std::unordered_set<std::string> unique;
-//     std::list<storage::ScoreMember> filtered_score_members;
-//     for (auto it = score_members.rbegin(); it != score_members.rend(); ++it) {
-//       if (unique.find(it->member) == unique.end()) {
-//         unique.insert(it->member);
-//         filtered_score_members.push_front(*it);
-//       }
-//     }
-//     std::vector<storage::ScoreMember> new_score_members;
-//     for (auto &item : filtered_score_members) {
-//       new_score_members.push_back(std::move(item));
-//     }
+// used
+Status PCache::ZAddIfKeyExistInCache(std::string& key, std::vector<storage::ScoreMember> &score_members,PClient* client) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  auto cache_obj = caches_[cache_index];
 
-//     double min_score = storage::ZSET_SCORE_MIN;
-//     double max_score = storage::ZSET_SCORE_MAX;
-//     GetMinMaxScore(new_score_members, min_score, max_score);
+  int db_len = 0;
+  PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(key, &db_len);
+  if(db_len>zset_cache_field_num_per_key_){
+    return cache_obj->Del(key);
+  }
+   if (cache_obj->Exists(key)){
+    return cache_obj->ZAdd(key, score_members);
+  }else {
+    return Status::NotFound("key not exist");
+  }
+}
 
-//     storage::ScoreMember cache_min_sm;
-//     storage::ScoreMember cache_max_sm;
-//     if (!GetCacheMinMaxSM(cache_obj, key, cache_min_sm, cache_max_sm)) {
-//       return Status::NotFound("key not exist");
-//     }
-//     auto cache_min_score = cache_min_sm.score;
-//     auto cache_max_score = cache_max_sm.score;
-//     if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
-//       if (max_score < cache_max_score) {
-//         cache_obj->ZAdd(key, new_score_members);
-//       } else {
-//         std::vector<storage::ScoreMember> score_members_can_add;
-//         std::vector<std::string> members_need_remove;
-//         bool left_close = false;
-//         for (auto &item : new_score_members) {
-//           if (item.score == cache_max_score) {
-//             left_close = true;
-//             score_members_can_add.push_back(item);
-//             continue;
-//           }
-//           if (item.score < cache_max_score) {
-//             score_members_can_add.push_back(item);
-//           } else {
-//             members_need_remove.push_back(item.member);
-//           }
-//         }
-//         if (!score_members_can_add.empty()) {
-//           cache_obj->ZAdd(key, score_members_can_add);
-//           std::string cache_max_score_str = left_close ? "" : "(" + std::to_string(cache_max_score);
-//           std::string max_str = "+inf";
-//           cache_obj->ZRemrangebyscore(key, cache_max_score_str, max_str);
-//         }
-//         if (!members_need_remove.empty()) {
-//           cache_obj->ZRem(key, members_need_remove);
-//         }
-//       }
-//     } else if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
-//       if (min_score > cache_min_score) {
-//         cache_obj->ZAdd(key, new_score_members);
-//       } else {
-//         std::vector<storage::ScoreMember> score_members_can_add;
-//         std::vector<std::string> members_need_remove;
-//         bool right_close = false;
-//         for (auto &item : new_score_members) {
-//           if (item.score == cache_min_score) {
-//             right_close = true;
-//             score_members_can_add.push_back(item);
-//             continue;
-//           }
-//           if (item.score > cache_min_score) {
-//             score_members_can_add.push_back(item);
-//           } else {
-//             members_need_remove.push_back(item.member);
-//           }
-//         }
-//         if (!score_members_can_add.empty()) {
-//           cache_obj->ZAdd(key, score_members_can_add);
-//           std::string cache_min_score_str = right_close ? "" : "(" + std::to_string(cache_min_score);
-//           std::string min_str = "-inf";
-//           cache_obj->ZRemrangebyscore(key, min_str, cache_min_score_str);
-//         }
-//         if (!members_need_remove.empty()) {
-//           cache_obj->ZRem(key, members_need_remove);
-//         }
-//       }
-//     }
+Status PCache::ZAddIfKeyExist(std::string& key, std::vector<storage::ScoreMember> &score_members) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  auto cache_obj = caches_[cache_index];
+  Status s;
+  if (cache_obj->Exists(key)) {
+    uint64_t cache_len = 0;
+    cache_obj->ZCard(key, &cache_len);
+  if(cache_len+score_members.size()<=(unsigned long)zset_cache_field_num_per_key_){
+    return cache_obj->ZAdd(key, score_members);
+  }
 
-//     return CleanCacheKeyIfNeeded(cache_obj, key);
-//   } else {
-//     return Status::NotFound("key not exist");
-//   }
-// }
+    std::unordered_set<std::string> unique;
+    std::list<storage::ScoreMember> filtered_score_members;
+    for (auto it = score_members.rbegin(); it != score_members.rend(); ++it) {
+      if (unique.find(it->member) == unique.end()) {
+        unique.insert(it->member);
+        filtered_score_members.push_front(*it);
+      }
+    }
+    std::vector<storage::ScoreMember> new_score_members;
+    for (auto &item : filtered_score_members) {
+      new_score_members.push_back(std::move(item));
+    }
 
-// Status PCache::CleanCacheKeyIfNeeded(cache::RedisCache *cache_obj, std::string& key) {
-//   uint64_t cache_len = 0;
-//   cache_obj->ZCard(key, &cache_len);
-//   if (cache_len > (unsigned long)zset_cache_field_num_per_key_) {
-//     long start = 0;
-//     long stop = 0;
-//     if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
-//       start = -cache_len + zset_cache_field_num_per_key_;
-//       stop = -1;
-//     } else if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
-//       start = 0;
-//       stop = cache_len - zset_cache_field_num_per_key_ - 1;
-//     }
-//     auto min = std::to_string(start);
-//     auto max = std::to_string(stop);
-//     cache_obj->ZRemrangebyrank(key, min, max);
-//   }
-//   return Status::OK();
-// }
+// when add element, you should keep score order between cache and DB.
+    double min_score = storage::ZSET_SCORE_MIN;
+    double max_score = storage::ZSET_SCORE_MAX;
+    GetMinMaxScore(new_score_members, min_score, max_score);
 
-// Status PCache::ZAddnx(std::string& key, std::vector<storage::ScoreMember> &score_members, int64_t ttl) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (!caches_[cache_index]->Exists(key)) {
-//     caches_[cache_index]->ZAdd(key, score_members);
-//     caches_[cache_index]->Expire(key, ttl);
-//     return Status::OK();
-//   } else {
-//     return Status::NotFound("key exist");
-//   }
-// }
+    storage::ScoreMember cache_min_sm;
+    storage::ScoreMember cache_max_sm;
+    if (!GetCacheMinMaxSM(cache_obj, key, cache_min_sm, cache_max_sm)) {
+      return Status::NotFound("key not exist");
+    }
+    auto cache_min_score = cache_min_sm.score;
+    auto cache_max_score = cache_max_sm.score;
+    if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
+      if (max_score < cache_max_score) {
+        cache_obj->ZAdd(key, new_score_members);
+      } else {
+        std::vector<storage::ScoreMember> score_members_can_add;
+        std::vector<std::string> members_need_remove;
+        bool left_close = false;
+        for (auto &item : new_score_members) {
+          if (item.score == cache_max_score) {
+            left_close = true;
+            score_members_can_add.push_back(item);
+            continue;
+          }
+          if (item.score < cache_max_score) {
+            score_members_can_add.push_back(item);
+          } else {
+            members_need_remove.push_back(item.member);
+          }
+        }
+        if (!score_members_can_add.empty()) {
+          cache_obj->ZAdd(key, score_members_can_add);
+          std::string cache_max_score_str = left_close ? "" : "(" + std::to_string(cache_max_score);
+          std::string max_str = "+inf";
+          cache_obj->ZRemrangebyscore(key, cache_max_score_str, max_str);
+        }
+        if (!members_need_remove.empty()) {
+          cache_obj->ZRem(key, members_need_remove);
+        }
+      }
+    } else if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
+      if (min_score > cache_min_score) {
+        cache_obj->ZAdd(key, new_score_members);
+      } else {
+        std::vector<storage::ScoreMember> score_members_can_add;
+        std::vector<std::string> members_need_remove;
+        bool right_close = false;
+        for (auto &item : new_score_members) {
+          if (item.score == cache_min_score) {
+            right_close = true;
+            score_members_can_add.push_back(item);
+            continue;
+          }
+          if (item.score > cache_min_score) {
+            score_members_can_add.push_back(item);
+          } else {
+            members_need_remove.push_back(item.member);
+          }
+        }
+        if (!score_members_can_add.empty()) {
+          cache_obj->ZAdd(key, score_members_can_add);
+          std::string cache_min_score_str = right_close ? "" : "(" + std::to_string(cache_min_score);
+          std::string min_str = "-inf";
+          cache_obj->ZRemrangebyscore(key, min_str, cache_min_score_str);
+        }
+        if (!members_need_remove.empty()) {
+          cache_obj->ZRem(key, members_need_remove);
+        }
+      }
+    }
 
-// Status PCache::ZAddnxWithoutTTL(std::string& key, std::vector<storage::ScoreMember> &score_members) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   if (!caches_[cache_index]->Exists(key)) {
-//     caches_[cache_index]->ZAdd(key, score_members);
-//     return Status::OK();
-//   } else {
-//     return Status::NotFound("key exist");
-//   }
-// }
+    return CleanCacheKeyIfNeeded(cache_obj, key);
+  } else {
+    return Status::NotFound("key not exist");
+  }
+}
 
-// Status PCache::ZCard(std::string& key, uint32_t *len, const std::shared_ptr<DB>& db) {
-//   int32_t db_len = 0;
-//   db->storage()->ZCard(key, &db_len);
-//   *len = db_len;
-//   return Status::OK();
-// }
+Status PCache::CleanCacheKeyIfNeeded(cache::RedisCache *cache_obj, std::string& key) {
+  uint64_t cache_len = 0;
+  cache_obj->ZCard(key, &cache_len);
+  if (cache_len > (unsigned long)zset_cache_field_num_per_key_) {
+    long start = 0;
+    long stop = 0;
+    if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
+      start = -cache_len + zset_cache_field_num_per_key_;
+      stop = -1;
+    } else if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
+      start = 0;
+      stop = cache_len - zset_cache_field_num_per_key_ - 1;
+    }
+    auto min = std::to_string(start);
+    auto max = std::to_string(stop);
+    cache_obj->ZRemrangebyrank(key, min, max);
+  }
+  return Status::OK();
+}
 
-// Status PCache::CacheZCard(std::string& key, uint64_t *len) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
+Status PCache::ZAddnx(std::string& key, std::vector<storage::ScoreMember> &score_members, int64_t ttl) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (!caches_[cache_index]->Exists(key)) {
+    caches_[cache_index]->ZAdd(key, score_members);
+    caches_[cache_index]->Expire(key, ttl);
+    return Status::OK();
+  } else {
+    return Status::NotFound("key exist");
+  }
+}
 
-//   return caches_[cache_index]->ZCard(key, len);
-// }
+Status PCache::ZAddnxWithoutTTL(std::string& key, std::vector<storage::ScoreMember> &score_members) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (!caches_[cache_index]->Exists(key)) {
+    caches_[cache_index]->ZAdd(key, score_members);
+    return Status::OK();
+  } else {
+    return Status::NotFound("key exist");
+  }
+}
 
-// RangeStatus PCache::CheckCacheRangeByScore(uint64_t cache_len, double cache_min, double cache_max, double min,
-//                                               double max, bool left_close, bool right_close) {
-//   bool cache_full = (cache_len == (unsigned long)zset_cache_field_num_per_key_);
+// used
+Status PCache::ZCard(std::string& key, uint64_t *len) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  auto cache_obj = caches_[cache_index];
 
-//   if (cache_full) {
-//     if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
-//       bool ret = (max < cache_max);
-//       if (ret) {
-//         if (max < cache_min) {
-//           return RangeStatus::RangeError;
-//         } else {
-//           return RangeStatus::RangeHit;
-//         }
-//       } else {
-//         return RangeStatus::RangeMiss;
-//       }
-//     } else if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
-//       bool ret = min > cache_min;
-//       if (ret) {
-//         if (min > cache_max) {
-//           return RangeStatus::RangeError;
-//         } else {
-//           return RangeStatus::RangeHit;
-//         }
-//       } else {
-//         return RangeStatus::RangeMiss;
-//       }
-//     } else {
-//       return RangeStatus::RangeError;
-//     }
-//   } else {
-//     if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
-//       bool ret = right_close ? max < cache_max : max <= cache_max;
-//       if (ret) {
-//         if (max < cache_min) {
-//           return RangeStatus::RangeError;
-//         } else {
-//           return RangeStatus::RangeHit;
-//         }
-//       } else {
-//         return RangeStatus::RangeMiss;
-//       }
-//     } else if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
-//       bool ret = left_close ? min > cache_min : min >= cache_min;
-//       if (ret) {
-//         if (min > cache_max) {
-//           return RangeStatus::RangeError;
-//         } else {
-//           return RangeStatus::RangeHit;
-//         }
-//       } else {
-//         return RangeStatus::RangeMiss;
-//       }
-//     } else {
-//       return RangeStatus::RangeError;
-//     }
-//   }
-// }
+  if (cache_obj->Exists(key)){
+    return cache_obj->ZCard(key, len);
+  }else {
+    return Status::NotFound("key not exist");
+  }
+}
+
+Status PCache::CacheZCard(std::string& key, uint64_t *len) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+
+  return caches_[cache_index]->ZCard(key, len);
+}
+
+RangeStatus PCache::CheckCacheRangeByScore(uint64_t cache_len, double cache_min, double cache_max, double min,
+                                              double max, bool left_close, bool right_close) {
+  bool cache_full = (cache_len == (unsigned long)zset_cache_field_num_per_key_);
+
+  if (cache_full) {
+    if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
+      bool ret = (max < cache_max);
+      if (ret) {
+        if (max < cache_min) {
+          return RangeStatus::RangeError;
+        } else {
+          return RangeStatus::RangeHit;
+        }
+      } else {
+        return RangeStatus::RangeMiss;
+      }
+    } else if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
+      bool ret = min > cache_min;
+      if (ret) {
+        if (min > cache_max) {
+          return RangeStatus::RangeError;
+        } else {
+          return RangeStatus::RangeHit;
+        }
+      } else {
+        return RangeStatus::RangeMiss;
+      }
+    } else {
+      return RangeStatus::RangeError;
+    }
+  } else {
+    if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
+      bool ret = right_close ? max < cache_max : max <= cache_max;
+      if (ret) {
+        if (max < cache_min) {
+          return RangeStatus::RangeError;
+        } else {
+          return RangeStatus::RangeHit;
+        }
+      } else {
+        return RangeStatus::RangeMiss;
+      }
+    } else if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
+      bool ret = left_close ? min > cache_min : min >= cache_min;
+      if (ret) {
+        if (min > cache_max) {
+          return RangeStatus::RangeError;
+        } else {
+          return RangeStatus::RangeHit;
+        }
+      } else {
+        return RangeStatus::RangeMiss;
+      }
+    } else {
+      return RangeStatus::RangeError;
+    }
+  }
+}
 
 // Status PCache::ZCount(std::string& key, std::string &min, std::string &max, uint64_t *len, ZCountCmd *cmd) {
 //   int cache_index = CacheIndex(key);
@@ -922,106 +955,56 @@ Status PCache::SRandmember(std::string& key, int64_t count, std::vector<std::str
 //   return caches_[cache_index]->ZIncrby(key, member, increment);
 // }
 
-// bool PCache::ReloadCacheKeyIfNeeded(cache::RedisCache *cache_obj, std::string& key, int mem_len, int db_len,
-//                                        const std::shared_ptr<DB>& db) {
-//   if (mem_len == -1) {
-//     uint64_t cache_len = 0;
-//     cache_obj->ZCard(key, &cache_len);
-//     mem_len = cache_len;
-//   }
-//   if (db_len == -1) {
-//     db_len = 0;
-//     db->storage()->ZCard(key, &db_len);
-//     if (!db_len) {
-//       return false;
-//     }
-//   }
-//   if (db_len < zset_cache_field_num_per_key_) {
-//     if (mem_len * 2 < db_len) {
-//       cache_obj->Del(key);
-//       PushKeyToAsyncLoadQueue(PIKA_KEY_TYPE_ZSET, key, db);
-//       return true;
-//     } else {
-//       return false;
-//     }
-//   } else {
-//     if (zset_cache_field_num_per_key_ && mem_len * 2 < zset_cache_field_num_per_key_) {
-//       cache_obj->Del(key);
-//       PushKeyToAsyncLoadQueue(PIKA_KEY_TYPE_ZSET, key, db);
-//       return true;
-//     } else {
-//       return false;
-//     }
-//   }
-// }
+bool PCache::ReloadCacheKeyIfNeeded(cache::RedisCache *cache_obj, std::string& key, int mem_len, int db_len,
+                                       PClient* client) {
+  if (mem_len == -1) {
+    uint64_t cache_len = 0;
+    cache_obj->ZCard(key, &cache_len);
+    mem_len = cache_len;
+  }
+  if (db_len == -1) {
+    db_len = 0;
+    PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(key, &db_len);
+    if (!db_len) {
+      return false;
+    }
+  }
+  if (db_len < zset_cache_field_num_per_key_) {
+    if (mem_len * 2 < db_len) {
+      cache_obj->Del(key);
+      PushKeyToAsyncLoadQueue(KEY_TYPE_ZSET, key, client);
+      return true;
+    } else {
+      return false;
+    }
+  } else {
+    if (zset_cache_field_num_per_key_ && mem_len * 2 < zset_cache_field_num_per_key_) {
+      cache_obj->Del(key);
+      PushKeyToAsyncLoadQueue(KEY_TYPE_ZSET, key, client);
+      return true;
+    } else {
+      return false;
+    }
+  }
+}
 
-// Status PCache::ZIncrbyIfKeyExist(std::string& key, std::string& member, double increment, ZIncrbyCmd *cmd, const
-// std::shared_ptr<DB>& db) {
-//   auto eps = std::numeric_limits<double>::epsilon();
-//   if (-eps < increment && increment < eps) {
-//     return Status::NotFound("icrement is 0, nothing to be done");
-//   }
-//   if (!cmd->res().ok()) {
-//     return Status::NotFound("key not exist");
-//   }
-//   std::lock_guard l(rwlock_);
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   auto cache_obj = caches_[cache_index];
-//   uint64_t cache_len = 0;
-//   cache_obj->ZCard(key, &cache_len);
-
-//   storage::ScoreMember cache_min_sm;
-//   storage::ScoreMember cache_max_sm;
-//   if (!GetCacheMinMaxSM(cache_obj, key, cache_min_sm, cache_max_sm)) {
-//     return Status::NotFound("key not exist");
-//   }
-//   auto cache_min_score = cache_min_sm.score;
-//   auto cache_max_score = cache_max_sm.score;
-//   auto RemCacheRangebyscoreAndCheck = [this, cache_obj, &key, cache_len, db](double score) {
-//     auto score_rm = std::to_string(score);
-//     auto s = cache_obj->ZRemrangebyscore(key, score_rm, score_rm);
-//     ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, -1, db);
-//     return s;
-//   };
-//   auto RemCacheKeyMember = [this, cache_obj, &key, cache_len, db](const std::string& member, bool check = true) {
-//     std::vector<std::string> member_rm = {member};
-//     auto s = cache_obj->ZRem(key, member_rm);
-//     if (check) {
-//       ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, -1, db);
-//     }
-//     return s;
-//   };
-
-//   if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
-//     if (cmd->Score() > cache_max_score) {
-//       return RemCacheKeyMember(member);
-//     } else if (cmd->Score() == cache_max_score) {
-//       RemCacheKeyMember(member, false);
-//       return RemCacheRangebyscoreAndCheck(cache_max_score);
-//     } else {
-//       std::vector<storage::ScoreMember> score_member = {{cmd->Score(), member}};
-//       auto s = cache_obj->ZAdd(key, score_member);
-//       CleanCacheKeyIfNeeded(cache_obj, key);
-//       return s;
-//     }
-//   } else if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
-//     if (cmd->Score() > cache_min_score) {
-//       std::vector<storage::ScoreMember> score_member = {{cmd->Score(), member}};
-//       auto s = cache_obj->ZAdd(key, score_member);
-//       CleanCacheKeyIfNeeded(cache_obj, key);
-//       return s;
-//     } else if (cmd->Score() == cache_min_score) {
-//       RemCacheKeyMember(member, false);
-//       return RemCacheRangebyscoreAndCheck(cache_min_score);
-//     } else {
-//       std::vector<std::string> member_rm = {member};
-//       return RemCacheKeyMember(member);
-//     }
-//   }
-
-//   return Status::NotFound("key not exist");
-// }
+// used
+Status PCache::ZIncrbyIfKeyExist(std::string& key, std::string& member, double increment, double score,PClient* client) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  auto cache_obj = caches_[cache_index];
+ int db_len = 0;
+  PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(key, &db_len);
+  if(db_len>zset_cache_field_num_per_key_){
+    return cache_obj->Del(key);
+  }
+   if (cache_obj->Exists(key)){
+    std::vector<storage::ScoreMember> score_member = {{score, member}};
+    return cache_obj->ZAdd(key, score_member);
+  }else {
+    return Status::NotFound("key not exist");
+  }
+}
 
 // RangeStatus PCache::CheckCacheRange(int32_t cache_len, int32_t db_len, int64_t start, int64_t stop, int64_t
 // &out_start,
@@ -1109,7 +1092,7 @@ Status PCache::SRandmember(std::string& key, int64_t count, std::vector<std::str
 //     if (rs == RangeStatus::RangeHit) {
 //       return cache_obj->ZRange(key, out_start, out_stop, score_members);
 //     } else if (rs == RangeStatus::RangeMiss) {
-//       ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, db_len, db);
+//       ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, db_len, client);
 //       return Status::NotFound("key not in cache");
 //     } else if (rs == RangeStatus::RangeError) {
 //       return Status::NotFound("error range");
@@ -1121,131 +1104,73 @@ Status PCache::SRandmember(std::string& key, int64_t count, std::vector<std::str
 //   }
 // }
 
-// Status PCache::ZRangebyscore(std::string& key, std::string &min, std::string &max,
-//                                 std::vector<storage::ScoreMember> *score_members, ZRangebyscoreCmd *cmd) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
+// used
+Status PCache::ZRangebyscore(std::string& key, std::string &min, std::string &max,
+                                std::vector<storage::ScoreMember> *score_members, ZRangebyscoreCmd *cmd) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  auto cache_obj = caches_[cache_index];
 
-//   auto cache_obj = caches_[cache_index];
-//   uint64_t cache_len = 0;
-//   cache_obj->ZCard(key, &cache_len);
-//   if (cache_len <= 0) {
-//     return Status::NotFound("key not in cache");
-//   } else {
-//     storage::ScoreMember cache_min_sm;
-//     storage::ScoreMember cache_max_sm;
-//     if (!GetCacheMinMaxSM(cache_obj, key, cache_min_sm, cache_max_sm)) {
-//       return Status::NotFound("key not exist");
-//     }
+  if (cache_obj->Exists(key)){
+return cache_obj->ZRangebyscore(key, min, max, score_members, cmd->Offset(), cmd->Count());
+  }else{
+    return Status::NotFound("key not in cache");
+  }
+}
 
-//     if (RangeStatus::RangeHit == CheckCacheRangeByScore(cache_len, cache_min_sm.score, cache_max_sm.score,
-//                                                         cmd->MinScore(), cmd->MaxScore(), cmd->LeftClose(),
-//                                                         cmd->RightClose())) {
-//       return cache_obj->ZRangebyscore(key, min, max, score_members, cmd->Offset(), cmd->Count());
-//     } else {
-//       return Status::NotFound("key not in cache");
-//     }
-//   }
-// }
+// used
+Status PCache::ZRank(std::string& key, std::string& member, int64_t *rank) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  auto cache_obj = caches_[cache_index];
 
-// Status PCache::ZRank(std::string& key, std::string& member, int64_t *rank, const std::shared_ptr<DB>& db) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (cache_obj->Exists(key)){
+    return cache_obj->ZRank(key, member, rank);
+  }else {
+    return Status::NotFound("key not exist");
+  }
+}
 
-//   auto cache_obj = caches_[cache_index];
-//   uint64_t cache_len = 0;
-//   cache_obj->ZCard(key, &cache_len);
-//   if (cache_len <= 0) {
-//     return Status::NotFound("key not in cache");
-//   } else {
-//     auto s = cache_obj->ZRank(key, member, rank);
-//     if (s.ok()) {
-//       if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
-//         int32_t db_len = 0;
-//         db->storage()->ZCard(key, &db_len);
-//         *rank = db_len - cache_len + *rank;
-//       }
-//       return s;
-//     } else {
-//       return Status::NotFound("key not in cache");
-//     }
-//   }
-// }
+// used
+Status PCache::ZRem(std::string& key, std::vector<std::string> &members) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+ auto cache_obj=caches_[cache_index];
 
-// Status PCache::ZRem(std::string& key, std::vector<std::string> &members, std::shared_ptr<DB> db) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
+  if (cache_obj->Exists(key)){
+    return cache_obj->ZRem(key, members);
+  }else {
+    return Status::NotFound("key not exist");
+  }
+}
 
-//   auto s = caches_[cache_index]->ZRem(key, members);
-//   ReloadCacheKeyIfNeeded(caches_[cache_index], key, -1, -1, db);
-//   return s;
-// }
+// used
+Status PCache::ZRemrangebyrank(std::string& key, int32_t start_index, int32_t stop_index) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  auto cache_obj = caches_[cache_index];
 
-// Status PCache::ZRemrangebyrank(std::string& key, std::string &min, std::string &max, int32_t ele_deleted,
-//                                   const std::shared_ptr<DB>& db) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   auto cache_obj = caches_[cache_index];
-//   uint64_t cache_len = 0;
-//   cache_obj->ZCard(key, &cache_len);
-//   if (cache_len <= 0) {
-//     return Status::NotFound("key not in cache");
-//   } else {
-//     auto db_obj = db->storage();
-//     int32_t db_len = 0;
-//     db_obj->ZCard(key, &db_len);
-//     db_len += ele_deleted;
-//     auto start = std::stol(min);
-//     auto stop = std::stol(max);
+  if (cache_obj->Exists(key)){
+    auto cache_min_str = std::to_string(start_index);
+        auto cache_max_str = std::to_string(stop_index);
+    return cache_obj->ZRemrangebyrank(key, cache_min_str, cache_max_str);
+  }else {
+    return Status::NotFound("key not exist");
+  }
+}
 
-//     int32_t start_index = start >= 0 ? start : db_len + start;
-//     int32_t stop_index = stop >= 0 ? stop : db_len + stop;
-//     start_index = start_index <= 0 ? 0 : start_index;
-//     stop_index = stop_index >= db_len ? db_len - 1 : stop_index;
-//     if (start_index > stop_index) {
-//       return Status::NotFound("error range");
-//     }
-
-//     if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
-//       if ((uint32_t)start_index <= cache_len) {
-//         auto cache_min_str = std::to_string(start_index);
-//         auto cache_max_str = std::to_string(stop_index);
-//         auto s = cache_obj->ZRemrangebyrank(key, cache_min_str, cache_max_str);
-//         ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, db_len - ele_deleted, db);
-//         return s;
-//       } else {
-//         return Status::NotFound("error range");
-//       }
-//     } else if (zset_cache_start_direction_ == cache::CACHE_START_FROM_END) {
-//       if ((uint32_t)stop_index >= db_len - cache_len) {
-//         int32_t cache_min = start_index - (db_len - cache_len);
-//         int32_t cache_max = stop_index - (db_len - cache_len);
-//         cache_min = cache_min <= 0 ? 0 : cache_min;
-//         cache_max = cache_max >= (int32_t)cache_len ? cache_len - 1 : cache_max;
-
-//         auto cache_min_str = std::to_string(cache_min);
-//         auto cache_max_str = std::to_string(cache_max);
-//         auto s = cache_obj->ZRemrangebyrank(key, cache_min_str, cache_max_str);
-
-//         ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, db_len - ele_deleted, db);
-//         return s;
-//       } else {
-//         return Status::NotFound("error range");
-//       }
-//     } else {
-//       return Status::NotFound("error range");
-//     }
-//   }
-// }
-
-// Status PCache::ZRemrangebyscore(std::string& key, std::string &min, std::string &max,
-//                                    const std::shared_ptr<DB>& db) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   auto s = caches_[cache_index]->ZRemrangebyscore(key, min, max);
-//   ReloadCacheKeyIfNeeded(caches_[cache_index], key, -1, -1, db);
-//   return s;
-// }
+// used
+Status PCache::ZRemrangebyscore(std::string& key, std::string &min, std::string &max
+                                   ) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  auto cache_obj=caches_[cache_index];
+  if (cache_obj->Exists(key)){
+    return cache_obj->ZRemrangebyscore(key, min, max);
+  }else {
+    return Status::NotFound("key not exist");
+  }
+}
 
 // Status PCache::ZRevrange(std::string& key, int64_t start, int64_t stop, std::vector<storage::ScoreMember>
 // *score_members,
@@ -1267,7 +1192,7 @@ Status PCache::SRandmember(std::string& key, int64_t count, std::vector<std::str
 //     if (rs == RangeStatus::RangeHit) {
 //       return cache_obj->ZRevrange(key, out_start, out_stop, score_members);
 //     } else if (rs == RangeStatus::RangeMiss) {
-//       ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, db_len, db);
+//       ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, db_len, client);
 //       return Status::NotFound("key not in cache");
 //     } else if (rs == RangeStatus::RangeError) {
 //       return Status::NotFound("error revrange");
@@ -1279,38 +1204,19 @@ Status PCache::SRandmember(std::string& key, int64_t count, std::vector<std::str
 //   }
 // }
 
-// Status PCache::ZRevrangebyscore(std::string& key, std::string &min, std::string &max,
-//                                    std::vector<storage::ScoreMember> *score_members, ZRevrangebyscoreCmd *cmd,
-//                                    const std::shared_ptr<DB>& db) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
+// used
+Status PCache::ZRevrangebyscore(std::string& key, std::string &min, std::string &max,
+                                   std::vector<storage::ScoreMember> *score_members, ZRevrangebyscoreCmd *cmd) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  auto cache_obj = caches_[cache_index];
 
-//   auto cache_obj = caches_[cache_index];
-//   uint64_t cache_len = 0;
-//   cache_obj->ZCard(key, &cache_len);
-//   if (cache_len <= 0) {
-//     return Status::NotFound("key not in cache");
-//   } else {
-//     storage::ScoreMember cache_min_sm;
-//     storage::ScoreMember cache_max_sm;
-//     if (!GetCacheMinMaxSM(cache_obj, key, cache_min_sm, cache_max_sm)) {
-//       return Status::NotFound("key not exist");
-//     }
-//     auto cache_min_score = cache_min_sm.score;
-//     auto cache_max_score = cache_max_sm.score;
-
-//     auto rs = CheckCacheRangeByScore(cache_len, cache_min_score, cache_max_score, cmd->MinScore(), cmd->MaxScore(),
-//                                      cmd->LeftClose(), cmd->RightClose());
-//     if (RangeStatus::RangeHit == rs) {
-//       return cache_obj->ZRevrangebyscore(key, min, max, score_members, cmd->Offset(), cmd->Count());
-//     } else if (RangeStatus::RangeMiss == rs) {
-//       ReloadCacheKeyIfNeeded(cache_obj, key, cache_len, -1, db);
-//       return Status::NotFound("score range miss");
-//     } else {
-//       return Status::NotFound("score range error");
-//     }
-//   }
-// }
+  if (cache_obj->Exists(key)){
+return cache_obj->ZRevrangebyscore(key, min, max, score_members, cmd->Offset(), cmd->Count());
+  }else{
+    return Status::NotFound("key not in cache");
+  }
+}
 
 // bool PCache::CacheSizeEqsDB(std::string& key, const std::shared_ptr<DB>& db) {
 //   int32_t db_len = 0;
@@ -1335,37 +1241,30 @@ Status PCache::SRandmember(std::string& key, int64_t count, std::vector<std::str
 //   }
 // }
 
-// Status PCache::ZRevrank(std::string& key, std::string& member, int64_t *rank, const std::shared_ptr<DB>& db) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   auto cache_obj = caches_[cache_index];
-//   uint64_t cache_len = 0;
-//   cache_obj->ZCard(key, &cache_len);
-//   if (cache_len <= 0) {
-//     return Status::NotFound("key not in cache");
-//   } else {
-//     auto s = cache_obj->ZRevrank(key, member, rank);
-//     if (s.ok()) {
-//       if (zset_cache_start_direction_ == cache::CACHE_START_FROM_BEGIN) {
-//         int32_t db_len = 0;
-//         db->storage()->ZCard(key, &db_len);
-//         *rank = db_len - cache_len + *rank;
-//       }
-//       return s;
-//     } else {
-//       return Status::NotFound("member not in cache");
-//     }
-//   }
-// }
-// Status PCache::ZScore(std::string& key, std::string& member, double *score, const std::shared_ptr<DB>& db) {
-//   int cache_index = CacheIndex(key);
-//   std::lock_guard lm(*cache_mutexs_[cache_index]);
-//   auto s = caches_[cache_index]->ZScore(key, member, score);
-//   if (!s.ok()) {
-//     return Status::NotFound("key or member not in cache");
-//   }
-//   return s;
-// }
+// used
+Status PCache::ZRevrank(std::string& key, std::string& member, int64_t *rank) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  auto cache_obj = caches_[cache_index];
+
+  if (cache_obj->Exists(key)){
+    return cache_obj->ZRevrank(key, member, rank);
+  }else {
+    return Status::NotFound("key not exist");
+  }
+}
+
+Status PCache::ZScore(std::string& key, std::string& member, double *score) {
+  int cache_index = CacheIndex(key);
+  std::lock_guard lm(*cache_mutexs_[cache_index]);
+  auto cache_obj=caches_[cache_index];
+  
+  if (cache_obj->Exists(key)){
+    return cache_obj->ZScore(key, member, score);
+  }else {
+    return Status::NotFound("key not exist");
+  }
+}
 
 // Status PCache::ZRangebylex(std::string& key, std::string &min, std::string &max, std::vector<std::string> *members,
 //                               const std::shared_ptr<DB>& db) {
@@ -1541,18 +1440,18 @@ Status PCache::WriteSetToCache(std::string& key, std::vector<std::string> &membe
   return Status::OK();
 }
 
-// Status PCache::WriteZSetToCache(std::string& key, std::vector<storage::ScoreMember> &score_members, int64_t ttl) {
-//   if (0 >= ttl) {
-//     if (PIKA_TTL_NONE == ttl) {
-//       return ZAddnxWithoutTTL(key, score_members);
-//     } else {
-//       return Del({key});
-//     }
-//   } else {
-//     return ZAddnx(key, score_members, ttl);
-//   }
-//   return Status::OK();
-// }
+Status PCache::WriteZSetToCache(std::string& key, std::vector<storage::ScoreMember> &score_members, int64_t ttl) {
+  if (0 >= ttl) {
+    if (PCache_TTL_NONE == ttl) {
+      return ZAddnxWithoutTTL(key, score_members);
+    } else {
+      return Del({key});
+    }
+  } else {
+    return ZAddnx(key, score_members, ttl);
+  }
+  return Status::OK();
+}
 
 void PCache::PushKeyToAsyncLoadQueue(const char key_type, std::string &key, PClient *client) {
   cache_load_thread_->Push(key_type, key, client);
