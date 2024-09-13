@@ -20,11 +20,11 @@ namespace storage {
 using Status = rocksdb::Status;
 using Slice = rocksdb::Slice;
 
-enum DataType : uint8_t { kStrings = 0, kHashes = 1, kSets = 2, kLists = 3, kZSets = 4, kNones = 5, kAll = 6 };
+enum DataType : uint8_t { kStrings = 0, kHashes = 1, kSets = 2, kLists = 3, kZSets = 4, kSearch = 5, kNones = 6, kAll = 7 };
 
-static const char* DataTypeStrings[] = {"string", "hash", "set", "list", "zset", "none", "all"};
+static const char* DataTypeStrings[] = {"string", "hash", "set", "list", "zset", "search", "none", "all"};
 
-static const char DataTypeTag[] = {'k', 'h', 's', 'l', 'z', 'n', 'a'};
+static const char DataTypeTag[] = {'k', 'h', 's', 'l', 'z', 'i', 'n', 'a'};
 
 const char* DataTypeToString(DataType type);
 

@@ -319,8 +319,12 @@ void InfoCmd::InfoServer(std::string& info) {
 
   tmp_stream << "# Server\r\n";
   tmp_stream << "PikiwiDB_version:" << version << "\r\n";
+#if defined(KPIKIWIDB_GIT_COMMIT_ID)
   tmp_stream << "PikiwiDB_build_git_sha:" << KPIKIWIDB_GIT_COMMIT_ID << "\r\n";
+#endif
+#if defined(KPIKIWIDB_BUILD_DATE)
   tmp_stream << "Pikiwidb_build_compile_date: " << KPIKIWIDB_BUILD_DATE << "\r\n";
+#endif
   tmp_stream << "os:" << host_info.sysname << " " << host_info.release << " " << host_info.machine << "\r\n";
   tmp_stream << "arch_bits:" << (reinterpret_cast<char*>(&host_info.machine) + strlen(host_info.machine) - 2) << "\r\n";
   tmp_stream << "process_id:" << getpid() << "\r\n";
