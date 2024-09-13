@@ -20,7 +20,7 @@
 #  include <iostream>
 #endif
 
-namespace pikiwidb {
+namespace kiwi {
 
 class ConfigParser {
  public:
@@ -81,4 +81,4 @@ inline T ConfigParser::GetData(const char* key, const T& default_) const {
   return toType<T>(it->second[0]);  // only return first value
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

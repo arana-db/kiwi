@@ -1,12 +1,12 @@
 name: 'Feature Request'
-description: Suggest a feature for PikiwiDB
+description: Suggest a feature for kiwi
 labels: [ "✏️ Feature" ]
 
 body:
   - type: dropdown
     id: affected-packages
     attributes:
-      label: Which PikiwiDB functionalities are relevant/related to the feature request?
+      label: Which kiwi functionalities are relevant/related to the feature request?
       options:
         - other
       multiple: true

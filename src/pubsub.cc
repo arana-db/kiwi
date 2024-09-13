@@ -13,7 +13,7 @@
 #include "log.h"
 #include "pubsub.h"
 
-namespace pikiwidb {
+namespace kiwi {
 PPubsub& PPubsub::Instance() {
   static PPubsub ps;
   return ps;
@@ -391,4 +391,4 @@ PError pubsub(const std::vector<PString>& params, UnboundedBuffer* reply) {
   return kPErrorOK;
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

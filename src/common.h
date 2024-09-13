@@ -25,11 +25,11 @@
 
 using PString = std::string;
 
-namespace pikiwidb {
+namespace kiwi {
 
 const int kStringMaxBytes = 1 * 1024 * 1024 * 1024;
 
-#define PIKIWIDB_SCAN_STEP_LENGTH 1000
+#define kiwi_SCAN_STEP_LENGTH 1000
 
 enum PError {
   kPErrorNop = -1,
@@ -223,8 +223,8 @@ class ExecuteOnScopeExit {
 };
 
 #define CONCAT(a, b) a##b
-#define _MAKE_DEFER_HELPER_(line) pikiwidb::ExecuteOnScopeExit CONCAT(defer, line) = [&]()
+#define _MAKE_DEFER_HELPER_(line) kiwi::ExecuteOnScopeExit CONCAT(defer, line) = [&]()
 
 #define DEFER _MAKE_DEFER_HELPER_(__LINE__)
 
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -1,5 +1,5 @@
-# PikiwiDB
-![](docs/images/pikiwidb-logo.png)
+# Kiwi
+![](docs/images/Kiwi-logo.png)
 [Click me switch to English](README.en.md)
 
 C++20 实现的增强版 Redis 服务器,使用 RocksDB 作为持久化存储引擎。(集群支持尚正在计划中)
@@ -8,27 +8,25 @@ C++20 实现的增强版 Redis 服务器,使用 RocksDB 作为持久化存储引
 
 * Linux 或 MAC OS 或 FreeBSD
 
-## 编译
-
-**建议使用最新版本的 Ubuntu 或 Debian Linux 系统**
-
-执行编译:
-
-在 Rocky Linux 下执行如下的指令：
-
-```bash
+```shell
+# Rocky Linux, Fedora Linux, CentOS
 sudo dnf groupinstall -y 'Development Tools'
 sudo dnf install cmake g++ autoconf perl -y
 git config --global http.version HTTP/1.1
+# Ubuntu
+sudo apt install cmake g++ autoconf perl -y
+git config --global http.version HTTP/1.1
 ```
 
-执行以下命令开始编译 PikiwiDB:
+## 编译
+
+执行以下命令开始编译 Kiwi:
 
 ```bash
 ./etc/script/build.sh
 ```
 
-PikiwiDB 默认以 release 模式编译，不支持调试。如果需要调试，请以 debug 模式编译。
+Kiwi 默认以 release 模式编译，不支持调试。如果需要调试，请以 debug 模式编译。
 
 ```bash
 ./etc/script/build.sh --clear
@@ -38,23 +36,23 @@ PikiwiDB 默认以 release 模式编译，不支持调试。如果需要调试�
 ## 运行
 
 ```bash
-./bin/pikiwidb ./etc/conf/pikiwidb.conf
+./bin/kiwi ./etc/conf/Kiwi.conf
 ```
 
 ## 与 Redis 完全兼容
 
-你可以用 Redis 的各种工具来测试 PikiwiDB，比如官方的 redis-cli, redis-benchmark。
+你可以用 Redis 的各种工具来测试 Kiwi，比如官方的 redis-cli, redis-benchmark。
 
-PikiwiDB 可以和 Redis 之间进行复制，可以读取 Redis 的 rdb 文件或 aof 文件。当然，PikiwiDB 生成的 aof 或 rdb 文件也可以被 Redis 读取。
+Kiwi 可以和 Redis 之间进行复制，可以读取 Redis 的 rdb 文件或 aof 文件。当然，Kiwi 生成的 aof 或 rdb 文件也可以被 Redis 读取。
 
-你还可以用 redis-sentinel 来实现 PikiwiDB 的高可用！
+你还可以用 redis-sentinel 来实现 Kiwi 的高可用！
 
-总之，PikiwiDB 与 Redis 完全兼容。
+总之，Kiwi 与 Redis 完全兼容。
 
 ## 高性能
 
-- PikiwiDB 性能大约比 Redis 3.2 高出 20% (使用 redis-benchmark 测试 pipeline 请求，比如设置 -P=50 或更高)
-- PikiwiDB 的高性能有一部分得益于独立的网络线程处理 IO，因此和 redis 比占了便宜。但 PikiwiDB 逻辑仍然是单线程的。
+- Kiwi 性能大约比 Redis 3.2 高出 20% (使用 redis-benchmark 测试 pipeline 请求，比如设置 -P=50 或更高)
+- Kiwi 的高性能有一部分得益于独立的网络线程处理 IO，因此和 redis 比占了便宜。但 Kiwi 逻辑仍然是单线程的。
 - 另一部分得益于 C++ STL 的高效率（CLANG 的表现比 GCC 更好）。
 - 在测试前，你要确保 std::list 的 size() 是 O(1) 复杂度，这才遵循 C++11 的标准。否则 list 相关命令不可测。
 
@@ -65,18 +63,18 @@ PikiwiDB 可以和 Redis 之间进行复制，可以读取 Redis 的 rdb 文件�
 
 ## 支持冷数据淘汰
 
-是的，在内存受限的情况下，你可以让 PikiwiDB 根据简单的 LRU 算法淘汰一些 key 以释放内存。
+是的，在内存受限的情况下，你可以让 Kiwi 根据简单的 LRU 算法淘汰一些 key 以释放内存。
 
 ## 主从复制，事务，RDB/AOF持久化，慢日志，发布订阅
 
-这些特性 PikiwiDB 都有:-)
+这些特性 Kiwi 都有:-)
 
 ## 持久化：内存不再是上限
-RocksDB 可以配置为 PikiwiDB 的持久化存储引擎，可以存储更多的数据。
+RocksDB 可以配置为 Kiwi 的持久化存储引擎，可以存储更多的数据。
 
 ## 命令列表
 
-#### 展示 PikiwiDB 支持的所有命令
+#### 展示 Kiwi 支持的所有命令
 
 - cmdlist
 
@@ -123,5 +121,5 @@ RocksDB 可以配置为 PikiwiDB 的持久化存储引擎，可以存储更多�
 
 ## Contact Us
 
-![](docs/images/pikiwidb-wechat-cn.png)
+![](docs/images/Kiwi-wechat-cn.png)
 

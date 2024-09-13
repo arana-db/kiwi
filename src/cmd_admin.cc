@@ -8,7 +8,7 @@
 
    Compared to the external commands at the user level,
    the commands defined here are more focused on the overall
-   management of the PikiwiDB.
+   management of the kiwi.
 
  */
 
@@ -31,7 +31,7 @@
 #include "pstd_string.h"
 #include "rocksdb/version.h"
 
-#include "pikiwidb.h"
+#include "kiwi.h"
 #include "praft/praft.h"
 #include "pstd/env.h"
 
@@ -39,7 +39,7 @@
 #include "slow_log.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 CmdConfig::CmdConfig(const std::string& name, int arity) : BaseCmdGroup(name, kCmdFlagsAdmin, kAclCategoryAdmin) {}
 
@@ -149,7 +149,7 @@ bool ShutdownCmd::DoInitial(PClient* client) {
 
 void ShutdownCmd::DoCmd(PClient* client) {
   PSTORE.GetBackend(client->GetCurrentDB())->UnLockShared();
-  g_pikiwidb->Stop();
+  g_kiwi->Stop();
   PSTORE.GetBackend(client->GetCurrentDB())->LockShared();
   client->SetRes(CmdRes::kNone);
 }
@@ -315,25 +315,21 @@ void InfoCmd::InfoServer(std::string& info) {
   time_t current_time_s = time(nullptr);
   std::stringstream tmp_stream;
   char version[32];
-  snprintf(version, sizeof(version), "%s", KPIKIWIDB_VERSION);
+  snprintf(version, sizeof(version), "%s", Kkiwi_VERSION);
 
   tmp_stream << "# Server\r\n";
-  tmp_stream << "PikiwiDB_version:" << version << "\r\n";
-#if defined(KPIKIWIDB_GIT_COMMIT_ID)
-  tmp_stream << "PikiwiDB_build_git_sha:" << KPIKIWIDB_GIT_COMMIT_ID << "\r\n";
-#endif
-#if defined(KPIKIWIDB_BUILD_DATE)
-  tmp_stream << "Pikiwidb_build_compile_date: " << KPIKIWIDB_BUILD_DATE << "\r\n";
-#endif
+  tmp_stream << "kiwi_version:" << version << "\r\n";
+  tmp_stream << "kiwi_build_git_sha:" << Kkiwi_GIT_COMMIT_ID << "\r\n";
+  tmp_stream << "kiwi_build_compile_date: " << Kkiwi_BUILD_DATE << "\r\n";
   tmp_stream << "os:" << host_info.sysname << " " << host_info.release << " " << host_info.machine << "\r\n";
   tmp_stream << "arch_bits:" << (reinterpret_cast<char*>(&host_info.machine) + strlen(host_info.machine) - 2) << "\r\n";
   tmp_stream << "process_id:" << getpid() << "\r\n";
   tmp_stream << "run_id:" << static_cast<std::string>(g_config.run_id) << "\r\n";
   tmp_stream << "tcp_port:" << g_config.port << "\r\n";
-  tmp_stream << "uptime_in_seconds:" << (current_time_s - g_pikiwidb->Start_time_s()) << "\r\n";
-  tmp_stream << "uptime_in_days:" << (current_time_s / (24 * 3600) - g_pikiwidb->Start_time_s() / (24 * 3600) + 1)
+  tmp_stream << "uptime_in_seconds:" << (current_time_s - g_kiwi->Start_time_s()) << "\r\n";
+  tmp_stream << "uptime_in_days:" << (current_time_s / (24 * 3600) - g_kiwi->Start_time_s() / (24 * 3600) + 1)
              << "\r\n";
-  tmp_stream << "config_file:" << g_pikiwidb->GetConfigName() << "\r\n";
+  tmp_stream << "config_file:" << g_kiwi->GetConfigName() << "\r\n";
 
   info.append(tmp_stream.str());
 }
@@ -372,8 +368,8 @@ void InfoCmd::InfoCPU(std::string& info) {
 }
 
 void InfoCmd::InfoData(std::string& message) {
-  message += DATABASES_NUM + std::string(":") + std::to_string(pikiwidb::g_config.databases) + "\r\n";
-  message += ROCKSDB_NUM + std::string(":") + std::to_string(pikiwidb::g_config.db_instance_num) + "\r\n";
+  message += DATABASES_NUM + std::string(":") + std::to_string(kiwi::g_config.databases) + "\r\n";
+  message += ROCKSDB_NUM + std::string(":") + std::to_string(kiwi::g_config.db_instance_num) + "\r\n";
   message += ROCKSDB_VERSION + std::string(":") + ROCKSDB_NAMESPACE::GetRocksVersionAsString() + "\r\n";
 }
 
@@ -648,4 +644,14 @@ void SortCmd::InitialArgument() {
   get_patterns_.clear();
   ret_.clear();
 }
-}  // namespace pikiwidb
+MonitorCmd::MonitorCmd(const std::string& name, int arity)
+    : BaseCmd(name, arity, kCmdFlagsReadonly | kCmdFlagsAdmin, kAclCategoryAdmin) {}
+
+bool MonitorCmd::DoInitial(PClient* client) { return true; }
+
+void MonitorCmd::DoCmd(PClient* client) {
+  client->AddToMonitor();
+  client->SetRes(CmdRes::kOK);
+}
+
+}  // namespace kiwi

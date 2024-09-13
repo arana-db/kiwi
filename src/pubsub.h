@@ -17,7 +17,7 @@
 
 #include "common.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class PClient;
 class PPubsub {
@@ -58,4 +58,4 @@ class PPubsub {
   static void recycleClients(ChannelClients& channels, PString& start);
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

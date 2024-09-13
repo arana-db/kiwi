@@ -23,7 +23,7 @@
 #include "replication.h"
 #include "storage/storage.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 struct CommandStatistics {
   CommandStatistics() = default;
@@ -162,7 +162,7 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   //  PClient() = delete;
   explicit PClient();
 
-  //  int HandlePackets(pikiwidb::TcpConnection*, const char*, int);
+  //  int HandlePackets(kiwi::TcpConnection*, const char*, int);
 
   void OnConnect();
 
@@ -250,8 +250,8 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   void SetSlaveInfo();
   PSlaveInfo* GetSlaveInfo() const { return slave_info_.get(); }
   void TransferToSlaveThreads();
+  void AddToMonitor();
 
-  static void AddCurrentToMonitor();
   static void FeedMonitors(const std::vector<std::string>& params);
 
   void SetAuth() { auth_ = true; }
@@ -341,4 +341,4 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   std::unordered_map<std::string, CommandStatistics> cmdstat_map_;
   std::shared_ptr<TimeStat> time_stat_;
 };
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -5,7 +5,7 @@
 
 /*
   Declared a set of functions responsible for managing the
-  runtime configuration information of PikiwiDB.
+  runtime configuration information of kiwi.
  */
 
 #pragma once
@@ -15,7 +15,9 @@
 #include <map>
 #include <memory>
 #include <shared_mutex>
-#include <string>
+#include <cstring>
+#include <cstdint>
+#include <cstddef>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -26,7 +28,7 @@
 #include "common.h"
 #include "config_parser.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 using Status = rocksdb::Status;
 using CheckFunc = std::function<Status(const std::string&)>;
@@ -118,7 +120,7 @@ using ValuePrt = std::unique_ptr<BaseValue>;
 using ConfigMap = std::unordered_map<std::string, ValuePrt>;
 
 /*
- * PConfig holds information about PikiwiDB
+ * PConfig holds information about kiwi
  * server-side runtime information.
  */
 class PConfig {
@@ -127,19 +129,19 @@ class PConfig {
 
   /*------------------------
    * PConfig()
-   * Initialize PikiwiDB's config & RocksDB's config.
+   * Initialize kiwi's config & RocksDB's config.
    */
   PConfig();
 
   /*------------------------
    * ~PConfig()
-   * Destroy a PikiwiDB instance.
+   * Destroy a kiwi's config instance.
    */
   ~PConfig() = default;
 
   /*------------------------
    * LoadFromFile(const std::string& file_name)
-   * Load a PikiwiDB config file and store in PConfig
+   * Load a kiwi config file and store in PConfig
    * Check the return to see success or not
    */
   bool LoadFromFile(const std::string& file_name);
@@ -171,7 +173,7 @@ class PConfig {
  public:
   /*
    * Some crucial, globally significant, externally accessible public data.
-   * Refer to the pikiwidb.conf
+   * Refer to the kiwi.conf
    */
 
   /*
@@ -180,7 +182,7 @@ class PConfig {
    */
   std::atomic_uint32_t timeout = 0;
   /*
-   * Client connect to PikiwiDB server may need password
+   * Client connect to kiwi server may need password
    */
   AtomicString password;
 
@@ -217,7 +219,7 @@ class PConfig {
   std::vector<PString> modules;
 
   /*
-   * PikiwiDB use the thread pool to manage the task,
+   * kiwi use the thread pool to manage the task,
    * categorize them into two types: fast tasks and slow tasks,
    * and fast_cmd_threads_num & slow_cmd_threads_num used to set
    * the number of threads to handle these task.
@@ -239,14 +241,14 @@ class PConfig {
   std::atomic_uint64_t small_compaction_threshold = 604800;
   std::atomic_uint64_t small_compaction_duration_threshold = 259200;
 
-  // Decide whether PikiwiDB runs as a daemon process.
+  // Decide whether kiwi runs as a daemon process.
   std::atomic_bool daemonize = false;
 
   // Which file to store the process id when running?
-  AtomicString pid_file = "./pikiwidb.pid";
+  AtomicString pid_file = "./kiwi.pid";
 
   /*
-   * For PikiwiDB, ip is the address and the port that
+   * For kiwi, ip is the address and the port that
    * the server will listen on.
    * In default, the full address will be "127.0.0.1:9221"
    */
@@ -268,7 +270,7 @@ class PConfig {
   AtomicString log_dir = "stdout";
 
   /*
-   * PikiwiDB uses the SPDLOG Library to implement the log module,
+   * kiwi uses the SPDLOG Library to implement the log module,
    * so the log_level is the same as the SPDLOG level.
    * Just look at SPDLOG wiki to know more.
    */
@@ -276,12 +278,15 @@ class PConfig {
 
   /*
    * run_id is a SHA1-sized random number that identifies a
-   * given execution of PikiwiDB.
+   * given execution of kiwi.
    */
   AtomicString run_id;
 
   // The number of databases.
   std::atomic<size_t> databases = 16;
+
+  // Enable redis_compatioble_mode?
+  std::atomic_bool redis_compatible_mode = true;
 
   /*
    * For Network I/O threads, in future version, we may delete
@@ -294,10 +299,10 @@ class PConfig {
   std::atomic<size_t> db_instance_num = 3;
 
   // Use raft protocol?
-  std::atomic_bool use_raft = true;
+  std::atomic_bool use_raft = false;
 
   /*
-   * PikiwiDB use the RocksDB to store the data,
+   * kiwi use the RocksDB to store the data,
    * and these options below will set to rocksdb::Options,
    * Just check the RocksDB document & PConfig::GetRocksDBOptions
    * to know more.
@@ -417,4 +422,4 @@ class PConfig {
   // The file name of the config
   std::string config_file_name_;
 };
-}  // namespace pikiwidb
+}  // namespace kiwi

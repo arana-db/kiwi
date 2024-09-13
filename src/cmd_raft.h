@@ -14,7 +14,7 @@
 
 #include "base_cmd.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 /* RAFT.NODE ADD [id] [address:port]
  *   Add a new node to the cluster.  The [id] can be an explicit non-zero value,
@@ -83,4 +83,4 @@ class RaftClusterCmd : public BaseCmd {
   static constexpr std::string_view kJoinCmd = "JOIN";
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

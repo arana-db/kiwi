@@ -12,7 +12,7 @@
 
 #include "base_cmd.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class GetCmd : public BaseCmd {
  public:
@@ -267,4 +267,4 @@ class MSetnxCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

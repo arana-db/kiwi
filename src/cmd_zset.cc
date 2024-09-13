@@ -14,7 +14,7 @@
 #include "pstd/pstd_string.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 static void FitLimit(int64_t& count, int64_t& offset, const int64_t size) {
   count = count >= 0 ? count : size;
@@ -1026,4 +1026,4 @@ void ZRemrangebyscoreCmd::DoCmd(PClient* client) {
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

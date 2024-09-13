@@ -5,7 +5,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-package pikiwidb_test
+package kiwi_test
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/OpenAtomFoundation/pikiwidb/tests/util"
+	"github.com/OpenAtomFoundation/kiwi/tests/util"
 )
 
 var _ = Describe("Hash", Ordered, func() {

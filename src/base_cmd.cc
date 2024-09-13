@@ -16,17 +16,17 @@
 #include "common.h"
 #include "config.h"
 #include "log.h"
-#include "pikiwidb.h"
+#include "kiwi.h"
 #include "praft/praft.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 BaseCmd::BaseCmd(std::string name, int16_t arity, uint32_t flag, uint32_t aclCategory) {
   name_ = std::move(name);
   arity_ = arity;
   flag_ = flag;
   acl_category_ = aclCategory;
-  cmd_id_ = g_pikiwidb->GetCmdID();
+  cmd_id_ = g_kiwi->GetCmdID();
 }
 
 bool BaseCmd::CheckArg(size_t num) const {
@@ -115,5 +115,5 @@ bool BaseCmdGroup::DoInitial(PClient* client) {
   return true;
 }
 
-}  // namespace pikiwidb
-/* namespace pikiwidb */
+}  // namespace kiwi
+/* namespace kiwi */

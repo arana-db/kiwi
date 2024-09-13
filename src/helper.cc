@@ -26,7 +26,7 @@
 
 #endif
 
-namespace pikiwidb {
+namespace kiwi {
 
 static unsigned dict_hash_function_seed = 5381;
 
@@ -369,4 +369,4 @@ size_t getMemoryInfo(MemoryInfoType type) {
 
 #endif
 
-}  // namespace pikiwidb
+}  // namespace kiwi

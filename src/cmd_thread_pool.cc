@@ -11,7 +11,7 @@
 #include "cmd_thread_pool_worker.h"
 #include "log.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 void CmdThreadPoolTask::Run(BaseCmd *cmd) { cmd->Execute(client_.get()); }
 const std::string &CmdThreadPoolTask::CmdName() { return client_->CmdName(); }
@@ -94,4 +94,4 @@ void CmdThreadPool::DoStop() {
 
 CmdThreadPool::~CmdThreadPool() { DoStop(); }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

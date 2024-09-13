@@ -20,7 +20,7 @@
 #include "db.h"
 #include "storage/storage.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 enum TaskType { kCheckpoint = 0, kLoadDBFromCheckpoint, kEmpty };
 
@@ -68,4 +68,4 @@ class PStore {
 
 #define PSTORE PStore::Instance()
 
-}  // namespace pikiwidb
+}  // namespace kiwi

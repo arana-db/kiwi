@@ -4,7 +4,7 @@
 # of patent rights can be found in the PATENTS file in the same directory.
 
 CMAKE_MINIMUM_REQUIRED(VERSION 3.14)
-PROJECT(PikiwiDB)
+PROJECT(kiwi)
 include(GNUInstallDirs)
 
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=return-type")

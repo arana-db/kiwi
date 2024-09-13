@@ -18,7 +18,7 @@
 #include "base_cmd.h"
 #include "pstd/pstd_status.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 // task interface
 // inherit this class and implement the Run method
@@ -97,4 +97,4 @@ class CmdThreadPool {
   std::atomic_bool stopped_ = false;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

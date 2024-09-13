@@ -15,7 +15,7 @@
 #include "log.h"
 #include "slow_log.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 PSlowLog& PSlowLog::Instance() {
   static PSlowLog slog;
@@ -72,4 +72,4 @@ void PSlowLog::EndAndStat(const std::vector<PString>& cmds) {
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

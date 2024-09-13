@@ -1,13 +1,13 @@
 #!/bin/bash
 
-killall -9 pikiwidb
+killall -9 kiwi
 mkdir leader follower1
 
 
 PWD=`pwd`
 PROJECT_HOME="${PWD}/../"
-BIN="${PROJECT_HOME}/bin/pikiwidb"
-CONF="${PROJECT_HOME}/etc/conf/pikiwidb.conf"
+BIN="${PROJECT_HOME}/bin/kiwi"
+CONF="${PROJECT_HOME}/etc/conf/kiwi.conf"
 cd leader    && ulimit -n 99999  && rm -fr *  && ${BIN} ${CONF} --port 7777 &
 cd follower1 && ulimit -n 99999 && rm -fr *   && ${BIN} ${CONF} --port 8888 &
 sleep 5

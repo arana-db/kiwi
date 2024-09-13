@@ -5,18 +5,19 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-package pikiwidb_test
+package kiwi_test
 
 import (
 	"context"
 	"log"
 	"strconv"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/OpenAtomFoundation/pikiwidb/tests/util"
+	"github.com/OpenAtomFoundation/kiwi/tests/util"
 )
 
 var _ = Describe("Admin", Ordered, func() {
@@ -71,7 +72,7 @@ var _ = Describe("Admin", Ordered, func() {
 	It("Cmd Shutdown", func() {
 		Expect(client.Shutdown(ctx).Err()).NotTo(HaveOccurred())
 
-		// PikiwiDB does not support the Ping command right now
+		// kiwi does not support the Ping command right now
 		// wait for 5 seconds and then ping server
 		// time.Sleep(5 * time.Second)
 		// Expect(client.Ping(ctx).Err()).To(HaveOccurred())
@@ -81,7 +82,7 @@ var _ = Describe("Admin", Ordered, func() {
 		s = util.StartServer(config, map[string]string{"port": strconv.Itoa(7777)}, true)
 		Expect(s).NotTo(Equal(nil))
 
-		// PikiwiDB does not support the Ping command right now
+		// kiwi does not support the Ping command right now
 		// wait for 5 seconds and then ping server
 		// time.Sleep(5 * time.Second)
 		// client = s.NewClient()
@@ -250,5 +251,35 @@ var _ = Describe("Admin", Ordered, func() {
 
 		del2 := client.Del(ctx, "list2")
 		Expect(del2.Err()).NotTo(HaveOccurred())
+	})
+
+	It("should monitor", Label("monitor"), func() {
+		ress := make(chan string)
+		client1 := s.NewClient()
+		mn := client1.Monitor(ctx, ress)
+		mn.Start()
+		// Wait for the Redis server to be in monitoring mode.
+		time.Sleep(100 * time.Millisecond)
+		client.Set(ctx, "foo", "bar", 0)
+		client.Set(ctx, "bar", "baz", 0)
+		client.Set(ctx, "bap", 8, 0)
+		client.Get(ctx, "bap")
+		lst := []string{}
+		for i := 0; i < 5; i++ {
+			s := <-ress
+			lst = append(lst, s)
+		}
+		mn.Stop()
+		Expect(lst[0]).To(ContainSubstring("OK"))
+		Expect(lst[2]).To(ContainSubstring(`"set foo bar"`))
+		Expect(lst[3]).To(ContainSubstring(`"set bar baz"`))
+		Expect(lst[4]).To(ContainSubstring(`"set bap 8"`))
+
+		err := client1.Close()
+		if err != nil {
+			log.Println("Close monitor client conn fail.", err.Error())
+			return
+		}
+
 	})
 })

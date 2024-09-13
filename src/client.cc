@@ -20,12 +20,12 @@
 #include "base_cmd.h"
 #include "config.h"
 #include "env.h"
-#include "pikiwidb.h"
+#include "kiwi.h"
 #include "pstd_string.h"
 #include "slow_log.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 void CmdRes::RedisAppendLen(std::string& str, int64_t ori, const std::string& prefix) {
   str.append(prefix);
@@ -297,7 +297,7 @@ int PClient::handlePacket(const char* start, int bytes) {
   auto parseRet = parser_.ParseRequest(ptr, end);
   if (parseRet == PParseResult::kError) {
     if (!parser_.IsInitialState()) {
-      //      g_pikiwidb->closeClient(this);
+      //      g_kiwi->closeClient(this);
       return 0;
     }
 
@@ -337,7 +337,7 @@ int PClient::handlePacket(const char* start, int bytes) {
       auto now = ::time(nullptr);
       if (now <= last_auth_ + 1) {
         // avoid guess password.
-        g_pikiwidb->CloseConnection(shared_from_this());
+        g_kiwi->CloseConnection(shared_from_this());
         return 0;
       } else {
         last_auth_ = now;
@@ -361,7 +361,7 @@ int PClient::handlePacket(const char* start, int bytes) {
   //  }
   auto now = std::chrono::steady_clock::now();
   time_stat_->SetEnqueueTs(now);
-  g_pikiwidb->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this()));
+  g_kiwi->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this()));
 
   // check transaction
   //  if (IsFlagOn(ClientFlag_multi)) {
@@ -406,7 +406,7 @@ int PClient::handlePacket(const char* start, int bytes) {
 // 为了兼容老的命令处理流程，新的命令处理流程在这里
 // 后面可以把client这个类重构，完整的支持新的命令处理流程
 void PClient::executeCommand() {
-  //  auto [cmdPtr, ret] = g_pikiwidb->GetCmdTableManager().GetCommand(CmdName(), this);
+  //  auto [cmdPtr, ret] = g_kiwi->GetCmdTableManager().GetCommand(CmdName(), this);
 
   //  if (!cmdPtr) {
   //    if (ret == CmdRes::kInvalidParameter) {
@@ -476,24 +476,24 @@ int PClient::PeerPort() const {
 bool PClient::SendPacket() {
   std::string str;
   message_.swap(str);
-  g_pikiwidb->SendPacket2Client(shared_from_this(), std::move(str));
+  g_kiwi->SendPacket2Client(shared_from_this(), std::move(str));
   SendOver();
   return true;
 }
 
 bool PClient::SendPacket(std::string&& msg) {
-  g_pikiwidb->SendPacket2Client(shared_from_this(), std::move(msg));
+  g_kiwi->SendPacket2Client(shared_from_this(), std::move(msg));
   SendOver();
   return true;
 }
 
 bool PClient::SendPacket(UnboundedBuffer& data) {
-  g_pikiwidb->SendPacket2Client(shared_from_this(), std::move(data.ToString()));
+  g_kiwi->SendPacket2Client(shared_from_this(), std::move(data.ToString()));
   SendOver();
   return true;
 }
 
-void PClient::Close() { g_pikiwidb->CloseConnection(shared_from_this()); }
+void PClient::Close() { g_kiwi->CloseConnection(shared_from_this()); }
 
 void PClient::OnClose() {
   SetState(ClientState::kClosed);
@@ -625,9 +625,9 @@ void PClient::TransferToSlaveThreads() {
   //  }
 }
 
-void PClient::AddCurrentToMonitor() {
+void PClient::AddToMonitor() {
   std::unique_lock<std::mutex> guard(monitors_mutex);
-  monitors.insert(std::static_pointer_cast<PClient>(s_current->shared_from_this()));
+  monitors.insert(weak_from_this());
 }
 
 void PClient::FeedMonitors(const std::vector<std::string>& params) {
@@ -677,4 +677,4 @@ std::unordered_map<std::string, CommandStatistics>* PClient::GetCommandStatMap()
 
 std::shared_ptr<TimeStat> PClient::GetTimeStat() { return time_stat_; }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

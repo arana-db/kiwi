@@ -15,7 +15,7 @@
 
 #include "common.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 // hash func from redis
 extern unsigned int dictGenHashFunction(const void* key, int len);
@@ -168,4 +168,4 @@ enum MemoryInfoType {
 extern std::vector<size_t> getMemoryInfo();
 extern size_t getMemoryInfo(MemoryInfoType type);
 
-}  // namespace pikiwidb
+}  // namespace kiwi

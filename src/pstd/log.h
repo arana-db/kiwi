@@ -38,7 +38,7 @@ namespace logger {
 
 class Logger {
  public:
-  Logger() : log_name_("pikiwidb_log") {}
+  Logger() : log_name_("kiwi_log") {}
 
   static Logger& Instance() {
     static Logger log;

@@ -21,7 +21,7 @@
 #include "praft.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 braft::FileAdaptor* PPosixFileSystemAdaptor::open(const std::string& path, int oflag,
                                                   const ::google::protobuf::Message* file_meta, butil::File::Error* e) {
@@ -120,4 +120,4 @@ void PPosixFileSystemAdaptor::AddAllFiles(const std::filesystem::path& dir,
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

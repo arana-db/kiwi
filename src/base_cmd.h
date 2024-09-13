@@ -4,7 +4,7 @@
 // of patent rights can be found in the PATENTS file in the same directory
 
 /*
-  Defined the open commands of PikiwiDB to the outside, the setting of permissions, and other aspects.
+  Defined the open commands of kiwi to the outside, the setting of permissions, and other aspects.
  */
 
 #pragma once
@@ -21,7 +21,7 @@
 #include "client.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 // command definition
 // base cmd
@@ -229,31 +229,6 @@ enum AclCategory {
  */
 class BaseCmd : public std::enable_shared_from_this<BaseCmd> {
  public:
-  // 这些感觉不需要了
-
-  //  enum CmdStage { kNone, kBinlogStage, kExecuteStage };
-  //  struct HintKeys {
-  //    HintKeys() = default;
-  //    void Push(const std::string& key, int hint) {
-  //      keys.push_back(key);
-  //      hints.push_back(hint);
-  //    }
-  //    bool empty() const { return keys.empty() && hints.empty(); }
-  //    std::vector<std::string> keys;
-  //    std::vector<int> hints;
-  //  };
-
-  //  struct CommandStatistics {
-  //    CommandStatistics() = default;
-  //    CommandStatistics(const CommandStatistics& other) {
-  //      cmd_time_consuming.store(other.cmd_time_consuming.load());
-  //      cmd_count.store(other.cmd_count.load());
-  //    }
-  //    std::atomic<int32_t> cmd_count = {0};
-  //    std::atomic<int32_t> cmd_time_consuming = {0};
-  //  };
-  //  CommandStatistics state;
-
   /**
    * @brief Construct a new Base Cmd object
    * @param name command name
@@ -281,17 +256,6 @@ class BaseCmd : public std::enable_shared_from_this<BaseCmd> {
                                uint64_t offset);
   virtual void DoBinlog();
 
-  //  virtual void ProcessFlushDBCmd();
-  //  virtual void ProcessFlushAllCmd();
-  //  virtual void ProcessSingleSlotCmd();
-  //  virtual void ProcessMultiSlotCmd();
-  //  virtual void ProcessDoNotSpecifySlotCmd();
-  //  virtual void Do(std::shared_ptr<Slot> slot = nullptr) = 0;
-  //  virtual Cmd* Clone() = 0;
-  //  used for execute multikey command into different slots
-  //  virtual void Split(std::shared_ptr<Slot> slot, const HintKeys& hint_keys) = 0;
-  //  virtual void Merge() = 0;
-
   bool HasFlag(uint32_t flag) const;
   void SetFlag(uint32_t flag);
   void ResetFlag(uint32_t flag);
@@ -306,16 +270,6 @@ class BaseCmd : public std::enable_shared_from_this<BaseCmd> {
   uint32_t AclCategory() const;
   void AddAclCategory(uint32_t aclCategory);
   std::string Name() const;
-  //  CmdRes& Res();
-  //  std::string db_name() const;
-  //  BinlogOffset binlog_offset() const;
-  //  PikaCmdArgsType& argv();
-
-  //  void SetConn(const std::shared_ptr<net::NetConn>& conn);
-  //  std::shared_ptr<net::NetConn> GetConn();
-
-  //  void SetResp(const std::shared_ptr<std::string>& resp);
-  //  std::shared_ptr<std::string> GetResp();
 
   uint32_t GetCmdID() const;
 
@@ -326,13 +280,6 @@ class BaseCmd : public std::enable_shared_from_this<BaseCmd> {
   std::string name_;
   int16_t arity_ = 0;
   uint32_t flag_ = 0;
-
-  //  CmdRes res_;
-  //  std::string dbName_;
-  //  std::weak_ptr<net::NetConn> conn_;
-  //  std::weak_ptr<std::string> resp_;
-  //  uint64_t doDuration_ = 0;
-
   uint32_t cmd_id_ = 0;
   uint32_t acl_category_ = 0;
 
@@ -365,4 +312,4 @@ class BaseCmdGroup : public BaseCmd {
  private:
   std::map<std::string, std::unique_ptr<BaseCmd>> subCmds_;
 };
-}  // namespace pikiwidb
+}  // namespace kiwi

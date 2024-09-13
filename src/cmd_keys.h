@@ -12,7 +12,7 @@
 
 #include "base_cmd.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class DelCmd : public BaseCmd {
  public:
@@ -157,4 +157,4 @@ class RenameNXCmd : public BaseCmd {
   void DoCmd(PClient* client) override;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

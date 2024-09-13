@@ -16,7 +16,7 @@
 
 class Logger;
 
-namespace pikiwidb {
+namespace kiwi {
 
 struct SlowLogItem {
   unsigned used;
@@ -56,4 +56,4 @@ class PSlowLog {
   std::deque<SlowLogItem> logs_;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -175,7 +175,6 @@ start_server {tags {"bitops"}} {
 
    test {BITOP NOT fuzzing} {
        for {set i 0} {$i < 10} {incr i} {
-           # TODO replaced by r flushall
            r flushdb
            set str [randstring 0 1000]
            r set str $str
@@ -206,7 +205,7 @@ start_server {tags {"bitops"}} {
         r bitop or x a b
     } {32}
 
-# Pikiwidb does not support the BITPOS command
+# kiwi does not support the BITPOS command
 #    test {BITPOS bit=0 with empty key returns 0} {
 #        r del str
 #        r bitpos str 0

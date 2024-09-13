@@ -16,7 +16,7 @@
 #include "cmd_table_manager.h"
 #include "cmd_thread_pool.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class CmdWorkThreadPoolWorker {
  public:
@@ -41,7 +41,7 @@ class CmdWorkThreadPoolWorker {
   const std::string name_;
   bool running_ = true;
 
-  pikiwidb::CmdTableManager cmd_table_manager_;
+  kiwi::CmdTableManager cmd_table_manager_;
 };
 
 // fast worker
@@ -67,4 +67,4 @@ class CmdSlowWorker : public CmdWorkThreadPoolWorker {
   int wait_time_ = 200;     // When the slow queue is empty, wait 200 ms to check again
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

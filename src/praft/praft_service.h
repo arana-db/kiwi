@@ -9,18 +9,18 @@
 
 #include "praft.pb.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class PRaft;
 
 class DummyServiceImpl : public DummyService {
  public:
   explicit DummyServiceImpl(PRaft* praft) : praft_(praft) {}
-  void DummyMethod(::google::protobuf::RpcController* controller, const ::pikiwidb::DummyRequest* request,
-                   ::pikiwidb::DummyResponse* response, ::google::protobuf::Closure* done) override {}
+  void DummyMethod(::google::protobuf::RpcController* controller, const ::kiwi::DummyRequest* request,
+                   ::kiwi::DummyResponse* response, ::google::protobuf::Closure* done) override {}
 
  private:
   PRaft* praft_ = nullptr;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug in the PikiwiDB
+description: Report a bug in the kiwi
 labels: [ "☢️ Bug" ]
 
 body:

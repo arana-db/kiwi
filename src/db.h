@@ -17,7 +17,7 @@
 #include "pstd/noncopyable.h"
 #include "storage/storage.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class DB {
  public:
@@ -56,4 +56,4 @@ class DB {
   bool opened_ = false;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

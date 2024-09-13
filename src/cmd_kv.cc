@@ -9,12 +9,15 @@
  */
 
 #include "cmd_kv.h"
+#include <cstddef>
+#include <cstdint>
 #include "common.h"
+#include "config.h"
 #include "pstd_string.h"
 #include "pstd_util.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 GetCmd::GetCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryString) {}
@@ -261,12 +264,12 @@ void BitCountCmd::DoCmd(PClient* client) {
 DecrCmd::DecrCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryString) {}
 
-bool DecrCmd::DoInitial(pikiwidb::PClient* client) {
+bool DecrCmd::DoInitial(kiwi::PClient* client) {
   client->SetKey(client->argv_[1]);
   return true;
 }
 
-void DecrCmd::DoCmd(pikiwidb::PClient* client) {
+void DecrCmd::DoCmd(kiwi::PClient* client) {
   int64_t ret = 0;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Decrby(client->Key(), 1, &ret);
   if (s.ok()) {
@@ -283,12 +286,12 @@ void DecrCmd::DoCmd(pikiwidb::PClient* client) {
 IncrCmd::IncrCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryString) {}
 
-bool IncrCmd::DoInitial(pikiwidb::PClient* client) {
+bool IncrCmd::DoInitial(kiwi::PClient* client) {
   client->SetKey(client->argv_[1]);
   return true;
 }
 
-void IncrCmd::DoCmd(pikiwidb::PClient* client) {
+void IncrCmd::DoCmd(kiwi::PClient* client) {
   int64_t ret = 0;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Incrby(client->Key(), 1, &ret);
   if (s.ok()) {
@@ -674,11 +677,17 @@ bool SetRangeCmd::DoInitial(PClient* client) {
 
 void SetRangeCmd::DoCmd(PClient* client) {
   int64_t offset = 0;
+
   if (!(pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &offset))) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-
+  // Ref: https://redis.io/docs/latest/commands/setrange/
+  if (g_config.redis_compatible_mode && std::atoi(client->argv_[2].c_str()) > 536870911) {
+    client->SetRes(CmdRes::kErrOther,
+                   "When Redis compatibility mode is enabled, the offset parameter must not exceed 536870911");
+    return;
+  }
   int32_t ret = 0;
   storage::Status s =
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setrange(client->Key(), offset, client->argv_[3], &ret);
@@ -726,4 +735,4 @@ void MSetnxCmd::DoCmd(PClient* client) {
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

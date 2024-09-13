@@ -22,7 +22,7 @@
 
 #include "client.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 #define RAFT_GROUPID_LEN 32
 
@@ -173,4 +173,4 @@ class PRaft : public braft::StateMachine {
   bool is_node_first_start_up_ = true;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

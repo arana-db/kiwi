@@ -14,7 +14,7 @@
 
 #include "common.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class PProtoParser {
  public:
@@ -42,4 +42,4 @@ class PProtoParser {
   std::vector<std::string>& params_;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

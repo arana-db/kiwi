@@ -14,7 +14,7 @@
 #include <string_view>
 #include <vector>
 
-namespace pikiwidb {
+namespace kiwi {
 
 class UnboundedBuffer {
  public:
@@ -52,4 +52,4 @@ class UnboundedBuffer {
   std::vector<char> buffer_;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

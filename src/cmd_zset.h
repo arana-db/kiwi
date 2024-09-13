@@ -10,7 +10,7 @@
 #pragma once
 #include "base_cmd.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class ZAddCmd : public BaseCmd {
  public:
@@ -237,4 +237,4 @@ class ZRemrangebyscoreCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi
