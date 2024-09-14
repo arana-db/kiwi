@@ -103,8 +103,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
 
     switch (c) {
       case 'v': {
-        std::cerr << "kiwi Server version: " << Kiwi_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32)
-                  << std::endl;
+        std::cerr << "kiwi Server version: " << Kiwi_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32) << std::endl;
         std::cerr << "kiwi Server Build Type: " << Kiwi_BUILD_TYPE << std::endl;
 #if defined(Kiwi_BUILD_DATE)
         std::cerr << "kiwi Server Build Date: " << Kiwi_BUILD_DATE << std::endl;
@@ -201,7 +200,7 @@ bool KiwiDB::Init() {
     PREPL.SetMasterAddr(g_config.master_ip.ToString().c_str(), g_config.master_port.load());
   }
 
-  event_server_ =std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(num);
+  event_server_ = std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(num);
 
   event_server_->SetRwSeparation(true);
 
