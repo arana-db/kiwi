@@ -103,14 +103,13 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
 
     switch (c) {
       case 'v': {
-        std::cerr << "kiwi Server version: " << Kkiwi_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32)
-                  << std::endl;
-        std::cerr << "kiwi Server Build Type: " << Kkiwi_BUILD_TYPE << std::endl;
-#if defined(Kkiwi_BUILD_DATE)
-        std::cerr << "kiwi Server Build Date: " << Kkiwi_BUILD_DATE << std::endl;
+        std::cerr << "kiwi Server version: " << Kiwi_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32) << std::endl;
+        std::cerr << "kiwi Server Build Type: " << Kiwi_BUILD_TYPE << std::endl;
+#if defined(Kiwi_BUILD_DATE)
+        std::cerr << "kiwi Server Build Date: " << Kiwi_BUILD_DATE << std::endl;
 #endif
-#if defined(Kkiwi_GIT_COMMIT_ID)
-        std::cerr << "kiwi Server Build GIT SHA: " << Kkiwi_GIT_COMMIT_ID << std::endl;
+#if defined(Kiwi_GIT_COMMIT_ID)
+        std::cerr << "kiwi Server Build GIT SHA: " << Kiwi_GIT_COMMIT_ID << std::endl;
 #endif
 
         std::exit(0);
@@ -201,7 +200,7 @@ bool KiwiDB::Init() {
     PREPL.SetMasterAddr(g_config.master_ip.ToString().c_str(), g_config.master_port.load());
   }
 
-  event_server_ =std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(num);
+  event_server_ = std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(num);
 
   event_server_->SetRwSeparation(true);
 
@@ -350,7 +349,7 @@ int main(int argc, char* argv[]) {
   if (g_kiwi->Init()) {
     // output logo to console
     char logo[1024] = "";
-    snprintf(logo, sizeof logo - 1, kiwiLogo, Kkiwi_VERSION, static_cast<int>(sizeof(void*)) * 8,
+    snprintf(logo, sizeof logo - 1, kiwiLogo, Kiwi_VERSION, static_cast<int>(sizeof(void*)) * 8,
              static_cast<int>(g_config.port));
     std::cout << logo;
     g_kiwi->Run();

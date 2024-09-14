@@ -23,7 +23,7 @@ git config --global http.version HTTP/1.1
 Execute this command to start compiling Kiwi:
 
 ```bash
-./etc/script/build.sh 
+./build.sh 
 ```
 
 Kiwi is compiled by default in release mode, which does not support debugging. If debugging is needed, compile in debug mode.

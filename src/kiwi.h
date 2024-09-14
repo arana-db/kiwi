@@ -14,12 +14,12 @@
 #include "common.h"
 #include "net/event_server.h"
 
-#define Kkiwi_VERSION "4.0.0"
+#define Kiwi_VERSION "4.0.0"
 
 #ifdef BUILD_DEBUG
-#  define Kkiwi_BUILD_TYPE "DEBUG"
+#  define Kiwi_BUILD_TYPE "DEBUG"
 #else
-#  define Kkiwi_BUILD_TYPE "RELEASE"
+#  define Kiwi_BUILD_TYPE "RELEASE"
 #endif
 
 namespace kiwi {
@@ -58,9 +58,7 @@ class KiwiDB final {
     event_server_->SendPacket(client, std::move(msg));
   }
 
-  inline void CloseConnection(const std::shared_ptr<kiwi::PClient>& client) {
-    event_server_->CloseConnection(client);
-  }
+  inline void CloseConnection(const std::shared_ptr<kiwi::PClient>& client) { event_server_->CloseConnection(client); }
 
   void TCPConnect(
       const net::SocketAddr& addr,
