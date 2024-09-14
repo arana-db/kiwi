@@ -14,12 +14,12 @@
 #include "common.h"
 #include "net/event_server.h"
 
-#define Kkiwi_VERSION "4.0.0"
+#define Kiwi_VERSION "4.0.0"
 
 #ifdef BUILD_DEBUG
-#  define Kkiwi_BUILD_TYPE "DEBUG"
+#  define Kiwi_BUILD_TYPE "DEBUG"
 #else
-#  define Kkiwi_BUILD_TYPE "RELEASE"
+#  define Kiwi_BUILD_TYPE "RELEASE"
 #endif
 
 namespace kiwi {

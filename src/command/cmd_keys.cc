@@ -10,7 +10,7 @@
 
 #include "cmd_keys.h"
 
-#include "pstd_string.h"
+#include "pstd/pstd_string.h"
 
 #include "store.h"
 

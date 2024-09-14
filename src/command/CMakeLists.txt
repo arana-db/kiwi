@@ -1,11 +1,18 @@
-# Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+# Copyright (c) 2024-present, Arana/Kiwi Community.  All rights reserved.
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-AUX_SOURCE_DIRECTORY(. kiwi_SRC)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.25)
 
-ADD_EXECUTABLE(kiwi ${kiwi_SRC})
+PROJECT(command)
+
+message(STATUS "COMMAND_INCLUDE_DIR: ${COMMAND_INCLUDE_DIR}")
+SET(CMAKE_CXX_STANDARD 20)
+
+AUX_SOURCE_DIRECTORY(. COMMAND_SRC)
+SET(LIBRARY_OUTPUT_PATH ${CMAKE_CURRENT_SOURCE_DIR})
+ADD_LIBRARY(command ${COMMAND_SRC})
 
 IF (CMAKE_BUILD_TYPE STREQUAL "Release")
     # get current date and time and git commit id
@@ -15,13 +22,11 @@ IF (CMAKE_BUILD_TYPE STREQUAL "Release")
     MESSAGE(STATUS "Build timestamp: ${BUILD_TIMESTAMP}")
     MESSAGE(STATUS "Git commit id: ${GIT_COMMIT_ID}")
 
-    TARGET_COMPILE_DEFINITIONS(kiwi PRIVATE Kiwi_BUILD_DATE="${BUILD_TIMESTAMP}" Kiwi_GIT_COMMIT_ID="${GIT_COMMIT_ID}")
+    TARGET_COMPILE_DEFINITIONS(command PRIVATE Kiwi_BUILD_DATE="${BUILD_TIMESTAMP}" Kiwi_GIT_COMMIT_ID="${GIT_COMMIT_ID}")
 ENDIF ()
 
-# SET(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin/)
-SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin/)
 
-TARGET_INCLUDE_DIRECTORIES(kiwi
+TARGET_INCLUDE_DIRECTORIES(command
         PRIVATE ${PROJECT_SOURCE_DIR}/src
         PRIVATE ${PROJECT_SOURCE_DIR}/src/pstd
         PRIVATE ${PROJECT_SOURCE_DIR}/src/net
@@ -34,24 +39,9 @@ TARGET_INCLUDE_DIRECTORIES(kiwi
         PRIVATE ${LIBEVENT_INCLUDE_DIRS}
 )
 
-ADD_DEPENDENCIES(kiwi
-        gflags
-        gtest
-        fmt
-        snappy
-        zlib
-        rocksdb
-        protobuf
-        pstd
-        braft
-        brpc
-        storage
-)
-
-TARGET_LINK_LIBRARIES(kiwi
+TARGET_LINK_LIBRARIES(command
         net
         dl
-        command
         fmt
         rocksdb
         snappy
@@ -74,5 +64,3 @@ TARGET_LINK_LIBRARIES(kiwi
         binlog_pb
         "${LIB}"
 )
-
-SET_TARGET_PROPERTIES(kiwi PROPERTIES LINKER_LANGUAGE CXX)

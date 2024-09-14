@@ -13,8 +13,8 @@
 #include <cstdint>
 #include "common.h"
 #include "config.h"
-#include "pstd_string.h"
-#include "pstd_util.h"
+#include "pstd/pstd_string.h"
+#include "pstd/pstd_util.h"
 #include "store.h"
 
 namespace kiwi {

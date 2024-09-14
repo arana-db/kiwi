@@ -28,7 +28,7 @@
 #include "db.h"
 
 #include "braft/raft.h"
-#include "pstd_string.h"
+#include "pstd/pstd_string.h"
 #include "rocksdb/version.h"
 
 #include "kiwi.h"
@@ -315,12 +315,12 @@ void InfoCmd::InfoServer(std::string& info) {
   time_t current_time_s = time(nullptr);
   std::stringstream tmp_stream;
   char version[32];
-  snprintf(version, sizeof(version), "%s", Kkiwi_VERSION);
+  snprintf(version, sizeof(version), "%s", Kiwi_VERSION);
 
   tmp_stream << "# Server\r\n";
   tmp_stream << "kiwi_version:" << version << "\r\n";
-  tmp_stream << "kiwi_build_git_sha:" << Kkiwi_GIT_COMMIT_ID << "\r\n";
-  tmp_stream << "kiwi_build_compile_date: " << Kkiwi_BUILD_DATE << "\r\n";
+  tmp_stream << "kiwi_build_git_sha:" << Kiwi_GIT_COMMIT_ID << "\r\n";
+  tmp_stream << "kiwi_build_compile_date: " << Kiwi_BUILD_DATE << "\r\n";
   tmp_stream << "os:" << host_info.sysname << " " << host_info.release << " " << host_info.machine << "\r\n";
   tmp_stream << "arch_bits:" << (reinterpret_cast<char*>(&host_info.machine) + strlen(host_info.machine) - 2) << "\r\n";
   tmp_stream << "process_id:" << getpid() << "\r\n";
