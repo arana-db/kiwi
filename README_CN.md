@@ -23,7 +23,7 @@ git config --global http.version HTTP/1.1
 执行以下命令开始编译 Kiwi:
 
 ```bash
-./etc/script/build.sh
+./build.sh
 ```
 
 Kiwi 默认以 release 模式编译，不支持调试。如果需要调试，请以 debug 模式编译。
