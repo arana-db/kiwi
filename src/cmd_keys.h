@@ -23,7 +23,6 @@ class DelCmd : public BaseCmd {
 
  private:
   rocksdb::Status s_;
-
   void DoCmd(PClient* client) override;
   void DoThroughDB(PClient* client) override;
   void DoUpdateCache(PClient* client) override;

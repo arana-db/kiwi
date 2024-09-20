@@ -8,7 +8,7 @@
 
 namespace cache {
 
-Status RedisCache::SAdd(std::string& key, std::vector<std::string> &members) {
+Status RedisCache::SAdd(std::string &key, std::vector<std::string> &members) {
   int ret = RcFreeMemoryIfNeeded(cache_);
   if (C_OK != ret) {
     return Status::Corruption("[error] Free memory faild !");
@@ -31,11 +31,9 @@ Status RedisCache::SAdd(std::string& key, std::vector<std::string> &members) {
   return Status::OK();
 }
 
-Status RedisCache::SCard(const std::string& key, uint64_t *len) {
+Status RedisCache::SCard(const std::string &key, uint64_t *len) {
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj); };
   int ret = RcSCard(cache_, kobj, reinterpret_cast<unsigned long *>(len));
   if (C_OK != ret) {
     if (REDIS_KEY_NOT_EXIST == ret) {
@@ -47,13 +45,11 @@ Status RedisCache::SCard(const std::string& key, uint64_t *len) {
   return Status::OK();
 }
 
-Status RedisCache::SIsmember(std::string& key, std::string& member) {
+Status RedisCache::SIsmember(std::string &key, std::string &member) {
   int is_member = 0;
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
   robj *mobj = createObject(OBJ_STRING, sdsnewlen(member.data(), member.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj, mobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj, mobj); };
   int ret = RcSIsmember(cache_, kobj, mobj, &is_member);
   if (C_OK != ret) {
     if (REDIS_KEY_NOT_EXIST == ret) {
@@ -65,13 +61,11 @@ Status RedisCache::SIsmember(std::string& key, std::string& member) {
   return is_member ? Status::OK() : Status::NotFound("member not exist");
 }
 
-Status RedisCache::SMembers(std::string& key, std::vector<std::string> *members) {
+Status RedisCache::SMembers(std::string &key, std::vector<std::string> *members) {
   sds *vals = nullptr;
   unsigned long vals_size = 0;
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj); };
   int ret = RcSMembers(cache_, kobj, &vals, &vals_size);
   if (C_OK != ret) {
     if (REDIS_KEY_NOT_EXIST == ret) {
@@ -88,7 +82,7 @@ Status RedisCache::SMembers(std::string& key, std::vector<std::string> *members)
   return Status::OK();
 }
 
-Status RedisCache::SRem(std::string& key, std::vector<std::string> &members) {
+Status RedisCache::SRem(std::string &key, std::vector<std::string> &members) {
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
   robj **vals = (robj **)zcallocate(sizeof(robj *) * members.size());
   for (unsigned int i = 0; i < members.size(); ++i) {
@@ -110,13 +104,11 @@ Status RedisCache::SRem(std::string& key, std::vector<std::string> &members) {
   return Status::OK();
 }
 
-Status RedisCache::SRandmember(std::string& key, int64_t count, std::vector<std::string> *members) {
+Status RedisCache::SRandmember(std::string &key, int64_t count, std::vector<std::string> *members) {
   sds *vals = nullptr;
   unsigned long vals_size = 0;
   robj *kobj = createObject(OBJ_STRING, sdsnewlen(key.data(), key.size()));
-  DEFER {
-    DecrObjectsRefCount(kobj);
-  };
+  DEFER { DecrObjectsRefCount(kobj); };
   int ret = RcSRandmember(cache_, kobj, count, &vals, &vals_size);
   if (C_OK != ret) {
     if (REDIS_KEY_NOT_EXIST == ret) {

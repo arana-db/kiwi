@@ -91,22 +91,24 @@ class PCache : public pstd::noncopyable, public std::enable_shared_from_this<PCa
   rocksdb::Status Strlen(std::string& key, int32_t* len);
 
   // Hash Commands
-    rocksdb::Status HDel(std::string& key, std::vector<std::string>& fields);
-    rocksdb::Status HSet(std::string& key, std::string& field, std::string& value);
-    rocksdb::Status HSetIfKeyExist(std::string& key, std::string& field, std::string& value);
-    rocksdb::Status HSetIfKeyExistAndFieldNotExist(std::string& key, std::string& field, std::string& value);
-    rocksdb::Status HMSet(std::string& key, std::vector<storage::FieldValue>& fvs);
-    rocksdb::Status HMSetnx(std::string& key, std::vector<storage::FieldValue>& fvs, int64_t ttl);
-    rocksdb::Status HMSetnxWithoutTTL(std::string& key, std::vector<storage::FieldValue>& fvs);
-    rocksdb::Status HMSetxx(std::string& key, std::vector<storage::FieldValue>& fvs);
-    rocksdb::Status HGet(std::string& key, std::string& field, std::string* value);
-    rocksdb::Status HMGet(std::string& key, std::vector<std::string>& fields, std::vector<storage::ValueStatus>*
-    vss); rocksdb::Status HGetall(std::string& key, std::vector<storage::FieldValue>* fvs); rocksdb::Status
-    HKeys(std::string& key, std::vector<std::string>* fields); rocksdb::Status HVals(std::string& key,
-    std::vector<std::string>* values); rocksdb::Status HExists(std::string& key, std::string& field); rocksdb::Status
-    HIncrbyxx(std::string& key, std::string& field, int64_t value); rocksdb::Status HIncrbyfloatxx(std::string& key,
-    std::string& field, long double value); rocksdb::Status HLen(std::string& key, uint64_t* len); rocksdb::Status
-    HStrlen(std::string& key, std::string& field, uint64_t* len);
+  rocksdb::Status HDel(std::string& key, std::vector<std::string>& fields);
+  rocksdb::Status HSet(std::string& key, std::string& field, std::string& value);
+  rocksdb::Status HSetIfKeyExist(std::string& key, std::string& field, std::string& value);
+  rocksdb::Status HSetIfKeyExistAndFieldNotExist(std::string& key, std::string& field, std::string& value);
+  rocksdb::Status HMSet(std::string& key, std::vector<storage::FieldValue>& fvs);
+  rocksdb::Status HMSetnx(std::string& key, std::vector<storage::FieldValue>& fvs, int64_t ttl);
+  rocksdb::Status HMSetnxWithoutTTL(std::string& key, std::vector<storage::FieldValue>& fvs);
+  rocksdb::Status HMSetxx(std::string& key, std::vector<storage::FieldValue>& fvs);
+  rocksdb::Status HGet(std::string& key, std::string& field, std::string* value);
+  rocksdb::Status HMGet(std::string& key, std::vector<std::string>& fields, std::vector<storage::ValueStatus>* vss);
+  rocksdb::Status HGetall(std::string& key, std::vector<storage::FieldValue>* fvs);
+  rocksdb::Status HKeys(std::string& key, std::vector<std::string>* fields);
+  rocksdb::Status HVals(std::string& key, std::vector<std::string>* values);
+  rocksdb::Status HExists(std::string& key, std::string& field);
+  rocksdb::Status HIncrbyxx(std::string& key, std::string& field, int64_t value);
+  rocksdb::Status HIncrbyfloatxx(std::string& key, std::string& field, long double value);
+  rocksdb::Status HLen(std::string& key, uint64_t* len);
+  rocksdb::Status HStrlen(std::string& key, std::string& field, uint64_t* len);
 
   // List Commands
   rocksdb::Status LIndex(std::string& key, int64_t index, std::string* element);
@@ -127,47 +129,48 @@ class PCache : public pstd::noncopyable, public std::enable_shared_from_this<PCa
   rocksdb::Status RPushnxWithoutTTL(std::string& key, std::vector<std::string>& values);
 
   // Set Commands
-    rocksdb::Status SAdd(std::string& key, std::vector<std::string>& members);
-    rocksdb::Status SAddIfKeyExist(std::string& key, std::vector<std::string>& members);
-    rocksdb::Status SAddnx(std::string& key, std::vector<std::string>& members, int64_t ttl);
-    rocksdb::Status SAddnxWithoutTTL(std::string& key, std::vector<std::string>& members);
-    rocksdb::Status SCard(std::string& key, uint64_t* len);
-    rocksdb::Status SIsmember(std::string& key, std::string& member);
-    rocksdb::Status SMembers(std::string& key, std::vector<std::string>* members);
-    rocksdb::Status SRem(std::string& key, std::vector<std::string>& members);
-    rocksdb::Status SRandmember(std::string& key, int64_t count, std::vector<std::string>* members);
+  rocksdb::Status SAdd(std::string& key, std::vector<std::string>& members);
+  rocksdb::Status SAddIfKeyExist(std::string& key, std::vector<std::string>& members);
+  rocksdb::Status SAddnx(std::string& key, std::vector<std::string>& members, int64_t ttl);
+  rocksdb::Status SAddnxWithoutTTL(std::string& key, std::vector<std::string>& members);
+  rocksdb::Status SCard(std::string& key, uint64_t* len);
+  rocksdb::Status SIsmember(std::string& key, std::string& member);
+  rocksdb::Status SMembers(std::string& key, std::vector<std::string>* members);
+  rocksdb::Status SRem(std::string& key, std::vector<std::string>& members);
+  rocksdb::Status SRandmember(std::string& key, int64_t count, std::vector<std::string>* members);
 
   // ZSet Commands
   //   rocksdb::Status ZAdd(std::string& key, std::vector<storage::ScoreMember>& score_members);
-    rocksdb::Status ZAddIfKeyExist(std::string& key, std::vector<storage::ScoreMember>& score_members);
-    rocksdb::Status ZAddIfKeyExistInCache(std::string& key, std::vector<storage::ScoreMember>& score_members,PClient* client);
-    rocksdb::Status ZAddnx(std::string& key, std::vector<storage::ScoreMember>& score_members, int64_t ttl);
-    rocksdb::Status ZAddnxWithoutTTL(std::string& key, std::vector<storage::ScoreMember>& score_members);
+  rocksdb::Status ZAddIfKeyExist(std::string& key, std::vector<storage::ScoreMember>& score_members);
+  rocksdb::Status ZAddIfKeyExistInCache(std::string& key, std::vector<storage::ScoreMember>& score_members,
+                                        PClient* client);
+  rocksdb::Status ZAddnx(std::string& key, std::vector<storage::ScoreMember>& score_members, int64_t ttl);
+  rocksdb::Status ZAddnxWithoutTTL(std::string& key, std::vector<storage::ScoreMember>& score_members);
   //   rocksdb::Status ZCount(std::string& key, std::string& min, std::string& max, uint64_t* len, ZCountCmd* cmd);
   //   rocksdb::Status ZIncrby(std::string& key, std::string& member, double increment);
-    rocksdb::Status ZIncrbyIfKeyExist(std::string& key, std::string& member, double increment, double score,PClient* client); 
-    // rocksdb::Status ZRange(std::string& key, int64_t start, int64_t stop,
-    // std::vector<storage::ScoreMember>* score_members,
-    //                        const std::shared_ptr<DB>& db);
-    rocksdb::Status ZRangebyscore(std::string& key, std::string& min, std::string& max,
-                                  std::vector<storage::ScoreMember>* score_members, ZRangebyscoreCmd* cmd);
-    rocksdb::Status ZRank(std::string& key, std::string& member, int64_t* rank);
-     rocksdb::Status ZRem(std::string& key, std::vector<std::string>& members);
-    rocksdb::Status ZRemrangebyrank(std::string& key, int32_t start, int32_t stop);
-    rocksdb::Status ZRemrangebyscore(std::string& key, std::string& min, std::string& max);
-    // rocksdb::Status ZRevrange(std::string& key, int64_t start, int64_t stop, std::vector<storage::ScoreMember>*
+  rocksdb::Status ZIncrbyIfKeyExist(std::string& key, std::string& member, double increment, double score,
+                                    PClient* client);
+  // rocksdb::Status ZRange(std::string& key, int64_t start, int64_t stop,
+  // std::vector<storage::ScoreMember>* score_members,
+  //                        const std::shared_ptr<DB>& db);
+  rocksdb::Status ZRangebyscore(std::string& key, std::string& min, std::string& max,
+                                std::vector<storage::ScoreMember>* score_members, ZRangebyscoreCmd* cmd);
+  rocksdb::Status ZRank(std::string& key, std::string& member, int64_t* rank);
+  rocksdb::Status ZRem(std::string& key, std::vector<std::string>& members);
+  rocksdb::Status ZRemrangebyrank(std::string& key, int32_t start, int32_t stop);
+  rocksdb::Status ZRemrangebyscore(std::string& key, std::string& min, std::string& max);
+  // rocksdb::Status ZRevrange(std::string& key, int64_t start, int64_t stop, std::vector<storage::ScoreMember>*
   //   score_members,
   //                             const std::shared_ptr<DB>& db);
-    rocksdb::Status ZRevrangebyscore(std::string& key, std::string& min, std::string& max,
-                                     std::vector<storage::ScoreMember>* score_members, ZRevrangebyscoreCmd* cmd);
-  //   rocksdb::Status ZRevrangebylex(std::string& key, std::string& min, std::string& max, std::vector<std::string>*
-  //   members,
-  //                                  const std::shared_ptr<DB>& db);
-    rocksdb::Status ZRevrank(std::string& key, std::string& member, int64_t *rank);
-    rocksdb::Status ZScore(std::string& key, std::string& member, double* score);
-    rocksdb::Status ZCard(std::string& key, uint64_t* len);
-  //   rocksdb::Status ZRangebylex(std::string& key, std::string& min, std::string& max, std::vector<std::string>*
-  //   members, const std::shared_ptr<DB>& db); rocksdb::Status ZLexcount(std::string& key, std::string& min,
+  rocksdb::Status ZRevrangebyscore(std::string& key, std::string& min, std::string& max,
+                                   std::vector<storage::ScoreMember>* score_members, ZRevrangebyscoreCmd* cmd);
+  rocksdb::Status ZRevrangebylex(std::string& key, std::string& min, std::string& max,
+                                 std::vector<std::string>* members);
+  rocksdb::Status ZRevrank(std::string& key, std::string& member, int64_t* rank);
+  rocksdb::Status ZScore(std::string& key, std::string& member, double* score);
+  rocksdb::Status ZCard(std::string& key, uint64_t* len);
+  rocksdb::Status ZRangebylex(std::string& key, std::string& min, std::string& max, std::vector<std::string>* members);
+  // rocksdb::Status ZLexcount(std::string& key, std::string& min,
   //   std::string& max, uint64_t* len,
   //                             const std::shared_ptr<DB>& db);
   //   rocksdb::Status ZRemrangebylex(std::string& key, std::string& min, std::string& max, const std::shared_ptr<DB>&
@@ -190,13 +193,14 @@ class PCache : public pstd::noncopyable, public std::enable_shared_from_this<PCa
   //                             int64_t& out_stop);
   // RangeStatus CheckCacheRevRange(int32_t cache_len, int32_t db_len, int64_t start, int64_t stop, int64_t& out_start,
   //                                int64_t& out_stop);
-  RangeStatus CheckCacheRangeByScore(uint64_t  cache_len, double cache_min, double cache_max, double min,
-                                     double max, bool left_close, bool right_close);
+  RangeStatus CheckCacheRangeByScore(uint64_t cache_len, double cache_min, double cache_max, double min, double max,
+                                     bool left_close, bool right_close);
   // bool CacheSizeEqsDB(std::string& key, const std::shared_ptr<DB>& db);
-  void GetMinMaxScore(std::vector<storage::ScoreMember>& score_members, double &min, double &max);
-  bool GetCacheMinMaxSM(cache::RedisCache* cache_obj, std::string& key, storage::ScoreMember &min_m,
-                        storage::ScoreMember &max_m);
-  bool ReloadCacheKeyIfNeeded(cache::RedisCache* cache_obj, std::string& key, int mem_len = -1, int db_len = -1,PClient* client=nullptr);
+  void GetMinMaxScore(std::vector<storage::ScoreMember>& score_members, double& min, double& max);
+  bool GetCacheMinMaxSM(cache::RedisCache* cache_obj, std::string& key, storage::ScoreMember& min_m,
+                        storage::ScoreMember& max_m);
+  bool ReloadCacheKeyIfNeeded(cache::RedisCache* cache_obj, std::string& key, int mem_len = -1, int db_len = -1,
+                              PClient* client = nullptr);
   rocksdb::Status CleanCacheKeyIfNeeded(cache::RedisCache* cache_obj, std::string& key);
 
  private:

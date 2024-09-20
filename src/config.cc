@@ -143,8 +143,8 @@ PConfig::PConfig() {
   AddNumber("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
 
   // cache config
-  AddNumberWihLimit("cache-num", true, &cache_num, 1, 48);
-  AddNumberWihLimit("cache-mode", true, &cache_mode, 0, 1);
+  AddNumberWithLimit("cache-num", true, &cache_num, 1, 48);
+  AddNumberWithLimit("cache-mode", true, &cache_mode, 0, 1);
   AddNumber("zset-cache-field-num-per-key", true, &zset_cache_field_num_per_key);
   AddNumber("zset-cache-start-direction", true, &zset_cache_start_direction);
   AddNumber("cache-maxmemory", true, &cache_maxmemory);

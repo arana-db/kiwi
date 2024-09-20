@@ -110,9 +110,9 @@ bool BaseCmd::IsNeedCacheDo(PClient* client) const {
     }
   } else if (HasFlag(kCmdFlagsZset)) {
     int32_t db_len = 0;
-  PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(client->Key(), &db_len);
-  auto zset_cache_field_num_per_key=g_config.zset_cache_field_num_per_key.load();
-    if (!g_config.cache_zset.load() || db_len>zset_cache_field_num_per_key) {
+    PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(client->Key(), &db_len);
+    auto zset_cache_field_num_per_key = g_config.zset_cache_field_num_per_key.load();
+    if (!g_config.cache_zset.load() || db_len > zset_cache_field_num_per_key) {
       return false;
     }
   } else if (HasFlag(kCmdFlagsHash)) {

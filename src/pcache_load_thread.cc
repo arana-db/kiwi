@@ -6,11 +6,11 @@
  */
 
 #include "pcache_load_thread.h"
+#include "config.h"
 #include "pcache.h"
 #include "pstd/log.h"
 #include "pstd/scope_record_lock.h"
 #include "store.h"
-#include "config.h"
 
 namespace pikiwidb {
 
@@ -78,7 +78,7 @@ bool PCacheLoadThread::LoadHash(std::string& key, PClient* client) {
   int64_t ttl = -1;
   rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->HGetallWithTTL(key, &fvs, &ttl);
   if (!s.ok()) {
-    WARN("load hash failed, key={}",key);
+    WARN("load hash failed, key={}", key);
     return false;
   }
   PSTORE.GetBackend(client->GetCurrentDB())->GetCache()->WriteHashToCache(key, fvs, ttl);
@@ -104,11 +104,11 @@ bool PCacheLoadThread::LoadList(std::string& key, PClient* client) {
   return true;
 }
 
-bool PCacheLoadThread::LoadSet(std::string& key,PClient* client) {
+bool PCacheLoadThread::LoadSet(std::string& key, PClient* client) {
   int32_t len = 0;
   PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SCard(key, &len);
   if (0 >= len || CACHE_VALUE_ITEM_MAX_SIZE < len) {
-    WARN("can not load key, because item size:{} beyond max item size:{}",len,CACHE_VALUE_ITEM_MAX_SIZE);
+    WARN("can not load key, because item size:{} beyond max item size:{}", len, CACHE_VALUE_ITEM_MAX_SIZE);
     return false;
   }
 
@@ -116,7 +116,7 @@ bool PCacheLoadThread::LoadSet(std::string& key,PClient* client) {
   int64_t ttl = -1;
   rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SMembersWithTTL(key, &values, &ttl);
   if (!s.ok()) {
-    WARN("load set failed, key={}",key);
+    WARN("load set failed, key={}", key);
     return false;
   }
   PSTORE.GetBackend(client->GetCurrentDB())->GetCache()->WriteSetToCache(key, values, ttl);
@@ -126,18 +126,20 @@ bool PCacheLoadThread::LoadSet(std::string& key,PClient* client) {
 bool PCacheLoadThread::LoadZset(std::string& key, PClient* client) {
   int32_t len = 0;
   PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(key, &len);
-  auto zset_cache_field_num_per_key=g_config.zset_cache_field_num_per_key.load();
-  if (0 >= len || len>zset_cache_field_num_per_key) {
+  auto zset_cache_field_num_per_key = g_config.zset_cache_field_num_per_key.load();
+  if (0 >= len || len > zset_cache_field_num_per_key) {
     return false;
   }
 
-int start_index = 0;
+  int start_index = 0;
   int stop_index = -1;
   std::vector<storage::ScoreMember> score_members;
   int64_t ttl = -1;
-  rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZRangeWithTTL(key, start_index, stop_index, &score_members, &ttl);
+  rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+                          ->GetStorage()
+                          ->ZRangeWithTTL(key, start_index, stop_index, &score_members, &ttl);
   if (!s.ok()) {
-    WARN("load zset failed, key={}",key);
+    WARN("load zset failed, key={}", key);
     return false;
   }
   PSTORE.GetBackend(client->GetCurrentDB())->GetCache()->WriteZSetToCache(key, score_members, ttl);
