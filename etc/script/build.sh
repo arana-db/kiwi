@@ -6,12 +6,6 @@ C_GREEN="\033[32m"
 
 C_END="\033[0m"
 
-BUILD_TIME=$(git log -1 --format=%ai)
-BUILD_TIME=${BUILD_TIME: 0: 10}
-
-COMMIT_ID=$(git rev-parse HEAD)
-SHORT_COMMIT_ID=${COMMIT_ID: 0: 8}
-
 BUILD_TYPE=Release
 VERBOSE=0
 CMAKE_FLAGS=""
