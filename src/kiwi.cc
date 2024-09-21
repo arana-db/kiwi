@@ -17,9 +17,9 @@
 #include <unistd.h>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <iostream>
 #include <thread>
-#include <ctime>
 
 #include "client.h"
 #include "config.h"
