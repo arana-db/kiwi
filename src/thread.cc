@@ -7,7 +7,7 @@
 
 #include "thread.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 Thread::Thread() : should_stop_(false) {}
 
@@ -47,4 +47,4 @@ int Thread::StopThread() {
 
 int Thread::JoinThread() { return pthread_join(thread_id_, nullptr); }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

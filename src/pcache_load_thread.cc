@@ -12,7 +12,7 @@
 #include "pstd/scope_record_lock.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 PCacheLoadThread::PCacheLoadThread(int zset_cache_start_direction, int zset_cache_field_num_per_key)
     : should_exit_(false),
@@ -199,4 +199,4 @@ void* PCacheLoadThread::ThreadMain() {
 
   return nullptr;
 }
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -5,7 +5,7 @@
 
 #pragma once
 
-namespace pikiwidb {
+namespace kiwi {
 /*
  * cache mode
  */
@@ -39,4 +39,4 @@ const int64_t CACHE_LOAD_NUM_ONE_TIME = 256;
 
 // TTL option
 const int PCache_TTL_NONE = -1;
-}  // namespace pikiwidb
+}  // namespace kiwi

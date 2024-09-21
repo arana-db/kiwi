@@ -693,7 +693,7 @@ IncrbyFloatCmd::IncrbyFloatCmd(const std::string& name, int16_t arity)
 
 bool IncrbyFloatCmd::DoInitial(PClient* client) {
   long double by_ = 0.00f;
-  if (pikiwidb::StrToLongDouble(client->argv_[2].data(), client->argv_[2].size(), &by_)) {
+  if (kiwi::StrToLongDouble(client->argv_[2].data(), client->argv_[2].size(), &by_)) {
     client->SetRes(CmdRes::kInvalidFloat);
     return false;
   }

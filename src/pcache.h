@@ -15,7 +15,7 @@
 #include "pstd/pstd_mutex.h"
 #include "pstd/pstd_status.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class PCacheLoadThread;
 class ZRangebyscoreCmd;
@@ -215,4 +215,4 @@ class PCache : public pstd::noncopyable, public std::enable_shared_from_this<PCa
   std::vector<cache::RedisCache*> caches_;
   std::vector<std::shared_ptr<pstd::Mutex>> cache_mutexs_;
 };
-}  // namespace pikiwidb
+}  // namespace kiwi

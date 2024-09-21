@@ -16,7 +16,7 @@
 #include "pcache.h"
 #include "thread.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class PCacheLoadThread : public Thread {
  public:
@@ -52,4 +52,4 @@ class PCacheLoadThread : public Thread {
   int zset_cache_start_direction_;
   int zset_cache_field_num_per_key_;
 };
-}  // namespace pikiwidb
+}  // namespace kiwi

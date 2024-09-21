@@ -14,7 +14,7 @@
 #include "pstd/noncopyable.h"
 #include "pstd/pstd_mutex.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class Thread : public pstd::noncopyable {
  public:
@@ -53,4 +53,4 @@ class Thread : public pstd::noncopyable {
   pthread_t thread_id_{};
   std::string thread_name_;
 };
-}  // namespace pikiwidb
+}  // namespace kiwi

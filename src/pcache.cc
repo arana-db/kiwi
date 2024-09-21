@@ -16,7 +16,7 @@
 #include "pstd/log.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 #define EXTEND_CACHE_SIZE(N) (N * 12 / 10)
 using rocksdb::Status;
@@ -1465,4 +1465,4 @@ void PCache::ClearHitRatio(void) {
   std::unique_lock l(rwlock_);
   cache::RedisCache::ResetHitAndMissNum();
 }
-}  // namespace pikiwidb
+}  // namespace kiwi
