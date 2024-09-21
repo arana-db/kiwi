@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+ * Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -38,7 +38,7 @@ func getBinPath() string {
 	rPath := getRootPathByCaller()
 	var bPath string
 	if len(rPath) != 0 {
-		bPath = path.Join(rPath, "bin", "pikiwidb")
+		bPath = path.Join(rPath, "bin", "kiwi")
 	}
 	return bPath
 }
@@ -50,11 +50,11 @@ func GetConfPath(copy bool, t int64) string {
 		nPath string
 	)
 	if len(rPath) != 0 && copy {
-		nPath = path.Join(rPath, fmt.Sprintf("etc/conf/pikiwidb_%d.conf", t))
+		nPath = path.Join(rPath, fmt.Sprintf("etc/conf/kiwi_%d.conf", t))
 		return nPath
 	}
 	if len(rPath) != 0 {
-		cPath = path.Join(rPath, "etc/conf/pikiwidb.conf")
+		cPath = path.Join(rPath, "etc/conf/kiwi.conf")
 		return cPath
 	}
 	return rPath
@@ -207,7 +207,7 @@ func StartServer(config string, options map[string]string, delete bool) *Server 
 
 	err = c.Start()
 	if err != nil {
-		log.Println("pikiwidb startup failed.", err.Error())
+		log.Println("kiwi startup failed.", err.Error())
 		return nil
 	}
 

@@ -1,8 +1,11 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Declared a set of functions responsible for managing the
+  runtime configuration information of kiwi.
  */
 
 #pragma once
@@ -12,7 +15,9 @@
 #include <map>
 #include <memory>
 #include <shared_mutex>
-#include <string>
+#include <cstring>
+#include <cstdint>
+#include <cstddef>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -23,7 +28,7 @@
 #include "common.h"
 #include "config_parser.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 using Status = rocksdb::Status;
 using CheckFunc = std::function<Status(const std::string&)>;
@@ -114,94 +119,307 @@ class BoolValue : public BaseValue {
 using ValuePrt = std::unique_ptr<BaseValue>;
 using ConfigMap = std::unordered_map<std::string, ValuePrt>;
 
+/*
+ * PConfig holds information about kiwi
+ * server-side runtime information.
+ */
 class PConfig {
  public:
+  /* Some important, globally relevant public interfaces. */
+
+  /*------------------------
+   * PConfig()
+   * Initialize kiwi's config & RocksDB's config.
+   */
   PConfig();
+
+  /*------------------------
+   * ~PConfig()
+   * Destroy a kiwi's config instance.
+   */
   ~PConfig() = default;
+
+  /*------------------------
+   * LoadFromFile(const std::string& file_name)
+   * Load a kiwi config file and store in PConfig
+   * Check the return to see success or not
+   */
   bool LoadFromFile(const std::string& file_name);
+
+  /*------------------------
+   * ConfigFileName()
+   * Return the name of the configuration file name specified at load time.
+   */
   const std::string& ConfigFileName() const { return config_file_name_; }
-  void Get(const std::string&, std::vector<std::string>*) const;
-  Status Set(std::string, const std::string&, bool force = false);
+
+  /*------------------------
+   * Get (const std::string& key, std::vector<std::string>* values)
+   * Retrieve the data corresponding to the specified configuration parameter.
+   * key is the configuration parameter want to retrieve
+   * values store the result
+   */
+  void Get(const std::string& key, std::vector<std::string>* values) const;
+
+  /*------------------------
+   * Set (std::string key, const std::string& value, bool init_stage)
+   * Set the data for the specified parameter。
+   * key is the configuration parameter want to set, case insensitive
+   * value is the data want to storexs
+   * init_stage represents whether the system is in the initialization phase,
+   * some parameters are not allowed to be modified outside of the initialization phase
+   */
+  Status Set(std::string key, const std::string& value, bool init_stage = false);
 
  public:
+  /*
+   * Some crucial, globally significant, externally accessible public data.
+   * Refer to the kiwi.conf
+   */
+
+  /*
+   * If the connection times out, then terminate the connection.
+   * 0 means no timeout limit, otherwise it is the specified number of seconds.
+   */
   std::atomic_uint32_t timeout = 0;
-  // auth
+  /*
+   * Client connect to kiwi server may need password
+   */
   AtomicString password;
+
+  /*
+   * Slave node connect to Master node may need password(master_auth),
+   * and their need to keep the master_ip & master_port
+   */
   AtomicString master_auth;
   AtomicString master_ip;
+  std::atomic_uint32_t master_port;
+
+  // aliases store the rename command
   std::map<std::string, std::string> aliases;
-  std::atomic_uint32_t max_clients = 10000;     // 10000
-  std::atomic_uint32_t slow_log_time = 1000;    // 1000 microseconds
-  std::atomic_uint32_t slow_log_max_len = 128;  // 128
-  std::atomic_uint32_t master_port;             // replication
-  AtomicString include_file;                    // the template config
-  std::vector<PString> modules;                 // modules
+
+  // The max connection limition
+  std::atomic_uint32_t max_clients = 10000;
+
+  /*
+   * Slow log help us to know the command that execute time more
+   * than slow_log_time (in microseconds, 1000000 microseconds
+   * is equivalent to 1 second)
+   *
+   * slow_log_max_len in current version just consume memory,
+   * has no practical effect
+   */
+  std::atomic_uint32_t slow_log_time = 1000;
+  std::atomic_uint32_t slow_log_max_len = 128;
+
+  /*
+   * include_file & modules in current version not support
+   * Reference: https://redis.io/docs/latest/operate/oss_and_stack/management/config-file/
+   */
+  AtomicString include_file;
+  std::vector<PString> modules;
+
+  /*
+   * kiwi use the thread pool to manage the task,
+   * categorize them into two types: fast tasks and slow tasks,
+   * and fast_cmd_threads_num & slow_cmd_threads_num used to set
+   * the number of threads to handle these task.
+   *
+   * In current version, we only use the fast task thread pool.
+   *
+   */
   std::atomic_int32_t fast_cmd_threads_num = 4;
   std::atomic_int32_t slow_cmd_threads_num = 4;
+
+  // Limit the maximum number of bytes returned to the client.
   std::atomic_uint64_t max_client_response_size = 1073741824;
+
+  /*
+   * Decide when to trigger a small-scale merge operation.
+   * In default, small_compaction_threshold = 86400 * 7,
+   * small_compaction_duration_threshold = 86400 * 3.
+   */
   std::atomic_uint64_t small_compaction_threshold = 604800;
   std::atomic_uint64_t small_compaction_duration_threshold = 259200;
 
+  // Decide whether kiwi runs as a daemon process.
   std::atomic_bool daemonize = false;
-  AtomicString pid_file = "./pikiwidb.pid";
+
+  // Which file to store the process id when running?
+  AtomicString pid_file = "./kiwi.pid";
+
+  /*
+   * For kiwi, ip is the address and the port that
+   * the server will listen on.
+   * In default, the full address will be "127.0.0.1:9221"
+   */
   AtomicString ip = "127.0.0.1";
   std::atomic_uint16_t port = 9221;
+
+  /*
+   * The raft protocol need regular communication between nodes.
+   * We will set the port that will ultimately be used
+   * for communication to be the port + raft_port_offset
+   * In default, raft_port_offset = 10
+   */
   std::atomic_uint16_t raft_port_offset = 10;
+
+  // The path to store the data
   AtomicString db_path = "./db/";
-  AtomicString log_dir = "stdout";  // the log directory, differ from redis
+
+  // The log directory, default print to stdout
+  AtomicString log_dir = "stdout";
+
+  /*
+   * kiwi uses the SPDLOG Library to implement the log module,
+   * so the log_level is the same as the SPDLOG level.
+   * Just look at SPDLOG wiki to know more.
+   */
   AtomicString log_level = "warning";
+
+  /*
+   * run_id is a SHA1-sized random number that identifies a
+   * given execution of kiwi.
+   */
   AtomicString run_id;
+
+  // The number of databases.
   std::atomic<size_t> databases = 16;
+
+  // Enable redis_compatioble_mode?
+  std::atomic_bool redis_compatible_mode = true;
+
+  /*
+   * For Network I/O threads, in future version, we may delete
+   * slave_threads_num.
+   */
   std::atomic_uint32_t worker_threads_num = 2;
   std::atomic_uint32_t slave_threads_num = 2;
+
+  // How many RocksDB Instances will be opened?
   std::atomic<size_t> db_instance_num = 3;
-  std::atomic_bool use_raft = true;
+
+  // Use raft protocol?
+  std::atomic_bool use_raft = false;
+
+  /*
+   * kiwi use the RocksDB to store the data,
+   * and these options below will set to rocksdb::Options,
+   * Just check the RocksDB document & PConfig::GetRocksDBOptions
+   * to know more.
+   */
 
   std::atomic_uint32_t rocksdb_max_subcompactions = 0;
+
   // default 2
   std::atomic_int rocksdb_max_background_jobs = 4;
+
   // default 2
   std::atomic<size_t> rocksdb_max_write_buffer_number = 2;
+
   // default 2
   std::atomic_int rocksdb_min_write_buffer_number_to_merge = 2;
+
   // default 64M
   std::atomic<size_t> rocksdb_write_buffer_size = 64 << 20;
+
   std::atomic_int rocksdb_level0_file_num_compaction_trigger = 4;
   std::atomic_int rocksdb_num_levels = 7;
   std::atomic_bool rocksdb_enable_pipelined_write = false;
   std::atomic_int rocksdb_level0_slowdown_writes_trigger = 20;
   std::atomic_int rocksdb_level0_stop_writes_trigger = 36;
-  std::atomic_uint64_t rocksdb_ttl_second = 604800;       // default 86400 * 7
-  std::atomic_uint64_t rocksdb_periodic_second = 259200;  // default 86400 * 3
+
+  // 86400 * 7 = 604800
+  std::atomic_uint64_t rocksdb_ttl_second = 604800;
+
+  // 86400 * 3 = 259200
+  std::atomic_uint64_t rocksdb_periodic_second = 259200;
 
   rocksdb::Options GetRocksDBOptions();
 
   rocksdb::BlockBasedTableOptions GetRocksDBBlockBasedTableOptions();
 
  private:
+  // Some functions and variables set up for internal work.
+
+  /*------------------------
+   * AddString (const std::string& key, bool rewritable, * std::vector<AtomicString*> values_ptr_vector)
+   * Introduce a new string key-value pair into the
+   * configuration data layer.
+   * A key may correspond to multiple values, so we use std::vector
+   * to store the data.
+   * rewritable represents whether to overwrite existing settings
+   * when a key-value pair is duplicated.
+   */
   inline void AddString(const std::string& key, bool rewritable, std::vector<AtomicString*> values_ptr_vector) {
     config_map_.emplace(key, std::make_unique<StringValue>(key, nullptr, rewritable, values_ptr_vector));
   }
-  inline void AddStrinWithFunc(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
-                               std::vector<AtomicString*> values_ptr_vector) {
+
+  /*------------------------
+   * AddStringWithFunc (const std::string& key, const CheckFunc& checkfunc, bool rewritable,
+                               std::vector<AtomicString*> values_ptr_vector)
+   * Introduce a new string key-value pair into the
+   * configuration data layer, with a check function.
+   * key, value, rewritable is the same as AddString.
+   * The checkfunc is coded by the user, validate the string as needed,
+   * and the return value should refer to rocksdb::Status.
+   */
+  inline void AddStringWithFunc(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
+                                std::vector<AtomicString*> values_ptr_vector) {
     config_map_.emplace(key, std::make_unique<StringValue>(key, checkfunc, rewritable, values_ptr_vector));
   }
+
+  /*------------------------
+   * AddBool (const std::string& key, const CheckFunc& checkfunc, bool rewritable,
+                      std::atomic<bool>* value_ptr)
+   * Introduce a new string key-value pair into the
+   * configuration data layer, with a check function.
+   * key is a string and value_ptr is a point to a bool value.
+   * checkfunc is the same as AddStrinWithFunc.
+   * rewritable represents whether to overwrite existing settings
+   * when a key-value pair is duplicated.
+   */
   inline void AddBool(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
                       std::atomic<bool>* value_ptr) {
     config_map_.emplace(key, std::make_unique<BoolValue>(key, checkfunc, rewritable, value_ptr));
   }
+
+  /*------------------------
+   * AddNumber (const std::string& key, bool rewritable, std::atomic<T>* value_ptr)
+   * Introduce a new string key-value pair into the
+   * configuration data layer, with a check function.
+   * key is a string and value_ptr is a set of numbers.
+   * rewritable represents whether to overwrite existing settings
+   * when a key-value pair is duplicated.
+   */
   template <typename T>
   inline void AddNumber(const std::string& key, bool rewritable, std::atomic<T>* value_ptr) {
     config_map_.emplace(key, std::make_unique<NumberValue<T>>(key, nullptr, rewritable, value_ptr));
   }
+
+  /*------------------------
+   * AddNumberWithLimit (const std::string& key, bool rewritable, std::atomic<T>* value_ptr, T min, T max)
+   * Introduce a new string key-value pair into the
+   * configuration data layer, with a check function.
+   * key is a string and value_ptr is a set of numbers.
+   * rewritable represents whether to overwrite existing settings
+   * when a key-value pair is duplicated.
+   * Please note that this function does not have a checkfunc function,
+   * as we have replaced it with the upper and lower limits
+   * of the numbers passed in.
+   */
   template <typename T>
-  inline void AddNumberWihLimit(const std::string& key, bool rewritable, std::atomic<T>* value_ptr, T min, T max) {
+  inline void AddNumberWithLimit(const std::string& key, bool rewritable, std::atomic<T>* value_ptr, T min, T max) {
     config_map_.emplace(key, std::make_unique<NumberValue<T>>(key, nullptr, rewritable, value_ptr, min, max));
   }
 
  private:
+  // The parser to parse the config data
   ConfigParser parser_;
+
+  // Store the key-value data for config
   ConfigMap config_map_;
+
+  // The file name of the config
   std::string config_file_name_;
 };
-}  // namespace pikiwidb
+}  // namespace kiwi

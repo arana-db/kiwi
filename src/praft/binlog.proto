@@ -1,5 +1,5 @@
 syntax = "proto3";
-package pikiwidb;
+package kiwi;
 option optimize_for = LITE_RUNTIME;
 
 enum OperateType {

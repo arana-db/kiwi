@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-present, OpenAtom Foundation, Inc.  All rights reserved.
+ * Copyright (c) 2024-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -70,7 +70,7 @@ class BinlogBatch : public Batch {
   void Put(ColumnFamilyIndex cf_idx, const Slice& key, const Slice& value) override {
     auto entry = binlog_.add_entries();
     entry->set_cf_idx(cf_idx);
-    entry->set_op_type(pikiwidb::OperateType::kPut);
+    entry->set_op_type(kiwi::OperateType::kPut);
     entry->set_key(key.ToString());
     entry->set_value(value.ToString());
     cnt_++;
@@ -79,7 +79,7 @@ class BinlogBatch : public Batch {
   void Delete(ColumnFamilyIndex cf_idx, const Slice& key) override {
     auto entry = binlog_.add_entries();
     entry->set_cf_idx(cf_idx);
-    entry->set_op_type(pikiwidb::OperateType::kDelete);
+    entry->set_op_type(kiwi::OperateType::kDelete);
     entry->set_key(key.ToString());
     cnt_++;
   }
@@ -98,7 +98,7 @@ class BinlogBatch : public Batch {
 
  private:
   AppendLogFunction func_;
-  pikiwidb::Binlog binlog_;
+  kiwi::Binlog binlog_;
   uint32_t seconds_ = 10;
 };
 

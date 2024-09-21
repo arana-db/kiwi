@@ -1,8 +1,11 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Defined a set of functions associated with the master-slave
+  replication mechanism.
  */
 
 #include <iostream>  // the child process use stdout for log
@@ -11,11 +14,11 @@
 #include "client.h"
 #include "config.h"
 #include "log.h"
-#include "pikiwidb.h"
+#include "kiwi.h"
 #include "pstd/pstd_string.h"
 #include "replication.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 PReplication& PReplication::Instance() {
   static PReplication rep;
@@ -26,7 +29,7 @@ PReplication::PReplication() {}
 
 bool PReplication::IsBgsaving() const { return bgsaving_; }
 
-void PReplication::AddSlave(pikiwidb::PClient* cli) {
+void PReplication::AddSlave(kiwi::PClient* cli) {
   slaves_.push_back(std::static_pointer_cast<PClient>(cli->shared_from_this()));
 
   // transfer to slave
@@ -186,11 +189,11 @@ void PReplication::Cron() {
 
         INFO("Try connect to master IP:{} port:{}", masterInfo_.addr.GetIP(), masterInfo_.addr.GetPort());
 
-        auto on_new_conn = [](uint64_t connID, std::shared_ptr<pikiwidb::PClient>& client,
+        auto on_new_conn = [](uint64_t connID, std::shared_ptr<kiwi::PClient>& client,
                               const net::SocketAddr& addr) {
           INFO("Connect to master IP:{} port:{}", addr.GetIP(), addr.GetPort());
-          if (g_pikiwidb) {
-            g_pikiwidb->OnNewConnection(connID, client, addr);
+          if (g_kiwi) {
+            g_kiwi->OnNewConnection(connID, client, addr);
           }
         };
 
@@ -206,7 +209,7 @@ void PReplication::Cron() {
           }
         };
 
-        g_pikiwidb->TCPConnect(masterInfo_.addr, on_new_conn, fail_cb);
+        g_kiwi->TCPConnect(masterInfo_.addr, on_new_conn, fail_cb);
         masterInfo_.state = kPReplStateConnecting;
       } break;
 
@@ -357,7 +360,7 @@ void PReplication::OnInfoCommand(UnboundedBuffer& res) {
       "none",
       "wait_bgsave",
       "wait_bgsave",
-      //"send_bulk", // pikiwidb does not have send bulk state
+      //"send_bulk", // kiwi does not have send bulk state
       "online",
 
   };
@@ -457,4 +460,4 @@ PError sync(const std::vector<PString>& params, UnboundedBuffer* reply) {
   return kPErrorOK;
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

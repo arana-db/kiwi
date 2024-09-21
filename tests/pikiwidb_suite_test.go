@@ -1,11 +1,11 @@
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+ * Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-package pikiwidb_test
+package kiwi_test
 
 import (
 	"math"
@@ -34,7 +34,7 @@ const (
 	kInvalidIndex = "ERR invalid DB index for 'select DB index is out of range'"
 )
 
-func TestPikiwidb(t *testing.T) {
+func Testkiwi(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Tests Suite")
 }

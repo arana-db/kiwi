@@ -1,4 +1,4 @@
-# Pikiwidb does not support the docs command
+# kiwi does not support the docs command
 
 start_server {tags {"command"}} {
     test "Command docs supported." {

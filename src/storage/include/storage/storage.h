@@ -1,4 +1,4 @@
-//  Copyright (c) 2017-present, OpenAtom Foundation, Inc.  All rights reserved.
+//  Copyright (c) 2017-present, Arana/Kiwi Community.  All rights reserved.
 //  This source code is licensed under the BSD-style license found in the
 //  LICENSE file in the root directory of this source tree. An additional grant
 //  of patent rights can be found in the PATENTS file in the same directory.
@@ -30,7 +30,7 @@
 #include "src/base_data_value_format.h"
 #include "storage/slot_indexer.h"
 
-namespace pikiwidb {
+namespace kiwi {
 class Binlog;
 }
 
@@ -62,7 +62,7 @@ enum class OptionType;
 template <typename T1, typename T2>
 class LRUCache;
 
-using AppendLogFunction = std::function<void(const pikiwidb::Binlog&, std::promise<Status>&&)>;
+using AppendLogFunction = std::function<void(const kiwi::Binlog&, std::promise<Status>&&)>;
 using DoSnapshotFunction = std::function<void(LogIndex, bool)>;
 
 struct StorageOptions {
@@ -1103,7 +1103,7 @@ class Storage {
 
   Status SetOptions(const OptionType& option_type, const std::unordered_map<std::string, std::string>& options);
   void GetRocksDBInfo(std::string& info);
-  Status OnBinlogWrite(const pikiwidb::Binlog& log, LogIndex log_idx);
+  Status OnBinlogWrite(const kiwi::Binlog& log, LogIndex log_idx);
 
   LogIndex GetSmallestFlushedLogIndex() const;
 

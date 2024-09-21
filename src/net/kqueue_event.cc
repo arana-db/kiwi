@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+ * Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -50,14 +50,21 @@ void KqueueEvent::AddEvent(uint64_t id, int fd, int mask) {
 }
 
 void KqueueEvent::DelEvent(int fd) {
-  struct kevent change;
-  EV_SET(&change, fd, EVENT_READ, EV_DELETE, 0, 0, nullptr);
-  if (kevent(EvFd(), &change, 1, nullptr, 0, nullptr) == -1) {
-    ERROR("KqueueEvent Del read Event EvFd:{}，fd:{}, kevent error:{}", EvFd(), fd, errno);
+  if (mode_ & EVENT_MODE_READ) {
+    struct kevent change;
+    EV_SET(&change, fd, EVENT_READ, EV_DELETE, 0, 0, nullptr);
+    if (kevent(EvFd(), &change, 1, nullptr, 0, nullptr) == -1) {
+      ERROR("KqueueEvent Del read Event EvFd:{}，fd:{}, kevent error:{}", EvFd(), fd, errno);
+    }
   }
-  EV_SET(&change, fd, EVENT_WRITE, EV_DELETE, 0, 0, nullptr);
-  if (kevent(EvFd(), &change, 1, nullptr, 0, nullptr) == -1) {
-    ERROR("KqueueEvent Del write Event EvFd:{}，fd:{}, kevent error:{}", EvFd(), fd, errno);
+  if (mode_ & EVENT_MODE_WRITE) {
+    struct kevent change;
+    EV_SET(&change, fd, EVENT_WRITE, EV_DELETE, 0, 0, nullptr);
+    if (kevent(EvFd(), &change, 1, nullptr, 0, nullptr) == -1) {
+      if (errno != ENOENT) {  // If the event does not exist, it will return ENOENT
+        ERROR("KqueueEvent Del write Event EvFd:{}，fd:{}, kevent error:{}", EvFd(), fd, errno);
+      }
+    }
   }
 }
 
@@ -191,18 +198,26 @@ void KqueueEvent::DoWrite(const struct kevent &event, const std::shared_ptr<Conn
     return;
   }
   if (ret == 0) {
-    DelWriteEvent(reinterpret_cast<uint64_t>(event.udata), conn->fd_);
-#  ifdef HAVE_32BIT
+#  ifdef HAVE_64BIT
+    auto connId = reinterpret_cast<uint64_t>(event.udata);
+#  else
+    auto _connId = reinterpret_cast<uint64_t *>(event.udata);
+    uint64_t connId = *_connId;
     delete event.udata;
 #  endif
+    DelWriteEvent(connId, conn->fd_);
   }
 }
 
 void KqueueEvent::DoError(const struct kevent &event, std::string &&err) {
-  onClose_(reinterpret_cast<uint64_t>(event.udata), std::move(err));
-#  ifdef HAVE_32BIT
+#  ifdef HAVE_64BIT
+  auto connId = reinterpret_cast<uint64_t>(event.udata);
+#  else
+  auto _connId = reinterpret_cast<uint64_t *>(event.udata);
+  uint64_t connId = *_connId;
   delete event.udata;
 #  endif
+  onClose_(connId, std::move(err));
 }
 
 }  // namespace net

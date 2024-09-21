@@ -39,7 +39,7 @@ jobs:
         run: |
           cd ../tests
           go mod tidy
-          go test ./pikiwidb_suite_test.go ./consistency_test.go -v
+          go test ./kiwi_suite_test.go ./consistency_test.go -v
 
   build_on_ubuntu:
     runs-on: ubuntu-latest
@@ -57,4 +57,4 @@ jobs:
         run: |
           cd ../tests
           go mod tidy
-          go test ./pikiwidb_suite_test.go ./consistency_test.go -v
+          go test ./kiwi_suite_test.go ./consistency_test.go -v

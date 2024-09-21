@@ -1,11 +1,11 @@
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+ * Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-package pikiwidb_test
+package kiwi_test
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/OpenAtomFoundation/pikiwidb/tests/util"
+	"github.com/OpenAtomFoundation/kiwi/tests/util"
 )
 
 var _ = Describe("Set", Ordered, func() {

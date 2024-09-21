@@ -1,11 +1,11 @@
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+ * Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-package pikiwidb_test
+package kiwi_test
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/OpenAtomFoundation/pikiwidb/tests/util"
+	"github.com/OpenAtomFoundation/kiwi/tests/util"
 )
 
 var _ = Describe("Keyspace", Ordered, func() {
@@ -275,7 +275,7 @@ var _ = Describe("Keyspace", Ordered, func() {
 		time.Sleep(2 * time.Second)
 	})
 
-	// pikiwidb should treat numbers other than base-10 as strings
+	// kiwi should treat numbers other than base-10 as strings
 	It("base", func() {
 		set := client.Set(ctx, "key", "0b1", 0)
 		Expect(set.Err()).NotTo(HaveOccurred())

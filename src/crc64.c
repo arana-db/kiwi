@@ -1,3 +1,7 @@
+/*
+  The source code is derived from Redis, thanks Redis very much.
+ */
+
 /* Redis uses the CRC64 variant with "Jones" coefficients and init value of 0.
  *
  * Specification of this CRC64 variant follows:

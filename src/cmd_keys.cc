@@ -1,8 +1,11 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  This file implements commands that focus on the keys in
+  key-value pairs, rather than the values.
  */
 
 #include "cmd_keys.h"
@@ -11,7 +14,7 @@
 
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 DelCmd::DelCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsWrite, kAclCategoryWrite | kAclCategoryKeyspace) {}
@@ -231,7 +234,7 @@ void PttlCmd::DoCmd(PClient* client) {
   if (timestamp == -3) {
     client->SetRes(CmdRes::kErrOther, "ttl internal error");
   } else {
-    client->AppendInteger(timestamp);
+    client->AppendInteger(timestamp * 1000);
   }
 }
 
@@ -276,4 +279,4 @@ void RenameNXCmd::DoCmd(PClient* client) {
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

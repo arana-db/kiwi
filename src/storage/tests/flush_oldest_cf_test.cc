@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-present, OpenAtom Foundation, Inc.  All rights reserved.
+ * Copyright (c) 2024-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -42,11 +42,11 @@ using LogIndex = int64_t;
 
 class LogQueue : public pstd::noncopyable {
  public:
-  using WriteCallback = std::function<rocksdb::Status(const pikiwidb::Binlog&, LogIndex idx)>;
+  using WriteCallback = std::function<rocksdb::Status(const kiwi::Binlog&, LogIndex idx)>;
 
   explicit LogQueue(WriteCallback&& cb) : write_cb_(std::move(cb)) { consumer_.SetMaxIdleThread(1); }
 
-  void AppendLog(const pikiwidb::Binlog& log, std::promise<rocksdb::Status>&& promise) {
+  void AppendLog(const kiwi::Binlog& log, std::promise<rocksdb::Status>&& promise) {
     auto task = [&] {
       auto idx = next_log_idx_.fetch_add(1);
       auto s = write_cb_(log, idx);
@@ -64,12 +64,12 @@ class LogQueue : public pstd::noncopyable {
 class FlushOldestCFTest : public ::testing::Test {
  public:
   FlushOldestCFTest()
-      : log_queue_([this](const pikiwidb::Binlog& log, LogIndex log_idx) { return db_.OnBinlogWrite(log, log_idx); }) {
+      : log_queue_([this](const kiwi::Binlog& log, LogIndex log_idx) { return db_.OnBinlogWrite(log, log_idx); }) {
     options_.options.create_if_missing = true;
     options_.options.max_background_jobs = 10;
     options_.db_instance_num = 1;
     options_.raft_timeout_s = 9000000;
-    options_.append_log_function = [this](const pikiwidb::Binlog& log, std::promise<rocksdb::Status>&& promise) {
+    options_.append_log_function = [this](const kiwi::Binlog& log, std::promise<rocksdb::Status>&& promise) {
       log_queue_.AppendLog(log, std::move(promise));
     };
     options_.do_snapshot_function = [](int64_t log_index, bool sync) {};

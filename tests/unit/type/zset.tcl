@@ -7,7 +7,7 @@ start_server {tags {"zset"}} {
     }
 
     proc basics {encoding} {
-# This parameter is not available in Pika
+# This parameter is not available in Arana/Kiwi
         #if {$encoding == "ziplist"} {
         #    r config set zset-max-ziplist-entries 128
         #    r config set zset-max-ziplist-value 64
@@ -581,7 +581,7 @@ start_server {tags {"zset"}} {
         r zrange out 0 -1 withscores
     } {neginf 0}
 
-# The return value of Pika is inconsistent with Redis
+# The return value of Arana/Kiwi is inconsistent with Redis
    # test {ZINTERSTORE #516 regression, mixed sets and ziplist zsets} {
    #     r sadd one 100 101 102 103
    #     r sadd two 100 200 201 202

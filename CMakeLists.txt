@@ -1,10 +1,10 @@
-# Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+# Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
 CMAKE_MINIMUM_REQUIRED(VERSION 3.14)
-PROJECT(PikiwiDB)
+PROJECT(kiwi)
 include(GNUInstallDirs)
 
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=return-type")

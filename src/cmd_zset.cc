@@ -1,8 +1,10 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Implemented a set of features related to sorted sets.
  */
 
 #include "cmd_zset.h"
@@ -12,7 +14,7 @@
 #include "pstd/pstd_string.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 static void FitLimit(int64_t& count, int64_t& offset, const int64_t size) {
   count = count >= 0 ? count : size;
@@ -1024,4 +1026,4 @@ void ZRemrangebyscoreCmd::DoCmd(PClient* client) {
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

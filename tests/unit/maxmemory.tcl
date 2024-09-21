@@ -5,16 +5,16 @@ start_server {tags {"maxmemory"}} {
     }
 
     # The current maxmemory command does not support config set and policy.
-    # For a complete list of commands, refer to the wiki: https://github.com/OpenAtomFoundation/pika/wiki/pika-%E5%B7%AE%E5%BC%82%E5%8C%96%E5%91%BD%E4%BB%A4
+    # For a complete list of commands, refer to the wiki: https://github.com/OpenAtomFoundation/Arana/Kiwi/wiki/Arana/Kiwi-%E5%B7%AE%E5%BC%82%E5%8C%96%E5%91%BD%E4%BB%A4
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     # test "Without maxmemory small integers are shared" {
     #     r config set maxmemory 0
     #     r set a 1
     #     assert {[r object refcount a] > 1}
     # }
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     # test "With maxmemory and non-LRU policy integers are still shared" {
     #     r config set maxmemory 1073741824
     #     r config set maxmemory-policy allkeys-random
@@ -22,7 +22,7 @@ start_server {tags {"maxmemory"}} {
     #     assert {[r object refcount a] > 1}
     # }
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     # test "With maxmemory and LRU policy integers are not shared" {
     #     r config set maxmemory 1073741824
     #     r config set maxmemory-policy allkeys-lru
@@ -34,7 +34,7 @@ start_server {tags {"maxmemory"}} {
     #     r config set maxmemory 0
     # }
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     # foreach policy {
     #     allkeys-random allkeys-lru volatile-lru volatile-random volatile-ttl
     # } {
@@ -67,7 +67,7 @@ start_server {tags {"maxmemory"}} {
     #     }
     # }
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     # foreach policy {
     #     allkeys-random allkeys-lru volatile-lru volatile-random volatile-ttl
     # } {
@@ -110,7 +110,7 @@ start_server {tags {"maxmemory"}} {
     #     }
     # }
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     # foreach policy {
     #     volatile-lru volatile-random volatile-ttl
     # } {

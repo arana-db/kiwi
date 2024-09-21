@@ -1,8 +1,10 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Implemented a dynamically expandable buffer.
  */
 
 #include "unbounded_buffer.h"
@@ -10,7 +12,7 @@
 #include <iostream>
 #include <limits>
 
-namespace pikiwidb {
+namespace kiwi {
 
 const std::size_t UnboundedBuffer::MAX_BUFFER_SIZE = std::numeric_limits<std::size_t>::max() / 2;
 
@@ -170,4 +172,4 @@ int main()
 
 #endif
 
-}  // namespace pikiwidb
+}  // namespace kiwi

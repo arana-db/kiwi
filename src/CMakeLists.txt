@@ -1,11 +1,11 @@
-# Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+# Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-AUX_SOURCE_DIRECTORY(. PIKIWIDB_SRC)
+AUX_SOURCE_DIRECTORY(. kiwi_SRC)
 
-ADD_EXECUTABLE(pikiwidb ${PIKIWIDB_SRC})
+ADD_EXECUTABLE(kiwi ${kiwi_SRC})
 
 IF (CMAKE_BUILD_TYPE STREQUAL "Release")
     # get current date and time and git commit id
@@ -15,13 +15,13 @@ IF (CMAKE_BUILD_TYPE STREQUAL "Release")
     MESSAGE(STATUS "Build timestamp: ${BUILD_TIMESTAMP}")
     MESSAGE(STATUS "Git commit id: ${GIT_COMMIT_ID}")
 
-    TARGET_COMPILE_DEFINITIONS(pikiwidb PRIVATE KPIKIWIDB_BUILD_DATE="${BUILD_TIMESTAMP}" KPIKIWIDB_GIT_COMMIT_ID="${GIT_COMMIT_ID}")
+    TARGET_COMPILE_DEFINITIONS(kiwi PRIVATE Kkiwi_BUILD_DATE="${BUILD_TIMESTAMP}" Kkiwi_GIT_COMMIT_ID="${GIT_COMMIT_ID}")
 ENDIF ()
 
 # SET(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin/)
 SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin/)
 
-TARGET_INCLUDE_DIRECTORIES(pikiwidb
+TARGET_INCLUDE_DIRECTORIES(kiwi
         PRIVATE ${PROJECT_SOURCE_DIR}/src
         PRIVATE ${PROJECT_SOURCE_DIR}/src/pstd
         PRIVATE ${PROJECT_SOURCE_DIR}/src/net
@@ -33,7 +33,7 @@ TARGET_INCLUDE_DIRECTORIES(pikiwidb
         PRIVATE ${LIBEVENT_INCLUDE_DIRS}
 )
 
-ADD_DEPENDENCIES(pikiwidb
+ADD_DEPENDENCIES(kiwi
         gflags
         gtest
         fmt
@@ -47,7 +47,7 @@ ADD_DEPENDENCIES(pikiwidb
         storage
 )
 
-TARGET_LINK_LIBRARIES(pikiwidb
+TARGET_LINK_LIBRARIES(kiwi
         net
         dl
         fmt
@@ -73,4 +73,4 @@ TARGET_LINK_LIBRARIES(pikiwidb
         "${LIB}"
 )
 
-SET_TARGET_PROPERTIES(pikiwidb PROPERTIES LINKER_LANGUAGE CXX)
+SET_TARGET_PROPERTIES(kiwi PROPERTIES LINKER_LANGUAGE CXX)

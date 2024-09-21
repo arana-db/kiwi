@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-present, OpenAtom Foundation, Inc.  All rights reserved.
+ * Copyright (c) 2024-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -17,7 +17,7 @@
 #define PRAFT_SNAPSHOT_PATH "snapshot/snapshot_"
 #define IS_RDONLY 0x01
 
-namespace pikiwidb {
+namespace kiwi {
 
 class PPosixFileSystemAdaptor : public braft::PosixFileSystemAdaptor {
  public:
@@ -33,4 +33,4 @@ class PPosixFileSystemAdaptor : public braft::PosixFileSystemAdaptor {
   braft::raft_mutex_t mutex_;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

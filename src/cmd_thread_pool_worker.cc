@@ -1,16 +1,20 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Retrieve commands from the thread pool and execute them.
  */
 
 #include "cmd_thread_pool_worker.h"
+#include "client.h"
+#include "env.h"
 #include "log.h"
-#include "pikiwidb.h"
+#include "kiwi.h"
 
-namespace pikiwidb {
-pikiwidb::CmdTableManager pikiwidb::cmd_table_manager_;
+namespace kiwi {
+
 void CmdWorkThreadPoolWorker::Work() {
   while (running_) {
     LoadWork();
@@ -28,7 +32,7 @@ void CmdWorkThreadPoolWorker::Work() {
         } else {
           task->Client()->SetRes(CmdRes::kInvalidParameter);
         }
-        g_pikiwidb->PushWriteTask(task->Client());
+        g_kiwi->PushWriteTask(task->Client());
         continue;
       }
 
@@ -38,8 +42,23 @@ void CmdWorkThreadPoolWorker::Work() {
         g_pikiwidb->PushWriteTask(task->Client());
         continue;
       }
+
+      auto cmdstat_map = task->Client()->GetCommandStatMap();
+      CommandStatistics statistics;
+      if (cmdstat_map->find(task->CmdName()) == cmdstat_map->end()) {
+        cmdstat_map->emplace(task->CmdName(), statistics);
+      }
+      auto now = std::chrono::steady_clock::now();
+      task->Client()->GetTimeStat()->SetDequeueTs(now);
       task->Run(cmdPtr);
-      g_pikiwidb->PushWriteTask(task->Client());
+
+      // Info Commandstats used
+      now = std::chrono::steady_clock::now();
+      task->Client()->GetTimeStat()->SetProcessDoneTs(now);
+      (*cmdstat_map)[task->CmdName()].cmd_count_.fetch_add(1);
+      (*cmdstat_map)[task->CmdName()].cmd_time_consuming_.fetch_add(task->Client()->GetTimeStat()->GetTotalTime());
+
+      g_kiwi->PushWriteTask(task->Client());
     }
     self_task_.clear();
   }
@@ -96,4 +115,4 @@ void CmdSlowWorker::LoadWork() {
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

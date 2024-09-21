@@ -1,29 +1,45 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+   Many management-level commands are defined here.
+
+   Compared to the external commands at the user level,
+   the commands defined here are more focused on the overall
+   management of the kiwi.
+
  */
 
-#include "cmd_admin.h"
+#include <sys/resource.h>
+#include <sys/statvfs.h>
+#include <sys/time.h>
+#include <sys/utsname.h>
+#include <algorithm>
+#include <cctype>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
+#include "cmd_admin.h"
 #include "db.h"
 
 #include "braft/raft.h"
 #include "pstd_string.h"
 #include "rocksdb/version.h"
 
-#include "pikiwidb.h"
+#include "kiwi.h"
 #include "praft/praft.h"
 #include "pstd/env.h"
 
+#include "cmd_table_manager.h"
+#include "slow_log.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 CmdConfig::CmdConfig(const std::string& name, int arity) : BaseCmdGroup(name, kCmdFlagsAdmin, kAclCategoryAdmin) {}
 
@@ -133,7 +149,7 @@ bool ShutdownCmd::DoInitial(PClient* client) {
 
 void ShutdownCmd::DoCmd(PClient* client) {
   PSTORE.GetBackend(client->GetCurrentDB())->UnLockShared();
-  g_pikiwidb->Stop();
+  g_kiwi->Stop();
   PSTORE.GetBackend(client->GetCurrentDB())->LockShared();
   client->SetRes(CmdRes::kNone);
 }
@@ -144,24 +160,90 @@ bool PingCmd::DoInitial(PClient* client) { return true; }
 
 void PingCmd::DoCmd(PClient* client) { client->SetRes(CmdRes::kPong, "PONG"); }
 
+const std::string InfoCmd::kInfoSection = "info";
+const std::string InfoCmd::kAllSection = "all";
+const std::string InfoCmd::kServerSection = "server";
+const std::string InfoCmd::kStatsSection = "stats";
+const std::string InfoCmd::kCPUSection = "cpu";
+const std::string InfoCmd::kDataSection = "data";
+const std::string InfoCmd::kCommandStatsSection = "commandstats";
+const std::string InfoCmd::kRaftSection = "raft";
+
 InfoCmd::InfoCmd(const std::string& name, int16_t arity) : BaseCmd(name, arity, kCmdFlagsAdmin, kAclCategoryAdmin) {}
 
-bool InfoCmd::DoInitial(PClient* client) { return true; }
-
-// @todo The info raft command is only supported for the time being
-void InfoCmd::DoCmd(PClient* client) {
-  if (client->argv_.size() <= 1) {
-    return client->SetRes(CmdRes::kWrongNum, client->CmdName());
+bool InfoCmd::DoInitial(PClient* client) {
+  size_t argc = client->argv_.size();
+  if (argc == 1) {
+    info_section_ = kInfo;
+    return true;
   }
 
-  auto cmd = client->argv_[1];
-  if (!strcasecmp(cmd.c_str(), "RAFT")) {
-    InfoRaft(client);
-  } else if (!strcasecmp(cmd.c_str(), "data")) {
-    InfoData(client);
+  std::string argv_ = client->argv_[1].data();
+  // convert section to lowercase
+  std::transform(argv_.begin(), argv_.end(), argv_.begin(), [](unsigned char c) { return std::tolower(c); });
+  if (argc == 2) {
+    auto it = sectionMap.find(argv_);
+    if (it != sectionMap.end()) {
+      info_section_ = it->second;
+    } else {
+      client->SetRes(CmdRes::kErrOther, "the cmd is not supported");
+      return false;
+    }
   } else {
-    client->SetRes(CmdRes::kErrOther, "the cmd is not supported");
+    client->SetRes(CmdRes::kSyntaxErr);
+    return false;
   }
+  return true;
+}
+
+void InfoCmd::DoCmd(PClient* client) {
+  std::string info;
+  switch (info_section_) {
+    case kInfo:
+      InfoServer(info);
+      info.append("\r\n");
+      InfoData(info);
+      info.append("\r\n");
+      InfoStats(info);
+      info.append("\r\n");
+      InfoCPU(info);
+      info.append("\r\n");
+      break;
+    case kInfoAll:
+      InfoServer(info);
+      info.append("\r\n");
+      InfoData(info);
+      info.append("\r\n");
+      InfoStats(info);
+      info.append("\r\n");
+      InfoCommandStats(client, info);
+      info.append("\r\n");
+      InfoCPU(info);
+      info.append("\r\n");
+      break;
+    case kInfoServer:
+      InfoServer(info);
+      break;
+    case kInfoStats:
+      InfoStats(info);
+      break;
+    case kInfoCPU:
+      InfoCPU(info);
+      break;
+    case kInfoData:
+      InfoData(info);
+      break;
+    case kInfoCommandStats:
+      InfoCommandStats(client, info);
+      break;
+    case kInfoRaft:
+      InfoRaft(info);
+      break;
+    default:
+      break;
+  }
+
+  client->AppendString(info);
 }
 
 /*
@@ -178,60 +260,154 @@ void InfoCmd::DoCmd(PClient* client) {
     raft_num_voting_nodes:2
     raft_node1:id=1733428433,state=connected,voting=yes,addr=localhost,port=5001,last_conn_secs=5,conn_errors=0,conn_oks=1
 */
-void InfoCmd::InfoRaft(PClient* client) {
-  if (client->argv_.size() != 2) {
-    return client->SetRes(CmdRes::kWrongNum, client->CmdName());
-  }
-
+void InfoCmd::InfoRaft(std::string& message) {
   if (!PRAFT.IsInitialized()) {
-    return client->SetRes(CmdRes::kErrOther, "Don't already cluster member");
+    message += "-ERR Not a cluster member.\r\n";
+    return;
   }
 
   auto node_status = PRAFT.GetNodeStatus();
   if (node_status.state == braft::State::STATE_END) {
-    return client->SetRes(CmdRes::kErrOther, "Node is not initialized");
+    message += "-ERR Node is not initialized.\r\n";
+    return;
   }
 
-  std::string message;
-  message += "raft_group_id:" + PRAFT.GetGroupID() + "\r\n";
-  message += "raft_node_id:" + PRAFT.GetNodeID() + "\r\n";
-  message += "raft_peer_id:" + PRAFT.GetPeerID() + "\r\n";
+  std::stringstream tmp_stream;
+
+  tmp_stream << "raft_group_id:" << PRAFT.GetGroupID() << "\r\n";
+  tmp_stream << "raft_node_id:" << PRAFT.GetNodeID() << "\r\n";
+  tmp_stream << "raft_peer_id:" << PRAFT.GetPeerID() << "\r\n";
   if (braft::is_active_state(node_status.state)) {
-    message += "raft_state:up\r\n";
+    tmp_stream << "raft_state:up\r\n";
   } else {
-    message += "raft_state:down\r\n";
+    tmp_stream << "raft_state:down\r\n";
   }
-  message += "raft_role:" + std::string(braft::state2str(node_status.state)) + "\r\n";
-  message += "raft_leader_id:" + node_status.leader_id.to_string() + "\r\n";
-  message += "raft_current_term:" + std::to_string(node_status.term) + "\r\n";
+  tmp_stream << "raft_role:" << std::string(braft::state2str(node_status.state)) << "\r\n";
+  tmp_stream << "raft_leader_id:" << node_status.leader_id.to_string() << "\r\n";
+  tmp_stream << "raft_current_term:" << std::to_string(node_status.term) << "\r\n";
 
   if (PRAFT.IsLeader()) {
     std::vector<braft::PeerId> peers;
     auto status = PRAFT.GetListPeers(&peers);
     if (!status.ok()) {
-      return client->SetRes(CmdRes::kErrOther, status.error_str());
+      tmp_stream.str("-ERR ");
+      tmp_stream << status.error_str() << "\r\n";
+      return;
     }
 
     for (int i = 0; i < peers.size(); i++) {
-      message += "raft_node" + std::to_string(i) + ":addr=" + butil::ip2str(peers[i].addr.ip).c_str() +
-                 ",port=" + std::to_string(peers[i].addr.port) + "\r\n";
+      tmp_stream << "raft_node" << std::to_string(i) << ":addr=" << butil::ip2str(peers[i].addr.ip).c_str()
+                 << ",port=" << std::to_string(peers[i].addr.port) << "\r\n";
     }
   }
 
-  client->AppendString(message);
+  message.append(tmp_stream.str());
 }
 
-void InfoCmd::InfoData(PClient* client) {
-  if (client->argv_.size() != 2) {
-    return client->SetRes(CmdRes::kWrongNum, client->CmdName());
+void InfoCmd::InfoServer(std::string& info) {
+  static struct utsname host_info;
+  static bool host_info_valid = false;
+  if (!host_info_valid) {
+    uname(&host_info);
+    host_info_valid = true;
   }
 
-  std::string message;
-  message += DATABASES_NUM + std::string(":") + std::to_string(pikiwidb::g_config.databases) + "\r\n";
-  message += ROCKSDB_NUM + std::string(":") + std::to_string(pikiwidb::g_config.db_instance_num) + "\r\n";
-  message += ROCKSDB_VERSION + std::string(":") + ROCKSDB_NAMESPACE::GetRocksVersionAsString() + "\r\n";
+  time_t current_time_s = time(nullptr);
+  std::stringstream tmp_stream;
+  char version[32];
+  snprintf(version, sizeof(version), "%s", Kkiwi_VERSION);
 
-  client->AppendString(message);
+  tmp_stream << "# Server\r\n";
+  tmp_stream << "kiwi_version:" << version << "\r\n";
+  tmp_stream << "kiwi_build_git_sha:" << Kkiwi_GIT_COMMIT_ID << "\r\n";
+  tmp_stream << "kiwi_build_compile_date: " << Kkiwi_BUILD_DATE << "\r\n";
+  tmp_stream << "os:" << host_info.sysname << " " << host_info.release << " " << host_info.machine << "\r\n";
+  tmp_stream << "arch_bits:" << (reinterpret_cast<char*>(&host_info.machine) + strlen(host_info.machine) - 2) << "\r\n";
+  tmp_stream << "process_id:" << getpid() << "\r\n";
+  tmp_stream << "run_id:" << static_cast<std::string>(g_config.run_id) << "\r\n";
+  tmp_stream << "tcp_port:" << g_config.port << "\r\n";
+  tmp_stream << "uptime_in_seconds:" << (current_time_s - g_kiwi->Start_time_s()) << "\r\n";
+  tmp_stream << "uptime_in_days:" << (current_time_s / (24 * 3600) - g_kiwi->Start_time_s() / (24 * 3600) + 1)
+             << "\r\n";
+  tmp_stream << "config_file:" << g_kiwi->GetConfigName() << "\r\n";
+
+  info.append(tmp_stream.str());
+}
+
+void InfoCmd::InfoStats(std::string& info) {
+  std::stringstream tmp_stream;
+  tmp_stream << "# Stats"
+             << "\r\n";
+
+  tmp_stream << "is_bgsaving:" << (PREPL.IsBgsaving() ? "Yes" : "No") << "\r\n";
+  tmp_stream << "slow_logs_count:" << PSlowLog::Instance().GetLogsCount() << "\r\n";
+  info.append(tmp_stream.str());
+}
+
+void InfoCmd::InfoCPU(std::string& info) {
+  struct rusage self_ru;
+  struct rusage c_ru;
+  getrusage(RUSAGE_SELF, &self_ru);
+  getrusage(RUSAGE_CHILDREN, &c_ru);
+  std::stringstream tmp_stream;
+  tmp_stream << "# CPU"
+             << "\r\n";
+  tmp_stream << "used_cpu_sys:" << std::setiosflags(std::ios::fixed) << std::setprecision(2)
+             << static_cast<float>(self_ru.ru_stime.tv_sec) + static_cast<float>(self_ru.ru_stime.tv_usec) / 1000000
+             << "\r\n";
+  tmp_stream << "used_cpu_user:" << std::setiosflags(std::ios::fixed) << std::setprecision(2)
+             << static_cast<float>(self_ru.ru_utime.tv_sec) + static_cast<float>(self_ru.ru_utime.tv_usec) / 1000000
+             << "\r\n";
+  tmp_stream << "used_cpu_sys_children:" << std::setiosflags(std::ios::fixed) << std::setprecision(2)
+             << static_cast<float>(c_ru.ru_stime.tv_sec) + static_cast<float>(c_ru.ru_stime.tv_usec) / 1000000
+             << "\r\n";
+  tmp_stream << "used_cpu_user_children:" << std::setiosflags(std::ios::fixed) << std::setprecision(2)
+             << static_cast<float>(c_ru.ru_utime.tv_sec) + static_cast<float>(c_ru.ru_utime.tv_usec) / 1000000
+             << "\r\n";
+  info.append(tmp_stream.str());
+}
+
+void InfoCmd::InfoData(std::string& message) {
+  message += DATABASES_NUM + std::string(":") + std::to_string(kiwi::g_config.databases) + "\r\n";
+  message += ROCKSDB_NUM + std::string(":") + std::to_string(kiwi::g_config.db_instance_num) + "\r\n";
+  message += ROCKSDB_VERSION + std::string(":") + ROCKSDB_NAMESPACE::GetRocksVersionAsString() + "\r\n";
+}
+
+double InfoCmd::MethodofTotalTimeCalculation(const uint64_t time_consuming) {
+  return static_cast<double>(time_consuming) / 1000.0;
+}
+
+double InfoCmd::MethodofCommandStatistics(const uint64_t time_consuming, const uint64_t frequency) {
+  return (static_cast<double>(time_consuming) / 1000.0) / static_cast<double>(frequency);
+}
+
+void InfoCmd::InfoCommandStats(PClient* client, std::string& info) {
+  std::stringstream tmp_stream;
+  tmp_stream.precision(2);
+  tmp_stream.setf(std::ios::fixed);
+  tmp_stream << "# Commandstats"
+             << "\r\n";
+  auto cmdstat_map = client->GetCommandStatMap();
+  for (auto iter : *cmdstat_map) {
+    if (iter.second.cmd_count_ != 0) {
+      tmp_stream << iter.first << ":" << FormatCommandStatLine(iter.second);
+    }
+  }
+  info.append(tmp_stream.str());
+}
+
+std::string InfoCmd::FormatCommandStatLine(const CommandStatistics& stats) {
+  std::stringstream stream;
+  stream.precision(2);
+  stream.setf(std::ios::fixed);
+  stream << "calls=" << stats.cmd_count_ << ", usec=" << MethodofTotalTimeCalculation(stats.cmd_time_consuming_)
+         << ", usec_per_call=";
+  if (!stats.cmd_time_consuming_) {
+    stream << 0 << "\r\n";
+  } else {
+    stream << MethodofCommandStatistics(stats.cmd_time_consuming_, stats.cmd_count_) << "\r\n";
+  }
+  return stream.str();
 }
 
 CmdDebug::CmdDebug(const std::string& name, int arity) : BaseCmdGroup(name, kCmdFlagsAdmin, kAclCategoryAdmin) {}
@@ -468,4 +644,14 @@ void SortCmd::InitialArgument() {
   get_patterns_.clear();
   ret_.clear();
 }
-}  // namespace pikiwidb
+MonitorCmd::MonitorCmd(const std::string& name, int arity)
+    : BaseCmd(name, arity, kCmdFlagsReadonly | kCmdFlagsAdmin, kAclCategoryAdmin) {}
+
+bool MonitorCmd::DoInitial(PClient* client) { return true; }
+
+void MonitorCmd::DoCmd(PClient* client) {
+  client->AddToMonitor();
+  client->SetRes(CmdRes::kOK);
+}
+
+}  // namespace kiwi

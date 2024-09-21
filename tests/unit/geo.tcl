@@ -1,4 +1,4 @@
-# Pikiwidb does not support the geo command
+# kiwi does not support the geo command
 
 # Helper functions to simulate search-in-radius in the Tcl side in order to
 # verify the Redis implementation with a fuzzy test.

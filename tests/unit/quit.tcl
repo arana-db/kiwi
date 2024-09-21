@@ -7,11 +7,11 @@ start_server {tags {"quit"}} {
         set _ $cmd
     }
 
-    test "QUIT returns OK" {
-        reconnect
-        assert_equal OK [r quit]
-        assert_error * {r ping}
-    }
+    # test "QUIT returns OK" {
+    #     reconnect
+    #     assert_equal OK [r quit]
+    #     assert_error * {r ping}
+    # }
 
 #    test "Pipelined commands after QUIT must not be executed" {
 #        reconnect

@@ -1,8 +1,11 @@
+// Copyright (c) 2024-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2024-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Responsible for interfacing with RocksDB to effectively
+  manage kiwi's data.
  */
 
 #include "db.h"
@@ -12,9 +15,9 @@
 #include "praft/praft.h"
 #include "pstd/log.h"
 
-extern pikiwidb::PConfig g_config;
+extern kiwi::PConfig g_config;
 
-namespace pikiwidb {
+namespace kiwi {
 
 DB::DB(int db_index, const std::string& db_path)
     : db_index_(db_index), db_path_(db_path + std::to_string(db_index_) + '/') {}
@@ -37,7 +40,7 @@ rocksdb::Status DB::Open() {
     storage_options.append_log_function = [&r = PRAFT](const Binlog& log, std::promise<rocksdb::Status>&& promise) {
       r.AppendLog(log, std::move(promise));
     };
-    storage_options.do_snapshot_function = [raft = &pikiwidb::PRAFT](auto&& self_snapshot_index, auto&& is_sync) {
+    storage_options.do_snapshot_function = [raft = &kiwi::PRAFT](auto&& self_snapshot_index, auto&& is_sync) {
       raft->DoSnapshot(std::forward<decltype(self_snapshot_index)>(self_snapshot_index),
                        std::forward<decltype(is_sync)>(is_sync));
     };
@@ -121,7 +124,7 @@ void DB::LoadDBFromCheckpoint(const std::string& checkpoint_path, bool sync [[ma
       r.AppendLog(log, std::move(promise));
     };
     storage_options.do_snapshot_function =
-        std::bind(&pikiwidb::PRaft::DoSnapshot, &pikiwidb::PRAFT, std::placeholders::_1, std::placeholders::_2);
+        std::bind(&kiwi::PRaft::DoSnapshot, &kiwi::PRAFT, std::placeholders::_1, std::placeholders::_2);
   }
 
   if (auto s = storage_->Open(storage_options, db_path_); !s.ok()) {
@@ -129,7 +132,7 @@ void DB::LoadDBFromCheckpoint(const std::string& checkpoint_path, bool sync [[ma
     abort();
   }
 
-  // in single-mode, pikiwidb will enable wal
+  // in single-mode, kiwi will enable wal
   if (!g_config.use_raft.load(std::memory_order_relaxed)) {
     storage_->DisableWal(false);
   }
@@ -137,4 +140,4 @@ void DB::LoadDBFromCheckpoint(const std::string& checkpoint_path, bool sync [[ma
   opened_ = true;
   INFO("DB{} load a checkpoint from {} success!", db_index_, checkpoint_path);
 }
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -1,8 +1,11 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Defined a set of functions for operating key-value pairs
+  in a hash table.
  */
 #include "cmd_hash.h"
 
@@ -11,7 +14,7 @@
 #include "pstd/pstd_string.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 HSetCmd::HSetCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsWrite, kAclCategoryWrite | kAclCategoryHash) {}
@@ -177,7 +180,7 @@ void HGetAllCmd::DoCmd(PClient* client) {
     fvs.clear();
     s = PSTORE.GetBackend(client->GetCurrentDB())
             ->GetStorage()
-            ->HScan(client->Key(), cursor, "*", PIKIWIDB_SCAN_STEP_LENGTH, &fvs, &next_cursor);
+            ->HScan(client->Key(), cursor, "*", kiwi_SCAN_STEP_LENGTH, &fvs, &next_cursor);
     if (!s.ok()) {
       raw.clear();
       total_fv = 0;
@@ -537,4 +540,4 @@ void HExistsCmd::DoCmd(PClient* client) {
   client->AppendInteger(s.IsNotFound() ? 0 : 1);
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

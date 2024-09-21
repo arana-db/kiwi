@@ -1,8 +1,10 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Stores the declarations of management commands.
  */
 
 #pragma once
@@ -20,7 +22,8 @@ const std::vector<std::string> debugHelps = {"DEBUG <subcommand> [<arg> [value] 
                                              "OOM",
                                              "    Crash the server simulating an out-of-memory error."};
 
-namespace pikiwidb {
+namespace kiwi {
+const std::string kCmdNameMonitor = "monitor";
 
 class CmdConfig : public BaseCmdGroup {
  public:
@@ -124,8 +127,45 @@ class InfoCmd : public BaseCmd {
  private:
   void DoCmd(PClient* client) override;
 
-  void InfoRaft(PClient* client);
-  void InfoData(PClient* client);
+  enum InfoSection {
+    kInfoErr = 0x0,
+    kInfoServer,
+    kInfoStats,
+    kInfoCPU,
+    kInfoData,
+    kInfo,
+    kInfoAll,
+    kInfoCommandStats,
+    kInfoRaft
+  };
+
+  InfoSection info_section_;
+  const static std::string kInfoSection;
+  const static std::string kAllSection;
+  const static std::string kServerSection;
+  const static std::string kStatsSection;
+  const static std::string kCPUSection;
+  const static std::string kDataSection;
+  const static std::string kCommandStatsSection;
+  const static std::string kRaftSection;
+
+  const std::unordered_map<std::string, InfoSection> sectionMap = {{kAllSection, kInfoAll},
+                                                                   {kServerSection, kInfoServer},
+                                                                   {kStatsSection, kInfoStats},
+                                                                   {kCPUSection, kInfoCPU},
+                                                                   {kDataSection, kInfoData},
+                                                                   {kRaftSection, kInfoRaft},
+                                                                   {kCommandStatsSection, kInfoCommandStats}};
+
+  void InfoServer(std::string& info);
+  void InfoStats(std::string& info);
+  void InfoCPU(std::string& info);
+  void InfoRaft(std::string& info);
+  void InfoData(std::string& info);
+  void InfoCommandStats(PClient* client, std::string& info);
+  std::string FormatCommandStatLine(const CommandStatistics& stats);
+  double MethodofTotalTimeCalculation(const uint64_t time_consuming);
+  double MethodofCommandStatistics(const uint64_t time_consuming, const uint64_t frequency);
 };
 
 class CmdDebug : public BaseCmdGroup {
@@ -174,6 +214,17 @@ class CmdDebugSegfault : public BaseCmd {
   void DoCmd(PClient* client) override;
 };
 
+class MonitorCmd : public BaseCmd {
+ public:
+  MonitorCmd(const std::string& name, int arity);
+
+ protected:
+  bool DoInitial(PClient* client) override;
+
+ private:
+  void DoCmd(PClient* client) override;
+};
+
 class SortCmd : public BaseCmd {
  public:
   SortCmd(const std::string& name, int16_t arity);
@@ -203,4 +254,4 @@ class SortCmd : public BaseCmd {
   std::vector<std::string> ret_;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

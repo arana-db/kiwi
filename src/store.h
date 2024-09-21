@@ -1,8 +1,11 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Connects external commands and coordinates the operation
+  of RocksDB.
  */
 
 #pragma once
@@ -17,7 +20,7 @@
 #include "db.h"
 #include "storage/storage.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 enum TaskType { kCheckpoint = 0, kLoadDBFromCheckpoint, kEmpty };
 
@@ -61,8 +64,10 @@ class PStore {
 };
 
 #define PSTORE PStore::Instance()
+
 // ugly, but I don't want to write signalModifiedKey() every where
 extern std::vector<PString> g_dirtyKeys;
 extern void Propagate(const std::vector<PString>& params, int dbno);
 extern void Propagate(int dbno, const std::vector<PString>& params);
-}  // namespace pikiwidb
+
+}  // namespace kiwi

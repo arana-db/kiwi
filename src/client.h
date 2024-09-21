@@ -1,12 +1,16 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Defined a set of feedback codes, messages, and functions
+  related to handling client commands.
  */
 
 #pragma once
 
+#include <chrono>
 #include <set>
 #include <span>
 #include <unordered_map>
@@ -19,7 +23,42 @@
 #include "replication.h"
 #include "storage/storage.h"
 
-namespace pikiwidb {
+namespace kiwi {
+
+struct CommandStatistics {
+  CommandStatistics() = default;
+  CommandStatistics(const CommandStatistics& other)
+      : cmd_count_(other.cmd_count_.load()), cmd_time_consuming_(other.cmd_time_consuming_.load()) {}
+
+  std::atomic<uint64_t> cmd_count_ = 0;
+  std::atomic<uint64_t> cmd_time_consuming_ = 0;
+};
+
+struct TimeStat {
+  using TimePoint = std::chrono::time_point<std::chrono::steady_clock>;
+
+  TimeStat() = default;
+
+  void Reset() {
+    enqueue_ts_ = TimePoint::min();
+    dequeue_ts_ = TimePoint::min();
+    process_done_ts_ = TimePoint::min();
+  }
+
+  uint64_t GetTotalTime() const {
+    return (process_done_ts_ > enqueue_ts_)
+               ? std::chrono::duration_cast<std::chrono::milliseconds>(process_done_ts_ - enqueue_ts_).count()
+               : 0;
+  }
+
+  void SetEnqueueTs(TimePoint now_time) { enqueue_ts_ = now_time; }
+  void SetDequeueTs(TimePoint now_time) { dequeue_ts_ = now_time; }
+  void SetProcessDoneTs(TimePoint now_time) { process_done_ts_ = now_time; }
+
+  TimePoint enqueue_ts_ = TimePoint::min();
+  TimePoint dequeue_ts_ = TimePoint::min();
+  TimePoint process_done_ts_ = TimePoint::min();
+};
 
 class CmdRes {
  public:
@@ -132,7 +171,7 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   //  PClient() = delete;
   explicit PClient();
 
-  //  int HandlePackets(pikiwidb::TcpConnection*, const char*, int);
+  //  int HandlePackets(kiwi::TcpConnection*, const char*, int);
 
   void OnConnect();
 
@@ -220,8 +259,8 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   void SetSlaveInfo();
   PSlaveInfo* GetSlaveInfo() const { return slave_info_.get(); }
   void TransferToSlaveThreads();
+  void AddToMonitor();
 
-  static void AddCurrentToMonitor();
   static void FeedMonitors(const std::vector<std::string>& params);
 
   void SetAuth() { auth_ = true; }
@@ -244,6 +283,10 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   // All parameters of this command (including the command itself)
   // e.g：["set","key","value"]
   std::span<std::string> argv_;
+
+  // Info Commandstats used
+  std::unordered_map<std::string, CommandStatistics>* GetCommandStatMap();
+  std::shared_ptr<TimeStat> GetTimeStat();
 
   //  std::shared_ptr<TcpConnection> getTcpConnection() const { return tcp_connection_.lock(); }
   int handlePacket(const char*, int);
@@ -299,5 +342,11 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   net::SocketAddr addr_;
 
   static thread_local PClient* s_current;
+
+  /*
+   * Info Commandstats used
+   */
+  std::unordered_map<std::string, CommandStatistics> cmdstat_map_;
+  std::shared_ptr<TimeStat> time_stat_;
 };
-}  // namespace pikiwidb
+}  // namespace kiwi

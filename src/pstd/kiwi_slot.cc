@@ -5,7 +5,7 @@
 
 #include <zlib.h>
 
-#include "pikiwidb_slot.h"
+#include "kiwi_slot.h"
 
 // get slot tag
 static const char *GetSlotsTag(const std::string &str, int *plen) {

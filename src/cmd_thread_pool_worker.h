@@ -1,8 +1,11 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Defined a set of functions for retrieving commands from
+  the thread pool and executing them.
  */
 
 #pragma once
@@ -13,7 +16,7 @@
 #include "cmd_table_manager.h"
 #include "cmd_thread_pool.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 extern pikiwidb::CmdTableManager cmd_table_manager_;
 class CmdWorkThreadPoolWorker {
@@ -38,6 +41,8 @@ class CmdWorkThreadPoolWorker {
   const int once_task_ = 0;  // the max task num that the worker can get from the thread pool
   const std::string name_;
   bool running_ = true;
+  
+  kiwi::CmdTableManager cmd_table_manager_;
 };
 
 // fast worker
@@ -63,4 +68,4 @@ class CmdSlowWorker : public CmdWorkThreadPoolWorker {
   int wait_time_ = 200;     // When the slow queue is empty, wait 200 ms to check again
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

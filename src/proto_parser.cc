@@ -1,8 +1,10 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Responsible for interfacing with the Redis client protocol.
  */
 
 #include <cassert>
@@ -17,7 +19,7 @@
 // 5 strlen -> $ number crlf
 // 6 strval -> string crlf
 
-namespace pikiwidb {
+namespace kiwi {
 void PProtoParser::Reset() {
   multi_ = -1;
   paramLen_ = -1;
@@ -130,4 +132,4 @@ PParseResult PProtoParser::parseStrlen(const char*& ptr, const char* end, int& r
   return ret;
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-present, OpenAtom Foundation, Inc.  All rights reserved.
+ * Copyright (c) 2024-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -20,7 +20,7 @@
 
 #include "binlog.pb.h"
 #include "config.h"
-#include "pikiwidb.h"
+#include "kiwi.h"
 #include "replication.h"
 #include "store.h"
 
@@ -37,7 +37,7 @@ DECLARE_bool(raft_enable_leader_lease);
     butil::Status(EINVAL, msg);   \
   })
 
-namespace pikiwidb {
+namespace kiwi {
 
 bool ClusterCmdContext::Set(ClusterCmdType cluster_cmd_type, PClient* client, std::string&& peer_ip, int port,
                             std::string&& peer_id) {
@@ -97,7 +97,7 @@ butil::Status PRaft::Init(std::string& group_id, bool initial_conf_is_null) {
   }
 
   server_ = std::make_unique<brpc::Server>();
-  auto port = g_config.port + pikiwidb::g_config.raft_port_offset;
+  auto port = g_config.port + kiwi::g_config.raft_port_offset;
   // Add your service into RPC server
   DummyServiceImpl service(&PRAFT);
   if (server_->AddService(&service, brpc::SERVER_DOESNT_OWN_SERVICE) != 0) {
@@ -165,7 +165,7 @@ butil::Status PRaft::Init(std::string& group_id, bool initial_conf_is_null) {
   snapshot_adaptor_ = new PPosixFileSystemAdaptor();
   node_options_.snapshot_file_system_adaptor = &snapshot_adaptor_;
 
-  node_ = std::make_unique<braft::Node>("pikiwidb", braft::PeerId(addr));  // group_id
+  node_ = std::make_unique<braft::Node>("kiwi", braft::PeerId(addr));  // group_id
   if (node_->init(node_options_) != 0) {
     server_.reset();
     node_.reset();
@@ -321,7 +321,7 @@ void PRaft::SendNodeAddRequest(PClient* client) {
 
   // Node id in braft are ip:port, the node id param in RAFT.NODE ADD cmd will be ignored.
   int unused_node_id = 0;
-  auto port = g_config.port + pikiwidb::g_config.raft_port_offset;
+  auto port = g_config.port + kiwi::g_config.raft_port_offset;
   auto raw_addr = g_config.ip.ToString() + ":" + std::to_string(port);
   UnboundedBuffer req;
   req.PushData("RAFT.NODE ADD ", 14);
@@ -393,8 +393,8 @@ void PRaft::CheckRocksDBConfiguration(PClient* client, PClient* join_client, con
     }
   }
 
-  int current_databases_num = pikiwidb::g_config.databases;
-  int current_rocksdb_num = pikiwidb::g_config.db_instance_num;
+  int current_databases_num = kiwi::g_config.databases;
+  int current_rocksdb_num = kiwi::g_config.db_instance_num;
   std::string current_rocksdb_version = ROCKSDB_NAMESPACE::GetRocksVersionAsString();
   if (current_databases_num != databases_num || current_rocksdb_num != rocksdb_num ||
       current_rocksdb_version != rockdb_version) {
@@ -739,4 +739,4 @@ void PRaft::on_stop_following(const ::braft::LeaderChangeContext& ctx) { LOG(INF
 
 void PRaft::on_start_following(const ::braft::LeaderChangeContext& ctx) { LOG(INFO) << "Node start following " << ctx; }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -136,7 +136,7 @@ start_server {
 #            assert_equal 1 [r llen blist2]
 #        }
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #        test "BRPOPLPUSH - $type" {
 #            r del target
 #
@@ -225,7 +225,7 @@ start_server {
 #        assert_equal foo [lindex [r lrange blist 0 -1] 0]
 #    }
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "BRPOPLPUSH with zero timeout should block indefinitely" {
 #        set rd [redis_deferring_client]
 #        r del blist target
@@ -236,7 +236,7 @@ start_server {
 #        assert_equal {foo} [r lrange target 0 -1]
 #    }
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "BRPOPLPUSH with a client BLPOPing the target list" {
 #        set rd [redis_deferring_client]
 #        set rd2 [redis_deferring_client]
@@ -251,7 +251,7 @@ start_server {
 #    }
 #
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "BRPOPLPUSH with wrong source type" {
 #        set rd [redis_deferring_client]
 #        r del blist target
@@ -261,7 +261,7 @@ start_server {
 #    }
 #
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "BRPOPLPUSH with wrong destination type" {
 #        set rd [redis_deferring_client]
 #        r del blist target
@@ -281,7 +281,7 @@ start_server {
 #    }
 #
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "BRPOPLPUSH maintains order of elements after failure" {
 #        set rd [redis_deferring_client]
 #        r del blist target
@@ -293,7 +293,7 @@ start_server {
 #    } {a b c}
 #
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "BRPOPLPUSH with multiple blocked clients" {
 #        set rd1 [redis_deferring_client]
 #        set rd2 [redis_deferring_client]
@@ -309,7 +309,7 @@ start_server {
 #    }
 #
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "Linked BRPOPLPUSH" {
 #      set rd1 [redis_deferring_client]
 #      set rd2 [redis_deferring_client]
@@ -327,7 +327,7 @@ start_server {
 #    }
 #
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "Circular BRPOPLPUSH" {
 #      set rd1 [redis_deferring_client]
 #      set rd2 [redis_deferring_client]
@@ -344,7 +344,7 @@ start_server {
 #    }
 #
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "Self-referential BRPOPLPUSH" {
 #      set rd [redis_deferring_client]
 #
@@ -358,7 +358,7 @@ start_server {
 #    }
 #
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "BRPOPLPUSH inside a transaction" {
 #        r del xlist target
 #        r lpush xlist foo
@@ -374,7 +374,7 @@ start_server {
 #    } {foo bar {} {} {bar foo}}
 #
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "PUSH resulting from BRPOPLPUSH affect WATCH" {
 #        set blocked_client [redis_deferring_client]
 #        set watching_client [redis_deferring_client]
@@ -393,7 +393,7 @@ start_server {
 #    } {}
 #
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test "BRPOPLPUSH does not affect WATCH while still blocked" {
 #        set blocked_client [redis_deferring_client]
 #        set watching_client [redis_deferring_client]
@@ -413,7 +413,7 @@ start_server {
 #    } {somevalue}
 #
 
-# Pika does not support the BRPOPLPUSH command
+# Arana/Kiwi does not support the BRPOPLPUSH command
 #    test {BRPOPLPUSH timeout} {
 #      set rd [redis_deferring_client]
 #
@@ -422,7 +422,7 @@ start_server {
 #      $rd read
 #    } {}
 
-# Pika does not yet support the RENAME command
+# Arana/Kiwi does not yet support the RENAME command
 #    test "BLPOP when new key is moved into place" {
 #        set rd [redis_deferring_client]
 #
@@ -433,7 +433,7 @@ start_server {
 #    } {foo hij}
 #
 
-# Pika does not yet support the SORT command
+# Arana/Kiwi does not yet support the SORT command
 #    test "BLPOP when result key is created by SORT..STORE" {
 #        set rd [redis_deferring_client]
 #
@@ -480,7 +480,7 @@ start_server {
 #            assert_equal {blist1 foo} [$rd read]
 #        }
 
-#  Keys for multiple data types of Pika can be duplicate
+#  Keys for multiple data types of Arana/Kiwi can be duplicate
 #        test "$pop: second argument is not a list" {
 #            set rd [redis_deferring_client]
 #            r del blist1 blist2
@@ -645,7 +645,7 @@ start_server {
             check_random_access_consistency mylist
         }
 
-# Pika does not support the debug command
+# Arana/Kiwi does not support the debug command
 #        test "Check if list is still ok after a DEBUG RELOAD - $type" {
 #            r debug reload
 #            assert_encoding $type mylist
@@ -654,7 +654,7 @@ start_server {
 #        }
     }
 
-# Keys for multiple data types of Pika can be duplicate
+# Keys for multiple data types of Arana/Kiwi can be duplicate
     test {LLEN against non-list value error} {
         r del mylist
         r set mylist foobar
@@ -665,7 +665,7 @@ start_server {
         assert_equal 0 [r llen not-a-key]
     }
 
-# Currently Redis and Pika are consistent
+# Currently Redis and Arana/Kiwi are consistent
     test {LINDEX against non-list value error} {
         assert_error WRONGTYPE* {r lindex mylist 0}
     }
@@ -674,12 +674,12 @@ start_server {
         assert_equal "" [r lindex not-a-key 10]
     }
 
-# Currently Redis and Pika are consistent
+# Currently Redis and Arana/Kiwi are consistent
     test {LPUSH against non-list value error} {
         assert_error WRONGTYPE* {r lpush mylist 0}
     }
 
-# Currently Redis and Pika are consistent
+# Currently Redis and Arana/Kiwi are consistent
     test {RPUSH against non-list value error} {
         assert_error WRONGTYPE* {r rpush mylist 0}
     }
@@ -695,7 +695,7 @@ start_server {
 #            assert_encoding ziplist mylist2
         }
 
-# Currently Redis and Pika are consistent
+# Currently Redis and Arana/Kiwi are consistent
 #        test "RPOPLPUSH with the same list as src and dst - $type" {
 #            create_$type mylist "a $large c"
 #            assert_equal "a $large c" [r lrange mylist 0 -1]
@@ -763,7 +763,7 @@ start_server {
         }
     }
 
-# Keys for multiple data types of Pika can be duplicate
+# Keys for multiple data types of Arana/Kiwi can be duplicate
     test {LPOP/RPOP against non list value} {
         r set notalist foo
         assert_error WRONGTYPE* {r lpop notalist}
@@ -865,7 +865,7 @@ start_server {
         assert_error ERR*key* {r lset nosuchkey 10 foo}
     }
 
-# Keys for multiple data types of Pika can be duplicate
+# Keys for multiple data types of Arana/Kiwi can be duplicate
     test {LSET against non list value} {
         r set nolist foobar
         assert_error WRONGTYPE* {r lset nolist 0 foo}

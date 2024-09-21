@@ -1,4 +1,4 @@
-### PikiwiDB test
+### kiwi test
 
-* 在 PikiwiDB 目录下执行 `sh ./etc/script/pikatests.sh geo` 测试PikiwiDB GEO命令
-* 如果是`unit/type`接口, 例如 SET, 执行 `./etc/script/pikiwidbtests.sh type/set` 测试PikiwiDB SET命令
+* 在 kiwi 目录下执行 `sh ./etc/script/Arana/Kiwitests.sh geo` 测试kiwi GEO命令
+* 如果是`unit/type`接口, 例如 SET, 执行 `./etc/script/kiwitests.sh type/set` 测试kiwi SET命令

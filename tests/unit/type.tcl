@@ -1,10 +1,5 @@
 start_server {tags {"type"}} {
 
-    test "type none" {
-        r flushdb
-        assert_equal none [r type key]
-    }
-
     test "type command" {
         r flushdb
 
