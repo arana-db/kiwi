@@ -3,17 +3,23 @@
 //  LICENSE file in the root directory of this source tree. An additional grant
 //  of patent rights can be found in the PATENTS file in the same directory.
 
+#include <memory>
 #include <sstream>
 
 #include "pstd/log.h"
+#include "rocksdb/cache.h"
 #include "rocksdb/env.h"
 
+#include "rocksdb/options.h"
+#include "rocksdb/table.h"
 #include "src/base_filter.h"
+#include "src/base_value_format.h"
 #include "src/lists_filter.h"
 #include "src/mutex.h"
 #include "src/redis.h"
 #include "src/strings_filter.h"
 #include "src/zsets_filter.h"
+#include "storage/storage_define.h"
 
 #define ADD_TABLE_PROPERTY_COLLECTOR_FACTORY(type)              \
   type##_cf_ops.table_properties_collector_factories.push_back( \
@@ -156,6 +162,16 @@ Status Redis::Open(const StorageOptions& storage_options, const std::string& db_
   zset_data_cf_ops.table_factory.reset(rocksdb::NewBlockBasedTableFactory(zset_data_cf_table_ops));
   zset_score_cf_ops.table_factory.reset(rocksdb::NewBlockBasedTableFactory(zset_score_cf_table_ops));
 
+  // search column-family options
+  rocksdb::ColumnFamilyOptions search_data_cf_ops(storage_options.options);
+  search_data_cf_ops.compaction_filter_factory =
+      std::make_shared<BaseDataFilterFactory>(&db_, &handles_, DataType::kSearch);
+  rocksdb::BlockBasedTableOptions serach_data_cf_table_ops(table_ops);
+  if (!storage_options.share_block_cache && storage_options.block_cache_size > 0) {
+    serach_data_cf_table_ops.block_cache = rocksdb::NewLRUCache(storage_options.block_cache_size);
+  }
+  search_data_cf_ops.table_factory.reset(rocksdb::NewBlockBasedTableFactory(serach_data_cf_table_ops));
+
   if (append_log_function_) {
     // Add log index table property collector factory to each column family
     ADD_TABLE_PROPERTY_COLLECTOR_FACTORY(meta);
@@ -164,6 +180,7 @@ Status Redis::Open(const StorageOptions& storage_options, const std::string& db_
     ADD_TABLE_PROPERTY_COLLECTOR_FACTORY(set_data);
     ADD_TABLE_PROPERTY_COLLECTOR_FACTORY(zset_data);
     ADD_TABLE_PROPERTY_COLLECTOR_FACTORY(zset_score);
+    ADD_TABLE_PROPERTY_COLLECTOR_FACTORY(search_data);
 
     // Add a listener on flush to purge log index collector
     db_ops.listeners.push_back(std::make_shared<LogIndexAndSequenceCollectorPurger>(
@@ -183,6 +200,8 @@ Status Redis::Open(const StorageOptions& storage_options, const std::string& db_
   // zset CF
   column_families.emplace_back("zset_data_cf", zset_data_cf_ops);
   column_families.emplace_back("zset_score_cf", zset_score_cf_ops);
+  // search CF
+  column_families.emplace_back("search_data_cf", search_data_cf_ops);
 
   auto s = rocksdb::DB::Open(db_ops, db_path, column_families, &handles_, &db_);
   if (!s.ok()) {
@@ -230,6 +249,7 @@ Status Redis::CompactRange(const rocksdb::Slice* begin, const rocksdb::Slice* en
   db_->CompactRange(default_compact_range_options_, handles_[kListsDataCF], begin, end);
   db_->CompactRange(default_compact_range_options_, handles_[kZsetsDataCF], begin, end);
   db_->CompactRange(default_compact_range_options_, handles_[kZsetsScoreCF], begin, end);
+  db_->CompactRange(default_compact_range_options_, handles_[kSearchDataCF], begin, end);
   return Status::OK();
 }
 
