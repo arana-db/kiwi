@@ -74,7 +74,7 @@ const std::string kCmdNameMSetnx = "msetnx";
 const std::string kCmdNameMulti = "multi";
 const std::string kCmdNameExec = "exec";
 const std::string kCmdNameWatch = "watch";
-const std::string kCmdNameUnwatch = "unwatch";
+const std::string kCmdNameUnWatch = "unwatch";
 const std::string kCmdNameDiscard = "discard";
 
 // admin

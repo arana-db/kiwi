@@ -38,7 +38,8 @@ void CmdWorkThreadPoolWorker::Work() {
 
       if (!cmdPtr->CheckArg(task->Client()->ParamsSize())) {
         task->Client()->SetRes(CmdRes::kWrongNum, task->CmdName());
-        g_kiwi->PushWriteTask(task->Client());
+        task->Client()->FlagExecWrong();
+        g_pikiwidb->PushWriteTask(task->Client());
         continue;
       }
 

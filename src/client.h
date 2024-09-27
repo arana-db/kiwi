@@ -84,6 +84,7 @@ class CmdRes {
     kInvalidIndex,
     kInvalidDbType,
     kInvalidDB,
+    kPErrorWatch,
     kInconsistentHashTag,
     kErrOther,
     kUnknownCmd,
@@ -92,6 +93,8 @@ class CmdRes {
     kInvalidCursor,
     kWrongLeader,
     kMultiKey,
+    kDirtyExec,
+    kQueued,
   };
 
   CmdRes() = default;
@@ -117,6 +120,7 @@ class CmdRes {
   inline void AppendArrayLenUint64(uint64_t ori) { RedisAppendLenUint64(message_, ori, "*"); }
   inline void AppendInteger(int64_t ori) { RedisAppendLen(message_, ori, ":"); }
   inline void AppendContent(const std::string& value) { RedisAppendContent(message_, value); }
+  inline void AppendContentv1(const std::string& value) { RedisAppendContentv1(message_, value); }
   inline void AppendStringRaw(const std::string& value) { message_.append(value); }
   inline void SetLineString(const std::string& value) { message_ = value + CRLF; }
 
@@ -133,7 +137,12 @@ class CmdRes {
     str.append(CRLF);
   }
 
+  inline void RedisAppendContentv1(std::string& str, const std::string& value) {
+    str.append(value.data(), value.size());
+  }
+
   void RedisAppendLen(std::string& str, int64_t ori, const std::string& prefix);
+  CmdRet GetRet() { return ret_; };
 
  protected:
   std::string message_;
@@ -328,7 +337,6 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   time_t last_auth_ = 0;
 
   ClientState state_;
-
   uint64_t net_id_ = 0;
   int8_t net_thread_index_ = 0;
   net::SocketAddr addr_;
