@@ -157,6 +157,14 @@ enum class ClientState {
 class DB;
 struct PSlaveInfo;
 
+struct ClientInfo {
+  uint64_t client_id;
+  std::string ip;
+  int port;
+  static const ClientInfo invalidClientInfo;
+  bool operator==(const ClientInfo& ci) const { return client_id == ci.client_id; }
+};
+
 class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
  public:
   //  PClient() = delete;
@@ -168,6 +176,8 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
 
   std::string PeerIP() const;
   int PeerPort() const;
+  const int GetFd() const;
+  ClientInfo GetClientInfo() const;
 
   //  bool SendPacket(const std::string& buf);
   //  bool SendPacket(const void* data, size_t size);
@@ -256,6 +266,7 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
 
   void SetAuth() { auth_ = true; }
   bool GetAuth() const { return auth_; }
+  uint64_t GetUniqueID() const;
   void RewriteCmd(std::vector<std::string>& params) { parser_.SetParams(params); }
   void Reexecutecommand() { this->executeCommand(); }
 
@@ -287,7 +298,6 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   int processInlineCmd(const char*, size_t, std::vector<std::string>&);
   void reset();
   bool isPeerMaster() const;
-  uint64_t uniqueID() const;
 
   bool isClusterCmdTarget() const;
 

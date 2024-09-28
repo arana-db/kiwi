@@ -106,7 +106,7 @@ class OutputMemoryFile {
    * Initialize some private value.
    */
   OutputMemoryFile();
-  
+
   /*------------------------
    * ~OutputMemoryFile()
    * Close file and free the memory.
@@ -131,7 +131,7 @@ class OutputMemoryFile {
    * Close file and end the mapping relation.
    */
   void Close();
-  
+
   /*------------------------
    * Sync()
    * Synchronize memory content to disk.
@@ -140,7 +140,7 @@ class OutputMemoryFile {
 
   /*------------------------
    * Truncate(std::size_t size)
-   * Adjust the file block size to the specified bytes 
+   * Adjust the file block size to the specified bytes
    * and rebuild the mapping relationship.
    */
   void Truncate(std::size_t size);
@@ -149,14 +149,14 @@ class OutputMemoryFile {
    * TruncateTailZero()
    * Equal to Truncate(0), if process terminated abnormally,
    * erase the trash data.
-   */ 
+   */
   void TruncateTailZero();
 
   /*------------------------
    * Write(const void* data, std::size_t len)
-   * Write the content of the specified length into the buffer 
+   * Write the content of the specified length into the buffer
    * and adjust the offset.
-   */ 
+   */
   void Write(const void* data, std::size_t len);
 
   // Write data to file buffer and adjust the offset.
@@ -197,7 +197,7 @@ class OutputMemoryFile {
 
   // fd
   int file_ = -1;
-  
+
   // The file content buffer
   char* pMemory_ = nullptr;
 

@@ -35,6 +35,7 @@
 #include "praft/praft.h"
 #include "pstd/env.h"
 
+#include "client_map.h"
 #include "cmd_table_manager.h"
 #include "slow_log.h"
 #include "store.h"
@@ -643,6 +644,141 @@ void SortCmd::InitialArgument() {
   sortby_.clear();
   get_patterns_.clear();
   ret_.clear();
+}
+CmdClient::CmdClient(const std::string& name, int arity)
+    : BaseCmdGroup(name, kCmdFlagsReadonly | kCmdFlagsAdmin, kAclCategoryAdmin) {}
+
+bool CmdClient::HasSubCommand() const { return true; }
+
+CmdClientGetname::CmdClientGetname(const std::string& name, int16_t arity)
+    : BaseCmd(name, arity, kCmdFlagsAdmin | kCmdFlagsReadonly, kAclCategoryAdmin) {}
+
+bool CmdClientGetname::DoInitial(PClient* client) { return true; }
+
+void CmdClientGetname::DoCmd(PClient* client) { client->AppendString(client->GetName()); }
+
+CmdClientSetname::CmdClientSetname(const std::string& name, int16_t arity)
+    : BaseCmd(name, arity, kCmdFlagsAdmin | kCmdFlagsWrite, kAclCategoryAdmin) {}
+
+bool CmdClientSetname::DoInitial(PClient* client) { return true; }
+
+void kiwi::CmdClientSetname::DoCmd(PClient* client) {
+  client->SetName(client->argv_[2]);
+  client->SetRes(CmdRes::kOK);
+}
+
+CmdClientId::CmdClientId(const std::string& name, int16_t arity)
+    : BaseCmd(name, arity, kCmdFlagsAdmin | kCmdFlagsReadonly, kAclCategoryAdmin) {}
+
+bool CmdClientId::DoInitial(PClient* client) { return true; }
+
+void CmdClientId::DoCmd(PClient* client) { client->AppendInteger(client->GetUniqueID()); }
+
+CmdClientKill::CmdClientKill(const std::string& name, int16_t arity)
+    : BaseCmd(name, arity, kCmdFlagsAdmin, kAclCategoryAdmin) {}
+
+bool CmdClientKill::DoInitial(PClient* client) {
+  if (client->argv_.size() == 3 && strcasecmp(client->argv_[2].data(), "all") == 0) {
+    kill_type_ = Type::ALL;
+    return true;
+  } else if (client->argv_.size() == 4 && strcasecmp(client->argv_[2].data(), "addr") == 0) {
+    kill_type_ = Type::ADDR;
+    return true;
+  } else if (client->argv_.size() == 4 && strcasecmp(client->argv_[2].data(), "id") == 0) {
+    kill_type_ = Type::ID;
+    return true;
+  } else {
+    client->SetRes(CmdRes::kWrongNum, client->CmdName());
+    return false;
+  }
+}
+
+void CmdClientKill::DoCmd(PClient* client) {
+  bool ret;
+  auto& client_map = kiwi::ClientMap::getInstance();
+  switch (kill_type_) {
+    case Type::ALL: {
+      ret = client_map.KillAllClients();
+      break;
+    }
+    case Type::ADDR: {
+      ret = client_map.KillClientByAddrPort(client->argv_[3]);
+      break;
+    }
+    case Type::ID: {
+      try {
+        int client_id = stoi(client->argv_[3]);
+        ret = client_map.KillClientById(client_id);
+      } catch (const std::exception& e) {
+        client->SetRes(CmdRes::kErrOther, "Invalid client id");
+        return;
+      }
+    }
+    default:
+      break;
+  }
+  ret == true ? client->SetRes(CmdRes::kOK) : client->SetRes(CmdRes::kErrOther, "No such client");
+}
+
+CmdClientList::CmdClientList(const std::string& name, int16_t arity)
+    : BaseCmd(name, arity, kCmdFlagsAdmin | kCmdFlagsReadonly, kAclCategoryAdmin) {}
+
+bool CmdClientList::DoInitial(PClient* client) {
+  if (client->argv_.size() == 2) {
+    list_type_ = Type::DEFAULT;
+    return true;
+  }
+  if (client->argv_.size() > 3 && strcasecmp(client->argv_[2].data(), "id") == 0) {
+    list_type_ = Type::ID;
+    return true;
+  }
+  client->SetRes(CmdRes::kErrOther, "Syntax error, try CLIENT (LIST [ID client_id_1, client_id_2...])");
+  return false;
+}
+
+void CmdClientList::DoCmd(PClient* client) {
+  auto& client_map = ClientMap::getInstance();
+  switch (list_type_) {
+    case Type::DEFAULT: {
+      std::vector<kiwi::ClientInfo> client_infos;
+      client_map.GetAllClientInfos(client_infos);
+      client->AppendArrayLen(client_infos.size());
+      if (client_infos.size() == 0) {
+        return;
+      }
+      char buf[128];
+      for (auto& client_info : client_infos) {
+        // client->
+        snprintf(buf, sizeof(buf), "ID=%ld IP=%s PORT=%d\n", client_info.client_id, client_info.ip.c_str(),
+                 client_info.port);
+        client->AppendString(std::string(buf));
+      }
+      break;
+    }
+    case Type::ID: {
+      client->AppendArrayLen(client->argv_.size() - 3);
+
+      for (size_t i = 3; i < client->argv_.size(); i++) {
+        try {
+          int client_id = std::stoi(client->argv_[i]);
+          auto client_info = client_map.GetClientsInfoById(client_id);
+          if (client_info == ClientInfo::invalidClientInfo) {
+            client->SetRes(CmdRes::kErrOther, "Invalid client id");
+            return;
+          }
+          std::string result =
+              fmt::format("ID={} IP={} PORT={}\n", client_info.client_id, client_info.ip, client_info.port);
+          client->AppendString(result);
+        } catch (const std::exception& e) {
+          client->SetRes(CmdRes::kErrOther, "Invalid client id");
+          return;
+        }
+      }
+      break;
+    }
+    default:
+      break;
+  }
 }
 MonitorCmd::MonitorCmd(const std::string& name, int arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly | kCmdFlagsAdmin, kAclCategoryAdmin) {}

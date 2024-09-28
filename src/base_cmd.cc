@@ -15,8 +15,8 @@
 
 #include "common.h"
 #include "config.h"
-#include "log.h"
 #include "kiwi.h"
+#include "log.h"
 #include "praft/praft.h"
 
 namespace kiwi {
