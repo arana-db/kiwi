@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+ * Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -46,7 +46,7 @@ bool InputMemoryFile::Open(const char* file) {
 
   if (file_ == kInvalidFile) {
     char err[128];
-    snprintf(err, sizeof err - 1, "OpenForRead %s failed\n", file);
+    snprintf(err, sizeof(err - 1), "OpenForRead %s failed\n", file);
     return false;
   }
 
@@ -160,12 +160,6 @@ bool OutputMemoryFile::MapWriteOnly() {
     return false;
   }
 
-#if 0
-    // codes below cause coredump when file size > 4MB
-    if (m_pMemory != kInvalidAddr) {
-      ::munmap(m_pMemory, m_size);
-    }
-#endif
   pMemory_ = static_cast<char*>(::mmap(nullptr, size_, PROT_WRITE, MAP_SHARED, file_, 0));
   return (pMemory_ != kInvalidAddr);
 }
@@ -185,19 +179,11 @@ void OutputMemoryFile::Truncate(std::size_t size) {
   MapWriteOnly();
 }
 
-void OutputMemoryFile::TruncateTailZero() {
+void inline OutputMemoryFile::TruncateTailZero() {
   if (file_ == kInvalidFile) {
     return;
   }
-
-  size_t tail = size_;
-  while (tail > 0 && pMemory_[--tail] == '\0') {
-    ;
-  }
-
-  ++tail;
-
-  Truncate(tail);
+  Truncate(0);
 }
 
 bool OutputMemoryFile::IsOpen() const { return file_ != kInvalidFile; }

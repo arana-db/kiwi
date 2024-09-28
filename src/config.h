@@ -1,4 +1,4 @@
-// Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree. An additional grant
 // of patent rights can be found in the PATENTS file in the same directory
@@ -15,7 +15,9 @@
 #include <map>
 #include <memory>
 #include <shared_mutex>
-#include <string>
+#include <cstring>
+#include <cstdint>
+#include <cstddef>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -133,7 +135,7 @@ class PConfig {
 
   /*------------------------
    * ~PConfig()
-   * Destroy a kiwi instance.
+   * Destroy a kiwi's config instance.
    */
   ~PConfig() = default;
 
@@ -283,6 +285,9 @@ class PConfig {
   // The number of databases.
   std::atomic<size_t> databases = 16;
 
+  // Enable redis_compatioble_mode?
+  std::atomic_bool redis_compatible_mode = true;
+
   /*
    * For Network I/O threads, in future version, we may delete
    * slave_threads_num.
@@ -294,7 +299,7 @@ class PConfig {
   std::atomic<size_t> db_instance_num = 3;
 
   // Use raft protocol?
-  std::atomic_bool use_raft = true;
+  std::atomic_bool use_raft = false;
 
   /*
    * kiwi use the RocksDB to store the data,

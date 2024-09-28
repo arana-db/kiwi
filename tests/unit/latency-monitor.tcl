@@ -3,7 +3,7 @@ start_server {tags {"latency-monitor"}} {
     r config set latency-monitor-threshold 200
     r latency reset
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     test {Test latency events logging} {
         r debug sleep 0.3
         after 1100
@@ -13,7 +13,7 @@ start_server {tags {"latency-monitor"}} {
         assert {[r latency history command] >= 3}
     }
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     test {LATENCY HISTORY output is ok} {
         set min 250
         set max 450
@@ -26,7 +26,7 @@ start_server {tags {"latency-monitor"}} {
         }
     }
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     test {LATENCY LATEST output is ok} {
         foreach event [r latency latest] {
             lassign $event eventname time latency max
@@ -37,18 +37,18 @@ start_server {tags {"latency-monitor"}} {
         }
     }
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     test {LATENCY HISTORY / RESET with wrong event name is fine} {
         assert {[llength [r latency history blabla]] == 0}
         assert {[r latency reset blabla] == 0}
     }
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     test {LATENCY DOCTOR produces some output} {
         assert {[string length [r latency doctor]] > 0}
     }
 
-    # This parameter is not available in Pika
+    # This parameter is not available in Arana/Kiwi
     test {LATENCY RESET is able to reset events} {
         assert {[r latency reset] > 0}
         assert {[r latency latest] eq {}}

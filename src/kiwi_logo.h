@@ -1,4 +1,4 @@
-// Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree. An additional grant
 // of patent rights can be found in the PATENTS file in the same directory
@@ -12,9 +12,12 @@
 #pragma once
 
 const char* kiwiLogo =
-    "\n______   _  _     _            _ ______ ______  \n"
-    "| ___ \\ (_)| |   (_)          (_)|  _  \\| ___ \\ \n"
-    "| |_/ /  _ | | __ _ __      __ _ | | | || |_/ /  kiwi(%s) %d bits \n"  // version and
-    "|  __/  | || |/ /| |\\ \\ /\\ / /| || | | || ___ \\ \n"
-    "| |     | ||   < | | \\ V  V / | || |/ / | |_/ /  Port: %d\n"
-    "\\_|     |_||_|\\_\\|_|  \\_/\\_/  |_||___/  \\____/   https://github.com/OpenAtomFoundation/kiwi \n\n\n";
+    "\n                                             _  _             __  _                       \n"
+    "                                              ( )( )           /  )( )     _             _  \n"
+    "     _ _  _ __   _ _   ___     _ _  ______   _| || |_        /' /' | |/') (_) _   _   _ (_) \n"
+    "   /'_` )( '__)/'_` )/' _ `\\ /'_` )(______)/'_` || '_`\\    /' /'   | , <  | |( ) ( ) ( )| | \n"
+    "  ( (_| || |  ( (_| || ( ) |( (_| |       ( (_| || |_) ) /' /'     | |\\`\\ | || \\_/ \\_/ || | \n"
+    "  `\\__,_)(_)  `\\__,_)(_) (_)`\\__,_)       `\\__,_)(_,__/'(_/'       (_) (_)(_)`\\___x___/'(_) \n"
+    "Kiwi(%s) %d bits \n"
+    "Port: %d\n"
+    "Github: https://github.com/arana-db/kiwi\n\n\n";

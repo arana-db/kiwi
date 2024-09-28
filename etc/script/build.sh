@@ -44,6 +44,9 @@ function build() {
     PREFIX="${PREFIX}-debug"
   fi
 
+  mkdir -p ${PREFIX}
+  cp CMakeLists.txt ${PREFIX}/
+
   cmake -DCMAKE_BUILD_TYPE=${BUILD_TYPE} ${CMAKE_FLAGS} -S . -B ${PREFIX}
   cmake --build ${PREFIX} -- ${MAKE_FLAGS} -j ${CPU_CORE}
 

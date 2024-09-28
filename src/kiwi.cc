@@ -1,4 +1,4 @@
-// Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree. An additional grant
 // of patent rights can be found in the PATENTS file in the same directory
@@ -19,6 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <cstdio>
+#include <cstdlib>
 #include <iostream>
 #include <thread>
 
@@ -30,6 +31,7 @@
 #include "client_map.h"
 #include "config.h"
 #include "helper.h"
+#include "kiwi.h"
 #include "kiwi_logo.h"
 #include "slow_log.h"
 #include "store.h"
@@ -65,11 +67,12 @@ static void Usage() {
   std::cerr << "  kiwi [/path/to/kiwi.conf] [options]\n";
   std::cerr << "\n";
   std::cerr << "Options:\n";
-  std::cerr << "  -v, --version                  output version information, then exit\n";
-  std::cerr << "  -h, --help                     output help message\n";
-  std::cerr << "  -p PORT, --port PORT           Set the port listen on\n";
-  std::cerr << "  -l LEVEL, --loglevel LEVEL     Set the log level\n";
-  std::cerr << "  -s ADDRESS, --slaveof ADDRESS  Set the slave address\n";
+  std::cerr << "  -v, --version                   output version information, then exit\n";
+  std::cerr << "  -h, --help                      output help message\n";
+  std::cerr << "  -p PORT, --port PORT            Set the port listen on\n";
+  std::cerr << "  -l LEVEL, --loglevel LEVEL      Set the log level\n";
+  std::cerr << "  -s ADDRESS, --slaveof ADDRESS   Set the slave address\n";
+  std::cerr << "  -c, --redis-compatible-mode     Enable Redis compatibility mode\n";
   std::cerr << "Examples:\n";
   std::cerr << "  kiwi /path/kiwi.conf\n";
   std::cerr << "  kiwi /path/kiwi.conf --loglevel verbose\n";
@@ -82,7 +85,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
   static struct option long_options[] = {
       {"version", no_argument, 0, 'v'},       {"help", no_argument, 0, 'h'},
       {"port", required_argument, 0, 'p'},    {"loglevel", required_argument, 0, 'l'},
-      {"slaveof", required_argument, 0, 's'},
+      {"slaveof", required_argument, 0, 's'}, {"redis-compatible-mode", no_argument, 0, 'c'},
   };
   // kiwi [/path/to/kiwi.conf] [options]
   if (cfg_file_.empty() && argc > 1 && ::access(argv[1], R_OK) == 0) {
@@ -94,7 +97,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
     int this_option_optind = optind ? optind : 1;
     int option_index = 0;
     int c;
-    c = getopt_long(argc, argv, "vhp:l:s:", long_options, &option_index);
+    c = getopt_long(argc, argv, "vhp:l:s:c", long_options, &option_index);
     if (c == -1) {
       break;
     }
@@ -104,14 +107,9 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
         std::cerr << "kiwi Server version: " << Kkiwi_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32)
                   << std::endl;
         std::cerr << "kiwi Server Build Type: " << Kkiwi_BUILD_TYPE << std::endl;
-#if defined(Kkiwi_BUILD_DATE)
         std::cerr << "kiwi Server Build Date: " << Kkiwi_BUILD_DATE << std::endl;
-#endif
-#if defined(Kkiwi_GIT_COMMIT_ID)
         std::cerr << "kiwi Server Build GIT SHA: " << Kkiwi_GIT_COMMIT_ID << std::endl;
-#endif
-
-        exit(0);
+        std::exit(0);
         break;
       }
       case 'h': {
@@ -143,6 +141,10 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
         }
         break;
       }
+      case 'c': {
+        redis_compatible_mode = true;
+        break;
+      }
       case '?': {
         std::cerr << "Unknow option " << std::endl;
         return false;
@@ -172,6 +174,10 @@ bool KiwiDB::Init() {
 
   if (!log_level_.empty()) {
     g_config.Set("log-level", log_level_, true);
+  }
+
+  if (redis_compatible_mode) {
+    g_config.Set("redis_compatible_mode", std::to_string(redis_compatible_mode), true);
   }
 
   auto num = g_config.worker_threads_num.load() + g_config.slave_threads_num.load();
@@ -343,7 +349,7 @@ int main(int argc, char* argv[]) {
 
   if (g_kiwi->Init()) {
     // output logo to console
-    char logo[512] = "";
+    char logo[1024] = "";
     snprintf(logo, sizeof logo - 1, kiwiLogo, Kkiwi_VERSION, static_cast<int>(sizeof(void*)) * 8,
              static_cast<int>(g_config.port));
     std::cout << logo;
