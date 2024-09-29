@@ -171,6 +171,9 @@ class PRaft : public braft::StateMachine {
   int db_id_ = 0;                      // db_id
 
   bool is_node_first_start_up_ = true;
+
+  // Concurrency `raft.cluster join` will throw an error, so use a mutex for restriction.
+  std::mutex add_peer_mutex_;
 };
 
 }  // namespace kiwi

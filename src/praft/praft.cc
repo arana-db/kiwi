@@ -532,6 +532,8 @@ int PRaft::ProcessClusterRemoveCmdResponse(PClient* client, const char* start, i
 }
 
 butil::Status PRaft::AddPeer(const std::string& peer) {
+  std::unique_lock<std::mutex> lck(add_peer_mutex_);
+
   if (!node_) {
     ERROR_LOG_AND_STATUS("Node is not initialized");
   }
