@@ -18,6 +18,7 @@
 #include "pstd/pstd_string.h"
 
 #include "base_cmd.h"
+#include "cmd_thread_pool_worker.h"
 #include "config.h"
 #include "env.h"
 #include "kiwi.h"
@@ -26,6 +27,8 @@
 #include "store.h"
 
 namespace kiwi {
+
+extern pikiwidb::CmdTableManager cmd_table_manager_;
 
 void CmdRes::RedisAppendLen(std::string& str, int64_t ori, const std::string& prefix) {
   str.append(prefix);
@@ -143,9 +146,22 @@ void CmdRes::SetRes(CmdRes::CmdRet _ret, const std::string& content) {
       AppendStringRaw("-ERR wrong leader");
       AppendStringRaw(content);
       AppendStringRaw(CRLF);
+      break;
     case kMultiKey:
       AppendStringRaw("-WRONGTYPE Operation against a key holding the wrong kind of value");
       AppendStringRaw(content);
+      AppendStringRaw(CRLF);
+      break;
+    case kQueued:
+      AppendStringRaw("+QUEUED");
+      AppendStringRaw(CRLF);
+      break;
+    case kPErrorWatch:
+      AppendStringRaw("-ERR WATCH inside MULTI is not allowed");
+      AppendStringRaw(CRLF);
+      break;
+    case kDirtyExec:
+      AppendStringRaw("-ERR EXECABORT Transaction discarded because of previous errors.");
       AppendStringRaw(CRLF);
       break;
     default:
@@ -364,26 +380,27 @@ int PClient::handlePacket(const char* start, int bytes) {
   g_kiwi->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this()));
 
   // check transaction
-  //  if (IsFlagOn(ClientFlag_multi)) {
-  //    if (cmdName_ != kCmdNameMulti && cmdName_ != kCmdNameExec && cmdName_ != kCmdNameWatch &&
-  //        cmdName_ != kCmdNameUnwatch && cmdName_ != kCmdNameDiscard) {
-  //      if (!info->CheckParamsCount(static_cast<int>(params.size()))) {
-  //        ERROR("queue failed: cmd {} has params {}", cmdName_, params.size());
-  //        ReplyError(info ? PError_param : PError_unknowCmd, &reply_);
-  //        FlagExecWrong();
-  //      } else {
-  //        if (!IsFlagOn(ClientFlag_wrongExec)) {
-  //          queue_cmds_.push_back(params);
-  //        }
-  //
-  //        reply_.PushData("+QUEUED\r\n", 9);
-  //        INFO("queue cmd {}", cmdName_);
-  //      }
-  //
-  //      return static_cast<int>(ptr - start);
-  //    }
-  //  }
+  if (IsFlagOn(kClientFlagMulti)) {
+    if (cmdName_ != kCmdNameMulti && cmdName_ != kCmdNameExec && cmdName_ != kCmdNameWatch &&
+        cmdName_ != kCmdNameUnWatch && cmdName_ != kCmdNameDiscard) {
+      auto [cmdPtr, ret] = cmd_table_manager_.GetCommand(cmdName_, this);
+      if (!cmdPtr->CheckArg(ParamsSize())) {
+        ERROR("queue failed: cmd {} has params {}", cmdName_, params_.size());
+        FlagExecWrong();
+      } else {
+        if (!IsFlagOn(kClientFlagWrongExec)) {
+          queue_cmds_.push_back(params_);
+        }
+        INFO("queue cmd {}", cmdName_);
+        this->SetRes(CmdRes::kQueued);
+        g_pikiwidb->PushWriteTask(shared_from_this());
+        return static_cast<int>(ptr - start);
+      }
+    }
+  }
+  Propagate(params_, GetCurrentDB());
 
+  g_pikiwidb->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this()));
   // check readonly slave and execute command
   //  PError err = PError_ok;
   //  if (PREPL.GetMasterState() != PReplState_none && !IsFlagOn(ClientFlag_master) &&
@@ -526,7 +543,6 @@ bool PClient::NotifyDirty(int dbno, const std::string& key) {
     INFO("client is already dirty {}", uniqueID());
     return true;
   }
-
   if (watch_keys_[dbno].contains(key)) {
     INFO("{} client become dirty because key {} in db {}", uniqueID(), key, dbno);
     SetFlag(kClientFlagDirty);
@@ -549,23 +565,23 @@ bool PClient::Exec() {
   }
 
   if (IsFlagOn(kClientFlagDirty)) {
-    //    FormatNullArray(&reply_);
-    AppendString("");
+    message_ = "$-1\r\n";
     return true;
   }
-
-  //  PreFormatMultiBulk(queue_cmds_.size(), &reply_);
-  //  for (const auto& cmd : queue_cmds_) {
-  //    DEBUG("EXEC {}, for client {}", cmd[0], UniqueId());
-  //    const PCommandInfo* info = PCommandTable::GetCommandInfo(cmd[0]);
-  //    PError err = PCommandTable::ExecuteCmd(cmd, info, &reply_);
-
-  // may dirty clients;
-  //    if (err == PError_ok && (info->attr & PAttr_write)) {
-  //      Propagate(cmd);
-  //    }
-  //  }
-
+  message_.clear();
+  AppendArrayLenUint64(queue_cmds_.size());
+  for (auto cmd : queue_cmds_) {
+    DEBUG("EXEC {}, for client {}", cmd[0], uniqueID());
+    auto client = std::make_shared<PClient>();
+    client->cmdName_ = cmd[0];
+    client->params_ = cmd;
+    client->argv_ = client->params_;
+    pstd::StringToLower(client->cmdName_);
+    auto [cmdPtr, ret] = cmd_table_manager_.GetCommand(client->CmdName(), client.get());
+    cmdPtr->Execute(client.get());
+    AppendContentv1(client->message_);
+    Propagate(client->params_, GetCurrentDB());
+  }
   return true;
 }
 

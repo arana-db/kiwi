@@ -47,15 +47,12 @@ using TasksVector = std::vector<TaskContext>;
 class PStore {
  public:
   static PStore& Instance();
-
   PStore(const PStore&) = delete;
   void operator=(const PStore&) = delete;
   ~PStore();
-
   void Init(int db_number);
 
   std::unique_ptr<DB>& GetBackend(int32_t index) { return backends_[index]; };
-
   void HandleTaskSpecificDB(const TasksVector& tasks);
 
   int GetDBNumber() const { return db_number_; }
@@ -67,5 +64,10 @@ class PStore {
 };
 
 #define PSTORE PStore::Instance()
+
+// ugly, but I don't want to write signalModifiedKey() every where
+extern std::vector<PString> g_dirtyKeys;
+extern void Propagate(const std::vector<PString>& params, int dbno);
+extern void Propagate(int dbno, const std::vector<PString>& params);
 
 }  // namespace kiwi

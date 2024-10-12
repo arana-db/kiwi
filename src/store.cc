@@ -17,6 +17,7 @@
 #include "db.h"
 #include "pstd/log.h"
 #include "pstd/pstd_string.h"
+#include "transaction.h"
 
 namespace kiwi {
 
@@ -76,4 +77,27 @@ void PStore::HandleTaskSpecificDB(const TasksVector& tasks) {
     }
   });
 }
+
+void Propagate(const std::vector<PString>& params, int dbno) {
+  assert(!params.empty());
+  //
+  //  if (!g_dirtyKeys.empty()) {
+  //    for (const auto& k : g_dirtyKeys) {
+  //      PTransaction::Instance().NotifyDirty(PSTORE.GetDBNumber(), k);
+  //
+  //    }
+  //    g_dirtyKeys.clear();
+  //  } else if (params.size() > 1) {
+  //    PTransaction::Instance().NotifyDirty(PSTORE.GetDBNumber(), params[1]);
+  //  }
+  if (params.size() > 1) {
+    PTransaction::Instance().NotifyDirty(dbno, params[1]);
+  }
+}
+
+void Propagate(int dbno, const std::vector<PString>& params) {
+  PTransaction::Instance().NotifyDirtyAll(dbno);
+  Propagate(params, dbno);
+}
+
 }  // namespace kiwi
