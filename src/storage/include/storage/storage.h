@@ -28,6 +28,7 @@
 #include "pstd/env.h"
 #include "pstd/pstd_mutex.h"
 #include "src/base_data_value_format.h"
+#include "src/search_format.h"
 #include "storage/slot_indexer.h"
 
 namespace kiwi {
@@ -956,6 +957,16 @@ class Storage {
   // See SCAN for ZSCAN documentation.
   Status ZScan(const Slice& key, int64_t cursor, const std::string& pattern, int64_t count,
                std::vector<ScoreMember>* score_members, int64_t* next_cursor);
+
+  Status PutHnswIndexMetaData(const Slice& index_key, HnswMetaValue& meta_value);
+  Status GetHnswIndexMetaData(const Slice& index_key, HnswMetaValue& meta_value);
+  Status PutHnswNodeMetaData(std::string& node_key, uint16_t level, HnswNodeMetaData& node_meta);
+  Status GetHnswNodeMetaData(std::string& node_key, uint16_t level, HnswNodeMetaData& node_meta);
+  Status AddHnswEdge(std::string& edge_key);
+  Status RemoveHnswEdge(std::string& edge_key);
+  Status HnswNodeDecodeNeighbours(std::string& node_key, uint16_t level, std::vector<std::string>& neighbours);
+  Status HnswNodeAddNeighbour(std::string& node_key, uint16_t level, std::string& neighbour_key);
+  Status HnswNodeRemoveNeighbour(std::string& node_key, uint16_t level, std::string& neighbour_key);
 
   // Keys Commands
 

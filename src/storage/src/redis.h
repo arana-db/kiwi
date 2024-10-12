@@ -6,6 +6,7 @@
 #ifndef SRC_REDIS_H_
 #define SRC_REDIS_H_
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -22,6 +23,7 @@
 #include "src/lock_mgr.h"
 #include "src/lru_cache.h"
 #include "src/mutex_impl.h"
+#include "src/search_format.h"
 #include "src/type_iterator.h"
 #include "storage/storage.h"
 #include "storage/storage_define.h"
@@ -289,6 +291,18 @@ class Redis {
                std::vector<ScoreMember>* score_members, int64_t* next_cursor);
   Status ZPopMax(const Slice& key, int64_t count, std::vector<ScoreMember>* score_members);
   Status ZPopMin(const Slice& key, int64_t count, std::vector<ScoreMember>* score_members);
+
+  // Vector Search storage apis
+  Status PutHnswIndexMetaData(const rocksdb::Slice& index_key, HnswMetaValue& meta_value);
+  Status GetHnswIndexMetaData(const rocksdb::Slice& index_key, HnswMetaValue& meta_value);
+  Status PutHnswNodeMetaData(std::string& node_key, uint16_t level, HnswNodeMetaData& node_data);
+  Status GetHnswNodeMetaData(std::string& node_key, uint16_t level, HnswNodeMetaData& node_data);
+  // TODO: construct edge_key within or above?
+  Status AddHnswEdge(std::string& edge_key);
+  Status RemoveHnswEdge(std::string& edge_key);
+  Status HnswNodeDecodeNeighbours(std::string& node_key, uint16_t level, std::vector<std::string>& neighbours);
+  Status HnswNodeAddNeighbour(std::string& node_key, uint16_t level, std::string& neighbour_key);
+  Status HnswNodeRemoveNeighbour(std::string& node_key, uint16_t level, std::string& neighbour_key);
 
   void ScanDatabase();
   void ScanStrings();
