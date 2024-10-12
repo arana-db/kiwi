@@ -27,6 +27,7 @@ void LPushCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LPush(client->Key(), list_values, &reply_num);
   if (s.ok()) {
     client->AppendInteger(reply_num);
+    ServeAndUnblockConns(client);
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
   } else {
@@ -74,6 +75,8 @@ void RPoplpushCmd::DoCmd(PClient* client) {
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPoplpush(source_, receiver_, &value);
   if (s.ok()) {
     client->AppendString(value);
+    client->SetKey(receiver_);
+    ServeAndUnblockConns(client);
   } else if (s.IsNotFound()) {
     client->AppendStringLen(-1);
   } else if (s.IsInvalidArgument()) {
@@ -98,6 +101,7 @@ void RPushCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPush(client->Key(), list_values, &reply_num);
   if (s.ok()) {
     client->AppendInteger(reply_num);
+    ServeAndUnblockConns(client);
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
   } else {
