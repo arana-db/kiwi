@@ -24,6 +24,8 @@ class HSetCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
 };
 
 class HGetCmd : public BaseCmd {
@@ -35,6 +37,9 @@ class HGetCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
+  void ReadCache(PClient *client) override;
 };
 
 class HDelCmd : public BaseCmd {
@@ -46,6 +51,10 @@ class HDelCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
+
+  int32_t deleted_ = 0;
 };
 
 class HMSetCmd : public BaseCmd {
@@ -57,6 +66,8 @@ class HMSetCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
 };
 
 class HMGetCmd : public BaseCmd {
@@ -68,6 +79,9 @@ class HMGetCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
+  void ReadCache(PClient *client) override;
 };
 
 class HGetAllCmd : public BaseCmd {
@@ -79,6 +93,9 @@ class HGetAllCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
+  void ReadCache(PClient *client) override;
 };
 
 class HKeysCmd : public BaseCmd {
@@ -90,6 +107,9 @@ class HKeysCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
+  void ReadCache(PClient *client) override;
 };
 
 class HLenCmd : public BaseCmd {
@@ -101,6 +121,9 @@ class HLenCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
+  void ReadCache(PClient *client) override;
 };
 
 class HStrLenCmd : public BaseCmd {
@@ -112,6 +135,9 @@ class HStrLenCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
+  void ReadCache(PClient *client) override;
 };
 
 class HScanCmd : public BaseCmd {
@@ -137,6 +163,9 @@ class HValsCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
+  void ReadCache(PClient *client) override;
 };
 
 class HIncrbyFloatCmd : public BaseCmd {
@@ -148,6 +177,8 @@ class HIncrbyFloatCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
 };
 
 class HSetNXCmd : public BaseCmd {
@@ -159,6 +190,8 @@ class HSetNXCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
 };
 
 class HIncrbyCmd : public BaseCmd {
@@ -170,6 +203,10 @@ class HIncrbyCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
+
+  int64_t int_by_ = 0;
 };
 
 class HRandFieldCmd : public BaseCmd {
@@ -193,6 +230,9 @@ class HExistsCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient *client) override;
+  void DoThroughDB(PClient *client) override;
+  void DoUpdateCache(PClient *client) override;
+  void ReadCache(PClient *client) override;
 };
 
 }  // namespace kiwi
