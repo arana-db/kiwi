@@ -1,4 +1,4 @@
-// Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree. An additional grant
 // of patent rights can be found in the PATENTS file in the same directory
@@ -181,7 +181,7 @@ enum CmdFlags {
   kCmdFlagsProtected = (1 << 12),        // Don't accept in scripts
   kCmdFlagsModuleNoCluster = (1 << 13),  // No cluster mode support
   kCmdFlagsNoMulti = (1 << 14),          // Cannot be pipelined
-  kCmdFlagsExclusive = (1 << 15),        // May change Storage pointer, like pika's kCmdFlagsSuspend
+  kCmdFlagsExclusive = (1 << 15),        // May change Storage pointer, like Arana/Kiwi's kCmdFlagsSuspend
   kCmdFlagsRaft = (1 << 16),             // raft
   kCmdFlagsKv = (1 << 17),
   kCmdFlagsHash = (1 << 18),

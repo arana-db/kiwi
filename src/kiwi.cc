@@ -1,4 +1,4 @@
-// Copyright (c) 2023-present, OpenAtom Foundation, Inc.  All rights reserved.
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree. An additional grant
 // of patent rights can be found in the PATENTS file in the same directory
@@ -106,13 +106,8 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
         std::cerr << "kiwi Server version: " << Kkiwi_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32)
                   << std::endl;
         std::cerr << "kiwi Server Build Type: " << Kkiwi_BUILD_TYPE << std::endl;
-#if defined(Kkiwi_BUILD_DATE)
         std::cerr << "kiwi Server Build Date: " << Kkiwi_BUILD_DATE << std::endl;
-#endif
-#if defined(Kkiwi_GIT_COMMIT_ID)
         std::cerr << "kiwi Server Build GIT SHA: " << Kkiwi_GIT_COMMIT_ID << std::endl;
-#endif
-
         std::exit(0);
         break;
       }

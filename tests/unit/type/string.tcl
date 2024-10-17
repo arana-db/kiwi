@@ -102,7 +102,7 @@ start_server {tags {"string"}} {
         assert_equal 20 [r get x]
     }
 
-# Pika does not support the getex command
+# Arana/Kiwi does not support the getex command
    # test "GETEX EX option" {
    #     r del foo
    #     r set foo bar
@@ -110,7 +110,7 @@ start_server {tags {"string"}} {
    #     assert_range [r ttl foo] 5 10
    # }
 
-# Pika does not support the getex command
+# Arana/Kiwi does not support the getex command
    # test "GETEX PX option" {
    #     r del foo
    #     r set foo bar
@@ -118,7 +118,7 @@ start_server {tags {"string"}} {
    #     assert_range [r pttl foo] 5000 10000
    # }
 
-# Pika does not support the getex command
+# Arana/Kiwi does not support the getex command
    # test "GETEX EXAT option" {
    #     r del foo
    #     r set foo bar
@@ -126,7 +126,7 @@ start_server {tags {"string"}} {
    #     assert_range [r ttl foo] 5 10
    # }
 
-# Pika does not support the getex command
+# Arana/Kiwi does not support the getex command
    # test "GETEX PXAT option" {
    #     r del foo
    #     r set foo bar
@@ -134,7 +134,7 @@ start_server {tags {"string"}} {
    #     assert_range [r pttl foo] 5000 10000
    # }
 
-# Pika does not support the getex command
+# Arana/Kiwi does not support the getex command
    # test "GETEX PERSIST option" {
    #     r del foo
    #     r set foo bar ex 10
@@ -143,7 +143,7 @@ start_server {tags {"string"}} {
    #     assert_equal -1 [r ttl foo]
    # }
 
-# Pika does not support the getex command
+# Arana/Kiwi does not support the getex command
    # test "GETEX no option" {
    #     r del foo
    #     r set foo bar
@@ -151,14 +151,14 @@ start_server {tags {"string"}} {
    #     assert_equal bar [r getex foo]
    # }
 
-# Pika does not support the getex command
+# Arana/Kiwi does not support the getex command
    # test "GETEX syntax errors" {
    #     set ex {}
    #     catch {r getex foo non-existent-option} ex
    #     set ex
    # } {*syntax*}
 
-# Pika does not support the getex command
+# Arana/Kiwi does not support the getex command
    # test "GETEX and GET expired key or not exist" {
    #     r del foo
    #     r set foo bar px 1
@@ -167,14 +167,14 @@ start_server {tags {"string"}} {
    #     assert_equal {} [r get foo]
    # }
 
-# Pika does not support the getex command
+# Arana/Kiwi does not support the getex command
    # test "GETEX no arguments" {
    #      set ex {}
    #      catch {r getex} ex
    #      set ex
    #  } {*wrong number of arguments for 'getex' command}
 
-# Pika does not support the getdel command
+# Arana/Kiwi does not support the getdel command
    # test "GETDEL command" {
    #     r del foo
    #     r set foo bar
@@ -182,7 +182,7 @@ start_server {tags {"string"}} {
    #     assert_equal {} [r getdel foo ]
    # }
 
-# Pika does not support the getdel command
+# Arana/Kiwi does not support the getdel command
    # test {GETDEL propagate as DEL command to replica} {
    #     set repl [attach_to_replication_stream]
    #     r set foo bar
@@ -195,7 +195,7 @@ start_server {tags {"string"}} {
    #     close_replication_stream $repl
    # } {} {needs:repl}
 
-# Pika does not support the getex command
+# Arana/Kiwi does not support the getex command
    # test {GETEX without argument does not propagate to replica} {
    #     set repl [attach_to_replication_stream]
    #     r set foo bar
@@ -298,7 +298,7 @@ start_server {tags {"string"}} {
         assert_equal [binary format B* 00100000] [r get mykey]
     }
 
-# Pika does not support the debug command
+# Arana/Kiwi does not support the debug command
    # test "SETBIT against integer-encoded key" {
    #     # Ascii "1" is integer 49 = 00 11 00 01
    #     r set mykey 1
@@ -310,7 +310,7 @@ start_server {tags {"string"}} {
    #     assert_equal [binary format B* 00010011] [r get mykey]
    # }
 
-# Keys for multiple data types of Pika can be duplicate
+# Keys for multiple data types of Arana/Kiwi can be duplicate
     test "SETBIT against key with wrong type" {
         r del mykey
         r lpush mykey "foo"
@@ -445,7 +445,7 @@ start_server {tags {"string"}} {
         assert_equal "1234\0002" [r get mykey]
     }
 
-# Keys for multiple data types of Pika can be duplicate
+# Keys for multiple data types of Arana/Kiwi can be duplicate
     test "SETRANGE against key with wrong type" {
         r del mykey
         r lpush mykey "foo"
@@ -467,7 +467,7 @@ start_server {tags {"string"}} {
         assert_equal "" [r getrange mykey 0 -1]
     }
 
-# Keys for multiple data types of Pika can be duplicate
+# Keys for multiple data types of Arana/Kiwi can be duplicate
     test "GETRANGE against wrong key type" {
         r lpush lkey1 "list"
         assert_error {WRONGTYPE Operation against a key holding the wrong kind of value*} {r getrange lkey1 0 -1}
@@ -504,7 +504,7 @@ start_server {tags {"string"}} {
         }
     }
 
-# Pika does not support the substr command
+# Arana/Kiwi does not support the substr command
    # test "Coverage: SUBSTR" {
    #     r set key abcde
    #     assert_equal "a" [r substr key 0 0]
@@ -547,7 +547,7 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
         list $v1 $v2 [r get foo]
     } {{} OK 2}
 
-# Pika does not support the setget command
+# Arana/Kiwi does not support the setget command
    # test {Extended SET GET option} {
    #     r del foo
    #     r set foo bar
@@ -556,7 +556,7 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
    #     list $old_value $new_value
    # } {bar bar2}
 
-# Pika does not support the setget command
+# Arana/Kiwi does not support the setget command
    # test {Extended SET GET option with no previous value} {
    #     r del foo
    #     set old_value [r set foo bar GET]
@@ -564,7 +564,7 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
    #     list $old_value $new_value
    # } {{} bar}
 
-# Pika does not support the setget command
+# Arana/Kiwi does not support the setget command
    # test {Extended SET GET option with XX} {
    #     r del foo
    #     r set foo bar
@@ -573,7 +573,7 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
    #     list $old_value $new_value
    # } {bar baz}
 
-# Pika does not support the setget command
+# Arana/Kiwi does not support the setget command
    # test {Extended SET GET option with XX and no previous value} {
    #     r del foo
    #     set old_value [r set foo bar GET XX]
@@ -581,7 +581,7 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
    #     list $old_value $new_value
    # } {{} {}}
 
-# Pika does not support the setget command
+# Arana/Kiwi does not support the setget command
    # test {Extended SET GET option with NX} {
    #     r del foo
    #     set old_value [r set foo bar GET NX]
@@ -589,7 +589,7 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
    #     list $old_value $new_value
    # } {{} bar}
 
-# Pika does not support the setget command
+# Arana/Kiwi does not support the setget command
    # test {Extended SET GET option with NX and previous value} {
    #     r del foo
    #     r set foo bar
@@ -598,7 +598,7 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
    #     list $old_value $new_value
    # } {bar bar}
 
-# Pika does not support the setget command
+# Arana/Kiwi does not support the setget command
 #    test {Extended SET GET with incorrect type should result in wrong type error} {
 #      r del foo
 #      r rpush foo waffle
@@ -648,7 +648,7 @@ if {[string match {*jemalloc*} [s mem_allocator]]} {
         r getrange foo 0 4294967297
     } {bar}
 
-# Pika does not support the lcs command
+# Arana/Kiwi does not support the lcs command
    # set rna1 {CACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCTGTTCTCTAAACGAACTTTAAAATCTGTGTGGCTGTCACTCGGCTGCATGCTTAGTGCACTCACGCAGTATAATTAATAACTAATTACTGTCGTTGACAGGACACGAGTAACTCGTCTATCTTCTGCAGGCTGCTTACGGTTTCGTCCGTGTTGCAGCCGATCATCAGCACATCTAGGTTTCGTCCGGGTGTG}
    # set rna2 {ATTAAAGGTTTATACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCTGTTCTCTAAACGAACTTTAAAATCTGTGTGGCTGTCACTCGGCTGCATGCTTAGTGCACTCACGCAGTATAATTAATAACTAATTACTGTCGTTGACAGGACACGAGTAACTCGTCTATCTTCTGCAGGCTGCTTACGGTTTCGTCCGTGTTGCAGCCGATCATCAGCACATCTAGGTTT}
    # set rnalcs {ACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCTGTTCTCTAAACGAACTTTAAAATCTGTGTGGCTGTCACTCGGCTGCATGCTTAGTGCACTCACGCAGTATAATTAATAACTAATTACTGTCGTTGACAGGACACGAGTAACTCGTCTATCTTCTGCAGGCTGCTTACGGTTTCGTCCGTGTTGCAGCCGATCATCAGCACATCTAGGTTT}

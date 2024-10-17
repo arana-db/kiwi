@@ -381,7 +381,7 @@ start_server {tags {"acl external:skip"}} {
 #        assert_match "*Unknown command or category name in ACL*" $e
 #    } {}
 
-# now pika not supported the command
+# now Arana/Kiwi not supported the command
 #    test {ACLs including of a type includes also subcommands} {
 #        r ACL setuser newuser -@all +del +acl +@stream
 #        r DEL key
@@ -423,7 +423,7 @@ start_server {tags {"acl external:skip"}} {
 #        r MEMORY DOCTOR; # Should not fail
 #    }
 
-# now pika not supported the command
+# now Arana/Kiwi not supported the command
 #    test {ACLs set can exclude subcommands, if already full command exists} {
 #        r ACL setuser alice +@all -memory|doctor
 #        set cmdstr [dict get [r ACL getuser alice] commands]
@@ -567,7 +567,7 @@ start_server {tags {"acl external:skip"}} {
         r ACL SETUSER adv-test -@all +client|list +client|list +config|get +config +acl|list -acl
         assert_equal "-@all +client|list +config -acl" [dict get [r ACL getuser adv-test] commands]
 
-        # Unnecessary categories are retained for potentional future compatibility (pika not supported `dangerous`)
+        # Unnecessary categories are retained for potentional future compatibility (Arana/Kiwi not supported `dangerous`)
         #r ACL SETUSER adv-test -@all -@dangerous
         #assert_equal "-@all -@dangerous" [dict get [r ACL getuser adv-test] commands]
 
@@ -588,7 +588,7 @@ start_server {tags {"acl external:skip"}} {
     }
 
     test "ACL CAT category - list all commands/subcommands that belong to category" {
-        # now pika not supported the command
+        # now Arana/Kiwi not supported the command
         #assert_not_equal [lsearch [r acl cat transaction] "multi"] -1
         #assert_not_equal [lsearch [r acl cat scripting] "function|list"] -1
 
@@ -597,7 +597,7 @@ start_server {tags {"acl external:skip"}} {
         #assert_equal [lsearch [r acl cat stream] "get"] -1
     }
 
-# now pika not supported the command
+# now Arana/Kiwi not supported the command
 #    test "ACL requires explicit permission for scripting for EVAL_RO, EVALSHA_RO and FCALL_RO" {
 #        r ACL SETUSER scripter on nopass +readonly
 #        assert_match {*has no permissions to run the 'eval_ro' command*} [r ACL DRYRUN scripter EVAL_RO "" 0]
@@ -605,7 +605,7 @@ start_server {tags {"acl external:skip"}} {
 #        assert_match {*has no permissions to run the 'fcall_ro' command*} [r ACL DRYRUN scripter FCALL_RO "" 0]
 #    }
 
-# now pika not supported the command
+# now Arana/Kiwi not supported the command
 #    test {ACL #5998 regression: memory leaks adding / removing subcommands} {
 #        r AUTH default ""
 #        r ACL setuser newuser reset -debug +debug|a +debug|b +debug|c
@@ -613,7 +613,7 @@ start_server {tags {"acl external:skip"}} {
 #        # The test framework will detect a leak if any.
 #    }
 
-# now pika not supported the command
+# now Arana/Kiwi not supported the command
 #    test {ACL LOG aggregates similar errors together and assigns unique entry-id to new errors} {
 #         r ACL LOG RESET
 #         r ACL setuser user1 >foo
@@ -730,7 +730,7 @@ start_server {tags {"acl external:skip"}} {
         r ACL SETUSER antirez -incr
     }
 
-# now pika not supported lua command
+# now Arana/Kiwi not supported lua command
 #    test {ACL can log errors in the context of Lua scripting} {
 #        r AUTH antirez foo
 #        catch {r EVAL {redis.call('incr','foo')} 0}
@@ -961,7 +961,7 @@ start_server [list overrides [list "dir" $server_path "acl-pubsub-default" "allc
     test {Bob: just execute @set and acl command} {
         r AUTH bob bob
         assert_equal "bob" [r acl whoami]
-        # The test was passed on local machine, Restarting the pika data will still exist,
+        # The test was passed on local machine, Restarting the Arana/Kiwi data will still exist,
         # which may cause the test to fail, so remove it
         #assert_equal "3" [r sadd set 1 2 3]
         catch {r SET key value} e
