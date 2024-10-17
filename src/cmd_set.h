@@ -25,7 +25,6 @@ class SIsMemberCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class SAddCmd : public BaseCmd {
@@ -39,7 +38,6 @@ class SAddCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class SUnionStoreCmd : public BaseCmd {
@@ -53,7 +51,6 @@ class SUnionStoreCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class SRemCmd : public BaseCmd {
@@ -67,7 +64,7 @@ class SRemCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
+
   int32_t deleted_num = 0;
 };
 
@@ -104,7 +101,6 @@ class SInterStoreCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class SCardCmd : public BaseCmd {
@@ -119,7 +115,6 @@ class SCardCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class SMoveCmd : public BaseCmd {
@@ -133,7 +128,6 @@ class SMoveCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class SRandMemberCmd : public BaseCmd {
@@ -149,7 +143,6 @@ class SRandMemberCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class SPopCmd : public BaseCmd {
@@ -163,7 +156,7 @@ class SPopCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
+
   std::vector<std::string> deleted_members_;
 };
 
@@ -179,7 +172,6 @@ class SMembersCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class SDiffCmd : public BaseCmd {
@@ -204,7 +196,6 @@ class SDiffstoreCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class SScanCmd : public BaseCmd {

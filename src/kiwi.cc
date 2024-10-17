@@ -201,7 +201,7 @@ bool KiwiDB::Init() {
     PREPL.SetMasterAddr(g_config.master_ip.ToString().c_str(), g_config.master_port.load());
   }
 
-  event_server_ =std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(num);
+  event_server_ = std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(num);
 
   event_server_->SetRwSeparation(true);
 

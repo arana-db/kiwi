@@ -25,7 +25,6 @@ class ZAddCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class ZPopMinCmd : public BaseCmd {
@@ -39,7 +38,6 @@ class ZPopMinCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class ZPopMaxCmd : public BaseCmd {
@@ -53,7 +51,6 @@ class ZPopMaxCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class ZsetUIstoreParentCmd : public BaseCmd {
@@ -81,7 +78,6 @@ class ZInterstoreCmd : public ZsetUIstoreParentCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class ZUnionstoreCmd : public ZsetUIstoreParentCmd {
@@ -95,7 +91,6 @@ class ZUnionstoreCmd : public ZsetUIstoreParentCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class ZRevrangeCmd : public BaseCmd {
@@ -124,7 +119,7 @@ class ZRangebyscoreCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
+
   double min_score_ = 0, max_score_ = 0;
   bool left_close_ = true, right_close_ = true, with_scores_ = false;
   int64_t offset_ = 0, count_ = -1;
@@ -141,7 +136,7 @@ class ZRemrangebyrankCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
+
   int32_t start_ = 0;
   int32_t end_ = 0;
 };
@@ -161,7 +156,7 @@ class ZRevrangebyscoreCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
+
   double min_score_ = 0, max_score_ = 0;
   bool left_close_ = true, right_close_ = true, with_scores_ = false;
   int64_t offset_ = 0, count_ = -1;
@@ -179,7 +174,6 @@ class ZCardCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class ZRangeCmd : public BaseCmd {
@@ -205,7 +199,6 @@ class ZScoreCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class ZRangebylexCmd : public BaseCmd {
@@ -220,7 +213,7 @@ class ZRangebylexCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
+
   std::string min_member_, max_member_;
   bool left_close_ = true, right_close_ = true;
   int64_t offset_ = 0, count_ = -1;
@@ -238,7 +231,7 @@ class ZRevrangebylexCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
+
   std::string min_member_, max_member_;
   bool left_close_ = true, right_close_ = true;
   int64_t offset_ = 0, count_ = -1;
@@ -256,7 +249,6 @@ class ZRankCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class ZRevrankCmd : public BaseCmd {
@@ -271,7 +263,6 @@ class ZRevrankCmd : public BaseCmd {
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
   void ReadCache(PClient *client) override;
-  storage::Status s_;
 };
 
 class ZRemCmd : public BaseCmd {
@@ -285,7 +276,7 @@ class ZRemCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
+
   int32_t deleted_ = 0;
 };
 
@@ -300,7 +291,7 @@ class ZIncrbyCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
+
   double by_ = .0f;
   double score_ = .0f;
 };
@@ -316,7 +307,6 @@ class ZRemrangebyscoreCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
   void DoThroughDB(PClient *client) override;
   void DoUpdateCache(PClient *client) override;
-  storage::Status s_;
 };
 
 }  // namespace kiwi

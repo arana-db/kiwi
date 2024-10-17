@@ -15,8 +15,8 @@
 
 #include "common.h"
 #include "config.h"
-#include "log.h"
 #include "kiwi.h"
+#include "log.h"
 #include "praft/praft.h"
 
 namespace kiwi {
@@ -96,10 +96,6 @@ bool BaseCmd::IsNeedReadCache() const { return HasFlag(kCmdFlagsReadCache); }
 bool BaseCmd::IsNeedUpdateCache() const { return HasFlag(kCmdFlagsUpdateCache); }
 
 bool BaseCmd::IsNeedCacheDo(PClient* client) const {
-  if (g_config.tmp_cache_disable_flag.load()) {
-    return false;
-  }
-
   if (HasFlag(kCmdFlagsKv)) {
     if (!g_config.cache_string.load()) {
       return false;

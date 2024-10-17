@@ -918,8 +918,6 @@ bool SetRangeCmd::DoInitial(PClient* client) {
 }
 
 void SetRangeCmd::DoCmd(PClient* client) {
-  
-
   int32_t ret = 0;
   s_ =
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setrange(client->Key(), offset_, client->argv_[3], &ret);

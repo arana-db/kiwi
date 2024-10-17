@@ -11,13 +11,13 @@
 #pragma once
 
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <memory>
 #include <shared_mutex>
-#include <cstring>
-#include <cstdint>
-#include <cstddef>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -336,7 +336,6 @@ class PConfig {
 
   // cache
   std::vector<std::string> cache_type_all;
-  std::atomic_bool tmp_cache_disable_flag = false;
   std::atomic_uint64_t cache_maxmemory = 10737418240;
   std::atomic_int cache_num = 5;
   std::atomic_int cache_mode = 1;

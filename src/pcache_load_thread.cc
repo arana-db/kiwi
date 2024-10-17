@@ -1,10 +1,3 @@
-/*
- * Copyright (c) 2024-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
- */
-
 #include "pcache_load_thread.h"
 #include "config.h"
 #include "pcache.h"
@@ -21,7 +14,8 @@ PCacheLoadThread::PCacheLoadThread(int zset_cache_start_direction, int zset_cach
       waitting_load_keys_num_(0),
       zset_cache_start_direction_(zset_cache_start_direction),
       zset_cache_field_num_per_key_(zset_cache_field_num_per_key) {
-  set_thread_name("PCacheLoadThread");
+  // set_thread_name("PCacheLoadThread");
+  thread_ = std::thread([this]() { this->ThreadMain(); });
 }
 
 PCacheLoadThread::~PCacheLoadThread() {
@@ -31,7 +25,7 @@ PCacheLoadThread::~PCacheLoadThread() {
     loadkeys_cond_.notify_all();
   }
 
-  StopThread();
+  // StopThread();
 }
 
 void PCacheLoadThread::Push(const char key_type, std::string& key, PClient* client) {
@@ -164,7 +158,7 @@ bool PCacheLoadThread::LoadKey(const char key_type, std::string& key, PClient* c
   }
 }
 
-void* PCacheLoadThread::ThreadMain() {
+void PCacheLoadThread::ThreadMain() {
   INFO("PCacheLoadThread::ThreadMain Start");
 
   while (!should_exit_) {
@@ -177,7 +171,7 @@ void* PCacheLoadThread::ThreadMain() {
       }
 
       if (should_exit_) {
-        return nullptr;
+        return;
       }
 
       for (int i = 0; i < CACHE_LOAD_NUM_ONE_TIME; ++i) {
@@ -197,6 +191,6 @@ void* PCacheLoadThread::ThreadMain() {
     }
   }
 
-  return nullptr;
+  return;
 }
 }  // namespace kiwi

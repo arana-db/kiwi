@@ -12,8 +12,8 @@
 
 #include "binlog.pb.h"
 #include "config.h"
-#include "pstd/log.h"
 #include "pstd/kiwi_slot.h"
+#include "pstd/log.h"
 #include "pstd/pstd_string.h"
 #include "rocksdb/utilities/checkpoint.h"
 #include "scope_snapshot.h"

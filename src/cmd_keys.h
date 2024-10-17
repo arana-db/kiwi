@@ -22,7 +22,6 @@ class DelCmd : public BaseCmd {
   bool DoInitial(PClient* client) override;
 
  private:
-  rocksdb::Status s_;
   void DoCmd(PClient* client) override;
   void DoThroughDB(PClient* client) override;
   void DoUpdateCache(PClient* client) override;
@@ -65,7 +64,7 @@ class ExpireCmd : public BaseCmd {
   void DoCmd(PClient* client) override;
   void DoThroughDB(PClient* client) override;
   void DoUpdateCache(PClient* client) override;
-  rocksdb::Status s_;
+
   int64_t sec_ = 0;
 };
 
@@ -94,7 +93,6 @@ class PExpireCmd : public BaseCmd {
   void DoThroughDB(PClient* client) override;
   void DoUpdateCache(PClient* client) override;
   int64_t msec_ = 0;
-  rocksdb::Status s_;
 };
 
 class ExpireatCmd : public BaseCmd {
@@ -105,7 +103,6 @@ class ExpireatCmd : public BaseCmd {
   bool DoInitial(PClient* client) override;
 
  private:
-  rocksdb::Status s_;
   int64_t time_stamp_ = 0;
   void DoCmd(PClient* client) override;
   void DoThroughDB(PClient* client) override;
@@ -120,7 +117,6 @@ class PExpireatCmd : public BaseCmd {
   bool DoInitial(PClient* client) override;
 
  private:
-  rocksdb::Status s_;
   int64_t time_stamp_ms_ = 0;
   void DoCmd(PClient* client) override;
   void DoThroughDB(PClient* client) override;
@@ -136,7 +132,7 @@ class PersistCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
-  rocksdb::Status s_;
+
   void DoThroughDB(PClient* client) override;
   void DoUpdateCache(PClient* client) override;
 };

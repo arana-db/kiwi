@@ -1,27 +1,21 @@
-/*
- * Copyright (c) 2024-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
- */
-
 #pragma once
 
 #include <atomic>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include "client.h"
 #include "pcache.h"
-#include "thread.h"
+// #include "thread.h"
 
 namespace kiwi {
 
-class PCacheLoadThread : public Thread {
+class PCacheLoadThread {
  public:
   PCacheLoadThread(int zset_cache_start_direction, int zset_cache_field_num_per_key);
-  ~PCacheLoadThread() override;
+  ~PCacheLoadThread();
 
   uint64_t AsyncLoadKeysNum(void) { return async_load_keys_num_; }
   uint32_t WaittingLoadKeysNum(void) { return waitting_load_keys_num_; }
@@ -34,7 +28,7 @@ class PCacheLoadThread : public Thread {
   bool LoadSet(std::string& key, PClient* client);
   bool LoadZset(std::string& key, PClient* client);
   bool LoadKey(const char key_type, std::string& key, PClient* client);
-  virtual void* ThreadMain() override;
+  void ThreadMain();
 
  private:
   std::atomic_bool should_exit_;
@@ -51,5 +45,7 @@ class PCacheLoadThread : public Thread {
   // currently only take effects to zset
   int zset_cache_start_direction_;
   int zset_cache_field_num_per_key_;
+
+  std::thread thread_;
 };
 }  // namespace kiwi

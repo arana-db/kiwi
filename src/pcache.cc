@@ -1,8 +1,3 @@
-// Copyright (c) 2024-present, Qihoo, Inc.  All rights reserved.
-// This source code is licensed under the BSD-style license found in the
-// LICENSE file in the root directory of this source tree. An additional grant
-// of patent rights can be found in the PATENTS file in the same directory.
-
 #include <zlib.h>
 #include <ctime>
 #include <thread>
@@ -27,7 +22,7 @@ PCache::PCache(int zset_cache_start_direction, int zset_cache_field_num_per_key)
       zset_cache_start_direction_(zset_cache_start_direction),
       zset_cache_field_num_per_key_(EXTEND_CACHE_SIZE(zset_cache_field_num_per_key)) {
   cache_load_thread_ = std::make_unique<PCacheLoadThread>(zset_cache_start_direction_, zset_cache_field_num_per_key_);
-  cache_load_thread_->StartThread();
+  // cache_load_thread_->StartThread();
 }
 
 PCache::~PCache() {

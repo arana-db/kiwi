@@ -299,6 +299,9 @@ class BaseCmd : public std::enable_shared_from_this<BaseCmd> {
   uint32_t cmd_id_ = 0;
   uint32_t acl_category_ = 0;
 
+  // save db operation status which will be used in cache operation
+  storage::Status s_;
+
  private:
   // The function to be executed first before executing `DoCmd`
   // What needs to be done at present are: extract the key in the command and fill it into the context
