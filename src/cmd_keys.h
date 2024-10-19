@@ -23,6 +23,8 @@ class DelCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
 };
 
 class ExistsCmd : public BaseCmd {
@@ -34,6 +36,8 @@ class ExistsCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void ReadCache(PClient* client) override;
 };
 
 class TypeCmd : public BaseCmd {
@@ -45,6 +49,8 @@ class TypeCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void ReadCache(PClient* client) override;
 };
 
 class ExpireCmd : public BaseCmd {
@@ -56,6 +62,10 @@ class ExpireCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
+
+  int64_t sec_ = 0;
 };
 
 class TtlCmd : public BaseCmd {
@@ -67,6 +77,8 @@ class TtlCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void ReadCache(PClient* client) override;
 };
 
 class PExpireCmd : public BaseCmd {
@@ -78,6 +90,9 @@ class PExpireCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
+  int64_t msec_ = 0;
 };
 
 class ExpireatCmd : public BaseCmd {
@@ -88,7 +103,10 @@ class ExpireatCmd : public BaseCmd {
   bool DoInitial(PClient* client) override;
 
  private:
+  int64_t time_stamp_ = 0;
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
 };
 
 class PExpireatCmd : public BaseCmd {
@@ -99,7 +117,10 @@ class PExpireatCmd : public BaseCmd {
   bool DoInitial(PClient* client) override;
 
  private:
+  int64_t time_stamp_ms_ = 0;
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
 };
 
 class PersistCmd : public BaseCmd {
@@ -111,6 +132,9 @@ class PersistCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
 };
 
 class KeysCmd : public BaseCmd {
@@ -133,6 +157,8 @@ class PttlCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void ReadCache(PClient* client) override;
 };
 
 class RenameCmd : public BaseCmd {

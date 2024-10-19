@@ -20,6 +20,8 @@ class LPushCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
 };
 
 class RPushCmd : public BaseCmd {
@@ -31,6 +33,8 @@ class RPushCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
 };
 
 class RPopCmd : public BaseCmd {
@@ -42,6 +46,8 @@ class RPopCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
 };
 class LRangeCmd : public BaseCmd {
  public:
@@ -52,6 +58,11 @@ class LRangeCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
+  void ReadCache(PClient* client) override;
+  int64_t start_index_ = 0;
+  int64_t end_index_ = 0;
 };
 
 class LRemCmd : public BaseCmd {
@@ -63,6 +74,10 @@ class LRemCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
+
+  int64_t freq_ = 0;
 };
 
 class LTrimCmd : public BaseCmd {
@@ -74,6 +89,11 @@ class LTrimCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
+
+  int64_t start_index_ = 0;
+  int64_t end_index_ = 0;
 };
 
 class LSetCmd : public BaseCmd {
@@ -85,6 +105,10 @@ class LSetCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
+
+  int64_t index_ = 0;
 };
 
 class LInsertCmd : public BaseCmd {
@@ -96,6 +120,9 @@ class LInsertCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
+  storage ::BeforeOrAfter before_or_after_;
 };
 
 class LPushxCmd : public BaseCmd {
@@ -107,6 +134,8 @@ class LPushxCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
 };
 
 class RPushxCmd : public BaseCmd {
@@ -118,6 +147,8 @@ class RPushxCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
 };
 
 class RPoplpushCmd : public BaseCmd {
@@ -145,6 +176,8 @@ class LPopCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
 };
 
 class LIndexCmd : public BaseCmd {
@@ -156,6 +189,10 @@ class LIndexCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
+  void ReadCache(PClient* client) override;
+  int64_t index_ = 0;
 };
 
 class LLenCmd : public BaseCmd {
@@ -167,5 +204,8 @@ class LLenCmd : public BaseCmd {
 
  private:
   void DoCmd(PClient* client) override;
+  void DoThroughDB(PClient* client) override;
+  void DoUpdateCache(PClient* client) override;
+  void ReadCache(PClient* client) override;
 };
 }  // namespace kiwi

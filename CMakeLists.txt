@@ -198,6 +198,7 @@ INCLUDE(cmake/gtest.cmake)
 INCLUDE(cmake/brpc.cmake)
 INCLUDE(cmake/rocksdb.cmake)
 INCLUDE(cmake/braft.cmake)
+INCLUDE(cmake/rediscache.cmake)
 
 SET(PROTO_OUTPUT_DIR "${CMAKE_BINARY_DIR}/generated_pb")
 FILE(MAKE_DIRECTORY "${PROTO_OUTPUT_DIR}")
@@ -208,7 +209,7 @@ ADD_SUBDIRECTORY(src/pstd)
 ADD_SUBDIRECTORY(src/net)
 ADD_SUBDIRECTORY(src/praft)
 ADD_SUBDIRECTORY(src/storage)
-
+ADD_SUBDIRECTORY(src/cache)
 ADD_SUBDIRECTORY(src)
 
 #############################################################################

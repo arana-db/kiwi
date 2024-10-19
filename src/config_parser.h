@@ -3,7 +3,6 @@
  *     Declared a set of functions for parsing configuration data
  * as required.
  *
- * Copyright (c) 2023-present, Arana/Kiwi Community All rights reserved.
  *
  * src/config_parser.h
  *
