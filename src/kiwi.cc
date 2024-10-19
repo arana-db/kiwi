@@ -157,6 +157,26 @@ void KiwiDB::OnNewConnection(uint64_t connId, std::shared_ptr<kiwi::PClient>& cl
   client->OnConnect();
 }
 
+void KiwiDB::ScanEvictedBlockedConnsOfBlrpop() {
+  std::unique_lock<std::shared_mutex> latch(block_mtx_);
+  auto& key_to_blocked_conns = g_kiwi->GetMapFromKeyToConns();
+  for (auto& it : key_to_blocked_conns) {
+    auto& conns_list = it.second;
+    for (auto conn_node = conns_list->begin(); conn_node != conns_list->end();) {
+      if (conn_node->is_done_->exchange(true) || conn_node->GetBlockedClient()->State() == ClientState::kClosed) {
+        conn_node = conns_list->erase(conn_node);
+      } else if (conn_node->IsExpired()) {
+        PClient* conn_ptr = conn_node->GetBlockedClient();
+        conn_ptr->AppendString("");
+        conn_ptr->SendPacket();
+        conn_node = conns_list->erase(conn_node);
+      } else {
+        conn_node++;
+      }
+    }
+  }
+}
+
 bool KiwiDB::Init() {
   char runid[kRunidSize + 1] = "";
   getRandomHexChars(runid, kRunidSize);
@@ -223,6 +243,10 @@ bool KiwiDB::Init() {
   auto timerTask = std::make_shared<net::CommonTimerTask>(1000);
   timerTask->SetCallback([]() { PREPL.Cron(); });
   event_server_->AddTimerTask(timerTask);
+
+  auto BLRPopTimerTask = std::make_shared<net::CommonTimerTask>(250);
+  BLRPopTimerTask->SetCallback(std::bind(&KiwiDB::ScanEvictedBlockedConnsOfBlrpop, this));
+  event_server_->AddTimerTask(BLRPopTimerTask);
 
   time(&start_time_s_);
 
