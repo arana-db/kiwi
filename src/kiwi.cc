@@ -10,28 +10,25 @@
   incarnation.
  */
 
-#include "kiwi.h"
-
 #include <getopt.h>
 #include <sys/fcntl.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <iostream>
 #include <thread>
-
-#include "praft/praft.h"
-#include "pstd/log.h"
-#include "pstd/pstd_util.h"
 
 #include "client.h"
 #include "config.h"
 #include "helper.h"
 #include "kiwi.h"
 #include "kiwi_logo.h"
+#include "praft/praft.h"
+#include "pstd/log.h"
+#include "pstd/pstd_util.h"
 #include "slow_log.h"
 #include "store.h"
 

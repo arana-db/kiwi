@@ -37,6 +37,11 @@ int Int64ToStr(char* dst, size_t dstlen, int64_t svalue) { return pstd::Ll2strin
  * the parsed value when appropriate. */
 int StrToInt64(const char* s, size_t slen, int64_t* value) { return pstd::String2int(s, slen, value); }
 
+/* Convert a string into a long long. Returns 1 if all char of string could be parsed
+ * into a (non-overflowing) long long, 0 otherwise. The value will be set to
+ * the parsed value when appropriate. */
+int StrToInt64Strict(const char* s, size_t slen, int64_t* value) { return pstd::String2intStrict(s, slen, value); }
+
 /* Glob-style pattern matching. */
 int StringMatch(const char* pattern, uint64_t pattern_len, const char* str, uint64_t string_len, int nocase) {
   return pstd::StringMatchLen(pattern, static_cast<int32_t>(pattern_len), str, static_cast<int32_t>(string_len),
