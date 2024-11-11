@@ -1,8 +1,10 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  A thread pool for managing commands has been defined here.
  */
 
 #pragma once
@@ -16,14 +18,17 @@
 #include "base_cmd.h"
 #include "pstd/pstd_status.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 // task interface
 // inherit this class and implement the Run method
 // then submit the task to the thread pool
+/*
+  CmdThreadPoolTask
+*/
 class CmdThreadPoolTask {
  public:
-  CmdThreadPoolTask(std::shared_ptr<PClient> client) : client_(std::move(client)) {}
+  explicit CmdThreadPoolTask(std::shared_ptr<PClient> client) : client_(std::move(client)) {}
   void Run(BaseCmd *cmd);
   const std::string &CmdName();
   std::shared_ptr<PClient> Client();
@@ -92,4 +97,4 @@ class CmdThreadPool {
   std::atomic_bool stopped_ = false;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

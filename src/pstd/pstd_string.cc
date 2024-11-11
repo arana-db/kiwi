@@ -1,4 +1,4 @@
-// Copyright (c) 2015-present, Qihoo, Inc.  All rights reserved.
+// Copyright (c) 2015-present, Arana/Kiwi Community.  All rights reserved.
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree. An additional grant
 // of patent rights can be found in the PATENTS file in the same directory.
@@ -403,7 +403,8 @@ int String2d(const char* s, size_t slen, double* val) {
   } catch (std::exception& e) {
     return 0;
   }
-  return 1;
+  std::string str(s, slen);
+  return str.find_first_not_of("0123456789.-+") != std::string::npos ? 0 : 1;
 #else
   auto [ptr, ec] = std::from_chars(s, s + slen, *val);
   if (ec != std::errc()) {

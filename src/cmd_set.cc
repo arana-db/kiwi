@@ -1,8 +1,10 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  A set of instructions and functions related to set operations.
  */
 
 #include "cmd_set.h"
@@ -11,7 +13,7 @@
 #include "pstd/pstd_string.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 SIsMemberCmd::SIsMemberCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategorySet) {}
@@ -22,8 +24,12 @@ bool SIsMemberCmd::DoInitial(PClient* client) {
 }
 void SIsMemberCmd::DoCmd(PClient* client) {
   int32_t reply_Num = 0;  // only change to 1 if ismember . key not exist it is 0
-  PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SIsmember(client->Key(), client->argv_[2], &reply_Num);
-
+  auto s =
+      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SIsmember(client->Key(), client->argv_[2], &reply_Num);
+  if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
+    return;
+  }
   client->AppendInteger(reply_Num);
 }
 
@@ -42,6 +48,8 @@ void SAddCmd::DoCmd(PClient* client) {
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SAdd(client->Key(), members, &ret);
   if (s.ok()) {
     client->AppendInteger(ret);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kSyntaxErr, "sadd cmd error");
   }
@@ -64,6 +72,10 @@ void SUnionStoreCmd::DoCmd(PClient* client) {
                           ->GetStorage()
                           ->SUnionstore(client->Keys().at(0), keys, value_to_dest, &ret);
   if (!s.ok()) {
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+      return;
+    }
     client->SetRes(CmdRes::kSyntaxErr, "sunionstore cmd error");
   }
   client->AppendInteger(ret);
@@ -82,7 +94,11 @@ void SInterCmd::DoCmd(PClient* client) {
   std::vector<std::string> res_vt;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SInter(client->Keys(), &res_vt);
   if (!s.ok()) {
-    client->SetRes(CmdRes::kErrOther, "sinter cmd error");
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, "sinter cmd error");
+    }
     return;
   }
   client->AppendStringVector(res_vt);
@@ -102,7 +118,12 @@ void SRemCmd::DoCmd(PClient* client) {
   storage::Status s =
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SRem(client->Key(), to_delete_members, &reply_num);
   if (!s.ok()) {
-    client->SetRes(CmdRes::kErrOther, "srem cmd error");
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, "srem cmd error");
+    }
+    return;
   }
   client->AppendInteger(reply_num);
 }
@@ -120,7 +141,12 @@ void SUnionCmd::DoCmd(PClient* client) {
   std::vector<std::string> res_vt;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SUnion(client->Keys(), &res_vt);
   if (!s.ok()) {
-    client->SetRes(CmdRes::kErrOther, "sunion cmd error");
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, "sunion cmd error");
+    }
+    return;
   }
   client->AppendStringVector(res_vt);
 }
@@ -142,7 +168,11 @@ void SInterStoreCmd::DoCmd(PClient* client) {
                           ->GetStorage()
                           ->SInterstore(client->Key(), inter_keys, value_to_dest, &reply_num);
   if (!s.ok()) {
-    client->SetRes(CmdRes::kSyntaxErr, "sinterstore cmd error");
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "sinterstore cmd error");
+    }
     return;
   }
   client->AppendInteger(reply_num);
@@ -159,10 +189,18 @@ void SCardCmd::DoCmd(PClient* client) {
   int32_t reply_Num = 0;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SCard(client->Key(), &reply_Num);
   if (!s.ok()) {
-    client->SetRes(CmdRes::kSyntaxErr, "scard cmd error");
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "scard cmd error");
+    }
     return;
   }
-  client->AppendInteger(reply_Num);
+  if (s.ok() || s.IsNotFound()) {
+    client->AppendInteger(reply_Num);
+    return;
+  }
+  client->SetRes(CmdRes::kSyntaxErr, "scard cmd error");
 }
 
 SMoveCmd::SMoveCmd(const std::string& name, int16_t arity)
@@ -175,11 +213,16 @@ void SMoveCmd::DoCmd(PClient* client) {
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->SMove(client->argv_[1], client->argv_[2], client->argv_[3], &reply_num);
-  if (!s.ok()) {
-    client->SetRes(CmdRes::kErrOther, "smove cmd error");
+  if (s.ok() || s.IsNotFound()) {
+    client->AppendInteger(reply_num);
+  } else {
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, "smove cmd error");
+    }
     return;
   }
-  client->AppendInteger(reply_num);
 }
 
 SRandMemberCmd::SRandMemberCmd(const std::string& name, int16_t arity)
@@ -203,17 +246,24 @@ bool SRandMemberCmd::DoInitial(PClient* client) {
 void SRandMemberCmd::DoCmd(PClient* client) {
   std::vector<std::string> vec_ret;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SRandmember(client->Key(), this->num_rand, &vec_ret);
-  if (!s.ok()) {
-    client->SetRes(CmdRes::kSyntaxErr, "srandmember cmd error");
+      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SRandmember(client->argv_[1], this->num_rand, &vec_ret);
+  if (s.ok()) {
+    if (client->argv_.size() == 3) {
+      client->AppendStringVector(vec_ret);
+    } else if (client->argv_.size() == 2) {  // srand only needs to return one element
+      client->AppendString(vec_ret[0]);
+    }
     return;
   }
-  if (client->argv_.size() == 3) {
-    client->AppendStringVector(vec_ret);
-  } else if (client->argv_.size() == 2) {  // srand only needs to return one element
-    client->AppendString(vec_ret[0]);
+  if (!s.IsNotFound()) {
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "srandmember cmd error");
+    }
+    return;
   }
-  return;
+  client->AppendString("");
 }
 
 SPopCmd::SPopCmd(const std::string& name, int16_t arity)
@@ -232,7 +282,11 @@ void SPopCmd::DoCmd(PClient* client) {
     storage::Status s =
         PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SPop(client->Key(), &delete_member, cnt);
     if (!s.ok()) {
-      client->SetRes(CmdRes::kSyntaxErr, "spop cmd error");
+      if (s.IsInvalidArgument()) {
+        client->SetRes(CmdRes::kMultiKey);
+      } else {
+        client->SetRes(CmdRes::kSyntaxErr, "spop cmd error");
+      }
       return;
     }
     client->AppendString(delete_member[0]);
@@ -247,7 +301,11 @@ void SPopCmd::DoCmd(PClient* client) {
     storage::Status s =
         PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SPop(client->Key(), &delete_members, cnt);
     if (!s.ok()) {
-      client->SetRes(CmdRes::kSyntaxErr, "spop cmd error");
+      if (s.IsInvalidArgument()) {
+        client->SetRes(CmdRes::kMultiKey);
+      } else {
+        client->SetRes(CmdRes::kSyntaxErr, "spop cmd error");
+      }
       return;
     }
     client->AppendStringVector(delete_members);
@@ -270,7 +328,11 @@ void SMembersCmd::DoCmd(PClient* client) {
   std::vector<std::string> delete_members;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SMembers(client->Key(), &delete_members);
   if (!s.ok()) {
-    client->SetRes(CmdRes::kSyntaxErr, "smembers cmd error");
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "smembers cmd error");
+    }
     return;
   }
   client->AppendStringVector(delete_members);
@@ -289,7 +351,11 @@ void SDiffCmd::DoCmd(PClient* client) {
   std::vector<std::string> diff_keys(client->argv_.begin() + 1, client->argv_.end());
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SDiff(diff_keys, &diff_members);
   if (!s.ok()) {
-    client->SetRes(CmdRes::kSyntaxErr, "sdiff cmd error");
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "sdiff cmd error");
+    }
     return;
   }
   client->AppendStringVector(diff_members);
@@ -311,7 +377,11 @@ void SDiffstoreCmd::DoCmd(PClient* client) {
                           ->GetStorage()
                           ->SDiffstore(client->Key(), diffstore_keys, value_to_dest, &reply_num);
   if (!s.ok()) {
-    client->SetRes(CmdRes::kSyntaxErr, "sdiffstore cmd error");
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "sdiffstore cmd error");
+    }
     return;
   }
   client->AppendInteger(reply_num);
@@ -364,7 +434,11 @@ void SScanCmd::DoCmd(PClient* client) {
                     ->GetStorage()
                     ->SScan(client->Key(), cursor, pattern, count, &members, &next_cursor);
   if (!status.ok() && !status.IsNotFound()) {
-    client->SetRes(CmdRes::kErrOther, status.ToString());
+    if (status.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, status.ToString());
+    }
     return;
   }
 
@@ -377,4 +451,4 @@ void SScanCmd::DoCmd(PClient* client) {
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

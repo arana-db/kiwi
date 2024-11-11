@@ -1,8 +1,11 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Implemented a set of functions and instructions for
+  coordinating external commands and interfacing with RocksDB.
  */
 
 #include "store.h"
@@ -15,7 +18,7 @@
 #include "pstd/log.h"
 #include "pstd/pstd_string.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 PStore::~PStore() { INFO("STORE is closing..."); }
 
@@ -73,4 +76,4 @@ void PStore::HandleTaskSpecificDB(const TasksVector& tasks) {
     }
   });
 }
-}  // namespace pikiwidb
+}  // namespace kiwi

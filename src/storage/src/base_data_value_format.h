@@ -1,4 +1,4 @@
-//  Copyright (c) 2024-present, Qihoo, Inc.  All rights reserved.
+//  Copyright (c) 2024-present, Arana/Kiwi Community.  All rights reserved.
 //  This source code is licensed under the BSD-style license found in the
 //  LICENSE file in the root directory of this source tree. An additional grant
 //  of patent rights can be found in the PATENTS file in the same directory.
@@ -11,10 +11,10 @@
 #include "rocksdb/env.h"
 #include "rocksdb/slice.h"
 
+#include "base_value_format.h"
+#include "coding.h"
+#include "mutex.h"
 #include "pstd/pstd_coding.h"
-#include "src/base_value_format.h"
-#include "src/coding.h"
-#include "src/mutex.h"
 #include "storage/storage_define.h"
 
 namespace storage {
@@ -25,7 +25,7 @@ namespace storage {
  */
 class BaseDataValue : public InternalValue {
  public:
-  explicit BaseDataValue(const rocksdb::Slice& user_value) : InternalValue(user_value) {}
+  explicit BaseDataValue(const rocksdb::Slice& user_value) : InternalValue(DataType::kNones, user_value) {}
   virtual ~BaseDataValue() {}
 
   virtual rocksdb::Slice Encode() {

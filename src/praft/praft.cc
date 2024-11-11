@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-present, Qihoo, Inc.  All rights reserved.
+ * Copyright (c) 2024-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -9,21 +9,27 @@
 
 #include <cassert>
 
+#include "braft/raft.h"
 #include "braft/snapshot.h"
 #include "braft/util.h"
 #include "brpc/server.h"
+#include "gflags/gflags.h"
 
 #include "pstd/log.h"
 #include "pstd/pstd_string.h"
 
 #include "binlog.pb.h"
 #include "config.h"
-#include "pikiwidb.h"
+#include "kiwi.h"
 #include "replication.h"
 #include "store.h"
 
 #include "praft_service.h"
 #include "psnapshot.h"
+
+namespace braft {
+DECLARE_bool(raft_enable_leader_lease);
+}  // namespace braft
 
 #define ERROR_LOG_AND_STATUS(msg) \
   ({                              \
@@ -31,7 +37,7 @@
     butil::Status(EINVAL, msg);   \
   })
 
-namespace pikiwidb {
+namespace kiwi {
 
 bool ClusterCmdContext::Set(ClusterCmdType cluster_cmd_type, PClient* client, std::string&& peer_ip, int port,
                             std::string&& peer_id) {
@@ -71,8 +77,9 @@ void ClusterCmdContext::ConnectTargetNode() {
   }
 
   // reconnect
-  auto fail_cb = [&](EventLoop*, const char* peer_ip, int port) {
-    PRAFT.OnClusterCmdConnectionFailed(EventLoop::Self(), peer_ip, port);
+  auto fail_cb = [&](const std::string& err) {
+    INFO("Failed to connect to cluster node, err: {}", err);
+    PRAFT.OnClusterCmdConnectionFailed(err);
   };
   PREPL.SetFailCallback(fail_cb);
   PREPL.SetMasterState(kPReplStateNone);
@@ -90,7 +97,7 @@ butil::Status PRaft::Init(std::string& group_id, bool initial_conf_is_null) {
   }
 
   server_ = std::make_unique<brpc::Server>();
-  auto port = g_config.port + pikiwidb::g_config.raft_port_offset;
+  auto port = g_config.port + kiwi::g_config.raft_port_offset;
   // Add your service into RPC server
   DummyServiceImpl service(&PRAFT);
   if (server_->AddService(&service, brpc::SERVER_DOESNT_OWN_SERVICE) != 0) {
@@ -158,12 +165,15 @@ butil::Status PRaft::Init(std::string& group_id, bool initial_conf_is_null) {
   snapshot_adaptor_ = new PPosixFileSystemAdaptor();
   node_options_.snapshot_file_system_adaptor = &snapshot_adaptor_;
 
-  node_ = std::make_unique<braft::Node>("pikiwidb", braft::PeerId(addr));  // group_id
+  node_ = std::make_unique<braft::Node>("kiwi", braft::PeerId(addr));  // group_id
   if (node_->init(node_options_) != 0) {
     server_.reset();
     node_.reset();
     return ERROR_LOG_AND_STATUS("Failed to init raft node");
   }
+
+  // enable leader lease
+  braft::FLAGS_raft_enable_leader_lease = true;
 
   return {0, "OK"};
 }
@@ -173,7 +183,23 @@ bool PRaft::IsLeader() const {
     ERROR("Node is not initialized");
     return false;
   }
-  return node_->is_leader();
+
+  braft::LeaderLeaseStatus lease_status;
+  GetLeaderLeaseStatus(&lease_status);
+  auto term = leader_term_.load(butil::memory_order_acquire);
+
+  INFO("term : {}, lease_status : {}", term, lease_status.term);
+
+  return term > 0 && term == lease_status.term;
+}
+
+void PRaft::GetLeaderLeaseStatus(braft::LeaderLeaseStatus* status) const {
+  if (!node_) {
+    ERROR("Node is not initialized");
+    return;
+  }
+
+  node_->get_leader_lease_status(status);
 }
 
 std::string PRaft::GetLeaderID() const {
@@ -190,6 +216,11 @@ std::string PRaft::GetLeaderAddress() const {
     return "Failed to get leader id";
   }
   auto id = node_->leader_id();
+  // The cluster does not have a leader.
+  if (id.is_empty()) {
+    return std::string();
+  }
+
   id.addr.port -= g_config.raft_port_offset;
   auto addr = butil::endpoint2str(id.addr);
   return addr.c_str();
@@ -290,9 +321,9 @@ void PRaft::SendNodeRequest(PClient* client) {
 void PRaft::SendNodeInfoRequest(PClient* client, const std::string& info_type) {
   assert(client);
 
-  const std::string cmd_str = "INFO " + info_type + "\r\n";
-  client->SendPacket(cmd_str);
-  client->Clear();
+  std::string cmd_str = "INFO " + info_type + "\r\n";
+  client->SendPacket(std::move(cmd_str));
+  //  client->Clear();
 }
 
 void PRaft::SendNodeAddRequest(PClient* client) {
@@ -300,7 +331,7 @@ void PRaft::SendNodeAddRequest(PClient* client) {
 
   // Node id in braft are ip:port, the node id param in RAFT.NODE ADD cmd will be ignored.
   int unused_node_id = 0;
-  auto port = g_config.port + pikiwidb::g_config.raft_port_offset;
+  auto port = g_config.port + kiwi::g_config.raft_port_offset;
   auto raw_addr = g_config.ip.ToString() + ":" + std::to_string(port);
   UnboundedBuffer req;
   req.PushData("RAFT.NODE ADD ", 14);
@@ -309,7 +340,7 @@ void PRaft::SendNodeAddRequest(PClient* client) {
   req.PushData(raw_addr.data(), raw_addr.size());
   req.PushData("\r\n", 2);
   client->SendPacket(req);
-  client->Clear();
+  //  client->Clear();
 }
 
 void PRaft::SendNodeRemoveRequest(PClient* client) {
@@ -356,14 +387,14 @@ void PRaft::CheckRocksDBConfiguration(PClient* client, PClient* join_client, con
 
       if (key == DATABASES_NUM && pstd::String2int(value, &databases_num) == 0) {
         join_client->SetRes(CmdRes::kErrOther, "Config of databases_num invalid");
-        join_client->SendPacket(join_client->Message());
-        join_client->Clear();
+        join_client->SendPacket();
+        //        join_client->Clear();
         // If the join fails, clear clusterContext and set it again by using the join command
         cluster_cmd_ctx_.Clear();
       } else if (key == ROCKSDB_NUM && pstd::String2int(value, &rocksdb_num) == 0) {
         join_client->SetRes(CmdRes::kErrOther, "Config of rocksdb_num invalid");
-        join_client->SendPacket(join_client->Message());
-        join_client->Clear();
+        join_client->SendPacket();
+        //        join_client->Clear();
         // If the join fails, clear clusterContext and set it again by using the join command
         cluster_cmd_ctx_.Clear();
       } else if (key == ROCKSDB_VERSION) {
@@ -372,14 +403,14 @@ void PRaft::CheckRocksDBConfiguration(PClient* client, PClient* join_client, con
     }
   }
 
-  int current_databases_num = pikiwidb::g_config.databases;
-  int current_rocksdb_num = pikiwidb::g_config.db_instance_num;
+  int current_databases_num = kiwi::g_config.databases;
+  int current_rocksdb_num = kiwi::g_config.db_instance_num;
   std::string current_rocksdb_version = ROCKSDB_NAMESPACE::GetRocksVersionAsString();
   if (current_databases_num != databases_num || current_rocksdb_num != rocksdb_num ||
       current_rocksdb_version != rockdb_version) {
     join_client->SetRes(CmdRes::kErrOther, "Config of databases_num, rocksdb_num or rocksdb_version mismatch");
-    join_client->SendPacket(join_client->Message());
-    join_client->Clear();
+    join_client->SendPacket();
+    //    join_client->Clear();
     // If the join fails, clear clusterContext and set it again by using the join command
     cluster_cmd_ctx_.Clear();
   } else {
@@ -401,8 +432,8 @@ void PRaft::LeaderRedirection(PClient* join_client, const std::string& reply) {
   auto ret = PRAFT.GetClusterCmdCtx().Set(ClusterCmdType::kJoin, join_client, std::move(peer_ip), port);
   if (!ret) {  // other clients have joined
     join_client->SetRes(CmdRes::kErrOther, "Other clients have joined");
-    join_client->SendPacket(join_client->Message());
-    join_client->Clear();
+    join_client->SendPacket();
+    //    join_client->Clear();
     return;
   }
   PRAFT.GetClusterCmdCtx().ConnectTargetNode();
@@ -423,8 +454,8 @@ void PRaft::InitializeNodeBeforeAdd(PClient* client, PClient* join_client, const
     auto s = PRAFT.Init(raft_group_id, true);
     if (!s.ok()) {
       join_client->SetRes(CmdRes::kErrOther, s.error_str());
-      join_client->SendPacket(join_client->Message());
-      join_client->Clear();
+      join_client->SendPacket();
+      //      join_client->Clear();
       // If the join fails, clear clusterContext and set it again by using the join command
       cluster_cmd_ctx_.Clear();
       return;
@@ -434,8 +465,8 @@ void PRaft::InitializeNodeBeforeAdd(PClient* client, PClient* join_client, const
   } else {
     ERROR("Joined Raft cluster fail, because of invalid raft_group_id");
     join_client->SetRes(CmdRes::kErrOther, "Invalid raft_group_id");
-    join_client->SendPacket(join_client->Message());
-    join_client->Clear();
+    join_client->SendPacket();
+    //    join_client->Clear();
     // If the join fails, clear clusterContext and set it again by using the join command
     cluster_cmd_ctx_.Clear();
   }
@@ -453,8 +484,8 @@ int PRaft::ProcessClusterJoinCmdResponse(PClient* client, const char* start, int
   if (reply.find(OK_STR) != std::string::npos) {
     INFO("Joined Raft cluster, node id: {}, group_id: {}", PRAFT.GetNodeID(), PRAFT.group_id_);
     join_client->SetRes(CmdRes::kOK);
-    join_client->SendPacket(join_client->Message());
-    join_client->Clear();
+    join_client->SendPacket();
+    //    join_client->Clear();
     // If the join fails, clear clusterContext and set it again by using the join command
     cluster_cmd_ctx_.Clear();
   } else if (reply.find(DATABASES_NUM) != std::string::npos) {
@@ -466,8 +497,8 @@ int PRaft::ProcessClusterJoinCmdResponse(PClient* client, const char* start, int
   } else {
     ERROR("Joined Raft cluster fail, str: {}", reply);
     join_client->SetRes(CmdRes::kErrOther, reply);
-    join_client->SendPacket(join_client->Message());
-    join_client->Clear();
+    join_client->SendPacket();
+    //    join_client->Clear();
     // If the join fails, clear clusterContext and set it again by using the join command
     cluster_cmd_ctx_.Clear();
   }
@@ -491,8 +522,8 @@ int PRaft::ProcessClusterRemoveCmdResponse(PClient* client, const char* start, i
     Clear();
 
     remove_client->SetRes(CmdRes::kOK);
-    remove_client->SendPacket(remove_client->Message());
-    remove_client->Clear();
+    remove_client->SendPacket();
+    //    remove_client->Clear();
   } else if (reply.find(NOT_LEADER) != std::string::npos) {
     auto remove_client = cluster_cmd_ctx_.GetClient();
     remove_client->Clear();
@@ -500,8 +531,8 @@ int PRaft::ProcessClusterRemoveCmdResponse(PClient* client, const char* start, i
   } else {
     ERROR("Removed Raft cluster fail, str: {}", reply);
     remove_client->SetRes(CmdRes::kErrOther, reply);
-    remove_client->SendPacket(remove_client->Message());
-    remove_client->Clear();
+    remove_client->SendPacket();
+    //    remove_client->Clear();
   }
 
   // If the remove fails, clear clusterContext and set it again by using the join command
@@ -512,8 +543,10 @@ int PRaft::ProcessClusterRemoveCmdResponse(PClient* client, const char* start, i
 
 butil::Status PRaft::AddPeer(const std::string& peer) {
   if (!node_) {
-    ERROR_LOG_AND_STATUS("Node is not initialized");
+    return ERROR_LOG_AND_STATUS("Node is not initialized");
   }
+
+  std::unique_lock<std::mutex> lck(change_peer_mutex_);
 
   braft::SynchronizedClosure done;
   node_->add_peer(peer, &done);
@@ -531,6 +564,8 @@ butil::Status PRaft::RemovePeer(const std::string& peer) {
   if (!node_) {
     return ERROR_LOG_AND_STATUS("Node is not initialized");
   }
+
+  std::unique_lock<std::mutex> lck(change_peer_mutex_);
 
   braft::SynchronizedClosure done;
   node_->remove_peer(peer, &done);
@@ -561,13 +596,12 @@ butil::Status PRaft::DoSnapshot(int64_t self_snapshot_index, bool is_sync) {
   }
 }
 
-void PRaft::OnClusterCmdConnectionFailed([[maybe_unused]] EventLoop* loop, const char* peer_ip, int port) {
+void PRaft::OnClusterCmdConnectionFailed(const std::string& err) {
   auto cli = cluster_cmd_ctx_.GetClient();
   if (cli) {
-    cli->SetRes(CmdRes::kErrOther, "Failed to connect to cluster for join or remove, please check logs " +
-                                       std::string(peer_ip) + ":" + std::to_string(port));
-    cli->SendPacket(cli->Message());
-    cli->Clear();
+    cli->SetRes(CmdRes::kErrOther, "Failed to connect to cluster for join or remove, please check logs " + err);
+    cli->SendPacket();
+    //    cli->Clear();
   }
   cluster_cmd_ctx_.Clear();
 
@@ -699,15 +733,25 @@ int PRaft::on_snapshot_load(braft::SnapshotReader* reader) {
 }
 
 void PRaft::on_leader_start(int64_t term) {
-  WARN("Node {} start to be leader, term={}", node_->node_id().to_string(), term);
+  leader_term_.store(term, butil::memory_order_release);
+  LOG(INFO) << "Node becomes leader, term : " << term;
 }
 
-void PRaft::on_leader_stop(const butil::Status& status) {}
+void PRaft::on_leader_stop(const butil::Status& status) {
+  leader_term_.store(-1, butil::memory_order_release);
+  LOG(INFO) << "Node stepped down : " << status;
+}
 
-void PRaft::on_shutdown() {}
-void PRaft::on_error(const ::braft::Error& e) {}
-void PRaft::on_configuration_committed(const ::braft::Configuration& conf) {}
-void PRaft::on_stop_following(const ::braft::LeaderChangeContext& ctx) {}
-void PRaft::on_start_following(const ::braft::LeaderChangeContext& ctx) {}
+void PRaft::on_shutdown() { LOG(INFO) << "This node is down"; }
 
-}  // namespace pikiwidb
+void PRaft::on_error(const ::braft::Error& e) { LOG(ERROR) << "Met raft error " << e; }
+
+void PRaft::on_configuration_committed(const ::braft::Configuration& conf) {
+  LOG(INFO) << "Configuration of this group is " << conf;
+}
+
+void PRaft::on_stop_following(const ::braft::LeaderChangeContext& ctx) { LOG(INFO) << "Node stops following " << ctx; }
+
+void PRaft::on_start_following(const ::braft::LeaderChangeContext& ctx) { LOG(INFO) << "Node start following " << ctx; }
+
+}  // namespace kiwi

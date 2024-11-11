@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
+ * Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -23,7 +23,7 @@
 
 #include "client.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 #define RAFT_GROUPID_LEN 32
 
@@ -37,7 +37,7 @@ namespace pikiwidb {
 
 #define PRAFT PRaft::Instance()
 
-class EventLoop;
+// class EventLoop;
 class Binlog;
 
 enum ClusterCmdType {
@@ -129,9 +129,10 @@ class PRaft : public braft::StateMachine {
   int ProcessClusterJoinCmdResponse(PClient* client, const char* start, int len);
   int ProcessClusterRemoveCmdResponse(PClient* client, const char* start, int len);
 
-  void OnClusterCmdConnectionFailed(EventLoop*, const char* peer_ip, int port);
+  void OnClusterCmdConnectionFailed(const std::string& err);
 
   bool IsLeader() const;
+  void GetLeaderLeaseStatus(braft::LeaderLeaseStatus* status) const;
   std::string GetLeaderAddress() const;
   std::string GetLeaderID() const;
   std::string GetNodeID() const;
@@ -163,6 +164,7 @@ class PRaft : public braft::StateMachine {
  private:
   std::unique_ptr<brpc::Server> server_{nullptr};  // brpc
   std::unique_ptr<braft::Node> node_{nullptr};
+  butil::atomic<int64_t> leader_term_ = -1;
   braft::NodeOptions node_options_;  // options for raft node
   std::string raw_addr_;             // ip:port of this node
 
@@ -172,6 +174,9 @@ class PRaft : public braft::StateMachine {
   int db_id_ = 0;                      // db_id
 
   bool is_node_first_start_up_ = true;
+
+  // Concurrency `raft.cluster join` will throw an error, so use a mutex for restriction.
+  std::mutex change_peer_mutex_;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

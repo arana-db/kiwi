@@ -1,8 +1,10 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Implemented a set of functions for interfacing with the client.
  */
 
 #include "client.h"
@@ -17,9 +19,13 @@
 
 #include "base_cmd.h"
 #include "config.h"
-#include "pikiwidb.h"
+#include "env.h"
+#include "kiwi.h"
+#include "pstd_string.h"
+#include "slow_log.h"
+#include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 void CmdRes::RedisAppendLen(std::string& str, int64_t ori, const std::string& prefix) {
   str.append(prefix);
@@ -137,6 +143,11 @@ void CmdRes::SetRes(CmdRes::CmdRet _ret, const std::string& content) {
       AppendStringRaw("-ERR wrong leader");
       AppendStringRaw(content);
       AppendStringRaw(CRLF);
+    case kMultiKey:
+      AppendStringRaw("-WRONGTYPE Operation against a key holding the wrong kind of value");
+      AppendStringRaw(content);
+      AppendStringRaw(CRLF);
+      break;
     default:
       break;
   }
@@ -255,11 +266,11 @@ static int ProcessMaster(const char* start, const char* end) {
 }
 
 int PClient::handlePacket(const char* start, int bytes) {
-  auto conn = getTcpConnection();
-  if (!conn) {
-    ERROR("BUG: conn can't be null when recv data");
-    return -1;
-  }
+  //  auto conn = getTcpConnection();
+  //  if (!conn) {
+  //    ERROR("BUG: conn can't be null when recv data");
+  //    return -1;
+  //  }
 
   s_current = this;
 
@@ -286,7 +297,7 @@ int PClient::handlePacket(const char* start, int bytes) {
   auto parseRet = parser_.ParseRequest(ptr, end);
   if (parseRet == PParseResult::kError) {
     if (!parser_.IsInitialState()) {
-      conn->ActiveClose();
+      //      g_kiwi->closeClient(this);
       return 0;
     }
 
@@ -326,18 +337,19 @@ int PClient::handlePacket(const char* start, int bytes) {
       auto now = ::time(nullptr);
       if (now <= last_auth_ + 1) {
         // avoid guess password.
-        conn->ActiveClose();
+        g_kiwi->CloseConnection(shared_from_this());
         return 0;
       } else {
         last_auth_ = now;
       }
     } else {
       SetLineString("-NOAUTH Authentication required.");
+      SendPacket();
       return static_cast<int>(ptr - start);
     }
   }
 
-  DEBUG("client {}, cmd {}", conn->GetUniqueId(), cmdName_);
+  //  DEBUG("client {}, cmd {}", conn->GetUniqueId(), cmdName_);
 
   FeedMonitors(params_);
 
@@ -347,8 +359,9 @@ int PClient::handlePacket(const char* start, int bytes) {
   //  executeCommand();
   //    return static_cast<int>(ptr - start);
   //  }
-
-  g_pikiwidb->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this()));
+  auto now = std::chrono::steady_clock::now();
+  time_stat_->SetEnqueueTs(now);
+  g_kiwi->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this()));
 
   // check transaction
   //  if (IsFlagOn(ClientFlag_multi)) {
@@ -393,7 +406,7 @@ int PClient::handlePacket(const char* start, int bytes) {
 // 为了兼容老的命令处理流程，新的命令处理流程在这里
 // 后面可以把client这个类重构，完整的支持新的命令处理流程
 void PClient::executeCommand() {
-  //  auto [cmdPtr, ret] = g_pikiwidb->GetCmdTableManager().GetCommand(CmdName(), this);
+  //  auto [cmdPtr, ret] = g_kiwi->GetCmdTableManager().GetCommand(CmdName(), this);
 
   //  if (!cmdPtr) {
   //    if (ret == CmdRes::kInvalidParameter) {
@@ -415,31 +428,10 @@ void PClient::executeCommand() {
 
 PClient* PClient::Current() { return s_current; }
 
-PClient::PClient(TcpConnection* obj)
-    : tcp_connection_(std::static_pointer_cast<TcpConnection>(obj->shared_from_this())),
-      dbno_(0),
-      flag_(0),
-      name_("clientxxx"),
-      parser_(params_) {
+PClient::PClient() : parser_(params_) {
   auth_ = false;
   reset();
-}
-
-int PClient::HandlePackets(pikiwidb::TcpConnection* obj, const char* start, int size) {
-  int total = 0;
-  while (total < size) {
-    auto processed = handlePacket(start + total, size - total);
-    if (processed <= 0) {
-      break;
-    }
-
-    total += processed;
-  }
-
-  //  obj->SendPacket(Message());
-  //  Clear();
-  //  reply_.Clear();
-  return total;
+  time_stat_.reset(new TimeStat());
 }
 
 void PClient::OnConnect() {
@@ -465,69 +457,47 @@ void PClient::OnConnect() {
   }
 }
 
-const std::string& PClient::PeerIP() const {
-  if (auto c = getTcpConnection(); c) {
-    return c->GetPeerIP();
+std::string PClient::PeerIP() const {
+  if (!addr_.IsValid()) {
+    ERROR("Invalid address detected for client {}", uniqueID());
+    return "";
   }
-
-  static const std::string kEmpty;
-  return kEmpty;
+  return addr_.GetIP();
 }
 
 int PClient::PeerPort() const {
-  if (auto c = getTcpConnection(); c) {
-    return c->GetPeerPort();
+  if (!addr_.IsValid()) {
+    ERROR("Invalid address detected for client {}", uniqueID());
+    return 0;
   }
-
-  return -1;
+  return addr_.GetPort();
 }
 
-bool PClient::SendPacket(const std::string& buf) {
-  if (auto c = getTcpConnection(); c) {
-    return c->SendPacket(buf);
-  }
-
-  return false;
+bool PClient::SendPacket() {
+  std::string str;
+  message_.swap(str);
+  g_kiwi->SendPacket2Client(shared_from_this(), std::move(str));
+  SendOver();
+  return true;
 }
 
-bool PClient::SendPacket(const void* data, size_t size) {
-  if (auto c = getTcpConnection(); c) {
-    return c->SendPacket(data, size);
-  }
-
-  return false;
+bool PClient::SendPacket(std::string&& msg) {
+  g_kiwi->SendPacket2Client(shared_from_this(), std::move(msg));
+  SendOver();
+  return true;
 }
+
 bool PClient::SendPacket(UnboundedBuffer& data) {
-  if (auto c = getTcpConnection(); c) {
-    return c->SendPacket(data);
-  }
-
-  return false;
+  g_kiwi->SendPacket2Client(shared_from_this(), std::move(data.ToString()));
+  SendOver();
+  return true;
 }
 
-bool PClient::SendPacket(const evbuffer_iovec* iovecs, size_t nvecs) {
-  if (auto c = getTcpConnection(); c) {
-    return c->SendPacket(iovecs, nvecs);
-  }
+void PClient::Close() { g_kiwi->CloseConnection(shared_from_this()); }
 
-  return false;
-}
-
-void PClient::WriteReply2Client() {
-  if (auto c = getTcpConnection(); c) {
-    c->SendPacket(Message());
-  }
-  Clear();
-  reset();
-}
-
-void PClient::Close() {
+void PClient::OnClose() {
   SetState(ClientState::kClosed);
   reset();
-  if (auto c = getTcpConnection(); c) {
-    c->ActiveClose();
-    tcp_connection_.reset();
-  }
 }
 
 void PClient::reset() {
@@ -544,13 +514,7 @@ bool PClient::isClusterCmdTarget() const {
   return PRAFT.GetClusterCmdCtx().GetPeerIp() == PeerIP() && PRAFT.GetClusterCmdCtx().GetPort() == PeerPort();
 }
 
-int PClient::uniqueID() const {
-  if (auto c = getTcpConnection(); c) {
-    return c->GetUniqueId();
-  }
-
-  return -1;
-}
+uint64_t PClient::uniqueID() const { return GetConnId(); }
 
 bool PClient::Watch(int dbno, const std::string& key) {
   DEBUG("Client {} watch {}, db {}", name_, key, dbno);
@@ -636,34 +600,34 @@ void PClient::SetSlaveInfo() { slave_info_ = std::make_unique<PSlaveInfo>(); }
 
 void PClient::TransferToSlaveThreads() {
   // transfer to slave
-  auto tcp_connection = getTcpConnection();
-  if (!tcp_connection) {
-    return;
-  }
+  //  auto tcp_connection = getTcpConnection();
+  //  if (!tcp_connection) {
+  //    return;
+  //  }
 
-  auto loop = tcp_connection->GetEventLoop();
-  auto loop_name = loop->GetName();
-  if (loop_name.find("slave") == std::string::npos) {
-    auto slave_loop = tcp_connection->SelectSlaveEventLoop();
-    auto id = tcp_connection->GetUniqueId();
-    auto event_object = loop->GetEventObject(id);
-    auto del_conn = [loop, slave_loop, event_object]() {
-      loop->Unregister(event_object);
-      event_object->SetUniqueId(-1);
-      auto tcp_connection = std::dynamic_pointer_cast<TcpConnection>(event_object);
-      assert(tcp_connection);
-      tcp_connection->ResetEventLoop(slave_loop);
-
-      auto add_conn = [slave_loop, event_object]() { slave_loop->Register(event_object, 0); };
-      slave_loop->Execute(std::move(add_conn));
-    };
-    loop->Execute(std::move(del_conn));
-  }
+  //  auto loop = tcp_connection->GetEventLoop();
+  //  auto loop_name = loop->GetName();
+  //  if (loop_name.find("slave") == std::string::npos) {
+  //    auto slave_loop = tcp_connection->SelectSlaveEventLoop();
+  //    auto id = tcp_connection->GetUniqueId();
+  //    auto event_object = loop->GetEventObject(id);
+  //    auto del_conn = [loop, slave_loop, event_object]() {
+  //      loop->Unregister(event_object);
+  //      event_object->SetUniqueId(-1);
+  //      auto tcp_connection = std::dynamic_pointer_cast<TcpConnection>(event_object);
+  //      assert(tcp_connection);
+  //      tcp_connection->ResetEventLoop(slave_loop);
+  //
+  //      auto add_conn = [slave_loop, event_object]() { slave_loop->Register(event_object, 0); };
+  //      slave_loop->Execute(std::move(add_conn));
+  //    };
+  //    loop->Execute(std::move(del_conn));
+  //  }
 }
 
-void PClient::AddCurrentToMonitor() {
+void PClient::AddToMonitor() {
   std::unique_lock<std::mutex> guard(monitors_mutex);
-  monitors.insert(std::static_pointer_cast<PClient>(s_current->shared_from_this()));
+  monitors.insert(weak_from_this());
 }
 
 void PClient::FeedMonitors(const std::vector<std::string>& params) {
@@ -676,34 +640,30 @@ void PClient::FeedMonitors(const std::vector<std::string>& params) {
     }
   }
 
-  char buf[512];
-  int n = snprintf(buf, sizeof buf, "+[db%d %s:%d]: \"", s_current->GetCurrentDB(), s_current->PeerIP().c_str(),
-                   s_current->PeerPort());
-
-  assert(n > 0);
+  fmt::memory_buffer buf;
+  fmt::format_to(std::back_inserter(buf), "+[db{} {}:{}]: \"", s_current->GetCurrentDB(), s_current->PeerIP(),
+                 s_current->PeerPort());
 
   for (const auto& e : params) {
-    if (n < static_cast<int>(sizeof buf)) {
-      n += snprintf(buf + n, sizeof buf - n, "%s ", e.data());
-    } else {
-      break;
-    }
+    fmt::format_to(std::back_inserter(buf), "{} ", e);
   }
 
-  --n;  // no space follow last param
+  // remove the last space
+  if (!params.empty() && buf.size() > 0) {
+    buf.resize(buf.size() - 1);
+  }
 
   {
     std::unique_lock<std::mutex> guard(monitors_mutex);
 
-    for (auto it(monitors.begin()); it != monitors.end();) {
+    for (auto it = monitors.begin(); it != monitors.end();) {
       auto m = it->lock();
       if (m) {
-        m->SendPacket(buf, n);
-        m->SendPacket("\"" CRLF, 3);
-
+        fmt::format_to(std::back_inserter(buf), "\"\r\n");
+        m->SendPacket(fmt::to_string(buf));
         ++it;
       } else {
-        monitors.erase(it++);
+        it = monitors.erase(it);
       }
     }
   }
@@ -713,4 +673,8 @@ void PClient::SetKey(std::vector<std::string>& names) {
   keys_ = std::move(names);  // use std::move clear copy expense
 }
 
-}  // namespace pikiwidb
+std::unordered_map<std::string, CommandStatistics>* PClient::GetCommandStatMap() { return &cmdstat_map_; }
+
+std::shared_ptr<TimeStat> PClient::GetTimeStat() { return time_stat_; }
+
+}  // namespace kiwi

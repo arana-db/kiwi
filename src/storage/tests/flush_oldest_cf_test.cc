@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-present, Qihoo, Inc.  All rights reserved.
+ * Copyright (c) 2024-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -42,11 +42,11 @@ using LogIndex = int64_t;
 
 class LogQueue : public pstd::noncopyable {
  public:
-  using WriteCallback = std::function<rocksdb::Status(const pikiwidb::Binlog&, LogIndex idx)>;
+  using WriteCallback = std::function<rocksdb::Status(const kiwi::Binlog&, LogIndex idx)>;
 
   explicit LogQueue(WriteCallback&& cb) : write_cb_(std::move(cb)) { consumer_.SetMaxIdleThread(1); }
 
-  void AppendLog(const pikiwidb::Binlog& log, std::promise<rocksdb::Status>&& promise) {
+  void AppendLog(const kiwi::Binlog& log, std::promise<rocksdb::Status>&& promise) {
     auto task = [&] {
       auto idx = next_log_idx_.fetch_add(1);
       auto s = write_cb_(log, idx);
@@ -64,12 +64,12 @@ class LogQueue : public pstd::noncopyable {
 class FlushOldestCFTest : public ::testing::Test {
  public:
   FlushOldestCFTest()
-      : log_queue_([this](const pikiwidb::Binlog& log, LogIndex log_idx) { return db_.OnBinlogWrite(log, log_idx); }) {
+      : log_queue_([this](const kiwi::Binlog& log, LogIndex log_idx) { return db_.OnBinlogWrite(log, log_idx); }) {
     options_.options.create_if_missing = true;
     options_.options.max_background_jobs = 10;
     options_.db_instance_num = 1;
     options_.raft_timeout_s = 9000000;
-    options_.append_log_function = [this](const pikiwidb::Binlog& log, std::promise<rocksdb::Status>&& promise) {
+    options_.append_log_function = [this](const kiwi::Binlog& log, std::promise<rocksdb::Status>&& promise) {
       log_queue_.AppendLog(log, std::move(promise));
     };
     options_.do_snapshot_function = [](int64_t log_index, bool sync) {};
@@ -145,7 +145,7 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
     ASSERT_EQ(last_flush_index.log_index.load(), 0);
     ASSERT_EQ(last_flush_index.seqno.load(), 0);
 
-    auto& cf_0_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kStringsCF);
+    auto& cf_0_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kMetaCF);
     ASSERT_EQ(cf_0_status.flushed_index.log_index, 0);
     ASSERT_EQ(cf_0_status.flushed_index.seqno, 0);
     ASSERT_EQ(cf_0_status.applied_index.log_index, 10);
@@ -179,7 +179,7 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
     ASSERT_EQ(last_flush_index.log_index.load(), 0);
     ASSERT_EQ(last_flush_index.seqno.load(), 0);
 
-    auto& cf_1_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kHashesMetaCF);
+    auto& cf_1_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kMetaCF);
     ASSERT_EQ(cf_1_status.flushed_index.log_index, 0);
     ASSERT_EQ(cf_1_status.flushed_index.seqno, 0);
     ASSERT_EQ(cf_1_status.applied_index.log_index, 30);
@@ -393,13 +393,13 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
     auto after_flush_size = rocksdb->GetCollector().GetSize();
     ASSERT_EQ(after_flush_size, 1);
 
-    auto& cf_0_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kStringsCF);
+    auto& cf_0_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kMetaCF);
     ASSERT_EQ(cf_0_status.flushed_index.log_index, 30);
     ASSERT_EQ(cf_0_status.flushed_index.seqno, 50);
     ASSERT_EQ(cf_0_status.applied_index.log_index, 10);
     ASSERT_EQ(cf_0_status.applied_index.seqno, 10);
 
-    auto& cf_1_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kHashesMetaCF);
+    auto& cf_1_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kMetaCF);
     ASSERT_EQ(cf_1_status.flushed_index.log_index, 30);
     ASSERT_EQ(cf_1_status.flushed_index.seqno, 50);
     ASSERT_EQ(cf_1_status.applied_index.log_index, 30);
@@ -415,7 +415,7 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
     ASSERT_EQ(last_flush_index.log_index.load(), 30);
     ASSERT_EQ(last_flush_index.seqno.load(), 50);
 
-    auto& cf_3_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kSetsMetaCF);
+    auto& cf_3_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kMetaCF);
     ASSERT_EQ(cf_3_status.flushed_index.log_index, 30);
     ASSERT_EQ(cf_3_status.flushed_index.seqno, 50);
     ASSERT_EQ(cf_3_status.applied_index.log_index, 0);
@@ -439,13 +439,13 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
     ASSERT_EQ(last_flush_index.log_index.load(), 30);
     ASSERT_EQ(last_flush_index.seqno.load(), 50);
 
-    auto& cf_0_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kStringsCF);
+    auto& cf_0_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kMetaCF);
     ASSERT_EQ(cf_0_status.flushed_index.log_index, 30);
     ASSERT_EQ(cf_0_status.flushed_index.seqno, 50);
     ASSERT_EQ(cf_0_status.applied_index.log_index, 35);
     ASSERT_EQ(cf_0_status.applied_index.seqno, 55);
 
-    auto& cf_1_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kHashesMetaCF);
+    auto& cf_1_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kMetaCF);
     ASSERT_EQ(cf_1_status.flushed_index.log_index, 30);
     ASSERT_EQ(cf_1_status.flushed_index.seqno, 50);
     ASSERT_EQ(cf_1_status.applied_index.log_index, 30);
@@ -457,7 +457,7 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
     ASSERT_EQ(cf_2_status.applied_index.log_index, 30);
     ASSERT_EQ(cf_2_status.applied_index.seqno, 50);
 
-    auto& cf_3_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kSetsMetaCF);
+    auto& cf_3_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kMetaCF);
     ASSERT_EQ(cf_3_status.flushed_index.log_index, 30);
     ASSERT_EQ(cf_3_status.flushed_index.seqno, 50);
     ASSERT_EQ(cf_3_status.applied_index.log_index, 0);

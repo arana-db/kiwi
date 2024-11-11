@@ -1,8 +1,12 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Declared a set of functions related to the master-slave
+  replication mechanism, note that this is not driven by the
+  Raft protocol.
  */
 
 #pragma once
@@ -12,12 +16,10 @@
 #include <vector>
 
 #include "common.h"
-#include "net/tcp_connection.h"
-#include "net/unbounded_buffer.h"
-#include "net/util.h"
+#include "net/socket_addr.h"
 #include "pstd/memory_file.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 template <typename DEST>
 inline void WriteBulkString(const char* str, size_t strLen, DEST& dst) {
@@ -86,7 +88,7 @@ enum PReplState {
 };
 
 struct PMasterInfo {
-  SocketAddr addr;
+  net::SocketAddr addr;
   PReplState state;
   time_t downSince;
 
@@ -127,7 +129,7 @@ class PReplication {
   void SendToSlaves(const std::vector<PString>& params);
 
   // slave side
-  void SetFailCallback(TcpConnectionFailCallback cb) { on_fail_ = std::move(cb); }
+  void SetFailCallback(std::function<void(std::string)> cb) { on_fail_ = std::move(cb); }
   void SaveTmpRdb(const char* data, std::size_t& len);
   void SetMaster(const std::shared_ptr<PClient>& cli);
   void SetMasterState(PReplState s);
@@ -135,7 +137,7 @@ class PReplication {
   void SetRdbSize(std::size_t s);
   PReplState GetMasterState() const;
   PClient* GetMaster() const { return master_.lock().get(); }
-  SocketAddr GetMasterAddr() const;
+  net::SocketAddr GetMasterAddr() const;
   std::size_t GetRdbSize() const;
 
   // info command
@@ -156,9 +158,9 @@ class PReplication {
   pstd::OutputMemoryFile rdb_;
 
   // Callback function that failed to connect to the master node
-  TcpConnectionFailCallback on_fail_ = nullptr;
+  std::function<void(std::string)> on_fail_ = nullptr;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi
 
-#define PREPL pikiwidb::PReplication::Instance()
+#define PREPL kiwi::PReplication::Instance()

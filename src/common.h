@@ -1,8 +1,11 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  A set of general functions defined here may be utilized by
+  other modules.
  */
 
 #pragma once
@@ -16,15 +19,17 @@
 #include <string>
 #include <vector>
 
+#include "unbounded_buffer.h"
+
 #define CRLF "\r\n"
 
 using PString = std::string;
 
-namespace pikiwidb {
+namespace kiwi {
 
 const int kStringMaxBytes = 1 * 1024 * 1024 * 1024;
 
-#define PIKIWIDB_SCAN_STEP_LENGTH 1000
+#define kiwi_SCAN_STEP_LENGTH 1000
 
 enum PError {
   kPErrorNop = -1,
@@ -58,8 +63,6 @@ extern struct PErrorInfo {
 
 int StrToLongDouble(const char* s, size_t slen, long double* ldval);
 
-class UnboundedBuffer;
-
 std::size_t FormatInt(long value, UnboundedBuffer* reply);
 std::size_t FormatBulk(const char* str, std::size_t len, UnboundedBuffer* reply);
 std::size_t FormatBulk(const PString& str, UnboundedBuffer* reply);
@@ -77,58 +80,113 @@ enum class PParseResult : int8_t {
 
 PParseResult GetIntUntilCRLF(const char*& ptr, std::size_t nBytes, int& val);
 
+/*
+ * AtomicString Use a locking mechanism to ensure atomicity of
+ * read and write operations.
+ * Based on the std::string
+ */
 class AtomicString {
  public:
+  /*------------------------
+   * AtomicString()
+   * Initialize a string instance.
+   */
   AtomicString() = default;
+  /*------------------------
+   * ~AtomicString()
+   * Destory a string instance.
+   */
   ~AtomicString() = default;
+  /*------------------------
+   * AtomicString (std::string)
+   * Initialize a string instance.
+   */
   AtomicString(std::string str) {
     std::lock_guard lock(mutex_);
     str_ = std::move(str);
   }
+  /*------------------------
+   * AtomicString (std::string&& str)
+   * Initialize a string instance.
+   */
   AtomicString(std::string&& str) {
     std::lock_guard lock(mutex_);
     str_ = std::move(str);
   }
+  /*------------------------
+   * AtomicString (const std::string& str)
+   * Initialize a string instance.
+   */
   AtomicString(const std::string& str) {
     std::lock_guard lock(mutex_);
     str_ = str;
   }
+  /*------------------------
+   * AtomicString (const char* c)
+   * Initialize a string instance.
+   */
   AtomicString(const char* c) {
     std::lock_guard lock(mutex_);
     str_ = std::string(c);
   };
+  /*------------------------
+   * AtomicString (const char* c)
+   * Initialize a string instance.
+   */
   AtomicString& operator=(const std::string& str) {
     std::lock_guard lock(mutex_);
     str_ = str;
     return *this;
   }
+  /*------------------------
+   * overloaded operator = (std::string&& str)
+   * Set string data.
+   */
   AtomicString& operator=(std::string&& str) {
     std::lock_guard lock(mutex_);
     str_ = std::move(str);
     return *this;
   }
+  /*------------------------
+   * overloaded operator std::string()
+   * Convert AtomicString to std::string
+   */
   operator std::string() {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     return str_;
   }
-
+  /*------------------------
+   * overloaded operator std::string()
+   * Convert AtomicString to std::string
+   */
   operator std::string() const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     return str_;
   }
-
+  /*------------------------
+   * empty()
+   * Empty a AtomicString
+   */
   bool empty() const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     return str_.empty();
   }
-
+  /*------------------------
+   * ToString()
+   * Convert AtomicString to std::string
+   */
   std::string ToString() const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     return str_;
   }
 
  private:
+  /*
+   * Mutex established to achieve atomicity
+   * of read and write operations
+   */
   mutable std::shared_mutex mutex_;
+  /* Store the string */
   std::string str_;
 };
 
@@ -165,8 +223,8 @@ class ExecuteOnScopeExit {
 };
 
 #define CONCAT(a, b) a##b
-#define _MAKE_DEFER_HELPER_(line) pikiwidb::ExecuteOnScopeExit CONCAT(defer, line) = [&]()
+#define _MAKE_DEFER_HELPER_(line) kiwi::ExecuteOnScopeExit CONCAT(defer, line) = [&]()
 
 #define DEFER _MAKE_DEFER_HELPER_(__LINE__)
 
-}  // namespace pikiwidb
+}  // namespace kiwi

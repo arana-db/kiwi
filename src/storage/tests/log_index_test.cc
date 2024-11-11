@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024-present, Qihoo, Inc.  All rights reserved.
+ * Copyright (c) 2024-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -23,7 +23,7 @@
 #include "pstd/thread_pool.h"
 #include "src/log_index.h"
 #include "src/redis.h"
-#include "storage/storage.h"
+// #include "storage/storage.h"
 #include "storage/util.h"
 
 using namespace storage;  // NOLINT
@@ -75,11 +75,11 @@ TEST(TablePropertyTest, SimpleTest) {
 
 class LogQueue : public pstd::noncopyable {
  public:
-  using WriteCallback = std::function<rocksdb::Status(const pikiwidb::Binlog&, LogIndex idx)>;
+  using WriteCallback = std::function<rocksdb::Status(const kiwi::Binlog&, LogIndex idx)>;
 
   explicit LogQueue(WriteCallback&& cb) : write_cb_(std::move(cb)) { consumer_.SetMaxIdleThread(1); }
 
-  void AppendLog(const pikiwidb::Binlog& log, std::promise<rocksdb::Status>&& promise) {
+  void AppendLog(const kiwi::Binlog& log, std::promise<rocksdb::Status>&& promise) {
     auto task = [&] {
       auto idx = next_log_idx_.fetch_add(1);
       auto s = write_cb_(log, idx);
@@ -97,11 +97,11 @@ class LogQueue : public pstd::noncopyable {
 class LogIndexTest : public ::testing::Test {
  public:
   LogIndexTest()
-      : log_queue_([this](const pikiwidb::Binlog& log, LogIndex log_idx) { return db_.OnBinlogWrite(log, log_idx); }) {
+      : log_queue_([this](const kiwi::Binlog& log, LogIndex log_idx) { return db_.OnBinlogWrite(log, log_idx); }) {
     options_.options.create_if_missing = true;
     options_.db_instance_num = 1;
     options_.raft_timeout_s = 10000;
-    options_.append_log_function = [this](const pikiwidb::Binlog& log, std::promise<rocksdb::Status>&& promise) {
+    options_.append_log_function = [this](const kiwi::Binlog& log, std::promise<rocksdb::Status>&& promise) {
       log_queue_.AppendLog(log, std::move(promise));
     };
     options_.do_snapshot_function = [](int64_t log_index, bool sync) {};
@@ -167,7 +167,7 @@ TEST_F(LogIndexTest, SimpleTest) {  // NOLINT
     }
   };
   auto flushdb = [&]() {
-    auto s = redis->GetDB()->Flush(rocksdb::FlushOptions(), redis->GetColumnFamilyHandles()[kHashesMetaCF]);
+    auto s = redis->GetDB()->Flush(rocksdb::FlushOptions(), redis->GetColumnFamilyHandles()[kMetaCF]);
     ASSERT_TRUE(s.ok());
     s = redis->GetDB()->Flush(rocksdb::FlushOptions(), redis->GetColumnFamilyHandles()[kHashesDataCF]);
     ASSERT_TRUE(s.ok());
@@ -179,7 +179,7 @@ TEST_F(LogIndexTest, SimpleTest) {  // NOLINT
     flushdb();
 
     rocksdb::TablePropertiesCollection properties;
-    auto s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kHashesMetaCF], &properties);
+    auto s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kMetaCF], &properties);
     ASSERT_TRUE(s.ok());
     ASSERT_TRUE(properties.size() == 1);
     auto res = LogIndexTablePropertiesCollector::GetLargestLogIndexFromTableCollection(properties);
@@ -205,7 +205,7 @@ TEST_F(LogIndexTest, SimpleTest) {  // NOLINT
     flushdb();
 
     rocksdb::TablePropertiesCollection properties;
-    auto s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kHashesMetaCF], &properties);
+    auto s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kMetaCF], &properties);
     ASSERT_TRUE(s.ok());
     auto res = LogIndexTablePropertiesCollector::GetLargestLogIndexFromTableCollection(properties);
     EXPECT_TRUE(res.has_value());
@@ -214,7 +214,7 @@ TEST_F(LogIndexTest, SimpleTest) {  // NOLINT
     EXPECT_EQ(res->GetSequenceNumber(), 19999);
 
     properties.clear();
-    s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kHashesDataCF], &properties);
+    s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kMetaCF], &properties);
     ASSERT_TRUE(s.ok());
     res = LogIndexTablePropertiesCollector::GetLargestLogIndexFromTableCollection(properties);
     EXPECT_TRUE(res.has_value());
@@ -236,7 +236,7 @@ TEST_F(LogIndexTest, SimpleTest) {  // NOLINT
 
       {
         rocksdb::TablePropertiesCollection properties;
-        auto s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kHashesMetaCF], &properties);
+        auto s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kMetaCF], &properties);
         s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kHashesDataCF], &properties);
         std::vector<rocksdb::LiveFileMetaData> metas;
         redis->GetDB()->GetLiveFilesMetaData(&metas);
@@ -253,7 +253,7 @@ TEST_F(LogIndexTest, SimpleTest) {  // NOLINT
       }
 
       rocksdb::TablePropertiesCollection properties;
-      auto s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kHashesMetaCF], &properties);
+      auto s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kMetaCF], &properties);
       ASSERT_TRUE(s.ok());
       auto res = LogIndexTablePropertiesCollector::GetLargestLogIndexFromTableCollection(properties);
       EXPECT_TRUE(res.has_value());

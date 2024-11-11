@@ -1,4 +1,4 @@
-// Copyright (c) 2015-present, Qihoo, Inc.  All rights reserved.
+// Copyright (c) 2015-present, Arana/Kiwi Community.  All rights reserved.
 // This source code is licensed under the BSD-style license found in the
 // LICENSE file in the root directory of this source tree. An additional grant
 // of patent rights can be found in the PATENTS file in the same directory.
@@ -65,6 +65,21 @@ int String2int(const char* s, size_t slen, T* val) {
   } else {
     return 1;
   }
+}
+
+/* Convert a string into a integral. Returns 1 if the all char of string could be parsed
+ * into a integer, 0 otherwise. The value will be set to
+ * the parsed value when appropriate. */
+template <std::integral T>
+int String2intStrict(const char* s, size_t slen, T* val) {
+  auto [ptr, ec] = std::from_chars(s, s + slen, *val);
+  if (ec != std::errc()) {
+    return 0;
+  }
+  if (ptr != s + slen) {
+    return 0;
+  }
+  return 1;
 }
 
 template <std::integral T>

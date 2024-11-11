@@ -1,4 +1,4 @@
-# Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
+# Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
@@ -19,6 +19,7 @@ ExternalProject_Add(
         URL_HASH SHA256=3c2e73019178ad72b0614a3124f25de454b9ca3a1afe81d5447b8d3cbdb6d322
         CMAKE_ARGS
         -DCMAKE_INSTALL_PREFIX=${LIB_INSTALL_PREFIX}
+        -DCMAKE_INSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}
         -DCMAKE_BUILD_TYPE=${LIB_BUILD_TYPE}
         -DFMT_DOC=FALSE
         -DFMT_TEST=FALSE

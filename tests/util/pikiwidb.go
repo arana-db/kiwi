@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
+ * Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
  * This source code is licensed under the BSD-style license found in the
  * LICENSE file in the root directory of this source tree. An additional grant
  * of patent rights can be found in the PATENTS file in the same directory.
@@ -38,7 +38,7 @@ func getBinPath() string {
 	rPath := getRootPathByCaller()
 	var bPath string
 	if len(rPath) != 0 {
-		bPath = path.Join(rPath, "bin", "pikiwidb")
+		bPath = path.Join(rPath, "bin", "kiwi")
 	}
 	return bPath
 }
@@ -50,11 +50,11 @@ func GetConfPath(copy bool, t int64) string {
 		nPath string
 	)
 	if len(rPath) != 0 && copy {
-		nPath = path.Join(rPath, fmt.Sprintf("pikiwidb_%d.conf", t))
+		nPath = path.Join(rPath, fmt.Sprintf("etc/conf/kiwi_%d.conf", t))
 		return nPath
 	}
 	if len(rPath) != 0 {
-		cPath = path.Join(rPath, "pikiwidb.conf")
+		cPath = path.Join(rPath, "etc/conf/kiwi.conf")
 		return cPath
 	}
 	return rPath
@@ -82,12 +82,12 @@ func (s *Server) NewClient() *redis.Client {
 	return redis.NewClient(&redis.Options{
 		Addr:         s.getAddr(),
 		DB:           0,
-		DialTimeout:  10 * time.Second,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		DialTimeout:  10 * time.Minute,
+		ReadTimeout:  10 * time.Minute,
+		WriteTimeout: 10 * time.Minute,
 		MaxRetries:   -1,
 		PoolSize:     30,
-		PoolTimeout:  60 * time.Second,
+		PoolTimeout:  10 * time.Minute,
 	})
 }
 
@@ -143,8 +143,14 @@ func StartServer(config string, options map[string]string, delete bool) *Server 
 
 	b := getBinPath()
 	c := exec.Command(b)
+	t := time.Now().UnixMilli()
 
-	outfile, err := os.Create("test.log")
+	if options["port"] != "" {
+		p, _ = strconv.Atoi(options["port"])
+	}
+
+	logName := fmt.Sprintf("test_%d_%d.log", t, p)
+	outfile, err := os.Create(logName)
 	if err != nil {
 		panic(err)
 	}
@@ -155,7 +161,6 @@ func StartServer(config string, options map[string]string, delete bool) *Server 
 	log.SetOutput(outfile)
 
 	if len(config) != 0 {
-		t := time.Now().UnixMilli()
 		d = path.Join(getRootPathByCaller(), fmt.Sprintf("db_%d", t))
 		n = GetConfPath(true, t)
 
@@ -200,13 +205,9 @@ func StartServer(config string, options map[string]string, delete bool) *Server 
 		c.Args = append(c.Args, fmt.Sprintf("--%s", k), v)
 	}
 
-	if options["port"] != "" {
-		p, _ = strconv.Atoi(options["port"])
-	}
-
 	err = c.Start()
 	if err != nil {
-		log.Println("pikiwidb startup failed.", err.Error())
+		log.Println("kiwi startup failed.", err.Error())
 		return nil
 	}
 

@@ -1,17 +1,23 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Implemented a set of operation functions and commands
+  associated with key-value pairs.
  */
 
 #include "cmd_kv.h"
+#include <cstddef>
+#include <cstdint>
 #include "common.h"
+#include "config.h"
 #include "pstd_string.h"
 #include "pstd_util.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 GetCmd::GetCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryString) {}
@@ -23,12 +29,14 @@ bool GetCmd::DoInitial(PClient* client) {
 
 void GetCmd::DoCmd(PClient* client) {
   PString value;
-  uint64_t ttl = -1;
+  int64_t ttl = -1;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->GetWithTTL(client->Key(), &value, &ttl);
   if (s.ok()) {
     client->AppendString(value);
   } else if (s.IsNotFound()) {
     client->AppendString("");
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kSyntaxErr, "get key error");
   }
@@ -103,6 +111,8 @@ void SetCmd::DoCmd(PClient* client) {
     } else {
       client->AppendStringLen(-1);
     }
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -244,6 +254,8 @@ void BitCountCmd::DoCmd(PClient* client) {
 
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(count);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -252,12 +264,12 @@ void BitCountCmd::DoCmd(PClient* client) {
 DecrCmd::DecrCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryString) {}
 
-bool DecrCmd::DoInitial(pikiwidb::PClient* client) {
+bool DecrCmd::DoInitial(kiwi::PClient* client) {
   client->SetKey(client->argv_[1]);
   return true;
 }
 
-void DecrCmd::DoCmd(pikiwidb::PClient* client) {
+void DecrCmd::DoCmd(kiwi::PClient* client) {
   int64_t ret = 0;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Decrby(client->Key(), 1, &ret);
   if (s.ok()) {
@@ -274,12 +286,12 @@ void DecrCmd::DoCmd(pikiwidb::PClient* client) {
 IncrCmd::IncrCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryString) {}
 
-bool IncrCmd::DoInitial(pikiwidb::PClient* client) {
+bool IncrCmd::DoInitial(kiwi::PClient* client) {
   client->SetKey(client->argv_[1]);
   return true;
 }
 
-void IncrCmd::DoCmd(pikiwidb::PClient* client) {
+void IncrCmd::DoCmd(kiwi::PClient* client) {
   int64_t ret = 0;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Incrby(client->Key(), 1, &ret);
   if (s.ok()) {
@@ -317,20 +329,18 @@ void BitOpCmd::DoCmd(PClient* client) {
   PString res;
   storage::BitOpType op = storage::kBitOpDefault;
 
-  if (keys.size() == 1) {
+  if (!keys.empty()) {
     if (pstd::StringEqualCaseInsensitive(client->argv_[1], "or")) {
       err = kPErrorOK;
       op = storage::kBitOpOr;
-    }
-  } else if (keys.size() >= 2) {
-    if (pstd::StringEqualCaseInsensitive(client->argv_[1], "xor")) {
+    } else if (pstd::StringEqualCaseInsensitive(client->argv_[1], "xor")) {
       err = kPErrorOK;
       op = storage::kBitOpXor;
     } else if (pstd::StringEqualCaseInsensitive(client->argv_[1], "and")) {
       err = kPErrorOK;
       op = storage::kBitOpAnd;
     } else if (pstd::StringEqualCaseInsensitive(client->argv_[1], "not")) {
-      if (client->argv_.size() == 4) {
+      if (keys.size() == 1) {
         err = kPErrorOK;
         op = storage::kBitOpNot;
       }
@@ -347,6 +357,8 @@ void BitOpCmd::DoCmd(PClient* client) {
                             ->BitOp(op, client->argv_[2], keys, value, &result_length);
     if (s.ok()) {
       client->AppendInteger(result_length);
+    } else if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
     } else {
       client->SetRes(CmdRes::kErrOther, s.ToString());
     }
@@ -366,6 +378,8 @@ void StrlenCmd::DoCmd(PClient* client) {
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Strlen(client->Key(), &len);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(len);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -391,6 +405,8 @@ void SetExCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setex(client->Key(), client->argv_[3], sec);
   if (s.ok()) {
     client->SetRes(CmdRes::kOK);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -417,6 +433,8 @@ void PSetExCmd::DoCmd(PClient* client) {
                           ->Setex(client->Key(), client->argv_[3], static_cast<int32_t>(msec / 1000));
   if (s.ok()) {
     client->SetRes(CmdRes::kOK);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -446,6 +464,9 @@ void IncrbyCmd::DoCmd(PClient* client) {
     client->SetRes(CmdRes::kInvalidInt);
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kOverFlow);
+  } else if (s.IsInvalidArgument() &&
+             s.ToString().substr(0, std::char_traits<char>::length(ErrTypeMessage)) == ErrTypeMessage) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   };
@@ -478,6 +499,9 @@ void DecrbyCmd::DoCmd(PClient* client) {
     client->SetRes(CmdRes::kInvalidInt);
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kOverFlow);
+  } else if (s.IsInvalidArgument() &&
+             s.ToString().substr(0, std::char_traits<char>::length(ErrTypeMessage)) == ErrTypeMessage) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -503,10 +527,13 @@ void IncrbyFloatCmd::DoCmd(PClient* client) {
   if (s.ok()) {
     client->AppendStringLen(ret.size());
     client->AppendContent(ret);
-  } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a vaild float") {
+  } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a valid float") {
     client->SetRes(CmdRes::kInvalidFloat);
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::KIncrByOverFlow);
+  } else if (s.IsInvalidArgument() &&
+             s.ToString().substr(0, std::char_traits<char>::length(ErrTypeMessage)) == ErrTypeMessage) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -526,6 +553,8 @@ void SetNXCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setnx(client->Key(), client->argv_[2], &success);
   if (s.ok()) {
     client->AppendInteger(success);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -549,6 +578,8 @@ void GetBitCmd::DoCmd(PClient* client) {
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->GetBit(client->Key(), offset, &bit_val);
   if (s.ok()) {
     client->AppendInteger(bit_val);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -581,9 +612,11 @@ void GetRangeCmd::DoCmd(PClient* client) {
   if (!s.ok()) {
     if (s.IsNotFound()) {
       client->AppendString("");
-      return;
+    } else if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, "getrange cmd error");
     }
-    client->SetRes(CmdRes::kErrOther, "getrange cmd error");
     return;
   }
   client->AppendString(ret);
@@ -600,14 +633,17 @@ bool SetBitCmd::DoInitial(PClient* client) {
 void SetBitCmd::DoCmd(PClient* client) {
   long offset = 0;
   long on = 0;
-  if (!pstd::String2int(client->argv_[2].c_str(), client->argv_[2].size(), &offset) ||
-      !pstd::String2int(client->argv_[3].c_str(), client->argv_[3].size(), &on)) {
-    client->SetRes(CmdRes::kInvalidInt);
+  if (pstd::String2int(client->argv_[2].c_str(), client->argv_[2].size(), &offset) == 0) {
+    client->SetRes(CmdRes::kInvalidBitOffsetInt);
+    return;
+  }
+  if (pstd::String2int(client->argv_[3].c_str(), client->argv_[3].size(), &on) == 0) {
+    client->SetRes(CmdRes::kInvalidBitInt);
     return;
   }
 
   if (offset < 0 || offset > kStringMaxBytes) {
-    client->AppendInteger(0);
+    client->SetRes(CmdRes::kInvalidBitInt);
     return;
   }
 
@@ -623,6 +659,8 @@ void SetBitCmd::DoCmd(PClient* client) {
                           ->SetBit(client->Key(), offset, static_cast<int32_t>(on), &bit_val);
   if (s.ok()) {
     client->AppendInteger(static_cast<int>(bit_val));
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -639,16 +677,26 @@ bool SetRangeCmd::DoInitial(PClient* client) {
 
 void SetRangeCmd::DoCmd(PClient* client) {
   int64_t offset = 0;
+
   if (!(pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &offset))) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-
+  // Ref: https://redis.io/docs/latest/commands/setrange/
+  if (g_config.redis_compatible_mode && std::atoi(client->argv_[2].c_str()) > 536870911) {
+    client->SetRes(CmdRes::kErrOther,
+                   "When Redis compatibility mode is enabled, the offset parameter must not exceed 536870911");
+    return;
+  }
   int32_t ret = 0;
   storage::Status s =
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setrange(client->Key(), offset, client->argv_[3], &ret);
   if (!s.ok()) {
-    client->SetRes(CmdRes::kErrOther, "setrange cmd error");
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, "setrange cmd error");
+    }
     return;
   }
   client->AppendInteger(static_cast<int>(ret));
@@ -680,9 +728,11 @@ void MSetnxCmd::DoCmd(PClient* client) {
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->MSetnx(kvs, &success);
   if (s.ok()) {
     client->AppendInteger(success);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

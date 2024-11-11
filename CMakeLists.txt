@@ -1,10 +1,11 @@
-# Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
+# Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
 CMAKE_MINIMUM_REQUIRED(VERSION 3.14)
-PROJECT(PikiwiDB)
+PROJECT(kiwi)
+include(GNUInstallDirs)
 
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=return-type")
 
@@ -29,6 +30,24 @@ ELSEIF (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         MESSAGE(FATAL_ERROR "GCC G++ version must be greater than 11.0")
     ENDIF ()
 ENDIF ()
+
+EXECUTE_PROCESS(
+        COMMAND git rev-parse HEAD
+        OUTPUT_VARIABLE GIT_COMMIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+EXECUTE_PROCESS(
+        COMMAND date "+%Y-%m-%d %H:%M:%S %Z%z"
+        OUTPUT_VARIABLE BUILD_DATE
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
+MESSAGE (status "GIT_COMMIT_HASH: ${GIT_COMMIT_HASH}")
+MESSAGE (status "GIT_COMMIT_DATE: ${BUILD_DATE}")
+
+ADD_DEFINITIONS(-DKkiwi_GIT_COMMIT_ID=\"${GIT_COMMIT_HASH}\")
+ADD_DEFINITIONS(-DKkiwi_BUILD_DATE=\"${BUILD_DATE}\")
 
 IF(CMAKE_BUILD_TYPE STREQUAL "Release")
     MESSAGE("Building in Release mode")
@@ -79,7 +98,7 @@ ELSEIF (CMAKE_SYSTEM_NAME MATCHES "Linux")
         SET(CMAKE_CXX_FLAGS "-stdlib=libc++ -pthread ${CMAKE_CXX_FLAGS}")
         set(CMAKE_THREAD_LIBS_INIT "-lpthread")
     ELSEIF (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        SET(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++")
+        SET(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -lstdc++")
         SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -pthread -Wl,--no-as-needed -ldl -Wno-restrict")
     ENDIF ()
     ADD_DEFINITIONS(-DOS_LINUX)
@@ -105,17 +124,28 @@ SET_PROPERTY(DIRECTORY PROPERTY EP_BASE ${CMAKE_CURRENT_SOURCE_DIR}/${EP_BASE_SU
 SET(CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/modules/")
 SET(BUILD_SUPPORT_DIR ${PROJECT_SOURCE_DIR}/build_support)
 
-SET(PLIB_INSTALL_DIR ${CMAKE_BINARY_DIR}/lib)
+SET(CMAKE_INSTALL_LIBDIR lib)
+SET(PLIB_INSTALL_DIR ${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR})
 SET(LIB_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/${LIB_SUFFIX})
 SET(LIB_INCLUDE_DIR ${LIB_INSTALL_PREFIX}/include)
-SET(LIB_INSTALL_DIR ${LIB_INSTALL_PREFIX}/lib)
+SET(LIB_INSTALL_DIR ${LIB_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
 SET(LIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/${EP_BASE_SUFFIX}/Source)
+
+SET(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG ${LIB_INSTALL_DIR})
+SET(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${LIB_INSTALL_DIR})
+SET(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${LIB_INSTALL_DIR})
+SET(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${LIB_INSTALL_DIR}) 
+SET(CMAKE_INSTALL_PREFIX ${LIB_INSTALL_DIR})
+SET(LIBDIR ${CMAKE_INSTALL_LIBDIR})
+SET(FIND_LIBRARY_USE_LIB32_PATHS true)
+SET(FIND_LIBRARY_USE_LIB64_PATHS true)
+SET(INSTALL_LOCATION ${LIB_INSTALL_DIR})
 
 # make sure we use the same compiler for all dependencies
 SET(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 MESSAGE(STATUS "${PROJECT_NAME} staged install: ${STAGED_INSTALL_PREFIX}")
-MESSAGE(STATUS "Current platform: ${OS_VERSION} ")
+MESSAGE(STATUS "Current platform: ${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_VERSION} ")
 CMAKE_HOST_SYSTEM_INFORMATION(RESULT CPU_CORE QUERY NUMBER_OF_LOGICAL_CORES)
 MESSAGE(STATUS "CPU core ${CPU_CORE}")
 
@@ -152,23 +182,21 @@ ENDIF()
 SET(LIB ${LIB} CACHE INTERNAL "libs which should be linked for executable target")
 
 INCLUDE(ExternalProject)
-
 INCLUDE(cmake/findTools.cmake)
 INCLUDE(cmake/openssl.cmake)
-INCLUDE(cmake/lz4.cmake)
-INCLUDE(cmake/zstd.cmake)
 INCLUDE(cmake/gflags.cmake)
-INCLUDE(cmake/snappy.cmake)
+INCLUDE(cmake/lz4.cmake)
 INCLUDE(cmake/zlib.cmake)
+INCLUDE(cmake/protobuf.cmake)
+INCLUDE(cmake/zstd.cmake)
+INCLUDE(cmake/snappy.cmake)
 INCLUDE(cmake/leveldb.cmake)
-INCLUDE(cmake/libevent.cmake)
 INCLUDE(cmake/llhttp.cmake)
 INCLUDE(cmake/fmt.cmake)
 INCLUDE(cmake/spdlog.cmake)
 INCLUDE(cmake/gtest.cmake)
-INCLUDE(cmake/rocksdb.cmake)
-INCLUDE(cmake/protobuf.cmake)
 INCLUDE(cmake/brpc.cmake)
+INCLUDE(cmake/rocksdb.cmake)
 INCLUDE(cmake/braft.cmake)
 
 SET(PROTO_OUTPUT_DIR "${CMAKE_BINARY_DIR}/generated_pb")

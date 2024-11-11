@@ -1,8 +1,11 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Defined a set of functions related to the client's
+  subscription mechanism.
  */
 
 #pragma once
@@ -14,7 +17,7 @@
 
 #include "common.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class PClient;
 class PPubsub {
@@ -55,4 +58,4 @@ class PPubsub {
   static void recycleClients(ChannelClients& channels, PString& start);
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

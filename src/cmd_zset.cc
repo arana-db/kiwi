@@ -1,8 +1,10 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Implemented a set of features related to sorted sets.
  */
 
 #include "cmd_zset.h"
@@ -12,7 +14,7 @@
 #include "pstd/pstd_string.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 static void FitLimit(int64_t& count, int64_t& offset, const int64_t size) {
   count = count >= 0 ? count : size;
@@ -112,6 +114,8 @@ void ZAddCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZAdd(client->Key(), score_members_, &count);
   if (s.ok()) {
     client->AppendInteger(count);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -153,6 +157,8 @@ void ZPopMinCmd::DoCmd(PClient* client) {
       client->AppendStringLen(len);
       client->AppendContent(buf);
     }
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -194,6 +200,8 @@ void ZPopMaxCmd::DoCmd(PClient* client) {
       client->AppendStringLen(len);
       client->AppendContent(buf);
     }
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -276,6 +284,8 @@ void ZInterstoreCmd::DoCmd(PClient* client) {
                           ->ZInterstore(dest_key_, keys_, weights_, aggregate_, value_to_dest_, &count);
   if (s.ok()) {
     client->AppendInteger(count);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -293,6 +303,8 @@ void ZUnionstoreCmd::DoCmd(PClient* client) {
                           ->ZUnionstore(dest_key_, keys_, weights_, aggregate_, value_to_dest, &count);
   if (s.ok()) {
     client->AppendInteger(count);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -349,6 +361,8 @@ void ZRevrangeCmd::DoCmd(PClient* client) {
         client->AppendContent(sm.member);
       }
     }
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -409,7 +423,11 @@ void ZRangebyscoreCmd::DoCmd(PClient* client) {
                           ->GetStorage()
                           ->ZRangebyscore(client->Key(), min_score, max_score, left_close, right_close, &score_members);
   if (!s.ok() && !s.IsNotFound()) {
-    client->SetRes(CmdRes::kErrOther, s.ToString());
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, s.ToString());
+    }
     return;
   }
   FitLimit(count, offset, static_cast<int64_t>(score_members.size()));
@@ -461,6 +479,8 @@ void ZRemrangebyrankCmd::DoCmd(PClient* client) {
   s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZRemrangebyrank(client->Key(), start, end, &ret);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(ret);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -520,12 +540,16 @@ void ZRevrangebyscoreCmd::DoCmd(PClient* client) {
     return;
   }
   std::vector<storage::ScoreMember> score_members;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
-                          ->GetStorage()
-                          ->ZRevrangebyscore(client->Key(), min_score, max_score, left_close, right_close, count,
-                                             offset, &score_members);
+  storage::Status s =
+      PSTORE.GetBackend(client->GetCurrentDB())
+          ->GetStorage()
+          ->ZRevrangebyscore(client->Key(), min_score, max_score, left_close, right_close, &score_members);
   if (!s.ok() && !s.IsNotFound()) {
-    client->SetRes(CmdRes::kErrOther, s.ToString());
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, s.ToString());
+    }
     return;
   }
   FitLimit(count, offset, static_cast<int64_t>(score_members.size()));
@@ -562,11 +586,16 @@ bool ZCardCmd::DoInitial(PClient* client) {
 void ZCardCmd::DoCmd(PClient* client) {
   int32_t reply_Num = 0;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(client->Key(), &reply_Num);
-  if (!s.ok()) {
-    client->SetRes(CmdRes::kSyntaxErr, "ZCard cmd error");
+  if (s.ok() || s.IsNotFound()) {
+    client->AppendInteger(reply_Num);
+  } else {
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "ZCard cmd error");
+    }
     return;
   }
-  client->AppendInteger(reply_Num);
 }
 
 ZRangeCmd::ZRangeCmd(const std::string& name, int16_t arity)
@@ -675,7 +704,11 @@ void ZRangeCmd::DoCmd(PClient* client) {
     }
   }
   if (!s.ok() && !s.IsNotFound()) {
-    client->SetRes(CmdRes::kErrOther, s.ToString());
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, s.ToString());
+    }
     return;
   }
   FitLimit(count, offset, static_cast<int64_t>(score_members.size()));
@@ -730,6 +763,8 @@ void ZScoreCmd::DoCmd(PClient* client) {
     int64_t len = pstd::D2string(buf, sizeof(buf), score);
     client->AppendStringLen(len);
     client->AppendContent(buf);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -781,7 +816,11 @@ void ZRangebylexCmd::DoCmd(PClient* client) {
           ->GetStorage()
           ->ZRangebylex(client->Key(), min_member, max_member, left_close, right_close, &members);
   if (!s.ok() && !s.IsNotFound()) {
-    client->SetRes(CmdRes::kErrOther, s.ToString());
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, s.ToString());
+    }
     return;
   }
 
@@ -838,7 +877,11 @@ void ZRevrangebylexCmd::DoCmd(PClient* client) {
           ->GetStorage()
           ->ZRangebylex(client->Key(), min_member, max_member, left_close, right_close, &members);
   if (!s.ok() && !s.IsNotFound()) {
-    client->SetRes(CmdRes::kErrOther, s.ToString());
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kErrOther, s.ToString());
+    }
     return;
   }
 
@@ -868,6 +911,8 @@ void ZRankCmd::DoCmd(PClient* client) {
     client->AppendInteger(rank);
   } else if (s.IsNotFound()) {
     client->AppendContent("$-1");
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -889,6 +934,8 @@ void ZRevrankCmd::DoCmd(PClient* client) {
     client->AppendInteger(revrank);
   } else if (s.IsNotFound()) {
     client->AppendContent("$-1");
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -909,6 +956,8 @@ void ZRemCmd::DoCmd(PClient* client) {
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZRem(client->Key(), members, &deleted);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(deleted);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -938,6 +987,8 @@ void ZIncrbyCmd::DoCmd(PClient* client) {
     int64_t len = pstd::D2string(buf, sizeof(buf), score);
     client->AppendStringLen(len);
     client->AppendContent(buf);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -968,9 +1019,11 @@ void ZRemrangebyscoreCmd::DoCmd(PClient* client) {
                           ->ZRemrangebyscore(client->Key(), min_score, max_score, left_close, right_close, &s_ret);
   if (s.ok()) {
     client->AppendInteger(s_ret);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

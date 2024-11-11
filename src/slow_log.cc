@@ -1,8 +1,12 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Implement the slow log feature.
+
+  The slow log is responsible for recording commands that exceed the threshold time.
  */
 
 #include <sys/time.h>
@@ -11,7 +15,7 @@
 #include "log.h"
 #include "slow_log.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 PSlowLog& PSlowLog::Instance() {
   static PSlowLog slog;
@@ -68,4 +72,4 @@ void PSlowLog::EndAndStat(const std::vector<PString>& cmds) {
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

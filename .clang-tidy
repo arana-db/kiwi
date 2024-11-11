@@ -94,23 +94,23 @@ AnalyzeTemporaryDtors: true
 # -bugprone-branch-clone,
 #    frequent misidentification
 # -google-default-arguments
-#    Too many virtual functions in pika have default parameters, specifically void Do(std::shared_ptr<Partition> partition = nullptr)
+#    Too many virtual functions in Arana/Kiwi have default parameters, specifically void Do(std::shared_ptr<Partition> partition = nullptr)
 # -clang-analyzer-cplusplus.InnerPointer
 #     I don't know why this bug in the RocksDB library fails to suppress detection.So I have to disable this check.
 #--google-explicit-constructor
-#     There are so many implicit convert in pika
+#     There are so many implicit convert in Arana/Kiwi
 #--use_of_tag_name_without_tag
 #     like class member is class , If there is no class tag, an error will be reported
 #     class A{  B b_;  } -> error ;  class A{  class B b_;  } -> no error ; 
 #-clang-analyzer-core.CallAndMessage
-#     pika/src/storage/src/scope_record_lock.h 
+#     Arana/Kiwi/src/storage/src/scope_record_lock.h 
 #     Always detect a null pointer and call the TryLock method
 #     Called C++ object pointer is null [clang-analyzer-core.CallAndMessage,-warnings-as-errors]
 #     lock_mgr_->UnLock(key);
 #-clang-analyzer-deadcode.DeadStores
 #    error detection in some places
 #-google-runtime-int
-#    todo discussed, because there are so many of `long` and `long long` in pika, so disable for now
+#    todo discussed, because there are so many of `long` and `long long` in Arana/Kiwi so disable for now
 #-clang-diagnostic-unused-command-line-argument
 #    because there are to many compile command error in github ci, but no error in local environment
 #    See in build folder compile_commands.json

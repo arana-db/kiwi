@@ -1,8 +1,11 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  The declarations of a set of instructions and functions
+  related to Raft are written here.
  */
 
 #pragma once
@@ -11,7 +14,7 @@
 
 #include "base_cmd.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 /* RAFT.NODE ADD [id] [address:port]
  *   Add a new node to the cluster.  The [id] can be an explicit non-zero value,
@@ -80,4 +83,4 @@ class RaftClusterCmd : public BaseCmd {
   static constexpr std::string_view kJoinCmd = "JOIN";
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi

@@ -1,4 +1,4 @@
-# Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
+# Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
@@ -14,6 +14,7 @@ ExternalProject_Add(
         GIT_TAG v1.14.0
         CMAKE_ARGS
         -DCMAKE_INSTALL_PREFIX=${LIB_INSTALL_PREFIX}
+        -DCMAKE_INSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
 )
 

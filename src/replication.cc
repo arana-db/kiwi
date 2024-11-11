@@ -1,22 +1,24 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Defined a set of functions associated with the master-slave
+  replication mechanism.
  */
 
 #include <iostream>  // the child process use stdout for log
+#include <utility>
 
 #include "client.h"
 #include "config.h"
-#include "event_loop.h"
+#include "kiwi.h"
 #include "log.h"
-#include "net/util.h"
-#include "pikiwidb.h"
 #include "pstd/pstd_string.h"
 #include "replication.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 PReplication& PReplication::Instance() {
   static PReplication rep;
@@ -27,7 +29,7 @@ PReplication::PReplication() {}
 
 bool PReplication::IsBgsaving() const { return bgsaving_; }
 
-void PReplication::AddSlave(pikiwidb::PClient* cli) {
+void PReplication::AddSlave(kiwi::PClient* cli) {
   slaves_.push_back(std::static_pointer_cast<PClient>(cli->shared_from_this()));
 
   // transfer to slave
@@ -71,9 +73,9 @@ void PReplication::OnRdbSaveDone() {
       // $file_len + filedata
       char tmp[32];
       int n = snprintf(tmp, sizeof tmp - 1, "$%ld\r\n", (long)size);
-      evbuffer_iovec iovecs[] = {
-          {tmp, (size_t)(n)}, {const_cast<char*>(data), size}, {buffer_.ReadAddr(), buffer_.ReadableSize()}};
-      cli->SendPacket(iovecs, sizeof(iovecs) / sizeof(iovecs[0]));
+      //      evbuffer_iovec iovecs[] = {
+      //          {tmp, (size_t)(n)}, {const_cast<char*>(data), size}, {buffer_.ReadAddr(), buffer_.ReadableSize()}};
+      //      cli->SendPacket(iovecs, sizeof(iovecs) / sizeof(iovecs[0]));
 
       INFO("Send to slave rdb {}, buffer {}", size, buffer_.ReadableSize());
     }
@@ -166,7 +168,7 @@ void PReplication::Cron() {
         ++it;
 
         if (cli->GetSlaveInfo()->state == kPSlaveStateOnline) {
-          cli->SendPacket("PING\r\n", 6);
+          cli->SendPacket("PING\r\n");
         }
       }
     }
@@ -185,31 +187,28 @@ void PReplication::Cron() {
           master->Close();
         }
 
-        INFO("Try connect to master {}", AddrToString(&masterInfo_.addr.GetAddr()));
+        INFO("Try connect to master IP:{} port:{}", masterInfo_.addr.GetIP(), masterInfo_.addr.GetPort());
 
-        auto on_new_conn = [](TcpConnection* obj) {
-          if (g_pikiwidb) {
-            g_pikiwidb->OnNewConnection(obj);
+        auto on_new_conn = [](uint64_t connID, std::shared_ptr<kiwi::PClient>& client, const net::SocketAddr& addr) {
+          INFO("Connect to master IP:{} port:{}", addr.GetIP(), addr.GetPort());
+          if (g_kiwi) {
+            g_kiwi->OnNewConnection(connID, client, addr);
           }
         };
 
-        auto fail_cb = [&](EventLoop*, const char* peer_ip, int port) {
-          WARN("OnCallback: Connect master {}:{} failed", peer_ip, port);
-
+        auto fail_cb = [&](std::string err) {
           PREPL.SetMasterState(kPReplStateNone);
           if (!masterInfo_.downSince) {
             masterInfo_.downSince = ::time(nullptr);
           }
 
           if (on_fail_) {
-            on_fail_(EventLoop::Self(), peer_ip, port);
+            on_fail_(std::move(err));
             on_fail_ = nullptr;
           }
         };
 
-        auto loop = EventLoop::Self();
-        loop->Connect(masterInfo_.addr.GetIP().c_str(), masterInfo_.addr.GetPort(), on_new_conn, fail_cb);
-
+        g_kiwi->TCPConnect(masterInfo_.addr, on_new_conn, fail_cb);
         masterInfo_.state = kPReplStateConnecting;
       } break;
 
@@ -226,7 +225,8 @@ void PReplication::Cron() {
           // send replconf
           char req[128];
           auto len = snprintf(req, sizeof req - 1, "replconf listening-port %hu\r\n", g_config.port.load());
-          master->SendPacket(req, len);
+          std::string info(req, len);
+          master->SendPacket(std::move(info));
           masterInfo_.state = kPReplStateWaitReplconf;
 
           INFO("Send replconf listening-port {}", g_config.port.load());
@@ -243,7 +243,7 @@ void PReplication::Cron() {
           WARN("Master is down from wait_replconf to none");
         } else {
           // request sync rdb file
-          master->SendPacket("SYNC\r\n", 6);
+          master->SendPacket("SYNC\r\n");
           INFO("Request SYNC");
 
           rdb_.Open(slaveRdbFile, false);
@@ -309,7 +309,7 @@ void PReplication::SetMasterState(PReplState s) { masterInfo_.state = s; }
 
 PReplState PReplication::GetMasterState() const { return masterInfo_.state; }
 
-SocketAddr PReplication::GetMasterAddr() const { return masterInfo_.addr; }
+net::SocketAddr PReplication::GetMasterAddr() const { return masterInfo_.addr; }
 
 void PReplication::SetMasterAddr(const char* ip, uint16_t port) {
   if (ip) {
@@ -359,7 +359,7 @@ void PReplication::OnInfoCommand(UnboundedBuffer& res) {
       "none",
       "wait_bgsave",
       "wait_bgsave",
-      //"send_bulk", // pikiwidb does not have send bulk state
+      //"send_bulk", // kiwi does not have send bulk state
       "online",
 
   };
@@ -426,7 +426,7 @@ PError slaveof(const std::vector<PString>& params, UnboundedBuffer* reply) {
     pstd::String2int(params[2].c_str(), params[2].size(), &tmpPort);
     uint16_t port = static_cast<uint16_t>(tmpPort);
 
-    SocketAddr reqMaster(params[1].c_str(), port);
+    net::SocketAddr reqMaster(params[1].c_str(), port);
 
     if (port > 0 && PREPL.GetMasterAddr() != reqMaster) {
       PREPL.SetMasterAddr(params[1].c_str(), port);
@@ -459,4 +459,4 @@ PError sync(const std::vector<PString>& params, UnboundedBuffer* reply) {
   return kPErrorOK;
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

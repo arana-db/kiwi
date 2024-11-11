@@ -234,7 +234,7 @@ proc start_server {options {code undefined}} {
         set pid [exec src/redis-server $config_file > $stdout 2> $stderr &]
     }
 
-    puts "Starting ---- "
+    puts "Starting ---- port = ${::port}"
 
     # Tell the test server about this new instance.
     send_data_packet $::test_server_fd server-spawned $pid

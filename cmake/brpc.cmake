@@ -1,4 +1,4 @@
-# Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
+# Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
@@ -23,7 +23,9 @@ ExternalProject_Add(
         -DCMAKE_BUILD_TYPE=${LIB_BUILD_TYPE}
         -DCMAKE_CPP_FLAGS=${CMAKE_CPP_FLAGS}
         -DCMAKE_INSTALL_PREFIX=${BRPC_INSTALL_DIR}
+        -DCMAKE_INSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}
         -DCMAKE_FIND_LIBRARY_SUFFIXES=${LIB_INSTALL_PREFIX}
+        -DCMAKE_LIBRARY_PATH=${LIB_INSTALL_PREFIX}
         -DGFLAGS_INCLUDE_PATH=${GFLAGS_INCLUDE_DIR}
         -DBUILD_SHARED_LIBS=FALSE
         -DBUILD_BRPC_TOOLS=OFF
@@ -34,7 +36,9 @@ ExternalProject_Add(
 
         -DPROTOC_LIB=${PROTOC_LIBRARY}
         -DPROTOBUF_LIBRARIES=${PROTOBUF_LIBRARY}
+        -DProtobuf_LIBRARIES=${PROTOBUF_LIBRARY}
         -DPROTOBUF_INCLUDE_DIRS=${PROTOBUF_INCLUDE_DIR}
+        -DProtobuf_INCLUDE_DIR=${PROTOBUF_INCLUDE_DIR}
         -DPROTOBUF_PROTOC_EXECUTABLE=${PROTOBUF_PROTOC}
 
         -DOPENSSL_INCLUDE_DIR=${OPENSSL_INCLUDE_DIR}

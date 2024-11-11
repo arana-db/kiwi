@@ -1,5 +1,5 @@
-name: 'Docs or PikiwiDB Bug Report'
-description: Report an issue in PikiwiDB's documentation
+name: 'Docs or kiwi Bug Report'
+description: Report an issue in kiwi's documentation
 labels: [ "📒 Documentation" ]
 
 body:

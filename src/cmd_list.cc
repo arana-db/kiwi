@@ -1,15 +1,17 @@
+// Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+// This source code is licensed under the BSD-style license found in the
+// LICENSE file in the root directory of this source tree. An additional grant
+// of patent rights can be found in the PATENTS file in the same directory
+
 /*
- * Copyright (c) 2023-present, Qihoo, Inc.  All rights reserved.
- * This source code is licensed under the BSD-style license found in the
- * LICENSE file in the root directory of this source tree. An additional grant
- * of patent rights can be found in the PATENTS file in the same directory.
+  Implemented a set of operation functions and commands related to lists.
  */
 
 #include "cmd_list.h"
 #include "pstd_string.h"
 #include "store.h"
 
-namespace pikiwidb {
+namespace kiwi {
 LPushCmd::LPushCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsWrite, kAclCategoryWrite | kAclCategoryList) {}
 
@@ -25,6 +27,8 @@ void LPushCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LPush(client->Key(), list_values, &reply_num);
   if (s.ok()) {
     client->AppendInteger(reply_num);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kSyntaxErr, "lpush cmd error");
   }
@@ -45,6 +49,8 @@ void LPushxCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LPushx(client->Key(), list_values, &reply_num);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(reply_num);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -70,6 +76,8 @@ void RPoplpushCmd::DoCmd(PClient* client) {
     client->AppendString(value);
   } else if (s.IsNotFound()) {
     client->AppendStringLen(-1);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -90,6 +98,8 @@ void RPushCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPush(client->Key(), list_values, &reply_num);
   if (s.ok()) {
     client->AppendInteger(reply_num);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kSyntaxErr, "rpush cmd error");
   }
@@ -110,6 +120,8 @@ void RPushxCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPushx(client->Key(), list_values, &reply_num);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(reply_num);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -130,6 +142,8 @@ void LPopCmd::DoCmd(PClient* client) {
     client->AppendString(elements[0]);
   } else if (s.IsNotFound()) {
     client->AppendStringLen(-1);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -150,6 +164,8 @@ void RPopCmd::DoCmd(PClient* client) {
     client->AppendString(elements[0]);
   } else if (s.IsNotFound()) {
     client->AppendStringLen(-1);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kSyntaxErr, "rpop cmd error");
   }
@@ -174,7 +190,11 @@ void LRangeCmd::DoCmd(PClient* client) {
   storage::Status s =
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LRange(client->Key(), start_index, end_index, &ret);
   if (!s.ok() && !s.IsNotFound()) {
-    client->SetRes(CmdRes::kSyntaxErr, "lrange cmd error");
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "lrange cmd error");
+    }
     return;
   }
   client->AppendStringVector(ret);
@@ -201,6 +221,8 @@ void LRemCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LRem(client->Key(), freq_, client->argv_[3], &reply_num);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(reply_num);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, "lrem cmd error");
   }
@@ -226,6 +248,8 @@ void LTrimCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LTrim(client->Key(), start_index, end_index);
   if (s.ok() || s.IsNotFound()) {
     client->SetRes(CmdRes::kOK);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kSyntaxErr, "ltrim cmd error");
   }
@@ -240,7 +264,7 @@ bool LSetCmd::DoInitial(PClient* client) {
 }
 
 void LSetCmd::DoCmd(PClient* client) {
-  // isVaildNumber ensures that the string is in decimal format,
+  // isValidNumber ensures that the string is in decimal format,
   // while strtol ensures that the string is within the range of long type
   const std::string index_str = client->argv_[2];
 
@@ -258,6 +282,8 @@ void LSetCmd::DoCmd(PClient* client) {
       client->SetRes(CmdRes::kNotFound);
     } else if (s.IsCorruption()) {
       client->SetRes(CmdRes::kOutOfRange);
+    } else if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
     } else {
       client->SetRes(CmdRes::kSyntaxErr, "lset cmd error");  // just a safeguard
     }
@@ -287,8 +313,12 @@ void LInsertCmd::DoCmd(PClient* client) {
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->LInsert(client->Key(), before_or_after, client->argv_[3], client->argv_[4], &ret);
-  if (!s.ok() && s.IsNotFound()) {
-    client->SetRes(CmdRes::kSyntaxErr, "linsert cmd error");  // just a safeguard
+  if (!s.ok() && !s.IsNotFound()) {
+    if (s.IsInvalidArgument()) {
+      client->SetRes(CmdRes::kMultiKey);
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "linsert cmd error");
+    }
     return;
   }
   client->AppendInteger(ret);
@@ -316,6 +346,8 @@ void LIndexCmd::DoCmd(PClient* client) {
     client->AppendString(value);
   } else if (s.IsNotFound()) {
     client->AppendStringLen(-1);
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -334,8 +366,10 @@ void LLenCmd::DoCmd(PClient* client) {
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LLen(client->Key(), &llen);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(static_cast<int64_t>(llen));
+  } else if (s.IsInvalidArgument()) {
+    client->SetRes(CmdRes::kMultiKey);
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
 }
-}  // namespace pikiwidb
+}  // namespace kiwi
