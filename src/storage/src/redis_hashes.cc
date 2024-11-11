@@ -290,7 +290,7 @@ Status Redis::HIncrby(const Slice& key, const Slice& field, int64_t value, int64
         ParsedBaseDataValue parsed_internal_value(&old_value);
         parsed_internal_value.StripSuffix();
         int64_t ival = 0;
-        if (StrToInt64(old_value.data(), old_value.size(), &ival) == 0) {
+        if (StrToInt64Strict(old_value.data(), old_value.size(), &ival) == 0) {
           return Status::Corruption("hash value is not an integer");
         }
         if ((value >= 0 && LLONG_MAX - value < ival) || (value < 0 && LLONG_MIN - value > ival)) {

@@ -2,6 +2,7 @@ name: Import BRaft Actions (Temporary)
 
 on:
   push:
+    branches: [ "import-braft" ]
   pull_request:
     branches: [ "import-braft" ]
 
