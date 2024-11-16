@@ -66,6 +66,7 @@ class CmdRes {
     kNone = 0,
     kOK,
     kPong,
+    kEcho,
     kSyntaxErr,
     kInvalidInt,
     kInvalidBitInt,

@@ -160,6 +160,26 @@ bool PingCmd::DoInitial(PClient* client) { return true; }
 
 void PingCmd::DoCmd(PClient* client) { client->SetRes(CmdRes::kPong, "PONG"); }
 
+EchoCmd::EchoCmd(const std::string& name, int16_t arity) : BaseCmd(name, arity, kCmdFlagsFast, kAclCategoryFast) {}
+
+bool EchoCmd::DoInitial(PClient* client) { return true; }
+
+void EchoCmd::DoCmd(PClient* client) {
+  size_t argc = client->argv_.size();
+  if (argc < 2) {
+    client->SetRes(CmdRes::kSyntaxErr);
+    return;
+  }
+
+  std::string response;
+  for (size_t i = 1; i < argc; i++) {
+    if (i > 1) response += " ";
+    response += client->argv_[i];
+  }
+
+  client->SetRes(CmdRes::kEcho, response);
+}
+
 const std::string InfoCmd::kInfoSection = "info";
 const std::string InfoCmd::kAllSection = "all";
 const std::string InfoCmd::kServerSection = "server";

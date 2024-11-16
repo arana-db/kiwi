@@ -62,6 +62,11 @@ void CmdRes::SetRes(CmdRes::CmdRet _ret, const std::string& content) {
     case kPong:
       SetLineString("+PONG");
       break;
+    case kEcho:
+      AppendStringRaw("+");
+      AppendStringRaw(content);
+      AppendStringRaw(CRLF);
+      break;
     case kSyntaxErr:
       SetLineString("-ERR syntax error");
       break;
