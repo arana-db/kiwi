@@ -10,6 +10,8 @@
 
 #include "psnapshot.h"
 
+#include "braft/configuration.h"
+#include "braft/configuration_manager.h"
 #include "braft/local_file_meta.pb.h"
 #include "braft/snapshot.h"
 #include "butil/files/file_path.h"
@@ -79,12 +81,27 @@ braft::FileAdaptor* PPosixFileSystemAdaptor::open(const std::string& path, int o
       PSTORE.HandleTaskSpecificDB(tasks);
       AddAllFiles(snapshot_path, &snapshot_meta_memtable, snapshot_path);
 
-      // update snapshot last log index and last_log_term
+      // update snapshot last log index, last_log_term, conf of last log index and learners
       auto& new_meta = const_cast<braft::SnapshotMeta&>(snapshot_meta_memtable.meta());
       auto last_log_index = PSTORE.GetBackend(db_id)->GetStorage()->GetSmallestFlushedLogIndex();
       new_meta.set_last_included_index(last_log_index);
       auto last_log_term = PRAFT.GetTerm(last_log_index);
       new_meta.set_last_included_term(last_log_term);
+      braft::ConfigurationEntry conf_entry;
+      braft::ConfigurationEntry learner_conf_entry;
+      PRAFT.GetConfigurationByIndex(last_log_index, &conf_entry, &learner_conf_entry);
+      new_meta.clear_peers();
+      for (auto iter = conf_entry.conf.begin(); iter != conf_entry.conf.end(); ++iter) {
+        *new_meta.add_peers() = iter->to_string();
+      }
+      new_meta.clear_old_peers();
+      for (auto iter = conf_entry.old_conf.begin(); iter != conf_entry.old_conf.end(); ++iter) {
+        *new_meta.add_old_peers() = iter->to_string();
+      }
+      new_meta.clear_learners();
+      for (auto iter = learner_conf_entry.conf.begin(); iter != learner_conf_entry.conf.end(); ++iter) {
+        *new_meta.add_learners() = iter->to_string();
+      }
       INFO("Succeed to fix db_{} snapshot meta: {}, {}", db_id, last_log_index, last_log_term);
 
       auto rc = snapshot_meta_memtable.save_to_file(fs, meta_path);

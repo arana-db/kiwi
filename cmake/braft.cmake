@@ -20,8 +20,8 @@ ExternalProject_Add(
         DEPENDS brpc
         # The pr on braft is not merged, so I am using my own warehouse to run the test for the time being
         GIT_REPOSITORY "https://github.com/pikiwidb/braft.git"
-        GIT_TAG v1.1.2-alpha2
-        URL_HASH SHA256=6afed189e97b7e6bf5864c5162fab3365b07d515fe0de4c1b0d61eff96cf772f
+        GIT_TAG v1.1.2.1
+        URL_HASH SHA256=d41883529b55266367d385d40f638967a0391d8a
         GIT_SHALLOW true
         CMAKE_ARGS
         -DCMAKE_BUILD_TYPE=${LIB_BUILD_TYPE}

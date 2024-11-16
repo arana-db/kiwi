@@ -290,6 +290,16 @@ storage::LogIndex PRaft::GetLastLogIndex(bool is_flush) {
   return node_->get_last_log_index(is_flush);
 }
 
+void PRaft::GetConfigurationByIndex(const int64_t index, braft::ConfigurationEntry* conf,
+                                    braft::ConfigurationEntry* learner_conf) {
+  if (!node_) {
+    ERROR("Node is not initialized");
+    return;
+  }
+
+  node_->get_configuration(index, conf, learner_conf);
+}
+
 void PRaft::SendNodeRequest(PClient* client) {
   assert(client);
 
@@ -697,8 +707,9 @@ int PRaft::on_snapshot_load(braft::SnapshotReader* reader) {
     2. When a node is improperly shut down and restarted, the minimum flush-index should
        be obtained as the starting point for fault recovery.
     */
+    // replay from <replay_point + 1>
     uint64_t replay_point = PSTORE.GetBackend(db_id_)->GetStorage()->GetSmallestFlushedLogIndex();
-    node_->set_self_playback_point(replay_point);
+    node_->set_last_applied_index_and_term(replay_point);
     is_node_first_start_up_ = false;
     INFO("set replay_point: {}", replay_point);
 
