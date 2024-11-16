@@ -41,7 +41,7 @@ class CmdWorkThreadPoolWorker {
   const int once_task_ = 0;  // the max task num that the worker can get from the thread pool
   const std::string name_;
   bool running_ = true;
-  
+
   kiwi::CmdTableManager cmd_table_manager_;
 };
 
