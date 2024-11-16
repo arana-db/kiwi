@@ -66,7 +66,18 @@ Status BaseValue::Set(const std::string& value, bool init_stage) {
   return SetValue(value_copy);
 }
 
-Status StringValue::SetValue(const std::string& value) {
+Status StringValueWithAtomic::SetValue(const std::string& value) {
+  auto values = SplitString(value, delimiter_);
+  if (values.size() != values_.size()) {
+    return Status::InvalidArgument("The number of parameters does not match.");
+  }
+  for (int i = 0; i < values_.size(); i++) {
+    *values_[i] = std::move(values[i]);
+  }
+  return Status::OK();
+}
+
+Status StringValueWithoutAtomic::SetValue(const std::string& value) {
   auto values = SplitString(value, delimiter_);
   if (values.size() != values_.size()) {
     return Status::InvalidArgument("The number of parameters does not match.");
@@ -96,7 +107,7 @@ Status BoolValueWithoutAtomic::SetValue(const std::string& value) {
 }
 
 template <typename T>
-Status NumberValue<T>::SetValue(const std::string& value) {
+Status NumberValueWithAtomic<T>::SetValue(const std::string& value) {
   T v;
   auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.length(), v);
   if (ec != std::errc()) {
@@ -112,44 +123,61 @@ Status NumberValue<T>::SetValue(const std::string& value) {
   return Status::OK();
 }
 
+template <typename T>
+Status NumberValueWithoutAtomic<T>::SetValue(const std::string& value) {
+  T v;
+  auto [ptr, ec] = std::from_chars(value.data(), value.data() + value.length(), v);
+  if (ec != std::errc()) {
+    return Status::InvalidArgument("Failed to convert to a number.");
+  }
+  if (v < value_min_) {
+    v = value_min_;
+  }
+  if (v > value_max_) {
+    v = value_max_;
+  }
+  *value_ = v;
+  return Status::OK();
+}
+
 PConfig::PConfig() {
   AddBoolWithoutAtomic("redis-compatible-mode", &CheckYesNo, true, {&redis_compatible_mode});
   AddBoolWithoutAtomic("daemonize", &CheckYesNo, false, &daemonize);
-  AddString("ip", false, {&ip});
-  AddNumberWithLimit<uint16_t>("port", false, &port, PORT_LIMIT_MIN, PORT_LIMIT_MAX);
-  AddNumber("raft-port-offset", true, &raft_port_offset);
-  AddNumber("timeout", true, &timeout);
-  AddString("db-path", false, {&db_path});
+  AddStringWithoutAtomic("ip", false, {&ip});
+  AddNumberWithLimitAndWithoutAtomic<uint16_t>("port", false, &port, PORT_LIMIT_MIN, PORT_LIMIT_MAX);
+  AddNumberWithoutAtomic("raft-port-offset", true, &raft_port_offset);
+  AddNumberWithoutAtomic("timeout", true, &timeout);
+  AddStringWithoutAtomic("db-path", false, {&db_path});
   AddStringWithFunc("loglevel", &CheckLogLevel, false, {&log_level});
-  AddString("logfile", false, {&log_dir});
-  AddNumberWithLimit<size_t>("databases", false, &databases, 1, DBNUMBER_MAX);
-  AddString("requirepass", true, {&password});
-  AddNumber("maxclients", true, &max_clients);
-  AddNumberWithLimit<uint32_t>("worker-threads", false, &worker_threads_num, 1, THREAD_MAX);
-  AddNumberWithLimit<uint32_t>("slave-threads", false, &worker_threads_num, 1, THREAD_MAX);
-  AddNumber("slowlog-log-slower-than", true, &slow_log_time);
-  AddNumber("slowlog-max-len", true, &slow_log_max_len);
-  AddNumberWithLimit<size_t>("db-instance-num", true, &db_instance_num, 1, ROCKSDB_INSTANCE_NUMBER_MAX);
-  AddNumberWithLimit<int32_t>("fast-cmd-threads-num", false, &fast_cmd_threads_num, 1, THREAD_MAX);
-  AddNumberWithLimit<int32_t>("slow-cmd-threads-num", false, &slow_cmd_threads_num, 1, THREAD_MAX);
-  AddNumber("max-client-response-size", true, &max_client_response_size);
-  AddString("runid", false, {&run_id});
-  AddNumber("small-compaction-threshold", true, &small_compaction_threshold);
-  AddNumber("small-compaction-duration-threshold", true, &small_compaction_duration_threshold);
+  AddStringWithoutAtomic("logfile", false, {&log_dir});
+  AddNumberWithLimitAndWithoutAtomic<size_t>("databases", false, &databases, 1, DBNUMBER_MAX);
+  AddStringWithoutAtomic("requirepass", true, {&password});
+  AddNumberWithoutAtomic("maxclients", true, &max_clients);
+  AddNumberWithLimitAndWithoutAtomic<uint32_t>("worker-threads", false, &worker_threads_num, 1, THREAD_MAX);
+  AddNumberWithLimitAndWithoutAtomic<uint32_t>("slave-threads", false, &worker_threads_num, 1, THREAD_MAX);
+  AddNumberWithoutAtomic("slowlog-log-slower-than", true, &slow_log_time);
+  AddNumberWithoutAtomic("slowlog-max-len", true, &slow_log_max_len);
+  AddNumberWithLimitAndWithoutAtomic<size_t>("db-instance-num", true, &db_instance_num, 1, ROCKSDB_INSTANCE_NUMBER_MAX);
+  AddNumberWithLimitAndWithoutAtomic<int32_t>("fast-cmd-threads-num", false, &fast_cmd_threads_num, 1, THREAD_MAX);
+  AddNumberWithLimitAndWithoutAtomic<int32_t>("slow-cmd-threads-num", false, &slow_cmd_threads_num, 1, THREAD_MAX);
+  AddNumberWithoutAtomic("max-client-response-size", true, &max_client_response_size);
+  AddStringWithoutAtomic("runid", false, {&run_id});
+  AddNumberWithoutAtomic("small-compaction-threshold", true, &small_compaction_threshold);
+  AddNumberWithoutAtomic("small-compaction-duration-threshold", true, &small_compaction_duration_threshold);
   AddBoolWithoutAtomic("use-raft", &CheckYesNo, false, &use_raft);
 
   // rocksdb config
-  AddNumber("rocksdb-max-subcompactions", false, &rocksdb_max_subcompactions);
-  AddNumber("rocksdb-max-background-jobs", false, &rocksdb_max_background_jobs);
-  AddNumber("rocksdb-max-write-buffer-number", false, &rocksdb_max_write_buffer_number);
-  AddNumber("rocksdb-min-write-buffer-number-to-merge", false, &rocksdb_min_write_buffer_number_to_merge);
-  AddNumber("rocksdb-write-buffer-size", false, &rocksdb_write_buffer_size);
-  AddNumber("rocksdb-level0-file-num-compaction-trigger", false, &rocksdb_level0_file_num_compaction_trigger);
-  AddNumber("rocksdb-number-levels", true, &rocksdb_num_levels);
-  AddBoolWithAtomic("rocksdb-enable-pipelined-write", CheckYesNo, false, &rocksdb_enable_pipelined_write);
-  AddNumber("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
-  AddNumber("rocksdb-level0-stop-writes-trigger", false, &rocksdb_level0_stop_writes_trigger);
-  AddNumber("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
+  AddNumberWithoutAtomic("rocksdb-max-subcompactions", false, &rocksdb_max_subcompactions);
+  AddNumberWithoutAtomic("rocksdb-max-background-jobs", false, &rocksdb_max_background_jobs);
+  AddNumberWithoutAtomic("rocksdb-max-write-buffer-number", false, &rocksdb_max_write_buffer_number);
+  AddNumberWithoutAtomic("rocksdb-min-write-buffer-number-to-merge", false, &rocksdb_min_write_buffer_number_to_merge);
+  AddNumberWithoutAtomic("rocksdb-write-buffer-size", false, &rocksdb_write_buffer_size);
+  AddNumberWithoutAtomic("rocksdb-level0-file-num-compaction-trigger", false, &rocksdb_level0_file_num_compaction_trigger);
+  AddNumberWithoutAtomic("rocksdb-number-levels", true, &rocksdb_num_levels);
+  AddBoolWithoutAtomic("rocksdb-enable-pipelined-write", CheckYesNo, false, &rocksdb_enable_pipelined_write);
+  AddNumberWithoutAtomic("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
+  AddNumberWithoutAtomic("rocksdb-level0-stop-writes-trigger", false, &rocksdb_level0_stop_writes_trigger);
+  AddNumberWithoutAtomic("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
 }
 
 bool PConfig::LoadFromFile(const std::string& file_name) {
