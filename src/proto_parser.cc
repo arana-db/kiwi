@@ -26,7 +26,6 @@ void PProtoParser::Reset() {
   numOfParam_ = 0;
 
   params_.clear();
-
 }
 
 PParseResult PProtoParser::ParseRequest(const char*& ptr, const char* end) {
@@ -96,7 +95,7 @@ PParseResult PProtoParser::parseStrval(const char*& ptr, const char* end, PStrin
   assert(paramLen_ >= 0);
 
   if (static_cast<int>(end - ptr) < paramLen_ + 2) {
-    paramLen_-=(end-ptr);
+    paramLen_ -= (end - ptr);
     result.append(ptr, end - ptr);
     return PParseResult::kWait;
   }
