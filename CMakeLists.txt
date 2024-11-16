@@ -219,6 +219,13 @@ ADD_CUSTOM_TARGET(check-format
   --source_dirs ${FORMAT_DIRS}
 )
 
+ADD_CUSTOM_TARGET(fix-format
+  COMMAND ${BUILD_SUPPORT_DIR}/run_clang_format.py
+  ${CLANG_FORMAT_BIN}
+  ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt
+  --source_dirs ${FORMAT_DIRS} --fix
+)
+
 ADD_CUSTOM_TARGET(clang-tidy
   COMMAND ${BUILD_SUPPORT_DIR}/run_clang_tidy.py
   -clang-tidy-binary ${CLANG_TIDY_BIN}
