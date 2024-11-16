@@ -331,7 +331,7 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  if (g_config.daemonize.load()) {
+  if (g_config.daemonize) {
     daemonize();
   }
 
@@ -340,7 +340,7 @@ int main(int argc, char* argv[]) {
   InitLogs();
   InitLimit();
 
-  if (g_config.daemonize.load()) {
+  if (g_config.daemonize) {
     closeStd();
   }
 

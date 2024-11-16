@@ -102,9 +102,9 @@ class NumberValue : public BaseValue {
   T value_max_;
 };
 
-class BoolValue : public BaseValue {
+class BoolValueWithAtomic : public BaseValue {
  public:
-  BoolValue(const std::string& key, CheckFunc check_func_ptr, bool rewritable, std::atomic<bool>* value_ptr)
+  BoolValueWithAtomic(const std::string& key, CheckFunc check_func_ptr, bool rewritable, std::atomic<bool>* value_ptr)
       : BaseValue(key, check_func_ptr, rewritable), value_(value_ptr) {
     assert(value_ != nullptr);
   };
@@ -114,6 +114,20 @@ class BoolValue : public BaseValue {
  private:
   Status SetValue(const std::string& value) override;
   std::atomic<bool>* value_ = nullptr;
+};
+
+class BoolValueWithoutAtomic : public BaseValue {
+ public:
+  BoolValueWithoutAtomic(const std::string& key, CheckFunc check_func_ptr, bool rewritable, bool* value_ptr)
+      : BaseValue(key, check_func_ptr, rewritable), value_(value_ptr) {
+    assert(value_ != nullptr);
+  };
+
+  std::string Value() const override { return *value_ ? "yes" : "no"; };
+
+ private:
+  Status SetValue(const std::string& value) override;
+  bool* value_ = nullptr;
 };
 
 using ValuePrt = std::unique_ptr<BaseValue>;
@@ -241,8 +255,12 @@ class PConfig {
   std::atomic_uint64_t small_compaction_threshold = 604800;
   std::atomic_uint64_t small_compaction_duration_threshold = 259200;
 
-  // Decide whether kiwi runs as a daemon process.
-  std::atomic_bool daemonize = false;
+  /*
+   * Decide whether kiwi runs as a daemon process.
+   * If changes are needed in the future,
+   * consider switching bool to atomic_bool. 
+   */
+  bool daemonize = false;
 
   // Which file to store the process id when running?
   AtomicString pid_file = "./kiwi.pid";
@@ -285,8 +303,12 @@ class PConfig {
   // The number of databases.
   std::atomic<size_t> databases = 16;
 
-  // Enable redis_compatioble_mode?
-  std::atomic_bool redis_compatible_mode = true;
+  /*
+   * Enable redis_compatioble_mode?
+   * If changes are needed in the future,
+   * consider switching bool to atomic_bool. 
+   */
+  bool redis_compatible_mode = true;
 
   /*
    * For Network I/O threads, in future version, we may delete
@@ -298,8 +320,12 @@ class PConfig {
   // How many RocksDB Instances will be opened?
   std::atomic<size_t> db_instance_num = 3;
 
-  // Use raft protocol?
-  std::atomic_bool use_raft = false;
+  /*
+   * Use raft protocol?
+   * If changes are needed in the future,
+   * consider switching bool to atomic_bool. 
+   */
+  bool use_raft = false;
 
   /*
    * kiwi use the RocksDB to store the data,
@@ -369,7 +395,7 @@ class PConfig {
   }
 
   /*------------------------
-   * AddBool (const std::string& key, const CheckFunc& checkfunc, bool rewritable,
+   * AddBoolWithAtomic (const std::string& key, const CheckFunc& checkfunc, bool rewritable,
                       std::atomic<bool>* value_ptr)
    * Introduce a new string key-value pair into the
    * configuration data layer, with a check function.
@@ -378,9 +404,24 @@ class PConfig {
    * rewritable represents whether to overwrite existing settings
    * when a key-value pair is duplicated.
    */
-  inline void AddBool(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
+  inline void AddBoolWithAtomic(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
                       std::atomic<bool>* value_ptr) {
-    config_map_.emplace(key, std::make_unique<BoolValue>(key, checkfunc, rewritable, value_ptr));
+    config_map_.emplace(key, std::make_unique<BoolValueWithAtomic>(key, checkfunc, rewritable, value_ptr));
+  }
+
+  /*------------------------
+   * AddBoolWithoutAtomic (const std::string& key, const CheckFunc& checkfunc, bool rewritable,
+                         bool* value_ptr)
+   * Introduce a new string key-value pair into the
+   * configuration data layer, with a check function.
+   * key is a string and value_ptr is a point to a bool value.
+   * checkfunc is the same as AddStrinWithFunc.
+   * rewritable represents whether to overwrite existing settings
+   * when a key-value pair is duplicated.
+   */
+  inline void AddBoolWithoutAtomic(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
+                      bool* value_ptr) {
+    config_map_.emplace(key, std::make_unique<BoolValueWithoutAtomic>(key, checkfunc, rewritable, value_ptr));
   }
 
   /*------------------------
