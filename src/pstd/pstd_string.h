@@ -67,6 +67,21 @@ int String2int(const char* s, size_t slen, T* val) {
   }
 }
 
+/* Convert a string into a integral. Returns 1 if the all char of string could be parsed
+ * into a integer, 0 otherwise. The value will be set to
+ * the parsed value when appropriate. */
+template <std::integral T>
+int String2intStrict(const char* s, size_t slen, T* val) {
+  auto [ptr, ec] = std::from_chars(s, s + slen, *val);
+  if (ec != std::errc()) {
+    return 0;
+  }
+  if (ptr != s + slen) {
+    return 0;
+  }
+  return 1;
+}
+
 template <std::integral T>
 inline int String2int(const std::string& s, T* val) {
   return String2int(s.data(), s.size(), val);

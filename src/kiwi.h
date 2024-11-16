@@ -22,6 +22,14 @@
 #  define Kkiwi_BUILD_TYPE "RELEASE"
 #endif
 
+#ifndef Kkiwi_GIT_COMMIT_ID
+#  define Kkiwi_GIT_COMMIT_ID "unknown"
+#endif
+
+#ifndef Kkiwi_BUILD_DATE
+#  define Kkiwi_BUILD_DATE "unknown"
+#endif
+
 namespace kiwi {
 class PRaft;
 }  // namespace kiwi
@@ -58,9 +66,7 @@ class KiwiDB final {
     event_server_->SendPacket(client, std::move(msg));
   }
 
-  inline void CloseConnection(const std::shared_ptr<kiwi::PClient>& client) {
-    event_server_->CloseConnection(client);
-  }
+  inline void CloseConnection(const std::shared_ptr<kiwi::PClient>& client) { event_server_->CloseConnection(client); }
 
   void TCPConnect(
       const net::SocketAddr& addr,

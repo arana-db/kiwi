@@ -10,8 +10,8 @@
 #include "cmd_thread_pool_worker.h"
 #include "client.h"
 #include "env.h"
-#include "log.h"
 #include "kiwi.h"
+#include "log.h"
 
 namespace kiwi {
 

@@ -34,7 +34,7 @@ const (
 	kInvalidIndex = "ERR invalid DB index for 'select DB index is out of range'"
 )
 
-func Testkiwi(t *testing.T) {
+func TestKiwi(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Tests Suite")
 }
