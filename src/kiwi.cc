@@ -22,6 +22,7 @@
 #include <thread>
 
 #include "client.h"
+#include "client_map.h"
 #include "config.h"
 #include "helper.h"
 #include "kiwi.h"
@@ -155,6 +156,8 @@ void KiwiDB::OnNewConnection(uint64_t connId, std::shared_ptr<kiwi::PClient>& cl
   INFO("New connection from {}:{}", addr.GetIP(), addr.GetPort());
   client->SetSocketAddr(addr);
   client->OnConnect();
+  // add new PClient to clients
+  ClientMap::getInstance().AddClient(client->GetUniqueID(), client);
 }
 
 bool KiwiDB::Init() {
@@ -206,6 +209,7 @@ bool KiwiDB::Init() {
   event_server_->SetOnCreate([](uint64_t connID, std::shared_ptr<PClient>& client, const net::SocketAddr& addr) {
     client->SetSocketAddr(addr);
     client->OnConnect();
+    ClientMap::getInstance().AddClient(client->GetUniqueID(), client);
     INFO("New connection from fd:{} IP:{} port:{}", connID, addr.GetIP(), addr.GetPort());
   });
 
@@ -216,6 +220,7 @@ bool KiwiDB::Init() {
   event_server_->SetOnClose([](std::shared_ptr<PClient>& client, std::string&& msg) {
     INFO("Close connection id:{} msg:{}", client->GetConnId(), msg);
     client->OnClose();
+    ClientMap::getInstance().RemoveClientById(client->GetUniqueID());
   });
 
   event_server_->InitTimer(10);

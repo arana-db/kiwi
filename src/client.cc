@@ -27,6 +27,8 @@
 
 namespace kiwi {
 
+const ClientInfo ClientInfo::invalidClientInfo = {0, "", -1};
+
 void CmdRes::RedisAppendLen(std::string& str, int64_t ori, const std::string& prefix) {
   str.append(prefix);
   str.append(pstd::Int2string(ori));
@@ -459,7 +461,7 @@ void PClient::OnConnect() {
 
 std::string PClient::PeerIP() const {
   if (!addr_.IsValid()) {
-    ERROR("Invalid address detected for client {}", uniqueID());
+    ERROR("Invalid address detected for client {}", GetUniqueID());
     return "";
   }
   return addr_.GetIP();
@@ -467,7 +469,7 @@ std::string PClient::PeerIP() const {
 
 int PClient::PeerPort() const {
   if (!addr_.IsValid()) {
-    ERROR("Invalid address detected for client {}", uniqueID());
+    ERROR("Invalid address detected for client {}", GetUniqueID());
     return 0;
   }
   return addr_.GetPort();
@@ -514,7 +516,9 @@ bool PClient::isClusterCmdTarget() const {
   return PRAFT.GetClusterCmdCtx().GetPeerIp() == PeerIP() && PRAFT.GetClusterCmdCtx().GetPort() == PeerPort();
 }
 
-uint64_t PClient::uniqueID() const { return GetConnId(); }
+uint64_t PClient::GetUniqueID() const { return GetConnId(); }
+
+ClientInfo PClient::GetClientInfo() const { return {GetUniqueID(), PeerIP().c_str(), PeerPort()}; }
 
 bool PClient::Watch(int dbno, const std::string& key) {
   DEBUG("Client {} watch {}, db {}", name_, key, dbno);
@@ -523,12 +527,12 @@ bool PClient::Watch(int dbno, const std::string& key) {
 
 bool PClient::NotifyDirty(int dbno, const std::string& key) {
   if (IsFlagOn(kClientFlagDirty)) {
-    INFO("client is already dirty {}", uniqueID());
+    INFO("client is already dirty {}", GetUniqueID());
     return true;
   }
 
   if (watch_keys_[dbno].contains(key)) {
-    INFO("{} client become dirty because key {} in db {}", uniqueID(), key, dbno);
+    INFO("{} client become dirty because key {} in db {}", GetUniqueID(), key, dbno);
     SetFlag(kClientFlagDirty);
     return true;
   } else {

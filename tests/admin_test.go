@@ -252,6 +252,29 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(del2.Err()).NotTo(HaveOccurred())
 	})
 
+	It("Cmd Client", func() {
+		conn := client.Conn()
+		set := conn.ClientSetName(ctx, "clientxxx")
+		Expect(set.Err()).NotTo(HaveOccurred())
+		Expect(set.Val()).To(Equal(true))
+
+		get := conn.ClientGetName(ctx)
+		Expect(get.Err()).NotTo(HaveOccurred())
+		Expect(get.Val()).To(Equal("clientxxx"))
+
+		resId := conn.ClientID(ctx).Err()
+		Expect(resId).NotTo(HaveOccurred())
+		Expect(client.ClientID(ctx).Val()).To(BeNumerically(">=", 0))
+
+		resKillFilter := conn.ClientKillByFilter(ctx, "ADDR", "1.1.1.1:1111")
+		Expect(resKillFilter.Err()).To(MatchError("ERR No such client"))
+		Expect(resKillFilter.Val()).To(Equal(int64(0)))
+
+		resKillFilter = conn.ClientKillByFilter(ctx, "ID", "1")
+		Expect(resKillFilter.Err()).To(MatchError("ERR No such client"))
+		Expect(resKillFilter.Val()).To(Equal(int64(0)))
+	})
+
 	// It("should monitor", Label("monitor"), func() {
 	// 		ress := make(chan string)
 	// 		client1 := s.NewClient()

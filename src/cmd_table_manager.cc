@@ -63,6 +63,13 @@ void CmdTableManager::InitCmdTable() {
   ADD_COMMAND(Sort, -2);
   ADD_COMMAND(Monitor, 1);
 
+  ADD_COMMAND_GROUP(Client, -2);
+  ADD_SUBCOMMAND(Client, Getname, 2);
+  ADD_SUBCOMMAND(Client, Setname, 3);
+  ADD_SUBCOMMAND(Client, Id, 2);
+  ADD_SUBCOMMAND(Client, List, -2);
+  ADD_SUBCOMMAND(Client, Kill, -3);
+
   // server
   ADD_COMMAND(Flushdb, 1);
   ADD_COMMAND(Flushall, 1);
