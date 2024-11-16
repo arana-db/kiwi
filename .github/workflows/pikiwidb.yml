@@ -13,10 +13,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build
-        run: |
-          echo "golang-format version"
-          /usr/bin/clang-format -version 
-          bash ./etc/script/ci/build.sh
+        run: bash ./etc/script/ci/build.sh
 
       - name: Check Format
         working-directory: ${{ github.workspace }}/build
