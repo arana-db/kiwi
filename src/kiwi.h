@@ -22,6 +22,14 @@
 #  define Kkiwi_BUILD_TYPE "RELEASE"
 #endif
 
+#ifndef Kkiwi_GIT_COMMIT_ID
+#  define Kkiwi_GIT_COMMIT_ID "unknown"
+#endif
+
+#ifndef Kkiwi_BUILD_DATE
+#  define Kkiwi_BUILD_DATE "unknown"
+#endif
+
 namespace kiwi {
 class PRaft;
 }  // namespace kiwi

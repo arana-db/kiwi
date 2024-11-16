@@ -10,28 +10,25 @@
   incarnation.
  */
 
-#include "kiwi.h"
-
 #include <getopt.h>
 #include <sys/fcntl.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
-#include <time.h>
 #include <unistd.h>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
 #include <iostream>
 #include <thread>
-
-#include "praft/praft.h"
-#include "pstd/log.h"
-#include "pstd/pstd_util.h"
 
 #include "client.h"
 #include "config.h"
 #include "helper.h"
 #include "kiwi.h"
 #include "kiwi_logo.h"
+#include "praft/praft.h"
+#include "pstd/log.h"
+#include "pstd/pstd_util.h"
 #include "slow_log.h"
 #include "store.h"
 
@@ -106,13 +103,8 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
         std::cerr << "kiwi Server version: " << Kkiwi_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32)
                   << std::endl;
         std::cerr << "kiwi Server Build Type: " << Kkiwi_BUILD_TYPE << std::endl;
-#if defined(Kkiwi_BUILD_DATE)
         std::cerr << "kiwi Server Build Date: " << Kkiwi_BUILD_DATE << std::endl;
-#endif
-#if defined(Kkiwi_GIT_COMMIT_ID)
         std::cerr << "kiwi Server Build GIT SHA: " << Kkiwi_GIT_COMMIT_ID << std::endl;
-#endif
-
         std::exit(0);
         break;
       }

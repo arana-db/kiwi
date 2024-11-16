@@ -13,8 +13,8 @@
 
 #include "client.h"
 #include "config.h"
-#include "log.h"
 #include "kiwi.h"
+#include "log.h"
 #include "pstd/pstd_string.h"
 #include "replication.h"
 
@@ -189,8 +189,7 @@ void PReplication::Cron() {
 
         INFO("Try connect to master IP:{} port:{}", masterInfo_.addr.GetIP(), masterInfo_.addr.GetPort());
 
-        auto on_new_conn = [](uint64_t connID, std::shared_ptr<kiwi::PClient>& client,
-                              const net::SocketAddr& addr) {
+        auto on_new_conn = [](uint64_t connID, std::shared_ptr<kiwi::PClient>& client, const net::SocketAddr& addr) {
           INFO("Connect to master IP:{} port:{}", addr.GetIP(), addr.GetPort());
           if (g_kiwi) {
             g_kiwi->OnNewConnection(connID, client, addr);
