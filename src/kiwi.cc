@@ -152,8 +152,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
   return true;
 }
 
-void KiwiDB::OnNewConnection(uint64_t connId, std::shared_ptr<kiwi::PClient>& client,
-                               const net::SocketAddr& addr) {
+void KiwiDB::OnNewConnection(uint64_t connId, std::shared_ptr<kiwi::PClient>& client, const net::SocketAddr& addr) {
   INFO("New connection from {}:{}", addr.GetIP(), addr.GetPort());
   client->SetSocketAddr(addr);
   client->OnConnect();
@@ -275,8 +274,8 @@ static int InitLimit() {
     limit.rlim_cur = maxfiles;
     limit.rlim_max = maxfiles;
     if (setrlimit(RLIMIT_NOFILE, &limit) != -1) {
-      WARN("your 'limit -n' of {} is not enough for kiwi to start. kiwi has successfully reconfig it to {}",
-           old_limit, limit.rlim_cur);
+      WARN("your 'limit -n' of {} is not enough for kiwi to start. kiwi has successfully reconfig it to {}", old_limit,
+           limit.rlim_cur);
     } else {
       ERROR(
           "your 'limit -n ' of {} is not enough for kiwi to start."
