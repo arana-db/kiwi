@@ -173,36 +173,6 @@ std::string PClient::FullCmdName() const {
   return cmdName_ + "|" + subCmdName_;
 }
 
-int PClient::processInlineCmd(const char* buf, size_t bytes, std::vector<std::string>& params) {
-  if (bytes < 2) {
-    return 0;
-  }
-
-  std::string res;
-
-  for (size_t i = 0; i + 1 < bytes; ++i) {
-    if (buf[i] == '\r' && buf[i + 1] == '\n') {
-      if (!res.empty()) {
-        params.emplace_back(std::move(res));
-      }
-
-      return static_cast<int>(i + 2);
-    }
-
-    if (isblank(buf[i])) {
-      if (!res.empty()) {
-        params.reserve(4);
-        params.emplace_back(std::move(res));
-      }
-    } else {
-      res.reserve(16);
-      res.push_back(buf[i]);
-    }
-  }
-
-  return 0;
-}
-
 static int ProcessMaster(const char* start, const char* end) {
   auto state = PREPL.GetMasterState();
 
@@ -267,7 +237,7 @@ static int ProcessMaster(const char* start, const char* end) {
   return -1;  // do nothing
 }
 
-int PClient::handlePacket(const char* start, int bytes) {
+int PClient::HandlePacket(std::string&& data) {
   //  auto conn = getTcpConnection();
   //  if (!conn) {
   //    ERROR("BUG: conn can't be null when recv data");
@@ -275,7 +245,8 @@ int PClient::handlePacket(const char* start, int bytes) {
   //  }
 
   s_current = this;
-
+  const char* start = data.data();
+  int bytes = data.size();
   const char* const end = start + bytes;
   const char* ptr = start;
 
@@ -296,46 +267,19 @@ int PClient::handlePacket(const char* start, int bytes) {
     }
   }
 
-  auto parseRet = parser_.ParseRequest(ptr, end);
-  if (parseRet == PParseResult::kError) {
-    if (!parser_.IsInitialState()) {
-      //      g_kiwi->closeClient(this);
-      return 0;
-    }
-
-    // try inline command
-    std::vector<std::string> params;
-    auto len = processInlineCmd(ptr, bytes, params);
-    if (len == 0) {
-      return 0;
-    }
-
-    ptr += len;
-    parser_.SetParams(params);
-    parseRet = PParseResult::kOK;
-  } else if (parseRet != PParseResult::kOK) {
-    return static_cast<int>(ptr - start);
+  auto parseRet = resp_parser_->Parse(std::move(data));
+  if (parseRet == RespResult::ERROR) {
+    ERROR("client {} IP:{} port:{} parse data error", uniqueID(), PeerIP(), PeerPort());
+    return 0;
   }
 
-  //  DEFER { reset(); };
-
-  // handle packet
-  //  const auto& params = parser_.GetParams();
-  if (params_.empty()) {
-    return static_cast<int>(ptr - start);
+  auto params = resp_parser_->GetParams();
+  if (params.empty()) {
+    return 0;
   }
-
-  params_ = parser_.GetParams();
-  if (params_.empty()) {
-    return static_cast<int>(ptr - start);
-  }
-
-  argv_ = params_;
-  cmdName_ = params_[0];
-  pstd::StringToLower(cmdName_);
 
   if (!auth_) {
-    if (cmdName_ == kCmdNameAuth) {
+    if (params[0][0] == kCmdNameAuth) {
       auto now = ::time(nullptr);
       if (now <= last_auth_ + 1) {
         // avoid guess password.
@@ -347,23 +291,22 @@ int PClient::handlePacket(const char* start, int bytes) {
     } else {
       SetLineString("-NOAUTH Authentication required.");
       SendPacket();
-      return static_cast<int>(ptr - start);
+      return 0;
     }
   }
 
-  //  DEBUG("client {}, cmd {}", conn->GetUniqueId(), cmdName_);
+  for (const auto& item : params) {
+    FeedMonitors(item);
+  }
 
-  FeedMonitors(params_);
-
-  //  const PCommandInfo* info = PCommandTable::GetCommandInfo(cmdName_);
-
-  //  if (!info) {  // 如果这个命令不存在，那么就走新的命令处理流程
-  //  executeCommand();
-  //    return static_cast<int>(ptr - start);
-  //  }
   auto now = std::chrono::steady_clock::now();
   time_stat_->SetEnqueueTs(now);
-  g_kiwi->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this()));
+
+  if (params.size() > 1) {  // if the size of the parameters is greater than 1，use slow thread execute
+    g_kiwi->SubmitSlow(std::make_shared<CmdThreadPoolTask>(shared_from_this(), std::move(params)));
+  } else {
+    g_kiwi->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this(), std::move(params)));
+  }
 
   // check transaction
   //  if (IsFlagOn(ClientFlag_multi)) {
@@ -402,38 +345,16 @@ int PClient::handlePacket(const char* start, int bytes) {
   //    Propagate(params);
   //  }
 
-  return static_cast<int>(ptr - start);
-}
-
-// 为了兼容老的命令处理流程，新的命令处理流程在这里
-// 后面可以把client这个类重构，完整的支持新的命令处理流程
-void PClient::executeCommand() {
-  //  auto [cmdPtr, ret] = g_kiwi->GetCmdTableManager().GetCommand(CmdName(), this);
-
-  //  if (!cmdPtr) {
-  //    if (ret == CmdRes::kInvalidParameter) {
-  //      SetRes(CmdRes::kInvalidParameter);
-  //    } else {
-  //      SetRes(CmdRes::kSyntaxErr, "unknown command '" + CmdName() + "'");
-  //    }
-  //    return;
-  //  }
-  //
-  //  if (!cmdPtr->CheckArg(params_.size())) {
-  //    SetRes(CmdRes::kWrongNum, CmdName());
-  //    return;
-  //  }
-  //
-  //  // execute a specific command
-  //  cmdPtr->Execute(this);
+  return 1;
 }
 
 PClient* PClient::Current() { return s_current; }
 
-PClient::PClient() : parser_(params_) {
+PClient::PClient() {
   auth_ = false;
   reset();
-  time_stat_.reset(new TimeStat());
+  time_stat_ = std::make_shared<TimeStat>();
+  resp_parser_ = std::make_unique<Resp2Parse>();
 }
 
 void PClient::OnConnect() {
@@ -504,7 +425,6 @@ void PClient::OnClose() {
 
 void PClient::reset() {
   s_current = nullptr;
-  parser_.Reset();
 }
 
 bool PClient::isPeerMaster() const {

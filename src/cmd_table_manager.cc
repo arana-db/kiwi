@@ -206,11 +206,11 @@ std::pair<BaseCmd*, CmdRes::CmdRet> CmdTableManager::GetCommand(const std::strin
 
   if (cmd->second->HasSubCommand()) {
     if (client->argv_.size() < 2) {
-      return std::pair(nullptr, CmdRes::kInvalidParameter);
+      return {nullptr, CmdRes::kInvalidParameter};
     }
-    return std::pair(cmd->second->GetSubCmd(pstd::StringToLower(client->argv_[1])), CmdRes::kUnknownSubCmd);
+    return {cmd->second->GetSubCmd(pstd::StringToLower(client->argv_[1])), CmdRes::kUnknownSubCmd};
   }
-  return std::pair(cmd->second.get(), CmdRes::kOK);
+  return {cmd->second.get(), CmdRes::kOK};
 }
 
 bool CmdTableManager::CmdExist(const std::string& cmd) const {

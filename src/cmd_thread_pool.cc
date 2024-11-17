@@ -13,10 +13,6 @@
 
 namespace kiwi {
 
-void CmdThreadPoolTask::Run(BaseCmd *cmd) { cmd->Execute(client_.get()); }
-const std::string &CmdThreadPoolTask::CmdName() { return client_->CmdName(); }
-std::shared_ptr<PClient> CmdThreadPoolTask::Client() { return client_; }
-
 CmdThreadPool::CmdThreadPool(std::string name) : name_(std::move(name)) {}
 
 pstd::Status CmdThreadPool::Init(int fast_thread, int slow_thread, std::string name) {

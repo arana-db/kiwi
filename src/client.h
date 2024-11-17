@@ -17,10 +17,9 @@
 #include <unordered_set>
 
 #include "common.h"
-// #include "net/tcp_connection.h"
 #include "net/socket_addr.h"
-#include "proto_parser.h"
 #include "replication.h"
+#include "resp2_parse.h"
 #include "storage/storage.h"
 
 namespace kiwi {
@@ -167,15 +166,11 @@ struct ClientInfo {
 
 class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
  public:
-  //  PClient() = delete;
   explicit PClient();
 
-  //  int HandlePackets(kiwi::TcpConnection*, const char*, int);
-
   void OnConnect();
+  int HandlePacket(std::string&& data);
 
-  std::string PeerIP() const;
-  int PeerPort() const;
   const int GetFd() const;
   ClientInfo GetClientInfo() const;
 
@@ -194,6 +189,9 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
 
   // on close callback
   void OnClose();
+
+  std::string PeerIP() const;
+  int PeerPort() const;
 
   // dbno
   void SetCurrentDB(int dbno) { dbno_ = dbno; }
@@ -267,10 +265,8 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   void SetAuth() { auth_ = true; }
   bool GetAuth() const { return auth_; }
   uint64_t GetUniqueID() const;
-  void RewriteCmd(std::vector<std::string>& params) { parser_.SetParams(params); }
-  void Reexecutecommand() { this->executeCommand(); }
 
-  inline size_t ParamsSize() const { return params_.size(); }
+  inline size_t ParamsSize() const { return argv_.size(); }
 
   inline ClientState State() const { return state_; }
 
@@ -282,31 +278,27 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   inline int8_t GetThreadIndex() const { return net_thread_index_; }
   inline void SetSocketAddr(const net::SocketAddr& addr) { addr_ = addr; }
 
-  // All parameters of this command (including the command itself)
-  // e.g：["set","key","value"]
-  std::span<std::string> argv_;
+  inline void SetArgv(std::vector<std::string>& argv) { argv_ = argv; }
 
   // Info Commandstats used
   std::unordered_map<std::string, CommandStatistics>* GetCommandStatMap();
   std::shared_ptr<TimeStat> GetTimeStat();
 
-  //  std::shared_ptr<TcpConnection> getTcpConnection() const { return tcp_connection_.lock(); }
-  int handlePacket(const char*, int);
-
  private:
-  void executeCommand();
-  int processInlineCmd(const char*, size_t, std::vector<std::string>&);
   void reset();
   bool isPeerMaster() const;
 
+  uint64_t uniqueID() const;
   bool isClusterCmdTarget() const;
 
-  // TcpConnection's life is undetermined, so use weak ptr for safety.
-  //  std::weak_ptr<TcpConnection> tcp_connection_;
+ public:
+  // All parameters of this command (including the command itself)
+  // e.g：["set","key","value"]
+  std::span<std::string> argv_;
 
-  PProtoParser parser_;
-
+ private:
   int dbno_ = 0;
+  std::unique_ptr<RespParse> resp_parser_;
 
   std::unordered_set<std::string> channels_;
   std::unordered_set<std::string> pattern_channels_;
@@ -330,9 +322,6 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   std::vector<storage::FieldValue> fvs_;
   std::vector<std::string> fields_;
 
-  // All parameters of this command (including the command itself)
-  // e.g：["set","key","value"]
-  std::vector<std::string> params_;
   // auth
   bool auth_ = false;
   time_t last_auth_ = 0;

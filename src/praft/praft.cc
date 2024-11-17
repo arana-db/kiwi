@@ -517,7 +517,6 @@ int PRaft::ProcessClusterRemoveCmdResponse(PClient* client, const char* start, i
   } else if (reply.find(NOT_LEADER) != std::string::npos) {
     auto remove_client = cluster_cmd_ctx_.GetClient();
     remove_client->Clear();
-    remove_client->Reexecutecommand();
   } else {
     ERROR("Removed Raft cluster fail, str: {}", reply);
     remove_client->SetRes(CmdRes::kErrOther, reply);

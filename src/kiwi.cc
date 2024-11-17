@@ -180,7 +180,7 @@ bool KiwiDB::Init() {
   auto num = g_config.worker_threads_num.load() + g_config.slave_threads_num.load();
 
   // now we only use fast cmd thread pool
-  auto status = cmd_threads_.Init(g_config.fast_cmd_threads_num.load(), 0, "kiwi-cmd");
+  auto status = cmd_threads_.Init(g_config.fast_cmd_threads_num.load(), 1, "kiwi-cmd");
   if (!status.ok()) {
     ERROR("init cmd thread pool failed: {}", status.ToString());
     return false;
@@ -213,8 +213,7 @@ bool KiwiDB::Init() {
     INFO("New connection from fd:{} IP:{} port:{}", connID, addr.GetIP(), addr.GetPort());
   });
 
-  event_server_->SetOnMessage([](std::string&& msg, std::shared_ptr<PClient>& t) {
-    t->handlePacket(msg.c_str(), static_cast<int>(msg.size()));
+  event_server_->SetOnMessage([](std::string&& msg, std::shared_ptr<PClient>& t) { t->HandlePacket(std::move(msg));
   });
 
   event_server_->SetOnClose([](std::shared_ptr<PClient>& client, std::string&& msg) {
