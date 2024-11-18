@@ -243,12 +243,14 @@ int PClient::HandlePacket(std::string&& data) {
   //    ERROR("BUG: conn can't be null when recv data");
   //    return -1;
   //  }
+  if (data.empty()) {
+    return 0;
+  }
 
   s_current = this;
   const char* start = data.data();
   int bytes = data.size();
   const char* const end = start + bytes;
-  const char* ptr = start;
 
   if (isPeerMaster()) {
     if (isClusterCmdTarget()) {
@@ -272,9 +274,14 @@ int PClient::HandlePacket(std::string&& data) {
     ERROR("client {} IP:{} port:{} parse data error", uniqueID(), PeerIP(), PeerPort());
     return 0;
   }
+  if (parseRet == RespResult::WAIT) {
+    DEBUG("client {} IP:{} port:{} parse data wait", uniqueID(), PeerIP(), PeerPort());
+    return 0;
+  }
 
   auto params = resp_parser_->GetParams();
   if (params.empty()) {
+    ERROR("client {} IP:{} port:{} parse data empty", uniqueID(), PeerIP(), PeerPort());
     return 0;
   }
 
@@ -423,9 +430,7 @@ void PClient::OnClose() {
   reset();
 }
 
-void PClient::reset() {
-  s_current = nullptr;
-}
+void PClient::reset() { s_current = nullptr; }
 
 bool PClient::isPeerMaster() const {
   const auto& repl_addr = PREPL.GetMasterAddr();

@@ -213,8 +213,7 @@ bool KiwiDB::Init() {
     INFO("New connection from fd:{} IP:{} port:{}", connID, addr.GetIP(), addr.GetPort());
   });
 
-  event_server_->SetOnMessage([](std::string&& msg, std::shared_ptr<PClient>& t) { t->HandlePacket(std::move(msg));
-  });
+  event_server_->SetOnMessage([](std::string&& msg, std::shared_ptr<PClient>& t) { t->HandlePacket(std::move(msg)); });
 
   event_server_->SetOnClose([](std::shared_ptr<PClient>& client, std::string&& msg) {
     INFO("Close connection id:{} msg:{}", client->GetConnId(), msg);

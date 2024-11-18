@@ -38,6 +38,74 @@ TEST(ParseInteger, ParsesCorrectly) {
   EXPECT_EQ(params[0][0], "1000");
 }
 
+TEST(ParseInline, ParsesCorrectly) {
+  Resp2Parse parser;
+  RespResult result = parser.Parse("ping\r\n");
+  EXPECT_EQ(result, RespResult::OK);
+  auto params = parser.GetParams();
+  ASSERT_EQ(params.size(), 1);
+  ASSERT_EQ(params[0].size(), 1);
+  EXPECT_EQ(params[0][0], "ping");
+
+  result = parser.Parse("PING\r\n\r\n");
+  EXPECT_EQ(result, RespResult::OK);
+  params = parser.GetParams();
+  ASSERT_EQ(params.size(), 1);
+  ASSERT_EQ(params[0].size(), 1);
+  EXPECT_EQ(params[0][0], "PING");
+
+  result = parser.Parse("PING\n");
+  EXPECT_EQ(result, RespResult::OK);
+  params = parser.GetParams();
+  ASSERT_EQ(params.size(), 1);
+  ASSERT_EQ(params[0].size(), 1);
+  EXPECT_EQ(params[0][0], "PING");
+
+  result = parser.Parse("PING\n\n");
+  EXPECT_EQ(result, RespResult::OK);
+  params = parser.GetParams();
+  ASSERT_EQ(params.size(), 1);
+  ASSERT_EQ(params[0].size(), 1);
+  EXPECT_EQ(params[0][0], "PING");
+
+  result = parser.Parse("PING\r\n\n");
+  EXPECT_EQ(result, RespResult::OK);
+  params = parser.GetParams();
+  ASSERT_EQ(params.size(), 1);
+  ASSERT_EQ(params[0].size(), 1);
+  EXPECT_EQ(params[0][0], "PING");
+}
+
+TEST(ParseInlineParams, ParsesCorrectly) {
+  Resp2Parse parser;
+  RespResult result = parser.Parse("hmget fruit apple banana watermelon\r\n");
+  EXPECT_EQ(result, RespResult::OK);
+  auto params = parser.GetParams();
+  ASSERT_EQ(params.size(), 1);
+  ASSERT_EQ(params[0].size(), 5);
+  EXPECT_EQ(params[0][0], "hmget");
+  EXPECT_EQ(params[0][1], "fruit");
+  EXPECT_EQ(params[0][2], "apple");
+  EXPECT_EQ(params[0][3], "banana");
+  EXPECT_EQ(params[0][4], "watermelon");
+}
+
+TEST(ParseMultipleInline, ParsesCorrectly) {
+  Resp2Parse parser;
+  RespResult result = parser.Parse("ping\r\nhmget fruit apple banana watermelon\r\n");
+  EXPECT_EQ(result, RespResult::OK);
+  auto params = parser.GetParams();
+  ASSERT_EQ(params.size(), 2);
+  ASSERT_EQ(params[0].size(), 1);
+  EXPECT_EQ(params[0][0], "ping");
+  ASSERT_EQ(params[1].size(), 5);
+  EXPECT_EQ(params[1][0], "hmget");
+  EXPECT_EQ(params[1][1], "fruit");
+  EXPECT_EQ(params[1][2], "apple");
+  EXPECT_EQ(params[1][3], "banana");
+  EXPECT_EQ(params[1][4], "watermelon");
+}
+
 TEST(ParseBulkString, ParsesCorrectly) {
   Resp2Parse parser;
   RespResult result = parser.Parse("$6\r\nfoobar\r\n");
@@ -50,13 +118,14 @@ TEST(ParseBulkString, ParsesCorrectly) {
 
 TEST(ParseArray, ParsesCorrectly) {
   Resp2Parse parser;
-  RespResult result = parser.Parse("*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n");
+  RespResult result = parser.Parse("*3\r\n$3\r\nfoo\r\n$3\r\nbar\r\n$-1\r\n");
   EXPECT_EQ(result, RespResult::OK);
   auto params = parser.GetParams();
   ASSERT_EQ(params.size(), 1);
-  ASSERT_EQ(params[0].size(), 2);
+  ASSERT_EQ(params[0].size(), 3);
   EXPECT_EQ(params[0][0], "foo");
   EXPECT_EQ(params[0][1], "bar");
+  EXPECT_EQ(params[0][2], "");
 }
 
 TEST(ParseArrayRestSwap, ParsesCorrectly) {
@@ -91,12 +160,6 @@ TEST(ParseEmptyArray, ParsesCorrectly) {
   auto params = parser.GetParams();
   ASSERT_EQ(params.size(), 1);
   ASSERT_EQ(params[0].size(), 0);
-}
-
-TEST(ParseInvalidInput, ReturnsError) {
-  Resp2Parse parser;
-  RespResult result = parser.Parse("invalid\r\n");
-  ASSERT_EQ(result, RespResult::ERROR);
 }
 
 TEST(ParseIncomplete, ReturnsWait) {
@@ -230,7 +293,7 @@ TEST(ParseMultiplexing, ParsesCorrectly) {
   EXPECT_EQ(params[0][3], "banana");
 }
 
-TEST(ParseMultiplexingInputInvalid, ParsesCorrectly) {
+TEST(ParseMultiplexingInline, ParsesCorrectly) {
   Resp2Parse parser;
   parser.Parse("*3\r\n$3\r\nset\r\n$5\r\nfruit\r\n$5\r\napple\r\n");
   auto params = parser.GetParams();
@@ -240,8 +303,12 @@ TEST(ParseMultiplexingInputInvalid, ParsesCorrectly) {
   EXPECT_EQ(params[0][1], "fruit");
   EXPECT_EQ(params[0][2], "apple");
 
-  RespResult result = parser.Parse("invalid\r\n");
-  ASSERT_EQ(result, RespResult::ERROR);
+  RespResult result = parser.Parse("ping\r\n");
+  ASSERT_EQ(result, RespResult::OK);
+  params = parser.GetParams();
+  ASSERT_EQ(params.size(), 1);
+  ASSERT_EQ(params[0].size(), 1);
+  EXPECT_EQ(params[0][0], "ping");
 
   parser.Parse("*4\r\n$4\r\nhset\r\n$5\r\nfruit\r\n$5\r\napple\r\n$6\r\nbanana\r\n");
   params = parser.GetParams();

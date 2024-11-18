@@ -4,6 +4,7 @@
 // of patent rights can be found in the PATENTS file in the same directory
 
 #include "resp2_parse.h"
+#include "pstd/log.h"
 #include "pstd_string.h"
 
 RespType Resp2Parse::PetRespType(char prefix) {
@@ -19,7 +20,7 @@ RespType Resp2Parse::PetRespType(char prefix) {
     case '*':
       return RespType::Array;
     default:
-      return RespType::Unknown;
+      return RespType::Inline;
   }
 }
 
@@ -40,15 +41,40 @@ RespResult Resp2Parse::ParsePipeline() {
 }
 
 std::pair<std::string, RespResult> Resp2Parse::ReadLine() {
-  size_t end = data_.find("\r\n", pos_);
+  size_t end = data_.find('\n', pos_);
   if (end == std::string::npos) {
-    // No \r\n found
+    // No \n found
     pos_ -= 1;  // Move back to the last character
     return {"", RespResult::WAIT};
   }
-  auto line = data_.substr(pos_, end - pos_);
-  pos_ = end + 2;  // Move past \r\n
+  if (end == pos_) {
+    ++pos_;  // first char is \n, skip \n
+    return {"", RespResult::OK};
+  }
+  size_t offset = 1;
+  if (data_[end - 1] == '\r') {  // Determine whether the terminator is \r\n
+    offset = 2;
+    --end;
+  }
+  std::string line;
+  if (end > pos_) {
+    line = data_.substr(pos_, end - pos_);
+  }
+  pos_ = end + offset;  // Move past \r\n
   return {line, RespResult::OK};
+}
+
+RespResult Resp2Parse::ParseInline() {
+  auto [line, result] = ReadLine();
+  if (result != RespResult::OK) {
+    return result;
+  }
+  if (line.empty()) {  // inline command empty string cant append
+    singleParamsSize_ = 0;
+    return RespResult::OK;
+  }
+  pstd::StringSplit(line, ' ', singleParams_);
+  return RespResult::OK;
 }
 
 RespResult Resp2Parse::ParseSimpleString() {
@@ -143,7 +169,17 @@ RespResult Resp2Parse::ParseResp() {
       return ParseBulkString();
     case RespType::Array:
       return ParseArray();
+    case RespType::Inline:
+      pos_--;  // Move back to the first character of the inline command
+      return ParseInline();
     default:
       return RespResult::ERROR;
+  }
+}
+
+void Resp2Parse::MergeParams() {
+  if (singleParamsSize_ < 0 || (singleParamsSize_ != 0 && singleParamsSize_ == singleParams_.size())) {
+    params_.emplace_back(std::move(singleParams_));
+    singleParams_.clear();
   }
 }

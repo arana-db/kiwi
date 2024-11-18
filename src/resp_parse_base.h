@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-enum class RespType { SimpleString, Error, Integer, BulkString, Array, Unknown };
+enum class RespType { SimpleString, Error, Integer, BulkString, Array, Inline };
 
 enum class RespResult { OK, ERROR, WAIT };
 

@@ -41,9 +41,10 @@ class Resp2Parse : public RespParse {
     singleParamsSize_ = -1;
   }
 
-  RespType PetRespType(char prefix);
+  static RespType PetRespType(char prefix);
   RespResult ParsePipeline();
   std::pair<std::string, RespResult> ReadLine();
+  RespResult ParseInline();
   RespResult ParseSimpleString();
   RespResult parseError();
   RespResult ParseInteger();
@@ -51,12 +52,7 @@ class Resp2Parse : public RespParse {
   RespResult ParseArray();
   RespResult ParseResp();
   inline void AppendParams(const std::string& param) { singleParams_.emplace_back(param); };
-  inline void MergeParams() {
-    if (singleParamsSize_ < 0 || singleParamsSize_ == singleParams_.size()) {
-      params_.emplace_back(std::move(singleParams_));
-      singleParams_.clear();
-    }
-  };
+  void MergeParams();
 
  private:
   std::string data_;

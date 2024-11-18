@@ -9,9 +9,9 @@
 
 #include "cmd_thread_pool_worker.h"
 #include "client.h"
-#include "env.h"
 #include "kiwi.h"
 #include "log.h"
+#include "pstd_string.h"
 
 namespace kiwi {
 
@@ -27,7 +27,7 @@ void CmdWorkThreadPoolWorker::Work() {
         if (param.empty()) {
           continue;
         }
-        task->Client()->SetCmdName(param[0]);
+        task->Client()->SetCmdName(pstd::StringToLower(param[0]));
         task->Client()->SetArgv(param);
 
         auto [cmdPtr, ret] = cmd_table_manager_.GetCommand(param[0], task->Client().get());
