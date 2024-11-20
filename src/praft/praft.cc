@@ -311,7 +311,7 @@ void PRaft::SendNodeRequest(PClient* client) {
 void PRaft::SendNodeInfoRequest(PClient* client, const std::string& info_type) {
   assert(client);
 
-  client->AppendArrayLen(2);
+  client->AppendArrayLen(int64_t(2));
   client->AppendString("INFO");
   client->AppendString(info_type);
   client->SendPacket();
@@ -326,7 +326,7 @@ void PRaft::SendNodeAddRequest(PClient* client) {
   auto port = g_config.port + kiwi::g_config.raft_port_offset;
   auto raw_addr = g_config.ip.ToString() + ":" + std::to_string(port);
 
-  client->AppendArrayLen(4);
+  client->AppendArrayLen(int64_t(4));
   client->AppendString("RAFT.NODE");
   client->AppendString("ADD");
   client->AppendString(std::to_string(unused_node_id));
@@ -337,12 +337,12 @@ void PRaft::SendNodeAddRequest(PClient* client) {
 
 void PRaft::SendNodeRemoveRequest(PClient* client) {
   assert(client);
-  client->AppendArrayLen(3);
+  client->AppendArrayLen(int64_t(3));
   client->AppendString("RAFT.NODE");
   client->AppendString("REMOVE");
   client->AppendString(cluster_cmd_ctx_.GetPeerID());
   client->SendPacket();
-  client->Clear();
+//  client->Clear();
 }
 
 int PRaft::ProcessClusterCmdResponse(PClient* client, const char* start, int len) {
@@ -430,7 +430,7 @@ void PRaft::LeaderRedirection(PClient* join_client, const std::string& reply) {
   PRAFT.GetClusterCmdCtx().ConnectTargetNode();
 
   // Not reply any message here, we will reply after the connection is established.
-  join_client->Clear();
+//  join_client->Clear();
 }
 
 void PRaft::InitializeNodeBeforeAdd(PClient* client, PClient* join_client, const std::string& reply) {
@@ -517,7 +517,7 @@ int PRaft::ProcessClusterRemoveCmdResponse(PClient* client, const char* start, i
     //    remove_client->Clear();
   } else if (reply.find(NOT_LEADER) != std::string::npos) {
     auto remove_client = cluster_cmd_ctx_.GetClient();
-    remove_client->Clear();
+//    remove_client->Clear();
   } else {
     ERROR("Removed Raft cluster fail, str: {}", reply);
     remove_client->SetRes(CmdRes::kErrOther, reply);

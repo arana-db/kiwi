@@ -195,7 +195,7 @@ void CmdTableManager::InitCmdTable() {
   ADD_COMMAND(ZIncrby, 4);
 }
 
-std::pair<BaseCmd*, CmdRes::CmdRet> CmdTableManager::GetCommand(const std::string& cmdName, PClient* client) {
+std::pair<BaseCmd*, CmdRes> CmdTableManager::GetCommand(const std::string& cmdName, PClient* client) {
   std::shared_lock rl(mutex_);
 
   auto cmd = cmds_->find(cmdName);
@@ -206,7 +206,7 @@ std::pair<BaseCmd*, CmdRes::CmdRet> CmdTableManager::GetCommand(const std::strin
 
   if (cmd->second->HasSubCommand()) {
     if (client->argv_.size() < 2) {
-      return {nullptr, CmdRes::kInvalidParameter};
+      return {nullptr, CmdRes::kWrongNum};
     }
     return {cmd->second->GetSubCmd(pstd::StringToLower(client->argv_[1])), CmdRes::kUnknownSubCmd};
   }

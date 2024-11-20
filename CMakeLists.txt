@@ -208,10 +208,9 @@ ADD_SUBDIRECTORY(src/pstd)
 ADD_SUBDIRECTORY(src/net)
 ADD_SUBDIRECTORY(src/praft)
 ADD_SUBDIRECTORY(src/storage)
+ADD_SUBDIRECTORY(src/resp)
 
 ADD_SUBDIRECTORY(src)
-
-ADD_SUBDIRECTORY(gtest)
 
 #############################################################################
 ###			custom target

@@ -34,15 +34,15 @@ void CmdWorkThreadPoolWorker::Work() {
 
         if (!cmdPtr) {
           if (ret == CmdRes::kUnknownCmd) {
-            task->Client()->SetRes(CmdRes::kErrOther, "unknown command '" + param[0] + "'");
+            task->Client()->SetRes(CmdRes::kUnknownCmd, fmt::format("unknown command '{}'", param[0]));
             WARN("client IP:{},port:{} unknown command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
                  param[0]);
           } else if (ret == CmdRes::kUnknownSubCmd) {
-            task->Client()->SetRes(CmdRes::kErrOther, "unknown sub command '" + task->Client()->argv_[1] + "'");
+            task->Client()->SetRes(CmdRes::kUnknownSubCmd, task->Client()->argv_[1]);
             WARN("client IP:{},port:{} unknown sub command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
                  task->Client()->argv_[1]);
           } else {
-            task->Client()->SetRes(CmdRes::kInvalidParameter);
+            task->Client()->SetRes(CmdRes::kWrongNum, param[0]);
             WARN("client IP:{},port:{} unknown command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
                  param[0]);
           }

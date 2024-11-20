@@ -8,9 +8,7 @@ cmake_minimum_required(VERSION 3.18)
 include(GoogleTest)
 set(CMAKE_CXX_STANDARD 20)
 
-include(deps_file.cmake)
-
-message(STATUS "DIR_SRCS: ${DIR_SRCS}")
+AUX_SOURCE_DIRECTORY(../ DIR_SRCS)
 
 file(GLOB_RECURSE GTEST_TEST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/*.cc")
 
@@ -20,8 +18,6 @@ foreach (gtest_test_source ${GTEST_TEST_SOURCE})
 
     add_executable(${gtest_test_name} ${gtest_test_source} ${DIR_SRCS})
     target_include_directories(${gtest_test_name}
-            PUBLIC ${PROJECT_SOURCE_DIR}/src
-            PUBLIC ${PROJECT_SOURCE_DIR}/src/pstd
             PRIVATE ${GTEST_INCLUDE_DIR}
     )
 

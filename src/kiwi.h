@@ -57,7 +57,7 @@ class KiwiDB final {
 
   void PushWriteTask(const std::shared_ptr<kiwi::PClient>& client) {
     std::string msg;
-    client->Message(&msg);
+    client->Reply(msg);
     client->SendOver();
     event_server_->SendPacket(client, std::move(msg));
   }

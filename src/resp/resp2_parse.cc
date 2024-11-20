@@ -4,7 +4,7 @@
 // of patent rights can be found in the PATENTS file in the same directory
 
 #include "resp2_parse.h"
-#include "pstd/log.h"
+#include "log.h"
 #include "pstd_string.h"
 
 RespType Resp2Parse::PetRespType(char prefix) {

@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "resp_parse_base.h"
+#include "resp_parse.h"
 
 class Resp2Parse : public RespParse {
  public:

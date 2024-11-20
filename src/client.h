@@ -19,7 +19,8 @@
 #include "common.h"
 #include "net/socket_addr.h"
 #include "replication.h"
-#include "resp2_parse.h"
+#include "resp/resp2_encode.h"
+#include "resp/resp2_parse.h"
 #include "storage/storage.h"
 
 namespace kiwi {
@@ -59,88 +60,6 @@ struct TimeStat {
   TimePoint process_done_ts_ = TimePoint::min();
 };
 
-class CmdRes {
- public:
-  enum CmdRet {
-    kNone = 0,
-    kOK,
-    kPong,
-    kSyntaxErr,
-    kInvalidInt,
-    kInvalidBitInt,
-    kInvalidBitOffsetInt,
-    kInvalidBitPosArgument,
-    kWrongBitOpNotNum,
-    kInvalidFloat,
-    kOverFlow,
-    kNotFound,
-    kOutOfRange,
-    kInvalidPwd,
-    kNoneBgsave,
-    kPurgeExist,
-    kInvalidParameter,
-    kWrongNum,
-    kInvalidIndex,
-    kInvalidDbType,
-    kInvalidDB,
-    kInconsistentHashTag,
-    kErrOther,
-    kUnknownCmd,
-    kUnknownSubCmd,
-    KIncrByOverFlow,
-    kInvalidCursor,
-    kWrongLeader,
-    kMultiKey,
-  };
-
-  CmdRes() = default;
-  virtual ~CmdRes();
-
-  bool None() const { return ret_ == kNone && message_.empty(); }
-
-  bool Ok() const { return ret_ == kOK || ret_ == kNone; }
-
-  void Clear() {
-    message_.clear();
-    ret_ = kNone;
-  }
-
-  inline const std::string& Message() const { return message_; };
-
-  inline void Message(std::string* str) { str->swap(message_); };
-
-  // Inline functions for Create Redis protocol
-  inline void AppendStringLen(int64_t ori) { RedisAppendLen(message_, ori, "$"); }
-  inline void AppendStringLenUint64(uint64_t ori) { RedisAppendLenUint64(message_, ori, "$"); }
-  inline void AppendArrayLen(int64_t ori) { RedisAppendLen(message_, ori, "*"); }
-  inline void AppendArrayLenUint64(uint64_t ori) { RedisAppendLenUint64(message_, ori, "*"); }
-  inline void AppendInteger(int64_t ori) { RedisAppendLen(message_, ori, ":"); }
-  inline void AppendContent(const std::string& value) { RedisAppendContent(message_, value); }
-  inline void AppendStringRaw(const std::string& value) { message_.append(value); }
-  inline void SetLineString(const std::string& value) { message_ = value + CRLF; }
-
-  void AppendString(const std::string& value);
-  void AppendStringVector(const std::vector<std::string>& strArray);
-  void RedisAppendLenUint64(std::string& str, uint64_t ori, const std::string& prefix) {
-    RedisAppendLen(str, static_cast<int64_t>(ori), prefix);
-  }
-
-  void SetRes(CmdRet _ret, const std::string& content = "");
-
-  inline void RedisAppendContent(std::string& str, const std::string& value) {
-    str.append(value.data(), value.size());
-    str.append(CRLF);
-  }
-
-  void RedisAppendLen(std::string& str, int64_t ori, const std::string& prefix);
-
- protected:
-  std::string message_;
-
- private:
-  CmdRet ret_ = kNone;
-};
-
 enum ClientFlag {
   kClientFlagMulti = (1 << 0),
   kClientFlagDirty = (1 << 1),
@@ -156,6 +75,7 @@ enum class ClientState {
 class DB;
 struct PSlaveInfo;
 
+class PClient : public std::enable_shared_from_this<PClient> {
 struct ClientInfo {
   uint64_t client_id;
   std::string ip;
@@ -164,7 +84,7 @@ struct ClientInfo {
   bool operator==(const ClientInfo& ci) const { return client_id == ci.client_id; }
 };
 
-class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
+class PClient : public std::enable_shared_from_this<PClient> {
  public:
   explicit PClient();
 
@@ -180,7 +100,6 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   bool SendPacket(std::string&& msg);
   bool SendPacket(UnboundedBuffer& data);
   inline void SendOver() {
-    Clear();
     reset();
   }
 
@@ -215,6 +134,22 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   bool Exec();
   void ClearMulti();
   void ClearWatch();
+
+  // reply
+  inline void SetRes(CmdRes _ret, const std::string& content = "") { resp_encode_->SetRes(_ret, content); };
+  inline void AppendArrayLen(int64_t ori) { resp_encode_->AppendArrayLen(ori); }
+  inline void AppendArrayLen(uint64_t ori) { resp_encode_->AppendArrayLen(static_cast<int64_t>(ori)); }
+  inline void AppendInteger(int64_t value) { resp_encode_->AppendInteger(value); }
+  inline void AppendStringRaw(const std::string& value) { resp_encode_->AppendStringRaw(value); }
+  inline void AppendSimpleString(const std::string& value) { resp_encode_->AppendSimpleString(value); }
+  inline void AppendString(const std::string& value) { resp_encode_->AppendString(value); }
+  inline void AppendStringVector(const std::vector<std::string>& strArray) {
+    resp_encode_->AppendStringVector(strArray);
+  };
+  inline void AppendString(const char* value, int64_t size) { resp_encode_->AppendString(value, size); }
+  inline void SetLineString(const std::string& value) { resp_encode_->SetLineString(value); }
+  inline void Reply(std::string& str) { resp_encode_->Reply(str); }
+  // reply
 
   // pubsub
   std::size_t Subscribe(const std::string& channel) { return channels_.insert(channel).second ? 1 : 0; }
@@ -299,6 +234,7 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
  private:
   int dbno_ = 0;
   std::unique_ptr<RespParse> resp_parser_;
+  std::unique_ptr<RespEncode> resp_encode_;
 
   std::unordered_set<std::string> channels_;
   std::unordered_set<std::string> pattern_channels_;

@@ -7,154 +7,23 @@
   Implemented a set of functions for interfacing with the client.
  */
 
-#include "client.h"
-
+#include <fmt/core.h>
 #include <algorithm>
 #include <memory>
 
-#include "fmt/core.h"
-#include "praft/praft.h"
-#include "pstd/log.h"
-#include "pstd/pstd_string.h"
-
 #include "base_cmd.h"
+#include "client.h"
 #include "config.h"
 #include "env.h"
 #include "kiwi.h"
-#include "pstd_string.h"
+#include "praft/praft.h"
+#include "pstd/log.h"
+#include "pstd/pstd_string.h"
 #include "slow_log.h"
-#include "store.h"
 
 namespace kiwi {
 
 const ClientInfo ClientInfo::invalidClientInfo = {0, "", -1};
-
-void CmdRes::RedisAppendLen(std::string& str, int64_t ori, const std::string& prefix) {
-  str.append(prefix);
-  str.append(pstd::Int2string(ori));
-  str.append(CRLF);
-}
-
-void CmdRes::AppendStringVector(const std::vector<std::string>& strArray) {
-  if (strArray.empty()) {
-    AppendArrayLen(0);
-    return;
-  }
-  AppendArrayLen(static_cast<int64_t>(strArray.size()));
-  for (const auto& item : strArray) {
-    AppendString(item);
-  }
-}
-
-void CmdRes::AppendString(const std::string& value) {
-  if (value.empty()) {
-    AppendStringLen(-1);
-  } else {
-    AppendStringLen(static_cast<int64_t>(value.size()));
-    AppendContent(value);
-  }
-}
-
-void CmdRes::SetRes(CmdRes::CmdRet _ret, const std::string& content) {
-  ret_ = _ret;
-  switch (ret_) {
-    case kOK:
-      SetLineString("+OK");
-      break;
-    case kPong:
-      SetLineString("+PONG");
-      break;
-    case kSyntaxErr:
-      SetLineString("-ERR syntax error");
-      break;
-    case kInvalidInt:
-      SetLineString("-ERR value is not an integer or out of range");
-      break;
-    case kInvalidBitInt:
-      SetLineString("-ERR bit is not an integer or out of range");
-      break;
-    case kInvalidBitOffsetInt:
-      SetLineString("-ERR bit offset is not an integer or out of range");
-      break;
-    case kWrongBitOpNotNum:
-      SetLineString("-ERR BITOP NOT must be called with a single source key.");
-      break;
-    case kInvalidBitPosArgument:
-      SetLineString("-ERR The bit argument must be 1 or 0.");
-      break;
-    case kInvalidFloat:
-      SetLineString("-ERR value is not a valid float");
-      break;
-    case kOverFlow:
-      SetLineString("-ERR increment or decrement would overflow");
-      break;
-    case kNotFound:
-      SetLineString("-ERR no such key");
-      break;
-    case kOutOfRange:
-      SetLineString("-ERR index out of range");
-      break;
-    case kInvalidPwd:
-      SetLineString("-ERR invalid password");
-      break;
-    case kNoneBgsave:
-      SetLineString("-ERR No BGSave Works now");
-      break;
-    case kPurgeExist:
-      SetLineString("-ERR binlog already in purging...");
-      break;
-    case kInvalidParameter:
-      SetLineString("-ERR Invalid Argument");
-      break;
-    case kWrongNum:
-      AppendStringRaw("-ERR wrong number of arguments for '");
-      AppendStringRaw(content);
-      AppendStringRaw("' command\r\n");
-      break;
-    case kInvalidIndex:
-      AppendStringRaw("-ERR invalid DB index for '");
-      AppendStringRaw(content);
-      AppendStringRaw("'\r\n");
-      break;
-    case kInvalidDbType:
-      AppendStringRaw("-ERR invalid DB for '");
-      AppendStringRaw(content);
-      AppendStringRaw("'\r\n");
-      break;
-    case kInconsistentHashTag:
-      SetLineString("-ERR parameters hashtag is inconsistent");
-    case kInvalidDB:
-      AppendStringRaw("-ERR invalid DB for '");
-      AppendStringRaw(content);
-      AppendStringRaw("'\r\n");
-      break;
-    case kErrOther:
-      AppendStringRaw("-ERR ");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-      break;
-    case KIncrByOverFlow:
-      AppendStringRaw("-ERR increment would produce NaN or Infinity");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-      break;
-    case kInvalidCursor:
-      AppendStringRaw("-ERR invalid cursor");
-      break;
-    case kWrongLeader:
-      AppendStringRaw("-ERR wrong leader");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-    case kMultiKey:
-      AppendStringRaw("-WRONGTYPE Operation against a key holding the wrong kind of value");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-      break;
-    default:
-      break;
-  }
-}
-CmdRes::~CmdRes() { message_.clear(); }
 
 thread_local PClient* PClient::s_current = nullptr;
 
@@ -238,11 +107,6 @@ static int ProcessMaster(const char* start, const char* end) {
 }
 
 int PClient::HandlePacket(std::string&& data) {
-  //  auto conn = getTcpConnection();
-  //  if (!conn) {
-  //    ERROR("BUG: conn can't be null when recv data");
-  //    return -1;
-  //  }
   if (data.empty()) {
     return 0;
   }
@@ -362,6 +226,7 @@ PClient::PClient() {
   reset();
   time_stat_ = std::make_shared<TimeStat>();
   resp_parser_ = std::make_unique<Resp2Parse>();
+  resp_encode_ = std::make_unique<Resp2Encode>();
 }
 
 void PClient::OnConnect() {
@@ -405,7 +270,7 @@ int PClient::PeerPort() const {
 
 bool PClient::SendPacket() {
   std::string str;
-  message_.swap(str);
+  resp_encode_->Reply(str);
   g_kiwi->SendPacket2Client(shared_from_this(), std::move(str));
   SendOver();
   return true;

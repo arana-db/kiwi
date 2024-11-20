@@ -210,7 +210,7 @@ bool KiwiDB::Init() {
     client->SetSocketAddr(addr);
     client->OnConnect();
     ClientMap::getInstance().AddClient(client->GetUniqueID(), client);
-    INFO("New connection from fd:{} IP:{} port:{}", connID, addr.GetIP(), addr.GetPort());
+    INFO("New connection connID fd:{} IP:{} port:{}", connID, addr.GetIP(), addr.GetPort());
   });
 
   event_server_->SetOnMessage([](std::string&& msg, std::shared_ptr<PClient>& t) { t->HandlePacket(std::move(msg)); });

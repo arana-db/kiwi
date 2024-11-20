@@ -6,10 +6,14 @@
 #include <gtest/gtest.h>
 #include <string>
 
-#include "resp2_parse.h"
+#include "../resp2_parse.h"
 
-TEST(ParseSimpleString, ParsesCorrectly) {
+class Resp2ParseTest : public ::testing::Test {
+ protected:
   Resp2Parse parser;
+};
+
+TEST_F(Resp2ParseTest, ParsesCorrectly) {
   RespResult result = parser.Parse("+OK\r\n");
   EXPECT_EQ(result, RespResult::OK);
   auto params = parser.GetParams();
@@ -18,8 +22,7 @@ TEST(ParseSimpleString, ParsesCorrectly) {
   EXPECT_EQ(params[0][0], "OK");
 }
 
-TEST(ParseError, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseError) {
   RespResult result = parser.Parse("-Error message\r\n");
   EXPECT_EQ(result, RespResult::OK);
   auto params = parser.GetParams();
@@ -28,8 +31,7 @@ TEST(ParseError, ParsesCorrectly) {
   EXPECT_EQ(params[0][0], "Error message");
 }
 
-TEST(ParseInteger, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseInteger) {
   RespResult result = parser.Parse(":1000\r\n");
   EXPECT_EQ(result, RespResult::OK);
   auto params = parser.GetParams();
@@ -38,8 +40,7 @@ TEST(ParseInteger, ParsesCorrectly) {
   EXPECT_EQ(params[0][0], "1000");
 }
 
-TEST(ParseInline, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseInline) {
   RespResult result = parser.Parse("ping\r\n");
   EXPECT_EQ(result, RespResult::OK);
   auto params = parser.GetParams();
@@ -76,8 +77,7 @@ TEST(ParseInline, ParsesCorrectly) {
   EXPECT_EQ(params[0][0], "PING");
 }
 
-TEST(ParseInlineParams, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseInlineParams) {
   RespResult result = parser.Parse("hmget fruit apple banana watermelon\r\n");
   EXPECT_EQ(result, RespResult::OK);
   auto params = parser.GetParams();
@@ -90,8 +90,7 @@ TEST(ParseInlineParams, ParsesCorrectly) {
   EXPECT_EQ(params[0][4], "watermelon");
 }
 
-TEST(ParseMultipleInline, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseMultipleInline) {
   RespResult result = parser.Parse("ping\r\nhmget fruit apple banana watermelon\r\n");
   EXPECT_EQ(result, RespResult::OK);
   auto params = parser.GetParams();
@@ -106,8 +105,7 @@ TEST(ParseMultipleInline, ParsesCorrectly) {
   EXPECT_EQ(params[1][4], "watermelon");
 }
 
-TEST(ParseBulkString, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseBulkString) {
   RespResult result = parser.Parse("$6\r\nfoobar\r\n");
   EXPECT_EQ(result, RespResult::OK);
   auto params = parser.GetParams();
@@ -116,8 +114,7 @@ TEST(ParseBulkString, ParsesCorrectly) {
   EXPECT_EQ(params[0][0], "foobar");
 }
 
-TEST(ParseArray, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseArray) {
   RespResult result = parser.Parse("*3\r\n$3\r\nfoo\r\n$3\r\nbar\r\n$-1\r\n");
   EXPECT_EQ(result, RespResult::OK);
   auto params = parser.GetParams();
@@ -128,8 +125,7 @@ TEST(ParseArray, ParsesCorrectly) {
   EXPECT_EQ(params[0][2], "");
 }
 
-TEST(ParseArrayRestSwap, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseArrayRestSwap) {
   RespResult result = parser.Parse("*2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n");
   EXPECT_EQ(result, RespResult::OK);
   RespParams params;
@@ -143,8 +139,7 @@ TEST(ParseArrayRestSwap, ParsesCorrectly) {
   ASSERT_EQ(oldParams.size(), 0);
 }
 
-TEST(ParseEmptyBulkString, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseEmptyBulkString) {
   RespResult result = parser.Parse("$0\r\n\r\n");
   EXPECT_EQ(result, RespResult::OK);
   auto params = parser.GetParams();
@@ -153,8 +148,7 @@ TEST(ParseEmptyBulkString, ParsesCorrectly) {
   EXPECT_EQ(params[0][0], "");
 }
 
-TEST(ParseEmptyArray, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseEmptyArray) {
   RespResult result = parser.Parse("*0\r\n");
   EXPECT_EQ(result, RespResult::OK);
   auto params = parser.GetParams();
@@ -162,14 +156,12 @@ TEST(ParseEmptyArray, ParsesCorrectly) {
   ASSERT_EQ(params[0].size(), 0);
 }
 
-TEST(ParseIncomplete, ReturnsWait) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseIncomplete) {
   RespResult result = parser.Parse("$10\r\nfoobar");
   ASSERT_EQ(result, RespResult::WAIT);
 }
 
-TEST(ParseFragment, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseFragment) {
   RespResult result = parser.Parse("*5\r\n$5\r\nhmget\r\n$5\r\nfruit\r\n$5\r\napple\r\n");
   ASSERT_EQ(result, RespResult::WAIT);
   result = parser.Parse("$6\r\nbanana\r\n$10\r\nwatermelon\r\n");
@@ -184,8 +176,7 @@ TEST(ParseFragment, ParsesCorrectly) {
   EXPECT_EQ(params[0][4], "watermelon");
 }
 
-TEST(ParseFragment2, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseFragment2) {
   RespResult result = parser.Parse("*5\r\n$5\r\nhmget\r\n$5\r\nfrui");
   EXPECT_EQ(result, RespResult::WAIT);
   result = parser.Parse("t\r\n$5\r\napple\r\n$6\r");
@@ -202,8 +193,7 @@ TEST(ParseFragment2, ParsesCorrectly) {
   EXPECT_EQ(params[0][4], "watermelon");
 }
 
-TEST(ParseFragment3, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseFragment3) {
   RespResult result = parser.Parse("*5\r\n$5\r\nhmget\r\n$5");
   EXPECT_EQ(result, RespResult::WAIT);
   result = parser.Parse("\r\nfruit\r\n$5\r\napple\r\n$");
@@ -222,9 +212,8 @@ TEST(ParseFragment3, ParsesCorrectly) {
   EXPECT_EQ(params[0][4], "watermelon");
 }
 
-// test pipeline cmd parse
-TEST(ParsePipeline, ParsesCorrectly) {
-  Resp2Parse parser;
+// TEST_F pipeline cmd parse
+TEST_F(Resp2ParseTest, ParsePipeline) {
   RespResult result = parser.Parse("*5\r\n$5\r\nhmget\r\n$5\r\nfruit\r\n$5\r\napple\r\n$6\r\nbanana\r");
   EXPECT_EQ(result, RespResult::WAIT);
   result = parser.Parse("\n$10\r\nwatermelon\r\n");
@@ -248,8 +237,7 @@ TEST(ParsePipeline, ParsesCorrectly) {
   EXPECT_EQ(params[1][2], "apple");
 }
 
-TEST(ParsePipeline2, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParsePipeline2) {
   RespResult result = parser.Parse("*5\r\n$5\r\nhmget\r\n$5\r\nfruit\r\n$5\r\napple\r\n$6\r\nbanana\r");
   EXPECT_EQ(result, RespResult::WAIT);
   // second cmd data in first cmd data
@@ -273,8 +261,7 @@ TEST(ParsePipeline2, ParsesCorrectly) {
   EXPECT_EQ(params[1][2], "apple");
 }
 
-TEST(ParseMultiplexing, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseMultiplexing) {
   parser.Parse("*3\r\n$3\r\nset\r\n$5\r\nfruit\r\n$5\r\napple\r\n");
   auto params = parser.GetParams();
   ASSERT_EQ(params.size(), 1);
@@ -293,8 +280,7 @@ TEST(ParseMultiplexing, ParsesCorrectly) {
   EXPECT_EQ(params[0][3], "banana");
 }
 
-TEST(ParseMultiplexingInline, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseMultiplexingInline) {
   parser.Parse("*3\r\n$3\r\nset\r\n$5\r\nfruit\r\n$5\r\napple\r\n");
   auto params = parser.GetParams();
   ASSERT_EQ(params.size(), 1);
@@ -320,8 +306,7 @@ TEST(ParseMultiplexingInline, ParsesCorrectly) {
   EXPECT_EQ(params[0][3], "banana");
 }
 
-TEST(ParseMultiplexingPipeline, ParsesCorrectly) {
-  Resp2Parse parser;
+TEST_F(Resp2ParseTest, ParseMultiplexingPipeline) {
   RespResult result = parser.Parse("*5\r\n$5\r\nhmget\r\n$5\r\nfruit\r\n$5\r\napple\r\n$6\r\nbanana\r");
   EXPECT_EQ(result, RespResult::WAIT);
   // second cmd data in first cmd data
