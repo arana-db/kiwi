@@ -342,7 +342,7 @@ void PRaft::SendNodeRemoveRequest(PClient* client) {
   client->AppendString("REMOVE");
   client->AppendString(cluster_cmd_ctx_.GetPeerID());
   client->SendPacket();
-//  client->Clear();
+  //  client->Clear();
 }
 
 int PRaft::ProcessClusterCmdResponse(PClient* client, const char* start, int len) {
@@ -430,7 +430,7 @@ void PRaft::LeaderRedirection(PClient* join_client, const std::string& reply) {
   PRAFT.GetClusterCmdCtx().ConnectTargetNode();
 
   // Not reply any message here, we will reply after the connection is established.
-//  join_client->Clear();
+  //  join_client->Clear();
 }
 
 void PRaft::InitializeNodeBeforeAdd(PClient* client, PClient* join_client, const std::string& reply) {
@@ -517,7 +517,7 @@ int PRaft::ProcessClusterRemoveCmdResponse(PClient* client, const char* start, i
     //    remove_client->Clear();
   } else if (reply.find(NOT_LEADER) != std::string::npos) {
     auto remove_client = cluster_cmd_ctx_.GetClient();
-//    remove_client->Clear();
+    //    remove_client->Clear();
   } else {
     ERROR("Removed Raft cluster fail, str: {}", reply);
     remove_client->SetRes(CmdRes::kErrOther, reply);

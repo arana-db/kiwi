@@ -135,17 +135,17 @@ int PClient::HandlePacket(std::string&& data) {
 
   auto parseRet = resp_parser_->Parse(std::move(data));
   if (parseRet == RespResult::ERROR) {
-    ERROR("client {} IP:{} port:{} parse data error", uniqueID(), PeerIP(), PeerPort());
+    ERROR("client {} IP:{} port:{} parse data error", GetUniqueID(), PeerIP(), PeerPort());
     return 0;
   }
   if (parseRet == RespResult::WAIT) {
-    DEBUG("client {} IP:{} port:{} parse data wait", uniqueID(), PeerIP(), PeerPort());
+    DEBUG("client {} IP:{} port:{} parse data wait", GetUniqueID(), PeerIP(), PeerPort());
     return 0;
   }
 
   auto params = resp_parser_->GetParams();
   if (params.empty()) {
-    ERROR("client {} IP:{} port:{} parse data empty", uniqueID(), PeerIP(), PeerPort());
+    ERROR("client {} IP:{} port:{} parse data empty", GetUniqueID(), PeerIP(), PeerPort());
     return 0;
   }
 

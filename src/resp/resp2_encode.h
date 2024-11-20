@@ -9,7 +9,7 @@
 
 class Resp2Encode : public RespEncode {
  public:
-  void SetRes(CmdRes ret, const std::string& content = "")override;
+  void SetRes(CmdRes ret, const std::string& content = "") override;
   inline void AppendArrayLen(int64_t ori) override { SetBulkStringLen(reply_, ori, "*"); }
   inline void AppendInteger(int64_t ori) override { SetBulkStringLen(reply_, ori, ":"); }
   inline void AppendStringRaw(const std::string& value) override { reply_.append(value); }

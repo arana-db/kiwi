@@ -114,7 +114,7 @@ void RaftNodeCmd::DoCmdRemove(PClient* client) {
     INFO("Sent remove request to leader successfully");
 
     // Not reply any message here, we will reply after the connection is established.
-//    client->Clear();
+    //    client->Clear();
     return;
   }
 
@@ -232,7 +232,7 @@ void RaftClusterCmd::DoCmdJoin(PClient* client) {
   INFO("Sent join request to leader successfully");
 
   // Not reply any message here, we will reply after the connection is established.
-//  client->Clear();
+  //  client->Clear();
 }
 
 }  // namespace kiwi

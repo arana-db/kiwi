@@ -146,7 +146,7 @@ void HMGetCmd::DoCmd(PClient* client) {
   auto s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->HMGet(client->Key(), client->Fields(), &vss);
   if (s.ok() || s.IsNotFound()) {
     client->AppendArrayLen(vss.size());
-    for (auto & vs : vss) {
+    for (auto& vs : vss) {
       if (vs.status.ok()) {
         client->AppendString(vs.value);
       } else {
@@ -189,7 +189,7 @@ void HGetAllCmd::DoCmd(PClient* client) {
     } else {
       for (const auto& fv : fvs) {
         //        client->RedisAppendLenUint64(raw, fv.field.size(), "$");
-//        client->RedisAppendContent(raw, fv.field);
+        //        client->RedisAppendContent(raw, fv.field);
         RespEncode::AppendBulkString(raw, fv.field);
         //        client->RedisAppendLenUint64(raw, fv.value.size(), "$");
         RespEncode::AppendBulkString(raw, fv.value);

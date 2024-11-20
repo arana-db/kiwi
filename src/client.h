@@ -16,7 +16,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-//#include "common.h"
 #include "net/socket_addr.h"
 #include "replication.h"
 #include "resp/resp2_encode.h"
@@ -75,7 +74,6 @@ enum class ClientState {
 class DB;
 struct PSlaveInfo;
 
-class PClient : public std::enable_shared_from_this<PClient> {
 struct ClientInfo {
   uint64_t client_id;
   std::string ip;
@@ -91,7 +89,6 @@ class PClient : public std::enable_shared_from_this<PClient> {
   void OnConnect();
   int HandlePacket(std::string&& data);
 
-  const int GetFd() const;
   ClientInfo GetClientInfo() const;
 
   //  bool SendPacket(const std::string& buf);
@@ -99,9 +96,7 @@ class PClient : public std::enable_shared_from_this<PClient> {
   bool SendPacket();
   bool SendPacket(std::string&& msg);
   bool SendPacket(UnboundedBuffer& data);
-  inline void SendOver() {
-    reset();
-  }
+  inline void SendOver() { reset(); }
 
   // active close
   void Close();
@@ -222,8 +217,6 @@ class PClient : public std::enable_shared_from_this<PClient> {
  private:
   void reset();
   bool isPeerMaster() const;
-
-  uint64_t uniqueID() const;
   bool isClusterCmdTarget() const;
 
  public:
