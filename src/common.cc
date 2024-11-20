@@ -70,7 +70,7 @@ size_t FormatInt(long value, UnboundedBuffer* reply) {
   }
 
   char val[32];
-  int len = snprintf(val, sizeof val, "%ld" CRLF, value);
+  int len = snprintf(val, sizeof val, "%ld", CRLF, value);
 
   size_t oldSize = reply->ReadableSize();
   reply->PushData(":");
@@ -88,7 +88,7 @@ size_t FormatBulk(const char* str, size_t len, UnboundedBuffer* reply) {
   reply->PushData("$");
 
   char val[32];
-  int tmp = snprintf(val, sizeof val - 1, "%lu" CRLF, len);
+  int tmp = snprintf(val, sizeof val - 1, "%lu", CRLF, len);
   reply->PushData(val, tmp);
 
   if (str && len > 0) {
@@ -111,7 +111,7 @@ size_t PreFormatMultiBulk(size_t nBulk, UnboundedBuffer* reply) {
   reply->PushData("*");
 
   char val[32];
-  int tmp = snprintf(val, sizeof val - 1, "%lu" CRLF, nBulk);
+  int tmp = snprintf(val, sizeof val - 1, "%lu", CRLF, nBulk);
   reply->PushData(val, tmp);
 
   return reply->ReadableSize() - oldSize;
@@ -133,7 +133,7 @@ size_t FormatOK(UnboundedBuffer* reply) {
   }
 
   size_t oldSize = reply->ReadableSize();
-  reply->PushData("+OK" CRLF);
+  reply->PushData("+OK\r\n");
 
   return reply->ReadableSize() - oldSize;
 }

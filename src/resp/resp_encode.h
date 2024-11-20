@@ -40,10 +40,10 @@ enum class CmdRes {
   kNoAuth,
 };
 
+constexpr char CRLF[] = "\r\n";
+
 class RespEncode {
  public:
-  static constexpr char CRLF[] = "\r\n";
-
   virtual ~RespEncode() = default;
 
   static void AppendBulkString(std::string& str, const std::string& value);
