@@ -159,6 +159,7 @@ void EpollEvent::DoRead(const epoll_event &event, const std::shared_ptr<Connecti
   } else if (conn) {
     std::string readBuff;
     int ret = conn->netEvent_->OnReadable(conn, &readBuff);
+    DEBUG("DoRead ret:{}; msg:{}", ret, readBuff);
     if (ret == NE_ERROR) {
       DoError(event, "read error,errno: " + std::to_string(errno));
       return;
@@ -178,8 +179,11 @@ void EpollEvent::DoWrite(const epoll_event &event, const std::shared_ptr<Connect
     DoError(event, "write error,errno: " + std::to_string(errno));
     return;
   }
-  if (ret == 0) {
-    DelWriteEvent(event.data.u64, conn->fd_);
+  if (ret == NE_OK) {  // If the data is sent, delete the write event
+    if (conn->netEvent_->CheckDecFlag(static_cast<uint8_t>(IOSocketFlag::WRITE))) {
+      DelWriteEvent(event.data.u64, conn->fd_);
+      conn->netEvent_->UnlockFlag();
+    }
   }
 }
 

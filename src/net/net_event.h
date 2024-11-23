@@ -16,8 +16,9 @@ namespace net {
 // For human readability
 enum {
   NE_ERROR = -1,
-  NE_CLOSE = 0,
-  NE_OK = 1,
+  NE_CLOSE = -2,
+  NE_WAIT = -3,
+  NE_OK = 0,
 };
 
 enum class NetListen {
@@ -25,6 +26,11 @@ enum class NetListen {
   OPEN_ERROR,
   BIND_ERROR,
   LISTEN_ERROR,
+};
+
+enum class IOSocketFlag {
+  READ = 1,
+  WRITE = 1 << 1,
 };
 
 // abstraction of all networks
@@ -50,10 +56,17 @@ class NetEvent {
 
   virtual void Close() = 0;
 
+  virtual bool CheckSetFlag(uint8_t flag) { return false; }
+  virtual bool CheckDecFlag(uint8_t flag) { return false; }
+
   inline int Fd() const { return fd_.load(); }
+  inline void LockFlag() { flagMutex_.lock(); }
+  inline void UnlockFlag() { flagMutex_.unlock(); }
 
  protected:
   std::atomic<int> fd_ = 0;
+  std::atomic<uint8_t> flag_ = 0;
+  std::mutex flagMutex_;
 };
 
 }  // namespace net
