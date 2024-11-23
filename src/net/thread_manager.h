@@ -255,10 +255,13 @@ void ThreadManager<T>::SendPacket(const T &conn, std::string &&msg) {
 
   connPtr->netEvent_->SendPacket(std::move(msg));
 
-  if (rwSeparation_) {
-    writeThread_->SetWriteEvent(connId, connPtr->fd_);
-  } else {
-    readThread_->SetWriteEvent(connId, connPtr->fd_);
+  if (connPtr->netEvent_->CheckSetFlag(0)) {
+    if (rwSeparation_) {
+      writeThread_->SetWriteEvent(connId, connPtr->fd_);
+    } else {
+      readThread_->SetWriteEvent(connId, connPtr->fd_);
+    }
+    connPtr->netEvent_->UnlockFlag();
   }
 }
 
@@ -326,8 +329,8 @@ bool ThreadManager<T>::CreateWriteThread() {
 }
 
 template <typename T>
-requires HasSetFdFunction<T> uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd,
-                                                                     const std::shared_ptr<Connection> &conn) {
+requires HasSetFdFunction<T>
+uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd, const std::shared_ptr<Connection> &conn) {
   auto connId = getConnId();
   if constexpr (IsPointer_v<T>) {
     t->SetConnId(connId);

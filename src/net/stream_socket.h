@@ -15,6 +15,7 @@
 #include <mutex>
 
 #include "base_socket.h"
+#include "lock_free_ring_buffer.h"
 
 namespace net {
 
@@ -32,13 +33,17 @@ class StreamSocket : public BaseSocket {
 
   int Read(std::string *readBuff);
 
+  bool CheckSetFlag(uint8_t flag) override;
+  bool CheckDecFlag(uint8_t flag) override;
+
  private:
   const int readBuffSize_ = 4 * 1024;  // read from socket buff size 4K
 
-  std::mutex sendMutex_;  // send data buff mutex
-
   std::string sendData_;  // send data buff
-  size_t sendPos_ = 0;    // send data buff pos
+
+  LockFreeRingBuffer<std::string> writeQueue_{8};  // write data queue
+
+  size_t sendPos_ = 0;  // send data buff pos
 };
 
 }  // namespace net
