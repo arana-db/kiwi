@@ -30,6 +30,7 @@ TARGET_INCLUDE_DIRECTORIES(kiwi
         PRIVATE ${rocksdb_SOURCE_DIR}/include
         PRIVATE ${BRAFT_INCLUDE_DIR}
         PRIVATE ${BRPC_INCLUDE_DIR}
+        PRIVATE ${RESP_INCLUDE_DIR}
         PRIVATE ${LIBEVENT_INCLUDE_DIRS}
 )
 
@@ -45,6 +46,7 @@ ADD_DEPENDENCIES(kiwi
         braft
         brpc
         storage
+        resp
 )
 
 TARGET_LINK_LIBRARIES(kiwi
@@ -70,6 +72,7 @@ TARGET_LINK_LIBRARIES(kiwi
         praft
         praft_pb
         binlog_pb
+        resp
         "${LIB}"
 )
 

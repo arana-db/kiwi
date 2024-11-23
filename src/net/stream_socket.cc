@@ -14,27 +14,38 @@ int StreamSocket::OnReadable(const std::shared_ptr<Connection> &conn, std::strin
 
 // return bytes that have not yet been sent
 int StreamSocket::OnWritable() {
-  std::lock_guard<std::mutex> lock(sendMutex_);
+  if (sendData_.empty()) {
+    if (!writeQueue_.Pop(sendData_)) {  // no data to send
+      return NE_OK;
+    }
+  }
   size_t ret = ::write(Fd(), sendData_.c_str() + sendPos_, sendData_.size() - sendPos_);
   if (ret == -1) {
-    if (EAGAIN == errno || EWOULDBLOCK == errno) {
-      return NE_OK;
+    if (EAGAIN == errno || EWOULDBLOCK == errno) {  // the socket buffer is full, waiting for the next write event
+      WARN("StreamSocket fd: {} write buffer full", Fd());
+      return NE_WAIT;
     }
     ERROR("StreamSocket fd: {} write error: {}", Fd(), errno);
     return NE_ERROR;
   }
   sendPos_ += ret;
-  if (sendPos_ == sendData_.size()) {
+  if (sendPos_ == sendData_.size()) {  // the current data has been sent
     sendPos_ = 0;
     sendData_.clear();
-    return 0;
+    // determine if there is still data in the queue
+    if (writeQueue_.Empty()) {
+      return NE_OK;
+    }
   }
-  return static_cast<int>(sendData_.size() - sendPos_);
+  return NE_WAIT;  // there is still data in the queue, waiting for the next write event
 }
 
 bool StreamSocket::SendPacket(std::string &&msg) {
-  std::lock_guard<std::mutex> lock(sendMutex_);
-  sendData_.append(msg);
+  bool sendOver;
+  do {
+    sendOver = writeQueue_.Push(std::move(msg));
+  } while (!sendOver);
+
   return true;
 }
 
@@ -63,6 +74,24 @@ int StreamSocket::Read(std::string *readBuff) {
   }
 
   return NE_OK;
+}
+
+bool StreamSocket::CheckSetFlag(uint8_t flag) {
+  if (!(flag_.load() & flag) && !writeQueue_.Empty()) {
+    LockFlag();
+    flag_ |= flag;
+    return true;  // need add write flag
+  }
+  return false;
+}
+
+bool StreamSocket::CheckDecFlag(uint8_t flag) {
+  if ((flag_.load() & flag) && writeQueue_.Empty()) {
+    LockFlag();
+    flag_ &= ~flag;
+    return true;  // need dec write flag
+  }
+  return false;
 }
 
 }  // namespace net

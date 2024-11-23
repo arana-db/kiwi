@@ -106,7 +106,7 @@ void ZAddCmd::DoCmd(PClient* client) {
       client->SetRes(CmdRes::kInvalidFloat);
       return;
     }
-    score_members_.push_back({score, client->argv_[index + 1]});
+    score_members_.emplace_back(score, client->argv_[index + 1]);
   }
   client->SetKey(client->argv_[1]);
   int32_t count = 0;
@@ -151,11 +151,9 @@ void ZPopMinCmd::DoCmd(PClient* client) {
     int64_t len = 0;
     client->AppendArrayLen(static_cast<int64_t>(score_members.size()) * 2);
     for (auto& score_member : score_members) {
-      client->AppendStringLenUint64(score_member.member.size());
-      client->AppendContent(score_member.member);
+      client->AppendString(score_member.member);
       len = pstd::D2string(buf, sizeof(buf), score_member.score);
-      client->AppendStringLen(len);
-      client->AppendContent(buf);
+      client->AppendString(buf, len);
     }
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
@@ -194,11 +192,9 @@ void ZPopMaxCmd::DoCmd(PClient* client) {
     int64_t len = 0;
     client->AppendArrayLen(static_cast<int64_t>(score_members.size()) * 2);
     for (auto& score_member : score_members) {
-      client->AppendStringLenUint64(score_member.member.size());
-      client->AppendContent(score_member.member);
+      client->AppendString(score_member.member);
       len = pstd::D2string(buf, sizeof(buf), score_member.score);
-      client->AppendStringLen(len);
-      client->AppendContent(buf);
+      client->AppendString(buf, len);
     }
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
@@ -346,19 +342,16 @@ void ZRevrangeCmd::DoCmd(PClient* client) {
     if (is_ws) {
       char buf[32];
       int64_t len;
-      client->AppendArrayLenUint64(score_members.size() * 2);
+      client->AppendArrayLen(score_members.size() * 2);
       for (const auto& sm : score_members) {
-        client->AppendStringLenUint64(sm.member.size());
-        client->AppendContent(sm.member);
+        client->AppendString(sm.member);
         len = pstd::D2string(buf, sizeof(buf), sm.score);
-        client->AppendStringLen(len);
-        client->AppendContent(buf);
+        client->AppendString(buf, len);
       }
     } else {
-      client->AppendArrayLenUint64(score_members.size());
+      client->AppendArrayLen(score_members.size());
       for (const auto& sm : score_members) {
-        client->AppendStringLenUint64(sm.member.size());
-        client->AppendContent(sm.member);
+        client->AppendString(sm.member);
       }
     }
   } else if (s.IsInvalidArgument()) {
@@ -415,7 +408,7 @@ void ZRangebyscoreCmd::DoCmd(PClient* client) {
   }
 
   if (min_score == storage::ZSET_SCORE_MAX || max_score == storage::ZSET_SCORE_MIN) {
-    client->AppendContent("*0");
+    client->AppendArrayLen(int64_t(0));
     return;
   }
   std::vector<storage::ScoreMember> score_members;
@@ -438,17 +431,14 @@ void ZRangebyscoreCmd::DoCmd(PClient* client) {
     int64_t len = 0;
     client->AppendArrayLen(count * 2);
     for (; start < end; start++) {
-      client->AppendStringLenUint64(score_members[start].member.size());
-      client->AppendContent(score_members[start].member);
+      client->AppendString(score_members[start].member);
       len = pstd::D2string(buf, sizeof(buf), score_members[start].score);
-      client->AppendStringLen(len);
-      client->AppendContent(buf);
+      client->AppendString(buf, len);
     }
   } else {
     client->AppendArrayLen(count);
     for (; start < end; start++) {
-      client->AppendStringLenUint64(score_members[start].member.size());
-      client->AppendContent(score_members[start].member);
+      client->AppendString(score_members[start].member);
     }
   }
 }
@@ -536,7 +526,7 @@ void ZRevrangebyscoreCmd::DoCmd(PClient* client) {
   }
 
   if (min_score == storage::ZSET_SCORE_MAX || max_score == storage::ZSET_SCORE_MIN) {
-    client->AppendContent("*0");
+    client->AppendArrayLen(int64_t(0));
     return;
   }
   std::vector<storage::ScoreMember> score_members;
@@ -560,17 +550,14 @@ void ZRevrangebyscoreCmd::DoCmd(PClient* client) {
     int64_t len = 0;
     client->AppendArrayLen(count * 2);
     for (; start < end; start++) {
-      client->AppendStringLenUint64(score_members[start].member.size());
-      client->AppendContent(score_members[start].member);
+      client->AppendString(score_members[start].member);
       len = pstd::D2string(buf, sizeof(buf), score_members[start].score);
-      client->AppendStringLen(len);
-      client->AppendContent(buf);
+      client->AppendString(buf, len);
     }
   } else {
     client->AppendArrayLen(count);
     for (; start < end; start++) {
-      client->AppendStringLenUint64(score_members[start].member.size());
-      client->AppendContent(score_members[start].member);
+      client->AppendString(score_members[start].member);
     }
   }
 }
@@ -720,7 +707,7 @@ void ZRangeCmd::DoCmd(PClient* client) {
     } else {
       client->AppendArrayLen(count);
       for (; m_start < m_end; m_start++) {
-        client->AppendContent(lex_members[m_start]);
+        client->AppendString(lex_members[m_start]);
       }
     }
   } else {
@@ -729,17 +716,14 @@ void ZRangeCmd::DoCmd(PClient* client) {
       int64_t len = 0;
       client->AppendArrayLen(count * 2);
       for (; m_start < m_end; m_start++) {
-        client->AppendStringLenUint64(score_members[m_start].member.size());
-        client->AppendContent(score_members[m_start].member);
+        client->AppendString(score_members[m_start].member);
         len = pstd::D2string(buf, sizeof(buf), score_members[m_start].score);
-        client->AppendStringLen(len);
-        client->AppendContent(buf);
+        client->AppendString(buf, len);
       }
     } else {
       client->AppendArrayLen(count);
       for (; m_start < m_end; m_start++) {
-        client->AppendStringLenUint64(score_members[m_start].member.size());
-        client->AppendContent(score_members[m_start].member);
+        client->AppendString(score_members[m_start].member);
       }
     }
   }
@@ -761,8 +745,7 @@ void ZScoreCmd::DoCmd(PClient* client) {
   if (s.ok() || s.IsNotFound()) {
     char buf[32];
     int64_t len = pstd::D2string(buf, sizeof(buf), score);
-    client->AppendStringLen(len);
-    client->AppendContent(buf);
+    client->AppendString(buf, len);
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
   } else {
@@ -780,7 +763,7 @@ bool ZRangebylexCmd::DoInitial(PClient* client) {
 
 void ZRangebylexCmd::DoCmd(PClient* client) {
   if (strcasecmp(client->argv_[2].data(), "+") == 0 || strcasecmp(client->argv_[3].data(), "-") == 0) {
-    client->AppendContent("*0");
+    client->AppendArrayLen(int64_t(0));
   }
 
   size_t argc = client->argv_.size();
@@ -830,8 +813,7 @@ void ZRangebylexCmd::DoCmd(PClient* client) {
 
   client->AppendArrayLen(static_cast<int64_t>(members.size()));
   for (; index < end; index++) {
-    client->AppendStringLenUint64(members[index].size());
-    client->AppendContent(members[index]);
+    client->AppendString(members[index]);
   }
 }
 
@@ -845,7 +827,7 @@ bool ZRevrangebylexCmd::DoInitial(PClient* client) {
 
 void ZRevrangebylexCmd::DoCmd(PClient* client) {
   if (strcasecmp(client->argv_[2].data(), "+") == 0 || strcasecmp(client->argv_[3].data(), "-") == 0) {
-    client->AppendContent("*0");
+    client->AppendArrayLen(int64_t(0));
   }
 
   size_t argc = client->argv_.size();
@@ -890,8 +872,7 @@ void ZRevrangebylexCmd::DoCmd(PClient* client) {
   size_t start = offset;
   client->AppendArrayLen(static_cast<int64_t>(members.size()));
   for (; index >= start; index--) {
-    client->AppendStringLenUint64(members[index].size());
-    client->AppendContent(members[index]);
+    client->AppendString(members[index]);
   }
 }
 
@@ -910,7 +891,7 @@ void ZRankCmd::DoCmd(PClient* client) {
   if (s.ok()) {
     client->AppendInteger(rank);
   } else if (s.IsNotFound()) {
-    client->AppendContent("$-1");
+    client->AppendArrayLen(int64_t(0));
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
   } else {
@@ -933,7 +914,7 @@ void ZRevrankCmd::DoCmd(PClient* client) {
   if (s.ok()) {
     client->AppendInteger(revrank);
   } else if (s.IsNotFound()) {
-    client->AppendContent("$-1");
+    client->AppendArrayLen(int64_t(0));
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
   } else {
@@ -985,8 +966,7 @@ void ZIncrbyCmd::DoCmd(PClient* client) {
   if (s.ok()) {
     char buf[32];
     int64_t len = pstd::D2string(buf, sizeof(buf), score);
-    client->AppendStringLen(len);
-    client->AppendContent(buf);
+    client->AppendString(buf, len);
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
   } else {
