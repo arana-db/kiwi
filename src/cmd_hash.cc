@@ -12,6 +12,7 @@
 #include <config.h>
 
 #include "pstd/pstd_string.h"
+#include "resp/resp_encode.h"
 #include "store.h"
 
 namespace kiwi {
@@ -144,10 +145,10 @@ void HMGetCmd::DoCmd(PClient* client) {
   std::vector<storage::ValueStatus> vss;
   auto s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->HMGet(client->Key(), client->Fields(), &vss);
   if (s.ok() || s.IsNotFound()) {
-    client->AppendArrayLenUint64(vss.size());
-    for (size_t i = 0; i < vss.size(); ++i) {
-      if (vss[i].status.ok()) {
-        client->AppendString(vss[i].value);
+    client->AppendArrayLen(vss.size());
+    for (auto& vs : vss) {
+      if (vs.status.ok()) {
+        client->AppendString(vs.value);
       } else {
         client->AppendString("");
       }
@@ -187,13 +188,14 @@ void HGetAllCmd::DoCmd(PClient* client) {
       break;
     } else {
       for (const auto& fv : fvs) {
-        client->RedisAppendLenUint64(raw, fv.field.size(), "$");
-        client->RedisAppendContent(raw, fv.field);
-        client->RedisAppendLenUint64(raw, fv.value.size(), "$");
-        client->RedisAppendContent(raw, fv.value);
+        //        client->RedisAppendLenUint64(raw, fv.field.size(), "$");
+        //        client->RedisAppendContent(raw, fv.field);
+        RespEncode::AppendBulkString(raw, fv.field);
+        //        client->RedisAppendLenUint64(raw, fv.value.size(), "$");
+        RespEncode::AppendBulkString(raw, fv.value);
       }
       if (raw.size() >= raw_limit) {
-        client->SetRes(CmdRes::kErrOther, "Response exceeds the max-client-response-size limit");
+        client->SetRes(CmdRes::kErrOther, "Reply exceeds the max-client-response-size limit");
         return;
       }
       total_fv += static_cast<int64_t>(fvs.size());
@@ -223,10 +225,9 @@ void HKeysCmd::DoCmd(PClient* client) {
   std::vector<std::string> fields;
   auto s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->HKeys(client->Key(), &fields);
   if (s.ok() || s.IsNotFound()) {
-    client->AppendArrayLenUint64(fields.size());
+    client->AppendArrayLen(fields.size());
     for (const auto& field : fields) {
-      client->AppendStringLenUint64(field.size());
-      client->AppendContent(field);
+      client->AppendString(field);
     }
     // update fields
     client->Fields() = std::move(fields);
@@ -333,9 +334,9 @@ void HScanCmd::DoCmd(PClient* client) {
   }
 
   // reply to client
-  client->AppendArrayLen(2);
+  client->AppendArrayLen(int64_t(2));
   client->AppendString(std::to_string(next_cursor));
-  client->AppendArrayLenUint64(fvs.size() * 2);
+  client->AppendArrayLen(fvs.size() * 2);
   for (const auto& [field, value] : fvs) {
     client->AppendString(field);
     client->AppendString(value);
@@ -369,7 +370,7 @@ bool HIncrbyFloatCmd::DoInitial(PClient* client) {
   client->SetKey(client->argv_[1]);
   long double long_double_by = 0;
   if (-1 == StrToLongDouble(client->argv_[3].c_str(), static_cast<int>(client->argv_[3].size()), &long_double_by)) {
-    client->SetRes(CmdRes::kInvalidParameter);
+    client->SetRes(CmdRes::kInvalidFloat);
     return false;
   }
   return true;
@@ -434,7 +435,7 @@ bool HIncrbyCmd::DoInitial(PClient* client) {
 void HIncrbyCmd::DoCmd(PClient* client) {
   int64_t int_by = 0;
   if (!pstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &int_by)) {
-    client->SetRes(CmdRes::kInvalidParameter);
+    client->SetRes(CmdRes::kInvalidInt);
     return;
   }
 
@@ -504,12 +505,7 @@ void HRandFieldCmd::DoCmd(PClient* client) {
   }
 
   // reply to client
-  if (argv.size() > 2) {
-    client->AppendArrayLenUint64(res.size());
-  }
-  for (const auto& item : res) {
-    client->AppendString(item);
-  }
+  client->AppendStringVector(res);
 }
 
 HExistsCmd::HExistsCmd(const std::string& name, int16_t arity)

@@ -28,13 +28,16 @@ namespace kiwi {
 */
 class CmdThreadPoolTask {
  public:
-  explicit CmdThreadPoolTask(std::shared_ptr<PClient> client) : client_(std::move(client)) {}
-  void Run(BaseCmd *cmd);
-  const std::string &CmdName();
-  std::shared_ptr<PClient> Client();
+  explicit CmdThreadPoolTask(std::shared_ptr<PClient> client, RespParams &&params)
+      : client_(std::move(client)), params_(params) {}
+
+  inline void Run(BaseCmd *cmd) { cmd->Execute(client_.get()); };
+  inline std::shared_ptr<PClient> Client() { return client_; };
+  inline RespParams &Params() { return params_; };
 
  private:
   std::shared_ptr<PClient> client_;
+  RespParams params_;
 };
 
 class CmdWorkThreadPoolWorker;

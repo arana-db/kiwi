@@ -50,7 +50,7 @@ void ExistsCmd::DoCmd(PClient* client) {
     //    if (PSTORE.ExistsKey(client->Key())) {
     //      client->AppendInteger(1);
     //    } else {
-    //      client->SetRes(CmdRes::kErrOther, "exists internal error");
+    //      client->SetRes(RespRet::kErrOther, "exists internal error");
     //    }
   } else {
     client->SetRes(CmdRes::kErrOther, "exists internal error");
@@ -69,7 +69,7 @@ void TypeCmd::DoCmd(PClient* client) {
   storage::DataType type = storage::DataType::kNones;
   rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->GetType(client->Key(), type);
   if (s.ok()) {
-    client->AppendContent("+" + std::string(storage::DataTypeToString(type)));
+    client->AppendSimpleString(std::string(storage::DataTypeToString(type)));
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
   }
@@ -86,7 +86,7 @@ bool ExpireCmd::DoInitial(PClient* client) {
 void ExpireCmd::DoCmd(PClient* client) {
   uint64_t sec = 0;
   if (pstd::String2int(client->argv_[2], &sec) == 0) {
-    client->SetRes(CmdRes ::kInvalidInt);
+    client->SetRes(CmdRes::kInvalidInt);
     return;
   }
   auto res = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Expire(client->Key(), sec);
@@ -125,7 +125,7 @@ bool PExpireCmd::DoInitial(PClient* client) {
 void PExpireCmd::DoCmd(PClient* client) {
   int64_t msec = 0;
   if (pstd::String2int(client->argv_[2], &msec) == 0) {
-    client->SetRes(CmdRes ::kInvalidInt);
+    client->SetRes(CmdRes::kInvalidInt);
     return;
   }
   auto res = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Expire(client->Key(), msec / 1000);
@@ -147,7 +147,7 @@ bool ExpireatCmd::DoInitial(PClient* client) {
 void ExpireatCmd::DoCmd(PClient* client) {
   int64_t time_stamp = 0;
   if (pstd::String2int(client->argv_[2], &time_stamp) == 0) {
-    client->SetRes(CmdRes ::kInvalidInt);
+    client->SetRes(CmdRes::kInvalidInt);
     return;
   }
   auto res = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Expireat(client->Key(), time_stamp);
@@ -170,7 +170,7 @@ bool PExpireatCmd::DoInitial(PClient* client) {
 void PExpireatCmd::DoCmd(PClient* client) {
   int64_t time_stamp_ms = 0;
   if (pstd::String2int(client->argv_[2], &time_stamp_ms) == 0) {
-    client->SetRes(CmdRes ::kInvalidInt);
+    client->SetRes(CmdRes::kInvalidInt);
     return;
   }
   auto res = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Expireat(client->Key(), time_stamp_ms / 1000);
@@ -211,7 +211,7 @@ void KeysCmd::DoCmd(PClient* client) {
   auto s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Keys(storage::DataType::kAll, client->Key(), &keys);
   if (s.ok()) {
     client->AppendArrayLen(keys.size());
-    for (auto k : keys) {
+    for (const auto& k : keys) {
       client->AppendString(k);
     }
   } else {

@@ -16,11 +16,10 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "common.h"
-// #include "net/tcp_connection.h"
 #include "net/socket_addr.h"
-#include "proto_parser.h"
 #include "replication.h"
+#include "resp/resp2_encode.h"
+#include "resp/resp2_parse.h"
 #include "storage/storage.h"
 
 namespace kiwi {
@@ -60,88 +59,6 @@ struct TimeStat {
   TimePoint process_done_ts_ = TimePoint::min();
 };
 
-class CmdRes {
- public:
-  enum CmdRet {
-    kNone = 0,
-    kOK,
-    kPong,
-    kSyntaxErr,
-    kInvalidInt,
-    kInvalidBitInt,
-    kInvalidBitOffsetInt,
-    kInvalidBitPosArgument,
-    kWrongBitOpNotNum,
-    kInvalidFloat,
-    kOverFlow,
-    kNotFound,
-    kOutOfRange,
-    kInvalidPwd,
-    kNoneBgsave,
-    kPurgeExist,
-    kInvalidParameter,
-    kWrongNum,
-    kInvalidIndex,
-    kInvalidDbType,
-    kInvalidDB,
-    kInconsistentHashTag,
-    kErrOther,
-    kUnknownCmd,
-    kUnknownSubCmd,
-    KIncrByOverFlow,
-    kInvalidCursor,
-    kWrongLeader,
-    kMultiKey,
-  };
-
-  CmdRes() = default;
-  virtual ~CmdRes();
-
-  bool None() const { return ret_ == kNone && message_.empty(); }
-
-  bool Ok() const { return ret_ == kOK || ret_ == kNone; }
-
-  void Clear() {
-    message_.clear();
-    ret_ = kNone;
-  }
-
-  inline const std::string& Message() const { return message_; };
-
-  inline void Message(std::string* str) { str->swap(message_); };
-
-  // Inline functions for Create Redis protocol
-  inline void AppendStringLen(int64_t ori) { RedisAppendLen(message_, ori, "$"); }
-  inline void AppendStringLenUint64(uint64_t ori) { RedisAppendLenUint64(message_, ori, "$"); }
-  inline void AppendArrayLen(int64_t ori) { RedisAppendLen(message_, ori, "*"); }
-  inline void AppendArrayLenUint64(uint64_t ori) { RedisAppendLenUint64(message_, ori, "*"); }
-  inline void AppendInteger(int64_t ori) { RedisAppendLen(message_, ori, ":"); }
-  inline void AppendContent(const std::string& value) { RedisAppendContent(message_, value); }
-  inline void AppendStringRaw(const std::string& value) { message_.append(value); }
-  inline void SetLineString(const std::string& value) { message_ = value + CRLF; }
-
-  void AppendString(const std::string& value);
-  void AppendStringVector(const std::vector<std::string>& strArray);
-  void RedisAppendLenUint64(std::string& str, uint64_t ori, const std::string& prefix) {
-    RedisAppendLen(str, static_cast<int64_t>(ori), prefix);
-  }
-
-  void SetRes(CmdRet _ret, const std::string& content = "");
-
-  inline void RedisAppendContent(std::string& str, const std::string& value) {
-    str.append(value.data(), value.size());
-    str.append(CRLF);
-  }
-
-  void RedisAppendLen(std::string& str, int64_t ori, const std::string& prefix);
-
- protected:
-  std::string message_;
-
- private:
-  CmdRet ret_ = kNone;
-};
-
 enum ClientFlag {
   kClientFlagMulti = (1 << 0),
   kClientFlagDirty = (1 << 1),
@@ -165,18 +82,13 @@ struct ClientInfo {
   bool operator==(const ClientInfo& ci) const { return client_id == ci.client_id; }
 };
 
-class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
+class PClient : public std::enable_shared_from_this<PClient> {
  public:
-  //  PClient() = delete;
   explicit PClient();
 
-  //  int HandlePackets(kiwi::TcpConnection*, const char*, int);
-
   void OnConnect();
+  int HandlePacket(std::string&& data);
 
-  std::string PeerIP() const;
-  int PeerPort() const;
-  const int GetFd() const;
   ClientInfo GetClientInfo() const;
 
   //  bool SendPacket(const std::string& buf);
@@ -184,16 +96,16 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   bool SendPacket();
   bool SendPacket(std::string&& msg);
   bool SendPacket(UnboundedBuffer& data);
-  inline void SendOver() {
-    Clear();
-    reset();
-  }
+  inline void SendOver() { reset(); }
 
   // active close
   void Close();
 
   // on close callback
   void OnClose();
+
+  std::string PeerIP() const;
+  int PeerPort() const;
 
   // dbno
   void SetCurrentDB(int dbno) { dbno_ = dbno; }
@@ -217,6 +129,22 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   bool Exec();
   void ClearMulti();
   void ClearWatch();
+
+  // reply
+  inline void SetRes(CmdRes _ret, const std::string& content = "") { resp_encode_->SetRes(_ret, content); };
+  inline void AppendArrayLen(int64_t ori) { resp_encode_->AppendArrayLen(ori); }
+  inline void AppendArrayLen(uint64_t ori) { resp_encode_->AppendArrayLen(static_cast<int64_t>(ori)); }
+  inline void AppendInteger(int64_t value) { resp_encode_->AppendInteger(value); }
+  inline void AppendStringRaw(const std::string& value) { resp_encode_->AppendStringRaw(value); }
+  inline void AppendSimpleString(const std::string& value) { resp_encode_->AppendSimpleString(value); }
+  inline void AppendString(const std::string& value) { resp_encode_->AppendString(value); }
+  inline void AppendStringVector(const std::vector<std::string>& strArray) {
+    resp_encode_->AppendStringVector(strArray);
+  };
+  inline void AppendString(const char* value, int64_t size) { resp_encode_->AppendString(value, size); }
+  inline void SetLineString(const std::string& value) { resp_encode_->SetLineString(value); }
+  inline void Reply(std::string& str) { resp_encode_->Reply(str); }
+  // reply
 
   // pubsub
   std::size_t Subscribe(const std::string& channel) { return channels_.insert(channel).second ? 1 : 0; }
@@ -267,10 +195,8 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   void SetAuth() { auth_ = true; }
   bool GetAuth() const { return auth_; }
   uint64_t GetUniqueID() const;
-  void RewriteCmd(std::vector<std::string>& params) { parser_.SetParams(params); }
-  void Reexecutecommand() { this->executeCommand(); }
 
-  inline size_t ParamsSize() const { return params_.size(); }
+  inline size_t ParamsSize() const { return argv_.size(); }
 
   inline ClientState State() const { return state_; }
 
@@ -282,31 +208,26 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   inline int8_t GetThreadIndex() const { return net_thread_index_; }
   inline void SetSocketAddr(const net::SocketAddr& addr) { addr_ = addr; }
 
-  // All parameters of this command (including the command itself)
-  // e.g：["set","key","value"]
-  std::span<std::string> argv_;
+  inline void SetArgv(std::vector<std::string>& argv) { argv_ = argv; }
 
   // Info Commandstats used
   std::unordered_map<std::string, CommandStatistics>* GetCommandStatMap();
   std::shared_ptr<TimeStat> GetTimeStat();
 
-  //  std::shared_ptr<TcpConnection> getTcpConnection() const { return tcp_connection_.lock(); }
-  int handlePacket(const char*, int);
-
  private:
-  void executeCommand();
-  int processInlineCmd(const char*, size_t, std::vector<std::string>&);
   void reset();
   bool isPeerMaster() const;
-
   bool isClusterCmdTarget() const;
 
-  // TcpConnection's life is undetermined, so use weak ptr for safety.
-  //  std::weak_ptr<TcpConnection> tcp_connection_;
+ public:
+  // All parameters of this command (including the command itself)
+  // e.g：["set","key","value"]
+  std::span<std::string> argv_;
 
-  PProtoParser parser_;
-
+ private:
   int dbno_ = 0;
+  std::unique_ptr<RespParse> resp_parser_;
+  std::unique_ptr<RespEncode> resp_encode_;
 
   std::unordered_set<std::string> channels_;
   std::unordered_set<std::string> pattern_channels_;
@@ -330,9 +251,6 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   std::vector<storage::FieldValue> fvs_;
   std::vector<std::string> fields_;
 
-  // All parameters of this command (including the command itself)
-  // e.g：["set","key","value"]
-  std::vector<std::string> params_;
   // auth
   bool auth_ = false;
   time_t last_auth_ = 0;
