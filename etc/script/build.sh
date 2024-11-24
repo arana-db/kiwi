@@ -70,6 +70,7 @@ function clear() {
 function show_help() {
   echo "
   sh $0 --debug     compile with debug
+  sh $0 --clang     use clang compiler
   sh $0 --clear     clear compilation directory
   sh $0 -h|--help   show help
   sh $0 --prefix    compile output path
@@ -91,6 +92,10 @@ while true; do
 
   --debug)
     BUILD_TYPE=debug
+    ;;
+
+  --clang)
+    CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++"
     ;;
 
   -h|--help)
