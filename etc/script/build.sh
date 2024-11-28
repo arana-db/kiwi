@@ -71,6 +71,7 @@ function show_help() {
   echo "
   sh $0 --debug     compile with debug
   sh $0 --clang     use clang compiler
+  sh $0 --kiwi      only compile kiwi
   sh $0 --clear     clear compilation directory
   sh $0 -h|--help   show help
   sh $0 --prefix    compile output path
@@ -98,6 +99,9 @@ while true; do
     CMAKE_FLAGS="${CMAKE_FLAGS} -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++"
     ;;
 
+  --kiwi)
+    MAKE_FLAGS="${MAKE_FLAGS} kiwi"
+    ;;
   -h|--help)
     show_help
     ;;
