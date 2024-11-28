@@ -16,6 +16,7 @@
 #include "callback_function.h"
 #include "config.h"
 #include "io_thread.h"
+#include "net_event.h"
 
 #if defined(HAVE_EPOLL)
 
@@ -255,7 +256,7 @@ void ThreadManager<T>::SendPacket(const T &conn, std::string &&msg) {
 
   connPtr->netEvent_->SendPacket(std::move(msg));
 
-  if (connPtr->netEvent_->CheckSetFlag(0)) {
+  if (connPtr->netEvent_->CheckSetFlag(static_cast<uint8_t>(IOSocketFlag::WRITE))) {
     if (rwSeparation_) {
       writeThread_->SetWriteEvent(connId, connPtr->fd_);
     } else {
