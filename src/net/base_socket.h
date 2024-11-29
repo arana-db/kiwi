@@ -9,10 +9,6 @@
 
 #include <sys/socket.h>
 
-#include <functional>
-#include <string>
-
-#include "base_event.h"
 #include "net_event.h"
 #include "socket_addr.h"
 
@@ -34,7 +30,7 @@ class BaseSocket : public NetEvent {
 
   ~BaseSocket() override = default;
 
-  void OnError() override{};
+  void OnError() override {};
 
   void Close() override;
 
@@ -59,7 +55,7 @@ class BaseSocket : public NetEvent {
 
   bool SetReusePort();
 
-  bool SetIpv6Only();
+  bool SetDisableIpv6Only();
 
   bool GetLocalAddr(SocketAddr &);
 

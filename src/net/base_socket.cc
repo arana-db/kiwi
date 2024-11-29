@@ -89,7 +89,7 @@ bool BaseSocket::SetReusePort() {
   return false;
 }
 
-bool BaseSocket::SetIpv6Only() {
+bool BaseSocket::SetDisableIpv6Only() {
   int ipv6only = 0;
   if (::setsockopt(Fd(), IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char *>(&ipv6only), sizeof(ipv6only)) == -1) {
     WARN("SetIpv6Only fd:{} error:{}", Fd(), errno);

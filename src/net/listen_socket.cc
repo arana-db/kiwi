@@ -69,10 +69,10 @@ bool ListenSocket::Open() {
   }
 
   if (SocketType() == SOCKET_LISTEN_TCP) {
-    if (addr_.IsIpv4()) {
-      fd_ = CreateTCPSocketIpv4();
-    } else if (addr_.IsIpv6()) {
+    if (addr_.IsIpv6()) {
       fd_ = CreateTCPSocketIpv6();
+    } else {
+      fd_ = CreateTCPSocketIpv4();
     }
   } else if (SocketType() == SOCKET_LISTEN_UDP) {
     fd_ = CreateUDPSocket();
@@ -94,16 +94,15 @@ bool ListenSocket::Bind() {
     REUSE_PORT = false;
   }
   if (addr_.IsIpv6()) {
-   SetIpv6Only();
+    SetDisableIpv6Only();
   }
 
-    auto serv = addr_.GetAddr();
-    int ret = ::bind(Fd(), serv, addr_.GetAddrLen());
-    if (0 != ret) {
-      ERROR("ListenSocket fd:{},Bind error:{}", Fd(), errno);
-      Close();
-      return false;
-    }
+  int ret = ::bind(Fd(), addr_.GetAddr(), addr_.GetAddrLen());
+  if (0 != ret) {
+    ERROR("ListenSocket fd:{},Bind error:{}", Fd(), errno);
+    Close();
+    return false;
+  }
 
   return true;
 }
