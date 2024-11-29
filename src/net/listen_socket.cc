@@ -19,7 +19,7 @@ const int ListenSocket::LISTENQ = 1024;
 bool ListenSocket::REUSE_PORT = true;
 
 int ListenSocket::OnReadable(const std::shared_ptr<Connection> &conn, std::string *readBuff) {
-  struct sockaddr_in clientAddr {};
+  struct sockaddr_in clientAddr{};
   auto newConnFd = Accept(&clientAddr);
   if (newConnFd == 0) {
     ERROR("ListenSocket fd:{},Accept error:{}", Fd(), errno);
@@ -59,6 +59,7 @@ int ListenSocket::Init() {
 
 bool ListenSocket::Open() {
   if (Fd() != 0) {
+    ERROR("ListenSocket fd:{} is invalid", Fd());
     return false;
   }
 
@@ -68,7 +69,11 @@ bool ListenSocket::Open() {
   }
 
   if (SocketType() == SOCKET_LISTEN_TCP) {
-    fd_ = CreateTCPSocket();
+    if (addr_.IsIpv4()) {
+      fd_ = CreateTCPSocketIpv4();
+    } else if (addr_.IsIpv6()) {
+      fd_ = CreateTCPSocketIpv6();
+    }
   } else if (SocketType() == SOCKET_LISTEN_UDP) {
     fd_ = CreateUDPSocket();
   } else {
@@ -88,13 +93,25 @@ bool ListenSocket::Bind() {
   if (!SetReusePort()) {
     REUSE_PORT = false;
   }
+  SetIpv6Only();
 
-  struct sockaddr_in serv = addr_.GetAddr();
-
-  int ret = ::bind(Fd(), reinterpret_cast<struct sockaddr *>(&serv), sizeof serv);
-  if (0 != ret) {
-    ERROR("ListenSocket fd:{},Bind error:{}", Fd(), errno);
-    Close();
+  if (addr_.IsIpv4()) {
+    struct sockaddr_in serv = addr_.GetAddrIpv4();
+    int ret = ::bind(Fd(), reinterpret_cast<struct sockaddr *>(&serv), sizeof serv);
+    if (0 != ret) {
+      ERROR("ListenSocket fd:{},Bind error:{}", Fd(), errno);
+      Close();
+      return false;
+    }
+  } else if (addr_.IsIpv6()) {
+    struct sockaddr_in6 serv = addr_.GetAddrIpv6();
+    int ret = ::bind(Fd(), reinterpret_cast<struct sockaddr *>(&serv), sizeof serv);
+    if (0 != ret) {
+      ERROR("ListenSocket fd:{},Bind error:{}", Fd(), errno);
+      Close();
+      return false;
+    }
+  } else {
     return false;
   }
   return true;

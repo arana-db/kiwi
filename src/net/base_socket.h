@@ -38,7 +38,9 @@ class BaseSocket : public NetEvent {
 
   void Close() override;
 
-  static int CreateTCPSocket();
+  static int CreateTCPSocketIpv4();
+
+  static int CreateTCPSocketIpv6();
 
   static int CreateUDPSocket();
 
@@ -56,6 +58,8 @@ class BaseSocket : public NetEvent {
   void SetReuseAddr();
 
   bool SetReusePort();
+
+  bool SetIpv6Only();
 
   bool GetLocalAddr(SocketAddr &);
 

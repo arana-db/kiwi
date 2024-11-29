@@ -12,7 +12,7 @@
 namespace net {
 
 bool ClientSocket::Connect() {
-  fd_ = CreateTCPSocket();
+  fd_ = CreateTCPSocketIpv4();
   if (fd_ == -1) {
     onConnectFail_("CreateTCPSocket open socket failed");
     return false;
@@ -22,7 +22,13 @@ bool ClientSocket::Connect() {
   SetRcvBuf();
   SetSndBuf();
 
-  auto ret = connect(Fd(), (sockaddr*)&addr_.GetAddr(), sizeof(sockaddr_in));
+  int ret;
+  if (addr_.IsIpv4()) {
+    ret = connect(Fd(), (sockaddr*)&addr_.GetAddrIpv4(), sizeof(sockaddr_in));
+  } else {
+    ret = connect(Fd(), (sockaddr*)&addr_.GetAddrIpv6(), sizeof(sockaddr_in6));
+  }
+
   if (0 != ret) {
     if (EINPROGRESS == errno) {
       return true;

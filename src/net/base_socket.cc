@@ -14,7 +14,9 @@
 
 namespace net {
 
-int BaseSocket::CreateTCPSocket() { return ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); }
+int BaseSocket::CreateTCPSocketIpv4() { return ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); }
+
+int BaseSocket::CreateTCPSocketIpv6() { return ::socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP); }
 
 int BaseSocket::CreateUDPSocket() { return ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); }
 
@@ -85,6 +87,15 @@ bool BaseSocket::SetReusePort() {
   }
   WARN("SetReusePort fd:{} error:{}", Fd(), errno);
   return false;
+}
+
+bool BaseSocket::SetIpv6Only() {
+  int ipv6only = 0;
+  if (::setsockopt(Fd(), IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char *>(&ipv6only), sizeof(ipv6only)) == -1) {
+    WARN("SetIpv6Only fd:{} error:{}", Fd(), errno);
+    return false;
+  }
+  return true;
 }
 
 bool BaseSocket::GetLocalAddr(SocketAddr &addr) {
