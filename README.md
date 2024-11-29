@@ -36,7 +36,7 @@ Kiwi is compiled by default in release mode, which does not support debugging. I
 ## Run
 
 ```bash
-./bin/kiwi ./etc/conf/Kiwi.conf
+./bin/kiwi ./etc/conf/kiwi.conf
 ```
 
 ## Support module for write your own extensions
