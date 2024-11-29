@@ -59,7 +59,6 @@ int ListenSocket::Init() {
 
 bool ListenSocket::Open() {
   if (Fd() != 0) {
-    ERROR("ListenSocket fd:{} is invalid", Fd());
     return false;
   }
 

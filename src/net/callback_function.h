@@ -62,7 +62,7 @@ class NetEvent;
 
 // Auxiliary structure
 struct Connection {
-  explicit Connection(std::unique_ptr<NetEvent> netEvent) : netEvent_(std::move(netEvent)), addr_(0, 0) {}
+  explicit Connection(std::unique_ptr<NetEvent> netEvent) : netEvent_(std::move(netEvent)) {}
 
   ~Connection() = default;
 

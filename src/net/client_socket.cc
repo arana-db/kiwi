@@ -24,9 +24,14 @@ bool ClientSocket::Connect() {
 
   int ret;
   if (addr_.IsIpv4()) {
-    ret = connect(Fd(), (sockaddr*)&addr_.GetAddrIpv4(), sizeof(sockaddr_in));
+    const sockaddr_in& addr = addr_.GetAddrIpv4();
+    ret = connect(Fd(), reinterpret_cast<const sockaddr*>(&addr), sizeof(sockaddr_in));
+  } else if (addr_.IsIpv6()) {
+    const sockaddr_in6& addr = addr_.GetAddrIpv6();
+    ret = connect(Fd(), reinterpret_cast<const sockaddr*>(&addr), sizeof(sockaddr_in6));
   } else {
-    ret = connect(Fd(), (sockaddr*)&addr_.GetAddrIpv6(), sizeof(sockaddr_in6));
+    onConnectFail_("IP address is invalid");
+    return false;
   }
 
   if (0 != ret) {

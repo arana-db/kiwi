@@ -17,7 +17,6 @@
 #include "client_socket.h"
 #include "io_thread.h"
 #include "listen_socket.h"
-#include "log.h"
 #include "thread_manager.h"
 
 namespace net {
@@ -250,7 +249,6 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
     listen->SetListenAddr(listenAddrs_);
 
     if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
-      std::cerr << "(1)ListenSocket init error: " << ret << std::endl;
       return ret;
     }
   }
@@ -261,7 +259,6 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
       listen.reset(ListenSocket::CreateTCPListen());
       listen->SetListenAddr(listenAddrs_);
       if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
-        std::cerr << "(2)ListenSocket init error: " << ret << std::endl;
         return ret;
       }
     }
@@ -269,7 +266,6 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
     // timer only works in the first thread
     bool ret = i == 0 ? thread->Start(listen, timer_) : thread->Start(listen, nullptr);
     if (!ret) {
-      std::cerr << "(3)ThreadManager start error" << std::endl;
       return -1;
     }
     ++i;
