@@ -13,7 +13,7 @@
 namespace net {
 
 bool ClientSocket::Connect() {
-  fd_ = CreateTCPSocketIpv4();
+  fd_ = CreateTCPSocket(addr_);
   if (fd_ == -1) {
     onConnectFail_("CreateTCPSocket open socket failed");
     return false;

@@ -69,11 +69,7 @@ bool ListenSocket::Open() {
   }
 
   if (SocketType() == SOCKET_LISTEN_TCP) {
-    if (addr_.IsIpv6()) {
-      fd_ = CreateTCPSocketIpv6();
-    } else {
-      fd_ = CreateTCPSocketIpv4();
-    }
+    fd_ = CreateTCPSocket(addr_);
   } else if (SocketType() == SOCKET_LISTEN_UDP) {
     fd_ = CreateUDPSocket();
   } else {

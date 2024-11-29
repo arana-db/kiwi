@@ -34,9 +34,7 @@ class BaseSocket : public NetEvent {
 
   void Close() override;
 
-  static int CreateTCPSocketIpv4();
-
-  static int CreateTCPSocketIpv6();
+  static int CreateTCPSocket(const SocketAddr &addr);
 
   static int CreateUDPSocket();
 
