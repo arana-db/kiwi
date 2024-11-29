@@ -202,7 +202,6 @@ bool KiwiDB::Init() {
 
   net::SocketAddr addr(g_config.ip.ToString(), g_config.port.load());
   INFO("Add listen addr:{}, port:{}", g_config.ip.ToString(), g_config.port.load());
-
   event_server_->AddListenAddr(addr);
 
   event_server_->SetOnInit([](std::shared_ptr<PClient>* client) { *client = std::make_shared<PClient>(); });
