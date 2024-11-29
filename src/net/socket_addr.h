@@ -111,14 +111,17 @@ struct SocketAddr {
   void Clear() { memset(&addr_, 0, sizeof(addr_)); }
 
   friend bool operator==(const SocketAddr &a, const SocketAddr &b) {
-    if (a.IsIpv4() && b.IsIpv4()) {
+    if (a.IsIpv4() != b.IsIpv4()) {
+      return false;
+    }
+
+    if (a.IsIpv4()) {
       return a.addr_.addr4_.sin_addr.s_addr == b.addr_.addr4_.sin_addr.s_addr &&
              a.addr_.addr4_.sin_port == b.addr_.addr4_.sin_port;
-    } else if (a.IsIpv6() && b.IsIpv6()) {
-      return memcmp(&a.addr_.addr6_.sin6_addr, &b.addr_.addr6_.sin6_addr, sizeof(in6_addr)) == 0 &&
-             a.addr_.addr6_.sin6_port == b.addr_.addr6_.sin6_port;
     }
-    return false;
+
+    return memcmp(&a.addr_.addr6_.sin6_addr, &b.addr_.addr6_.sin6_addr, sizeof(in6_addr)) == 0 &&
+           a.addr_.addr6_.sin6_port == b.addr_.addr6_.sin6_port;
   }
 
   friend bool operator!=(const SocketAddr &a, const SocketAddr &b) { return !(a == b); }
