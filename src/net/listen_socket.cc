@@ -6,6 +6,7 @@
  */
 
 #include <netinet/tcp.h>
+#include <sys/socket.h>
 
 #include "config.h"
 #include "listen_socket.h"
@@ -92,27 +93,18 @@ bool ListenSocket::Bind() {
   if (!SetReusePort()) {
     REUSE_PORT = false;
   }
-  SetIpv6Only();
-
-  if (addr_.IsIpv4()) {
-    struct sockaddr_in serv = addr_.GetAddrIpv4();
-    int ret = ::bind(Fd(), reinterpret_cast<struct sockaddr *>(&serv), sizeof serv);
-    if (0 != ret) {
-      ERROR("ListenSocket fd:{},Bind error:{}", Fd(), errno);
-      Close();
-      return false;
-    }
-  } else if (addr_.IsIpv6()) {
-    struct sockaddr_in6 serv = addr_.GetAddrIpv6();
-    int ret = ::bind(Fd(), reinterpret_cast<struct sockaddr *>(&serv), sizeof serv);
-    if (0 != ret) {
-      ERROR("ListenSocket fd:{},Bind error:{}", Fd(), errno);
-      Close();
-      return false;
-    }
-  } else {
-    return false;
+  if (addr_.IsIpv6()) {
+   SetIpv6Only();
   }
+
+    auto serv = addr_.GetAddr();
+    int ret = ::bind(Fd(), serv, addr_.GetAddrLen());
+    if (0 != ret) {
+      ERROR("ListenSocket fd:{},Bind error:{}", Fd(), errno);
+      Close();
+      return false;
+    }
+
   return true;
 }
 

@@ -7,6 +7,7 @@
 
 #include <sstream>
 
+#include <sys/socket.h>
 #include "client_socket.h"
 
 namespace net {
@@ -22,17 +23,8 @@ bool ClientSocket::Connect() {
   SetRcvBuf();
   SetSndBuf();
 
-  int ret;
-  if (addr_.IsIpv4()) {
-    const sockaddr_in& addr = addr_.GetAddrIpv4();
-    ret = connect(Fd(), reinterpret_cast<const sockaddr*>(&addr), sizeof(sockaddr_in));
-  } else if (addr_.IsIpv6()) {
-    const sockaddr_in6& addr = addr_.GetAddrIpv6();
-    ret = connect(Fd(), reinterpret_cast<const sockaddr*>(&addr), sizeof(sockaddr_in6));
-  } else {
-    onConnectFail_("IP address is invalid");
-    return false;
-  }
+  auto addr = addr_.GetAddr();
+  int ret = connect(Fd(), addr, addr_.GetAddrLen());
 
   if (0 != ret) {
     if (EINPROGRESS == errno) {

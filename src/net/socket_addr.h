@@ -47,9 +47,23 @@ struct SocketAddr {
     }
   }
 
-  const sockaddr_in &GetAddrIpv4() const { return addr_.addr4_; }
+  const sockaddr *GetAddr() const {
+    if (IsIpv4()) {
+      return reinterpret_cast<const sockaddr *>(&addr_.addr4_);
+    } else if (IsIpv6()) {
+      return reinterpret_cast<const sockaddr *>(&addr_.addr6_);
+    }
+    return nullptr;
+  }
 
-  const sockaddr_in6 &GetAddrIpv6() const { return addr_.addr6_; }
+  socklen_t GetAddrLen() const {
+    if (IsIpv4()) {
+      return sizeof(addr_.addr4_);
+    } else if (IsIpv6()) {
+      return sizeof(addr_.addr6_);
+    }
+    return 0;
+  }
 
   std::string GetIP() const {
     if (IsIpv4()) {
@@ -80,9 +94,9 @@ struct SocketAddr {
   }
 
   uint16_t GetPort() const {
-    if (addr_.addr4_.sin_family == AF_INET) {
+    if (IsIpv4()) {
       return ntohs(addr_.addr4_.sin_port);
-    } else if (addr_.addr6_.sin6_family == AF_INET6) {
+    } else if (IsIpv6()) {
       return ntohs(addr_.addr6_.sin6_port);
     }
     return 0;
