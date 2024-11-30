@@ -64,32 +64,14 @@ class BaseValue {
   bool rewritable_ = false;
 };
 
-class StringValueWithAtomic : public BaseValue {
+class StringValue : public BaseValue {
  public:
-  StringValueWithAtomic(const std::string& key, CheckFunc check_func_ptr, bool rewritable,
-              const std::vector<AtomicString*>& value_ptr_vec, char delimiter = ' ')
-      : BaseValue(key, check_func_ptr, rewritable), values_(value_ptr_vec), delimiter_(delimiter) {
-    assert(!values_.empty());
-  }
-  ~StringValueWithAtomic() override = default;
-
-  std::string Value() const override { return MergeString(values_, delimiter_); };
-
- private:
-  Status SetValue(const std::string& value) override;
-
-  std::vector<AtomicString*> values_;
-  char delimiter_ = 0;
-};
-
-class StringValueWithoutAtomic : public BaseValue {
- public:
-  StringValueWithoutAtomic(const std::string& key, CheckFunc check_func_ptr, bool rewritable,
+  StringValue(const std::string& key, CheckFunc check_func_ptr, bool rewritable,
               const std::vector<std::string*>& value_ptr_vec, char delimiter = ' ')
       : BaseValue(key, check_func_ptr, rewritable), values_(value_ptr_vec), delimiter_(delimiter) {
     assert(!values_.empty());
   }
-  ~StringValueWithoutAtomic() override = default;
+  ~StringValue() override = default;
 
   std::string Value() const override { return MergeString(values_, delimiter_); };
 
@@ -101,29 +83,9 @@ class StringValueWithoutAtomic : public BaseValue {
 };
 
 template <typename T>
-class NumberValueWithAtomic : public BaseValue {
+class NumberValue : public BaseValue {
  public:
-  NumberValueWithAtomic(const std::string& key, CheckFunc check_func_ptr, bool rewritable, std::atomic<T>* value_ptr,
-              T min = std::numeric_limits<T>::min(), T max = std::numeric_limits<T>::max())
-      : BaseValue(key, check_func_ptr, rewritable), value_(value_ptr), value_min_(min), value_max_(max) {
-    assert(value_ != nullptr);
-    assert(value_min_ <= value_max_);
-  };
-
-  std::string Value() const override { return std::to_string(value_->load()); }
-
- private:
-  Status SetValue(const std::string& value) override;
-
-  std::atomic<T>* value_ = nullptr;
-  T value_min_;
-  T value_max_;
-};
-
-template <typename T>
-class NumberValueWithoutAtomic : public BaseValue {
- public:
-  NumberValueWithoutAtomic(const std::string& key, CheckFunc check_func_ptr, bool rewritable, T* value_ptr,
+  NumberValue(const std::string& key, CheckFunc check_func_ptr, bool rewritable, T* value_ptr,
               T min = std::numeric_limits<T>::min(), T max = std::numeric_limits<T>::max())
       : BaseValue(key, check_func_ptr, rewritable), value_(value_ptr), value_min_(min), value_max_(max) {
     assert(value_ != nullptr);
@@ -140,23 +102,9 @@ class NumberValueWithoutAtomic : public BaseValue {
   T value_max_;
 };
 
-class BoolValueWithAtomic : public BaseValue {
+class BoolValue : public BaseValue {
  public:
-  BoolValueWithAtomic(const std::string& key, CheckFunc check_func_ptr, bool rewritable, std::atomic<bool>* value_ptr)
-      : BaseValue(key, check_func_ptr, rewritable), value_(value_ptr) {
-    assert(value_ != nullptr);
-  };
-
-  std::string Value() const override { return value_->load() ? "yes" : "no"; };
-
- private:
-  Status SetValue(const std::string& value) override;
-  std::atomic<bool>* value_ = nullptr;
-};
-
-class BoolValueWithoutAtomic : public BaseValue {
- public:
-  BoolValueWithoutAtomic(const std::string& key, CheckFunc check_func_ptr, bool rewritable, bool* value_ptr)
+  BoolValue(const std::string& key, CheckFunc check_func_ptr, bool rewritable, bool* value_ptr)
       : BaseValue(key, check_func_ptr, rewritable), value_(value_ptr) {
     assert(value_ != nullptr);
   };
@@ -411,19 +359,6 @@ class PConfig {
   // Some functions and variables set up for internal work.
 
   /*------------------------
-   * AddString (const std::string& key, bool rewritable, * std::vector<AtomicString*> values_ptr_vector)
-   * Introduce a new string key-value pair into the
-   * configuration data layer.
-   * A key may correspond to multiple values, so we use std::vector
-   * to store the data.
-   * rewritable represents whether to overwrite existing settings
-   * when a key-value pair is duplicated.
-   */
-  inline void AddStringWithAtomic(const std::string& key, bool rewritable, std::vector<AtomicString*> values_ptr_vector) {
-    config_map_.emplace(key, std::make_unique<StringValueWithAtomic>(key, nullptr, rewritable, values_ptr_vector));
-  }
-
-  /*------------------------
    * AddString (const std::string& key, bool rewritable, * std::vector<std::string*> values_ptr_vector)
    * Introduce a new string key-value pair into the
    * configuration data layer.
@@ -432,22 +367,8 @@ class PConfig {
    * rewritable represents whether to overwrite existing settings
    * when a key-value pair is duplicated.
    */
-  inline void AddStringWithoutAtomic(const std::string& key, bool rewritable, std::vector<std::string*> values_ptr_vector) {
-    config_map_.emplace(key, std::make_unique<StringValueWithoutAtomic>(key, nullptr, rewritable, values_ptr_vector));
-  }
-
-  /*------------------------
-   * AddStringWithFunc (const std::string& key, const CheckFunc& checkfunc, bool rewritable,
-                               std::vector<AtomicString*> values_ptr_vector)
-   * Introduce a new string key-value pair into the
-   * configuration data layer, with a check function.
-   * key, value, rewritable is the same as AddString.
-   * The checkfunc is coded by the user, validate the string as needed,
-   * and the return value should refer to rocksdb::Status.
-   */
-  inline void AddStringWithFunc(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
-                                std::vector<AtomicString*> values_ptr_vector) {
-    config_map_.emplace(key, std::make_unique<StringValueWithAtomic>(key, checkfunc, rewritable, values_ptr_vector));
+  inline void AddString(const std::string& key, bool rewritable, std::vector<std::string*> values_ptr_vector) {
+    config_map_.emplace(key, std::make_unique<StringValue>(key, nullptr, rewritable, values_ptr_vector));
   }
 
   /*------------------------
@@ -461,26 +382,11 @@ class PConfig {
    */
   inline void AddStringWithFunc(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
                                 std::vector<std::string*> values_ptr_vector) {
-    config_map_.emplace(key, std::make_unique<StringValueWithoutAtomic>(key, checkfunc, rewritable, values_ptr_vector));
+    config_map_.emplace(key, std::make_unique<StringValue>(key, checkfunc, rewritable, values_ptr_vector));
   }
 
   /*------------------------
-   * AddBoolWithAtomic (const std::string& key, const CheckFunc& checkfunc, bool rewritable,
-                      std::atomic<bool>* value_ptr)
-   * Introduce a new string key-value pair into the
-   * configuration data layer, with a check function.
-   * key is a string and value_ptr is a point to a bool value.
-   * checkfunc is the same as AddStrinWithFunc.
-   * rewritable represents whether to overwrite existing settings
-   * when a key-value pair is duplicated.
-   */
-  inline void AddBoolWithAtomic(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
-                      std::atomic<bool>* value_ptr) {
-    config_map_.emplace(key, std::make_unique<BoolValueWithAtomic>(key, checkfunc, rewritable, value_ptr));
-  }
-
-  /*------------------------
-   * AddBoolWithoutAtomic (const std::string& key, const CheckFunc& checkfunc, bool rewritable,
+   * AddBool (const std::string& key, const CheckFunc& checkfunc, bool rewritable,
                          bool* value_ptr)
    * Introduce a new string key-value pair into the
    * configuration data layer, with a check function.
@@ -489,13 +395,14 @@ class PConfig {
    * rewritable represents whether to overwrite existing settings
    * when a key-value pair is duplicated.
    */
-  inline void AddBoolWithoutAtomic(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
+  inline void AddBool(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
                       bool* value_ptr) {
-    config_map_.emplace(key, std::make_unique<BoolValueWithoutAtomic>(key, checkfunc, rewritable, value_ptr));
+    config_map_.emplace(key, std::make_unique<BoolValue>(key, checkfunc, rewritable, value_ptr));
   }
 
+
   /*------------------------
-   * AddNumber (const std::string& key, bool rewritable, std::atomic<T>* value_ptr)
+   * AddNumber (const std::string& key, bool rewritable, T* value_ptr)
    * Introduce a new string key-value pair into the
    * configuration data layer, with a check function.
    * key is a string and value_ptr is a set of numbers.
@@ -503,37 +410,8 @@ class PConfig {
    * when a key-value pair is duplicated.
    */
   template <typename T>
-  inline void AddNumberWithAtomic(const std::string& key, bool rewritable, std::atomic<T>* value_ptr) {
-    config_map_.emplace(key, std::make_unique<NumberValueWithAtomic<T>>(key, nullptr, rewritable, value_ptr));
-  }
-
-  /*------------------------
-   * AddNumberWithoutAtomic (const std::string& key, bool rewritable, T* value_ptr)
-   * Introduce a new string key-value pair into the
-   * configuration data layer, with a check function.
-   * key is a string and value_ptr is a set of numbers.
-   * rewritable represents whether to overwrite existing settings
-   * when a key-value pair is duplicated.
-   */
-  template <typename T>
-  inline void AddNumberWithoutAtomic(const std::string& key, bool rewritable, T* value_ptr) {
-    config_map_.emplace(key, std::make_unique<NumberValueWithoutAtomic<T>>(key, nullptr, rewritable, value_ptr));
-  }
-
-  /*------------------------
-   * AddNumberWithLimit (const std::string& key, bool rewritable, std::atomic<T>* value_ptr, T min, T max)
-   * Introduce a new string key-value pair into the
-   * configuration data layer, with a check function.
-   * key is a string and value_ptr is a set of numbers.
-   * rewritable represents whether to overwrite existing settings
-   * when a key-value pair is duplicated.
-   * Please note that this function does not have a checkfunc function,
-   * as we have replaced it with the upper and lower limits
-   * of the numbers passed in.
-   */
-  template <typename T>
-  inline void AddNumberWithLimitAndAtomic(const std::string& key, bool rewritable, std::atomic<T>* value_ptr, T min, T max) {
-    config_map_.emplace(key, std::make_unique<NumberValueWithAtomic<T>>(key, nullptr, rewritable, value_ptr, min, max));
+  inline void AddNumber(const std::string& key, bool rewritable, T* value_ptr) {
+    config_map_.emplace(key, std::make_unique<NumberValue<T>>(key, nullptr, rewritable, value_ptr));
   }
 
   /*------------------------
@@ -548,8 +426,8 @@ class PConfig {
    * of the numbers passed in.
    */
   template <typename T>
-  inline void AddNumberWithLimitAndWithoutAtomic(const std::string& key, bool rewritable, T* value_ptr, T min, T max) {
-    config_map_.emplace(key, std::make_unique<NumberValueWithoutAtomic<T>>(key, nullptr, rewritable, value_ptr, min, max));
+  inline void AddNumberWithLimit(const std::string& key, bool rewritable, T* value_ptr, T min, T max) {
+    config_map_.emplace(key, std::make_unique<NumberValue<T>>(key, nullptr, rewritable, value_ptr, min, max));
   }
 
  private:
