@@ -201,12 +201,17 @@ bool KiwiDB::Init() {
   event_server_->SetRwSeparation(true);
 
   net::SocketAddr addr(g_config.ip.ToString(), g_config.port.load());
-  INFO("Add listen addr:{}, port:{}", g_config.ip.ToString(), g_config.port.load());
+  INFO("Add listen addr: {}, port: {}", g_config.ip.ToString(), g_config.port.load());
   event_server_->AddListenAddr(addr);
+
+  net::SocketAddr addrIpv6("::1", 10000);
+  INFO("Add listen addr: {}, port: {}", addrIpv6.GetIP(), addrIpv6.GetPort());
+  event_server_->AddListenAddrIpv6(addrIpv6);
 
   event_server_->SetOnInit([](std::shared_ptr<PClient>* client) { *client = std::make_shared<PClient>(); });
 
   event_server_->SetOnCreate([](uint64_t connID, std::shared_ptr<PClient>& client, const net::SocketAddr& addr) {
+    INFO("SetOnCreate connID:{} fd:{} IP:{} port:{}", connID, client->GetConnId(), addr.GetIP(), addr.GetPort());
     client->SetSocketAddr(addr);
     client->OnConnect();
     ClientMap::getInstance().AddClient(client->GetUniqueID(), client);

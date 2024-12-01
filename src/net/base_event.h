@@ -44,8 +44,8 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
   const static int EVENT_ERROR;
   const static int EVENT_HUB;
 
-  BaseEvent(const std::shared_ptr<NetEvent> &listen, int8_t mode, int8_t type)
-      : listen_(listen), mode_(mode), type_(type){};
+  BaseEvent(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<NetEvent> &listenIpv6, int8_t mode, int8_t type)
+      : listen_(listen), listenIpv6_(listenIpv6), mode_(mode), type_(type){};
 
   virtual ~BaseEvent() = default;
 
@@ -114,6 +114,8 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
 
   // listening socket
   std::shared_ptr<NetEvent> listen_;
+
+  std::shared_ptr<NetEvent> listenIpv6_;
 
   // callback function when a new connection is created
   std::function<void(uint64_t, std::shared_ptr<Connection>)> onCreate_;

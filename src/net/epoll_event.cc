@@ -27,6 +27,10 @@ bool EpollEvent::Init() {
   }
   if (mode_ & EVENT_MODE_READ) {  // Add the listen socket to epoll for read
     AddEvent(listen_->Fd(), listen_->Fd(), EVENT_READ);
+    if (listenIpv6_) {
+      DEBUG("listenIpv6_ fd:{}", listenIpv6_->Fd());
+      AddEvent(listenIpv6_->Fd(), listenIpv6_->Fd(), EVENT_READ);
+    }
   }
   if (pipe(pipeFd_) == -1) {
     ERROR("pipe error errno:{}", errno);
@@ -39,7 +43,7 @@ bool EpollEvent::Init() {
 }
 
 void EpollEvent::AddEvent(uint64_t id, int fd, int mask) {
-  struct epoll_event ev {};
+  struct epoll_event ev{};
   ev.events = mask;
   ev.data.u64 = id;
   if (epoll_ctl(EvFd(), EPOLL_CTL_ADD, fd, &ev) == -1) {
@@ -58,7 +62,7 @@ void EpollEvent::EventPoll() {
 }
 
 void EpollEvent::AddWriteEvent(uint64_t id, int fd) {
-  struct epoll_event ev {};
+  struct epoll_event ev{};
   ev.events = EVENT_WRITE;
   ev.data.u64 = id;
   if (mode_ & EVENT_MODE_READ) {  // If it is a read multiplex, modify the event
@@ -75,7 +79,7 @@ void EpollEvent::AddWriteEvent(uint64_t id, int fd) {
 
 void EpollEvent::DelWriteEvent(uint64_t id, int fd) {
   if (mode_ & EVENT_MODE_READ) {  // If it is a read multiplex, modify the event to read
-    struct epoll_event ev {};
+    struct epoll_event ev{};
     ev.events = EVENT_READ;
     ev.data.u64 = id;
     if (epoll_ctl(EvFd(), EPOLL_CTL_MOD, fd, &ev) == -1) {
@@ -105,7 +109,8 @@ void EpollEvent::EventRead() {
       std::shared_ptr<Connection> conn;
       if (events[i].events & EVENT_READ) {
         // If the event is less than the listen socket, it is a new connection
-        if (events[i].data.u64 != listen_->Fd()) {
+        DEBUG("listen fd:{}; listenIpv6 fd:{};", listen_->Fd(), listenIpv6_->Fd());
+        if (events[i].data.u64 != listen_->Fd() && events[i].data.u64 != listenIpv6_->Fd()) {
           conn = getConn_(events[i].data.u64);
         }
         DoRead(events[i], conn);
@@ -123,6 +128,10 @@ void EpollEvent::EventRead() {
     }
     if (timer_) {
       timer_->OnTimer();
+    }
+    if (nfds < 0) {
+      ERROR("epoll_wait error errno:{}", errno);
+      continue;
     }
   }
 }
@@ -155,6 +164,18 @@ void EpollEvent::DoRead(const epoll_event &event, const std::shared_ptr<Connecti
       DoError(event, "accept error");
       return;
     }
+    // create new connection
+    // thread_manager.h: 148
+    onCreate_(connFd, newConn);
+  } else if (event.data.u64 == listenIpv6_->Fd()) {
+    auto newConn = std::make_shared<Connection>(nullptr);
+    auto connFd = listenIpv6_->OnReadable(newConn, nullptr);
+    if (connFd < 0) {
+      DoError(event, "accept error");
+      return;
+    }
+    // create new connection
+    // thread_manager.h: 148
     onCreate_(connFd, newConn);
   } else if (conn) {
     std::string readBuff;

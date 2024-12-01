@@ -41,6 +41,8 @@ class EventServer final {
 
   inline void AddListenAddr(const SocketAddr &addr) { listenAddrs_ = addr; }
 
+  inline void AddListenAddrIpv6(const SocketAddr &addr) { listenAddrsIpv6_ = addr; }
+
   inline void SetRwSeparation(bool separation = true) { rwSeparation_ = separation; }
 
   void InitTimer(int64_t interval) { timer_ = std::make_shared<Timer>(interval); }
@@ -89,6 +91,8 @@ class EventServer final {
 
   SocketAddr listenAddrs_;  // The address to listen on
 
+  SocketAddr listenAddrsIpv6_;  // The address to listen on
+
   std::atomic<bool> running_ = true;  // Whether the server is running
 
   bool rwSeparation_ = true;  // Whether to separate read and write
@@ -104,7 +108,8 @@ class EventServer final {
 };
 
 template <typename T>
-requires HasSetFdFunction<T> std::pair<bool, std::string> EventServer<T>::StartServer(int64_t interval) {
+requires HasSetFdFunction<T>
+std::pair<bool, std::string> EventServer<T>::StartServer(int64_t interval) {
   if (threadNum_ <= 0) {
     return std::pair(false, "thread num must be greater than 0");
   }
@@ -143,7 +148,8 @@ requires HasSetFdFunction<T> std::pair<bool, std::string> EventServer<T>::StartS
 }
 
 template <typename T>
-requires HasSetFdFunction<T> std::pair<bool, std::string> EventServer<T>::StartClientServer() {
+requires HasSetFdFunction<T>
+std::pair<bool, std::string> EventServer<T>::StartClientServer() {
   if (threadNum_ <= 0) {
     return std::pair(false, "thread num must be greater than 0");
   }
@@ -245,11 +251,21 @@ template <typename T>
 requires HasSetFdFunction<T>
 int EventServer<T>::StartThreadManager(bool serverMode) {
   std::shared_ptr<ListenSocket> listen(ListenSocket::CreateTCPListen());
+  std::shared_ptr<ListenSocket> listenIpv6(ListenSocket::CreateTCPListen());
+
   if (serverMode) {
     listen->SetListenAddr(listenAddrs_);
 
     if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
       return ret;
+    }
+
+    if (listenAddrsIpv6_.IsIpv6()) {
+      listenIpv6->SetListenAddr(listenAddrsIpv6_);
+
+      if (auto ret = listenIpv6->Init() != static_cast<int>(NetListen::OK)) {
+        return ret;
+      }
     }
   }
 
@@ -261,10 +277,18 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
       if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
         return ret;
       }
+
+      if (listenAddrsIpv6_.IsIpv6()) {
+        listenIpv6.reset(ListenSocket::CreateTCPListen());
+        listenIpv6->SetListenAddr(listenAddrsIpv6_);
+        if (auto ret = listenIpv6->Init() != static_cast<int>(NetListen::OK)) {
+          return ret;
+        }
+      }
     }
 
     // timer only works in the first thread
-    bool ret = i == 0 ? thread->Start(listen, timer_) : thread->Start(listen, nullptr);
+    bool ret = i == 0 ? thread->Start(listen, listenIpv6, timer_) : thread->Start(listen, listenIpv6, nullptr);
     if (!ret) {
       return -1;
     }
