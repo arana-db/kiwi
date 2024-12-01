@@ -10,6 +10,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <functional>
+#include <memory>
 #include <string>
 
 #include "base_socket.h"
@@ -18,6 +19,7 @@
 #include "io_thread.h"
 #include "listen_socket.h"
 #include "thread_manager.h"
+#include "listen_sockets_mananger.h"
 
 namespace net {
 
@@ -250,45 +252,31 @@ void EventServer<T>::TCPConnect(const SocketAddr &addr, const std::function<void
 template <typename T>
 requires HasSetFdFunction<T>
 int EventServer<T>::StartThreadManager(bool serverMode) {
-  std::shared_ptr<ListenSocket> listen(ListenSocket::CreateTCPListen());
-  std::shared_ptr<ListenSocket> listenIpv6(ListenSocket::CreateTCPListen());
+  bool isIpv6 = listenAddrsIpv6_.IsIpv6();
+  auto listenSocketsManager = std::make_shared<ListenSocketsManager>(isIpv6);
 
   if (serverMode) {
-    listen->SetListenAddr(listenAddrs_);
+    listenSocketsManager->SetListenAddr(listenAddrs_);
+    listenSocketsManager->SetListenAddrIpv6(listenAddrsIpv6_);
 
-    if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
+    if (auto ret = listenSocketsManager->Init() != static_cast<int>(NetListen::OK)) {
       return ret;
-    }
-
-    if (listenAddrsIpv6_.IsIpv6()) {
-      listenIpv6->SetListenAddr(listenAddrsIpv6_);
-
-      if (auto ret = listenIpv6->Init() != static_cast<int>(NetListen::OK)) {
-        return ret;
-      }
     }
   }
 
   int i = 0;
   for (const auto &thread : threadsManager_) {
     if (i > 0 && ListenSocket::REUSE_PORT && serverMode) {
-      listen.reset(ListenSocket::CreateTCPListen());
-      listen->SetListenAddr(listenAddrs_);
-      if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
+      listenSocketsManager->Reset();
+      listenSocketsManager->SetListenAddr(listenAddrs_);
+      listenSocketsManager->SetListenAddrIpv6(listenAddrsIpv6_);
+      if (auto ret = listenSocketsManager->Init() != static_cast<int>(NetListen::OK)) {
         return ret;
-      }
-
-      if (listenAddrsIpv6_.IsIpv6()) {
-        listenIpv6.reset(ListenSocket::CreateTCPListen());
-        listenIpv6->SetListenAddr(listenAddrsIpv6_);
-        if (auto ret = listenIpv6->Init() != static_cast<int>(NetListen::OK)) {
-          return ret;
-        }
       }
     }
 
     // timer only works in the first thread
-    bool ret = i == 0 ? thread->Start(listen, listenIpv6, timer_) : thread->Start(listen, listenIpv6, nullptr);
+    bool ret = i == 0 ? thread->Start(listenSocketsManager, timer_) : thread->Start(listenSocketsManager, nullptr);
     if (!ret) {
       return -1;
     }

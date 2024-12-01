@@ -16,6 +16,7 @@
 #include "callback_function.h"
 #include "config.h"
 #include "io_thread.h"
+#include "listen_sockets_mananger.h"
 
 #if defined(HAVE_EPOLL)
 
@@ -54,7 +55,7 @@ class ThreadManager {
   inline void SetOnClose(const OnClose<T> &func) { onClose_ = func; }
 
   // Start the thread and initialize the event
-  bool Start(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<NetEvent> &listenIpv6, const std::shared_ptr<Timer> &timer);
+  bool Start(const std::shared_ptr<ListenSocketsManager> &listenSocketsManager, const std::shared_ptr<Timer> &timer);
 
   // Stop the thread
   void Stop();
@@ -82,7 +83,8 @@ class ThreadManager {
 
  private:
   // Create read thread
-  bool CreateReadThread(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<NetEvent> &listenIpv6, const std::shared_ptr<Timer> &timer);
+  bool CreateReadThread(const std::shared_ptr<ListenSocketsManager> &listenSocketsManager,
+                        const std::shared_ptr<Timer> &timer);
 
   // Create write thread if rwSeparation_ is true
   bool CreateWriteThread();
@@ -121,8 +123,9 @@ ThreadManager<T>::~ThreadManager() {
 
 template <typename T>
 requires HasSetFdFunction<T>
-bool ThreadManager<T>::Start(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<NetEvent> &listenIpv6, const std::shared_ptr<Timer> &timer) {
-  if (!CreateReadThread(listen, listenIpv6, timer)) {
+bool ThreadManager<T>::Start(const std::shared_ptr<ListenSocketsManager> &listenSocketsManager,
+                             const std::shared_ptr<Timer> &timer) {
+  if (!CreateReadThread(listenSocketsManager, timer)) {
     return false;
   }
   if (rwSeparation_) {
@@ -272,7 +275,8 @@ void ThreadManager<T>::SendPacket(const T &conn, std::string &&msg) {
 
 template <typename T>
 requires HasSetFdFunction<T>
-bool ThreadManager<T>::CreateReadThread(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<NetEvent> &listenIpv6, const std::shared_ptr<Timer> &timer) {
+bool ThreadManager<T>::CreateReadThread(const std::shared_ptr<ListenSocketsManager> &listenSocketsManager,
+                                        const std::shared_ptr<Timer> &timer) {
   std::shared_ptr<BaseEvent> event;
   int8_t eventMode = BaseEvent::EVENT_MODE_READ;
   if (!rwSeparation_) {
@@ -280,9 +284,11 @@ bool ThreadManager<T>::CreateReadThread(const std::shared_ptr<NetEvent> &listen,
   }
 
 #if defined(HAVE_EPOLL)
-  event = std::make_shared<EpollEvent>(listen, listenIpv6, eventMode);
+  event = std::make_shared<EpollEvent>(listenSocketsManager->GetListenSocket(),
+                                       listenSocketsManager->GetListenSocketIpv6(), eventMode);
 #elif defined(HAVE_KQUEUE)
-  event = std::make_shared<KqueueEvent>(listen, listenIpv6, eventMode);
+  event = std::make_shared<KqueueEvent>(listenSocketsManager->GetListenSocket(),
+                                        listenSocketsManager->GetListenSocketIpv6(), eventMode);
 #endif
 
   event->AddTimer(timer);

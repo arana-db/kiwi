@@ -28,7 +28,6 @@ bool EpollEvent::Init() {
   if (mode_ & EVENT_MODE_READ) {  // Add the listen socket to epoll for read
     AddEvent(listen_->Fd(), listen_->Fd(), EVENT_READ);
     if (listenIpv6_) {
-      DEBUG("listenIpv6_ fd:{}", listenIpv6_->Fd());
       AddEvent(listenIpv6_->Fd(), listenIpv6_->Fd(), EVENT_READ);
     }
   }
@@ -109,7 +108,6 @@ void EpollEvent::EventRead() {
       std::shared_ptr<Connection> conn;
       if (events[i].events & EVENT_READ) {
         // If the event is less than the listen socket, it is a new connection
-        DEBUG("listen fd:{}; listenIpv6 fd:{};", listen_->Fd(), listenIpv6_->Fd());
         if (events[i].data.u64 != listen_->Fd() && events[i].data.u64 != listenIpv6_->Fd()) {
           conn = getConn_(events[i].data.u64);
         }

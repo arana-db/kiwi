@@ -207,7 +207,6 @@ class PClient : public std::enable_shared_from_this<PClient> {
   inline void SetThreadIndex(int8_t index) { net_thread_index_ = index; }
   inline int8_t GetThreadIndex() const { return net_thread_index_; }
   inline void SetSocketAddr(const net::SocketAddr& addr) { addr_ = addr; }
-  inline void SetSocketAddrIPv6(const net::SocketAddr& addr) { addr_ipv6_ = addr; }
 
   inline void SetArgv(std::vector<std::string>& argv) { argv_ = argv; }
 
@@ -261,7 +260,6 @@ class PClient : public std::enable_shared_from_this<PClient> {
   uint64_t net_id_ = 0;
   int8_t net_thread_index_ = 0;
   net::SocketAddr addr_;
-  net::SocketAddr addr_ipv6_;
 
   static thread_local PClient* s_current;
 

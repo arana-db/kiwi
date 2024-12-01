@@ -25,6 +25,9 @@ bool KqueueEvent::Init() {
   }
   if (mode_ & EVENT_MODE_READ) {
     AddEvent(0, listen_->Fd(), EVENT_READ);
+    if (listenIpv6_) {
+      AddEvent(listenIpv6_->Fd(), listenIpv6_->Fd(), EVENT_READ);
+    }
   }
   if (pipe(pipeFd_) == -1) {
     ERROR("pipe error:{}", errno);
@@ -106,7 +109,7 @@ void KqueueEvent::EventRead() {
       }
       std::shared_ptr<Connection> conn;
       if (events[i].filter == EVENT_READ) {
-        if (events[i].ident != listen_->Fd()) {
+        if (events[i].ident != listen_->Fd() && events[i].data.u64 != listenIpv6_->Fd()) {
 #  ifdef HAVE_64BIT
           auto connId = reinterpret_cast<uint64_t>(events[i].udata);
 #  else
@@ -168,6 +171,10 @@ void KqueueEvent::DoRead(const struct kevent &event, const std::shared_ptr<Conne
   if (event.ident == listen_->Fd()) {
     auto newConn = std::make_shared<Connection>(nullptr);
     auto connFd = listen_->OnReadable(newConn, nullptr);
+    onCreate_(connFd, newConn);
+  } else if (event.ident == listenIpv6_->Fd()) {
+    auto newConn = std::make_shared<Connection>(nullptr);
+    auto connFd = listenIpv6_->OnReadable(newConn, nullptr);
     onCreate_(connFd, newConn);
   } else if (conn) {
     std::string readBuff;
