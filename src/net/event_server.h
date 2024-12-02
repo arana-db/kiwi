@@ -7,6 +7,8 @@
 
 #pragma once
 
+#include <sys/socket.h>
+#include <algorithm>
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -19,7 +21,6 @@
 #include "io_thread.h"
 #include "listen_socket.h"
 #include "thread_manager.h"
-#include "listen_sockets_mananger.h"
 
 namespace net {
 
@@ -41,9 +42,7 @@ class EventServer final {
 
   inline void SetOnClose(OnClose<T> &&func) { onClose_ = std::move(func); }
 
-  inline void AddListenAddr(const SocketAddr &addr) { listenAddrs_ = addr; }
-
-  inline void AddListenAddrIpv6(const SocketAddr &addr) { listenAddrsIpv6_ = addr; }
+  inline void AddListenAddr(const SocketAddr &addr) { listenAddrs_.push_back(addr); }
 
   inline void SetRwSeparation(bool separation = true) { rwSeparation_ = separation; }
 
@@ -91,9 +90,7 @@ class EventServer final {
 
   OnClose<T> onClose_;  // The callback function when the connection is closed
 
-  SocketAddr listenAddrs_;  // The address to listen on
-
-  SocketAddr listenAddrsIpv6_;  // The address to listen on
+  std::vector<SocketAddr> listenAddrs_;  // The address to listen on
 
   std::atomic<bool> running_ = true;  // Whether the server is running
 
@@ -252,31 +249,37 @@ void EventServer<T>::TCPConnect(const SocketAddr &addr, const std::function<void
 template <typename T>
 requires HasSetFdFunction<T>
 int EventServer<T>::StartThreadManager(bool serverMode) {
-  bool isIpv6 = listenAddrsIpv6_.IsIpv6();
-  auto listenSocketsManager = std::make_shared<ListenSocketsManager>(isIpv6);
+  std::vector<std::shared_ptr<ListenSocket>> listenSockets;
 
   if (serverMode) {
-    listenSocketsManager->SetListenAddr(listenAddrs_);
-    listenSocketsManager->SetListenAddrIpv6(listenAddrsIpv6_);
+    for (auto &listenAddr : listenAddrs_) {
+      std::shared_ptr<ListenSocket> listen(ListenSocket::CreateTCPListen());
+      listen->SetListenAddr(listenAddr);
+      listenSockets.push_back(listen);
+    }
 
-    if (auto ret = listenSocketsManager->Init() != static_cast<int>(NetListen::OK)) {
-      return ret;
+    for (auto &listen : listenSockets) {
+      if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
+        return ret;
+      }
     }
   }
 
   int i = 0;
   for (const auto &thread : threadsManager_) {
     if (i > 0 && ListenSocket::REUSE_PORT && serverMode) {
-      listenSocketsManager->Reset();
-      listenSocketsManager->SetListenAddr(listenAddrs_);
-      listenSocketsManager->SetListenAddrIpv6(listenAddrsIpv6_);
-      if (auto ret = listenSocketsManager->Init() != static_cast<int>(NetListen::OK)) {
-        return ret;
+      for (auto &listen : listenSockets) {
+        auto listenAddr = listen->GetListenAddr();
+        listen.reset(ListenSocket::CreateTCPListen());
+        listen->SetListenAddr(listenAddr);
+        if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
+          return ret;
+        }
       }
     }
 
     // timer only works in the first thread
-    bool ret = i == 0 ? thread->Start(listenSocketsManager, timer_) : thread->Start(listenSocketsManager, nullptr);
+    bool ret = i == 0 ? thread->Start(listenSockets, timer_) : thread->Start(listenSockets, nullptr);
     if (!ret) {
       return -1;
     }

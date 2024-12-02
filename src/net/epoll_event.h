@@ -8,6 +8,7 @@
 #pragma once
 
 #include "config.h"
+#include "listen_socket.h"
 
 #ifdef HAVE_EPOLL
 
@@ -22,8 +23,11 @@ namespace net {
 
 class EpollEvent : public BaseEvent {
  public:
-  explicit EpollEvent(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<NetEvent> &listenIpv6, int8_t mode)
-      : BaseEvent(listen, listenIpv6, mode, BaseEvent::EVENT_TYPE_EPOLL){};
+  explicit EpollEvent(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, int8_t mode)
+      : BaseEvent(listenSockets, mode, BaseEvent::EVENT_TYPE_EPOLL) {};
+
+  EpollEvent(std::nullptr_t, int8_t mode)
+      : EpollEvent(std::vector<std::shared_ptr<ListenSocket>>(), mode) {}
 
   ~EpollEvent() override { Close(); }
 

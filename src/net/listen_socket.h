@@ -27,6 +27,8 @@ class ListenSocket : public BaseSocket {
 
   inline void SetListenAddr(const SocketAddr &addr) { addr_ = addr; }
 
+  inline SocketAddr GetListenAddr() const { return addr_; }
+
   // Accept new connection and create new connection object
   // when the connection is established, the OnCreate function is called
   int OnReadable(const std::shared_ptr<Connection> &conn, std::string *readBuff) override;

@@ -206,7 +206,7 @@ bool KiwiDB::Init() {
 
   net::SocketAddr addrIpv6("::1", 10000);
   INFO("Add listen addr: {}, port: {}", addrIpv6.GetIP(), addrIpv6.GetPort());
-  event_server_->AddListenAddrIpv6(addrIpv6);
+  event_server_->AddListenAddr(addrIpv6);
 
   event_server_->SetOnInit([](std::shared_ptr<PClient>* client) { *client = std::make_shared<PClient>(); });
 

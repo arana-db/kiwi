@@ -17,6 +17,7 @@
 #include <utility>
 
 #include "callback_function.h"
+#include "listen_socket.h"
 #include "net_event.h"
 #include "timer.h"
 
@@ -44,8 +45,8 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
   const static int EVENT_ERROR;
   const static int EVENT_HUB;
 
-  BaseEvent(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<NetEvent> &listenIpv6, int8_t mode, int8_t type)
-      : listen_(listen), listenIpv6_(listenIpv6), mode_(mode), type_(type){};
+  BaseEvent(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, int8_t mode, int8_t type)
+      : listenSockets_(listenSockets),  mode_(mode), type_(type){};
 
   virtual ~BaseEvent() = default;
 
@@ -96,6 +97,15 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
 
   inline int8_t Type() const { return type_; }
 
+  inline std::shared_ptr<net::ListenSocket>  getListenSocket(int fd) {
+    for (const auto &listen : listenSockets_) {
+      if (fd == listen->Fd()) {
+        return listen;
+      }
+    }
+    return nullptr;
+  }
+
  protected:
   int evFd_ = 0;  // event fd
   std::atomic<bool> running_ = true;
@@ -112,10 +122,8 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
 
   std::shared_ptr<Timer> timer_;
 
-  // listening socket
-  std::shared_ptr<NetEvent> listen_;
-
-  std::shared_ptr<NetEvent> listenIpv6_;
+  // listening sockets
+  std::vector<std::shared_ptr<ListenSocket>> listenSockets_;
 
   // callback function when a new connection is created
   std::function<void(uint64_t, std::shared_ptr<Connection>)> onCreate_;

@@ -26,9 +26,8 @@ bool EpollEvent::Init() {
     return false;
   }
   if (mode_ & EVENT_MODE_READ) {  // Add the listen socket to epoll for read
-    AddEvent(listen_->Fd(), listen_->Fd(), EVENT_READ);
-    if (listenIpv6_) {
-      AddEvent(listenIpv6_->Fd(), listenIpv6_->Fd(), EVENT_READ);
+    for (auto &listenSocket : listenSockets_) {
+      AddEvent(listenSocket->Fd(), listenSocket->Fd(), EVENT_READ);
     }
   }
   if (pipe(pipeFd_) == -1) {
@@ -108,7 +107,8 @@ void EpollEvent::EventRead() {
       std::shared_ptr<Connection> conn;
       if (events[i].events & EVENT_READ) {
         // If the event is less than the listen socket, it is a new connection
-        if (events[i].data.u64 != listen_->Fd() && events[i].data.u64 != listenIpv6_->Fd()) {
+        // If getListenSocket is nullptr, it means the event is not a listen socket
+        if (getListenSocket(events[i].data.u64) == nullptr) {
           conn = getConn_(events[i].data.u64);
         }
         DoRead(events[i], conn);
@@ -155,25 +155,14 @@ void EpollEvent::EventWrite() {
 }
 
 void EpollEvent::DoRead(const epoll_event &event, const std::shared_ptr<Connection> &conn) {
-  if (event.data.u64 == listen_->Fd()) {
+  auto listenSocket = getListenSocket(event.data.u64);
+  if (listenSocket != nullptr) {
     auto newConn = std::make_shared<Connection>(nullptr);
-    auto connFd = listen_->OnReadable(newConn, nullptr);
+    auto connFd = listenSocket->OnReadable(newConn, nullptr);
     if (connFd < 0) {
       DoError(event, "accept error");
       return;
     }
-    // create new connection
-    // thread_manager.h: 148
-    onCreate_(connFd, newConn);
-  } else if (event.data.u64 == listenIpv6_->Fd()) {
-    auto newConn = std::make_shared<Connection>(nullptr);
-    auto connFd = listenIpv6_->OnReadable(newConn, nullptr);
-    if (connFd < 0) {
-      DoError(event, "accept error");
-      return;
-    }
-    // create new connection
-    // thread_manager.h: 148
     onCreate_(connFd, newConn);
   } else if (conn) {
     std::string readBuff;
