@@ -26,9 +26,6 @@ class EpollEvent : public BaseEvent {
   explicit EpollEvent(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, int8_t mode)
       : BaseEvent(listenSockets, mode, BaseEvent::EVENT_TYPE_EPOLL) {};
 
-  EpollEvent(std::nullptr_t, int8_t mode)
-      : EpollEvent(std::vector<std::shared_ptr<ListenSocket>>(), mode) {}
-
   ~EpollEvent() override { Close(); }
 
   // Initialize the epoll event

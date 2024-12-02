@@ -19,7 +19,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
-#include <thread>
 
 #include "client.h"
 #include "client_map.h"
@@ -211,7 +210,6 @@ bool KiwiDB::Init() {
   event_server_->SetOnInit([](std::shared_ptr<PClient>* client) { *client = std::make_shared<PClient>(); });
 
   event_server_->SetOnCreate([](uint64_t connID, std::shared_ptr<PClient>& client, const net::SocketAddr& addr) {
-    INFO("SetOnCreate connID:{} fd:{} IP:{} port:{}", connID, client->GetConnId(), addr.GetIP(), addr.GetPort());
     client->SetSocketAddr(addr);
     client->OnConnect();
     ClientMap::getInstance().AddClient(client->GetUniqueID(), client);

@@ -23,7 +23,7 @@ bool ClientSocket::Connect() {
   SetRcvBuf();
   SetSndBuf();
 
-  int ret = connect(Fd(), addr_.GetAddr(), addr_.GetAddrLen());
+  auto ret = connect(Fd(), addr_.GetAddr(), addr_.GetAddrLen());
   if (0 != ret) {
     if (EINPROGRESS == errno) {
       return true;

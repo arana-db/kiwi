@@ -315,9 +315,9 @@ bool ThreadManager<T>::CreateWriteThread() {
   std::shared_ptr<BaseEvent> event;
 
 #if defined(HAVE_EPOLL)
-  event = std::make_shared<EpollEvent>(nullptr, BaseEvent::EVENT_MODE_WRITE);
+  event = std::make_shared<EpollEvent>(std::vector<std::shared_ptr<ListenSocket>>(), BaseEvent::EVENT_MODE_WRITE);
 #elif defined(HAVE_KQUEUE)
-  event = std::make_shared<KqueueEvent>(nullptr, BaseEvent::EVENT_MODE_WRITE);
+  event = std::make_shared<KqueueEvent>(std::vector<std::shared_ptr<ListenSocket>>(), BaseEvent::EVENT_MODE_WRITE);
 #endif
 
   event->SetOnClose([this](uint64_t connId, std::string &&msg) { OnNetEventClose(connId, std::move(msg)); });

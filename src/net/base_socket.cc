@@ -100,7 +100,6 @@ bool BaseSocket::SetDisableIpv6Only() {
     WARN("SetIpv6Only fd:{} error:{}", Fd(), errno);
     return false;
   }
-  DEBUG("SetIpv6Only fd:{} success", Fd());
   return true;
 }
 
