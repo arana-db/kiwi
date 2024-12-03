@@ -7,7 +7,6 @@
   Responsible for managing the runtime configuration information of kiwi.
  */
 
-#include <iostream>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -149,8 +148,6 @@ bool PConfig::LoadFromFile(const std::string& file_name) {
   if (!parser_.Load(file_name.c_str())) {
     return false;
   }
-
-  std::cout << "------------[Load ok]--------------" << std::endl;
 
   // During the initialization phase, so there is no need to hold a lock.
   for (auto& [key, value] : parser_.GetMap()) {

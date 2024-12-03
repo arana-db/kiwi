@@ -210,12 +210,8 @@ bool KiwiDB::Init() {
 
   event_server_->SetRwSeparation(true);
 
-  DEBUG("g_config.ip: {}", g_config.ip.ToString());
-
   auto ip_list = ParseIp(g_config.ip.ToString());
-
   for (const auto& ip : ip_list) {
-    DEBUG("ip: {}", ip);
     net::SocketAddr addr(ip, g_config.port.load());
     INFO("Add listen addr: {}, port: {}", ip, g_config.port.load());
     event_server_->AddListenAddr(addr);
