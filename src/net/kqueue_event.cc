@@ -24,9 +24,8 @@ bool KqueueEvent::Init() {
     return false;
   }
   if (mode_ & EVENT_MODE_READ) {
-    AddEvent(0, listen_->Fd(), EVENT_READ);
-    if (listenIpv6_) {
-      AddEvent(listenIpv6_->Fd(), listenIpv6_->Fd(), EVENT_READ);
+    for (auto &listenSocket : listenSockets_) {
+      AddEvent(listenSocket->Fd(), listenSocket->Fd(), EVENT_READ);
     }
   }
   if (pipe(pipeFd_) == -1) {
@@ -92,7 +91,7 @@ void KqueueEvent::EventPoll() {
 void KqueueEvent::EventRead() {
   struct kevent events[eventsSize];
   struct timespec *pTimeout = nullptr;
-  struct timespec timeout {};
+  struct timespec timeout{};
   if (timer_) {
     pTimeout = &timeout;
     int waitInterval = static_cast<int>(timer_->Interval());
@@ -109,7 +108,7 @@ void KqueueEvent::EventRead() {
       }
       std::shared_ptr<Connection> conn;
       if (events[i].filter == EVENT_READ) {
-        if (events[i].ident != listen_->Fd() && events[i].data.u64 != listenIpv6_->Fd()) {
+        if (getListenSocket(events[i].data.u64) == nullptr) {
 #  ifdef HAVE_64BIT
           auto connId = reinterpret_cast<uint64_t>(events[i].udata);
 #  else
@@ -168,13 +167,10 @@ void KqueueEvent::EventWrite() {
 }
 
 void KqueueEvent::DoRead(const struct kevent &event, const std::shared_ptr<Connection> &conn) {
-  if (event.ident == listen_->Fd()) {
+  auto listenSocket = getListenSocket(event.data.u64);
+  if (listenSocket != nullptr) {
     auto newConn = std::make_shared<Connection>(nullptr);
-    auto connFd = listen_->OnReadable(newConn, nullptr);
-    onCreate_(connFd, newConn);
-  } else if (event.ident == listenIpv6_->Fd()) {
-    auto newConn = std::make_shared<Connection>(nullptr);
-    auto connFd = listenIpv6_->OnReadable(newConn, nullptr);
+    auto connFd = listenSocket->OnReadable(newConn, nullptr);
     onCreate_(connFd, newConn);
   } else if (conn) {
     std::string readBuff;

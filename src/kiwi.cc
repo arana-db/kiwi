@@ -19,6 +19,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
+#include <thread>
 
 #include "client.h"
 #include "client_map.h"
