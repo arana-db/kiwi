@@ -15,10 +15,10 @@
 namespace net {
 
 int BaseSocket::CreateTCPSocket(const SocketAddr &addr) {
-  if (addr.IsIpv4()) {
-    return ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  } else {
+  if (addr.IsIpv6()) {
     return ::socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+  } else {
+    return ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   }
 }
 

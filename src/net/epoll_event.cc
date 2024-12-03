@@ -127,10 +127,6 @@ void EpollEvent::EventRead() {
     if (timer_) {
       timer_->OnTimer();
     }
-    if (nfds < 0) {
-      ERROR("epoll_wait error errno:{}", errno);
-      continue;
-    }
   }
 }
 

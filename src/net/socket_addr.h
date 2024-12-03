@@ -102,8 +102,7 @@ struct SocketAddr {
     return 0;
   }
 
-  // Valid return true, invalid return false
-  bool IsValid() const { return addr_.addr4_.sin_family != 0 || addr_.addr6_.sin6_family != 0; }
+  bool IsValid() const { return IsIpv4() || IsIpv6(); }
 
   bool IsIpv6() const { return addr_.addr6_.sin6_family == AF_INET6; }
 
