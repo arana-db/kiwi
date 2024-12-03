@@ -40,6 +40,7 @@ class KiwiDB final {
   ~KiwiDB() = default;
 
   bool ParseArgs(int ac, char* av[]);
+  std::vector<std::string> ParseIp(const std::string& ip);
   const PString& GetConfigName() const { return cfg_file_; }
 
   bool Init();

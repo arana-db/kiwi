@@ -8,6 +8,7 @@
  */
 
 #include "config_parser.h"
+#include <iostream>
 #include <vector>
 #include "memory_file.h"
 
@@ -61,6 +62,7 @@ bool ConfigParser::Load(const char* FileName) {
         bReadKey = true;
 
         if (!key.empty()) {
+          std::cout << "key: " << key << " value: " << value << std::endl;
           data_[key].push_back(value);
 
           key.clear();

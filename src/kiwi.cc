@@ -152,6 +152,16 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
   return true;
 }
 
+std::vector<std::string> KiwiDB::ParseIp(const std::string& ips) {
+  std::vector<std::string> ip_list;
+  std::string ip;
+  std::istringstream iss(ips);
+  while (std::getline(iss, ip, ',')) {
+    ip_list.push_back(ip);
+  }
+  return ip_list;
+}
+
 void KiwiDB::OnNewConnection(uint64_t connId, std::shared_ptr<kiwi::PClient>& client, const net::SocketAddr& addr) {
   INFO("New connection from {}:{}", addr.GetIP(), addr.GetPort());
   client->SetSocketAddr(addr);
@@ -200,13 +210,16 @@ bool KiwiDB::Init() {
 
   event_server_->SetRwSeparation(true);
 
-  net::SocketAddr addr(g_config.ip.ToString(), g_config.port.load());
-  INFO("Add listen addr: {}, port: {}", g_config.ip.ToString(), g_config.port.load());
-  event_server_->AddListenAddr(addr);
+  DEBUG("g_config.ip: {}", g_config.ip.ToString());
 
-  net::SocketAddr addrIpv6("::1", 10000);
-  INFO("Add listen addr: {}, port: {}", addrIpv6.GetIP(), addrIpv6.GetPort());
-  event_server_->AddListenAddr(addrIpv6);
+  auto ip_list = ParseIp(g_config.ip.ToString());
+
+  for (const auto& ip : ip_list) {
+    DEBUG("ip: {}", ip);
+    net::SocketAddr addr(ip, g_config.port.load());
+    INFO("Add listen addr: {}, port: {}", ip, g_config.port.load());
+    event_server_->AddListenAddr(addr);
+  }
 
   event_server_->SetOnInit([](std::shared_ptr<PClient>* client) { *client = std::make_shared<PClient>(); });
 

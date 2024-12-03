@@ -126,7 +126,7 @@ butil::Status PRaft::Init(std::string& group_id, bool initial_conf_is_null) {
   assert(group_id.size() == RAFT_GROUPID_LEN);
   this->group_id_ = group_id;
 
-  // FIXME: g_config.ip is default to 127.0.0.0, which may not work in cluster.
+  // FIXME: g_config.ip is default to 127.0.0.1, which may not work in cluster.
   raw_addr_ = g_config.ip.ToString() + ":" + std::to_string(port);
   butil::ip_t ip;
   auto ret = butil::str2ip(g_config.ip.ToString().c_str(), &ip);
