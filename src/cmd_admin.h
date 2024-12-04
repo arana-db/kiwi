@@ -97,7 +97,7 @@ class CmdClient : public BaseCmdGroup {
   const static std::string CLIENT_LIST_S;
   const static std::string CLIENT_KILL_S;
 
-  void DoCmd(PClient* client) override{}
+  void DoCmd(PClient* client) override {}
 };
 
 class CmdClientGetname : public BaseCmd {
