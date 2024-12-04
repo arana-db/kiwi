@@ -41,6 +41,7 @@ struct SocketAddr {
     if (::inet_pton(AF_INET, ip.c_str(), &addr_.addr4_.sin_addr) == 1) {
       addr_.addr4_.sin_family = AF_INET;
       addr_.addr4_.sin_port = htons(hostPort);
+      return;
     }
     ::inet_pton(AF_INET6, ip.c_str(), &addr_.addr6_.sin6_addr);
     addr_.addr6_.sin6_family = AF_INET6;
