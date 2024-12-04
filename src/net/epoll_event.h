@@ -24,7 +24,7 @@ namespace net {
 class EpollEvent : public BaseEvent {
  public:
   explicit EpollEvent(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, int8_t mode)
-      : BaseEvent(listenSockets, mode, BaseEvent::EVENT_TYPE_EPOLL) {};
+      : BaseEvent(listenSockets, mode, BaseEvent::EVENT_TYPE_EPOLL){};
 
   ~EpollEvent() override { Close(); }
 

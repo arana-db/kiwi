@@ -30,7 +30,7 @@ class BaseSocket : public NetEvent {
 
   ~BaseSocket() override = default;
 
-  void OnError() override {};
+  void OnError() override{};
 
   void Close() override;
 
