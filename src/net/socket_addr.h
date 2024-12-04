@@ -41,10 +41,10 @@ struct SocketAddr {
     if (::inet_pton(AF_INET, ip.c_str(), &addr_.addr4_.sin_addr) == 1) {
       addr_.addr4_.sin_family = AF_INET;
       addr_.addr4_.sin_port = htons(hostPort);
-    } else if (::inet_pton(AF_INET6, ip.c_str(), &addr_.addr6_.sin6_addr) == 1) {
-      addr_.addr6_.sin6_family = AF_INET6;
-      addr_.addr6_.sin6_port = htons(hostPort);
     }
+    ::inet_pton(AF_INET6, ip.c_str(), &addr_.addr6_.sin6_addr);
+    addr_.addr6_.sin6_family = AF_INET6;
+    addr_.addr6_.sin6_port = htons(hostPort);
   }
 
   const sockaddr *GetAddr() const {
@@ -57,10 +57,8 @@ struct SocketAddr {
   socklen_t GetAddrLen() const {
     if (IsIpv4()) {
       return sizeof(addr_.addr4_);
-    } else if (IsIpv6()) {
-      return sizeof(addr_.addr6_);
     }
-    return 0;
+    return sizeof(addr_.addr6_);
   }
 
   std::string GetIP() const {
