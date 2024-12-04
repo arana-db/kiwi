@@ -50,10 +50,8 @@ struct SocketAddr {
   const sockaddr *GetAddr() const {
     if (IsIpv4()) {
       return reinterpret_cast<const sockaddr *>(&addr_.addr4_);
-    } else if (IsIpv6()) {
-      return reinterpret_cast<const sockaddr *>(&addr_.addr6_);
     }
-    return nullptr;
+    return reinterpret_cast<const sockaddr *>(&addr_.addr6_);
   }
 
   socklen_t GetAddrLen() const {
@@ -71,35 +69,26 @@ struct SocketAddr {
       if (::inet_ntop(AF_INET, &addr_.addr4_.sin_addr, ipv4_buf, sizeof(ipv4_buf))) {
         return ipv4_buf;
       }
-    } else if (IsIpv6()) {
-      char ipv6_buf[INET6_ADDRSTRLEN] = {0};
-      if (::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, ipv6_buf, sizeof(ipv6_buf))) {
-        return ipv6_buf;
-      }
     }
-    return {};
+    char ipv6_buf[INET6_ADDRSTRLEN] = {0};
+    ::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, ipv6_buf, sizeof(ipv6_buf));
+    return ipv6_buf;
   }
 
   std::string GetIP(char *buf, socklen_t size) const {
     if (IsIpv4()) {
-      if (::inet_ntop(AF_INET, &addr_.addr4_.sin_addr, buf, size)) {
-        return buf;
-      }
-    } else if (IsIpv6()) {
-      if (::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, buf, size)) {
-        return buf;
-      }
+      ::inet_ntop(AF_INET, &addr_.addr4_.sin_addr, buf, size);
+      return buf;
     }
-    return {};
+    ::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, buf, size);
+    return buf;
   }
 
   uint16_t GetPort() const {
     if (IsIpv4()) {
       return ntohs(addr_.addr4_.sin_port);
-    } else if (IsIpv6()) {
-      return ntohs(addr_.addr6_.sin6_port);
     }
-    return 0;
+    return ntohs(addr_.addr6_.sin6_port);
   }
 
   bool IsValid() const { return IsIpv4() || IsIpv6(); }

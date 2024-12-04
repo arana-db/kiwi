@@ -154,11 +154,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
 
 std::vector<std::string> KiwiDB::ParseIp(const std::string& ips) {
   std::vector<std::string> ip_list;
-  std::string ip;
-  std::istringstream iss(ips);
-  while (std::getline(iss, ip, ',')) {
-    ip_list.push_back(ip);
-  }
+  pstd::StringSplit(ips, ',', ip_list);
   return ip_list;
 }
 

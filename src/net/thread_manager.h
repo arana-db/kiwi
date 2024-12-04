@@ -55,7 +55,7 @@ class ThreadManager {
   inline void SetOnClose(const OnClose<T> &func) { onClose_ = func; }
 
   // Start the thread and initialize the event
-  bool Start(const std::vector<std::shared_ptr<ListenSocket>>& listenSockets, const std::shared_ptr<Timer> &timer);
+  bool Start(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, const std::shared_ptr<Timer> &timer);
 
   // Stop the thread
   void Stop();
@@ -83,7 +83,8 @@ class ThreadManager {
 
  private:
   // Create read thread
-  bool CreateReadThread(const std::vector<std::shared_ptr<ListenSocket>>& listenSockets, const std::shared_ptr<Timer> &timer);
+  bool CreateReadThread(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets,
+                        const std::shared_ptr<Timer> &timer);
 
   // Create write thread if rwSeparation_ is true
   bool CreateWriteThread();
@@ -122,7 +123,8 @@ ThreadManager<T>::~ThreadManager() {
 
 template <typename T>
 requires HasSetFdFunction<T>
-bool ThreadManager<T>::Start(const std::vector<std::shared_ptr<ListenSocket>>& listenSockets, const std::shared_ptr<Timer> &timer) {
+bool ThreadManager<T>::Start(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets,
+                             const std::shared_ptr<Timer> &timer) {
   if (!CreateReadThread(listenSockets, timer)) {
     return false;
   }
@@ -273,7 +275,8 @@ void ThreadManager<T>::SendPacket(const T &conn, std::string &&msg) {
 
 template <typename T>
 requires HasSetFdFunction<T>
-bool ThreadManager<T>::CreateReadThread(const std::vector<std::shared_ptr<ListenSocket>>& listenSockets, const std::shared_ptr<Timer> &timer) {
+bool ThreadManager<T>::CreateReadThread(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets,
+                                        const std::shared_ptr<Timer> &timer) {
   std::shared_ptr<BaseEvent> event;
   int8_t eventMode = BaseEvent::EVENT_MODE_READ;
   if (!rwSeparation_) {

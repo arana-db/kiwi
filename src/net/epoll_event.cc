@@ -41,7 +41,7 @@ bool EpollEvent::Init() {
 }
 
 void EpollEvent::AddEvent(uint64_t id, int fd, int mask) {
-  struct epoll_event ev{};
+  struct epoll_event ev {};
   ev.events = mask;
   ev.data.u64 = id;
   if (epoll_ctl(EvFd(), EPOLL_CTL_ADD, fd, &ev) == -1) {
@@ -60,7 +60,7 @@ void EpollEvent::EventPoll() {
 }
 
 void EpollEvent::AddWriteEvent(uint64_t id, int fd) {
-  struct epoll_event ev{};
+  struct epoll_event ev {};
   ev.events = EVENT_WRITE;
   ev.data.u64 = id;
   if (mode_ & EVENT_MODE_READ) {  // If it is a read multiplex, modify the event
@@ -77,7 +77,7 @@ void EpollEvent::AddWriteEvent(uint64_t id, int fd) {
 
 void EpollEvent::DelWriteEvent(uint64_t id, int fd) {
   if (mode_ & EVENT_MODE_READ) {  // If it is a read multiplex, modify the event to read
-    struct epoll_event ev{};
+    struct epoll_event ev {};
     ev.events = EVENT_READ;
     ev.data.u64 = id;
     if (epoll_ctl(EvFd(), EPOLL_CTL_MOD, fd, &ev) == -1) {
@@ -108,7 +108,7 @@ void EpollEvent::EventRead() {
       if (events[i].events & EVENT_READ) {
         // If the event is less than the listen socket, it is a new connection
         // If getListenSocket is nullptr, it means the event is not a listen socket
-        if (getListenSocket(events[i].data.u64) == nullptr) {
+        if (!getListenSocket(events[i].data.u64)) {
           conn = getConn_(events[i].data.u64);
         }
         DoRead(events[i], conn);
@@ -151,8 +151,7 @@ void EpollEvent::EventWrite() {
 }
 
 void EpollEvent::DoRead(const epoll_event &event, const std::shared_ptr<Connection> &conn) {
-  auto listenSocket = getListenSocket(event.data.u64);
-  if (listenSocket != nullptr) {
+  if (auto listenSocket = getListenSocket(event.data.u64); listenSocket) {
     auto newConn = std::make_shared<Connection>(nullptr);
     auto connFd = listenSocket->OnReadable(newConn, nullptr);
     if (connFd < 0) {

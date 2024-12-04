@@ -63,9 +63,7 @@ int StreamSocket::Read(std::string *readBuff) {
       }
     } else if (ret == 0) {
       return NE_CLOSE;
-    }
-
-    if (ret > 0) {
+    } else if (ret > 0) {
       readBuff->append(readBuffer, ret);
     }
     if (!NoBlock()) {

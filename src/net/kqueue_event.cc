@@ -91,7 +91,7 @@ void KqueueEvent::EventPoll() {
 void KqueueEvent::EventRead() {
   struct kevent events[eventsSize];
   struct timespec *pTimeout = nullptr;
-  struct timespec timeout{};
+  struct timespec timeout {};
   if (timer_) {
     pTimeout = &timeout;
     int waitInterval = static_cast<int>(timer_->Interval());
@@ -108,7 +108,7 @@ void KqueueEvent::EventRead() {
       }
       std::shared_ptr<Connection> conn;
       if (events[i].filter == EVENT_READ) {
-        if (getListenSocket(events[i].data.u64) == nullptr) {
+        if (!getListenSocket(events[i].data.u64)) {
 #  ifdef HAVE_64BIT
           auto connId = reinterpret_cast<uint64_t>(events[i].udata);
 #  else
@@ -167,8 +167,7 @@ void KqueueEvent::EventWrite() {
 }
 
 void KqueueEvent::DoRead(const struct kevent &event, const std::shared_ptr<Connection> &conn) {
-  auto listenSocket = getListenSocket(event.data.u64);
-  if (listenSocket != nullptr) {
+  if (auto listenSocket = getListenSocket(event.data.u64); listenSocket) {
     auto newConn = std::make_shared<Connection>(nullptr);
     auto connFd = listenSocket->OnReadable(newConn, nullptr);
     onCreate_(connFd, newConn);

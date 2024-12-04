@@ -42,7 +42,7 @@ class EventServer final {
 
   inline void SetOnClose(OnClose<T> &&func) { onClose_ = std::move(func); }
 
-  inline void AddListenAddr(const SocketAddr &addr) { listenAddrs_.push_back(addr); }
+  inline void AddListenAddr(const SocketAddr &addr) { listenAddrs_.emplace_back(addr); }
 
   inline void SetRwSeparation(bool separation = true) { rwSeparation_ = separation; }
 
