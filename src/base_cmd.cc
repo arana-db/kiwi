@@ -108,9 +108,8 @@ BaseCmd* BaseCmdGroup::GetSubCmd(const std::string& cmdName) {
 
 void BaseCmd::BlockThisClientToWaitLRPush(std::vector<std::string>& keys, int64_t expire_time, PClient* client,
                                           BlockedConnNode::Type type) {
-  std::unique_lock<std::shared_mutex> latch(g_kiwi->GetBlockMtx());
+  std::lock_guard<std::shared_mutex> map_lock(g_kiwi->GetBlockMtx());
   auto& key_to_conns = g_kiwi->GetMapFromKeyToConns();
-  std::shared_ptr<std::atomic<bool>> is_done = std::make_shared<std::atomic<bool>>(false);
   for (auto key : keys) {
     kiwi::BlockKey blpop_key{client->GetCurrentDB(), key};
 
@@ -120,38 +119,32 @@ void BaseCmd::BlockThisClientToWaitLRPush(std::vector<std::string>& keys, int64_
       it = key_to_conns.find(blpop_key);
     }
     auto& wait_list_of_this_key = it->second;
-    wait_list_of_this_key->emplace_back(expire_time, client, type, is_done);
+    wait_list_of_this_key->emplace_back(expire_time, client, type);
   }
 }
 
 void BaseCmd::ServeAndUnblockConns(PClient* client) {
   kiwi::BlockKey key{client->GetCurrentDB(), client->Key()};
 
-  std::shared_lock<std::shared_mutex> read_latch(g_kiwi->GetBlockMtx());
+  std::lock_guard<std::shared_mutex> map_lock(g_kiwi->GetBlockMtx());
   auto& key_to_conns = g_kiwi->GetMapFromKeyToConns();
   auto it = key_to_conns.find(key);
   if (it == key_to_conns.end()) {
     // no client is waitting for this key
     return;
   }
-  read_latch.unlock();
 
-  std::unique_lock<std::shared_mutex> write_lock(g_kiwi->GetBlockMtx());
   auto& waitting_list = it->second;
   std::vector<std::string> elements;
   storage::Status s;
 
   // traverse this list from head to tail(in the order of adding sequence) ,means "first blocked, first get served“
   for (auto conn_blocked = waitting_list->begin(); conn_blocked != waitting_list->end();) {
-    if (conn_blocked->is_done_->exchange(true)) {
-      conn_blocked = waitting_list->erase(conn_blocked);
-      continue;
-    }
-
-    PClient* BlockedClient = (*conn_blocked).GetBlockedClient();
+    auto BlockedClient = conn_blocked->GetBlockedClient();
 
     if (BlockedClient->State() == ClientState::kClosed) {
       conn_blocked = waitting_list->erase(conn_blocked);
+      CleanBlockedNodes(BlockedClient);
       continue;
     }
 
@@ -175,7 +168,9 @@ void BaseCmd::ServeAndUnblockConns(PClient* client) {
       BlockedClient->SetRes(CmdRes::kErrOther, s.ToString());
     }
     BlockedClient->SendPacket();
-    conn_blocked = waitting_list->erase(conn_blocked);  // remove this conn from current waiting list
+    // remove this conn from current waiting list
+    conn_blocked = waitting_list->erase(conn_blocked);
+    CleanBlockedNodes(BlockedClient);
   }
 }
 

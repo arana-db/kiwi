@@ -216,17 +216,16 @@ class BlockedConnNode {
  public:
   enum Type { BLPop = 0, BRPop };
   virtual ~BlockedConnNode() {}
-  BlockedConnNode(int64_t expire_time, PClient* client, Type type, std::shared_ptr<std::atomic<bool>> is_done)
-      : expire_time_(expire_time), client_(client), type_(type), is_done_(is_done) {}
+  BlockedConnNode(int64_t expire_time, PClient* client, Type type)
+      : expire_time_(expire_time), client_(client), type_(type) {}
   bool IsExpired();
-  PClient* GetBlockedClient() { return client_; }
-  std::shared_ptr<std::atomic<bool>> is_done_;
+  std::shared_ptr<PClient> GetBlockedClient() { return client_; }
   Type GetCmdType() { return type_; }
 
  private:
   Type type_;
   int64_t expire_time_;
-  PClient* client_;
+  std::shared_ptr<PClient> client_;
 };
 
 /**
@@ -337,7 +336,7 @@ class BaseCmdGroup : public BaseCmd {
   std::map<std::string, std::unique_ptr<BaseCmd>> subCmds_;
 };
 
-struct BlockKey {  // this data struct is made for the scenario of multi dbs in pika.
+struct BlockKey {  // this data struct is made for the scenario of multi dbs in kiwi.
   int db_id;
   std::string key;
   bool operator==(const BlockKey& p) const { return p.db_id == db_id && p.key == key; }
