@@ -182,7 +182,7 @@ BRPopCmd::BRPopCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsWrite, kAclCategoryWrite | kAclCategoryList) {}
 
 bool BRPopCmd::DoInitial(PClient* client) {
-  std::vector<std::string> keys(client->argv_.begin() + 1, client->argv_.end()-1);
+  std::vector<std::string> keys(client->argv_.begin() + 1, client->argv_.end() - 1);
   client->SetKey(keys);
 
   int64_t timeout = 0;
@@ -190,9 +190,8 @@ bool BRPopCmd::DoInitial(PClient* client) {
     client->SetRes(CmdRes::kInvalidInt);
     return false;
   }
-  if (timeout < 0 ) {
-    client->SetRes(CmdRes::kErrOther,
-                   "timeout can't be a negative value");
+  if (timeout < 0) {
+    client->SetRes(CmdRes::kErrOther, "timeout can't be a negative value");
     return false;
   }
   if (timeout > 0) {
@@ -206,7 +205,7 @@ bool BRPopCmd::DoInitial(PClient* client) {
 void BRPopCmd::DoCmd(PClient* client) {
   std::vector<std::string> elements;
   std::vector<std::string> list_keys(client->Keys().begin(), client->Keys().end());
-  for(auto &list_key:list_keys){
+  for (auto& list_key : list_keys) {
     storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPop(list_key, 1, &elements);
     if (s.ok()) {
       client->AppendArrayLen(2);
@@ -220,7 +219,7 @@ void BRPopCmd::DoCmd(PClient* client) {
       return;
     }
   }
-  BlockThisClientToWaitLRPush(list_keys,expire_time_,client,BlockedConnNode::Type::BRPop);
+  BlockThisClientToWaitLRPush(list_keys, expire_time_, client, BlockedConnNode::Type::BRPop);
 }
 
 LRangeCmd::LRangeCmd(const std::string& name, int16_t arity)

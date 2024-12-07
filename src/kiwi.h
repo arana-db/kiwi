@@ -71,7 +71,7 @@ class KiwiDB final {
 
   void ScanEvictedBlockedConnsOfBlrpop();
   // erase all blocked nodes of this client
-  void CleanBlockedNodes(const std::shared_ptr<kiwi::PClient>&  client);
+  void CleanBlockedNodes(const std::shared_ptr<kiwi::PClient>& client);
   inline void SendPacket2Client(const std::shared_ptr<kiwi::PClient>& client, std::string&& msg) {
     event_server_->SendPacket(client, std::move(msg));
   }
