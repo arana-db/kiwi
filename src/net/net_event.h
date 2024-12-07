@@ -8,6 +8,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 
 #include "callback_function.h"
 
