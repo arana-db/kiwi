@@ -60,7 +60,6 @@ Checks:     '
 WarningsAsErrors: '*'
 # HeaderFilterRegex: '(|/src|/src/net|/src/pstd|/src/storage)/include'
 # HeaderFilterRegex: '/src/(net|storage|pstd)/include'
-AnalyzeTemporaryDtors: true
 
 #### Disabled checks and why: #####
 #

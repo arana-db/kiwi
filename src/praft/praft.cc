@@ -311,8 +311,10 @@ void PRaft::SendNodeRequest(PClient* client) {
 void PRaft::SendNodeInfoRequest(PClient* client, const std::string& info_type) {
   assert(client);
 
-  std::string cmd_str = "INFO " + info_type + "\r\n";
-  client->SendPacket(std::move(cmd_str));
+  client->AppendArrayLen(int64_t(2));
+  client->AppendString("INFO");
+  client->AppendString(info_type);
+  client->SendPacket();
   //  client->Clear();
 }
 
@@ -323,25 +325,24 @@ void PRaft::SendNodeAddRequest(PClient* client) {
   int unused_node_id = 0;
   auto port = g_config.port + kiwi::g_config.raft_port_offset;
   auto raw_addr = g_config.ip.ToString() + ":" + std::to_string(port);
-  UnboundedBuffer req;
-  req.PushData("RAFT.NODE ADD ", 14);
-  req.PushData(std::to_string(unused_node_id).c_str(), std::to_string(unused_node_id).size());
-  req.PushData(" ", 1);
-  req.PushData(raw_addr.data(), raw_addr.size());
-  req.PushData("\r\n", 2);
-  client->SendPacket(req);
+
+  client->AppendArrayLen(int64_t(4));
+  client->AppendString("RAFT.NODE");
+  client->AppendString("ADD");
+  client->AppendString(std::to_string(unused_node_id));
+  client->AppendString(raw_addr);
+  client->SendPacket();
   //  client->Clear();
 }
 
 void PRaft::SendNodeRemoveRequest(PClient* client) {
   assert(client);
-
-  UnboundedBuffer req;
-  req.PushData("RAFT.NODE REMOVE ", 17);
-  req.PushData(cluster_cmd_ctx_.GetPeerID().c_str(), cluster_cmd_ctx_.GetPeerID().size());
-  req.PushData("\r\n", 2);
-  client->SendPacket(req);
-  client->Clear();
+  client->AppendArrayLen(int64_t(3));
+  client->AppendString("RAFT.NODE");
+  client->AppendString("REMOVE");
+  client->AppendString(cluster_cmd_ctx_.GetPeerID());
+  client->SendPacket();
+  //  client->Clear();
 }
 
 int PRaft::ProcessClusterCmdResponse(PClient* client, const char* start, int len) {
@@ -429,7 +430,7 @@ void PRaft::LeaderRedirection(PClient* join_client, const std::string& reply) {
   PRAFT.GetClusterCmdCtx().ConnectTargetNode();
 
   // Not reply any message here, we will reply after the connection is established.
-  join_client->Clear();
+  //  join_client->Clear();
 }
 
 void PRaft::InitializeNodeBeforeAdd(PClient* client, PClient* join_client, const std::string& reply) {
@@ -516,8 +517,7 @@ int PRaft::ProcessClusterRemoveCmdResponse(PClient* client, const char* start, i
     //    remove_client->Clear();
   } else if (reply.find(NOT_LEADER) != std::string::npos) {
     auto remove_client = cluster_cmd_ctx_.GetClient();
-    remove_client->Clear();
-    remove_client->Reexecutecommand();
+    //    remove_client->Clear();
   } else {
     ERROR("Removed Raft cluster fail, str: {}", reply);
     remove_client->SetRes(CmdRes::kErrOther, reply);

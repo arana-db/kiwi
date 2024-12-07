@@ -75,7 +75,7 @@ void RPoplpushCmd::DoCmd(PClient* client) {
   if (s.ok()) {
     client->AppendString(value);
   } else if (s.IsNotFound()) {
-    client->AppendStringLen(-1);
+    client->AppendString("");
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
   } else {
@@ -141,7 +141,7 @@ void LPopCmd::DoCmd(PClient* client) {
   if (s.ok()) {
     client->AppendString(elements[0]);
   } else if (s.IsNotFound()) {
-    client->AppendStringLen(-1);
+    client->AppendString("");
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
   } else {
@@ -163,7 +163,7 @@ void RPopCmd::DoCmd(PClient* client) {
   if (s.ok()) {
     client->AppendString(elements[0]);
   } else if (s.IsNotFound()) {
-    client->AppendStringLen(-1);
+    client->AppendString("");
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
   } else {
@@ -345,7 +345,7 @@ void LIndexCmd::DoCmd(PClient* client) {
   if (s.ok()) {
     client->AppendString(value);
   } else if (s.IsNotFound()) {
-    client->AppendStringLen(-1);
+    client->AppendString("");
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
   } else {

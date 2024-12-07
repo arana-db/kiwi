@@ -64,6 +64,13 @@ void CmdTableManager::InitCmdTable() {
   ADD_COMMAND(Sort, -2);
   ADD_COMMAND(Monitor, 1);
 
+  ADD_COMMAND_GROUP(Client, -2);
+  ADD_SUBCOMMAND(Client, Getname, 2);
+  ADD_SUBCOMMAND(Client, Setname, 3);
+  ADD_SUBCOMMAND(Client, Id, 2);
+  ADD_SUBCOMMAND(Client, List, -2);
+  ADD_SUBCOMMAND(Client, Kill, -3);
+
   // server
   ADD_COMMAND(Flushdb, 1);
   ADD_COMMAND(Flushall, 1);
@@ -189,7 +196,7 @@ void CmdTableManager::InitCmdTable() {
   ADD_COMMAND(ZIncrby, 4);
 }
 
-std::pair<BaseCmd*, CmdRes::CmdRet> CmdTableManager::GetCommand(const std::string& cmdName, PClient* client) {
+std::pair<BaseCmd*, CmdRes> CmdTableManager::GetCommand(const std::string& cmdName, PClient* client) {
   std::shared_lock rl(mutex_);
 
   auto cmd = cmds_->find(cmdName);
@@ -200,11 +207,11 @@ std::pair<BaseCmd*, CmdRes::CmdRet> CmdTableManager::GetCommand(const std::strin
 
   if (cmd->second->HasSubCommand()) {
     if (client->argv_.size() < 2) {
-      return std::pair(nullptr, CmdRes::kInvalidParameter);
+      return {nullptr, CmdRes::kWrongNum};
     }
-    return std::pair(cmd->second->GetSubCmd(pstd::StringToLower(client->argv_[1])), CmdRes::kUnknownSubCmd);
+    return {cmd->second->GetSubCmd(pstd::StringToLower(client->argv_[1])), CmdRes::kUnknownSubCmd};
   }
-  return std::pair(cmd->second.get(), CmdRes::kOK);
+  return {cmd->second.get(), CmdRes::kOK};
 }
 
 bool CmdTableManager::CmdExist(const std::string& cmd) const {

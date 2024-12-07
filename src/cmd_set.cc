@@ -443,12 +443,9 @@ void SScanCmd::DoCmd(PClient* client) {
   }
 
   // reply to client
-  client->AppendArrayLen(2);
+  client->AppendArrayLen(int64_t(2));
   client->AppendString(std::to_string(next_cursor));
-  client->AppendArrayLenUint64(members.size());
-  for (const auto& member : members) {
-    client->AppendString(member);
-  }
+  client->AppendStringVector(members);
 }
 
 }  // namespace kiwi

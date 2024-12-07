@@ -109,7 +109,7 @@ void SetCmd::DoCmd(PClient* client) {
     if (res == 1) {
       client->SetRes(CmdRes::kOK);
     } else {
-      client->AppendStringLen(-1);
+      client->AppendString("");
     }
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
@@ -151,10 +151,9 @@ void GetSetCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->GetSet(client->Key(), client->argv_[2], &old_value);
   if (s.ok()) {
     if (old_value.empty()) {
-      client->AppendContent("$-1");
+      client->AppendString("");
     } else {
-      client->AppendStringLen(old_value.size());
-      client->AppendContent(old_value);
+      client->AppendString(old_value);
     }
   } else {
     client->SetRes(CmdRes::kErrOther, s.ToString());
@@ -179,10 +178,9 @@ void MGetCmd::DoCmd(PClient* client) {
     client->AppendArrayLen(db_value_status_array.size());
     for (const auto& vs : db_value_status_array) {
       if (vs.status.ok()) {
-        client->AppendStringLen(vs.value.size());
-        client->AppendContent(vs.value);
+        client->AppendString(vs.value);
       } else {
-        client->AppendContent("$-1");
+        client->AppendString("");
       }
     }
   } else {
@@ -273,7 +271,7 @@ void DecrCmd::DoCmd(kiwi::PClient* client) {
   int64_t ret = 0;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Decrby(client->Key(), 1, &ret);
   if (s.ok()) {
-    client->AppendContent(":" + std::to_string(ret));
+    client->AppendInteger(ret);
   } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a integer") {
     client->SetRes(CmdRes::kInvalidInt);
   } else if (s.IsInvalidArgument()) {
@@ -295,7 +293,7 @@ void IncrCmd::DoCmd(kiwi::PClient* client) {
   int64_t ret = 0;
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Incrby(client->Key(), 1, &ret);
   if (s.ok()) {
-    client->AppendContent(":" + std::to_string(ret));
+    client->AppendInteger(ret);
   } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a integer") {
     client->SetRes(CmdRes::kInvalidInt);
   } else if (s.IsInvalidArgument()) {
@@ -459,7 +457,7 @@ void IncrbyCmd::DoCmd(PClient* client) {
   pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &by);
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Incrby(client->Key(), by, &ret);
   if (s.ok()) {
-    client->AppendContent(":" + std::to_string(ret));
+    client->AppendInteger(ret);
   } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a integer") {
     client->SetRes(CmdRes::kInvalidInt);
   } else if (s.IsInvalidArgument()) {
@@ -494,7 +492,7 @@ void DecrbyCmd::DoCmd(PClient* client) {
   }
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Decrby(client->Key(), by, &ret);
   if (s.ok()) {
-    client->AppendContent(":" + std::to_string(ret));
+    client->AppendInteger(ret);
   } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a integer") {
     client->SetRes(CmdRes::kInvalidInt);
   } else if (s.IsInvalidArgument()) {
@@ -525,8 +523,7 @@ void IncrbyFloatCmd::DoCmd(PClient* client) {
   storage::Status s =
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Incrbyfloat(client->Key(), client->argv_[2], &ret);
   if (s.ok()) {
-    client->AppendStringLen(ret.size());
-    client->AppendContent(ret);
+    client->AppendString(ret);
   } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a valid float") {
     client->SetRes(CmdRes::kInvalidFloat);
   } else if (s.IsInvalidArgument()) {
