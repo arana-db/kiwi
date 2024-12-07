@@ -251,7 +251,6 @@ void RenameCmd::DoCmd(PClient* client) {
   if (s.ok()) {
     client->SetRes(CmdRes::kOK);
     client->SetKey(client->argv_[2]);
-    ServeAndUnblockConns(client);
   } else if (s.IsNotFound()) {
     client->SetRes(CmdRes::kNotFound, s.ToString());
   } else {

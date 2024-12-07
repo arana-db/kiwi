@@ -165,11 +165,11 @@ void KiwiDB::ScanEvictedBlockedConnsOfBlrpop() {
   for (auto& it : key_to_blocked_conns) {
     auto& conns_list = it.second;
     for (auto conn_node = conns_list->begin(); conn_node != conns_list->end();) {
+      auto conn_ptr = conn_node->GetBlockedClient();
       if (conn_node->GetBlockedClient()->State() == ClientState::kClosed) {
         conn_node = conns_list->erase(conn_node);
         CleanBlockedNodes(conn_ptr);
       } else if (conn_node->IsExpired()) {
-        auto conn_ptr = conn_node->GetBlockedClient();
         conn_ptr->AppendString("");
         conn_ptr->SendPacket();
         conn_node = conns_list->erase(conn_node);
@@ -178,7 +178,7 @@ void KiwiDB::ScanEvictedBlockedConnsOfBlrpop() {
         conn_node++;
       }
     }
-    if(conns_list.empty()){
+    if(conns_list->empty()){
       keys_need_remove.push_back(it.first);
     }
   }
@@ -189,13 +189,13 @@ void KiwiDB::ScanEvictedBlockedConnsOfBlrpop() {
 }
 
 void KiwiDB::CleanBlockedNodes(const std::shared_ptr<kiwi::PClient>&  client){
-  std::vector<KiwiDB::BlockKey> blocked_keys;
+  std::vector<kiwi::BlockKey> blocked_keys;
   for(auto key:client->Keys()){
     blocked_keys.emplace_back(client->GetCurrentDB(), key);
   }
   auto &key_to_blocked_conns=g_kiwi->GetMapFromKeyToConns();
   for(auto& blocked_key : blocked_keys){
-    auto &it=key_to_blocked_conns.find(blocked_key);
+    const auto &it=key_to_blocked_conns.find(blocked_key);
     if(it!=key_to_blocked_conns.end()){
       auto &conns_list=it->second;
       for(auto conn_node=conns_list->begin();conn_node!=conns_list->end();conn_node++){

@@ -144,7 +144,7 @@ void BaseCmd::ServeAndUnblockConns(PClient* client) {
 
     if (BlockedClient->State() == ClientState::kClosed) {
       conn_blocked = waitting_list->erase(conn_blocked);
-      CleanBlockedNodes(BlockedClient);
+      g_kiwi->CleanBlockedNodes(BlockedClient);
       continue;
     }
 
@@ -170,7 +170,7 @@ void BaseCmd::ServeAndUnblockConns(PClient* client) {
     BlockedClient->SendPacket();
     // remove this conn from current waiting list
     conn_blocked = waitting_list->erase(conn_blocked);
-    CleanBlockedNodes(BlockedClient);
+    g_kiwi->CleanBlockedNodes(BlockedClient);
   }
 }
 
