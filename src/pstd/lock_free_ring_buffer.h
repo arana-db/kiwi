@@ -42,12 +42,11 @@ class LockFreeRingBuffer {
     size_t current_tail = tail_.load(std::memory_order_relaxed);
     size_t next_tail = (current_tail + 1) & (capacity_ - 1);
 
-    if (next_tail == head_.load(std::memory_order_acquire)) {
+    if (!tail_.compare_exchange_strong(current_tail, next_tail, std::memory_order_acq_rel)) {
       // queue is full
       return false;
     }
-
-    buffer_[current_tail] = std::forward<U>(item);  // 使用完美转发
+    buffer_[current_tail] = std::forward<U>(item);
     tail_.store(next_tail, std::memory_order_release);
     return true;
   }
@@ -60,7 +59,7 @@ class LockFreeRingBuffer {
       return false;
     }
 
-    item = std::move(buffer_[current_head]);  // 移动数据
+    item = std::move(buffer_[current_head]);
     head_.store((current_head + 1) & (capacity_ - 1), std::memory_order_release);
     return true;
   }
