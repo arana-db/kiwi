@@ -223,6 +223,8 @@ bool KiwiDB::Init() {
 
   event_server_->InitTimer(10);
 
+  event_server_->SetMaxConnCount(g_config.max_clients.load());
+
   auto timerTask = std::make_shared<net::CommonTimerTask>(1000);
   timerTask->SetCallback([]() { PREPL.Cron(); });
   event_server_->AddTimerTask(timerTask);

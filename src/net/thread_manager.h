@@ -16,6 +16,7 @@
 #include "callback_function.h"
 #include "config.h"
 #include "io_thread.h"
+#include "log.h"
 
 #if defined(HAVE_EPOLL)
 
@@ -80,6 +81,12 @@ class ThreadManager {
   // Send message to the client
   void SendPacket(const T &conn, std::string &&msg);
 
+  // Set the maximum number of connections
+  void SetMaxConnCount(uint64_t maxConnCount) { maxConnCount_ = maxConnCount; }
+
+  uint64_t getConnCount(){return this->connCount_.load();}; // Get the number of connections
+  void addConnCount(){this->connCount_.fetch_add(1);}; // Add the number of connections
+  void subConnCount(){this->connCount_.fetch_sub(1);}; // Subtract the number of connections
  private:
   // Create read thread
   bool CreateReadThread(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<Timer> &timer);
@@ -89,10 +96,14 @@ class ThreadManager {
 
   uint64_t DoTCPConnect(T &t, int fd, const std::shared_ptr<Connection> &conn);
 
+
  private:
   const bool rwSeparation_ = true;    // Whether to separate read and write threads
   const int8_t index_ = 0;            // The index of the thread
   std::atomic<bool> running_ = true;  // Whether the thread is running
+
+  inline static std::atomic<uint64_t> connCount_{0};
+  std::atomic<uint64_t> maxConnCount_; // The maximum number of connections
 
   std::unique_ptr<IOThread> readThread_;   // Read thread
   std::unique_ptr<IOThread> writeThread_;  // Write thread
@@ -112,6 +123,8 @@ class ThreadManager {
 
   OnClose<T> onClose_;
 };
+
+
 
 template <typename T>
 requires HasSetFdFunction<T> ThreadManager<T>::~ThreadManager() { Stop(); }
@@ -153,7 +166,11 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     t.SetConnId(connId);
     t.SetThreadIndex(index_);
   }
-
+  if (getConnCount() >= maxConnCount_) {
+   // 返回给客户端 "too many connections"
+   INFO("too many connections");
+    return;
+  }
   {
     std::lock_guard lock(mutex_);
     connections_.emplace(connId, std::make_pair(t, conn));
@@ -163,6 +180,7 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     writeThread_->AddNewEvent(connId, fd, BaseEvent::EVENT_NULL);  // add null event to write_thread epoll
   }
 
+  addConnCount();
   onCreate_(connId, t, conn->addr_);
 }
 
@@ -200,6 +218,7 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
   iter->second.second->netEvent_->Close();  // close socket
   onClose_(iter->second.first, std::move(err));
   connections_.erase(iter);
+  subConnCount();  // decrease connection count
 }
 
 template <typename T>

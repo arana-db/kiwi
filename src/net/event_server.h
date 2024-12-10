@@ -49,6 +49,8 @@ class EventServer final {
 
   inline void DelTimerTask(int64_t timerId) { timer_->DelTask(timerId); }
 
+  inline void SetMaxConnCount(int64_t count) { maxConnCount_ = count; }
+
   std::pair<bool, std::string> StartServer(int64_t interval = 0);
 
   std::pair<bool, std::string> StartClientServer();
@@ -101,6 +103,8 @@ class EventServer final {
   std::condition_variable cv_;
 
   std::shared_ptr<Timer> timer_;
+
+  int64_t maxConnCount_;
 };
 
 template <typename T>
@@ -132,6 +136,7 @@ requires HasSetFdFunction<T> std::pair<bool, std::string> EventServer<T>::StartS
     tm->SetOnConnect(onConnect_);
     tm->SetOnMessage(onMessage_);
     tm->SetOnClose(onClose_);
+    tm->SetMaxConnCount(maxConnCount_);
     threadsManager_.emplace_back(std::move(tm));
   }
 
