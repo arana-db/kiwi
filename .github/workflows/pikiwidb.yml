@@ -24,15 +24,11 @@ jobs:
         run: make check-format
 
   build_on_macos:
-    runs-on: macos-14
+    runs-on: macos-13
     needs: check_format
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Xcode Command Line Tools
-        run: |
-          xcode-select --install
 
       - name: Build
         run: |
