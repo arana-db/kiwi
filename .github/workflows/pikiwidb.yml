@@ -30,6 +30,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Xcode Command Line Tools
+        run: |
+        xcode-select --install
+
       - name: Build
         run: |
           brew install autoconf
