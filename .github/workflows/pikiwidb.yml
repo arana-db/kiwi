@@ -32,7 +32,7 @@ jobs:
 
       - name: Install Xcode Command Line Tools
         run: |
-        xcode-select --install
+          xcode-select --install
 
       - name: Build
         run: |
