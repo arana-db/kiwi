@@ -114,7 +114,10 @@ class ThreadManager {
 };
 
 template <typename T>
-requires HasSetFdFunction<T> ThreadManager<T>::~ThreadManager() { Stop(); }
+requires HasSetFdFunction<T>
+ThreadManager<T>::~ThreadManager() {
+  Stop();
+}
 
 template <typename T>
 requires HasSetFdFunction<T>
@@ -153,7 +156,7 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     t.SetConnId(connId);
     t.SetThreadIndex(index_);
   }
-
+  t->SetTcpKeepAlive(fd);
   {
     std::lock_guard lock(mutex_);
     connections_.emplace(connId, std::make_pair(t, conn));
@@ -204,7 +207,9 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
 
 template <typename T>
 requires HasSetFdFunction<T>
-void ThreadManager<T>::CloseConnection(uint64_t connId) { OnNetEventClose(connId, ""); }
+void ThreadManager<T>::CloseConnection(uint64_t connId) {
+  OnNetEventClose(connId, "");
+}
 
 template <typename T>
 requires HasSetFdFunction<T>

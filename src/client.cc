@@ -288,6 +288,49 @@ bool PClient::SendPacket(UnboundedBuffer& data) {
   return true;
 }
 
+void PClient::SetTcpKeepAlive(int fd) {
+  if (g_config.tcp_keepalive.load() == 0) {
+    return;
+  }
+
+  int enabled = 1;
+  uint32_t idle = g_config.tcp_keepalive.load();
+  uint32_t intvl = g_config.tcp_keepalive.load() / 3;
+  int cnt = 3;
+
+  if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &enabled, sizeof(enabled)) == -1) {
+    ERROR("Failed to enable SO_KEEPALIVE: %s", strerror(errno));
+    return;
+  }
+
+#ifdef TCP_KEEPIDLE
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle))) {
+    ERROR("Failed to set TCP_KEEPIDLE: %s", strerror(errno));
+    return;
+  }
+#elif defined(TCP_KEEPALIVE)
+  /* support MacOS */
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &idle, sizeof(idle))) {
+    ERROR("Failed to set TCP_KEEPALIVE: %s", strerror(errno));
+    return;
+  }
+#endif
+
+#ifdef TCP_KEEPINTVL
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl))) {
+    ERROR("Failed to set TCP_KEEPINTVL: %s", strerror(errno));
+    return;
+  }
+#endif
+
+#ifdef TCP_KEEPCNT
+  if (setsockopt(fd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt))) {
+    ERROR("Failed to set TCP_KEEPCNT: %s", strerror(errno));
+    return;
+  }
+#endif
+}
+
 void PClient::Close() { g_kiwi->CloseConnection(shared_from_this()); }
 
 void PClient::OnClose() {

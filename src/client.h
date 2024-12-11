@@ -98,6 +98,8 @@ class PClient : public std::enable_shared_from_this<PClient> {
   bool SendPacket(UnboundedBuffer& data);
   inline void SendOver() { reset(); }
 
+  static void SetTcpKeepAlive(int fd);
+
   // active close
   void Close();
 
