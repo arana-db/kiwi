@@ -48,7 +48,7 @@ TEST_F(LockFreeRingBufferTest, SingleThread) {
 
 TEST_F(LockFreeRingBufferTest, MultipleThread) {
   LockFreeRingBuffer<int> ring_buffer(10);
-  const int SIZE = 1000;
+  const int SIZE = 10000;
   std::thread producer([&ring_buffer]() {
     for (int i = 0; i < SIZE; ++i) {
       while (!ring_buffer.Push(i)) {
@@ -60,10 +60,10 @@ TEST_F(LockFreeRingBufferTest, MultipleThread) {
     int i = 0;
     while (i < SIZE) {
       int item;
-      if (ring_buffer.Pop(item)) {
-        ASSERT_EQ(item, i);
-        ++i;
+      while (!ring_buffer.Pop(item)) {
       }
+      ASSERT_EQ(item, i);
+      ++i;
     }
   });
   producer.join();
