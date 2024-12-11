@@ -115,9 +115,7 @@ class ThreadManager {
 
 template <typename T>
 requires HasSetFdFunction<T>
-ThreadManager<T>::~ThreadManager() {
-  Stop();
-}
+ThreadManager<T>::~ThreadManager() { Stop(); }
 
 template <typename T>
 requires HasSetFdFunction<T>
@@ -207,9 +205,7 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
 
 template <typename T>
 requires HasSetFdFunction<T>
-void ThreadManager<T>::CloseConnection(uint64_t connId) {
-  OnNetEventClose(connId, "");
-}
+void ThreadManager<T>::CloseConnection(uint64_t connId) { OnNetEventClose(connId, ""); }
 
 template <typename T>
 requires HasSetFdFunction<T>
