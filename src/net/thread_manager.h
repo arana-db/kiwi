@@ -14,8 +14,10 @@
 #include <unordered_map>
 
 #include "callback_function.h"
+#include "client.h"
 #include "config.h"
 #include "io_thread.h"
+#include "kiwi.h"
 #include "log.h"
 
 #if defined(HAVE_EPOLL)
@@ -102,7 +104,7 @@ class ThreadManager {
   const int8_t index_ = 0;            // The index of the thread
   std::atomic<bool> running_ = true;  // Whether the thread is running
 
-  inline static std::atomic<uint64_t> connCount_{0};
+  inline static std::atomic<uint64_t> connCount_{0}; // The number of connections
   std::atomic<uint64_t> maxConnCount_; // The maximum number of connections
 
   std::unique_ptr<IOThread> readThread_;   // Read thread
@@ -167,8 +169,9 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     t.SetThreadIndex(index_);
   }
   if (getConnCount() >= maxConnCount_) {
-   // 返回给客户端 "too many connections"
-   INFO("too many connections");
+
+    INFO("too many connections");
+    onClose_(t, "too many connections");
     return;
   }
   {
