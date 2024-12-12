@@ -16,6 +16,7 @@ const int BaseEvent::EVENT_READ = EVFILT_READ;
 const int BaseEvent::EVENT_WRITE = EVFILT_WRITE;
 const int BaseEvent::EVENT_ERROR = EV_ERROR;
 const int BaseEvent::EVENT_HUB = EV_EOF;
+const int BaseEvent::EVENT_NULL = EVFILT_USER;
 
 bool KqueueEvent::Init() {
   evFd_ = kqueue();

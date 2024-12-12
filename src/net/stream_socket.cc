@@ -16,6 +16,7 @@ int StreamSocket::OnReadable(const std::shared_ptr<Connection> &conn, std::strin
 int StreamSocket::OnWritable() {
   if (sendData_.empty()) {
     if (!writeQueue_.Pop(sendData_)) {  // no data to send
+      writeReady_.store(false);
       return NE_OK;
     }
   }
@@ -34,6 +35,7 @@ int StreamSocket::OnWritable() {
     sendData_.clear();
     // determine if there is still data in the queue
     if (writeQueue_.Empty()) {
+      writeReady_.store(false);
       return NE_OK;
     }
   }
@@ -43,10 +45,9 @@ int StreamSocket::OnWritable() {
 bool StreamSocket::SendPacket(std::string &&msg) {
   bool sendOver;
   do {
-    sendOver = writeQueue_.Push(std::move(msg));
+    sendOver = writeQueue_.Push(msg);
   } while (!sendOver);
-
-  return true;
+  return !writeReady_.exchange(true);
 }
 
 // Read data from the socket
@@ -72,24 +73,6 @@ int StreamSocket::Read(std::string *readBuff) {
   }
 
   return NE_OK;
-}
-
-bool StreamSocket::CheckSetFlag(uint8_t flag) {
-  if (!(flag_.load() & flag) && !writeQueue_.Empty()) {
-    LockFlag();
-    flag_ |= flag;
-    return true;  // need add write flag
-  }
-  return false;
-}
-
-bool StreamSocket::CheckDecFlag(uint8_t flag) {
-  if ((flag_.load() & flag) && writeQueue_.Empty()) {
-    LockFlag();
-    flag_ &= ~flag;
-    return true;  // need dec write flag
-  }
-  return false;
 }
 
 }  // namespace net

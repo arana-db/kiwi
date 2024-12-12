@@ -162,6 +162,9 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     connections_.emplace(connId, std::make_pair(t, conn));
   }
   readThread_->AddNewEvent(connId, fd, BaseEvent::EVENT_READ);
+  if (writeThread_) {
+    writeThread_->AddNewEvent(connId, fd, BaseEvent::EVENT_NULL);  // add null event to write_thread epoll
+  }
 
   onCreate_(connId, t, conn->addr_);
 }
@@ -257,14 +260,10 @@ void ThreadManager<T>::SendPacket(const T &conn, std::string &&msg) {
   }
 
   connPtr->netEvent_->SendPacket(std::move(msg));
-
-  if (connPtr->netEvent_->CheckSetFlag(0)) {
-    if (rwSeparation_) {
-      writeThread_->SetWriteEvent(connId, connPtr->fd_);
-    } else {
-      readThread_->SetWriteEvent(connId, connPtr->fd_);
-    }
-    connPtr->netEvent_->UnlockFlag();
+  if (rwSeparation_) {
+    writeThread_->SetWriteEvent(connId, connPtr->fd_);
+  } else {
+    readThread_->SetWriteEvent(connId, connPtr->fd_);
   }
 }
 
