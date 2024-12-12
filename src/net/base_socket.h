@@ -67,6 +67,8 @@ class BaseSocket : public NetEvent {
 
   inline void SetSocketType(int type) { type_ = type; }
 
+  inline void SetBSTcpKeepAlive(uint32_t keepAlive) { tcpKeepAlive_ = keepAlive; }
+
  protected:
   inline bool NoBlock() const { return noBlock_; }
 

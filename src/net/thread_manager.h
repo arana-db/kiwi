@@ -35,7 +35,7 @@ template <typename T>
 requires HasSetFdFunction<T>
 class ThreadManager {
  public:
-  explicit ThreadManager(int8_t index, bool rwSeparation = true, uint32_t tcpKeepAlive)
+  explicit ThreadManager(int8_t index, bool rwSeparation = true, uint32_t tcpKeepAlive = 300)
       : index_(index), rwSeparation_(rwSeparation), tcpKeepAlive_(tcpKeepAlive) {}
 
   ~ThreadManager();

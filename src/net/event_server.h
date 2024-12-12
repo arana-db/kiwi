@@ -251,7 +251,7 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
   std::shared_ptr<ListenSocket> listen(ListenSocket::CreateTCPListen());
   if (serverMode) {
     listen->SetListenAddr(listenAddrs_);
-    listen->SetTcpKeepAlive(tcpKeepAlive_);
+    listen->SetBSTcpKeepAlive(tcpKeepAlive_);
     if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
       return ret;
     }

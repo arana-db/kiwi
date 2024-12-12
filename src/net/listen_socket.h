@@ -27,8 +27,6 @@ class ListenSocket : public BaseSocket {
 
   inline void SetListenAddr(const SocketAddr &addr) { addr_ = addr; }
 
-  inline void SetBSTcpKeepAlive(uint32_t keepAlive) { tcpKeepAlive_ = keepAlive; }
-
   // Accept new connection and create new connection object
   // when the connection is established, the OnCreate function is called
   int OnReadable(const std::shared_ptr<Connection> &conn, std::string *readBuff) override;
