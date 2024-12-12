@@ -152,7 +152,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
   return true;
 }
 
-std::vector<std::string> KiwiDB::ParseIp(const std::string& ips) {
+std::vector<std::string> KiwiDB::ParseIP(const std::string& ips) {
   std::vector<std::string> ip_list;
   pstd::StringSplit(ips, ',', ip_list);
   return ip_list;
@@ -206,7 +206,7 @@ bool KiwiDB::Init() {
 
   event_server_->SetRwSeparation(true);
 
-  auto ip_list = ParseIp(g_config.ip.ToString());
+  auto ip_list = ParseIP(g_config.ip.ToString());
   for (const auto& ip : ip_list) {
     net::SocketAddr addr(ip, g_config.port.load());
     INFO("Add listen addr: {}, port: {}", ip, g_config.port.load());

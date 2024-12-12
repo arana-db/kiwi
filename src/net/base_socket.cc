@@ -15,7 +15,7 @@
 namespace net {
 
 int BaseSocket::CreateTCPSocket(const SocketAddr &addr) {
-  if (addr.IsIpv6()) {
+  if (addr.IsIPV6()) {
     return ::socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
   } else {
     return ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);

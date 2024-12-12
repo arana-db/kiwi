@@ -89,7 +89,7 @@ bool ListenSocket::Bind() {
   if (!SetReusePort()) {
     REUSE_PORT = false;
   }
-  if (addr_.IsIpv6()) {
+  if (addr_.IsIPV6()) {
     SetDisableIpv6Only();
   }
 
