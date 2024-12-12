@@ -12,8 +12,8 @@
 #include "cmd_table_manager.h"
 #include "cmd_thread_pool.h"
 #include "common.h"
-#include "options.h"
 #include "net/event_server.h"
+#include "options.h"
 
 #define Kkiwi_VERSION "4.0.0"
 

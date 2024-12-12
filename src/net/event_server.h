@@ -17,8 +17,8 @@
 #include "client_socket.h"
 #include "io_thread.h"
 #include "listen_socket.h"
-#include "thread_manager.h"
 #include "net_options.h"
+#include "thread_manager.h"
 
 namespace net {
 
@@ -90,7 +90,7 @@ class EventServer final {
 
   std::atomic<bool> running_ = true;  // Whether the server is running
 
-  NetOptions opt_; // The option of the server
+  NetOptions opt_;  // The option of the server
 
   std::vector<std::unique_ptr<ThreadManager<T>>> threadsManager_;
 

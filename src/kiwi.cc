@@ -26,12 +26,12 @@
 #include "helper.h"
 #include "kiwi.h"
 #include "kiwi_logo.h"
+#include "options.h"
 #include "praft/praft.h"
 #include "pstd/log.h"
 #include "pstd/pstd_util.h"
 #include "slow_log.h"
 #include "store.h"
-#include "options.h"
 
 // g_kiwi is a global abstraction of the server-side process
 std::unique_ptr<KiwiDB> g_kiwi;

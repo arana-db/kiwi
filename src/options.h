@@ -13,7 +13,7 @@
 namespace kiwi {
 
 class Options : public net::NetOptions {
-public:
+ public:
   Options() = default;
   ~Options() = default;
 
@@ -29,7 +29,7 @@ public:
 
   bool GetRedisCompatibleMode() const { return redis_compatible_mode; }
 
-private:
+ private:
   PString cfg_file_;
   PString log_level_;
 
