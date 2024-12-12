@@ -35,7 +35,8 @@ template <typename T>
 requires HasSetFdFunction<T>
 class ThreadManager {
  public:
-  explicit ThreadManager(int8_t index, bool rwSeparation = true) : index_(index), rwSeparation_(rwSeparation) {}
+  explicit ThreadManager(int8_t index, bool rwSeparation = true, uint32_t tcpKeepAlive)
+      : index_(index), rwSeparation_(rwSeparation), tcpKeepAlive_(tcpKeepAlive) {}
 
   ~ThreadManager();
 
@@ -92,6 +93,7 @@ class ThreadManager {
  private:
   const bool rwSeparation_ = true;    // Whether to separate read and write threads
   const int8_t index_ = 0;            // The index of the thread
+  uint32_t tcpKeepAlive_ = 300;       // The timeout of the keepalive connection in seconds
   std::atomic<bool> running_ = true;  // Whether the thread is running
 
   std::unique_ptr<IOThread> readThread_;   // Read thread
@@ -114,8 +116,8 @@ class ThreadManager {
 };
 
 template <typename T>
-requires HasSetFdFunction<T>
-ThreadManager<T>::~ThreadManager() { Stop(); }
+requires HasSetFdFunction<T> ThreadManager<T>::~ThreadManager() { Stop(); }
+
 
 template <typename T>
 requires HasSetFdFunction<T>
@@ -154,7 +156,7 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     t.SetConnId(connId);
     t.SetThreadIndex(index_);
   }
-  t->SetTcpKeepAlive(fd);
+
   {
     std::lock_guard lock(mutex_);
     connections_.emplace(connId, std::make_pair(t, conn));

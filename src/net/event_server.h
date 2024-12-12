@@ -43,6 +43,8 @@ class EventServer final {
 
   inline void SetRwSeparation(bool separation = true) { rwSeparation_ = separation; }
 
+  inline void SetESTcpKeepAlive(uint32_t keepAlive) { tcpKeepAlive_ = keepAlive; }
+
   void InitTimer(int64_t interval) { timer_ = std::make_shared<Timer>(interval); }
 
   inline int64_t AddTimerTask(const std::shared_ptr<ITimerTask> &task) { return timer_->AddTask(task); }
@@ -93,6 +95,8 @@ class EventServer final {
 
   bool rwSeparation_ = true;  // Whether to separate read and write
 
+  uint32_t tcpKeepAlive_ = 300;  // Whether to enalbe tcp_keepalive
+
   int8_t threadNum_ = 1;  // The number of threads
 
   std::vector<std::unique_ptr<ThreadManager<T>>> threadsManager_;
@@ -126,7 +130,7 @@ requires HasSetFdFunction<T> std::pair<bool, std::string> EventServer<T>::StartS
   }
 
   for (int8_t i = 0; i < threadNum_; ++i) {
-    auto tm = std::make_unique<ThreadManager<T>>(i, rwSeparation_);
+    auto tm = std::make_unique<ThreadManager<T>>(i, rwSeparation_, tcpKeepAlive_);
     tm->SetOnInit(onInit_);
     tm->SetOnCreate(onCreate_);
     tm->SetOnConnect(onConnect_);
@@ -247,7 +251,7 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
   std::shared_ptr<ListenSocket> listen(ListenSocket::CreateTCPListen());
   if (serverMode) {
     listen->SetListenAddr(listenAddrs_);
-
+    listen->SetTcpKeepAlive(tcpKeepAlive_);
     if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
       return ret;
     }
@@ -258,6 +262,7 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
     if (i > 0 && ListenSocket::REUSE_PORT && serverMode) {
       listen.reset(ListenSocket::CreateTCPListen());
       listen->SetListenAddr(listenAddrs_);
+      listen->SetBSTcpKeepAlive(tcpKeepAlive_);
       if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
         return ret;
       }

@@ -31,6 +31,7 @@ void BaseSocket::OnCreate() {
   SetNonBlock(true);
 #endif
   SetNodelay();
+  SetTcpKeepAlive();
   SetSndBuf();
   SetRcvBuf();
 }
@@ -57,6 +58,49 @@ void BaseSocket::SetNodelay() {
   if (::setsockopt(Fd(), IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char *>(&nodelay), sizeof(int)) == -1) {
     WARN("SetNodelay fd:{} error:{}", Fd(), errno);
   }
+}
+
+void BaseSocket::SetTcpKeepAlive() {
+  if (tcpKeepAlive_ == 0) {
+    return;
+  }
+
+  int enabled = 1;
+  uint32_t idle = tcpKeepAlive_;
+  uint32_t intvl = idle / 3;
+  int cnt = 3;
+
+  if (setsockopt(Fd(), SOL_SOCKET, SO_KEEPALIVE, &enabled, sizeof(enabled)) == -1) {
+    WARN("Failed to enable SO_KEEPALIVE: %s", strerror(errno));
+    return;
+  }
+
+#ifdef TCP_KEEPIDLE
+  if (setsockopt(Fd(), IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle))) {
+    WARN("Failed to set TCP_KEEPIDLE: %s", strerror(errno));
+    return;
+  }
+#elif defined(TCP_KEEPALIVE)
+  /* support MacOS */
+  if (setsockopt(Fd(), IPPROTO_TCP, TCP_KEEPALIVE, &idle, sizeof(idle))) {
+    ERROR("Failed to set TCP_KEEPALIVE: %s", strerror(errno));
+    return;
+  }
+#endif
+
+#ifdef TCP_KEEPINTVL
+  if (setsockopt(Fd(), IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl))) {
+    ERROR("Failed to set TCP_KEEPINTVL: %s", strerror(errno));
+    return;
+  }
+#endif
+
+#ifdef TCP_KEEPCNT
+  if (setsockopt(Fd(), IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt))) {
+    ERROR("Failed to set TCP_KEEPCNT: %s", strerror(errno));
+    return;
+  }
+#endif
 }
 
 void BaseSocket::SetSndBuf(socklen_t winsize) {

@@ -199,6 +199,7 @@ bool KiwiDB::Init() {
   event_server_ = std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(num);
 
   event_server_->SetRwSeparation(true);
+  event_server_->SetESTcpKeepAlive(g_config.tcp_keepalive.load());
 
   net::SocketAddr addr(g_config.ip.ToString(), g_config.port.load());
   INFO("Add listen addr:{}, port:{}", g_config.ip.ToString(), g_config.port.load());

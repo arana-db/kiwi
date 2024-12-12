@@ -34,7 +34,7 @@ class BaseSocket : public NetEvent {
 
   ~BaseSocket() override = default;
 
-  void OnError() override{};
+  void OnError() override {};
 
   void Close() override;
 
@@ -48,6 +48,8 @@ class BaseSocket : public NetEvent {
   void SetNonBlock(bool noBlock);
 
   void SetNodelay();
+
+  void SetTcpKeepAlive();
 
   void SetSndBuf(socklen_t size = SOCKET_WIN_SIZE);
 
@@ -71,6 +73,7 @@ class BaseSocket : public NetEvent {
  private:
   int type_ = SOCKET_NONE;  // socket type (TCP/UDP)
   bool noBlock_ = true;
+  uint32_t tcpKeepAlive_;  // TCP keepalive
 };
 
 }  // namespace net
