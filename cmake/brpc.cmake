@@ -20,6 +20,10 @@ ExternalProject_Add(
         URL https://github.com/apache/brpc/archive/refs/tags/1.8.0.tar.gz
         URL_HASH SHA256=13ffb2f1f57c679379a20367c744b3e597614a793ec036cd7580aae90798019d
         CMAKE_ARGS
+        ${EXTERNAL_PROJECT_C}
+        ${EXTERNAL_PROJECT_CXX}
+        ${EXTERNAL_PROJECT_CXX_FLAGS}
+        ${EXTERNAL_PROJECT_CXX_LINK_FLAGS}
         -DCMAKE_BUILD_TYPE=${LIB_BUILD_TYPE}
         -DCMAKE_CPP_FLAGS=${CMAKE_CPP_FLAGS}
         -DCMAKE_INSTALL_PREFIX=${BRPC_INSTALL_DIR}

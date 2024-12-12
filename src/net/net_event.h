@@ -8,6 +8,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 
 #include "callback_function.h"
 
@@ -26,11 +27,6 @@ enum class NetListen {
   OPEN_ERROR,
   BIND_ERROR,
   LISTEN_ERROR,
-};
-
-enum class IOSocketFlag {
-  READ = 1,
-  WRITE = 1 << 1,
 };
 
 // abstraction of all networks
@@ -56,17 +52,10 @@ class NetEvent {
 
   virtual void Close() = 0;
 
-  virtual bool CheckSetFlag(uint8_t flag) { return false; }
-  virtual bool CheckDecFlag(uint8_t flag) { return false; }
-
   inline int Fd() const { return fd_.load(); }
-  inline void LockFlag() { flagMutex_.lock(); }
-  inline void UnlockFlag() { flagMutex_.unlock(); }
 
  protected:
   std::atomic<int> fd_ = 0;
-  std::atomic<uint8_t> flag_ = 0;
-  std::mutex flagMutex_;
 };
 
 }  // namespace net

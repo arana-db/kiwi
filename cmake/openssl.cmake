@@ -15,12 +15,11 @@ ExternalProject_Add(
         URL_HASH SHA256=75cc6803ffac92625c06ea3c677fb32ef20d15a1b41ecc8dddbc6b9d6a2da84c
         USES_TERMINAL_DOWNLOAD TRUE
         CONFIGURE_COMMAND
+        env CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER}
         <SOURCE_DIR>/config
         --prefix=${OPENSSL_INSTALL_DIR}
         --openssldir=${OPENSSL_INSTALL_DIR}
         --libdir=${OPENSSL_INSTALL_DIR}/${CMAKE_INSTALL_LIBDIR}
-        -DCMAKE_INSTALL_PREFIX=${LIB_INSTALL_PREFIX}
-        -DCMAKE_INSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}
         no-docs
         BUILD_COMMAND make -j${CPU_CORE}
         TEST_COMMAND ""

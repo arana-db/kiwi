@@ -33,9 +33,6 @@ class StreamSocket : public BaseSocket {
 
   int Read(std::string *readBuff);
 
-  bool CheckSetFlag(uint8_t flag) override;
-  bool CheckDecFlag(uint8_t flag) override;
-
  private:
   const int readBuffSize_ = 4 * 1024;  // read from socket buff size 4K
 
@@ -44,6 +41,8 @@ class StreamSocket : public BaseSocket {
   LockFreeRingBuffer<std::string> writeQueue_{8};  // write data queue
 
   size_t sendPos_ = 0;  // send data buff pos
+
+  std::atomic<bool> writeReady_ = false;  // write ready flag
 };
 
 }  // namespace net
