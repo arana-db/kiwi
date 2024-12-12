@@ -118,7 +118,6 @@ class ThreadManager {
 template <typename T>
 requires HasSetFdFunction<T> ThreadManager<T>::~ThreadManager() { Stop(); }
 
-
 template <typename T>
 requires HasSetFdFunction<T>
 bool ThreadManager<T>::Start(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<Timer> &timer) {
