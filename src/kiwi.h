@@ -12,6 +12,7 @@
 #include "cmd_table_manager.h"
 #include "cmd_thread_pool.h"
 #include "common.h"
+#include "options.h"
 #include "net/event_server.h"
 
 #define Kkiwi_VERSION "4.0.0"
@@ -40,7 +41,7 @@ class KiwiDB final {
   ~KiwiDB() = default;
 
   bool ParseArgs(int ac, char* av[]);
-  const PString& GetConfigName() const { return cfg_file_; }
+  const PString& GetConfigName() const { return options_.GetConfigName(); }
 
   bool Init();
   void Run();
@@ -76,14 +77,12 @@ class KiwiDB final {
   time_t Start_time_s() { return start_time_s_; }
 
  public:
-  PString cfg_file_;
   uint16_t port_{0};
-  PString log_level_;
 
   PString master_;
   uint16_t master_port_{0};
 
-  std::atomic<bool> redis_compatible_mode = false;
+  kiwi::Options options_;
 
   static const uint32_t kRunidSize;
 
