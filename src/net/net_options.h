@@ -12,6 +12,20 @@ namespace net {
 class NetOptions {
  public:
   NetOptions() = default;
+
+  NetOptions(const NetOptions& other) : rwSeparation_(other.rwSeparation_), threadNum_(other.threadNum_) {
+    // NOTE: If there are member variables of pointer type, a deep copy needs to be performed here
+  }
+
+  NetOptions& operator=(const NetOptions& other) {
+    if (this != &other) {
+      rwSeparation_ = other.rwSeparation_;
+      threadNum_ = other.threadNum_;
+      // NOTE: If there are member variables of pointer type, a deep copy needs to be performed here
+    }
+    return *this;
+  }
+
   ~NetOptions() = default;
 
   void SetThreadNum(int8_t threadNum) { threadNum_ = threadNum; }

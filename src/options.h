@@ -15,6 +15,25 @@ namespace kiwi {
 class Options : public net::NetOptions {
  public:
   Options() = default;
+
+  Options(const Options& other)
+      : net::NetOptions(other),
+        cfg_file_(other.cfg_file_),
+        log_level_(other.log_level_),
+        redis_compatible_mode(other.redis_compatible_mode.load()) {
+    // NOTE: If there are member variables of pointer type, a deep copy needs to be performed here
+  }
+
+  Options& operator=(const Options& other) {
+    if (this != &other) {
+      cfg_file_ = other.cfg_file_;
+      log_level_ = other.log_level_;
+      redis_compatible_mode.store(other.redis_compatible_mode.load());
+      // NOTE: If there are member variables of pointer type, a deep copy needs to be performed here
+    }
+    return *this;
+  }
+
   ~Options() = default;
 
   void SetConfigName(const PString& cfg_file) { cfg_file_ = cfg_file; }
