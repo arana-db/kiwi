@@ -36,7 +36,7 @@ template <typename T>
 requires HasSetFdFunction<T>
 class ThreadManager {
  public:
-  explicit ThreadManager(int8_t index, NetOptions& netOptions) : index_(index), netOptions_(netOptions) {}
+  explicit ThreadManager(int8_t index, NetOptions &netOptions) : index_(index), netOptions_(netOptions) {}
 
   ~ThreadManager();
 
