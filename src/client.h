@@ -10,6 +10,7 @@
 
 #pragma once
 
+#include <fmt/format.h>
 #include <chrono>
 #include <set>
 #include <span>
@@ -132,8 +133,16 @@ class PClient : public std::enable_shared_from_this<PClient> {
 
   // reply
   void SetRes(CmdRes _ret, const std::string& content = "") { resp_encode_->SetRes(_ret, content); };
-  void AppendArrayLen(int64_t ori) { resp_encode_->AppendArrayLen(ori); }
-  void AppendArrayLen(uint64_t ori) { resp_encode_->AppendArrayLen(static_cast<int64_t>(ori)); }
+
+  template <typename T>
+  requires(std::integral<T> || std::same_as<T, std::string>) void AppendArrayLen(T value) {
+    if constexpr (std::integral<T>) {
+      AppendStringRaw(fmt::format("*{}\r\n", pstd::Int2string(value)));
+    } else {
+      AppendStringRaw(fmt::format("*{}\r\n", value));
+    }
+  }
+
   void AppendInteger(int64_t value) { resp_encode_->AppendInteger(value); }
   void AppendStringRaw(const std::string& value) { resp_encode_->AppendStringRaw(value); }
   void AppendSimpleString(const std::string& value) { resp_encode_->AppendSimpleString(value); }
