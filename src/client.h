@@ -196,7 +196,7 @@ class PClient : public std::enable_shared_from_this<PClient> {
   bool GetAuth() const { return auth_; }
   uint64_t GetUniqueID() const;
 
-  inline size_t ParamsSize() const { return argv_.size(); }
+  size_t ParamsSize() const { return argv_.size(); }
 
   ClientState State() const { return state_; }
 
