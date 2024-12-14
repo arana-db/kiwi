@@ -241,7 +241,7 @@ class PConfig {
   /*
    * Decide whether kiwi runs as a daemon process.
    * If changes are needed in the future,
-   * consider switching bool to atomic_bool. 
+   * consider switching bool to atomic_bool.
    */
   bool daemonize = false;
 
@@ -289,7 +289,7 @@ class PConfig {
   /*
    * Enable redis_compatioble_mode?
    * If changes are needed in the future,
-   * consider switching bool to atomic_bool. 
+   * consider switching bool to atomic_bool.
    */
   bool redis_compatible_mode = true;
 
@@ -306,7 +306,7 @@ class PConfig {
   /*
    * Use raft protocol?
    * If changes are needed in the future,
-   * consider switching bool to atomic_bool. 
+   * consider switching bool to atomic_bool.
    */
   bool use_raft = false;
 
@@ -336,7 +336,7 @@ class PConfig {
 
   /*
    * If changes are needed in the future,
-   * consider switching bool to atomic_bool. 
+   * consider switching bool to atomic_bool.
    */
   bool rocksdb_enable_pipelined_write = false;
   int rocksdb_level0_slowdown_writes_trigger = 20;
@@ -392,11 +392,9 @@ class PConfig {
    * rewritable represents whether to overwrite existing settings
    * when a key-value pair is duplicated.
    */
-  inline void AddBool(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
-                      bool* value_ptr) {
+  inline void AddBool(const std::string& key, const CheckFunc& checkfunc, bool rewritable, bool* value_ptr) {
     config_map_.emplace(key, std::make_unique<BoolValue>(key, checkfunc, rewritable, value_ptr));
   }
-
 
   /*------------------------
    * AddNumber (const std::string& key, bool rewritable, T* value_ptr)

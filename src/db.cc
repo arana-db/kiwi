@@ -30,8 +30,7 @@ rocksdb::Status DB::Open() {
   storage_options.table_options = g_config.GetRocksDBBlockBasedTableOptions();
 
   storage_options.options.ttl = g_config.rocksdb_ttl_second;
-  storage_options.options.periodic_compaction_seconds =
-      g_config.rocksdb_periodic_second;
+  storage_options.options.periodic_compaction_seconds = g_config.rocksdb_periodic_second;
 
   storage_options.small_compaction_threshold = g_config.small_compaction_threshold;
   storage_options.small_compaction_duration_threshold = g_config.small_compaction_duration_threshold;
@@ -117,8 +116,7 @@ void DB::LoadDBFromCheckpoint(const std::string& checkpoint_path, bool sync [[ma
 
   // options for CF
   storage_options.options.ttl = g_config.rocksdb_ttl_second;
-  storage_options.options.periodic_compaction_seconds =
-      g_config.rocksdb_periodic_second;
+  storage_options.options.periodic_compaction_seconds = g_config.rocksdb_periodic_second;
   if (g_config.use_raft) {
     storage_options.append_log_function = [&r = PRAFT](const Binlog& log, std::promise<rocksdb::Status>&& promise) {
       r.AppendLog(log, std::move(promise));
