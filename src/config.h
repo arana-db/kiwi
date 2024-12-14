@@ -378,7 +378,7 @@ class PConfig {
    * and the return value should refer to rocksdb::Status.
    */
   void AddStringWithFunc(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
-                                std::vector<std::string*> values_ptr_vector) {
+                         std::vector<std::string*> values_ptr_vector) {
     config_map_.emplace(key, std::make_unique<StringValue>(key, checkfunc, rewritable, values_ptr_vector));
   }
 
