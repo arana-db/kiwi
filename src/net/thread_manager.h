@@ -116,10 +116,7 @@ class ThreadManager {
 };
 
 template <typename T>
-requires HasSetFdFunction<T>
-ThreadManager<T>::~ThreadManager() {
-  Stop();
-}
+requires HasSetFdFunction<T> ThreadManager<T>::~ThreadManager() { Stop(); }
 
 template <typename T>
 requires HasSetFdFunction<T>
@@ -209,9 +206,7 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
 
 template <typename T>
 requires HasSetFdFunction<T>
-void ThreadManager<T>::CloseConnection(uint64_t connId) {
-  OnNetEventClose(connId, "");
-}
+void ThreadManager<T>::CloseConnection(uint64_t connId) { OnNetEventClose(connId, ""); }
 
 template <typename T>
 requires HasSetFdFunction<T>
@@ -335,8 +330,8 @@ bool ThreadManager<T>::CreateWriteThread() {
 }
 
 template <typename T>
-requires HasSetFdFunction<T>
-uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd, const std::shared_ptr<Connection> &conn) {
+requires HasSetFdFunction<T> uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd,
+                                                                     const std::shared_ptr<Connection> &conn) {
   auto connId = getConnId();
   if constexpr (IsPointer_v<T>) {
     t->SetConnId(connId);
