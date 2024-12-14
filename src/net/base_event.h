@@ -46,7 +46,7 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
   const static int EVENT_NULL;
 
   BaseEvent(const std::shared_ptr<NetEvent> &listen, int8_t mode, int8_t type)
-      : listen_(listen), mode_(mode), type_(type){};
+      : listen_(listen), mode_(mode), type_(type) {};
 
   virtual ~BaseEvent() = default;
 
@@ -85,15 +85,11 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
     onCreate_ = std::move(onCreate);
   }
 
-  void SetOnMessage(std::function<void(uint64_t, std::string &&)> &&onMessage) {
-    onMessage_ = std::move(onMessage);
-  }
+  void SetOnMessage(std::function<void(uint64_t, std::string &&)> &&onMessage) { onMessage_ = std::move(onMessage); }
 
   void SetOnClose(std::function<void(uint64_t, std::string &&)> &&onClose) { onClose_ = std::move(onClose); }
 
-  void SetGetConn(std::function<std::shared_ptr<Connection>(uint64_t)> &&getConn) {
-    getConn_ = std::move(getConn);
-  }
+  void SetGetConn(std::function<std::shared_ptr<Connection>(uint64_t)> &&getConn) { getConn_ = std::move(getConn); }
 
   int8_t Type() const { return type_; }
 

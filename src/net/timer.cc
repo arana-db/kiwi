@@ -23,7 +23,9 @@ int64_t Timer::AddTask(const std::shared_ptr<ITimerTask>& task) {
 void Timer::RePushTask() {
   for (const auto& task : list_) {
     task->Next();
-    { queue_.push(task); }
+    {
+      queue_.push(task);
+    }
   }
   list_.clear();
 }
