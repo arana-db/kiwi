@@ -27,19 +27,19 @@ class ITimerTask {
 
   virtual void TimeOut() = 0;
 
-  inline int64_t Start() const { return start_; }
+  int64_t Start() const { return start_; }
 
-  inline int64_t Interval() const { return interval_; }
+  int64_t Interval() const { return interval_; }
 
-  inline void Next() {  // the next time it can be executed
+  void Next() {  // the next time it can be executed
     start_ += Interval();
   }
 
-  inline int64_t Id() const { return id_; }
+  int64_t Id() const { return id_; }
 
-  inline void SetId(int64_t id) { id_ = id; }
+  void SetId(int64_t id) { id_ = id; }
 
-  inline bool operator<(ITimerTask& task1) const { return task1.Start() < Start(); }
+  bool operator<(ITimerTask& task1) const { return task1.Start() < Start(); }
 
  protected:
   int64_t start_ = 0;     // Timestamp of the start of the task (in milliseconds)

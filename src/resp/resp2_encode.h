@@ -10,13 +10,13 @@
 class Resp2Encode : public RespEncode {
  public:
   void SetRes(CmdRes ret, const std::string& content = "") override;
-  inline void AppendArrayLen(int64_t ori) override { SetBulkStringLen(reply_, ori, "*"); }
-  inline void AppendInteger(int64_t ori) override { SetBulkStringLen(reply_, ori, ":"); }
-  inline void AppendStringRaw(const std::string& value) override { reply_.append(value); }
+  void AppendArrayLen(int64_t ori) override { SetBulkStringLen(reply_, ori, "*"); }
+  void AppendInteger(int64_t ori) override { SetBulkStringLen(reply_, ori, ":"); }
+  void AppendStringRaw(const std::string& value) override { reply_.append(value); }
   void AppendSimpleString(const std::string& value) override;
-  inline void AppendString(const std::string& value) override { AppendBulkString(reply_, value); }
+  void AppendString(const std::string& value) override { AppendBulkString(reply_, value); }
   void AppendString(const char* value, int64_t size) override;
   void AppendStringVector(const std::vector<std::string>& strArray) override;
-  inline void SetLineString(const std::string& value) override { reply_ = value + CRLF; }
+  void SetLineString(const std::string& value) override { reply_ = value + CRLF; }
   void ClearReply() override { reply_.clear(); }
 };

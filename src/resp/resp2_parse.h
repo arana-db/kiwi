@@ -11,7 +11,7 @@ class Resp2Parse : public RespParse {
  public:
   explicit Resp2Parse() = default;
 
-  inline RespResult Parse(std::string&& data) override {
+  RespResult Parse(std::string&& data) override {
     data_.append(data);
     return ParsePipeline();
   };
@@ -23,19 +23,19 @@ class Resp2Parse : public RespParse {
     return result;
   }
 
-  inline void GetParams(RespParams& params) override {
+  void GetParams(RespParams& params) override {
     Reset();
     params.swap(params_);
     ClearParams();
   }
 
  private:
-  inline void Reset() {
+  void Reset() {
     pos_ = 0;
     data_.clear();
   };
 
-  inline void ClearParams() {
+  void ClearParams() {
     params_.resize(0);
     singleParams_.resize(0);
     singleParamsSize_ = -1;
@@ -51,7 +51,7 @@ class Resp2Parse : public RespParse {
   RespResult ParseBulkString();
   RespResult ParseArray();
   RespResult ParseResp();
-  inline void AppendParams(const std::string& param) { singleParams_.emplace_back(param); };
+  void AppendParams(const std::string& param) { singleParams_.emplace_back(param); };
   void MergeParams();
 
  private:
