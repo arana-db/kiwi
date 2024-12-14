@@ -12,14 +12,11 @@
 
 #include <cassert>
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 #include <functional>
 #include <map>
 #include <memory>
-#include <shared_mutex>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 #include "rocksdb/options.h"

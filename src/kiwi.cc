@@ -19,7 +19,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
-#include <thread>
 
 #include "client.h"
 #include "client_map.h"
@@ -27,6 +26,7 @@
 #include "helper.h"
 #include "kiwi.h"
 #include "kiwi_logo.h"
+#include "options.h"
 #include "praft/praft.h"
 #include "pstd/log.h"
 #include "pstd/pstd_util.h"
@@ -85,8 +85,8 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
       {"slaveof", required_argument, 0, 's'}, {"redis-compatible-mode", no_argument, 0, 'c'},
   };
   // kiwi [/path/to/kiwi.conf] [options]
-  if (cfg_file_.empty() && argc > 1 && ::access(argv[1], R_OK) == 0) {
-    cfg_file_ = argv[1];
+  if (options_.GetConfigName().empty() && argc > 1 && ::access(argv[1], R_OK) == 0) {
+    options_.SetConfigName(argv[1]);
     argc = argc - 1;
     argv = argv + 1;
   }
@@ -119,7 +119,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
         break;
       }
       case 'l': {
-        log_level_ = std::string(optarg);
+        options_.SetLogLevel(std::string(optarg));
         break;
       }
       case 's': {
@@ -139,7 +139,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
         break;
       }
       case 'c': {
-        redis_compatible_mode = true;
+        options_.SetRedisCompatibleMode(true);
         break;
       }
       case '?': {
@@ -169,15 +169,16 @@ bool KiwiDB::Init() {
     g_config.Set("port", std::to_string(port_), true);
   }
 
-  if (!log_level_.empty()) {
-    g_config.Set("log-level", log_level_, true);
+  if (!options_.GetLogLevel().empty()) {
+    g_config.Set("log-level", options_.GetLogLevel(), true);
   }
 
-  if (redis_compatible_mode) {
-    g_config.Set("redis_compatible_mode", std::to_string(redis_compatible_mode), true);
+  if (options_.GetRedisCompatibleMode()) {
+    g_config.Set("redis_compatible_mode", std::to_string(options_.GetRedisCompatibleMode()), true);
   }
 
   auto num = g_config.worker_threads_num + g_config.slave_threads_num;
+  options_.SetThreadNum(num);
 
   // now we only use fast cmd thread pool
   auto status = cmd_threads_.Init(g_config.fast_cmd_threads_num, 1, "kiwi-cmd");
@@ -196,9 +197,9 @@ bool KiwiDB::Init() {
     PREPL.SetMasterAddr(g_config.master_ip.c_str(), g_config.master_port);
   }
 
-  event_server_ = std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(num);
+  options_.SetRwSeparation(true);
 
-  event_server_->SetRwSeparation(true);
+  event_server_ = std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(options_);
 
   net::SocketAddr addr(g_config.ip, g_config.port);
   INFO("Add listen addr:{}, port:{}", g_config.ip, g_config.port);
