@@ -131,19 +131,19 @@ class PClient : public std::enable_shared_from_this<PClient> {
   void ClearWatch();
 
   // reply
-  inline void SetRes(CmdRes _ret, const std::string& content = "") { resp_encode_->SetRes(_ret, content); };
-  inline void AppendArrayLen(int64_t ori) { resp_encode_->AppendArrayLen(ori); }
-  inline void AppendArrayLen(uint64_t ori) { resp_encode_->AppendArrayLen(static_cast<int64_t>(ori)); }
-  inline void AppendInteger(int64_t value) { resp_encode_->AppendInteger(value); }
-  inline void AppendStringRaw(const std::string& value) { resp_encode_->AppendStringRaw(value); }
-  inline void AppendSimpleString(const std::string& value) { resp_encode_->AppendSimpleString(value); }
-  inline void AppendString(const std::string& value) { resp_encode_->AppendString(value); }
-  inline void AppendStringVector(const std::vector<std::string>& strArray) {
+  void SetRes(CmdRes _ret, const std::string& content = "") { resp_encode_->SetRes(_ret, content); };
+  void AppendArrayLen(int64_t ori) { resp_encode_->AppendArrayLen(ori); }
+  void AppendArrayLen(uint64_t ori) { resp_encode_->AppendArrayLen(static_cast<int64_t>(ori)); }
+  void AppendInteger(int64_t value) { resp_encode_->AppendInteger(value); }
+  void AppendStringRaw(const std::string& value) { resp_encode_->AppendStringRaw(value); }
+  void AppendSimpleString(const std::string& value) { resp_encode_->AppendSimpleString(value); }
+  void AppendString(const std::string& value) { resp_encode_->AppendString(value); }
+  void AppendStringVector(const std::vector<std::string>& strArray) {
     resp_encode_->AppendStringVector(strArray);
   };
-  inline void AppendString(const char* value, int64_t size) { resp_encode_->AppendString(value, size); }
-  inline void SetLineString(const std::string& value) { resp_encode_->SetLineString(value); }
-  inline void Reply(std::string& str) { resp_encode_->Reply(str); }
+  void AppendString(const char* value, int64_t size) { resp_encode_->AppendString(value, size); }
+  void SetLineString(const std::string& value) { resp_encode_->SetLineString(value); }
+  void Reply(std::string& str) { resp_encode_->Reply(str); }
   // reply
 
   // pubsub

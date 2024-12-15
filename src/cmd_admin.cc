@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include "cmd_admin.h"
+#include "config.h"
 #include "db.h"
 
 #include "braft/raft.h"
@@ -36,7 +37,6 @@
 #include "pstd/env.h"
 
 #include "client_map.h"
-#include "cmd_table_manager.h"
 #include "slow_log.h"
 #include "store.h"
 
@@ -160,6 +160,78 @@ PingCmd::PingCmd(const std::string& name, int16_t arity) : BaseCmd(name, arity, 
 bool PingCmd::DoInitial(PClient* client) { return true; }
 
 void PingCmd::DoCmd(PClient* client) { client->SetRes(CmdRes::kPong, "PONG"); }
+
+HelloCmd::HelloCmd(const std::string& name, int16_t arity)
+    : BaseCmd(name, arity, kCmdFlagsFast, kAclCategoryFast | kAclCategoryConnection) {}
+
+bool HelloCmd::DoInitial(PClient* client) {
+  size_t argc = client->argv_.size();
+  int resp_version = 2;
+
+  if (argc > 1) {
+    if (pstd::String2int(client->argv_[1].data(), client->argv_[1].size(), &resp_version) == 0) {
+      client->SetRes(CmdRes::kErrOther, "Protocol version is not an integer or out of range");
+      return false;
+    }
+  }
+
+  if (resp_version != 2) {
+    client->SetRes(CmdRes::kErrOther, "unsupported protocol version");
+    return false;
+  }
+
+  return true;
+}
+
+void HelloCmd::DoCmd(PClient* client) {
+  size_t argc = client->argv_.size();
+  size_t next_arg = 2;
+
+  for (; next_arg < argc; next_arg++) {
+    size_t more_args = argc - next_arg;
+    const std::string& arg = client->argv_[next_arg];
+    if ((strcasecmp(arg.data(), "SETNAME") == 0) && more_args) {
+      client->SetName(client->argv_[next_arg + 1]);
+      next_arg++;
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "Syntax error");
+      return;
+    }
+  }
+
+  Hello(client);
+}
+
+void HelloCmd::Hello(PClient* client) {
+  client->AppendArrayLen(static_cast<int64_t>(12));
+  client->AppendString("server");
+  client->AppendString("kiwi");
+  client->AppendString("version");
+  client->AppendString(Kkiwi_VERSION);
+  client->AppendString("proto");
+  client->AppendInteger(static_cast<int64_t>(2));
+  client->AppendString("id");
+  client->AppendInteger(static_cast<int64_t>(client->GetConnId()));
+  client->AppendString("mode");
+
+  if (!g_config.use_raft) {
+    client->AppendString("standalone");
+  } else {
+    client->AppendString("cluster");
+  }
+
+  client->AppendString("role");
+  if (client->GetAuth()) {
+    client->AppendString("master");
+  } else {
+    client->AppendString("slave");
+  }
+}
+
+void HelloCmd::HelloSubCmdSetname(PClient* client) {
+  Hello(client);
+  client->SetName(client->argv_[3]);
+}
 
 const std::string InfoCmd::kInfoSection = "info";
 const std::string InfoCmd::kAllSection = "all";
