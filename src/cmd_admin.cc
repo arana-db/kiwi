@@ -190,6 +190,7 @@ void HelloCmd::DoCmd(PClient* client) {
   for (; next_arg < argc; next_arg++) {
     size_t more_args = argc - next_arg;
     const std::string& arg = client->argv_[next_arg];
+    // TODO(marsevilspirit): support auth
     if ((strcasecmp(arg.data(), "SETNAME") == 0) && more_args) {
       client->SetName(client->argv_[next_arg + 1]);
       next_arg++;
