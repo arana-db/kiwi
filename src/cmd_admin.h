@@ -207,7 +207,6 @@ class HelloCmd : public BaseCmd {
   void DoCmd(PClient* client) override;
 
   void Hello(PClient* client);
-  void HelloSubCmdSetname(PClient* client);
 };
 
 class InfoCmd : public BaseCmd {

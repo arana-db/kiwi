@@ -228,11 +228,6 @@ void HelloCmd::Hello(PClient* client) {
   }
 }
 
-void HelloCmd::HelloSubCmdSetname(PClient* client) {
-  Hello(client);
-  client->SetName(client->argv_[3]);
-}
-
 const std::string InfoCmd::kInfoSection = "info";
 const std::string InfoCmd::kAllSection = "all";
 const std::string InfoCmd::kServerSection = "server";
