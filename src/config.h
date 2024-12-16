@@ -364,7 +364,7 @@ class PConfig {
    * rewritable represents whether to overwrite existing settings
    * when a key-value pair is duplicated.
    */
-  inline void AddString(const std::string& key, bool rewritable, std::vector<std::string*> values_ptr_vector) {
+  void AddString(const std::string& key, bool rewritable, const std::vector<std::string*>& values_ptr_vector) {
     config_map_.emplace(key, std::make_unique<StringValue>(key, nullptr, rewritable, values_ptr_vector));
   }
 
@@ -377,8 +377,8 @@ class PConfig {
    * The checkfunc is coded by the user, validate the string as needed,
    * and the return value should refer to rocksdb::Status.
    */
-  inline void AddStringWithFunc(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
-                                std::vector<std::string*> values_ptr_vector) {
+  void AddStringWithFunc(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
+                                const std::vector<std::string*>& values_ptr_vector) {
     config_map_.emplace(key, std::make_unique<StringValue>(key, checkfunc, rewritable, values_ptr_vector));
   }
 
