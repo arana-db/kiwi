@@ -30,7 +30,6 @@
 #include "db.h"
 
 #include "braft/raft.h"
-#include "log.h"
 #include "pstd_string.h"
 #include "resp_encode.h"
 #include "rocksdb/version.h"
@@ -40,7 +39,6 @@
 #include "pstd/env.h"
 
 #include "client_map.h"
-#include "cmd_table_manager.h"
 #include "slow_log.h"
 #include "store.h"
 

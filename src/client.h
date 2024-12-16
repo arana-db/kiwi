@@ -139,9 +139,7 @@ class PClient : public std::enable_shared_from_this<PClient> {
   void AppendStringRaw(const std::string& value) { resp_encode_->AppendStringRaw(value); }
   void AppendSimpleString(const std::string& value) { resp_encode_->AppendSimpleString(value); }
   void AppendString(const std::string& value) { resp_encode_->AppendString(value); }
-  void AppendStringVector(const std::vector<std::string>& strArray) {
-    resp_encode_->AppendStringVector(strArray);
-  };
+  void AppendStringVector(const std::vector<std::string>& strArray) { resp_encode_->AppendStringVector(strArray); };
   void AppendString(const char* value, int64_t size) { resp_encode_->AppendString(value, size); }
   void SetLineString(const std::string& value) { resp_encode_->SetLineString(value); }
   void Reply(std::string& str) { resp_encode_->Reply(str); }
