@@ -128,6 +128,11 @@ AuthCmd::AuthCmd(const std::string& name, int16_t arity)
 bool AuthCmd::DoInitial(PClient* client) { return true; }
 
 void AuthCmd::DoCmd(PClient* client) {
+  if (!client) {
+    client->SetRes(CmdRes::kErrOther, "Client is null");
+    return;
+  }
+
   if (g_config.password == "") {
     client->SetRes(CmdRes::kErrOther, "Client sent AUTH, but no password is set");
   }
