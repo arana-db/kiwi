@@ -85,4 +85,6 @@ jobs:
           cd ../tests
           go mod tidy
           go test -timeout 15m --ginkgo.v
+          test_exit_code=$?
           sh print_log.sh
+          exit $test_exit_code
