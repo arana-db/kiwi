@@ -167,18 +167,15 @@ bool EchoCmd::DoInitial(PClient* client) { return true; }
 
 void EchoCmd::DoCmd(PClient* client) {
   size_t argc = client->argv_.size();
-  if (argc < 2) {
+  if (argc != 2) {
     client->SetRes(CmdRes::kSyntaxErr);
     return;
   }
 
   std::string response;
-  for (size_t i = 1; i < argc; i++) {
-    if (i > 1) response += " ";
-    response += client->argv_[i];
-  }
+  response = client->argv_[1];
 
-  client->SetRes(CmdRes::kEcho, response);
+  client->AppendString(response);
 }
 
 const std::string InfoCmd::kInfoSection = "info";
