@@ -14,11 +14,8 @@
 #include <unordered_map>
 
 #include "callback_function.h"
-#include "client.h"
 #include "config.h"
 #include "io_thread.h"
-#include "kiwi.h"
-#include "log.h"
 
 #if defined(HAVE_EPOLL)
 
@@ -86,7 +83,7 @@ class ThreadManager {
   // Set the maximum number of connections
   void SetMaxConnCount(uint64_t maxConnCount) { maxConnCount_ = maxConnCount; }
 
-  uint64_t getConnCount(){return this->connCount_.load();}; // Get the number of connections
+  uint64_t getConnCount(){return this->connCount_.load(std::memory_order_acquire);}; // Get the number of connections
   void addConnCount(){this->connCount_.fetch_add(1);}; // Add the number of connections
   void subConnCount(){this->connCount_.fetch_sub(1);}; // Subtract the number of connections
  private:
@@ -169,8 +166,6 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     t.SetThreadIndex(index_);
   }
   if (getConnCount() >= maxConnCount_) {
-
-    INFO("too many connections");
     onClose_(t, "too many connections");
     return;
   }
