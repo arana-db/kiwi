@@ -12,6 +12,10 @@ ExternalProject_Add(
         URL https://github.com/nodejs/llhttp/archive/refs/tags/release/v6.0.5.tar.gz
         URL_HASH SHA256=28d5bc494d379228cd7a9af32dfc518fc9e6c5ad56838cafb63e8062bee06bda
         CMAKE_ARGS
+        ${EXTERNAL_PROJECT_C}
+        ${EXTERNAL_PROJECT_CXX}
+        ${EXTERNAL_PROJECT_CXX_FLAGS}
+        ${EXTERNAL_PROJECT_CXX_LINK_FLAGS}
         -DCMAKE_INSTALL_PREFIX=${LIB_INSTALL_PREFIX}
         -DCMAKE_INSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}
         -DCMAKE_BUILD_TYPE=${LIB_BUILD_TYPE}

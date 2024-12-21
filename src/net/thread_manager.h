@@ -16,6 +16,7 @@
 #include "callback_function.h"
 #include "config.h"
 #include "io_thread.h"
+#include "net_options.h"
 
 #if defined(HAVE_EPOLL)
 
@@ -35,23 +36,23 @@ template <typename T>
 requires HasSetFdFunction<T>
 class ThreadManager {
  public:
-  explicit ThreadManager(int8_t index, bool rwSeparation = true) : index_(index), rwSeparation_(rwSeparation) {}
+  explicit ThreadManager(int8_t index, NetOptions &netOptions) : index_(index), netOptions_(netOptions) {}
 
   ~ThreadManager();
 
   // set new connect create before callback function
-  inline void SetOnInit(const OnInit<T> &func) { onInit_ = func; }
+  void SetOnInit(const OnInit<T> &func) { onInit_ = func; }
 
   // set new connect create callback function
-  inline void SetOnCreate(const OnCreate<T> &func) { onCreate_ = func; }
+  void SetOnCreate(const OnCreate<T> &func) { onCreate_ = func; }
 
-  inline void SetOnConnect(const OnCreate<T> &func) { onConnect_ = func; }
+  void SetOnConnect(const OnCreate<T> &func) { onConnect_ = func; }
 
   // set read message callback function
-  inline void SetOnMessage(const OnMessage<T> &func) { onMessage_ = func; }
+  void SetOnMessage(const OnMessage<T> &func) { onMessage_ = func; }
 
   // set close connect callback function
-  inline void SetOnClose(const OnClose<T> &func) { onClose_ = func; }
+  void SetOnClose(const OnClose<T> &func) { onClose_ = func; }
 
   // Start the thread and initialize the event
   bool Start(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<Timer> &timer);
@@ -90,9 +91,10 @@ class ThreadManager {
   uint64_t DoTCPConnect(T &t, int fd, const std::shared_ptr<Connection> &conn);
 
  private:
-  const bool rwSeparation_ = true;    // Whether to separate read and write threads
   const int8_t index_ = 0;            // The index of the thread
   std::atomic<bool> running_ = true;  // Whether the thread is running
+
+  NetOptions netOptions_;
 
   std::unique_ptr<IOThread> readThread_;   // Read thread
   std::unique_ptr<IOThread> writeThread_;  // Write thread
@@ -122,7 +124,7 @@ bool ThreadManager<T>::Start(const std::shared_ptr<NetEvent> &listen, const std:
   if (!CreateReadThread(listen, timer)) {
     return false;
   }
-  if (rwSeparation_) {
+  if (netOptions_.GetRwSeparation()) {
     return CreateWriteThread();
   }
   return true;
@@ -134,7 +136,7 @@ void ThreadManager<T>::Stop() {
   bool expected = true;
   if (running_.compare_exchange_strong(expected, false)) {
     readThread_->Stop();
-    if (rwSeparation_) {
+    if (netOptions_.GetRwSeparation()) {
       writeThread_->Stop();
     }
   }
@@ -159,6 +161,9 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     connections_.emplace(connId, std::make_pair(t, conn));
   }
   readThread_->AddNewEvent(connId, fd, BaseEvent::EVENT_READ);
+  if (writeThread_) {
+    writeThread_->AddNewEvent(connId, fd, BaseEvent::EVENT_NULL);  // add null event to write_thread epoll
+  }
 
   onCreate_(connId, t, conn->addr_);
 }
@@ -190,7 +195,7 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
   fd = iter->second.second->fd_;
 
   readThread_->CloseConnection(fd);
-  if (rwSeparation_) {
+  if (netOptions_.GetRwSeparation()) {
     writeThread_->CloseConnection(fd);
   }
 
@@ -229,7 +234,7 @@ template <typename T>
 requires HasSetFdFunction<T>
 void ThreadManager<T>::Wait() {
   readThread_->Wait();
-  if (rwSeparation_) {
+  if (netOptions_.GetRwSeparation()) {
     writeThread_->Wait();
   }
 }
@@ -254,14 +259,10 @@ void ThreadManager<T>::SendPacket(const T &conn, std::string &&msg) {
   }
 
   connPtr->netEvent_->SendPacket(std::move(msg));
-
-  if (connPtr->netEvent_->CheckSetFlag(0)) {
-    if (rwSeparation_) {
-      writeThread_->SetWriteEvent(connId, connPtr->fd_);
-    } else {
-      readThread_->SetWriteEvent(connId, connPtr->fd_);
-    }
-    connPtr->netEvent_->UnlockFlag();
+  if (netOptions_.GetRwSeparation()) {
+    writeThread_->SetWriteEvent(connId, connPtr->fd_);
+  } else {
+    readThread_->SetWriteEvent(connId, connPtr->fd_);
   }
 }
 
@@ -270,7 +271,7 @@ requires HasSetFdFunction<T>
 bool ThreadManager<T>::CreateReadThread(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<Timer> &timer) {
   std::shared_ptr<BaseEvent> event;
   int8_t eventMode = BaseEvent::EVENT_MODE_READ;
-  if (!rwSeparation_) {
+  if (!netOptions_.GetRwSeparation()) {
     eventMode |= BaseEvent::EVENT_MODE_WRITE;
   }
 
@@ -329,8 +330,8 @@ bool ThreadManager<T>::CreateWriteThread() {
 }
 
 template <typename T>
-requires HasSetFdFunction<T>
-uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd, const std::shared_ptr<Connection> &conn) {
+requires HasSetFdFunction<T> uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd,
+                                                                     const std::shared_ptr<Connection> &conn) {
   auto connId = getConnId();
   if constexpr (IsPointer_v<T>) {
     t->SetConnId(connId);

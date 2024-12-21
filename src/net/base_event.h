@@ -43,6 +43,7 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
   const static int EVENT_WRITE;
   const static int EVENT_ERROR;
   const static int EVENT_HUB;
+  const static int EVENT_NULL;
 
   BaseEvent(const std::shared_ptr<NetEvent> &listen, int8_t mode, int8_t type)
       : listen_(listen), mode_(mode), type_(type){};
@@ -78,23 +79,19 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
     }
   }
 
-  inline int EvFd() const { return evFd_; }
+  int EvFd() const { return evFd_; }
 
-  inline void SetOnCreate(std::function<void(uint64_t, std::shared_ptr<Connection>)> &&onCreate) {
+  void SetOnCreate(std::function<void(uint64_t, std::shared_ptr<Connection>)> &&onCreate) {
     onCreate_ = std::move(onCreate);
   }
 
-  inline void SetOnMessage(std::function<void(uint64_t, std::string &&)> &&onMessage) {
-    onMessage_ = std::move(onMessage);
-  }
+  void SetOnMessage(std::function<void(uint64_t, std::string &&)> &&onMessage) { onMessage_ = std::move(onMessage); }
 
-  inline void SetOnClose(std::function<void(uint64_t, std::string &&)> &&onClose) { onClose_ = std::move(onClose); }
+  void SetOnClose(std::function<void(uint64_t, std::string &&)> &&onClose) { onClose_ = std::move(onClose); }
 
-  inline void SetGetConn(std::function<std::shared_ptr<Connection>(uint64_t)> &&getConn) {
-    getConn_ = std::move(getConn);
-  }
+  void SetGetConn(std::function<std::shared_ptr<Connection>(uint64_t)> &&getConn) { getConn_ = std::move(getConn); }
 
-  inline int8_t Type() const { return type_; }
+  int8_t Type() const { return type_; }
 
  protected:
   int evFd_ = 0;  // event fd
