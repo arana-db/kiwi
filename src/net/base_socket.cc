@@ -71,33 +71,33 @@ void BaseSocket::SetTcpKeepAlive() {
   int cnt = 3;
 
   if (setsockopt(Fd(), SOL_SOCKET, SO_KEEPALIVE, &enabled, sizeof(enabled)) == -1) {
-    WARN("Failed to enable SO_KEEPALIVE: %s", strerror(errno));
+    WARN("SetTcpKeepAlive fd:{} error:{}", Fd(), errno);
     return;
   }
 
 #ifdef TCP_KEEPIDLE
   if (setsockopt(Fd(), IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle))) {
-    WARN("Failed to set TCP_KEEPIDLE: %s", strerror(errno));
+    WARN("SetTcpKeepAlive fd:{} error:{}", Fd(), errno);
     return;
   }
 #elif defined(TCP_KEEPALIVE)
   /* support MacOS */
   if (setsockopt(Fd(), IPPROTO_TCP, TCP_KEEPALIVE, &idle, sizeof(idle))) {
-    ERROR("Failed to set TCP_KEEPALIVE: %s", strerror(errno));
+    WARN("SetTcpKeepAlive fd:{} error:{}", Fd(), errno);
     return;
   }
 #endif
 
 #ifdef TCP_KEEPINTVL
   if (setsockopt(Fd(), IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl))) {
-    ERROR("Failed to set TCP_KEEPINTVL: %s", strerror(errno));
+    WARN("SetTcpKeepAlive fd:{} error:{}", Fd(), errno);
     return;
   }
 #endif
 
 #ifdef TCP_KEEPCNT
   if (setsockopt(Fd(), IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt))) {
-    ERROR("Failed to set TCP_KEEPCNT: %s", strerror(errno));
+    WARN("SetTcpKeepAlive fd:{} error:{}", Fd(), errno);
     return;
   }
 #endif

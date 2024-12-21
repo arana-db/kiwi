@@ -84,7 +84,7 @@ void FlushdbCmd::DoCmd(PClient* client) {
   PSTORE.GetBackend(currentDBIndex).get()->Lock();
   DEFER { PSTORE.GetBackend(currentDBIndex).get()->UnLock(); };
 
-  std::string db_path = g_config.db_path.ToString() + std::to_string(currentDBIndex);
+  std::string db_path = g_config.db_path + std::to_string(currentDBIndex);
   std::string path_temp = db_path;
   path_temp.append("_deleting/");
   pstd::RenameFile(db_path, path_temp);
@@ -107,7 +107,7 @@ bool FlushallCmd::DoInitial(PClient* client) { return true; }
 void FlushallCmd::DoCmd(PClient* client) {
   for (size_t i = 0; i < g_config.databases; ++i) {
     PSTORE.GetBackend(i).get()->Lock();
-    std::string db_path = g_config.db_path.ToString() + std::to_string(i);
+    std::string db_path = g_config.db_path + std::to_string(i);
     std::string path_temp = db_path;
     path_temp.append("_deleting/");
     pstd::RenameFile(db_path, path_temp);
@@ -141,7 +141,7 @@ ShutdownCmd::ShutdownCmd(const std::string& name, int16_t arity)
 bool ShutdownCmd::DoInitial(PClient* client) {
   // For now, only shutdown need check local
   if (client->PeerIP().find("127.0.0.1") == std::string::npos &&
-      client->PeerIP().find(g_config.ip.ToString()) == std::string::npos) {
+      client->PeerIP().find(g_config.ip) == std::string::npos) {
     client->SetRes(CmdRes::kErrOther, kCmdNameShutdown + " should be localhost");
     return false;
   }

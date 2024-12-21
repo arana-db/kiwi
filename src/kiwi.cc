@@ -19,7 +19,6 @@
 #include <cstdlib>
 #include <ctime>
 #include <iostream>
-#include <thread>
 
 #include "client.h"
 #include "client_map.h"
@@ -27,6 +26,7 @@
 #include "helper.h"
 #include "kiwi.h"
 #include "kiwi_logo.h"
+#include "options.h"
 #include "praft/praft.h"
 #include "pstd/log.h"
 #include "pstd/pstd_util.h"
@@ -85,8 +85,8 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
       {"slaveof", required_argument, 0, 's'}, {"redis-compatible-mode", no_argument, 0, 'c'},
   };
   // kiwi [/path/to/kiwi.conf] [options]
-  if (cfg_file_.empty() && argc > 1 && ::access(argv[1], R_OK) == 0) {
-    cfg_file_ = argv[1];
+  if (options_.GetConfigName().empty() && argc > 1 && ::access(argv[1], R_OK) == 0) {
+    options_.SetConfigName(argv[1]);
     argc = argc - 1;
     argv = argv + 1;
   }
@@ -119,7 +119,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
         break;
       }
       case 'l': {
-        log_level_ = std::string(optarg);
+        options_.SetLogLevel(std::string(optarg));
         break;
       }
       case 's': {
@@ -139,7 +139,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
         break;
       }
       case 'c': {
-        redis_compatible_mode = true;
+        options_.SetRedisCompatibleMode(true);
         break;
       }
       case '?': {
@@ -169,40 +169,43 @@ bool KiwiDB::Init() {
     g_config.Set("port", std::to_string(port_), true);
   }
 
-  if (!log_level_.empty()) {
-    g_config.Set("log-level", log_level_, true);
+  if (!options_.GetLogLevel().empty()) {
+    g_config.Set("log-level", options_.GetLogLevel(), true);
   }
 
-  if (redis_compatible_mode) {
-    g_config.Set("redis_compatible_mode", std::to_string(redis_compatible_mode), true);
+  if (options_.GetRedisCompatibleMode()) {
+    g_config.Set("redis_compatible_mode", std::to_string(options_.GetRedisCompatibleMode()), true);
   }
 
-  auto num = g_config.worker_threads_num.load() + g_config.slave_threads_num.load();
+  auto num = g_config.worker_threads_num + g_config.slave_threads_num;
+  options_.SetThreadNum(num);
 
   // now we only use fast cmd thread pool
-  auto status = cmd_threads_.Init(g_config.fast_cmd_threads_num.load(), 1, "kiwi-cmd");
+  auto status = cmd_threads_.Init(g_config.fast_cmd_threads_num, 1, "kiwi-cmd");
   if (!status.ok()) {
     ERROR("init cmd thread pool failed: {}", status.ToString());
     return false;
   }
 
-  PSTORE.Init(g_config.databases.load(std::memory_order_relaxed));
+  PSTORE.Init(g_config.databases);
 
-  PSlowLog::Instance().SetThreshold(g_config.slow_log_time.load());
-  PSlowLog::Instance().SetLogLimit(static_cast<std::size_t>(g_config.slow_log_max_len.load()));
+  PSlowLog::Instance().SetThreshold(g_config.slow_log_time);
+  PSlowLog::Instance().SetLogLimit(static_cast<std::size_t>(g_config.slow_log_max_len));
 
   // master ip
   if (!g_config.master_ip.empty()) {
-    PREPL.SetMasterAddr(g_config.master_ip.ToString().c_str(), g_config.master_port.load());
+    PREPL.SetMasterAddr(g_config.master_ip.c_str(), g_config.master_port);
   }
 
-  event_server_ = std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(num);
+  auto tcpKeepAlive = g_config.tcp_keepalive;
+  options_.SetOpTcpKeepAlive(tcpKeepAlive);
 
-  event_server_->SetRwSeparation(true);
-  event_server_->SetESTcpKeepAlive(g_config.tcp_keepalive.load());
+  options_.SetRwSeparation(true);
 
-  net::SocketAddr addr(g_config.ip.ToString(), g_config.port.load());
-  INFO("Add listen addr:{}, port:{}", g_config.ip.ToString(), g_config.port.load());
+  event_server_ = std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(options_);
+
+  net::SocketAddr addr(g_config.ip, g_config.port);
+  INFO("Add listen addr:{}, port:{}", g_config.ip, g_config.port);
   event_server_->AddListenAddr(addr);
 
   event_server_->SetOnInit([](std::shared_ptr<PClient>* client) { *client = std::make_shared<PClient>(); });
@@ -330,7 +333,7 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  if (g_config.daemonize.load()) {
+  if (g_config.daemonize) {
     daemonize();
   }
 
@@ -339,7 +342,7 @@ int main(int argc, char* argv[]) {
   InitLogs();
   InitLimit();
 
-  if (g_config.daemonize.load()) {
+  if (g_config.daemonize) {
     closeStd();
   }
 
