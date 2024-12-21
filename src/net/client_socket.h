@@ -19,7 +19,7 @@ class ClientSocket : public StreamSocket {
 
   bool Connect();
 
-  inline void SetFailCallback(const std::function<void(std::string)>& cb) { onConnectFail_ = cb; }
+  void SetFailCallback(const std::function<void(std::string)>& cb) { onConnectFail_ = cb; }
 
  private:
   SocketAddr addr_;
