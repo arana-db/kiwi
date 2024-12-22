@@ -16,6 +16,7 @@
 #include "callback_function.h"
 #include "config.h"
 #include "io_thread.h"
+#include "net_options.h"
 
 #if defined(HAVE_EPOLL)
 
@@ -35,7 +36,7 @@ template <typename T>
 requires HasSetFdFunction<T>
 class ThreadManager {
  public:
-  explicit ThreadManager(int8_t index, bool rwSeparation = true) : index_(index), rwSeparation_(rwSeparation) {}
+  explicit ThreadManager(int8_t index, NetOptions &netOptions) : index_(index), netOptions_(netOptions) {}
 
   ~ThreadManager();
 
@@ -80,12 +81,6 @@ class ThreadManager {
   // Send message to the client
   void SendPacket(const T &conn, std::string &&msg);
 
-  // Set the maximum number of connections
-  void SetMaxConnCount(uint64_t maxConnCount) { maxConnCount_ = maxConnCount; }
-
-  uint64_t getConnCount(){return this->connCount_.load(std::memory_order_acquire);}; // Get the number of connections
-  void addConnCount(){this->connCount_.fetch_add(1);}; // Add the number of connections
-  void subConnCount(){this->connCount_.fetch_sub(1);}; // Subtract the number of connections
  private:
   // Create read thread
   bool CreateReadThread(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<Timer> &timer);
@@ -95,20 +90,23 @@ class ThreadManager {
 
   uint64_t DoTCPConnect(T &t, int fd, const std::shared_ptr<Connection> &conn);
 
+  uint32_t getClientCount() const { return clientCount_.load(); }
 
+  void clientCountIncrement() { clientCount_.fetch_add(1, std::memory_order_relaxed); }
+
+  void clientCountDecrement() { clientCount_.fetch_sub(1, std::memory_order_relaxed); }
  private:
-  const bool rwSeparation_ = true;    // Whether to separate read and write threads
   const int8_t index_ = 0;            // The index of the thread
   std::atomic<bool> running_ = true;  // Whether the thread is running
 
-  inline static std::atomic<uint64_t> connCount_{0}; // The number of connections
-  std::atomic<uint64_t> maxConnCount_; // The maximum number of connections
+  NetOptions netOptions_;
+
+  inline static std::atomic<uint32_t> clientCount_{0};  
 
   std::unique_ptr<IOThread> readThread_;   // Read thread
   std::unique_ptr<IOThread> writeThread_;  // Write thread
 
-  // All connections for the current thread
-  std::unordered_map<uint64_t, std::pair<T, std::shared_ptr<Connection>>> connections_;
+  std::unordered_map<uint64_t, std::pair<T, std::shared_ptr<Connection>>> connections_;   // All connections for the current thread
 
   std::shared_mutex mutex_;
 
@@ -134,7 +132,7 @@ bool ThreadManager<T>::Start(const std::shared_ptr<NetEvent> &listen, const std:
   if (!CreateReadThread(listen, timer)) {
     return false;
   }
-  if (rwSeparation_) {
+  if (netOptions_.GetRwSeparation()) {
     return CreateWriteThread();
   }
   return true;
@@ -146,7 +144,7 @@ void ThreadManager<T>::Stop() {
   bool expected = true;
   if (running_.compare_exchange_strong(expected, false)) {
     readThread_->Stop();
-    if (rwSeparation_) {
+    if (netOptions_.GetRwSeparation()) {
       writeThread_->Stop();
     }
   }
@@ -155,6 +153,11 @@ void ThreadManager<T>::Stop() {
 template <typename T>
 requires HasSetFdFunction<T>
 void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection> &conn) {
+  if(getClientCount() >= netOptions_.GetMaxClients()){
+    ::close(fd);
+    return;
+  }
+
   T t;
   onInit_(&t);
   auto connId = getConnId();
@@ -165,10 +168,7 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     t.SetConnId(connId);
     t.SetThreadIndex(index_);
   }
-  if (getConnCount() >= maxConnCount_) {
-    onClose_(t, "too many connections");
-    return;
-  }
+
   {
     std::lock_guard lock(mutex_);
     connections_.emplace(connId, std::make_pair(t, conn));
@@ -178,8 +178,8 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     writeThread_->AddNewEvent(connId, fd, BaseEvent::EVENT_NULL);  // add null event to write_thread epoll
   }
 
-  addConnCount();
   onCreate_(connId, t, conn->addr_);
+  clientCountIncrement();
 }
 
 template <typename T>
@@ -209,14 +209,14 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
   fd = iter->second.second->fd_;
 
   readThread_->CloseConnection(fd);
-  if (rwSeparation_) {
+  if (netOptions_.GetRwSeparation()) {
     writeThread_->CloseConnection(fd);
   }
 
   iter->second.second->netEvent_->Close();  // close socket
   onClose_(iter->second.first, std::move(err));
   connections_.erase(iter);
-  subConnCount();  // decrease connection count
+  clientCountDecrement();
 }
 
 template <typename T>
@@ -249,7 +249,7 @@ template <typename T>
 requires HasSetFdFunction<T>
 void ThreadManager<T>::Wait() {
   readThread_->Wait();
-  if (rwSeparation_) {
+  if (netOptions_.GetRwSeparation()) {
     writeThread_->Wait();
   }
 }
@@ -274,7 +274,7 @@ void ThreadManager<T>::SendPacket(const T &conn, std::string &&msg) {
   }
 
   connPtr->netEvent_->SendPacket(std::move(msg));
-  if (rwSeparation_) {
+  if (netOptions_.GetRwSeparation()) {
     writeThread_->SetWriteEvent(connId, connPtr->fd_);
   } else {
     readThread_->SetWriteEvent(connId, connPtr->fd_);
@@ -286,7 +286,7 @@ requires HasSetFdFunction<T>
 bool ThreadManager<T>::CreateReadThread(const std::shared_ptr<NetEvent> &listen, const std::shared_ptr<Timer> &timer) {
   std::shared_ptr<BaseEvent> event;
   int8_t eventMode = BaseEvent::EVENT_MODE_READ;
-  if (!rwSeparation_) {
+  if (!netOptions_.GetRwSeparation()) {
     eventMode |= BaseEvent::EVENT_MODE_WRITE;
   }
 
@@ -345,8 +345,8 @@ bool ThreadManager<T>::CreateWriteThread() {
 }
 
 template <typename T>
-requires HasSetFdFunction<T>
-uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd, const std::shared_ptr<Connection> &conn) {
+requires HasSetFdFunction<T> uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd,
+                                                                     const std::shared_ptr<Connection> &conn) {
   auto connId = getConnId();
   if constexpr (IsPointer_v<T>) {
     t->SetConnId(connId);

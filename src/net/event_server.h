@@ -17,6 +17,7 @@
 #include "client_socket.h"
 #include "io_thread.h"
 #include "listen_socket.h"
+#include "net_options.h"
 #include "thread_manager.h"
 
 namespace net {
@@ -25,7 +26,7 @@ template <typename T>
 requires HasSetFdFunction<T>
 class EventServer final {
  public:
-  explicit EventServer(int8_t threadNum) : threadNum_(threadNum) { threadsManager_.reserve(threadNum_); }
+  explicit EventServer(NetOptions netOptions) : opt_(netOptions) { threadsManager_.reserve(netOptions.GetThreadNum()); }
 
   ~EventServer() = default;
 
@@ -41,15 +42,11 @@ class EventServer final {
 
   inline void AddListenAddr(const SocketAddr &addr) { listenAddrs_ = addr; }
 
-  inline void SetRwSeparation(bool separation = true) { rwSeparation_ = separation; }
-
   void InitTimer(int64_t interval) { timer_ = std::make_shared<Timer>(interval); }
 
   inline int64_t AddTimerTask(const std::shared_ptr<ITimerTask> &task) { return timer_->AddTask(task); }
 
   inline void DelTimerTask(int64_t timerId) { timer_->DelTask(timerId); }
-
-  inline void SetMaxConnCount(int64_t count) { maxConnCount_ = count; }
 
   std::pair<bool, std::string> StartServer(int64_t interval = 0);
 
@@ -93,9 +90,7 @@ class EventServer final {
 
   std::atomic<bool> running_ = true;  // Whether the server is running
 
-  bool rwSeparation_ = true;  // Whether to separate read and write
-
-  int8_t threadNum_ = 1;  // The number of threads
+  NetOptions opt_;  // The option of the server
 
   std::vector<std::unique_ptr<ThreadManager<T>>> threadsManager_;
 
@@ -104,12 +99,11 @@ class EventServer final {
 
   std::shared_ptr<Timer> timer_;
 
-  int64_t maxConnCount_;
 };
 
 template <typename T>
 requires HasSetFdFunction<T> std::pair<bool, std::string> EventServer<T>::StartServer(int64_t interval) {
-  if (threadNum_ <= 0) {
+  if (opt_.GetThreadNum() <= 0) {
     return std::pair(false, "thread num must be greater than 0");
   }
   if (!onInit_) {
@@ -129,14 +123,13 @@ requires HasSetFdFunction<T> std::pair<bool, std::string> EventServer<T>::StartS
     InitTimer(interval);
   }
 
-  for (int8_t i = 0; i < threadNum_; ++i) {
-    auto tm = std::make_unique<ThreadManager<T>>(i, rwSeparation_);
+  for (int8_t i = 0; i < opt_.GetThreadNum(); ++i) {
+    auto tm = std::make_unique<ThreadManager<T>>(i, opt_);
     tm->SetOnInit(onInit_);
     tm->SetOnCreate(onCreate_);
     tm->SetOnConnect(onConnect_);
     tm->SetOnMessage(onMessage_);
     tm->SetOnClose(onClose_);
-    tm->SetMaxConnCount(maxConnCount_);
     threadsManager_.emplace_back(std::move(tm));
   }
 
@@ -149,7 +142,7 @@ requires HasSetFdFunction<T> std::pair<bool, std::string> EventServer<T>::StartS
 
 template <typename T>
 requires HasSetFdFunction<T> std::pair<bool, std::string> EventServer<T>::StartClientServer() {
-  if (threadNum_ <= 0) {
+  if (opt_.GetThreadNum() <= 0) {
     return std::pair(false, "thread num must be greater than 0");
   }
   if (!onInit_) {
@@ -165,8 +158,8 @@ requires HasSetFdFunction<T> std::pair<bool, std::string> EventServer<T>::StartC
     return std::pair(false, "OnClose must be set");
   }
 
-  for (int8_t i = 0; i < threadNum_; ++i) {
-    auto tm = std::make_unique<ThreadManager<T>>(i, rwSeparation_);
+  for (int8_t i = 0; i < opt_.GetThreadNum(); ++i) {
+    auto tm = std::make_unique<ThreadManager<T>>(i, opt_);
     tm->SetOnInit(onInit_);
     tm->SetOnConnect(onConnect_);
     tm->SetOnMessage(onMessage_);

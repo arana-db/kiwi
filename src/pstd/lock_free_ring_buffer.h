@@ -41,8 +41,7 @@ class LockFreeRingBuffer {
   bool Push(U&& item) {
     size_t current_tail = tail_.load(std::memory_order_relaxed);
     size_t next_tail = (current_tail + 1) & (capacity_ - 1);
-
-    if (!tail_.compare_exchange_strong(current_tail, next_tail, std::memory_order_acq_rel)) {
+    if (next_tail == head_.load(std::memory_order_acquire)) {
       // queue is full
       return false;
     }
