@@ -20,10 +20,8 @@ ExternalProject_Add(
         extern_braft
         ${EXTERNAL_PROJECT_LOG_ARGS}
         DEPENDS brpc
-        # The pr on braft is not merged, so I am using my own warehouse to run the test for the time being
         GIT_REPOSITORY "https://github.com/arana-db/braft.git"
         GIT_TAG v1.1.2-beta1222
-        # URL_HASH SHA256=6afed189e97b7e6bf5864c5162fab3365b07d515fe0de4c1b0d61eff96cf772f
         GIT_SHALLOW true
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
