@@ -13,6 +13,10 @@ ExternalProject_Add(
         GIT_REPOSITORY "https://github.com/google/snappy.git"
         GIT_TAG "1.2.1"
         CMAKE_ARGS
+        ${EXTERNAL_PROJECT_C}
+        ${EXTERNAL_PROJECT_CXX}
+        ${EXTERNAL_PROJECT_CXX_FLAGS}
+        ${EXTERNAL_PROJECT_CXX_LINK_FLAGS}
         -DCMAKE_INSTALL_PREFIX=${LIB_INSTALL_PREFIX}
         -DCMAKE_INSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}
         -DCMAKE_BUILD_TYPE=${LIB_BUILD_TYPE}

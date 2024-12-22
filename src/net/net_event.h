@@ -8,6 +8,7 @@
 #pragma once
 
 #include <atomic>
+#include <mutex>
 
 #include "callback_function.h"
 
@@ -16,8 +17,9 @@ namespace net {
 // For human readability
 enum {
   NE_ERROR = -1,
-  NE_CLOSE = 0,
-  NE_OK = 1,
+  NE_CLOSE = -2,
+  NE_WAIT = -3,
+  NE_OK = 0,
 };
 
 enum class NetListen {
@@ -50,7 +52,7 @@ class NetEvent {
 
   virtual void Close() = 0;
 
-  inline int Fd() const { return fd_.load(); }
+  int Fd() const { return fd_.load(); }
 
  protected:
   std::atomic<int> fd_ = 0;

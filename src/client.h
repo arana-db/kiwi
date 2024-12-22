@@ -10,17 +10,17 @@
 
 #pragma once
 
+#include <fmt/format.h>
 #include <chrono>
 #include <set>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
 
-#include "common.h"
-// #include "net/tcp_connection.h"
 #include "net/socket_addr.h"
-#include "proto_parser.h"
 #include "replication.h"
+#include "resp/resp2_encode.h"
+#include "resp/resp2_parse.h"
 #include "storage/storage.h"
 
 namespace kiwi {
@@ -166,33 +166,38 @@ enum class ClientState {
 class DB;
 struct PSlaveInfo;
 
-class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
+struct ClientInfo {
+  uint64_t client_id;
+  std::string ip;
+  int port;
+  static const ClientInfo invalidClientInfo;
+  bool operator==(const ClientInfo& ci) const { return client_id == ci.client_id; }
+};
+
+class PClient : public std::enable_shared_from_this<PClient> {
  public:
-  //  PClient() = delete;
   explicit PClient();
 
-  //  int HandlePackets(kiwi::TcpConnection*, const char*, int);
-
   void OnConnect();
+  int HandlePacket(std::string&& data);
 
-  std::string PeerIP() const;
-  int PeerPort() const;
+  ClientInfo GetClientInfo() const;
 
   //  bool SendPacket(const std::string& buf);
   //  bool SendPacket(const void* data, size_t size);
   bool SendPacket();
   bool SendPacket(std::string&& msg);
   bool SendPacket(UnboundedBuffer& data);
-  inline void SendOver() {
-    Clear();
-    reset();
-  }
+  void SendOver() { reset(); }
 
   // active close
   void Close();
 
   // on close callback
   void OnClose();
+
+  std::string PeerIP() const;
+  int PeerPort() const;
 
   // dbno
   void SetCurrentDB(int dbno) { dbno_ = dbno; }
@@ -216,6 +221,25 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   bool Exec();
   void ClearMulti();
   void ClearWatch();
+
+  // reply
+  void SetRes(CmdRes _ret, const std::string& content = "") { resp_encode_->SetRes(_ret, content); };
+
+  // If T is of type string, then the contents of string must be numbers
+  template <typename T>
+  requires(std::integral<T> || std::same_as<T, std::string>) void AppendArrayLen(T value) {
+    AppendStringRaw(fmt::format("*{}\r\n", value));
+  }
+
+  void AppendInteger(int64_t value) { resp_encode_->AppendInteger(value); }
+  void AppendStringRaw(const std::string& value) { resp_encode_->AppendStringRaw(value); }
+  void AppendSimpleString(const std::string& value) { resp_encode_->AppendSimpleString(value); }
+  void AppendString(const std::string& value) { resp_encode_->AppendString(value); }
+  void AppendStringVector(const std::vector<std::string>& strArray) { resp_encode_->AppendStringVector(strArray); };
+  void AppendString(const char* value, int64_t size) { resp_encode_->AppendString(value, size); }
+  void SetLineString(const std::string& value) { resp_encode_->SetLineString(value); }
+  void Reply(std::string& str) { resp_encode_->Reply(str); }
+  // reply
 
   // pubsub
   std::size_t Subscribe(const std::string& channel) { return channels_.insert(channel).second ? 1 : 0; }
@@ -265,47 +289,40 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
 
   void SetAuth() { auth_ = true; }
   bool GetAuth() const { return auth_; }
-  void RewriteCmd(std::vector<std::string>& params) { parser_.SetParams(params); }
-  void Reexecutecommand() { this->executeCommand(); }
+  uint64_t GetUniqueID() const;
 
-  inline size_t ParamsSize() const { return params_.size(); }
+  size_t ParamsSize() const { return argv_.size(); }
 
-  inline ClientState State() const { return state_; }
+  ClientState State() const { return state_; }
 
-  inline void SetState(ClientState state) { state_ = state; }
+  void SetState(ClientState state) { state_ = state; }
 
-  inline void SetConnId(uint64_t id) { net_id_ = id; }
-  inline uint64_t GetConnId() const { return net_id_; }
-  inline void SetThreadIndex(int8_t index) { net_thread_index_ = index; }
-  inline int8_t GetThreadIndex() const { return net_thread_index_; }
-  inline void SetSocketAddr(const net::SocketAddr& addr) { addr_ = addr; }
+  void SetConnId(uint64_t id) { net_id_ = id; }
+  uint64_t GetConnId() const { return net_id_; }
+  void SetThreadIndex(int8_t index) { net_thread_index_ = index; }
+  int8_t GetThreadIndex() const { return net_thread_index_; }
+  void SetSocketAddr(const net::SocketAddr& addr) { addr_ = addr; }
 
-  // All parameters of this command (including the command itself)
-  // e.g：["set","key","value"]
-  std::span<std::string> argv_;
+  void SetArgv(std::vector<std::string>& argv) { argv_ = argv; }
 
   // Info Commandstats used
   std::unordered_map<std::string, CommandStatistics>* GetCommandStatMap();
   std::shared_ptr<TimeStat> GetTimeStat();
 
-  //  std::shared_ptr<TcpConnection> getTcpConnection() const { return tcp_connection_.lock(); }
-  int handlePacket(const char*, int);
-
  private:
-  void executeCommand();
-  int processInlineCmd(const char*, size_t, std::vector<std::string>&);
   void reset();
   bool isPeerMaster() const;
-  uint64_t uniqueID() const;
-
   bool isClusterCmdTarget() const;
 
-  // TcpConnection's life is undetermined, so use weak ptr for safety.
-  //  std::weak_ptr<TcpConnection> tcp_connection_;
+ public:
+  // All parameters of this command (including the command itself)
+  // e.g：["set","key","value"]
+  std::span<std::string> argv_;
 
-  PProtoParser parser_;
-
+ private:
   int dbno_ = 0;
+  std::unique_ptr<RespParse> resp_parser_;
+  std::unique_ptr<RespEncode> resp_encode_;
 
   std::unordered_set<std::string> channels_;
   std::unordered_set<std::string> pattern_channels_;
@@ -329,9 +346,6 @@ class PClient : public std::enable_shared_from_this<PClient>, public CmdRes {
   std::vector<storage::FieldValue> fvs_;
   std::vector<std::string> fields_;
 
-  // All parameters of this command (including the command itself)
-  // e.g：["set","key","value"]
-  std::vector<std::string> params_;
   // auth
   bool auth_ = false;
   time_t last_auth_ = 0;

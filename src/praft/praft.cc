@@ -127,9 +127,9 @@ butil::Status PRaft::Init(std::string& group_id, bool initial_conf_is_null) {
   this->group_id_ = group_id;
 
   // FIXME: g_config.ip is default to 127.0.0.0, which may not work in cluster.
-  raw_addr_ = g_config.ip.ToString() + ":" + std::to_string(port);
+  raw_addr_ = g_config.ip + ":" + std::to_string(port);
   butil::ip_t ip;
-  auto ret = butil::str2ip(g_config.ip.ToString().c_str(), &ip);
+  auto ret = butil::str2ip(g_config.ip.c_str(), &ip);
   if (ret != 0) {
     server_.reset();
     return ERROR_LOG_AND_STATUS("Failed to convert str_ip to butil::ip_t");
@@ -157,7 +157,7 @@ butil::Status PRaft::Init(std::string& group_id, bool initial_conf_is_null) {
   node_options_.fsm = this;
   node_options_.node_owns_fsm = false;
   node_options_.snapshot_interval_s = 0;
-  std::string prefix = "local://" + g_config.db_path.ToString() + std::to_string(db_id_) + "/_praft";
+  std::string prefix = "local://" + g_config.db_path + std::to_string(db_id_) + "/_praft";
   node_options_.log_uri = prefix + "/log";
   node_options_.raft_meta_uri = prefix + "/raft_meta";
   node_options_.snapshot_uri = prefix + "/snapshot";
@@ -311,8 +311,10 @@ void PRaft::SendNodeRequest(PClient* client) {
 void PRaft::SendNodeInfoRequest(PClient* client, const std::string& info_type) {
   assert(client);
 
-  std::string cmd_str = "INFO " + info_type + "\r\n";
-  client->SendPacket(std::move(cmd_str));
+  client->AppendArrayLen(int64_t(2));
+  client->AppendString("INFO");
+  client->AppendString(info_type);
+  client->SendPacket();
   //  client->Clear();
 }
 
@@ -322,26 +324,25 @@ void PRaft::SendNodeAddRequest(PClient* client) {
   // Node id in braft are ip:port, the node id param in RAFT.NODE ADD cmd will be ignored.
   int unused_node_id = 0;
   auto port = g_config.port + kiwi::g_config.raft_port_offset;
-  auto raw_addr = g_config.ip.ToString() + ":" + std::to_string(port);
-  UnboundedBuffer req;
-  req.PushData("RAFT.NODE ADD ", 14);
-  req.PushData(std::to_string(unused_node_id).c_str(), std::to_string(unused_node_id).size());
-  req.PushData(" ", 1);
-  req.PushData(raw_addr.data(), raw_addr.size());
-  req.PushData("\r\n", 2);
-  client->SendPacket(req);
+  auto raw_addr = g_config.ip + ":" + std::to_string(port);
+
+  client->AppendArrayLen(int64_t(4));
+  client->AppendString("RAFT.NODE");
+  client->AppendString("ADD");
+  client->AppendString(std::to_string(unused_node_id));
+  client->AppendString(raw_addr);
+  client->SendPacket();
   //  client->Clear();
 }
 
 void PRaft::SendNodeRemoveRequest(PClient* client) {
   assert(client);
-
-  UnboundedBuffer req;
-  req.PushData("RAFT.NODE REMOVE ", 17);
-  req.PushData(cluster_cmd_ctx_.GetPeerID().c_str(), cluster_cmd_ctx_.GetPeerID().size());
-  req.PushData("\r\n", 2);
-  client->SendPacket(req);
-  client->Clear();
+  client->AppendArrayLen(int64_t(3));
+  client->AppendString("RAFT.NODE");
+  client->AppendString("REMOVE");
+  client->AppendString(cluster_cmd_ctx_.GetPeerID());
+  client->SendPacket();
+  //  client->Clear();
 }
 
 int PRaft::ProcessClusterCmdResponse(PClient* client, const char* start, int len) {
@@ -429,7 +430,7 @@ void PRaft::LeaderRedirection(PClient* join_client, const std::string& reply) {
   PRAFT.GetClusterCmdCtx().ConnectTargetNode();
 
   // Not reply any message here, we will reply after the connection is established.
-  join_client->Clear();
+  //  join_client->Clear();
 }
 
 void PRaft::InitializeNodeBeforeAdd(PClient* client, PClient* join_client, const std::string& reply) {
@@ -516,8 +517,7 @@ int PRaft::ProcessClusterRemoveCmdResponse(PClient* client, const char* start, i
     //    remove_client->Clear();
   } else if (reply.find(NOT_LEADER) != std::string::npos) {
     auto remove_client = cluster_cmd_ctx_.GetClient();
-    remove_client->Clear();
-    remove_client->Reexecutecommand();
+    //    remove_client->Clear();
   } else {
     ERROR("Removed Raft cluster fail, str: {}", reply);
     remove_client->SetRes(CmdRes::kErrOther, reply);
@@ -713,8 +713,8 @@ int PRaft::on_snapshot_load(braft::SnapshotReader* reader) {
   }
 
   // 3. When a snapshot is installed on a node, you do not need to set a playback point.
-  auto reader_path = reader->get_path();                             // xx/snapshot_0000001
-  auto path = g_config.db_path.ToString() + std::to_string(db_id_);  // db/db_id
+  auto reader_path = reader->get_path();                  // xx/snapshot_0000001
+  auto path = g_config.db_path + std::to_string(db_id_);  // db/db_id
   TasksVector tasks(1, {TaskType::kLoadDBFromCheckpoint, db_id_, {{TaskArg::kCheckpointPath, reader_path}}, true});
   PSTORE.HandleTaskSpecificDB(tasks);
   INFO("load snapshot success!");

@@ -78,6 +78,13 @@ const std::string kCmdNameUnWatch = "unwatch";
 const std::string kCmdNameDiscard = "discard";
 
 // admin
+const std::string kCmdNameClient = "client";
+const std::string kSubCmdNameClientGetname = "getname";
+const std::string kSubCmdNameClientSetname = "setname";
+const std::string kSubCmdNameClientId = "id";
+const std::string kSubCmdNameClientList = "list";
+const std::string kSubCmdNameClientKill = "kill";
+
 const std::string kCmdNameConfig = "config";
 const std::string kSubCmdNameConfigGet = "get";
 const std::string kSubCmdNameConfigSet = "set";

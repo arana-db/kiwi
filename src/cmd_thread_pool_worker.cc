@@ -9,9 +9,9 @@
 
 #include "cmd_thread_pool_worker.h"
 #include "client.h"
-#include "env.h"
 #include "kiwi.h"
 #include "log.h"
+#include "pstd_string.h"
 
 namespace kiwi {
 
@@ -22,43 +22,63 @@ void CmdWorkThreadPoolWorker::Work() {
       if (task->Client()->State() != ClientState::kOK) {  // the client is closed
         continue;
       }
-      auto [cmdPtr, ret] = cmd_table_manager_.GetCommand(task->CmdName(), task->Client().get());
 
-      if (!cmdPtr) {
-        if (ret == CmdRes::kUnknownCmd) {
-          task->Client()->SetRes(CmdRes::kErrOther, "unknown command '" + task->CmdName() + "'");
-        } else if (ret == CmdRes::kUnknownSubCmd) {
-          task->Client()->SetRes(CmdRes::kErrOther, "unknown sub command '" + task->Client().get()->argv_[1] + "'");
-        } else {
-          task->Client()->SetRes(CmdRes::kInvalidParameter);
+      for (auto &param : task->Params()) {
+        if (param.empty()) {
+          continue;
         }
+        task->Client()->SetCmdName(pstd::StringToLower(param[0]));
+        task->Client()->SetArgv(param);
+
+        auto [cmdPtr, ret] = cmd_table_manager_.GetCommand(param[0], task->Client().get());
+
+        if (!cmdPtr) {
+          if (ret == CmdRes::kUnknownCmd) {
+            task->Client()->SetRes(CmdRes::kUnknownCmd, fmt::format("unknown command '{}'", param[0]));
+            WARN("client IP:{},port:{} unknown command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
+                 param[0]);
+          } else if (ret == CmdRes::kUnknownSubCmd) {
+            task->Client()->SetRes(CmdRes::kUnknownSubCmd, task->Client()->argv_[1]);
+            WARN("client IP:{},port:{} unknown sub command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
+                 task->Client()->argv_[1]);
+          } else {
+            task->Client()->SetRes(CmdRes::kWrongNum, param[0]);
+            WARN("client IP:{},port:{} unknown command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
+                 param[0]);
+          }
+          g_kiwi->PushWriteTask(task->Client());
+          continue;
+        }
+
+      if (!cmdPtr->CheckArg(task->Client()->ParamsSize())) {
+        task->Client()->SetRes(CmdRes::kWrongNum, param[0]);
+        task->Client()->FlagExecWrong();
         g_kiwi->PushWriteTask(task->Client());
         continue;
       }
+        if (!cmdPtr->CheckArg(task->Client()->ParamsSize())) {
+          task->Client()->SetRes(CmdRes::kWrongNum, param[0]);
+          g_kiwi->PushWriteTask(task->Client());
+          continue;
+        }
 
-      if (!cmdPtr->CheckArg(task->Client()->ParamsSize())) {
-        task->Client()->SetRes(CmdRes::kWrongNum, task->CmdName());
-        task->Client()->FlagExecWrong();
-        g_pikiwidb->PushWriteTask(task->Client());
-        continue;
+        auto cmdstat_map = task->Client()->GetCommandStatMap();
+        CommandStatistics statistics;
+        if (cmdstat_map->find(param[0]) == cmdstat_map->end()) {
+          cmdstat_map->emplace(param[0], statistics);
+        }
+        auto now = std::chrono::steady_clock::now();
+        task->Client()->GetTimeStat()->SetDequeueTs(now);
+        task->Run(cmdPtr);
+
+        // Info Commandstats used
+        now = std::chrono::steady_clock::now();
+        task->Client()->GetTimeStat()->SetProcessDoneTs(now);
+        (*cmdstat_map)[param[0]].cmd_count_.fetch_add(1);
+        (*cmdstat_map)[param[0]].cmd_time_consuming_.fetch_add(task->Client()->GetTimeStat()->GetTotalTime());
+
+        g_kiwi->PushWriteTask(task->Client());
       }
-
-      auto cmdstat_map = task->Client()->GetCommandStatMap();
-      CommandStatistics statistics;
-      if (cmdstat_map->find(task->CmdName()) == cmdstat_map->end()) {
-        cmdstat_map->emplace(task->CmdName(), statistics);
-      }
-      auto now = std::chrono::steady_clock::now();
-      task->Client()->GetTimeStat()->SetDequeueTs(now);
-      task->Run(cmdPtr);
-
-      // Info Commandstats used
-      now = std::chrono::steady_clock::now();
-      task->Client()->GetTimeStat()->SetProcessDoneTs(now);
-      (*cmdstat_map)[task->CmdName()].cmd_count_.fetch_add(1);
-      (*cmdstat_map)[task->CmdName()].cmd_time_consuming_.fetch_add(task->Client()->GetTimeStat()->GetTotalTime());
-
-      g_kiwi->PushWriteTask(task->Client());
     }
     self_task_.clear();
   }
