@@ -64,8 +64,7 @@ class BaseValue {
 class StringValue : public BaseValue {
  public:
   StringValue(const std::string& key, CheckFunc check_func_ptr, bool rewritable, std::string* value_ptr_vec)
-      : BaseValue(key, std::move(check_func_ptr), rewritable), values_(value_ptr_vec) {
-  }
+      : BaseValue(key, std::move(check_func_ptr), rewritable), values_(value_ptr_vec) {}
   ~StringValue() override = default;
 
   std::string Value() const override { return *values_; };
@@ -80,8 +79,7 @@ class StringValueArray : public BaseValue {
  public:
   StringValueArray(const std::string& key, CheckFunc check_func_ptr, bool rewritable,
                    std::vector<std::string>& value_ptr_vec, char delimiter = ' ')
-      : BaseValue(key, std::move(check_func_ptr), rewritable), values_(value_ptr_vec), delimiter_(delimiter) {
-  }
+      : BaseValue(key, std::move(check_func_ptr), rewritable), values_(value_ptr_vec), delimiter_(delimiter) {}
   ~StringValueArray() override = default;
 
   std::string Value() const override { return pstd::StringConcat(values_, delimiter_); };
