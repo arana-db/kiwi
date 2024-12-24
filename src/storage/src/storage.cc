@@ -146,8 +146,9 @@ Status Storage::Open(const StorageOptions& storage_options, const std::string& d
   LogIndexAndSequenceCollector::max_gap_.store(storage_options.max_gap);
   storage_options.options.write_buffer_manager =
       std::make_shared<rocksdb::WriteBufferManager>(storage_options.mem_manager_size);
+  lock_mgr_ = std::make_shared<LockMgr>(1000, 0, std::make_shared<MutexFactoryImpl>());
   for (size_t index = 0; index < db_instance_num_; index++) {
-    insts_.emplace_back(std::make_unique<Redis>(this, index));
+    insts_.emplace_back(std::make_unique<Redis>(this, index, lock_mgr_));
     Status s = insts_.back()->Open(storage_options, AppendSubDirectory(db_path, index));
     if (!s.ok()) {
       ERROR("open RocksDB{} failed {}", index, s.ToString());
@@ -903,6 +904,12 @@ Status Storage::RPop(const Slice& key, int64_t count, std::vector<std::string>* 
   elements->clear();
   auto& inst = GetDBInstance(key);
   return inst->RPop(key, count, elements);
+}
+
+Status Storage::RPopWithoutLock(const Slice& key, int64_t count, std::vector<std::string>* elements) {
+  elements->clear();
+  auto& inst = GetDBInstance(key);
+  return inst->RPopWithoutLock(key, count, elements);
 }
 
 Status Storage::LIndex(const Slice& key, int64_t index, std::string* element) {

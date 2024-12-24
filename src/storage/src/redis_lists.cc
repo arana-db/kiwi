@@ -746,6 +746,53 @@ Status Redis::RPop(const Slice& key, int64_t count, std::vector<std::string>* el
   return s;
 }
 
+Status Redis::RPopWithoutLock(const Slice& key, int64_t count, std::vector<std::string>* elements) {
+  uint32_t statistic = 0;
+  elements->clear();
+
+  auto batch = Batch::CreateBatch(this);
+
+  std::string meta_value;
+
+  BaseMetaKey base_meta_key(key);
+  Status s = db_->Get(default_read_options_, handles_[kMetaCF], base_meta_key.Encode(), &meta_value);
+  if (s.ok()) {
+    if (IsStale(meta_value)) {
+      return Status::NotFound();
+    } else if (!ExpectedMetaValue(DataType::kLists, meta_value)) {
+      return Status::InvalidArgument(fmt::format("WRONGTYPE, key: {}, expect type: {}, get type: {}", key.ToString(),
+                                                 DataTypeStrings[static_cast<int>(DataType::kLists)],
+                                                 DataTypeStrings[static_cast<int>(GetMetaValueType(meta_value))]));
+    } else {
+      ParsedListsMetaValue parsed_lists_meta_value(&meta_value);
+      auto size = static_cast<int64_t>(parsed_lists_meta_value.Count());
+      uint64_t version = parsed_lists_meta_value.Version();
+      int32_t start_index = 0;
+      auto stop_index = static_cast<int32_t>(count <= size ? count - 1 : size - 1);
+      int32_t cur_index = 0;
+      ListsDataKey lists_data_key(key, version, parsed_lists_meta_value.RightIndex() - 1);
+      rocksdb::Iterator* iter = db_->NewIterator(default_read_options_, handles_[kListsDataCF]);
+      for (iter->SeekForPrev(lists_data_key.Encode()); iter->Valid() && cur_index <= stop_index;
+           iter->Prev(), ++cur_index) {
+        statistic++;
+        ParsedBaseDataValue parsed_value(iter->value());
+        elements->push_back(parsed_value.UserValue().ToString());
+        batch->Delete(kListsDataCF, iter->key());
+
+        parsed_lists_meta_value.ModifyCount(-1);
+        parsed_lists_meta_value.ModifyRightIndex(-1);
+      }
+      batch->Put(kMetaCF, base_meta_key.Encode(), meta_value);
+      delete iter;
+    }
+  }
+  if (batch->Count() != 0U) {
+    s = batch->Commit();
+    UpdateSpecificKeyStatistics(DataType::kLists, key.ToString(), statistic);
+  }
+  return s;
+}
+
 Status Redis::RPoplpush(const Slice& source, const Slice& destination, std::string* element) {
   element->clear();
   uint32_t statistic = 0;

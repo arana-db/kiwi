@@ -9,6 +9,7 @@
 
 #include "cmd_list.h"
 #include "pstd_string.h"
+#include "src/scope_record_lock.h"
 #include "store.h"
 
 namespace kiwi {
@@ -205,8 +206,10 @@ bool BRPopCmd::DoInitial(PClient* client) {
 void BRPopCmd::DoCmd(PClient* client) {
   std::vector<std::string> elements;
   std::vector<std::string> list_keys(client->Keys().begin(), client->Keys().end());
+  storage::MultiScopeRecordLock(PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->GetLockMgr(), list_keys);
   for (auto& list_key : list_keys) {
-    storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPop(list_key, 1, &elements);
+    storage::Status s =
+        PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPopWithoutLock(list_key, 1, &elements);
     if (s.ok()) {
       client->AppendArrayLen(2);
       client->AppendString(list_key);

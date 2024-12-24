@@ -45,10 +45,10 @@ rocksdb::Comparator* ZSetsScoreKeyComparator() {
   return &zsets_score_key_compare;
 }
 
-Redis::Redis(Storage* const s, int32_t index)
+Redis::Redis(Storage* const s, int32_t index, std::shared_ptr<LockMgr> lock_mgr)
     : storage_(s),
       index_(index),
-      lock_mgr_(std::make_shared<LockMgr>(1000, 0, std::make_shared<MutexFactoryImpl>())),
+      lock_mgr_(lock_mgr),
       small_compaction_threshold_(5000),
       small_compaction_duration_threshold_(10000) {
   statistics_store_ = std::make_unique<LRUCache<std::string, KeyStatistics>>();
