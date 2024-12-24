@@ -222,7 +222,7 @@ void BRPopCmd::DoCmd(PClient* client) {
       return;
     }
   }
-  BlockThisClientToWaitLRPush(list_keys, expire_time_, client, BlockedConnNode::Type::BRPop);
+  BlockThisClientToWaitLRPush(list_keys, expire_time_, client->shared_from_this(), BlockedConnNode::Type::BRPop);
 }
 
 LRangeCmd::LRangeCmd(const std::string& name, int16_t arity)

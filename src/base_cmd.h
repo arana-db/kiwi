@@ -216,7 +216,7 @@ class BlockedConnNode {
  public:
   enum Type { BLPop = 0, BRPop };
   virtual ~BlockedConnNode() {}
-  BlockedConnNode(int64_t expire_time, PClient* client, Type type)
+  BlockedConnNode(int64_t expire_time, std::shared_ptr<PClient> client, Type type)
       : expire_time_(expire_time), client_(client), type_(type) {}
   bool IsExpired();
   std::shared_ptr<PClient> GetBlockedClient() { return client_; }
@@ -293,7 +293,7 @@ class BaseCmd : public std::enable_shared_from_this<BaseCmd> {
 
   void ServeAndUnblockConns(PClient* client);
 
-  void BlockThisClientToWaitLRPush(std::vector<std::string>& keys, int64_t expire_time, PClient* client,
+  void BlockThisClientToWaitLRPush(std::vector<std::string>& keys, int64_t expire_time, std::shared_ptr<PClient> client,
                                    BlockedConnNode::Type type);
 
  protected:
