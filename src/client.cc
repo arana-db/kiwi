@@ -7,152 +7,23 @@
   Implemented a set of functions for interfacing with the client.
  */
 
-#include "client.h"
-
+#include <fmt/core.h>
 #include <algorithm>
 #include <memory>
 
-#include "fmt/core.h"
-#include "praft/praft.h"
-#include "pstd/log.h"
-#include "pstd/pstd_string.h"
-
 #include "base_cmd.h"
+#include "client.h"
 #include "config.h"
 #include "env.h"
 #include "kiwi.h"
-#include "pstd_string.h"
+#include "praft/praft.h"
+#include "pstd/log.h"
+#include "pstd/pstd_string.h"
 #include "slow_log.h"
-#include "store.h"
 
 namespace kiwi {
 
-void CmdRes::RedisAppendLen(std::string& str, int64_t ori, const std::string& prefix) {
-  str.append(prefix);
-  str.append(pstd::Int2string(ori));
-  str.append(CRLF);
-}
-
-void CmdRes::AppendStringVector(const std::vector<std::string>& strArray) {
-  if (strArray.empty()) {
-    AppendArrayLen(0);
-    return;
-  }
-  AppendArrayLen(static_cast<int64_t>(strArray.size()));
-  for (const auto& item : strArray) {
-    AppendString(item);
-  }
-}
-
-void CmdRes::AppendString(const std::string& value) {
-  if (value.empty()) {
-    AppendStringLen(-1);
-  } else {
-    AppendStringLen(static_cast<int64_t>(value.size()));
-    AppendContent(value);
-  }
-}
-
-void CmdRes::SetRes(CmdRes::CmdRet _ret, const std::string& content) {
-  ret_ = _ret;
-  switch (ret_) {
-    case kOK:
-      SetLineString("+OK");
-      break;
-    case kPong:
-      SetLineString("+PONG");
-      break;
-    case kSyntaxErr:
-      SetLineString("-ERR syntax error");
-      break;
-    case kInvalidInt:
-      SetLineString("-ERR value is not an integer or out of range");
-      break;
-    case kInvalidBitInt:
-      SetLineString("-ERR bit is not an integer or out of range");
-      break;
-    case kInvalidBitOffsetInt:
-      SetLineString("-ERR bit offset is not an integer or out of range");
-      break;
-    case kWrongBitOpNotNum:
-      SetLineString("-ERR BITOP NOT must be called with a single source key.");
-      break;
-    case kInvalidBitPosArgument:
-      SetLineString("-ERR The bit argument must be 1 or 0.");
-      break;
-    case kInvalidFloat:
-      SetLineString("-ERR value is not a valid float");
-      break;
-    case kOverFlow:
-      SetLineString("-ERR increment or decrement would overflow");
-      break;
-    case kNotFound:
-      SetLineString("-ERR no such key");
-      break;
-    case kOutOfRange:
-      SetLineString("-ERR index out of range");
-      break;
-    case kInvalidPwd:
-      SetLineString("-ERR invalid password");
-      break;
-    case kNoneBgsave:
-      SetLineString("-ERR No BGSave Works now");
-      break;
-    case kPurgeExist:
-      SetLineString("-ERR binlog already in purging...");
-      break;
-    case kInvalidParameter:
-      SetLineString("-ERR Invalid Argument");
-      break;
-    case kWrongNum:
-      AppendStringRaw("-ERR wrong number of arguments for '");
-      AppendStringRaw(content);
-      AppendStringRaw("' command\r\n");
-      break;
-    case kInvalidIndex:
-      AppendStringRaw("-ERR invalid DB index for '");
-      AppendStringRaw(content);
-      AppendStringRaw("'\r\n");
-      break;
-    case kInvalidDbType:
-      AppendStringRaw("-ERR invalid DB for '");
-      AppendStringRaw(content);
-      AppendStringRaw("'\r\n");
-      break;
-    case kInconsistentHashTag:
-      SetLineString("-ERR parameters hashtag is inconsistent");
-    case kInvalidDB:
-      AppendStringRaw("-ERR invalid DB for '");
-      AppendStringRaw(content);
-      AppendStringRaw("'\r\n");
-      break;
-    case kErrOther:
-      AppendStringRaw("-ERR ");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-      break;
-    case KIncrByOverFlow:
-      AppendStringRaw("-ERR increment would produce NaN or Infinity");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-      break;
-    case kInvalidCursor:
-      AppendStringRaw("-ERR invalid cursor");
-      break;
-    case kWrongLeader:
-      AppendStringRaw("-ERR wrong leader");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-    case kMultiKey:
-      AppendStringRaw("-WRONGTYPE Operation against a key holding the wrong kind of value");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-      break;
-    default:
-      break;
-  }
-}
-CmdRes::~CmdRes() { message_.clear(); }
+const ClientInfo ClientInfo::invalidClientInfo = {0, "", -1};
 
 thread_local PClient* PClient::s_current = nullptr;
 
@@ -169,36 +40,6 @@ std::string PClient::FullCmdName() const {
     return cmdName_;
   }
   return cmdName_ + "|" + subCmdName_;
-}
-
-int PClient::processInlineCmd(const char* buf, size_t bytes, std::vector<std::string>& params) {
-  if (bytes < 2) {
-    return 0;
-  }
-
-  std::string res;
-
-  for (size_t i = 0; i + 1 < bytes; ++i) {
-    if (buf[i] == '\r' && buf[i + 1] == '\n') {
-      if (!res.empty()) {
-        params.emplace_back(std::move(res));
-      }
-
-      return static_cast<int>(i + 2);
-    }
-
-    if (isblank(buf[i])) {
-      if (!res.empty()) {
-        params.reserve(4);
-        params.emplace_back(std::move(res));
-      }
-    } else {
-      res.reserve(16);
-      res.push_back(buf[i]);
-    }
-  }
-
-  return 0;
 }
 
 static int ProcessMaster(const char* start, const char* end) {
@@ -265,17 +106,15 @@ static int ProcessMaster(const char* start, const char* end) {
   return -1;  // do nothing
 }
 
-int PClient::handlePacket(const char* start, int bytes) {
-  //  auto conn = getTcpConnection();
-  //  if (!conn) {
-  //    ERROR("BUG: conn can't be null when recv data");
-  //    return -1;
-  //  }
+int PClient::HandlePacket(std::string&& data) {
+  if (data.empty()) {
+    return 0;
+  }
 
   s_current = this;
-
+  const char* start = data.data();
+  int bytes = data.size();
   const char* const end = start + bytes;
-  const char* ptr = start;
 
   if (isPeerMaster()) {
     if (isClusterCmdTarget()) {
@@ -294,46 +133,24 @@ int PClient::handlePacket(const char* start, int bytes) {
     }
   }
 
-  auto parseRet = parser_.ParseRequest(ptr, end);
-  if (parseRet == PParseResult::kError) {
-    if (!parser_.IsInitialState()) {
-      //      g_kiwi->closeClient(this);
-      return 0;
-    }
-
-    // try inline command
-    std::vector<std::string> params;
-    auto len = processInlineCmd(ptr, bytes, params);
-    if (len == 0) {
-      return 0;
-    }
-
-    ptr += len;
-    parser_.SetParams(params);
-    parseRet = PParseResult::kOK;
-  } else if (parseRet != PParseResult::kOK) {
-    return static_cast<int>(ptr - start);
+  auto parseRet = resp_parser_->Parse(std::move(data));
+  if (parseRet == RespResult::ERROR) {
+    ERROR("client {} IP:{} port:{} parse data error", GetUniqueID(), PeerIP(), PeerPort());
+    return 0;
+  }
+  if (parseRet == RespResult::WAIT) {
+    DEBUG("client {} IP:{} port:{} parse data wait", GetUniqueID(), PeerIP(), PeerPort());
+    return 0;
   }
 
-  //  DEFER { reset(); };
-
-  // handle packet
-  //  const auto& params = parser_.GetParams();
-  if (params_.empty()) {
-    return static_cast<int>(ptr - start);
+  auto params = resp_parser_->GetParams();
+  if (params.empty()) {
+    ERROR("client {} IP:{} port:{} parse data empty", GetUniqueID(), PeerIP(), PeerPort());
+    return 0;
   }
-
-  params_ = parser_.GetParams();
-  if (params_.empty()) {
-    return static_cast<int>(ptr - start);
-  }
-
-  argv_ = params_;
-  cmdName_ = params_[0];
-  pstd::StringToLower(cmdName_);
 
   if (!auth_) {
-    if (cmdName_ == kCmdNameAuth) {
+    if (params[0][0] == kCmdNameAuth) {
       auto now = ::time(nullptr);
       if (now <= last_auth_ + 1) {
         // avoid guess password.
@@ -345,23 +162,22 @@ int PClient::handlePacket(const char* start, int bytes) {
     } else {
       SetLineString("-NOAUTH Authentication required.");
       SendPacket();
-      return static_cast<int>(ptr - start);
+      return 0;
     }
   }
 
-  //  DEBUG("client {}, cmd {}", conn->GetUniqueId(), cmdName_);
+  for (const auto& item : params) {
+    FeedMonitors(item);
+  }
 
-  FeedMonitors(params_);
-
-  //  const PCommandInfo* info = PCommandTable::GetCommandInfo(cmdName_);
-
-  //  if (!info) {  // 如果这个命令不存在，那么就走新的命令处理流程
-  //  executeCommand();
-  //    return static_cast<int>(ptr - start);
-  //  }
   auto now = std::chrono::steady_clock::now();
   time_stat_->SetEnqueueTs(now);
-  g_kiwi->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this()));
+
+  if (params.size() > 1) {  // if the size of the parameters is greater than 1，use slow thread execute
+    g_kiwi->SubmitSlow(std::make_shared<CmdThreadPoolTask>(shared_from_this(), std::move(params)));
+  } else {
+    g_kiwi->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this(), std::move(params)));
+  }
 
   // check transaction
   //  if (IsFlagOn(ClientFlag_multi)) {
@@ -400,38 +216,17 @@ int PClient::handlePacket(const char* start, int bytes) {
   //    Propagate(params);
   //  }
 
-  return static_cast<int>(ptr - start);
-}
-
-// 为了兼容老的命令处理流程，新的命令处理流程在这里
-// 后面可以把client这个类重构，完整的支持新的命令处理流程
-void PClient::executeCommand() {
-  //  auto [cmdPtr, ret] = g_kiwi->GetCmdTableManager().GetCommand(CmdName(), this);
-
-  //  if (!cmdPtr) {
-  //    if (ret == CmdRes::kInvalidParameter) {
-  //      SetRes(CmdRes::kInvalidParameter);
-  //    } else {
-  //      SetRes(CmdRes::kSyntaxErr, "unknown command '" + CmdName() + "'");
-  //    }
-  //    return;
-  //  }
-  //
-  //  if (!cmdPtr->CheckArg(params_.size())) {
-  //    SetRes(CmdRes::kWrongNum, CmdName());
-  //    return;
-  //  }
-  //
-  //  // execute a specific command
-  //  cmdPtr->Execute(this);
+  return 1;
 }
 
 PClient* PClient::Current() { return s_current; }
 
-PClient::PClient() : parser_(params_) {
+PClient::PClient() {
   auth_ = false;
   reset();
-  time_stat_.reset(new TimeStat());
+  time_stat_ = std::make_shared<TimeStat>();
+  resp_parser_ = std::make_unique<Resp2Parse>();
+  resp_encode_ = std::make_unique<Resp2Encode>();
 }
 
 void PClient::OnConnect() {
@@ -459,7 +254,7 @@ void PClient::OnConnect() {
 
 std::string PClient::PeerIP() const {
   if (!addr_.IsValid()) {
-    ERROR("Invalid address detected for client {}", uniqueID());
+    ERROR("Invalid address detected for client {}", GetUniqueID());
     return "";
   }
   return addr_.GetIP();
@@ -467,7 +262,7 @@ std::string PClient::PeerIP() const {
 
 int PClient::PeerPort() const {
   if (!addr_.IsValid()) {
-    ERROR("Invalid address detected for client {}", uniqueID());
+    ERROR("Invalid address detected for client {}", GetUniqueID());
     return 0;
   }
   return addr_.GetPort();
@@ -475,7 +270,7 @@ int PClient::PeerPort() const {
 
 bool PClient::SendPacket() {
   std::string str;
-  message_.swap(str);
+  resp_encode_->Reply(str);
   g_kiwi->SendPacket2Client(shared_from_this(), std::move(str));
   SendOver();
   return true;
@@ -500,10 +295,7 @@ void PClient::OnClose() {
   reset();
 }
 
-void PClient::reset() {
-  s_current = nullptr;
-  parser_.Reset();
-}
+void PClient::reset() { s_current = nullptr; }
 
 bool PClient::isPeerMaster() const {
   const auto& repl_addr = PREPL.GetMasterAddr();
@@ -514,7 +306,9 @@ bool PClient::isClusterCmdTarget() const {
   return PRAFT.GetClusterCmdCtx().GetPeerIp() == PeerIP() && PRAFT.GetClusterCmdCtx().GetPort() == PeerPort();
 }
 
-uint64_t PClient::uniqueID() const { return GetConnId(); }
+uint64_t PClient::GetUniqueID() const { return GetConnId(); }
+
+ClientInfo PClient::GetClientInfo() const { return {GetUniqueID(), PeerIP().c_str(), PeerPort()}; }
 
 bool PClient::Watch(int dbno, const std::string& key) {
   DEBUG("Client {} watch {}, db {}", name_, key, dbno);
@@ -523,12 +317,12 @@ bool PClient::Watch(int dbno, const std::string& key) {
 
 bool PClient::NotifyDirty(int dbno, const std::string& key) {
   if (IsFlagOn(kClientFlagDirty)) {
-    INFO("client is already dirty {}", uniqueID());
+    INFO("client is already dirty {}", GetUniqueID());
     return true;
   }
 
   if (watch_keys_[dbno].contains(key)) {
-    INFO("{} client become dirty because key {} in db {}", uniqueID(), key, dbno);
+    INFO("{} client become dirty because key {} in db {}", GetUniqueID(), key, dbno);
     SetFlag(kClientFlagDirty);
     return true;
   } else {

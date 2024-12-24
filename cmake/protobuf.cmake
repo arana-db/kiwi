@@ -30,6 +30,10 @@ ExternalProject_Add(
         URL "https://github.com/protocolbuffers/protobuf/archive/v3.18.0.tar.gz"
         URL_HASH SHA256=14e8042b5da37652c92ef6a2759e7d2979d295f60afd7767825e3de68c856c54
         CMAKE_ARGS
+        ${EXTERNAL_PROJECT_C}
+        ${EXTERNAL_PROJECT_CXX}
+        ${EXTERNAL_PROJECT_CXX_FLAGS}
+        ${EXTERNAL_PROJECT_CXX_LINK_FLAGS}
         -DCMAKE_INSTALL_PREFIX=${LIB_INSTALL_PREFIX}
         -DCMAKE_INSTALL_LIBDIR=${CMAKE_INSTALL_LIBDIR}
         -DCMAKE_BUILD_TYPE=${LIB_BUILD_TYPE}

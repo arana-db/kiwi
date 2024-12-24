@@ -23,7 +23,7 @@ class IOThread {
   // Initialize the event and run the event loop
   bool Run();
 
-  inline void CloseConnection(int fd) { baseEvent_->DelEvent(fd); }
+  void CloseConnection(int fd) { baseEvent_->DelEvent(fd); }
 
   // Stop the event loop and wait for the thread to exit
   void Stop();
@@ -32,10 +32,10 @@ class IOThread {
   void Wait();
 
   // Add read event to epoll when send message to client
-  inline void SetWriteEvent(uint64_t id, int fd) { baseEvent_->AddWriteEvent(id, fd); }
+  void SetWriteEvent(uint64_t id, int fd) { baseEvent_->AddWriteEvent(id, fd); }
 
   // Add new event to epoll when new connection
-  inline void AddNewEvent(uint64_t connId, int fd, int mask) { baseEvent_->AddEvent(connId, fd, mask); }
+  void AddNewEvent(uint64_t connId, int fd, int mask) { baseEvent_->AddEvent(connId, fd, mask); }
 
  protected:
   std::atomic<bool> running_ = true;

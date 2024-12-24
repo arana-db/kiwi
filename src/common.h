@@ -19,9 +19,8 @@
 #include <string>
 #include <vector>
 
+#include "resp/resp_encode.h"
 #include "unbounded_buffer.h"
-
-#define CRLF "\r\n"
 
 using PString = std::string;
 

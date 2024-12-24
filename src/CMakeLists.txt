@@ -15,7 +15,10 @@ IF (CMAKE_BUILD_TYPE STREQUAL "Release")
     MESSAGE(STATUS "Build timestamp: ${BUILD_TIMESTAMP}")
     MESSAGE(STATUS "Git commit id: ${GIT_COMMIT_ID}")
 
-    TARGET_COMPILE_DEFINITIONS(kiwi PRIVATE Kkiwi_BUILD_DATE="${BUILD_TIMESTAMP}" Kkiwi_GIT_COMMIT_ID="${GIT_COMMIT_ID}")
+    TARGET_COMPILE_DEFINITIONS(kiwi
+            PRIVATE Kkiwi_GIT_COMMIT_ID="${GIT_COMMIT_HASH}"
+            PRIVATE Kkiwi_BUILD_DATE="${BUILD_DATE}"
+    )
 ENDIF ()
 
 # SET(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR}/bin/)
@@ -30,6 +33,7 @@ TARGET_INCLUDE_DIRECTORIES(kiwi
         PRIVATE ${rocksdb_SOURCE_DIR}/include
         PRIVATE ${BRAFT_INCLUDE_DIR}
         PRIVATE ${BRPC_INCLUDE_DIR}
+        PRIVATE ${RESP_INCLUDE_DIR}
         PRIVATE ${LIBEVENT_INCLUDE_DIRS}
 )
 
@@ -45,6 +49,7 @@ ADD_DEPENDENCIES(kiwi
         braft
         brpc
         storage
+        resp
 )
 
 TARGET_LINK_LIBRARIES(kiwi
@@ -70,6 +75,7 @@ TARGET_LINK_LIBRARIES(kiwi
         praft
         praft_pb
         binlog_pb
+        resp
         "${LIB}"
 )
 

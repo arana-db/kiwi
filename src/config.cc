@@ -79,9 +79,9 @@ Status StringValue::SetValue(const std::string& value) {
 
 Status BoolValue::SetValue(const std::string& value) {
   if (pstd::StringEqualCaseInsensitive(value, "yes")) {
-    value_->store(true);
+    *value_ = true;
   } else {
-    value_->store(false);
+    *value_ = false;
   }
   return Status::OK();
 }
@@ -99,7 +99,7 @@ Status NumberValue<T>::SetValue(const std::string& value) {
   if (v > value_max_) {
     v = value_max_;
   }
-  value_->store(v);
+  *value_ = v;
   return Status::OK();
 }
 

@@ -15,6 +15,7 @@
 #include <mutex>
 
 #include "base_socket.h"
+#include "lock_free_ring_buffer.h"
 
 namespace net {
 
@@ -35,10 +36,13 @@ class StreamSocket : public BaseSocket {
  private:
   const int readBuffSize_ = 4 * 1024;  // read from socket buff size 4K
 
-  std::mutex sendMutex_;  // send data buff mutex
-
   std::string sendData_;  // send data buff
-  size_t sendPos_ = 0;    // send data buff pos
+
+  LockFreeRingBuffer<std::string> writeQueue_{8};  // write data queue
+
+  size_t sendPos_ = 0;  // send data buff pos
+
+  std::atomic<bool> writeReady_ = false;  // write ready flag
 };
 
 }  // namespace net

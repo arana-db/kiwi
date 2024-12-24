@@ -18,6 +18,7 @@ const int BaseEvent::EVENT_READ = EPOLLIN;
 const int BaseEvent::EVENT_WRITE = EPOLLOUT;
 const int BaseEvent::EVENT_ERROR = EPOLLERR;
 const int BaseEvent::EVENT_HUB = EPOLLHUP;
+const int BaseEvent::EVENT_NULL = 0;
 
 bool EpollEvent::Init() {
   evFd_ = epoll_create1(0);
@@ -67,22 +68,23 @@ void EpollEvent::AddWriteEvent(uint64_t id, int fd) {
       ERROR("AddWriteEvent id:{},EvFd:{},fd:{}, epoll add RW error errno:{}", id, EvFd(), fd, errno);
     }
   } else {  // If it is a write multiplex, add the event
-    if (epoll_ctl(EvFd(), EPOLL_CTL_ADD, fd, &ev) == -1) {
+    if (epoll_ctl(EvFd(), EPOLL_CTL_MOD, fd, &ev) == -1) {
       ERROR("AddWriteEvent id:{},EvFd:{},fd:{}, epoll add W error errno:{}", id, EvFd(), fd, errno);
     }
   }
 }
 
 void EpollEvent::DelWriteEvent(uint64_t id, int fd) {
-  if (mode_ & EVENT_MODE_READ) {  // If it is a read multiplex, modify the event to read
-    struct epoll_event ev {};
+  struct epoll_event ev {};
+  ev.data.u64 = id;
+  if (mode_ & EVENT_MODE_READ) {  // If it is a read multiplex, modify the event to rea
     ev.events = EVENT_READ;
-    ev.data.u64 = id;
     if (epoll_ctl(EvFd(), EPOLL_CTL_MOD, fd, &ev) == -1) {
       ERROR("DelWriteEvent id:{},EvFd:{},fd:{}, EPOLL_CTL_MOD error errno:{}", id, EvFd(), fd, errno);
     }
   } else {
-    if (epoll_ctl(EvFd(), EPOLL_CTL_DEL, fd, nullptr) == -1) {
+    ev.events = BaseEvent::EVENT_NULL;
+    if (epoll_ctl(EvFd(), EPOLL_CTL_MOD, fd, &ev) == -1) {
       ERROR("DelWriteEvent id:{},EvFd:{},fd:{}, EPOLL_CTL_DEL error errno:{}", id, EvFd(), fd, errno);
     }
   }
@@ -178,7 +180,7 @@ void EpollEvent::DoWrite(const epoll_event &event, const std::shared_ptr<Connect
     DoError(event, "write error,errno: " + std::to_string(errno));
     return;
   }
-  if (ret == 0) {
+  if (ret == NE_OK) {  // If the write is successful, delete the write event
     DelWriteEvent(event.data.u64, conn->fd_);
   }
 }
