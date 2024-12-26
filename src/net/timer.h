@@ -36,11 +36,11 @@ class Timer {
   std::vector<std::shared_ptr<ITimerTask>> list_;
 
  public:
-  inline int64_t Interval() const { return interval_; }
+  int64_t Interval() const { return interval_; }
 
   int64_t AddTask(const std::shared_ptr<ITimerTask>& task);
 
-  inline void DelTask(int64_t taskId) {
+  void DelTask(int64_t taskId) {
     std::unique_lock l(lockSet_);
     markDel.insert(taskId);
   }
@@ -48,14 +48,14 @@ class Timer {
   void OnTimer();
 
  private:
-  inline int64_t TaskId() { return ++taskId_; }
+  int64_t TaskId() { return ++taskId_; }
 
-  inline bool Deleted(int64_t taskId) {
+  bool Deleted(int64_t taskId) {
     std::shared_lock l(lockSet_);
     return markDel.count(taskId);
   }
 
-  inline void DelMark(int64_t taskId) {
+  void DelMark(int64_t taskId) {
     std::unique_lock l(lockSet_);
     markDel.erase(taskId);
   }

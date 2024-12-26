@@ -392,7 +392,7 @@ class PConfig {
    * rewritable represents whether to overwrite existing settings
    * when a key-value pair is duplicated.
    */
-  inline void AddBool(const std::string& key, const CheckFunc& checkfunc, bool rewritable, bool* value_ptr) {
+  void AddBool(const std::string& key, const CheckFunc& checkfunc, bool rewritable, bool* value_ptr) {
     config_map_.emplace(key, std::make_unique<BoolValue>(key, checkfunc, rewritable, value_ptr));
   }
 
@@ -405,7 +405,7 @@ class PConfig {
    * when a key-value pair is duplicated.
    */
   template <typename T>
-  inline void AddNumber(const std::string& key, bool rewritable, T* value_ptr) {
+  void AddNumber(const std::string& key, bool rewritable, T* value_ptr) {
     config_map_.emplace(key, std::make_unique<NumberValue<T>>(key, nullptr, rewritable, value_ptr));
   }
 
@@ -421,7 +421,7 @@ class PConfig {
    * of the numbers passed in.
    */
   template <typename T>
-  inline void AddNumberWithLimit(const std::string& key, bool rewritable, T* value_ptr, T min, T max) {
+  void AddNumberWithLimit(const std::string& key, bool rewritable, T* value_ptr, T min, T max) {
     config_map_.emplace(key, std::make_unique<NumberValue<T>>(key, nullptr, rewritable, value_ptr, min, max));
   }
 
