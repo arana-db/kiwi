@@ -204,6 +204,8 @@ class HelloCmd : public BaseCmd {
   bool DoInitial(PClient* client) override;
 
  private:
+  bool Authed_ = true;
+
   void DoCmd(PClient* client) override;
 
   void Hello(PClient* client);

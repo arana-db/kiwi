@@ -29,6 +29,7 @@
 #include "db.h"
 
 #include "braft/raft.h"
+#include "log.h"
 #include "pstd_string.h"
 #include "rocksdb/version.h"
 
@@ -168,6 +169,10 @@ bool HelloCmd::DoInitial(PClient* client) {
   size_t argc = client->argv_.size();
   int resp_version = 2;
 
+  if (!client->GetAuth()) {
+    Authed_ = false;
+  }
+
   if (argc > 1) {
     if (pstd::String2int(client->argv_[1].data(), client->argv_[1].size(), &resp_version) == 0) {
       client->SetRes(CmdRes::kErrOther, "Protocol version is not an integer or out of range");
@@ -192,13 +197,35 @@ void HelloCmd::DoCmd(PClient* client) {
     const std::string& arg = client->argv_[next_arg];
     // TODO(marsevilspirit): support auth acl
     // like: hello 2 auth username password
+    // now only support hello auth password
+    // do not support username (need acl)
     if ((strcasecmp(arg.data(), "SETNAME") == 0) && more_args) {
       client->SetName(client->argv_[next_arg + 1]);
+      next_arg++;
+    } else if (strcasecmp(arg.data(), "AUTH") == 0 && more_args) {
+      Authed_ = true;
+      if (client->GetAuth()) {
+        continue;
+      }
+      if (client->argv_[next_arg + 1] != g_config.password) {
+        client->SetRes(CmdRes::kErrOther, "invalid password");
+        return;
+      } else {
+        client->SetAuth();
+      }
       next_arg++;
     } else {
       client->SetRes(CmdRes::kSyntaxErr, "Syntax error");
       return;
     }
+  }
+
+  if (!Authed_) {
+    client->SetRes(CmdRes::kErrOther,
+                   "NOAUTH HELLO must be called with the client already authenticated, \
+        otherwise the HELLO <proto> AUTH <pass> option can be used to authenticate the client and \
+        select the RESP protocol version at the same time");
+    return;
   }
 
   Hello(client);
@@ -213,7 +240,7 @@ void HelloCmd::Hello(PClient* client) {
   client->AppendString("proto");
   client->AppendInteger(static_cast<int64_t>(2));
   client->AppendString("id");
-  client->AppendInteger(static_cast<int64_t>(client->GetConnId()));
+  client->AppendInteger(static_cast<int64_t>(client->GetUniqueID()));
   client->AppendString("mode");
 
   if (!g_config.use_raft) {
