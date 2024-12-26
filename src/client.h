@@ -96,7 +96,7 @@ class PClient : public std::enable_shared_from_this<PClient> {
   bool SendPacket();
   bool SendPacket(std::string&& msg);
   bool SendPacket(UnboundedBuffer& data);
-  inline void SendOver() { reset(); }
+  void SendOver() { reset(); }
 
   // active close
   void Close();
@@ -194,19 +194,19 @@ class PClient : public std::enable_shared_from_this<PClient> {
   bool GetAuth() const { return auth_; }
   uint64_t GetUniqueID() const;
 
-  inline size_t ParamsSize() const { return argv_.size(); }
+  size_t ParamsSize() const { return argv_.size(); }
 
-  inline ClientState State() const { return state_; }
+  ClientState State() const { return state_; }
 
-  inline void SetState(ClientState state) { state_ = state; }
+  void SetState(ClientState state) { state_ = state; }
 
-  inline void SetConnId(uint64_t id) { net_id_ = id; }
-  inline uint64_t GetConnId() const { return net_id_; }
-  inline void SetThreadIndex(int8_t index) { net_thread_index_ = index; }
-  inline int8_t GetThreadIndex() const { return net_thread_index_; }
-  inline void SetSocketAddr(const net::SocketAddr& addr) { addr_ = addr; }
+  void SetConnId(uint64_t id) { net_id_ = id; }
+  uint64_t GetConnId() const { return net_id_; }
+  void SetThreadIndex(int8_t index) { net_thread_index_ = index; }
+  int8_t GetThreadIndex() const { return net_thread_index_; }
+  void SetSocketAddr(const net::SocketAddr& addr) { addr_ = addr; }
 
-  inline void SetArgv(std::vector<std::string>& argv) { argv_ = argv; }
+  void SetArgv(std::vector<std::string>& argv) { argv_ = argv; }
 
   // Info Commandstats used
   std::unordered_map<std::string, CommandStatistics>* GetCommandStatMap();

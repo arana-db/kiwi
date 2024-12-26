@@ -25,7 +25,7 @@ class ListenSocket : public BaseSocket {
   static const int LISTENQ;
   static bool REUSE_PORT;  // Determine whether REUSE_PORT can be used
 
-  inline void SetListenAddr(const SocketAddr &addr) { addr_ = addr; }
+  void SetListenAddr(const SocketAddr &addr) { addr_ = addr; }
 
   // Accept new connection and create new connection object
   // when the connection is established, the OnCreate function is called

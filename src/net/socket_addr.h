@@ -49,24 +49,24 @@ struct SocketAddr {
 
   const sockaddr_in &GetAddr() const { return addr_; }
 
-  inline std::string GetIP() const { return ::inet_ntoa(addr_.sin_addr); }
+  std::string GetIP() const { return ::inet_ntoa(addr_.sin_addr); }
 
-  inline std::string GetIP(char *buf, socklen_t size) const {
+  std::string GetIP(char *buf, socklen_t size) const {
     return ::inet_ntop(AF_INET, reinterpret_cast<const char *>(&addr_.sin_addr), buf, size);
   }
 
-  inline uint16_t GetPort() const { return ntohs(addr_.sin_port); }
+  uint16_t GetPort() const { return ntohs(addr_.sin_port); }
 
-  inline bool IsValid() const { return 0 != addr_.sin_family; }
+  bool IsValid() const { return 0 != addr_.sin_family; }
 
   void Clear() { memset(&addr_, 0, sizeof addr_); }
 
-  inline friend bool operator==(const SocketAddr &a, const SocketAddr &b) {
+  friend bool operator==(const SocketAddr &a, const SocketAddr &b) {
     return a.addr_.sin_family == b.addr_.sin_family && a.addr_.sin_addr.s_addr == b.addr_.sin_addr.s_addr &&
            a.addr_.sin_port == b.addr_.sin_port;
   }
 
-  inline friend bool operator!=(const SocketAddr &a, const SocketAddr &b) { return !(a == b); }
+  friend bool operator!=(const SocketAddr &a, const SocketAddr &b) { return !(a == b); }
 
   sockaddr_in addr_{};
 };
