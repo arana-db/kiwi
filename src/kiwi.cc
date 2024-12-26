@@ -178,7 +178,7 @@ void KiwiDB::ScanEvictedBlockedConnsOfBlrpop() {
         conn_node = conns_list->erase(conn_node);
         CleanBlockedNodes(conn_ptr);
       } else {
-        conn_node++;
+        ++conn_node;
       }
     }
     if (conns_list->empty()) {
@@ -201,7 +201,7 @@ void KiwiDB::CleanBlockedNodes(const std::shared_ptr<kiwi::PClient>& client) {
     const auto& it = key_to_blocked_conns.find(blocked_key);
     if (it != key_to_blocked_conns.end()) {
       auto& conns_list = it->second;
-      for (auto conn_node = conns_list->begin(); conn_node != conns_list->end(); conn_node++) {
+      for (auto conn_node = conns_list->begin(); conn_node != conns_list->end(); ++conn_node) {
         if (conn_node->GetBlockedClient()->GetConnId() == client->GetConnId()) {
           conns_list->erase(conn_node);
           break;

@@ -174,11 +174,10 @@ void BaseCmd::ServeAndUnblockConns(PClient* client) {
   }
 }
 
-bool BlockedConnNode::IsExpired() {
+bool BlockedConnNode::IsExpired(std::chrono::system_clock::time_point now) {
   if (expire_time_ == 0) {
     return false;
   }
-  auto now = std::chrono::system_clock::now();
   int64_t now_in_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now).time_since_epoch().count();
   if (expire_time_ <= now_in_ms) {
     return true;

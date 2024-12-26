@@ -222,10 +222,10 @@ enum AclCategory {
 class BlockedConnNode {
  public:
   enum Type { BLPop = 0, BRPop };
-  virtual ~BlockedConnNode() {}
+  virtual ~BlockedConnNode() =default;
   BlockedConnNode(int64_t expire_time, std::shared_ptr<PClient> client, Type type)
       : expire_time_(expire_time), client_(client), type_(type) {}
-  bool IsExpired();
+  bool IsExpired(std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
   std::shared_ptr<PClient> GetBlockedClient() { return client_; }
   Type GetCmdType() { return type_; }
 
