@@ -165,18 +165,7 @@ EchoCmd::EchoCmd(const std::string& name, int16_t arity) : BaseCmd(name, arity, 
 
 bool EchoCmd::DoInitial(PClient* client) { return true; }
 
-void EchoCmd::DoCmd(PClient* client) {
-  size_t argc = client->argv_.size();
-  if (argc != 2) {
-    client->SetRes(CmdRes::kSyntaxErr);
-    return;
-  }
-
-  std::string response;
-  response = client->argv_[1];
-
-  client->AppendString(response);
-}
+void EchoCmd::DoCmd(PClient* client) { client->AppendString(client->argv_[1]); }
 
 const std::string InfoCmd::kInfoSection = "info";
 const std::string InfoCmd::kAllSection = "all";
@@ -196,7 +185,7 @@ bool InfoCmd::DoInitial(PClient* client) {
     return true;
   }
 
-  std::string argv_ = client->argv_[1].data();
+  std::string argv_ = client->argv_[1];
   // convert section to lowercase
   std::transform(argv_.begin(), argv_.end(), argv_.begin(), [](unsigned char c) { return std::tolower(c); });
   if (argc == 2) {
