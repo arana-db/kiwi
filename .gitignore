@@ -15,6 +15,7 @@ cmake-build-release-release/
 build/
 build-debug/
 build-release/
+Download/
 CMakeFiles/
 CMakeCache.txt
 
