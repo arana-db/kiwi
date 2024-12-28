@@ -26,6 +26,7 @@ namespace kiwi {
 // command definition
 // base cmd
 const std::string kCmdNamePing = "ping";
+const std::string kCmdNameEcho = "echo";
 
 // key cmd
 const std::string kCmdNameDel = "del";
