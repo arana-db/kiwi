@@ -161,6 +161,12 @@ bool PingCmd::DoInitial(PClient* client) { return true; }
 
 void PingCmd::DoCmd(PClient* client) { client->SetRes(CmdRes::kPong, "PONG"); }
 
+EchoCmd::EchoCmd(const std::string& name, int16_t arity) : BaseCmd(name, arity, kCmdFlagsFast, kAclCategoryFast) {}
+
+bool EchoCmd::DoInitial(PClient* client) { return true; }
+
+void EchoCmd::DoCmd(PClient* client) { client->AppendString(client->argv_[1]); }
+
 const std::string InfoCmd::kInfoSection = "info";
 const std::string InfoCmd::kAllSection = "all";
 const std::string InfoCmd::kServerSection = "server";
@@ -179,7 +185,7 @@ bool InfoCmd::DoInitial(PClient* client) {
     return true;
   }
 
-  std::string argv_ = client->argv_[1].data();
+  std::string argv_ = client->argv_[1];
   // convert section to lowercase
   std::transform(argv_.begin(), argv_.end(), argv_.begin(), [](unsigned char c) { return std::tolower(c); });
   if (argc == 2) {
