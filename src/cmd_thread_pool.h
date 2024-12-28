@@ -31,9 +31,9 @@ class CmdThreadPoolTask {
   explicit CmdThreadPoolTask(std::shared_ptr<PClient> client, RespParams &&params)
       : client_(std::move(client)), params_(params) {}
 
-  inline void Run(BaseCmd *cmd) { cmd->Execute(client_.get()); };
-  inline std::shared_ptr<PClient> Client() { return client_; };
-  inline RespParams &Params() { return params_; };
+  void Run(BaseCmd *cmd) { cmd->Execute(client_.get()); };
+  std::shared_ptr<PClient> Client() { return client_; };
+  RespParams &Params() { return params_; };
 
  private:
   std::shared_ptr<PClient> client_;
@@ -71,13 +71,13 @@ class CmdThreadPool {
   void SubmitSlow(const std::shared_ptr<CmdThreadPoolTask> &runner);
 
   // get the fast thread num
-  inline int FastThreadNum() const { return fast_thread_num_; };
+  int FastThreadNum() const { return fast_thread_num_; };
 
   // get the slow thread num
-  inline int SlowThreadNum() const { return slow_thread_num_; };
+  int SlowThreadNum() const { return slow_thread_num_; };
 
   // get the thread pool size
-  inline int ThreadPollSize() const { return fast_thread_num_ + slow_thread_num_; };
+  int ThreadPollSize() const { return fast_thread_num_ + slow_thread_num_; };
 
   ~CmdThreadPool();
 

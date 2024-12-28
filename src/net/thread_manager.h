@@ -41,18 +41,18 @@ class ThreadManager {
   ~ThreadManager();
 
   // set new connect create before callback function
-  inline void SetOnInit(const OnInit<T> &func) { onInit_ = func; }
+  void SetOnInit(const OnInit<T> &func) { onInit_ = func; }
 
   // set new connect create callback function
-  inline void SetOnCreate(const OnCreate<T> &func) { onCreate_ = func; }
+  void SetOnCreate(const OnCreate<T> &func) { onCreate_ = func; }
 
-  inline void SetOnConnect(const OnCreate<T> &func) { onConnect_ = func; }
+  void SetOnConnect(const OnCreate<T> &func) { onConnect_ = func; }
 
   // set read message callback function
-  inline void SetOnMessage(const OnMessage<T> &func) { onMessage_ = func; }
+  void SetOnMessage(const OnMessage<T> &func) { onMessage_ = func; }
 
   // set close connect callback function
-  inline void SetOnClose(const OnClose<T> &func) { onClose_ = func; }
+  void SetOnClose(const OnClose<T> &func) { onClose_ = func; }
 
   // Start the thread and initialize the event
   bool Start(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, const std::shared_ptr<Timer> &timer);

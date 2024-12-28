@@ -64,11 +64,11 @@ class KiwiDB final {
     event_server_->SendPacket(client, std::move(msg));
   }
 
-  inline void SendPacket2Client(const std::shared_ptr<kiwi::PClient>& client, std::string&& msg) {
+  void SendPacket2Client(const std::shared_ptr<kiwi::PClient>& client, std::string&& msg) {
     event_server_->SendPacket(client, std::move(msg));
   }
 
-  inline void CloseConnection(const std::shared_ptr<kiwi::PClient>& client) { event_server_->CloseConnection(client); }
+  void CloseConnection(const std::shared_ptr<kiwi::PClient>& client) { event_server_->CloseConnection(client); }
 
   void TCPConnect(
       const net::SocketAddr& addr,

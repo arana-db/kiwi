@@ -33,23 +33,23 @@ class EventServer final {
 
   ~EventServer() = default;
 
-  inline void SetOnInit(OnInit<T> &&func) { onInit_ = std::move(func); }
+  void SetOnInit(OnInit<T> &&func) { onInit_ = std::move(func); }
 
-  inline void SetOnCreate(OnCreate<T> &&func) { onCreate_ = std::move(func); }
+  void SetOnCreate(OnCreate<T> &&func) { onCreate_ = std::move(func); }
 
-  inline void SetOnConnect(OnCreate<T> &&func) { onConnect_ = std::move(func); }
+  void SetOnConnect(OnCreate<T> &&func) { onConnect_ = std::move(func); }
 
-  inline void SetOnMessage(OnMessage<T> &&func) { onMessage_ = std::move(func); }
+  void SetOnMessage(OnMessage<T> &&func) { onMessage_ = std::move(func); }
 
-  inline void SetOnClose(OnClose<T> &&func) { onClose_ = std::move(func); }
+  void SetOnClose(OnClose<T> &&func) { onClose_ = std::move(func); }
 
   inline void AddListenAddr(const SocketAddr &addr) { listenAddrs_.emplace_back(addr); }
 
   void InitTimer(int64_t interval) { timer_ = std::make_shared<Timer>(interval); }
 
-  inline int64_t AddTimerTask(const std::shared_ptr<ITimerTask> &task) { return timer_->AddTask(task); }
+  int64_t AddTimerTask(const std::shared_ptr<ITimerTask> &task) { return timer_->AddTask(task); }
 
-  inline void DelTimerTask(int64_t timerId) { timer_->DelTask(timerId); }
+  void DelTimerTask(int64_t timerId) { timer_->DelTask(timerId); }
 
   std::pair<bool, std::string> StartServer(int64_t interval = 0);
 

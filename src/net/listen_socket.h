@@ -25,7 +25,7 @@ class ListenSocket : public BaseSocket {
   static const int LISTENQ;
   static bool REUSE_PORT;  // Determine whether REUSE_PORT can be used
 
-  inline void SetListenAddr(const SocketAddr &addr) { addr_ = addr; }
+  void SetListenAddr(const SocketAddr &addr) { addr_ = addr; }
 
   inline SocketAddr GetListenAddr() const { return addr_; }
 
