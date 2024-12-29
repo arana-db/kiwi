@@ -14,12 +14,13 @@ SET(GFLAGS_INCLUDE_DIR ${LIB_INCLUDE_DIR} CACHE PATH "gflags include directory."
 SET(GFLAGS_LIBRARIES ${LIB_INSTALL_DIR}/${LIB_GFLAGS} CACHE FILEPATH "gflags library." FORCE)
 SET(GFLAGS_LIBRARY ${LIB_INSTALL_DIR}/${LIB_GFLAGS} CACHE FILEPATH "gflags library." FORCE)
 
-SET(GFLAGS_INCLUDE_PATH "${LIB_INCLUDE_DIR}/gflags" CACHE PATH "gflags include directory." FORCE)
+# SET(GFLAGS_INCLUDE_PATH "${LIB_INCLUDE_DIR}/gflags" CACHE PATH "gflags include directory." FORCE)
 
 ExternalProject_Add(
         extern_gflags
         URL https://github.com/gflags/gflags/archive/v2.2.2.zip
         URL_HASH SHA256=19713a36c9f32b33df59d1c79b4958434cb005b5b47dc5400a7a4b078111d9b5
+        DOWNLOAD_NO_PROGRESS 1
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
         ${EXTERNAL_PROJECT_CXX}

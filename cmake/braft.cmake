@@ -23,7 +23,6 @@ ExternalProject_Add(
         # The pr on braft is not merged, so I am using my own warehouse to run the test for the time being
         GIT_REPOSITORY "https://github.com/pikiwidb/braft.git"
         GIT_TAG v1.1.2-alpha2
-        URL_HASH SHA256=6afed189e97b7e6bf5864c5162fab3365b07d515fe0de4c1b0d61eff96cf772f
         GIT_SHALLOW true
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}

@@ -10,6 +10,7 @@ ExternalProject_Add(
         extern_lz4
         URL https://github.com/lz4/lz4/archive/refs/tags/v1.9.4.tar.gz
         URL_HASH SHA256=0b0e3aa07c8c063ddf40b082bdf7e37a1562bda40a0ff5272957f3e987e0e54b
+        DOWNLOAD_NO_PROGRESS 1
         ${EXTERNAL_PROJECT_LOG_ARGS}
         SOURCE_SUBDIR build/cmake
         CMAKE_ARGS

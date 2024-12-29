@@ -20,7 +20,6 @@ SET(PROTOBUF_PROTOC "${LIB_INSTALL_PREFIX}/bin/protoc")
 
 ExternalProject_Add(
         extern_protobuf
-        DOWNLOAD_NO_PROGRESS 1
         UPDATE_COMMAND ""
         LOG_CONFIGURE 1
         LOG_BUILD 1
@@ -29,6 +28,7 @@ ExternalProject_Add(
         DEPENDS zlib
         URL "https://github.com/protocolbuffers/protobuf/archive/v3.18.0.tar.gz"
         URL_HASH SHA256=14e8042b5da37652c92ef6a2759e7d2979d295f60afd7767825e3de68c856c54
+        DOWNLOAD_NO_PROGRESS 1
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
         ${EXTERNAL_PROJECT_CXX}

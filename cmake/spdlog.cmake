@@ -17,8 +17,10 @@ ADD_DEFINITIONS(-DSPDLOG_FMT_EXTERNAL)
 ExternalProject_Add(
         extern_spdlog
         ${EXTERNAL_PROJECT_LOG_ARGS}
+        DEPENDS fmt
         URL https://github.com/gabime/spdlog/archive/v1.12.0.zip
         URL_HASH SHA256=6174bf8885287422a6c6a0312eb8a30e8d22bcfcee7c48a6d02d1835d7769232
+        DOWNLOAD_NO_PROGRESS 1
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
         ${EXTERNAL_PROJECT_CXX}
@@ -32,7 +34,6 @@ ExternalProject_Add(
         BUILD_COMMAND make -j${CPU_CORE}
 )
 
-ADD_DEPENDENCIES(extern_spdlog fmt)
 ADD_LIBRARY(spdlog STATIC IMPORTED GLOBAL)
 SET_PROPERTY(TARGET spdlog PROPERTY IMPORTED_LOCATION ${SPDLOG_LIBRARIES})
 ADD_DEPENDENCIES(spdlog extern_spdlog)

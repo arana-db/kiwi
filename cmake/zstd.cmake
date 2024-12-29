@@ -11,6 +11,7 @@ ExternalProject_Add(
         ${EXTERNAL_PROJECT_LOG_ARGS}
         URL https://github.com/facebook/zstd/releases/download/v1.5.4/zstd-1.5.4.tar.gz
         URL_HASH SHA256=0f470992aedad543126d06efab344dc5f3e171893810455787d38347343a4424
+        DOWNLOAD_NO_PROGRESS 1
         SOURCE_SUBDIR build/cmake
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
