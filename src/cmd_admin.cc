@@ -170,7 +170,7 @@ bool HelloCmd::DoInitial(PClient* client) {
   int resp_version = 2;
 
   if (!client->GetAuth()) {
-    Authed_ = false;
+    authed_ = false;
   }
 
   if (argc > 1) {
@@ -203,7 +203,7 @@ void HelloCmd::DoCmd(PClient* client) {
       client->SetName(client->argv_[next_arg + 1]);
       next_arg++;
     } else if (strcasecmp(arg.data(), "AUTH") == 0 && more_args) {
-      Authed_ = true;
+      authed_ = true;
       if (client->GetAuth()) {
         continue;
       }
@@ -220,7 +220,7 @@ void HelloCmd::DoCmd(PClient* client) {
     }
   }
 
-  if (!Authed_) {
+  if (!authed_) {
     client->SetRes(CmdRes::kErrOther,
                    "NOAUTH HELLO must be called with the client already authenticated, \
         otherwise the HELLO <proto> AUTH <pass> option can be used to authenticate the client and \
