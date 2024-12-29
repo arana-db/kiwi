@@ -5,7 +5,7 @@
 
 INCLUDE(ExternalProject)
 
-SET(BRAFT_SOURCES_DIR ${LIB_INSTALL_PREFIX})
+SET(BRAFT_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_braft" CACHE PATH "Path to braft sources")
 SET(BRAFT_INSTALL_DIR ${LIB_INSTALL_PREFIX})
 SET(BRAFT_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "brpc include directory." FORCE)
 SET(BRAFT_LIBRARIES "${LIB_INSTALL_DIR}/libbraft.a" CACHE FILEPATH "brpc library." FORCE)
@@ -24,6 +24,7 @@ ExternalProject_Add(
         GIT_REPOSITORY "https://github.com/pikiwidb/braft.git"
         GIT_TAG v1.1.2-alpha2
         GIT_SHALLOW true
+        SOURCE_DIR ${BRAFT_SOURCES_DIR}
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
         ${EXTERNAL_PROJECT_CXX}

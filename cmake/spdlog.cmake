@@ -9,6 +9,7 @@ ELSE ()
     SET(SPDLOG_LIB "libspdlog.a")
 ENDIF ()
 
+SET(SPDLOG_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_spdlog" CACHE PATH "Path to spdlog sources")
 SET(SPDLOG_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "spdlog include directory." FORCE)
 SET(SPDLOG_LIBRARIES "${LIB_INSTALL_DIR}/${SPDLOG_LIB}" CACHE FILEPATH "spdlog library directory." FORCE)
 
@@ -20,6 +21,9 @@ ExternalProject_Add(
         DEPENDS fmt
         URL https://github.com/gabime/spdlog/archive/v1.12.0.zip
         URL_HASH SHA256=6174bf8885287422a6c6a0312eb8a30e8d22bcfcee7c48a6d02d1835d7769232
+        DOWNLOAD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download"
+        DOWNLOAD_NAME "spdlog-1.12.0.zip"
+        SOURCE_DIR ${SPDLOG_SOURCES_DIR}
         DOWNLOAD_NO_PROGRESS 1
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}

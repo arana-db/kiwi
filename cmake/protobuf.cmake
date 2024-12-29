@@ -13,6 +13,7 @@ ELSE ()
     SET(LIB_PROTOC "libprotoc.a")
 ENDIF ()
 
+SET(PROTOBUF_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_protobuf" CACHE PATH "Path to protobuf sources")
 SET(PROTOBUF_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "protobuf include directory." FORCE)
 SET(PROTOBUF_LIBRARY "${LIB_INSTALL_DIR}/${LIB_PROTOBUF}" CACHE FILEPATH "protobuf install directory." FORCE)
 SET(PROTOC_LIBRARY "${LIB_INSTALL_DIR}/${LIB_PROTOC}" CACHE FILEPATH "protoc install directory." FORCE)
@@ -28,6 +29,9 @@ ExternalProject_Add(
         DEPENDS zlib
         URL "https://github.com/protocolbuffers/protobuf/archive/v3.18.0.tar.gz"
         URL_HASH SHA256=14e8042b5da37652c92ef6a2759e7d2979d295f60afd7767825e3de68c856c54
+        DOWNLOAD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download"
+        DOWNLOAD_NAME "protobuf-3.18.0.tar.gz"
+        SOURCE_DIR ${PROTOBUF_SOURCES_DIR}
         DOWNLOAD_NO_PROGRESS 1
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}

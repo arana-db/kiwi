@@ -9,7 +9,7 @@ ELSE ()
     SET(LIB_GFLAGS libgflags.a)
 ENDIF ()
 
-SET(GFLAGS_ROOT ${LIB_INSTALL_PREFIX} CACHE PATH "gflags source directory." FORCE)
+SET(GFLAGS_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_gflags" CACHE PATH "Path to gflags sources")
 SET(GFLAGS_INCLUDE_DIR ${LIB_INCLUDE_DIR} CACHE PATH "gflags include directory." FORCE)
 SET(GFLAGS_LIBRARIES ${LIB_INSTALL_DIR}/${LIB_GFLAGS} CACHE FILEPATH "gflags library." FORCE)
 SET(GFLAGS_LIBRARY ${LIB_INSTALL_DIR}/${LIB_GFLAGS} CACHE FILEPATH "gflags library." FORCE)
@@ -21,6 +21,9 @@ ExternalProject_Add(
         URL https://github.com/gflags/gflags/archive/v2.2.2.zip
         URL_HASH SHA256=19713a36c9f32b33df59d1c79b4958434cb005b5b47dc5400a7a4b078111d9b5
         DOWNLOAD_NO_PROGRESS 1
+        DOWNLOAD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download"
+        DOWNLOAD_NAME "gflags-2.2.2.zip"
+        SOURCE_DIR ${GFLAGS_SOURCES_DIR}
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
         ${EXTERNAL_PROJECT_CXX}

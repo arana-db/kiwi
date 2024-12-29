@@ -4,7 +4,7 @@
 # of patent rights can be found in the PATENTS file in the same directory.
 
 SET(OPENSSL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_openssl" CACHE PATH "Path to OpenSSL sources")
-SET(OPENSSL_INSTALL_DIR "${LIB_INSTALL_DIR}")
+SET(OPENSSL_INSTALL_DIR "${LIB_INSTALL_PREFIX}")
 SET(OPENSSL_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "Openssl include directory." FORCE)
 
 FILE(MAKE_DIRECTORY ${OPENSSL_INCLUDE_DIR})

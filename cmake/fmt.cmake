@@ -10,7 +10,7 @@ ELSE ()
     SET(LIB_FMT libfmt.a)
 ENDIF ()
 
-SET(FMT_SOURCE_DIR ${LIB_INSTALL_PREFIX})
+SET(FMT_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_fmt" CACHE PATH "Path to fmt sources")
 SET(FMT_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "fmt include directory." FORCE)
 SET(FMT_LIBRARIES "${LIB_INSTALL_DIR}/${LIB_FMT}" CACHE FILEPATH "fmt library directory." FORCE)
 
@@ -19,6 +19,9 @@ ExternalProject_Add(
         URL https://github.com/fmtlib/fmt/archive/10.1.1.zip
         URL_HASH SHA256=3c2e73019178ad72b0614a3124f25de454b9ca3a1afe81d5447b8d3cbdb6d322
         DOWNLOAD_NO_PROGRESS 1
+        DOWNLOAD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download"
+        DOWNLOAD_NAME "fmt-10.1.1.zip"
+        SOURCE_DIR ${FMT_SOURCES_DIR}
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
         ${EXTERNAL_PROJECT_CXX}

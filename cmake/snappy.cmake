@@ -3,7 +3,7 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(Snappy_SOURCES_DIR ${LIB_INSTALL_PREFIX})
+SET(Snappy_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_snappy" CACHE PATH "Path to snappy sources")
 SET(Snappy_INCLUDE_DIRS "${LIB_INCLUDE_DIR}" CACHE PATH "Snappy include directory." FORCE)
 SET(Snappy_LIBRARIES "${LIB_INSTALL_DIR}/libsnappy.a" CACHE FILEPATH "Snappy install directory." FORCE)
 
@@ -12,6 +12,8 @@ ExternalProject_Add(
         ${EXTERNAL_PROJECT_LOG_ARGS}
         GIT_REPOSITORY "https://github.com/google/snappy.git"
         GIT_TAG "1.2.1"
+        GIT_SHALLOW true
+        SOURCE_DIR ${Snappy_SOURCES_DIR}
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
         ${EXTERNAL_PROJECT_CXX}
