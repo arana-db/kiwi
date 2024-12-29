@@ -281,7 +281,7 @@ class PConfig {
    * the server will listen on.
    * In default, the full address will be "127.0.0.1:9221"
    */
-  std::string ip = "127.0.0.1";
+  std::vector<std::string> ips = {"127.0.0.1"};
   uint16_t port = 9221;
 
   /*
@@ -337,6 +337,9 @@ class PConfig {
    * consider switching bool to atomic_bool.
    */
   bool use_raft = false;
+
+  // raft ip
+  std::string raft_ip = "127.0.0.1";
 
   /*
    * kiwi use the RocksDB to store the data,

@@ -7,13 +7,13 @@
   Responsible for managing the runtime configuration information of kiwi.
  */
 
+#include <iostream> //delete
 #include <string>
 #include <system_error>
 #include <vector>
 
 #include "config.h"
 #include "pstd/pstd_string.h"
-#include "store.h"
 
 namespace kiwi {
 
@@ -133,7 +133,8 @@ Status MemorySize::SetValue(const std::string& value) {
 PConfig::PConfig() {
   AddBool("redis-compatible-mode", &CheckYesNo, true, &redis_compatible_mode);
   AddBool("daemonize", &CheckYesNo, false, &daemonize);
-  AddString("ip", false, &ip);
+  AddStringArray("ips", false, ips);
+  AddString("raft-ip", false, &raft_ip);
   AddNumberWithLimit<uint16_t>("port", false, &port, PORT_LIMIT_MIN, PORT_LIMIT_MAX);
   AddNumber("raft-port-offset", true, &raft_port_offset);
   AddNumber("timeout", true, &timeout);
@@ -181,7 +182,9 @@ bool PConfig::LoadFromFile(const std::string& file_name) {
     if (auto iter = config_map_.find(key); iter != config_map_.end()) {
       auto& v = config_map_[key];
       auto s = v->Set(value.at(0), true);
+      std::cerr << key <<" : " << value.at(0) << '\n';
       if (!s.ok()) {
+        // FIXME: here a error happened
         return false;
       }
     }

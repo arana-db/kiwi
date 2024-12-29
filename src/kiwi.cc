@@ -152,12 +152,6 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
   return true;
 }
 
-std::vector<std::string> KiwiDB::ParseIP(const std::string& ips) {
-  std::vector<std::string> ip_list;
-  pstd::StringSplit(ips, ',', ip_list);
-  return ip_list;
-}
-
 void KiwiDB::OnNewConnection(uint64_t connId, std::shared_ptr<kiwi::PClient>& client, const net::SocketAddr& addr) {
   INFO("New connection from {}:{}", addr.GetIP(), addr.GetPort());
   client->SetSocketAddr(addr);
@@ -207,8 +201,7 @@ bool KiwiDB::Init() {
 
   event_server_ = std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(options_);
 
-  auto ip_list = ParseIP(g_config.ip);
-  for (const auto& ip : ip_list) {
+  for (const auto& ip : g_config.ips) {
     net::SocketAddr addr(ip, g_config.port);
     INFO("Add listen addr: {}, port: {}", ip, g_config.port);
     event_server_->AddListenAddr(addr);
