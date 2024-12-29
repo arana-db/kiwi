@@ -3,7 +3,7 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(Snappy_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_snappy" CACHE PATH "Path to snappy sources")
+SET(Snappy_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_snappy" CACHE PATH "Path to snappy sources")
 SET(Snappy_INCLUDE_DIRS "${LIB_INCLUDE_DIR}" CACHE PATH "Snappy include directory." FORCE)
 SET(Snappy_LIBRARIES "${LIB_INSTALL_DIR}/libsnappy.a" CACHE FILEPATH "Snappy install directory." FORCE)
 

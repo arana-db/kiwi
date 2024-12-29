@@ -3,7 +3,7 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(OPENSSL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_openssl" CACHE PATH "Path to OpenSSL sources")
+SET(OPENSSL_SOURCE_DIR "${LIB_SOURCE_DIR}/extern_openssl" CACHE PATH "Path to OpenSSL sources")
 SET(OPENSSL_INSTALL_DIR "${LIB_INSTALL_PREFIX}")
 SET(OPENSSL_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "Openssl include directory." FORCE)
 
@@ -13,8 +13,10 @@ ExternalProject_Add(
         OpenSSL
         URL https://github.com/openssl/openssl/archive/refs/tags/openssl-3.2.1.tar.gz
         URL_HASH SHA256=75cc6803ffac92625c06ea3c677fb32ef20d15a1b41ecc8dddbc6b9d6a2da84c
-        DOWNLOAD_NO_PROGRESS 1
+        DOWNLOAD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download"
+        DOWNLOAD_NAME "openssl-3.2.1.tar.gz"
         SOURCE_DIR ${OPENSSL_SOURCE_DIR}
+        DOWNLOAD_NO_PROGRESS 1
         USES_TERMINAL_DOWNLOAD TRUE
         CONFIGURE_COMMAND
         env CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER}

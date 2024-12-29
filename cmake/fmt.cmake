@@ -10,7 +10,7 @@ ELSE ()
     SET(LIB_FMT libfmt.a)
 ENDIF ()
 
-SET(FMT_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_fmt" CACHE PATH "Path to fmt sources")
+SET(FMT_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_fmt" CACHE PATH "Path to fmt sources")
 SET(FMT_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "fmt include directory." FORCE)
 SET(FMT_LIBRARIES "${LIB_INSTALL_DIR}/${LIB_FMT}" CACHE FILEPATH "fmt library directory." FORCE)
 

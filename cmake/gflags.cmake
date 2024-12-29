@@ -9,7 +9,7 @@ ELSE ()
     SET(LIB_GFLAGS libgflags.a)
 ENDIF ()
 
-SET(GFLAGS_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_gflags" CACHE PATH "Path to gflags sources")
+SET(GFLAGS_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_gflags" CACHE PATH "Path to gflags sources")
 SET(GFLAGS_INCLUDE_DIR ${LIB_INCLUDE_DIR} CACHE PATH "gflags include directory." FORCE)
 SET(GFLAGS_LIBRARIES ${LIB_INSTALL_DIR}/${LIB_GFLAGS} CACHE FILEPATH "gflags library." FORCE)
 SET(GFLAGS_LIBRARY ${LIB_INSTALL_DIR}/${LIB_GFLAGS} CACHE FILEPATH "gflags library." FORCE)

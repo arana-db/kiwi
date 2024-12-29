@@ -3,7 +3,7 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(GTEST_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_gtest" CACHE PATH "Path to gtest sources")
+SET(GTEST_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_gtest" CACHE PATH "Path to gtest sources")
 SET(GTEST_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "gtest include directory." FORCE)
 SET(GTEST_LIBRARIES "${LIB_INSTALL_DIR}/libgtest.a" CACHE FILEPATH "gtest lib directory." FORCE)
 SET(GTEST_MAIN_LIBRARIES "${LIB_INSTALL_DIR}/libgtest_main.a" CACHE FILEPATH "gtest main include directory." FORCE)

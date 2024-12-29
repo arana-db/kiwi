@@ -3,7 +3,7 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(ZLIB_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_zlib" CACHE PATH "Path to zlib sources")
+SET(ZLIB_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_zlib" CACHE PATH "Path to zlib sources")
 SET(ZLIB_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "zlib include directory." FORCE)
 SET(ZLIB_LIBRARIES "${LIB_INSTALL_DIR}/libz.a" CACHE FILEPATH "zlib library." FORCE)
 

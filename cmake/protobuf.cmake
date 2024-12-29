@@ -13,7 +13,7 @@ ELSE ()
     SET(LIB_PROTOC "libprotoc.a")
 ENDIF ()
 
-SET(PROTOBUF_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_protobuf" CACHE PATH "Path to protobuf sources")
+SET(PROTOBUF_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_protobuf" CACHE PATH "Path to protobuf sources")
 SET(PROTOBUF_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "protobuf include directory." FORCE)
 SET(PROTOBUF_LIBRARY "${LIB_INSTALL_DIR}/${LIB_PROTOBUF}" CACHE FILEPATH "protobuf install directory." FORCE)
 SET(PROTOC_LIBRARY "${LIB_INSTALL_DIR}/${LIB_PROTOC}" CACHE FILEPATH "protoc install directory." FORCE)

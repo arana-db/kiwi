@@ -3,8 +3,8 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-# SET(ROCKSDB_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_rocksdb" CACHE PATH "Path to RocksDB sources")
-SET(ROCKSDB_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_rocksdb" CACHE PATH "Path to RocksDB sources")
+SET(ROCKSDB_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_rocksdb" CACHE PATH "Path to RocksDB sources")
+# SET(ROCKSDB_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_rocksdb" CACHE PATH "Path to RocksDB sources")
 SET(ROCKSDB_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "rocksdb include directory." FORCE)
 SET(ROCKSDB_LIBRARIES "${LIB_INSTALL_DIR}/librocksdb.a" CACHE FILEPATH "rocksdb include directory." FORCE)
 

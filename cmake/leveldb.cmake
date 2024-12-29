@@ -3,7 +3,7 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(LEVELDB_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_leveldb" CACHE PATH "Path to leveldb sources")
+SET(LEVELDB_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_leveldb" CACHE PATH "Path to leveldb sources")
 SET(LEVELDB_INCLUDE_DIR "${LIB_INCLUDE_DIR}/leveldb" CACHE PATH "leveldb include directory." FORCE)
 SET(LEVELDB_LIBRARIES "${LIB_INSTALL_DIR}/libleveldb.a" CACHE FILEPATH "leveldb include directory." FORCE)
 SET(LEVELDB_INSTALL_LIBDIR "${LIB_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")

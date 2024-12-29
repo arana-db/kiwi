@@ -3,7 +3,7 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(zstd_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_zstd" CACHE PATH "Path to zstd sources")
+SET(zstd_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_zstd" CACHE PATH "Path to zstd sources")
 SET(zstd_INCLUDE_DIRS "${LIB_INCLUDE_DIR}" CACHE PATH "zstd include directory." FORCE)
 SET(zstd_LIBRARIES "${LIB_INSTALL_DIR}/libzstd.a" CACHE FILEPATH "zstd include directory." FORCE)
 

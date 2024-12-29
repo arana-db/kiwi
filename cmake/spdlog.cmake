@@ -9,7 +9,7 @@ ELSE ()
     SET(SPDLOG_LIB "libspdlog.a")
 ENDIF ()
 
-SET(SPDLOG_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_spdlog" CACHE PATH "Path to spdlog sources")
+SET(SPDLOG_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_spdlog" CACHE PATH "Path to spdlog sources")
 SET(SPDLOG_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "spdlog include directory." FORCE)
 SET(SPDLOG_LIBRARIES "${LIB_INSTALL_DIR}/${SPDLOG_LIB}" CACHE FILEPATH "spdlog library directory." FORCE)
 

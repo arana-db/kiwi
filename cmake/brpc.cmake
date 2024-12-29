@@ -3,7 +3,7 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(BRPC_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_brpc" CACHE PATH "Path to brpc sources")
+SET(BRPC_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_brpc" CACHE PATH "Path to brpc sources")
 SET(BRPC_INSTALL_DIR ${LIB_INSTALL_PREFIX})
 SET(BRPC_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "brpc include directory." FORCE)
 SET(BRPC_LIBRARIES "${LIB_INSTALL_DIR}/libbrpc.a" CACHE FILEPATH "brpc library." FORCE)

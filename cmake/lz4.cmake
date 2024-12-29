@@ -3,7 +3,7 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(LZ4_SOURCES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source/extern_lz4" CACHE PATH "Path to lz4 sources")
+SET(LZ4_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_lz4" CACHE PATH "Path to lz4 sources")
 SET(LZ4_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "lz4 include directory." FORCE)
 SET(LZ4_LIBRARIES "${LIB_INSTALL_DIR}/liblz4.a" CACHE FILEPATH "lz4 include directory." FORCE)
 
