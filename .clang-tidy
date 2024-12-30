@@ -57,7 +57,7 @@ Checks:     '
 #   - { key: readability-identifier-naming.UnionCase,           value: CamelCase  }
 #   - { key: readability-identifier-naming.VariableCase,        value: lower_case }
 
-WarningsAsErrors: ''
+WarningsAsErrors: '*'
 # HeaderFilterRegex: '(|/src|/src/net|/src/pstd|/src/storage)/include'
 # HeaderFilterRegex: '/src/(net|storage|pstd)/include'
 
