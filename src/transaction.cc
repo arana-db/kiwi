@@ -9,17 +9,19 @@
 #include "client.h"
 #include "log.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 PTransaction& PTransaction::Instance() {
   static PTransaction mt;
   return mt;
 }
 
-void PTransaction::Watch(PClient* client, int dbno, const PString& key) {
-  if (client->Watch(dbno, key)) {
-    Clients& cls = clients_[dbno][key];
-    cls.push_back(std::static_pointer_cast<PClient>(client->shared_from_this()));
+void PTransaction::Watch(PClient* client, int dbno, const std::vector<PString> &keys) {
+  for(const auto& key : keys) {
+    if (client->Watch(dbno, key)) {
+      Clients& cls = clients_[dbno][key];
+      cls.push_back(std::static_pointer_cast<PClient>(client->shared_from_this()));
+    }
   }
 }
 
@@ -121,8 +123,9 @@ void WatchCmd::DoCmd(PClient* client) {
     return;
   }
 
-  std::for_each(++client->argv_.begin(), ++client->argv_.end(),
-                [client](const PString& s) { PTransaction::Instance().Watch(client, client->GetCurrentDB(), s); });
+  std::vector<PString> watch_keys(client->argv_.begin() + 1, client->argv_.end());
+  PTransaction::Instance().Watch(client, client->GetCurrentDB(), watch_keys);
+  
   client->SetRes(CmdRes::kOK);
 }
 
@@ -191,4 +194,4 @@ void DiscardCmd::DoCmd(PClient* client) {
   }
 }
 
-}  // namespace pikiwidb
+}  // namespace kiwi

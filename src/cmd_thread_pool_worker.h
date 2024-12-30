@@ -18,7 +18,6 @@
 
 namespace kiwi {
 
-extern pikiwidb::CmdTableManager cmd_table_manager_;
 class CmdWorkThreadPoolWorker {
  public:
   explicit CmdWorkThreadPoolWorker(CmdThreadPool *pool, int onceTask, std::string name)

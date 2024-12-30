@@ -12,8 +12,8 @@
 #include <memory>
 
 #include "base_cmd.h"
-#include "cmd_thread_pool_worker.h"
 #include "client.h"
+#include "cmd_thread_pool_worker.h"
 #include "config.h"
 #include "env.h"
 #include "kiwi.h"
@@ -24,147 +24,8 @@
 
 namespace kiwi {
 
-extern pikiwidb::CmdTableManager cmd_table_manager_;
+extern kiwi::CmdTableManager cmd_table_manager_;
 
-void CmdRes::RedisAppendLen(std::string& str, int64_t ori, const std::string& prefix) {
-  str.append(prefix);
-  str.append(pstd::Int2string(ori));
-  str.append(CRLF);
-}
-
-void CmdRes::AppendStringVector(const std::vector<std::string>& strArray) {
-  if (strArray.empty()) {
-    AppendArrayLen(0);
-    return;
-  }
-  AppendArrayLen(static_cast<int64_t>(strArray.size()));
-  for (const auto& item : strArray) {
-    AppendString(item);
-  }
-}
-
-void CmdRes::AppendString(const std::string& value) {
-  if (value.empty()) {
-    AppendStringLen(-1);
-  } else {
-    AppendStringLen(static_cast<int64_t>(value.size()));
-    AppendContent(value);
-  }
-}
-
-void CmdRes::SetRes(CmdRes::CmdRet _ret, const std::string& content) {
-  ret_ = _ret;
-  switch (ret_) {
-    case kOK:
-      SetLineString("+OK");
-      break;
-    case kPong:
-      SetLineString("+PONG");
-      break;
-    case kSyntaxErr:
-      SetLineString("-ERR syntax error");
-      break;
-    case kInvalidInt:
-      SetLineString("-ERR value is not an integer or out of range");
-      break;
-    case kInvalidBitInt:
-      SetLineString("-ERR bit is not an integer or out of range");
-      break;
-    case kInvalidBitOffsetInt:
-      SetLineString("-ERR bit offset is not an integer or out of range");
-      break;
-    case kWrongBitOpNotNum:
-      SetLineString("-ERR BITOP NOT must be called with a single source key.");
-      break;
-    case kInvalidBitPosArgument:
-      SetLineString("-ERR The bit argument must be 1 or 0.");
-      break;
-    case kInvalidFloat:
-      SetLineString("-ERR value is not a valid float");
-      break;
-    case kOverFlow:
-      SetLineString("-ERR increment or decrement would overflow");
-      break;
-    case kNotFound:
-      SetLineString("-ERR no such key");
-      break;
-    case kOutOfRange:
-      SetLineString("-ERR index out of range");
-      break;
-    case kInvalidPwd:
-      SetLineString("-ERR invalid password");
-      break;
-    case kNoneBgsave:
-      SetLineString("-ERR No BGSave Works now");
-      break;
-    case kPurgeExist:
-      SetLineString("-ERR binlog already in purging...");
-      break;
-    case kInvalidParameter:
-      SetLineString("-ERR Invalid Argument");
-      break;
-    case kWrongNum:
-      AppendStringRaw("-ERR wrong number of arguments for '");
-      AppendStringRaw(content);
-      AppendStringRaw("' command\r\n");
-      break;
-    case kInvalidIndex:
-      AppendStringRaw("-ERR invalid DB index for '");
-      AppendStringRaw(content);
-      AppendStringRaw("'\r\n");
-      break;
-    case kInvalidDbType:
-      AppendStringRaw("-ERR invalid DB for '");
-      AppendStringRaw(content);
-      AppendStringRaw("'\r\n");
-      break;
-    case kInconsistentHashTag:
-      SetLineString("-ERR parameters hashtag is inconsistent");
-    case kInvalidDB:
-      AppendStringRaw("-ERR invalid DB for '");
-      AppendStringRaw(content);
-      AppendStringRaw("'\r\n");
-      break;
-    case kErrOther:
-      AppendStringRaw("-ERR ");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-      break;
-    case KIncrByOverFlow:
-      AppendStringRaw("-ERR increment would produce NaN or Infinity");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-      break;
-    case kInvalidCursor:
-      AppendStringRaw("-ERR invalid cursor");
-      break;
-    case kWrongLeader:
-      AppendStringRaw("-ERR wrong leader");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-      break;
-    case kMultiKey:
-      AppendStringRaw("-WRONGTYPE Operation against a key holding the wrong kind of value");
-      AppendStringRaw(content);
-      AppendStringRaw(CRLF);
-      break;
-    case kQueued:
-      AppendStringRaw("+QUEUED");
-      AppendStringRaw(CRLF);
-      break;
-    case kPErrorWatch:
-      AppendStringRaw("-ERR WATCH inside MULTI is not allowed");
-      AppendStringRaw(CRLF);
-      break;
-    case kDirtyExec:
-      AppendStringRaw("-ERR EXECABORT Transaction discarded because of previous errors.");
-      AppendStringRaw(CRLF);
-      break;
-    default:
-      break;
-  }
-}
-CmdRes::~CmdRes() { message_.clear(); }
 const ClientInfo ClientInfo::invalidClientInfo = {0, "", -1};
 
 thread_local PClient* PClient::s_current = nullptr;
@@ -308,6 +169,27 @@ int PClient::HandlePacket(std::string&& data) {
     }
   }
 
+  // check transaction
+  if (IsFlagOn(kClientFlagMulti)) {
+    if (cmdName_ != kCmdNameMulti && cmdName_ != kCmdNameExec && cmdName_ != kCmdNameWatch &&
+        cmdName_ != kCmdNameUnWatch && cmdName_ != kCmdNameDiscard) {
+      auto [cmdPtr, ret] = cmd_table_manager_.GetCommand(cmdName_, this);
+      if (!cmdPtr->CheckArg(ParamsSize())) {
+        ERROR("queue failed: cmd {} has params {}", cmdName_, params.size());
+        FlagExecWrong();
+      } else {
+        if (!IsFlagOn(kClientFlagWrongExec)) {
+          queue_cmds_.insert(queue_cmds_.end(), std::make_move_iterator(params.begin()),
+                             std::make_move_iterator(params.end()));
+        }
+        INFO("queue cmd {}", cmdName_);
+        this->SetRes(CmdRes::kQueued);
+        g_kiwi->PushWriteTask(shared_from_this());
+        return 1;
+      }
+    }
+  }
+
   for (const auto& item : params) {
     FeedMonitors(item);
   }
@@ -321,28 +203,10 @@ int PClient::HandlePacket(std::string&& data) {
     g_kiwi->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this(), std::move(params)));
   }
 
-  // check transaction
-  if (IsFlagOn(kClientFlagMulti)) {
-    if (cmdName_ != kCmdNameMulti && cmdName_ != kCmdNameExec && cmdName_ != kCmdNameWatch &&
-        cmdName_ != kCmdNameUnWatch && cmdName_ != kCmdNameDiscard) {
-      auto [cmdPtr, ret] = cmd_table_manager_.GetCommand(cmdName_, this);
-      if (!cmdPtr->CheckArg(ParamsSize())) {
-        ERROR("queue failed: cmd {} has params {}", cmdName_, params_.size());
-        FlagExecWrong();
-      } else {
-        if (!IsFlagOn(kClientFlagWrongExec)) {
-          queue_cmds_.push_back(params_);
-        }
-        INFO("queue cmd {}", cmdName_);
-        this->SetRes(CmdRes::kQueued);
-        g_pikiwidb->PushWriteTask(shared_from_this());
-        return static_cast<int>(ptr - start);
-      }
-    }
-  }
-  Propagate(params_, GetCurrentDB());
+  // Propagate(params, GetCurrentDB());
 
-  g_pikiwidb->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this()));
+  // g_kiwi->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this()));
+
   // check readonly slave and execute command
   //  PError err = PError_ok;
   //  if (PREPL.GetMasterState() != PReplState_none && !IsFlagOn(ClientFlag_master) &&
@@ -485,13 +349,14 @@ bool PClient::Exec() {
   }
 
   if (IsFlagOn(kClientFlagDirty)) {
-    message_ = "$-1\r\n";
+    std::string message_ = "$-1\r\n";
+    resp_encode_->Reply(message_);
     return true;
   }
-  message_.clear();
-  AppendArrayLenUint64(queue_cmds_.size());
+  resp_encode_->ClearReply();
+  AppendArrayLen(queue_cmds_.size());
   for (auto cmd : queue_cmds_) {
-    DEBUG("EXEC {}, for client {}", cmd[0], uniqueID());
+    DEBUG("EXEC {}, for client {}", cmd[0], GetUniqueID());
     auto client = std::make_shared<PClient>();
     client->cmdName_ = cmd[0];
     client->params_ = cmd;

@@ -67,7 +67,7 @@ start_server {tags {"multi"}} {
 #        list [r exists foo1{t}] [r exists foo2{t}]
 #   } {0 0}
 
-    # PikiwiDB not support parameter maxmemory
+    # Kiwi not support parameter maxmemory
     # test {EXEC fails if there are errors while queueing commands #2} {
     #     set rd [redis_deferring_client]
     #     r del foo1{t} foo2{t}
@@ -122,7 +122,7 @@ start_server {tags {"multi"}} {
         r exec
     } {}
 
-    # PikiwiDB does not support the sort command
+    # Kiwi does not support the sort command
     # test {EXEC fail on WATCHed key modified by SORT with STORE even if the result is empty} {
     #     r flushdb
     #     r lpush foo bar
@@ -133,7 +133,7 @@ start_server {tags {"multi"}} {
     #     r exec
     # } {}
 
-    # PikiwiDB does not support the debug command
+    # Kiwi does not support the debug command
     # test {EXEC fail on lazy expired WATCHed key} {
     #     r del key
     #     r debug set-active-expire 0
@@ -154,7 +154,7 @@ start_server {tags {"multi"}} {
     #     set _ $res
     # } {} {needs:debug}
 
-    # PikiwiDB does not support the debug command
+    # Kiwi does not support the debug command
     # test {WATCH stale keys should not fail EXEC} {
     #     r del x
     #     r debug set-active-expire 0
@@ -167,7 +167,7 @@ start_server {tags {"multi"}} {
     #     r debug set-active-expire 1
     # } {OK} {needs:debug}
 
-    # PikiwiDB does not support the debug command
+    # Kiwi does not support the debug command
     # test {Delete WATCHed stale keys should not fail EXEC} {
     #     r del x
     #     r debug set-active-expire 0
@@ -182,7 +182,7 @@ start_server {tags {"multi"}} {
     #     r debug set-active-expire 1
     # } {OK} {needs:debug}
 
-    # PikiwiDB does not support the debug command
+    # Kiwi does not support the debug command
     # test {FLUSHDB while watching stale keys should not fail EXEC} {
     #     r del x
     #     r debug set-active-expire 0
@@ -271,7 +271,7 @@ start_server {tags {"multi"}} {
         r exec
     } {PONG}
 
-    # # PikiwiDB does not support the swapdb command
+    # # Kiwi does not support the swapdb command
     # test {SWAPDB is able to touch the watched keys that exist} {
     #     r flushall
     #     r select 0
@@ -283,7 +283,7 @@ start_server {tags {"multi"}} {
     #     r exec
     # } {} {singledb:skip}
 
-    # # PikiwiDB does not support the swapdb command
+    # # Kiwi does not support the swapdb command
     # test {SWAPDB is able to touch the watched keys that do not exist} {
     #     r flushall
     #     r select 1
@@ -296,7 +296,7 @@ start_server {tags {"multi"}} {
     #     r exec
     # } {} {singledb:skip}
 
-    # # PikiwiDB does not support the swapdb command
+    # # Kiwi does not support the swapdb command
     # test {SWAPDB does not touch watched stale keys} {
     #     r flushall
     #     r select 1
@@ -311,7 +311,7 @@ start_server {tags {"multi"}} {
     #     r debug set-active-expire 1
     # } {OK} {singledb:skip needs:debug}
 
-    # # PikiwiDB does not support the swapdb command
+    # # Kiwi does not support the swapdb command
     # test {SWAPDB does not touch non-existing key replaced with stale key} {
     #     r flushall
     #     r select 0
@@ -327,7 +327,7 @@ start_server {tags {"multi"}} {
     #     r debug set-active-expire 1
     # } {OK} {singledb:skip needs:debug}
 
-    # PikiwiDB does not support the swapdb command
+    # Kiwi does not support the swapdb command
     # test {SWAPDB does not touch stale key replaced with another stale key} {
     #     r flushall
     #     r debug set-active-expire 0
@@ -406,7 +406,7 @@ start_server {tags {"multi"}} {
 #        r exec
 #    } {11}
 
-    # PikiwiDB does not support the sync command
+    # Kiwi does not support the sync command
     # test {MULTI / EXEC is not propagated (single write command)} {
     #     set repl [attach_to_replication_stream]
     #     r multi
@@ -421,7 +421,7 @@ start_server {tags {"multi"}} {
     #     close_replication_stream $repl
     # } {} {needs:repl}
 
-    # PikiwiDB does not support the sync command
+    # Kiwi does not support the sync command
     # test {MULTI / EXEC is propagated correctly (multiple commands)} {
     #     set repl [attach_to_replication_stream]
     #     r multi
@@ -444,7 +444,7 @@ start_server {tags {"multi"}} {
     #     close_replication_stream $repl
     # } {} {needs:repl}
 
-    # PikiwiDB does not support the sync command
+    # Kiwi does not support the sync command
     # test {MULTI / EXEC is propagated correctly (multiple commands with SELECT)} {
     #     set repl [attach_to_replication_stream]
     #     r multi
@@ -472,7 +472,7 @@ start_server {tags {"multi"}} {
     #     close_replication_stream $repl
     # } {} {needs:repl singledb:skip}
 
-    # PikiwiDB does not support the sync command
+    # Kiwi does not support the sync command
     # test {MULTI / EXEC is propagated correctly (empty transaction)} {
     #     set repl [attach_to_replication_stream]
     #     r multi
@@ -485,7 +485,7 @@ start_server {tags {"multi"}} {
     #     close_replication_stream $repl
     # } {} {needs:repl}
 
-    # PikiwiDB does not support the sync command
+    # Kiwi does not support the sync command
     # test {MULTI / EXEC is propagated correctly (read-only commands)} {
     #     r set foo value1
     #     set repl [attach_to_replication_stream]
@@ -500,7 +500,7 @@ start_server {tags {"multi"}} {
     #     close_replication_stream $repl
     # } {} {needs:repl}
 
-    # PikiwiDB does not support the sync command
+    # Kiwi does not support the sync command
     # test {MULTI / EXEC is propagated correctly (write command, no effect)} {
     #     r del bar
     #     r del foo
@@ -520,7 +520,7 @@ start_server {tags {"multi"}} {
     #     close_replication_stream $repl
     # } {} {needs:repl}
 
-    # PikiwiDB does not support the sync command
+    # Kiwi does not support the sync command
     # test {MULTI / EXEC with REPLICAOF} {
     #     # This test verifies that if we demote a master to replica inside a transaction, the
     #     # entire transaction is not propagated to the already-connected replica
@@ -540,7 +540,7 @@ start_server {tags {"multi"}} {
     #     r replicaof no one
     # } {OK} {needs:repl cluster:skip}
 
-    # PikiwiDB does not support the "config set maxmemory" command
+    # Kiwi does not support the "config set maxmemory" command
     # test {DISCARD should not fail during OOM} {
     #     set rd [redis_deferring_client]
     #     $rd config set maxmemory 1
@@ -555,7 +555,7 @@ start_server {tags {"multi"}} {
     #     r ping
     # } {PONG} {needs:config-maxmemory}
 
-    # PikiwiDB does not support the "config set lua-time-limit" command
+    # Kiwi does not support the "config set lua-time-limit" command
     # test {MULTI and script timeout} {
     #     # check that if MULTI arrives during timeout, it is either refused, or
     #     # allowed to pass, and we don't end up executing half of the transaction
@@ -581,7 +581,7 @@ start_server {tags {"multi"}} {
     #     $rd1 close; $r2 close
     # }
 
-    # PikiwiDB does not support the "config set lua-time-limit" command
+    # Kiwi does not support the "config set lua-time-limit" command
     # test {EXEC and script timeout} {
     #     # check that if EXEC arrives during timeout, we don't end up executing
     #     # half of the transaction, and also that we exit the multi state
@@ -607,7 +607,7 @@ start_server {tags {"multi"}} {
     #     $rd1 close; $r2 close
     # }
 
-    # PikiwiDB does not support the "config set lua-time-limit" command
+    # Kiwi does not support the "config set lua-time-limit" command
     # test {MULTI-EXEC body and script timeout} {
     #     # check that we don't run an incomplete transaction due to some commands
     #     # arriving during busy script
@@ -633,7 +633,7 @@ start_server {tags {"multi"}} {
     #     $rd1 close; $r2 close
     # }
 
-    # PikiwiDB does not support the "config set lua-time-limit" command
+    # Kiwi does not support the "config set lua-time-limit" command
     # test {just EXEC and script timeout} {
     #     # check that if EXEC arrives during timeout, we don't end up executing
     #     # actual commands during busy script, and also that we exit the multi state
@@ -658,7 +658,7 @@ start_server {tags {"multi"}} {
     #     $rd1 close; $r2 close
     # }
 
-    # PikiwiDB does not support the "config set min-replicas-to-write" command
+    # Kiwi does not support the "config set min-replicas-to-write" command
     # test {exec with write commands and state change} {
     #     # check that exec that contains write commands fails if server state changed since they were queued
     #     set r1 [redis_client]
@@ -675,7 +675,7 @@ start_server {tags {"multi"}} {
     #     $r1 close
     # } {0} {needs:repl}
 
-    # PikiwiDB does not support the "config set replica-serve-stale-data" command
+    # Kiwi does not support the "config set replica-serve-stale-data" command
     # test {exec with read commands and stale replica state change} {
     #     # check that exec that contains read commands fails if server state changed since they were queued
     #     r config set replica-serve-stale-data no
@@ -709,7 +709,7 @@ start_server {tags {"multi"}} {
     #     $r1 close
     # } {0} {needs:repl cluster:skip}
 
-    # PikiwiDB does not support the "config set maxmemory" command
+    # Kiwi does not support the "config set maxmemory" command
     # test {EXEC with only read commands should not be rejected when OOM} {
     #     set r2 [redis_client]
 
@@ -729,7 +729,7 @@ start_server {tags {"multi"}} {
     #     $r2 close
     # } {0} {needs:config-maxmemory}
 
-    # PikiwiDB does not support the "config set maxmemory" command
+    # Kiwi does not support the "config set maxmemory" command
     # test {EXEC with at least one use-memory command should fail} {
     #     set r2 [redis_client]
 
@@ -749,7 +749,7 @@ start_server {tags {"multi"}} {
     #     $r2 close
     # } {0} {needs:config-maxmemory}
 
-    # PikiwiDB does not support the xgroup command
+    # Kiwi does not support the xgroup command
     # test {Blocking commands ignores the timeout} {
     #     r xgroup create s{t} g $ MKSTREAM
 
@@ -767,7 +767,7 @@ start_server {tags {"multi"}} {
     #     list $m $res
     # } {OK {{} {} {} {} {} {} {} {}}}
 
-    # PikiwiDB does not support the SYNC command
+    # Kiwi does not support the SYNC command
     # test {MULTI propagation of PUBLISH} {
     #     set repl [attach_to_replication_stream]
 
@@ -782,7 +782,7 @@ start_server {tags {"multi"}} {
     #     close_replication_stream $repl
     # } {} {needs:repl cluster:skip}
 
-    # PikiwiDB does not support the SYNC command
+    # Kiwi does not support the SYNC command
     # test {MULTI propagation of SCRIPT LOAD} {
     #     set repl [attach_to_replication_stream]
 
@@ -800,7 +800,7 @@ start_server {tags {"multi"}} {
     #     close_replication_stream $repl
     # } {} {needs:repl}
 
-    # PikiwiDB does not support the SYNC command
+    # Kiwi does not support the SYNC command
     # test {MULTI propagation of EVAL} {
     #     set repl [attach_to_replication_stream]
 
@@ -816,7 +816,7 @@ start_server {tags {"multi"}} {
     #     close_replication_stream $repl
     # } {} {needs:repl}
 
-    # PikiwiDB does not support the SYNC command
+    # Kiwi does not support the SYNC command
     # test {MULTI propagation of SCRIPT FLUSH} {
     #     set repl [attach_to_replication_stream]
 
@@ -833,7 +833,7 @@ start_server {tags {"multi"}} {
     #     close_replication_stream $repl
     # } {} {needs:repl}
 
-    # PikiwiDB does not support the SYNC command
+    # Kiwi does not support the SYNC command
     # tags {"stream"} {
     #     test {MULTI propagation of XREADGROUP} {
     #         set repl [attach_to_replication_stream]
@@ -867,9 +867,9 @@ start_server {tags {"multi"}} {
     #     } {} {needs:repl}
     # }
 
-    # PikiwiDB does not support the SAVE command
+    # Kiwi does not support the SAVE command
     foreach {cmd} {SAVE SHUTDOWN} {
-        # The return value of PikiwiDB is inconsistent with Redis
+        # The return value of Kiwi is inconsistent with Redis
         # test "MULTI with $cmd" {
         #     r del foo
         #     r multi
@@ -882,7 +882,7 @@ start_server {tags {"multi"}} {
         # } {}
     }
 
-    # PikiwiDB does not support the BGREWRITEAOF command
+    # Kiwi does not support the BGREWRITEAOF command
     # test "MULTI with BGREWRITEAOF" {
     #     set forks [s total_forks]
     #     r multi
@@ -898,7 +898,7 @@ start_server {tags {"multi"}} {
     #     waitForBgrewriteaof r
     # } {} {external:skip}
 
-    # PikiwiDB does not support the "config set appendonly" command
+    # Kiwi does not support the "config set appendonly" command
     # test "MULTI with config set appendonly" {
     #     set lines [count_log_lines 0]
     #     set forks [s total_forks]
@@ -915,7 +915,7 @@ start_server {tags {"multi"}} {
     #     waitForBgrewriteaof r
     # } {} {external:skip}
 
-    # PikiwiDB does not support the "config set maxmemory" command
+    # Kiwi does not support the "config set maxmemory" command
     # test "MULTI with config error" {
     #     r multi
     #     r set foo bar
@@ -944,7 +944,7 @@ start_server {tags {"multi"}} {
       }
 }
 
-# PikiwiDB does not support AOF
+# Kiwi does not support AOF
 # start_server {overrides {appendonly {yes} appendfilename {appendonly.aof} appendfsync always} tags {external:skip}} {
 #      test {MULTI with FLUSHALL and AOF} {
 #          set aof [get_last_incr_aof_path r]

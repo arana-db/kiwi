@@ -17,6 +17,8 @@ enum class CmdRes {
   kInvalidInt,
   kInvalidBitInt,
   kInvalidBitOffsetInt,
+  kInvalidBitPosArgument,
+  kWrongBitOpNotNum,
   kInvalidFloat,
   kOverFlow,
   kNotFound,
@@ -37,6 +39,9 @@ enum class CmdRes {
   kInvalidCursor,
   kWrongLeader,
   kMultiKey,
+  kDirtyExec,
+  kPErrorWatch,
+  kQueued,
   kNoAuth,
 };
 

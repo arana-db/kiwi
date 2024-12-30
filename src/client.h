@@ -60,97 +60,6 @@ struct TimeStat {
   TimePoint process_done_ts_ = TimePoint::min();
 };
 
-class CmdRes {
- public:
-  enum CmdRet {
-    kNone = 0,
-    kOK,
-    kPong,
-    kSyntaxErr,
-    kInvalidInt,
-    kInvalidBitInt,
-    kInvalidBitOffsetInt,
-    kInvalidBitPosArgument,
-    kWrongBitOpNotNum,
-    kInvalidFloat,
-    kOverFlow,
-    kNotFound,
-    kOutOfRange,
-    kInvalidPwd,
-    kNoneBgsave,
-    kPurgeExist,
-    kInvalidParameter,
-    kWrongNum,
-    kInvalidIndex,
-    kInvalidDbType,
-    kInvalidDB,
-    kPErrorWatch,
-    kInconsistentHashTag,
-    kErrOther,
-    kUnknownCmd,
-    kUnknownSubCmd,
-    KIncrByOverFlow,
-    kInvalidCursor,
-    kWrongLeader,
-    kMultiKey,
-    kDirtyExec,
-    kQueued,
-  };
-
-  CmdRes() = default;
-  virtual ~CmdRes();
-
-  bool None() const { return ret_ == kNone && message_.empty(); }
-
-  bool Ok() const { return ret_ == kOK || ret_ == kNone; }
-
-  void Clear() {
-    message_.clear();
-    ret_ = kNone;
-  }
-
-  inline const std::string& Message() const { return message_; };
-
-  inline void Message(std::string* str) { str->swap(message_); };
-
-  // Inline functions for Create Redis protocol
-  inline void AppendStringLen(int64_t ori) { RedisAppendLen(message_, ori, "$"); }
-  inline void AppendStringLenUint64(uint64_t ori) { RedisAppendLenUint64(message_, ori, "$"); }
-  inline void AppendArrayLen(int64_t ori) { RedisAppendLen(message_, ori, "*"); }
-  inline void AppendArrayLenUint64(uint64_t ori) { RedisAppendLenUint64(message_, ori, "*"); }
-  inline void AppendInteger(int64_t ori) { RedisAppendLen(message_, ori, ":"); }
-  inline void AppendContent(const std::string& value) { RedisAppendContent(message_, value); }
-  inline void AppendContentv1(const std::string& value) { RedisAppendContentv1(message_, value); }
-  inline void AppendStringRaw(const std::string& value) { message_.append(value); }
-  inline void SetLineString(const std::string& value) { message_ = value + CRLF; }
-
-  void AppendString(const std::string& value);
-  void AppendStringVector(const std::vector<std::string>& strArray);
-  void RedisAppendLenUint64(std::string& str, uint64_t ori, const std::string& prefix) {
-    RedisAppendLen(str, static_cast<int64_t>(ori), prefix);
-  }
-
-  void SetRes(CmdRet _ret, const std::string& content = "");
-
-  inline void RedisAppendContent(std::string& str, const std::string& value) {
-    str.append(value.data(), value.size());
-    str.append(CRLF);
-  }
-
-  inline void RedisAppendContentv1(std::string& str, const std::string& value) {
-    str.append(value.data(), value.size());
-  }
-
-  void RedisAppendLen(std::string& str, int64_t ori, const std::string& prefix);
-  CmdRet GetRet() { return ret_; };
-
- protected:
-  std::string message_;
-
- private:
-  CmdRet ret_ = kNone;
-};
-
 enum ClientFlag {
   kClientFlagMulti = (1 << 0),
   kClientFlagDirty = (1 << 1),
@@ -227,7 +136,8 @@ class PClient : public std::enable_shared_from_this<PClient> {
 
   // If T is of type string, then the contents of string must be numbers
   template <typename T>
-  requires(std::integral<T> || std::same_as<T, std::string>) void AppendArrayLen(T value) {
+  requires(std::integral<T> || std::same_as<T, std::string>)
+  void AppendArrayLen(T value) {
     AppendStringRaw(fmt::format("*{}\r\n", value));
   }
 
@@ -329,7 +239,7 @@ class PClient : public std::enable_shared_from_this<PClient> {
 
   uint32_t flag_ = 0;
   std::unordered_map<int32_t, std::unordered_set<std::string> > watch_keys_;
-  std::vector<std::vector<std::string> > queue_cmds_;
+  RespParams queue_cmds_;
 
   // blocked list
   std::unordered_set<std::string> waiting_keys_;

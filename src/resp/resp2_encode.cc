@@ -34,6 +34,12 @@ void Resp2Encode::SetRes(CmdRes ret, const std::string& content) {
     case CmdRes::kInvalidBitOffsetInt:
       SetLineString("-ERR bit offset is not an integer or out of range");
       break;
+    case CmdRes::kInvalidBitPosArgument:
+      SetLineString("-ERR The bit argument must be 1 or 0.");
+      break;
+    case CmdRes::kWrongBitOpNotNum:
+      SetLineString("-ERR BITOP NOT must be called with a single source key.");
+      break;
     case CmdRes::kInvalidFloat:
       SetLineString("-ERR value is not a valid float");
       break;
@@ -87,6 +93,18 @@ void Resp2Encode::SetRes(CmdRes ret, const std::string& content) {
     case CmdRes::kMultiKey:
       AppendStringRaw(
           fmt::format("-WRONGTYPE Operation against a key holding the wrong kind of value {}\r\n", content));
+      break;
+    case CmdRes::kDirtyExec:
+      AppendStringRaw("-ERR EXECABORT Transaction discarded because of previous errors.");
+      AppendStringRaw(CRLF);
+      break;
+    case CmdRes::kPErrorWatch:
+      AppendStringRaw("-ERR WATCH inside MULTI is not allowed");
+      AppendStringRaw(CRLF);
+      break;
+    case CmdRes::kQueued:
+      AppendStringRaw("+QUEUED");
+      AppendStringRaw(CRLF);
       break;
     case CmdRes::kNoAuth:
       SetLineString("-NOAUTH Authentication required");

@@ -56,28 +56,23 @@ void CmdWorkThreadPoolWorker::Work() {
         g_kiwi->PushWriteTask(task->Client());
         continue;
       }
-        if (!cmdPtr->CheckArg(task->Client()->ParamsSize())) {
-          task->Client()->SetRes(CmdRes::kWrongNum, param[0]);
-          g_kiwi->PushWriteTask(task->Client());
-          continue;
-        }
 
-        auto cmdstat_map = task->Client()->GetCommandStatMap();
-        CommandStatistics statistics;
-        if (cmdstat_map->find(param[0]) == cmdstat_map->end()) {
-          cmdstat_map->emplace(param[0], statistics);
-        }
-        auto now = std::chrono::steady_clock::now();
-        task->Client()->GetTimeStat()->SetDequeueTs(now);
-        task->Run(cmdPtr);
+      auto cmdstat_map = task->Client()->GetCommandStatMap();
+      CommandStatistics statistics;
+      if (cmdstat_map->find(param[0]) == cmdstat_map->end()) {
+        cmdstat_map->emplace(param[0], statistics);
+      }
+      auto now = std::chrono::steady_clock::now();
+      task->Client()->GetTimeStat()->SetDequeueTs(now);
+      task->Run(cmdPtr);
+      
+      // Info Commandstats used
+      now = std::chrono::steady_clock::now();
+      task->Client()->GetTimeStat()->SetProcessDoneTs(now);
+      (*cmdstat_map)[param[0]].cmd_count_.fetch_add(1);
+      (*cmdstat_map)[param[0]].cmd_time_consuming_.fetch_add(task->Client()->GetTimeStat()->GetTotalTime());
 
-        // Info Commandstats used
-        now = std::chrono::steady_clock::now();
-        task->Client()->GetTimeStat()->SetProcessDoneTs(now);
-        (*cmdstat_map)[param[0]].cmd_count_.fetch_add(1);
-        (*cmdstat_map)[param[0]].cmd_time_consuming_.fetch_add(task->Client()->GetTimeStat()->GetTotalTime());
-
-        g_kiwi->PushWriteTask(task->Client());
+      g_kiwi->PushWriteTask(task->Client());
       }
     }
     self_task_.clear();

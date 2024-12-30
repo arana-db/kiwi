@@ -15,7 +15,7 @@
 #include "base_cmd.h"
 #include "common.h"
 
-namespace pikiwidb {
+namespace kiwi {
 
 class PClient;
 class PTransaction {
@@ -25,7 +25,7 @@ class PTransaction {
   PTransaction(const PTransaction &) = delete;
   void operator=(const PTransaction &) = delete;
 
-  void Watch(PClient *client, int dbno, const PString &key);
+  void Watch(PClient *client, int dbno, const std::vector<PString> &keys);
   bool Multi(PClient *client);
   bool Exec(PClient *client);
   void Discard(PClient *client);
@@ -97,4 +97,4 @@ class DiscardCmd : public BaseCmd {
   void DoCmd(PClient *client) override;
 };
 
-}  // namespace pikiwidb
+}  // namespace kiwi
