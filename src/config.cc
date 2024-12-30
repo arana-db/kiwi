@@ -182,9 +182,7 @@ bool PConfig::LoadFromFile(const std::string& file_name) {
     if (auto iter = config_map_.find(key); iter != config_map_.end()) {
       auto& v = config_map_[key];
       auto s = v->Set(value.at(0), true);
-      std::cerr << key <<" : " << value.at(0) << '\n';
       if (!s.ok()) {
-        // FIXME: here a error happened
         return false;
       }
     }

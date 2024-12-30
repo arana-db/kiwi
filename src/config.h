@@ -44,7 +44,7 @@ class BaseValue {
 
   virtual std::string Value() const = 0;
 
-  Status Set(const std::string& value, bool force);
+  Status Set(const std::string& value, bool init_stage);
 
  protected:
   virtual Status SetValue(const std::string&) = 0;
@@ -96,7 +96,7 @@ class NumberValue : public BaseValue {
  public:
   NumberValue(const std::string& key, CheckFunc check_func_ptr, bool rewritable, T* value_ptr,
               T min = std::numeric_limits<T>::min(), T max = std::numeric_limits<T>::max())
-      : BaseValue(key, check_func_ptr, rewritable), value_(value_ptr), value_min_(min), value_max_(max) {
+      : BaseValue(key, std::move(check_func_ptr), rewritable), value_(value_ptr), value_min_(min), value_max_(max) {
     assert(value_ != nullptr);
     assert(value_min_ <= value_max_);
   };
@@ -280,8 +280,9 @@ class PConfig {
    * For kiwi, ip is the address and the port that
    * the server will listen on.
    * In default, the full address will be "127.0.0.1:9221"
+   * and "::1:9221"
    */
-  std::vector<std::string> ips = {"127.0.0.1"};
+  std::vector<std::string> ips = {"127.0.0.1", "::1"};
   uint16_t port = 9221;
 
   /*
