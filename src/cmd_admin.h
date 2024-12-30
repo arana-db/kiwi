@@ -208,6 +208,22 @@ class PingCmd : public BaseCmd {
   void DoCmd(PClient* client) override;
 };
 
+class HelloCmd : public BaseCmd {
+ public:
+  HelloCmd(const std::string& name, int16_t arity);
+
+ protected:
+  bool DoInitial(PClient* client) override;
+
+ private:
+  void DoCmd(PClient* client) override;
+
+  void Hello(PClient* client);
+
+ private:
+  bool authed_ = true;
+};
+
 class EchoCmd : public BaseCmd {
  public:
   EchoCmd(const std::string& name, int16_t arity);
@@ -229,7 +245,7 @@ class InfoCmd : public BaseCmd {
  private:
   void DoCmd(PClient* client) override;
 
-  enum InfoSection : std::int8_t {
+  enum InfoSection : std::uint8_t {
     kInfoErr = 0x0,
     kInfoServer,
     kInfoStats,

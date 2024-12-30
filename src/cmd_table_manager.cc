@@ -78,6 +78,9 @@ void CmdTableManager::InitCmdTable() {
   ADD_COMMAND(Select, 2);
   ADD_COMMAND(Shutdown, 1);
 
+  // hello
+  ADD_COMMAND(Hello, -1);
+
   // info
   ADD_COMMAND(Info, -1);
 
