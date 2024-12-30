@@ -150,7 +150,8 @@ int PClient::HandlePacket(std::string&& data) {
   }
 
   if (!auth_) {
-    if (params[0][0] == kCmdNameAuth) {
+    // auth and hello command can be executed without auth
+    if (params[0][0] == kCmdNameAuth || params[0][0] == kCmdNameHello) {
       auto now = ::time(nullptr);
       if (now <= last_auth_ + 1) {
         // avoid guess password.

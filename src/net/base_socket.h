@@ -63,14 +63,14 @@ class BaseSocket : public NetEvent {
 
   bool GetPeerAddr(SocketAddr &);
 
-  inline int SocketType() { return type_; }
+  int SocketType() { return type_; }
 
-  inline void SetSocketType(int type) { type_ = type; }
+  void SetSocketType(int type) { type_ = type; }
 
   inline void SetBSTcpKeepAlive(uint32_t keepAlive) { tcpKeepAlive_ = keepAlive; }
 
  protected:
-  inline bool NoBlock() const { return noBlock_; }
+  bool NoBlock() const { return noBlock_; }
 
  private:
   int type_ = SOCKET_NONE;  // socket type (TCP/UDP)

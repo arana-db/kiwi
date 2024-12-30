@@ -25,9 +25,11 @@
 #include <string>
 #include <vector>
 #include "cmd_admin.h"
+#include "config.h"
 #include "db.h"
 
 #include "braft/raft.h"
+#include "log.h"
 #include "pstd_string.h"
 #include "rocksdb/version.h"
 
@@ -36,7 +38,6 @@
 #include "pstd/env.h"
 
 #include "client_map.h"
-#include "cmd_table_manager.h"
 #include "slow_log.h"
 #include "store.h"
 
@@ -161,6 +162,107 @@ bool PingCmd::DoInitial(PClient* client) { return true; }
 
 void PingCmd::DoCmd(PClient* client) { client->SetRes(CmdRes::kPong, "PONG"); }
 
+HelloCmd::HelloCmd(const std::string& name, int16_t arity)
+    : BaseCmd(name, arity, kCmdFlagsFast, kAclCategoryFast | kAclCategoryConnection) {}
+
+bool HelloCmd::DoInitial(PClient* client) {
+  size_t argc = client->argv_.size();
+  int resp_version = 2;
+
+  if (!client->GetAuth()) {
+    authed_ = false;
+  }
+
+  if (argc > 1) {
+    if (pstd::String2int(client->argv_[1].data(), client->argv_[1].size(), &resp_version) == 0) {
+      client->SetRes(CmdRes::kErrOther, "Protocol version is not an integer or out of range");
+      return false;
+    }
+  }
+
+  if (resp_version != 2) {
+    client->SetRes(CmdRes::kErrOther, "unsupported protocol version");
+    return false;
+  }
+
+  return true;
+}
+
+void HelloCmd::DoCmd(PClient* client) {
+  size_t argc = client->argv_.size();
+  size_t next_arg = 2;
+
+  for (; next_arg < argc; next_arg++) {
+    size_t more_args = argc - next_arg;
+    const std::string& arg = client->argv_[next_arg];
+    // TODO(marsevilspirit): support auth acl
+    // like: hello 2 auth username password
+    // now only support hello auth password
+    // do not support username (need acl)
+    if ((strcasecmp(arg.data(), "SETNAME") == 0) && more_args) {
+      client->SetName(client->argv_[next_arg + 1]);
+      next_arg++;
+    } else if (strcasecmp(arg.data(), "AUTH") == 0 && more_args) {
+      authed_ = true;
+      if (client->GetAuth()) {
+        continue;
+      }
+      if (client->argv_[next_arg + 1] != g_config.password) {
+        client->SetRes(CmdRes::kErrOther, "invalid password");
+        return;
+      } else {
+        client->SetAuth();
+      }
+      next_arg++;
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "Syntax error");
+      return;
+    }
+  }
+
+  if (!authed_) {
+    client->SetRes(CmdRes::kErrOther,
+                   "NOAUTH HELLO must be called with the client already authenticated, \
+        otherwise the HELLO <proto> AUTH <pass> option can be used to authenticate the client and \
+        select the RESP protocol version at the same time");
+    return;
+  }
+
+  Hello(client);
+}
+
+void HelloCmd::Hello(PClient* client) {
+  client->AppendArrayLen(static_cast<int64_t>(12));
+  client->AppendString("server");
+  client->AppendString("kiwi");
+  client->AppendString("version");
+  client->AppendString(Kkiwi_VERSION);
+  client->AppendString("proto");
+  client->AppendInteger(static_cast<int64_t>(2));
+  client->AppendString("id");
+  client->AppendInteger(static_cast<int64_t>(client->GetUniqueID()));
+  client->AppendString("mode");
+
+  if (!g_config.use_raft) {
+    client->AppendString("standalone");
+  } else {
+    client->AppendString("cluster");
+  }
+
+  client->AppendString("role");
+  if (client->GetAuth()) {
+    client->AppendString("master");
+  } else {
+    client->AppendString("slave");
+  }
+}
+
+EchoCmd::EchoCmd(const std::string& name, int16_t arity) : BaseCmd(name, arity, kCmdFlagsFast, kAclCategoryFast) {}
+
+bool EchoCmd::DoInitial(PClient* client) { return true; }
+
+void EchoCmd::DoCmd(PClient* client) { client->AppendString(client->argv_[1]); }
+
 const std::string InfoCmd::kInfoSection = "info";
 const std::string InfoCmd::kAllSection = "all";
 const std::string InfoCmd::kServerSection = "server";
@@ -179,7 +281,7 @@ bool InfoCmd::DoInitial(PClient* client) {
     return true;
   }
 
-  std::string argv_ = client->argv_[1].data();
+  std::string argv_ = client->argv_[1];
   // convert section to lowercase
   std::transform(argv_.begin(), argv_.end(), argv_.begin(), [](unsigned char c) { return std::tolower(c); });
   if (argc == 2) {

@@ -52,7 +52,7 @@ class NetEvent {
 
   virtual void Close() = 0;
 
-  inline int Fd() const { return fd_.load(); }
+  int Fd() const { return fd_.load(); }
 
  protected:
   std::atomic<int> fd_ = 0;
