@@ -24,6 +24,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "base_cmd.h"
 #include "cmd_admin.h"
 #include "config.h"
 #include "db.h"
@@ -31,6 +32,7 @@
 #include "braft/raft.h"
 #include "log.h"
 #include "pstd_string.h"
+#include "resp_encode.h"
 #include "rocksdb/version.h"
 
 #include "kiwi.h"
@@ -119,6 +121,30 @@ void FlushallCmd::DoCmd(PClient* client) {
     PSTORE.GetBackend(i).get()->UnLock();
   }
   client->SetRes(CmdRes::kOK);
+}
+
+AuthCmd::AuthCmd(const std::string& name, int16_t arity)
+    : BaseCmd(name, arity, kCmdFlagsFast, kAclCategoryFast | kAclCategoryConnection) {}
+
+bool AuthCmd::DoInitial(PClient* client) { return true; }
+
+void AuthCmd::DoCmd(PClient* client) {
+  if (!client) {
+    client->SetRes(CmdRes::kErrOther, "Client is null");
+    return;
+  }
+
+  if (g_config.password == "") {
+    client->SetRes(CmdRes::kErrOther, "Client sent AUTH, but no password is set");
+  }
+
+  std::string password = client->argv_[1];
+  if (password != g_config.password) {
+    client->SetRes(CmdRes::kInvalidPwd);
+  } else {
+    client->SetAuth();
+    client->SetRes(CmdRes::kOK);
+  }
 }
 
 SelectCmd::SelectCmd(const std::string& name, int16_t arity)

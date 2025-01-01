@@ -13,6 +13,7 @@
 #include <optional>
 #include <variant>
 #include "base_cmd.h"
+#include "client.h"
 #include "config.h"
 
 const std::vector<std::string> debugHelps = {"DEBUG <subcommand> [<arg> [value] [opt] ...]. Subcommands are:",
@@ -155,6 +156,17 @@ class CmdClientKill : public BaseCmd {
 
  public:
   CmdClientKill(const std::string& name, int16_t arity);
+
+ protected:
+  bool DoInitial(PClient* client) override;
+
+ private:
+  void DoCmd(PClient* client) override;
+};
+
+class AuthCmd : public BaseCmd {
+ public:
+  AuthCmd(const std::string& name, int16_t arity);
 
  protected:
   bool DoInitial(PClient* client) override;

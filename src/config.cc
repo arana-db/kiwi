@@ -164,7 +164,7 @@ PConfig::PConfig() {
   AddNumber("rocksdb-write-buffer-size", false, &rocksdb_write_buffer_size);
   AddNumber("rocksdb-level0-file-num-compaction-trigger", false, &rocksdb_level0_file_num_compaction_trigger);
   AddNumber("rocksdb-number-levels", true, &rocksdb_num_levels);
-  AddBool("rocksdb-enable-pipelined-write", CheckYesNo, false, &rocksdb_enable_pipelined_write);
+  AddBool("rocksdb-enable-pipelined-write", &CheckYesNo, false, &rocksdb_enable_pipelined_write);
   AddNumber("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
   AddNumber("rocksdb-level0-stop-writes-trigger", false, &rocksdb_level0_stop_writes_trigger);
   AddNumber("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
