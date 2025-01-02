@@ -31,7 +31,6 @@ using Status = rocksdb::Status;
 using CheckFunc = std::function<Status(const std::string&)>;
 class PConfig;
 
-
 class BaseValue {
  public:
   BaseValue(std::string key, CheckFunc check_func_ptr, bool rewritable = false)
@@ -155,12 +154,12 @@ class PConfig {
    * PConfig()
    * Initialize kiwi's config & RocksDB's config.
    */
-  static PConfig& GetInstance(){
+  static PConfig& GetInstance() {
     static PConfig instance;
     return instance;
- }
-  PConfig(const PConfig&)=delete;
-  PConfig& operator=(const PConfig&)=delete;
+  }
+  PConfig(const PConfig&) = delete;
+  PConfig& operator=(const PConfig&) = delete;
 
   /*------------------------
    * ~PConfig()
