@@ -103,7 +103,7 @@ void RaftNodeCmd::DoCmdRemove(PClient* client) {
 
     // Connect target
     std::string peer_ip = butil::ip2str(leader_peer_id.addr.ip).c_str();
-    auto port = leader_peer_id.addr.port - kiwi::g_config.raft_port_offset;
+    auto port = leader_peer_id.addr.port - kiwi::PConfig::GetInstance().raft_port_offset;
     auto peer_id = client->argv_[2];
     auto ret =
         PRAFT.GetClusterCmdCtx().Set(ClusterCmdType::kRemove, client, std::move(peer_ip), port, std::move(peer_id));

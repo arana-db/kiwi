@@ -31,7 +31,6 @@ using Status = rocksdb::Status;
 using CheckFunc = std::function<Status(const std::string&)>;
 class PConfig;
 
-extern PConfig g_config;
 
 class BaseValue {
  public:
@@ -156,7 +155,12 @@ class PConfig {
    * PConfig()
    * Initialize kiwi's config & RocksDB's config.
    */
-  PConfig();
+  static PConfig& GetInstance(){
+    static PConfig instance;
+    return instance;
+ }
+  PConfig(const PConfig&)=delete;
+  PConfig& operator=(const PConfig&)=delete;
 
   /*------------------------
    * ~PConfig()
@@ -492,5 +496,6 @@ class PConfig {
 
   // The file name of the config
   std::string config_file_name_;
+  PConfig();
 };
 }  // namespace kiwi

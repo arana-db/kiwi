@@ -23,7 +23,7 @@ constexpr int DBNUMBER_MAX = 16;
 constexpr int THREAD_MAX = 129;
 constexpr int ROCKSDB_INSTANCE_NUMBER_MAX = 10;
 
-PConfig g_config;
+PConfig &g_config=kiwi::PConfig::GetInstance();
 
 // preprocess func
 static void EraseQuotes(std::string& str) {

@@ -163,46 +163,46 @@ void KiwiDB::OnNewConnection(uint64_t connId, std::shared_ptr<kiwi::PClient>& cl
 bool KiwiDB::Init() {
   char runid[kRunidSize + 1] = "";
   getRandomHexChars(runid, kRunidSize);
-  g_config.Set("runid", {runid, kRunidSize}, true);
+  kiwi::PConfig::GetInstance().Set("runid", {runid, kRunidSize}, true);
 
   if (port_ != 0) {
-    g_config.Set("port", std::to_string(port_), true);
+    kiwi::PConfig::GetInstance().Set("port", std::to_string(port_), true);
   }
 
   if (!options_.GetLogLevel().empty()) {
-    g_config.Set("log-level", options_.GetLogLevel(), true);
+    kiwi::PConfig::GetInstance().Set("log-level", options_.GetLogLevel(), true);
   }
 
   if (options_.GetRedisCompatibleMode()) {
-    g_config.Set("redis_compatible_mode", std::to_string(options_.GetRedisCompatibleMode()), true);
+    kiwi::PConfig::GetInstance().Set("redis_compatible_mode", std::to_string(options_.GetRedisCompatibleMode()), true);
   }
 
-  auto num = g_config.worker_threads_num + g_config.slave_threads_num;
+  auto num = kiwi::PConfig::GetInstance().worker_threads_num + kiwi::PConfig::GetInstance().slave_threads_num;
   options_.SetThreadNum(num);
 
   // now we only use fast cmd thread pool
-  auto status = cmd_threads_.Init(g_config.fast_cmd_threads_num, 1, "kiwi-cmd");
+  auto status = cmd_threads_.Init(kiwi::PConfig::GetInstance().fast_cmd_threads_num, 1, "kiwi-cmd");
   if (!status.ok()) {
     ERROR("init cmd thread pool failed: {}", status.ToString());
     return false;
   }
 
-  PSTORE.Init(g_config.databases);
+  PSTORE.Init(kiwi::PConfig::GetInstance().databases);
 
-  PSlowLog::Instance().SetThreshold(g_config.slow_log_time);
-  PSlowLog::Instance().SetLogLimit(static_cast<std::size_t>(g_config.slow_log_max_len));
+  PSlowLog::Instance().SetThreshold(kiwi::PConfig::GetInstance().slow_log_time);
+  PSlowLog::Instance().SetLogLimit(static_cast<std::size_t>(kiwi::PConfig::GetInstance().slow_log_max_len));
 
   // master ip
-  if (!g_config.master_ip.empty()) {
-    PREPL.SetMasterAddr(g_config.master_ip.c_str(), g_config.master_port);
+  if (!kiwi::PConfig::GetInstance().master_ip.empty()) {
+    PREPL.SetMasterAddr(kiwi::PConfig::GetInstance().master_ip.c_str(), kiwi::PConfig::GetInstance().master_port);
   }
 
   options_.SetRwSeparation(true);
 
   event_server_ = std::make_unique<net::EventServer<std::shared_ptr<PClient>>>(options_);
 
-  net::SocketAddr addr(g_config.ip, g_config.port);
-  INFO("Add listen addr:{}, port:{}", g_config.ip, g_config.port);
+  net::SocketAddr addr(kiwi::PConfig::GetInstance().ip, kiwi::PConfig::GetInstance().port);
+  INFO("Add listen addr:{}, port:{}", kiwi::PConfig::GetInstance().ip, kiwi::PConfig::GetInstance().port);
   event_server_->AddListenAddr(addr);
 
   event_server_->SetOnInit([](std::shared_ptr<PClient>* client) { *client = std::make_shared<PClient>(); });
@@ -273,7 +273,7 @@ static void InitLogs() {
 
 static int InitLimit() {
   rlimit limit;
-  rlim_t maxfiles = g_config.max_clients;
+  rlim_t maxfiles = kiwi::PConfig::GetInstance().max_clients;
   if (getrlimit(RLIMIT_NOFILE, &limit) == -1) {
     WARN("getrlimit error: {}", strerror(errno));
   } else if (limit.rlim_cur < maxfiles) {
@@ -324,13 +324,13 @@ int main(int argc, char* argv[]) {
   }
 
   if (!g_kiwi->GetConfigName().empty()) {
-    if (!g_config.LoadFromFile(g_kiwi->GetConfigName())) {
+    if (!kiwi::PConfig::GetInstance().LoadFromFile(g_kiwi->GetConfigName())) {
       std::cerr << "Load config file [" << g_kiwi->GetConfigName() << "] failed!\n";
       return -1;
     }
   }
 
-  if (g_config.daemonize) {
+  if (kiwi::PConfig::GetInstance().daemonize) {
     daemonize();
   }
 
@@ -339,7 +339,7 @@ int main(int argc, char* argv[]) {
   InitLogs();
   InitLimit();
 
-  if (g_config.daemonize) {
+  if (kiwi::PConfig::GetInstance().daemonize) {
     closeStd();
   }
 
@@ -347,7 +347,7 @@ int main(int argc, char* argv[]) {
     // output logo to console
     char logo[1024] = "";
     snprintf(logo, sizeof logo - 1, kiwiLogo, Kkiwi_VERSION, static_cast<int>(sizeof(void*)) * 8,
-             static_cast<int>(g_config.port));
+             static_cast<int>(kiwi::PConfig::GetInstance().port));
     std::cout << logo;
     g_kiwi->Run();
   }
