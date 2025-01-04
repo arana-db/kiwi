@@ -221,8 +221,8 @@ enum AclCategory {
 
 class BlockedConnNode {
  public:
-  enum Type { BLPop = 0, BRPop };
-  virtual ~BlockedConnNode() =default;
+  enum Type { NotAny = 0, BLPop, BRPop };
+  virtual ~BlockedConnNode() = default;
   BlockedConnNode(int64_t expire_time, std::shared_ptr<PClient> client, Type type)
       : expire_time_(expire_time), client_(client), type_(type) {}
   bool IsExpired(std::chrono::system_clock::time_point now = std::chrono::system_clock::now());
@@ -230,8 +230,8 @@ class BlockedConnNode {
   Type GetCmdType() { return type_; }
 
  private:
-  Type type_;
-  int64_t expire_time_;
+  Type type_ = NotAny;
+  int64_t expire_time_ = 0;
   std::shared_ptr<PClient> client_;
 };
 
@@ -344,7 +344,7 @@ class BaseCmdGroup : public BaseCmd {
 };
 
 struct BlockKey {  // this data struct is made for the scenario of multi dbs in kiwi.
-  int db_id;
+  int db_id = -1;
   std::string key;
   bool operator==(const BlockKey& p) const { return p.db_id == db_id && p.key == key; }
 };

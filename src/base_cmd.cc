@@ -118,8 +118,7 @@ void BaseCmd::BlockThisClientToWaitLRPush(std::vector<std::string>& keys, int64_
       key_to_conns.emplace(blpop_key, std::make_unique<std::list<BlockedConnNode>>());
       it = key_to_conns.find(blpop_key);
     }
-    auto& wait_list_of_this_key = it->second;
-    wait_list_of_this_key->emplace_back(expire_time, client, type);
+    it->second->emplace_back(expire_time, client, type);
   }
 }
 
