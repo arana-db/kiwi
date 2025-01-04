@@ -239,7 +239,7 @@ void PClient::OnConnect() {
     SetName("MasterConnection");
     SetFlag(kClientFlagMaster);
 
-    if (g_config.master_auth.empty()) {
+    if (kiwi::PConfig::GetInstance().master_auth.empty()) {
       SetAuth();
     }
 
@@ -247,7 +247,7 @@ void PClient::OnConnect() {
       PRAFT.SendNodeRequest(this);
     }
   } else {
-    if (g_config.password.empty()) {
+    if (kiwi::PConfig::GetInstance().password.empty()) {
       SetAuth();
     }
   }

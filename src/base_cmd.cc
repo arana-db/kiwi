@@ -42,7 +42,7 @@ void BaseCmd::Execute(PClient* client) {
   DEBUG("execute command: {}", client->CmdName());
 
   // read consistency (lease read) / write redirection
-  if (g_config.use_raft && (HasFlag(kCmdFlagsReadonly) || HasFlag(kCmdFlagsWrite))) {
+  if (kiwi::PConfig::GetInstance().use_raft && (HasFlag(kCmdFlagsReadonly) || HasFlag(kCmdFlagsWrite))) {
     if (!PRAFT.IsInitialized()) {
       return client->SetRes(CmdRes::kErrOther, "PRAFT is not initialized");
     }

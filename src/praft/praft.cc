@@ -97,7 +97,7 @@ butil::Status PRaft::Init(std::string& group_id, bool initial_conf_is_null) {
   }
 
   server_ = std::make_unique<brpc::Server>();
-  auto port = g_config.port + kiwi::g_config.raft_port_offset;
+  auto port = kiwi::PConfig::GetInstance().port + kiwi::PConfig::GetInstance().raft_port_offset;
   // Add your service into RPC server
   DummyServiceImpl service(&PRAFT);
   if (server_->AddService(&service, brpc::SERVER_DOESNT_OWN_SERVICE) != 0) {
@@ -126,10 +126,10 @@ butil::Status PRaft::Init(std::string& group_id, bool initial_conf_is_null) {
   assert(group_id.size() == RAFT_GROUPID_LEN);
   this->group_id_ = group_id;
 
-  // FIXME: g_config.ip is default to 127.0.0.0, which may not work in cluster.
-  raw_addr_ = g_config.ip + ":" + std::to_string(port);
+  // FIXME: kiwi::PConfig::GetInstance().ip is default to 127.0.0.0, which may not work in cluster.
+  raw_addr_ = kiwi::PConfig::GetInstance().ip + ":" + std::to_string(port);
   butil::ip_t ip;
-  auto ret = butil::str2ip(g_config.ip.c_str(), &ip);
+  auto ret = butil::str2ip(kiwi::PConfig::GetInstance().ip.c_str(), &ip);
   if (ret != 0) {
     server_.reset();
     return ERROR_LOG_AND_STATUS("Failed to convert str_ip to butil::ip_t");
@@ -157,7 +157,7 @@ butil::Status PRaft::Init(std::string& group_id, bool initial_conf_is_null) {
   node_options_.fsm = this;
   node_options_.node_owns_fsm = false;
   node_options_.snapshot_interval_s = 0;
-  std::string prefix = "local://" + g_config.db_path + std::to_string(db_id_) + "/_praft";
+  std::string prefix = "local://" + kiwi::PConfig::GetInstance().db_path + std::to_string(db_id_) + "/_praft";
   node_options_.log_uri = prefix + "/log";
   node_options_.raft_meta_uri = prefix + "/raft_meta";
   node_options_.snapshot_uri = prefix + "/snapshot";
@@ -221,7 +221,7 @@ std::string PRaft::GetLeaderAddress() const {
     return std::string();
   }
 
-  id.addr.port -= g_config.raft_port_offset;
+  id.addr.port -= kiwi::PConfig::GetInstance().raft_port_offset;
   auto addr = butil::endpoint2str(id.addr);
   return addr.c_str();
 }
@@ -323,8 +323,8 @@ void PRaft::SendNodeAddRequest(PClient* client) {
 
   // Node id in braft are ip:port, the node id param in RAFT.NODE ADD cmd will be ignored.
   int unused_node_id = 0;
-  auto port = g_config.port + kiwi::g_config.raft_port_offset;
-  auto raw_addr = g_config.ip + ":" + std::to_string(port);
+  auto port = kiwi::PConfig::GetInstance().port + kiwi::PConfig::GetInstance().raft_port_offset;
+  auto raw_addr = kiwi::PConfig::GetInstance().ip + ":" + std::to_string(port);
 
   client->AppendArrayLen(int64_t(4));
   client->AppendString("RAFT.NODE");
@@ -394,8 +394,8 @@ void PRaft::CheckRocksDBConfiguration(PClient* client, PClient* join_client, con
     }
   }
 
-  int current_databases_num = kiwi::g_config.databases;
-  int current_rocksdb_num = kiwi::g_config.db_instance_num;
+  int current_databases_num = kiwi::PConfig::GetInstance().databases;
+  int current_rocksdb_num = kiwi::PConfig::GetInstance().db_instance_num;
   std::string current_rocksdb_version = ROCKSDB_NAMESPACE::GetRocksVersionAsString();
   if (current_databases_num != databases_num || current_rocksdb_num != rocksdb_num ||
       current_rocksdb_version != rockdb_version) {
@@ -714,7 +714,7 @@ int PRaft::on_snapshot_load(braft::SnapshotReader* reader) {
 
   // 3. When a snapshot is installed on a node, you do not need to set a playback point.
   auto reader_path = reader->get_path();                  // xx/snapshot_0000001
-  auto path = g_config.db_path + std::to_string(db_id_);  // db/db_id
+  auto path = kiwi::PConfig::GetInstance().db_path + std::to_string(db_id_);  // db/db_id
   TasksVector tasks(1, {TaskType::kLoadDBFromCheckpoint, db_id_, {{TaskArg::kCheckpointPath, reader_path}}, true});
   PSTORE.HandleTaskSpecificDB(tasks);
   INFO("load snapshot success!");

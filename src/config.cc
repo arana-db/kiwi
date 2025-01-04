@@ -23,7 +23,7 @@ constexpr int DBNUMBER_MAX = 16;
 constexpr int THREAD_MAX = 129;
 constexpr int ROCKSDB_INSTANCE_NUMBER_MAX = 10;
 
-PConfig g_config;
+PConfig &g_config=kiwi::PConfig::GetInstance();
 
 // preprocess func
 static void EraseQuotes(std::string& str) {
@@ -207,8 +207,10 @@ bool PConfig::LoadFromFile(const std::string& file_name) {
 }
 
 void PConfig::Get(const std::string& key, std::vector<std::string>* values) const {
+  std::lock_guard<std::mutex> lock(mutex_);
   values->clear();
   for (const auto& [k, v] : config_map_) {
+    
     if (key == "*" || pstd::StringMatch(key.c_str(), k.c_str(), 1)) {
       values->emplace_back(k);
       values->emplace_back(v->Value());
@@ -217,6 +219,7 @@ void PConfig::Get(const std::string& key, std::vector<std::string>* values) cons
 }
 
 Status PConfig::Set(std::string key, const std::string& value, bool init_stage) {
+  std::lock_guard<std::mutex> lock(mutex_);
   std::transform(key.begin(), key.end(), key.begin(), ::tolower);
   auto iter = config_map_.find(key);
   if (iter == config_map_.end()) {

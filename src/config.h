@@ -31,7 +31,7 @@ using Status = rocksdb::Status;
 using CheckFunc = std::function<Status(const std::string&)>;
 class PConfig;
 
-extern PConfig g_config;
+
 
 class BaseValue {
  public:
@@ -156,8 +156,12 @@ class PConfig {
    * PConfig()
    * Initialize kiwi's config & RocksDB's config.
    */
-  PConfig();
-
+  static PConfig& GetInstance() {
+    static PConfig instance;
+    return instance;
+  }
+  PConfig(const PConfig&) = delete;
+  PConfig& operator=(const PConfig&) = delete;
   /*------------------------
    * ~PConfig()
    * Destroy a kiwi's config instance.
@@ -393,6 +397,7 @@ class PConfig {
    * when a key-value pair is duplicated.
    */
   void AddString(const std::string& key, bool rewritable, std::string* values_ptr) {
+    std::lock_guard<std::mutex> lock(mutex_);
     config_map_.emplace(key, std::make_unique<StringValue>(key, nullptr, rewritable, values_ptr));
   }
 
@@ -407,6 +412,8 @@ class PConfig {
    * support read string array from config file,default delimiter is ' '
    */
   void AddStringArray(const std::string& key, bool rewritable, std::vector<std::string> values_ptr_vector) {
+    
+    std::lock_guard<std::mutex> lock(mutex_);
     config_map_.emplace(key, std::make_unique<StringValueArray>(key, nullptr, rewritable, values_ptr_vector));
   }
 
@@ -421,6 +428,7 @@ class PConfig {
    */
   void AddStringWithFunc(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
                          std::string* values_ptr_vector) {
+    std::lock_guard<std::mutex> lock(mutex_);
     config_map_.emplace(key, std::make_unique<StringValue>(key, checkfunc, rewritable, values_ptr_vector));
   }
 
@@ -435,6 +443,7 @@ class PConfig {
    * when a key-value pair is duplicated.
    */
   void AddBool(const std::string& key, const CheckFunc& checkfunc, bool rewritable, bool* value_ptr) {
+    std::lock_guard<std::mutex> lock(mutex_);
     config_map_.emplace(key, std::make_unique<BoolValue>(key, checkfunc, rewritable, value_ptr));
   }
 
@@ -448,6 +457,7 @@ class PConfig {
    */
   template <typename T>
   void AddNumber(const std::string& key, bool rewritable, T* value_ptr) {
+    std::lock_guard<std::mutex> lock(mutex_);
     config_map_.emplace(key, std::make_unique<NumberValue<T>>(key, nullptr, rewritable, value_ptr));
   }
 
@@ -464,6 +474,7 @@ class PConfig {
    */
   template <typename T>
   void AddNumberWithLimit(const std::string& key, bool rewritable, T* value_ptr, T min, T max) {
+    std::lock_guard<std::mutex> lock(mutex_);
     config_map_.emplace(key, std::make_unique<NumberValue<T>>(key, nullptr, rewritable, value_ptr, min, max));
   }
 
@@ -480,6 +491,7 @@ class PConfig {
    * support the unit of memory size: B, KB, MB, GB,default is B.
    */
   void AddMemorySize(const std::string& key, bool rewritable, size_t* value_ptr) {
+    std::lock_guard<std::mutex> lock(mutex_);
     config_map_.emplace(key, std::make_unique<MemorySize>(key, nullptr, rewritable, value_ptr));
   }
 
@@ -492,5 +504,7 @@ class PConfig {
 
   // The file name of the config
   std::string config_file_name_;
+  PConfig();
+  mutable std::mutex mutex_;
 };
 }  // namespace kiwi
