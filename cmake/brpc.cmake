@@ -55,6 +55,7 @@ ExternalProject_Add(
         -DWITH_GLOG=OFF
         -DDOWNLOAD_GTEST=OFF
         BUILD_COMMAND make -j${CPU_CORE}
+        UPDATE_COMMAND ""
 )
 ADD_DEPENDENCIES(extern_brpc ssl crypto zlib protobuf leveldb gflags)
 ADD_LIBRARY(brpc STATIC IMPORTED GLOBAL)

@@ -52,6 +52,7 @@ ExternalProject_Add(
         -DOPENSSL_INCLUDE_DIR=${OPENSSL_INCLUDE_DIR}
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
         BUILD_COMMAND make -j${CPU_CORE}
+        UPDATE_COMMAND ""
 )
 
 ADD_DEPENDENCIES(extern_braft brpc gflags)

@@ -34,6 +34,7 @@ ExternalProject_Add(
         -DFMT_TEST=FALSE
         -DSHARED_LIBS=FALSE
         BUILD_COMMAND make -j${CPU_CORE}
+        UPDATE_COMMAND ""
 )
 
 
