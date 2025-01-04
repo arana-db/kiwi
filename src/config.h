@@ -31,8 +31,6 @@ using Status = rocksdb::Status;
 using CheckFunc = std::function<Status(const std::string&)>;
 class PConfig;
 
-
-
 class BaseValue {
  public:
   BaseValue(std::string key, CheckFunc check_func_ptr, bool rewritable = false)
@@ -412,7 +410,6 @@ class PConfig {
    * support read string array from config file,default delimiter is ' '
    */
   void AddStringArray(const std::string& key, bool rewritable, std::vector<std::string> values_ptr_vector) {
-    
     std::lock_guard<std::mutex> lock(mutex_);
     config_map_.emplace(key, std::make_unique<StringValueArray>(key, nullptr, rewritable, values_ptr_vector));
   }

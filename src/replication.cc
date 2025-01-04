@@ -177,7 +177,8 @@ void PReplication::Cron() {
   if (masterInfo_.addr.IsValid()) {
     switch (masterInfo_.state) {
       case kPReplStateNone: {
-        if (masterInfo_.addr.GetIP() == kiwi::PConfig::GetInstance().ip && masterInfo_.addr.GetPort() == kiwi::PConfig::GetInstance().port) {
+        if (masterInfo_.addr.GetIP() == kiwi::PConfig::GetInstance().ip &&
+            masterInfo_.addr.GetPort() == kiwi::PConfig::GetInstance().port) {
           ERROR("Fix config, master addr is self addr!");
           assert(!!!"wrong config for master addr");
         }
@@ -224,7 +225,8 @@ void PReplication::Cron() {
         } else if (master->GetAuth()) {
           // send replconf
           char req[128];
-          auto len = snprintf(req, sizeof req - 1, "replconf listening-port %hu\r\n", kiwi::PConfig::GetInstance().port);
+          auto len =
+              snprintf(req, sizeof req - 1, "replconf listening-port %hu\r\n", kiwi::PConfig::GetInstance().port);
           std::string info(req, len);
           master->SendPacket(std::move(info));
           masterInfo_.state = kPReplStateWaitReplconf;
