@@ -9,6 +9,16 @@ SET(OPENSSL_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "Openssl include directo
 
 FILE(MAKE_DIRECTORY ${OPENSSL_INCLUDE_DIR})
 
+SET(OPENSSL_CFLAGS "${CMAKE_C_FLAGS} -w")#disable warnings
+IF (CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    EXECUTE_PROCESS(
+            COMMAND xcrun --show-sdk-path
+            OUTPUT_VARIABLE SDK_PATH
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    SET(OPENSSL_CFLAGS "${OPENSSL_CFLAGS} -I${SDK_PATH}/usr/include")
+ENDIF ()
+
 ExternalProject_Add(
         OpenSSL
         URL https://github.com/openssl/openssl/archive/refs/tags/openssl-3.2.1.tar.gz
@@ -25,7 +35,7 @@ ExternalProject_Add(
         --openssldir=${OPENSSL_INSTALL_DIR}
         --libdir=${OPENSSL_INSTALL_DIR}/${CMAKE_INSTALL_LIBDIR}
         no-docs
-        BUILD_COMMAND make -j${CPU_CORE}
+        BUILD_COMMAND make CFLAGS=${OPENSSL_CFLAGS} -j${CPU_CORE}
         TEST_COMMAND ""
         INSTALL_COMMAND make install_sw
         INSTALL_DIR ${OPENSSL_INSTALL_DIR}
