@@ -13,16 +13,16 @@
 #include "braft/macros.h"
 #include "braft/snapshot.h"
 
-#define PRAFT_SNAPSHOT_META_FILE "__raft_snapshot_meta"
-#define PRAFT_SNAPSHOT_PATH "snapshot/snapshot_"
+#define RAFT_INST_SNAPSHOT_META_FILE "__raft_snapshot_meta"
+#define RAFT_INST_SNAPSHOT_PATH "snapshot/snapshot_"
 #define IS_RDONLY 0x01
 
 namespace kiwi {
 
-class PPosixFileSystemAdaptor : public braft::PosixFileSystemAdaptor {
+class PosixFileSystemAdaptor : public braft::PosixFileSystemAdaptor {
  public:
-  PPosixFileSystemAdaptor() {}
-  ~PPosixFileSystemAdaptor() {}
+  PosixFileSystemAdaptor() {}
+  ~PosixFileSystemAdaptor() {}
 
   braft::FileAdaptor* open(const std::string& path, int oflag, const ::google::protobuf::Message* file_meta,
                            butil::File::Error* e) override;

@@ -27,7 +27,7 @@
 #include "storage/storage.h"
 #include "storage/util.h"
 
-#define PRAFT_SNAPSHOT_META_FILE "__raft_snapshot_meta"
+#define RAFT_INST_SNAPSHOT_META_FILE "__raft_snapshot_meta"
 #define SST_FILE_EXTENSION ".sst"
 
 namespace storage {
@@ -105,7 +105,7 @@ static std::string AppendSubDirectory(const std::string& db_path, int index) {
 
 static int RecursiveLinkAndCopy(const std::filesystem::path& source, const std::filesystem::path& destination) {
   if (std::filesystem::is_regular_file(source)) {
-    if (source.filename() == PRAFT_SNAPSHOT_META_FILE) {
+    if (source.filename() == RAFT_INST_SNAPSHOT_META_FILE) {
       return 0;
     } else if (source.extension() == SST_FILE_EXTENSION) {
       // Create a hard link

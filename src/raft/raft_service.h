@@ -11,16 +11,16 @@
 
 namespace kiwi {
 
-class PRaft;
+class Raft;
 
 class DummyServiceImpl : public DummyService {
  public:
-  explicit DummyServiceImpl(PRaft* praft) : praft_(praft) {}
+  explicit DummyServiceImpl(Raft* praft) : praft_(praft) {}
   void DummyMethod(::google::protobuf::RpcController* controller, const ::kiwi::DummyRequest* request,
                    ::kiwi::DummyResponse* response, ::google::protobuf::Closure* done) override {}
 
  private:
-  PRaft* praft_ = nullptr;
+  Raft* praft_ = nullptr;
 };
 
 }  // namespace kiwi

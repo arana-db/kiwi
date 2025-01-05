@@ -34,7 +34,7 @@ namespace kiwi {
 #define RAFT_GROUP_ID "raft_group_id:"
 #define NOT_LEADER "Not leader"
 
-#define PRAFT PRaft::Instance()
+#define RAFT_INST KRaft::Instance()
 
 // class EventLoop;
 class Binlog;
@@ -46,7 +46,7 @@ enum ClusterCmdType {
 };
 
 class ClusterCmdContext {
-  friend class PRaft;
+  friend class KRaft;
 
  public:
   ClusterCmdContext() = default;
@@ -86,18 +86,17 @@ class PRaftWriteDoneClosure : public braft::Closure {
     delete this;
   }
   void SetStatus(rocksdb::Status status) { result_ = std::move(status); }
-
  private:
   std::promise<rocksdb::Status> promise_;
   rocksdb::Status result_{rocksdb::Status::Aborted("Unknown error")};
 };
 
-class PRaft : public braft::StateMachine {
+class KRaft : public braft::StateMachine {
  public:
-  PRaft() = default;
-  ~PRaft() override = default;
+  KRaft() = default;
+  ~KRaft() override = default;
 
-  static PRaft& Instance();
+  static KRaft& Instance();
 
   //===--------------------------------------------------------------------===//
   // Braft API

@@ -27,7 +27,7 @@
 #include "kiwi.h"
 #include "kiwi_logo.h"
 #include "options.h"
-#include "praft/praft.h"
+#include "raft/raft.h"
 #include "pstd/log.h"
 #include "pstd/pstd_util.h"
 #include "slow_log.h"
@@ -101,11 +101,11 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
 
     switch (c) {
       case 'v': {
-        std::cerr << "kiwi Server version: " << Kkiwi_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32)
+        std::cerr << "kiwi Server version: " << KIWI_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32)
                   << std::endl;
-        std::cerr << "kiwi Server Build Type: " << Kkiwi_BUILD_TYPE << std::endl;
-        std::cerr << "kiwi Server Build Date: " << Kkiwi_BUILD_DATE << std::endl;
-        std::cerr << "kiwi Server Build GIT SHA: " << Kkiwi_GIT_COMMIT_ID << std::endl;
+        std::cerr << "kiwi Server Build Type: " << KIWI_BUILD_TYPE << std::endl;
+        std::cerr << "kiwi Server Build Date: " << KIWI_BUILD_DATE << std::endl;
+        std::cerr << "kiwi Server Build GIT SHA: " << KIWI_GIT_COMMIT_ID << std::endl;
         std::exit(0);
         break;
       }
@@ -246,9 +246,9 @@ void KiwiDB::Run() {
 }
 
 void KiwiDB::Stop() {
-  kiwi::PRAFT.ShutDown();
-  kiwi::PRAFT.Join();
-  kiwi::PRAFT.Clear();
+  kiwi::RAFT_INST.ShutDown();
+  kiwi::RAFT_INST.Join();
+  kiwi::RAFT_INST.Clear();
   cmd_threads_.Stop();
   event_server_->StopServer();
 }
@@ -346,7 +346,7 @@ int main(int argc, char* argv[]) {
   if (g_kiwi->Init()) {
     // output logo to console
     char logo[1024] = "";
-    snprintf(logo, sizeof logo - 1, kiwiLogo, Kkiwi_VERSION, static_cast<int>(sizeof(void*)) * 8,
+    snprintf(logo, sizeof logo - 1, kiwiLogo, KIWI_VERSION, static_cast<int>(sizeof(void*)) * 8,
              static_cast<int>(kiwi::PConfig::GetInstance().port));
     std::cout << logo;
     g_kiwi->Run();

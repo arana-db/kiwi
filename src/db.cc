@@ -12,7 +12,7 @@
 #include <algorithm>
 
 #include "config.h"
-#include "praft/praft.h"
+#include "raft/raft.h"
 #include "pstd/log.h"
 
 namespace kiwi {
@@ -35,10 +35,10 @@ rocksdb::Status DB::Open() {
       kiwi::PConfig::GetInstance().small_compaction_duration_threshold;
 
   if (kiwi::PConfig::GetInstance().use_raft) {
-    storage_options.append_log_function = [&r = PRAFT](const Binlog& log, std::promise<rocksdb::Status>&& promise) {
+    storage_options.append_log_function = [&r = RAFT_INST](const Binlog& log, std::promise<rocksdb::Status>&& promise) {
       r.AppendLog(log, std::move(promise));
     };
-    storage_options.do_snapshot_function = [raft = &kiwi::PRAFT](auto&& self_snapshot_index, auto&& is_sync) {
+    storage_options.do_snapshot_function = [raft = &kiwi::RAFT_INST](auto&& self_snapshot_index, auto&& is_sync) {
       raft->DoSnapshot(std::forward<decltype(self_snapshot_index)>(self_snapshot_index),
                        std::forward<decltype(is_sync)>(is_sync));
     };
@@ -117,11 +117,11 @@ void DB::LoadDBFromCheckpoint(const std::string& checkpoint_path, bool sync [[ma
   storage_options.options.ttl = kiwi::PConfig::GetInstance().rocksdb_ttl_second;
   storage_options.options.periodic_compaction_seconds = kiwi::PConfig::GetInstance().rocksdb_periodic_second;
   if (kiwi::PConfig::GetInstance().use_raft) {
-    storage_options.append_log_function = [&r = PRAFT](const Binlog& log, std::promise<rocksdb::Status>&& promise) {
+    storage_options.append_log_function = [&r = RAFT_INST](const Binlog& log, std::promise<rocksdb::Status>&& promise) {
       r.AppendLog(log, std::move(promise));
     };
     storage_options.do_snapshot_function =
-        std::bind(&kiwi::PRaft::DoSnapshot, &kiwi::PRAFT, std::placeholders::_1, std::placeholders::_2);
+        std::bind(&kiwi::KRaft::DoSnapshot, &kiwi::RAFT_INST, std::placeholders::_1, std::placeholders::_2);
   }
 
   if (auto s = storage_->Open(storage_options, db_path_); !s.ok()) {

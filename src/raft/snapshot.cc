@@ -6,9 +6,9 @@
  */
 
 //
-//  psnapshot.cc
+//  snapshot.cc
 
-#include "psnapshot.h"
+#include "snapshot.h"
 
 #include "braft/local_file_meta.pb.h"
 #include "braft/snapshot.h"
@@ -18,12 +18,12 @@
 #include "pstd/pstd_string.h"
 
 #include "config.h"
-#include "praft.h"
+#include "raft.h"
 #include "store.h"
 
 namespace kiwi {
 
-braft::FileAdaptor* PPosixFileSystemAdaptor::open(const std::string& path, int oflag,
+braft::FileAdaptor* PosixFileSystemAdaptor::open(const std::string& path, int oflag,
                                                   const ::google::protobuf::Message* file_meta, butil::File::Error* e) {
   if ((oflag & IS_RDONLY) == 0) {  // This is a read operation
     bool snapshots_exists = false;
@@ -55,7 +55,7 @@ braft::FileAdaptor* PPosixFileSystemAdaptor::open(const std::string& path, int o
       for (const auto& entry : std::filesystem::directory_iterator(snapshot_path)) {
         std::string filename = entry.path().filename().string();
         if (entry.is_regular_file() || entry.is_directory()) {
-          if (filename != "." && filename != ".." && filename.find(PRAFT_SNAPSHOT_META_FILE) == std::string::npos) {
+          if (filename != "." && filename != ".." && filename.find(RAFT_INST_SNAPSHOT_META_FILE) == std::string::npos) {
             // If the path directory contains files other than raft_snapshot_meta, snapshots have been generated
             snapshots_exists = true;
             break;
@@ -69,7 +69,7 @@ braft::FileAdaptor* PPosixFileSystemAdaptor::open(const std::string& path, int o
       assert(db_id >= 0);
 
       braft::LocalSnapshotMetaTable snapshot_meta_memtable;
-      std::string meta_path = snapshot_path + "/" PRAFT_SNAPSHOT_META_FILE;
+      std::string meta_path = snapshot_path + "/" RAFT_INST_SNAPSHOT_META_FILE;
       INFO("start to generate snapshot in path {}", snapshot_path);
       braft::FileSystemAdaptor* fs = braft::default_file_system();
       assert(fs);
@@ -83,7 +83,7 @@ braft::FileAdaptor* PPosixFileSystemAdaptor::open(const std::string& path, int o
       auto& new_meta = const_cast<braft::SnapshotMeta&>(snapshot_meta_memtable.meta());
       auto last_log_index = PSTORE.GetBackend(db_id)->GetStorage()->GetSmallestFlushedLogIndex();
       new_meta.set_last_included_index(last_log_index);
-      auto last_log_term = PRAFT.GetTerm(last_log_index);
+      auto last_log_term = RAFT_INST.GetTerm(last_log_index);
       new_meta.set_last_included_term(last_log_term);
       INFO("Succeed to fix db_{} snapshot meta: {}, {}", db_id, last_log_index, last_log_term);
 
@@ -100,7 +100,7 @@ braft::FileAdaptor* PPosixFileSystemAdaptor::open(const std::string& path, int o
   return braft::PosixFileSystemAdaptor::open(path, oflag, file_meta, e);
 }
 
-void PPosixFileSystemAdaptor::AddAllFiles(const std::filesystem::path& dir,
+void PosixFileSystemAdaptor::AddAllFiles(const std::filesystem::path& dir,
                                           braft::LocalSnapshotMetaTable* snapshot_meta_memtable,
                                           const std::string& path) {
   assert(snapshot_meta_memtable);

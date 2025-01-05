@@ -36,7 +36,7 @@
 #include "rocksdb/version.h"
 
 #include "kiwi.h"
-#include "praft/praft.h"
+#include "raft/raft.h"
 #include "pstd/env.h"
 
 #include "client_map.h"
@@ -262,7 +262,7 @@ void HelloCmd::Hello(PClient* client) {
   client->AppendString("server");
   client->AppendString("kiwi");
   client->AppendString("version");
-  client->AppendString(Kkiwi_VERSION);
+  client->AppendString(KIWI_VERSION);
   client->AppendString("proto");
   client->AppendInteger(static_cast<int64_t>(2));
   client->AppendString("id");
@@ -390,12 +390,12 @@ void InfoCmd::DoCmd(PClient* client) {
     raft_node1:id=1733428433,state=connected,voting=yes,addr=localhost,port=5001,last_conn_secs=5,conn_errors=0,conn_oks=1
 */
 void InfoCmd::InfoRaft(std::string& message) {
-  if (!PRAFT.IsInitialized()) {
+  if (!RAFT_INST.IsInitialized()) {
     message += "-ERR Not a cluster member.\r\n";
     return;
   }
 
-  auto node_status = PRAFT.GetNodeStatus();
+  auto node_status = RAFT_INST.GetNodeStatus();
   if (node_status.state == braft::State::STATE_END) {
     message += "-ERR Node is not initialized.\r\n";
     return;
@@ -403,9 +403,9 @@ void InfoCmd::InfoRaft(std::string& message) {
 
   std::stringstream tmp_stream;
 
-  tmp_stream << "raft_group_id:" << PRAFT.GetGroupID() << "\r\n";
-  tmp_stream << "raft_node_id:" << PRAFT.GetNodeID() << "\r\n";
-  tmp_stream << "raft_peer_id:" << PRAFT.GetPeerID() << "\r\n";
+  tmp_stream << "raft_group_id:" << RAFT_INST.GetGroupID() << "\r\n";
+  tmp_stream << "raft_node_id:" << RAFT_INST.GetNodeID() << "\r\n";
+  tmp_stream << "raft_peer_id:" << RAFT_INST.GetPeerID() << "\r\n";
   if (braft::is_active_state(node_status.state)) {
     tmp_stream << "raft_state:up\r\n";
   } else {
@@ -415,9 +415,9 @@ void InfoCmd::InfoRaft(std::string& message) {
   tmp_stream << "raft_leader_id:" << node_status.leader_id.to_string() << "\r\n";
   tmp_stream << "raft_current_term:" << std::to_string(node_status.term) << "\r\n";
 
-  if (PRAFT.IsLeader()) {
+  if (RAFT_INST.IsLeader()) {
     std::vector<braft::PeerId> peers;
-    auto status = PRAFT.GetListPeers(&peers);
+    auto status = RAFT_INST.GetListPeers(&peers);
     if (!status.ok()) {
       tmp_stream.str("-ERR ");
       tmp_stream << status.error_str() << "\r\n";
@@ -444,19 +444,19 @@ void InfoCmd::InfoServer(std::string& info) {
   time_t current_time_s = time(nullptr);
   std::stringstream tmp_stream;
   char version[32];
-  snprintf(version, sizeof(version), "%s", Kkiwi_VERSION);
+  snprintf(version, sizeof(version), "%s", KIWI_VERSION);
 
   tmp_stream << "# Server\r\n";
   tmp_stream << "kiwi_version:" << version << "\r\n";
-  tmp_stream << "kiwi_build_git_sha:" << Kkiwi_GIT_COMMIT_ID << "\r\n";
-  tmp_stream << "kiwi_build_compile_date: " << Kkiwi_BUILD_DATE << "\r\n";
+  tmp_stream << "kiwi_build_git_sha:" << KIWI_GIT_COMMIT_ID << "\r\n";
+  tmp_stream << "kiwi_build_compile_date: " << KIWI_BUILD_DATE << "\r\n";
   tmp_stream << "os:" << host_info.sysname << " " << host_info.release << " " << host_info.machine << "\r\n";
   tmp_stream << "arch_bits:" << (reinterpret_cast<char*>(&host_info.machine) + strlen(host_info.machine) - 2) << "\r\n";
   tmp_stream << "process_id:" << getpid() << "\r\n";
   tmp_stream << "run_id:" << static_cast<std::string>(kiwi::PConfig::GetInstance().run_id) << "\r\n";
   tmp_stream << "tcp_port:" << kiwi::PConfig::GetInstance().port << "\r\n";
-  tmp_stream << "uptime_in_seconds:" << (current_time_s - g_kiwi->Start_time_s()) << "\r\n";
-  tmp_stream << "uptime_in_days:" << (current_time_s / (24 * 3600) - g_kiwi->Start_time_s() / (24 * 3600) + 1)
+  tmp_stream << "uptime_in_seconds:" << (current_time_s - g_kiwi->GetStartTime()) << "\r\n";
+  tmp_stream << "uptime_in_days:" << (current_time_s / (24 * 3600) - g_kiwi->GetStartTime() / (24 * 3600) + 1)
              << "\r\n";
   tmp_stream << "config_file:" << g_kiwi->GetConfigName() << "\r\n";
 
