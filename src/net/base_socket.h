@@ -75,7 +75,7 @@ class BaseSocket : public NetEvent {
  private:
   int type_ = SOCKET_NONE;  // socket type (TCP/UDP)
   bool noBlock_ = true;
-  uint32_t tcpKeepAlive_;  // TCP keepalive
+  uint32_t tcp_keep_alive_ = 300;  // TCP keepalive
 };
 
 }  // namespace net
