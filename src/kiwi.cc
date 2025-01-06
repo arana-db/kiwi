@@ -101,8 +101,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
 
     switch (c) {
       case 'v': {
-        std::cerr << "kiwi Server version: " << KIWI_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32)
-                  << std::endl;
+        std::cerr << "kiwi Server version: " << KIWI_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32) << std::endl;
         std::cerr << "kiwi Server Build Type: " << KIWI_BUILD_TYPE << std::endl;
         std::cerr << "kiwi Server Build Date: " << KIWI_BUILD_DATE << std::endl;
         std::cerr << "kiwi Server Build GIT SHA: " << KIWI_GIT_COMMIT_ID << std::endl;

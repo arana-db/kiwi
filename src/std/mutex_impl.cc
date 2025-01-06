@@ -117,4 +117,4 @@ Status CondVarImpl::WaitFor(std::shared_ptr<Mutex> mutex, int64_t timeout_time) 
   // CV was signaled, or we spuriously woke up (but didn't time out)
   return s;
 }
-}  // namespace std::lock
+}  // namespace kstd::lock

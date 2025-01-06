@@ -211,4 +211,4 @@ void OutputMemoryFile::AssureSpace(size_t size) {
   ExtendFileSize(newSize);
 }
 
-}  // namespace std
+}  // namespace kstd

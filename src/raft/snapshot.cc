@@ -24,7 +24,7 @@
 namespace kiwi {
 
 braft::FileAdaptor* PosixFileSystemAdaptor::open(const std::string& path, int oflag,
-                                                  const ::google::protobuf::Message* file_meta, butil::File::Error* e) {
+                                                 const ::google::protobuf::Message* file_meta, butil::File::Error* e) {
   if ((oflag & IS_RDONLY) == 0) {  // This is a read operation
     bool snapshots_exists = false;
     std::string snapshot_path;
@@ -101,8 +101,8 @@ braft::FileAdaptor* PosixFileSystemAdaptor::open(const std::string& path, int of
 }
 
 void PosixFileSystemAdaptor::AddAllFiles(const std::filesystem::path& dir,
-                                          braft::LocalSnapshotMetaTable* snapshot_meta_memtable,
-                                          const std::string& path) {
+                                         braft::LocalSnapshotMetaTable* snapshot_meta_memtable,
+                                         const std::string& path) {
   assert(snapshot_meta_memtable);
   for (const auto& entry : std::filesystem::directory_iterator(dir)) {
     if (entry.is_directory()) {

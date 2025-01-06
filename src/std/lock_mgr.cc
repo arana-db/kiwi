@@ -176,4 +176,4 @@ void LockMgr::UnLock(const std::string& key) {
   // Signal waiting threads to retry locking
   stripe->stripe_cv->NotifyAll();
 }
-}  // namespace std::lock
+}  // namespace kstd::lock

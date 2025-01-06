@@ -3,8 +3,8 @@
 // LICENSE file in the root directory of this source tree. An additional grant
 // of patent rights can be found in the PATENTS file in the same directory.
 
-#include <gtest/gtest.h>
 #include "std/std_util.h"
+#include <gtest/gtest.h>
 
 class UtilTest : public ::testing::Test {};
 
