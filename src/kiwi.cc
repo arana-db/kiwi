@@ -28,9 +28,9 @@
 #include "kiwi_logo.h"
 #include "options.h"
 #include "raft/raft.h"
-#include "pstd/log.h"
-#include "pstd/pstd_util.h"
 #include "slow_log.h"
+#include "std/log.h"
+#include "std/std_util.h"
 #include "store.h"
 
 // g_kiwi is a global abstraction of the server-side process
@@ -334,7 +334,7 @@ int main(int argc, char* argv[]) {
     daemonize();
   }
 
-  pstd::InitRandom();
+  kstd::InitRandom();
   SignalSetup();
   InitLogs();
   InitLimit();

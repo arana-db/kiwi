@@ -10,7 +10,6 @@
 #include <string>
 #include <vector>
 
-#include "pstd/log.h"
 #include "rocksdb/compaction_filter.h"
 #include "rocksdb/db.h"
 #include "src/base_data_key_format.h"
@@ -21,6 +20,7 @@
 #include "src/lists_meta_value_format.h"
 #include "src/strings_value_format.h"
 #include "src/zsets_data_key_format.h"
+#include "std/log.h"
 
 namespace storage {
 

@@ -14,8 +14,8 @@
 #include "braft/snapshot.h"
 #include "butil/files/file_path.h"
 
-#include "pstd/log.h"
-#include "pstd/pstd_string.h"
+#include "std/log.h"
+#include "std/std_string.h"
 
 #include "config.h"
 #include "raft.h"
@@ -38,7 +38,7 @@ braft::FileAdaptor* PosixFileSystemAdaptor::open(const std::string& path, int of
     for (const auto& component : components) {
       snapshot_path += component + "/";
 
-      if (is_find_db && pstd::String2int(component, &db_id)) {
+      if (is_find_db && kstd::String2int(component, &db_id)) {
         is_find_db = false;
       }
 

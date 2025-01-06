@@ -34,7 +34,7 @@ namespace kiwi {
 #define RAFT_GROUP_ID "raft_group_id:"
 #define NOT_LEADER "Not leader"
 
-#define RAFT_INST KRaft::Instance()
+#define RAFT_INST Raft::Instance()
 
 // class EventLoop;
 class Binlog;
@@ -46,7 +46,7 @@ enum ClusterCmdType {
 };
 
 class ClusterCmdContext {
-  friend class KRaft;
+  friend class Raft;
 
  public:
   ClusterCmdContext() = default;
@@ -77,9 +77,9 @@ class ClusterCmdContext {
   std::string peer_id_;
 };
 
-class PRaftWriteDoneClosure : public braft::Closure {
+class RaftWriteDoneClosure : public braft::Closure {
  public:
-  explicit PRaftWriteDoneClosure(std::promise<rocksdb::Status>&& promise) : promise_(std::move(promise)) {}
+  explicit RaftWriteDoneClosure(std::promise<rocksdb::Status>&& promise) : promise_(std::move(promise)) {}
 
   void Run() override {
     promise_.set_value(result_);
@@ -91,12 +91,12 @@ class PRaftWriteDoneClosure : public braft::Closure {
   rocksdb::Status result_{rocksdb::Status::Aborted("Unknown error")};
 };
 
-class KRaft : public braft::StateMachine {
+class Raft : public braft::StateMachine {
  public:
-  KRaft() = default;
-  ~KRaft() override = default;
+  Raft() = default;
+  ~Raft() override = default;
 
-  static KRaft& Instance();
+  static Raft& Instance();
 
   //===--------------------------------------------------------------------===//
   // Braft API

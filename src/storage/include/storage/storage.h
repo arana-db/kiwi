@@ -25,9 +25,9 @@
 #include "rocksdb/status.h"
 #include "rocksdb/table.h"
 
-#include "pstd/env.h"
-#include "pstd/pstd_mutex.h"
 #include "src/base_data_value_format.h"
+#include "std/env.h"
+#include "std/std_mutex.h"
 #include "storage/slot_indexer.h"
 
 namespace kiwi {
@@ -1116,8 +1116,8 @@ class Storage {
 
   // Storage start the background thread for compaction task
   pthread_t bg_tasks_thread_id_ = 0;
-  pstd::Mutex bg_tasks_mutex_;
-  pstd::CondVar bg_tasks_cond_var_;
+  kstd::Mutex bg_tasks_mutex_;
+  kstd::CondVar bg_tasks_cond_var_;
   std::queue<BGTask> bg_tasks_queue_;
 
   std::atomic<int> current_task_type_ = kNone;

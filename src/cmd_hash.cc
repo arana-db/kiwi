@@ -11,8 +11,8 @@
 
 #include <config.h>
 
-#include "pstd/pstd_string.h"
 #include "resp/resp_encode.h"
+#include "std/std_string.h"
 #include "store.h"
 
 namespace kiwi {
@@ -296,15 +296,15 @@ void HScanCmd::DoCmd(PClient* client) {
   int64_t cursor{};
   int64_t count{10};
   std::string pattern{"*"};
-  if (pstd::String2int(argv[2], &cursor) == 0) {
+  if (kstd::String2int(argv[2], &cursor) == 0) {
     client->SetRes(CmdRes::kInvalidCursor, kCmdNameHScan);
     return;
   }
   for (size_t i = 3; i < argv.size(); i += 2) {
-    if (auto lower = pstd::StringToLower(argv[i]); kMatchSymbol == lower) {
+    if (auto lower = kstd::StringToLower(argv[i]); kMatchSymbol == lower) {
       pattern = argv[i + 1];
     } else if (kCountSymbol == lower) {
-      if (pstd::String2int(argv[i + 1], &count) == 0) {
+      if (kstd::String2int(argv[i + 1], &count) == 0) {
         client->SetRes(CmdRes::kInvalidInt, kCmdNameHScan);
         return;
       }
@@ -434,7 +434,7 @@ bool HIncrbyCmd::DoInitial(PClient* client) {
 
 void HIncrbyCmd::DoCmd(PClient* client) {
   int64_t int_by = 0;
-  if (!pstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &int_by)) {
+  if (!kstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &int_by)) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
@@ -471,7 +471,7 @@ void HRandFieldCmd::DoCmd(PClient* client) {
   bool with_values{false};
   if (argv.size() > 2) {
     // redis checks the integer argument first and then the number of parameters
-    if (pstd::String2int(argv[2], &count) == 0) {
+    if (kstd::String2int(argv[2], &count) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
@@ -480,7 +480,7 @@ void HRandFieldCmd::DoCmd(PClient* client) {
       return;
     }
     if (argv.size() > 3) {
-      if (kWithValueString != pstd::StringToLower(argv[3])) {
+      if (kWithValueString != kstd::StringToLower(argv[3])) {
         client->SetRes(CmdRes::kSyntaxErr);
         return;
       }

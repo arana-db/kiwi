@@ -15,8 +15,8 @@
 
 #include "config.h"
 #include "db.h"
-#include "pstd/log.h"
-#include "pstd/pstd_string.h"
+#include "std/log.h"
+#include "std/std_string.h"
 
 namespace kiwi {
 
@@ -53,7 +53,7 @@ void PStore::HandleTaskSpecificDB(const TasksVector& tasks) {
           return;
         }
         auto path = task.args.find(kCheckpointPath)->second;
-        pstd::TrimSlash(path);
+        kstd::TrimSlash(path);
         db->CreateCheckpoint(path, task.sync);
         break;
       }
@@ -63,7 +63,7 @@ void PStore::HandleTaskSpecificDB(const TasksVector& tasks) {
           return;
         }
         auto path = task.args.find(kCheckpointPath)->second;
-        pstd::TrimSlash(path);
+        kstd::TrimSlash(path);
         db->LoadDBFromCheckpoint(path, task.sync);
         break;
       }

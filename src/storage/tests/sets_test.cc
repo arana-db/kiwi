@@ -7,8 +7,8 @@
 #include <iostream>
 #include <thread>
 
-#include "pstd/env.h"
-#include "pstd/log.h"
+#include "std/env.h"
+#include "std/log.h"
 #include "storage/storage.h"
 #include "storage/util.h"
 
@@ -30,7 +30,7 @@ class SetsTest : public ::testing::Test {
   ~SetsTest() override = default;
 
   void SetUp() override {
-    pstd::DeleteDirIfExist(db_path);
+    kstd::DeleteDirIfExist(db_path);
     mkdir(db_path.c_str(), 0755);
     options.options.create_if_missing = true;
     options.options.create_missing_column_families = true;
@@ -2245,8 +2245,8 @@ TEST_F(SetsTest, SScanTest) {  // NOLINT
 }
 
 int main(int argc, char** argv) {
-  if (!pstd::FileExists("./log")) {
-    pstd::CreatePath("./log");
+  if (!kstd::FileExists("./log")) {
+    kstd::CreatePath("./log");
   }
   //   FLAGS_log_dir = "./log";
   //   FLAGS_minloglevel = 0;

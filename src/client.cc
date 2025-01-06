@@ -17,9 +17,9 @@
 #include "env.h"
 #include "kiwi.h"
 #include "raft/raft.h"
-#include "pstd/log.h"
-#include "pstd/pstd_string.h"
 #include "slow_log.h"
+#include "std/log.h"
+#include "std/std_string.h"
 
 namespace kiwi {
 

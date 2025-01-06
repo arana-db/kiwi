@@ -11,7 +11,7 @@
 
 #include <memory>
 
-#include "pstd/pstd_string.h"
+#include "std/std_string.h"
 #include "store.h"
 
 namespace kiwi {
@@ -32,7 +32,7 @@ int32_t DoScoreStrRange(std::string begin_score, std::string end_score, bool* le
     *min_score = storage::ZSET_SCORE_MIN;
   } else if (begin_score == "inf" || begin_score == "+inf") {
     *min_score = storage::ZSET_SCORE_MAX;
-  } else if (pstd::String2d(begin_score.data(), begin_score.size(), min_score) == 0) {
+  } else if (kstd::String2d(begin_score.data(), begin_score.size(), min_score) == 0) {
     return -1;
   }
 
@@ -44,7 +44,7 @@ int32_t DoScoreStrRange(std::string begin_score, std::string end_score, bool* le
     *max_score = storage::ZSET_SCORE_MAX;
   } else if (end_score == "-inf") {
     *max_score = storage::ZSET_SCORE_MIN;
-  } else if (pstd::String2d(end_score.data(), end_score.size(), max_score) == 0) {
+  } else if (kstd::String2d(end_score.data(), end_score.size(), max_score) == 0) {
     return -1;
   }
   return 0;
@@ -102,7 +102,7 @@ void ZAddCmd::DoCmd(PClient* client) {
   double score = 0.0;
   size_t index = 2;
   for (; index < argc; index += 2) {
-    if (pstd::String2d(client->argv_[index].data(), client->argv_[index].size(), &score) == 0) {
+    if (kstd::String2d(client->argv_[index].data(), client->argv_[index].size(), &score) == 0) {
       client->SetRes(CmdRes::kInvalidFloat);
       return;
     }
@@ -137,7 +137,7 @@ bool ZPopMinCmd::DoInitial(PClient* client) {
 void ZPopMinCmd::DoCmd(PClient* client) {
   int32_t count = 1;
   if (client->argv_.size() == 3) {
-    if (pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &count) == 0) {
+    if (kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &count) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
@@ -152,7 +152,7 @@ void ZPopMinCmd::DoCmd(PClient* client) {
     client->AppendArrayLen(static_cast<int64_t>(score_members.size()) * 2);
     for (auto& score_member : score_members) {
       client->AppendString(score_member.member);
-      len = pstd::D2string(buf, sizeof(buf), score_member.score);
+      len = kstd::D2string(buf, sizeof(buf), score_member.score);
       client->AppendString(buf, len);
     }
   } else if (s.IsInvalidArgument()) {
@@ -178,7 +178,7 @@ bool ZPopMaxCmd::DoInitial(PClient* client) {
 void ZPopMaxCmd::DoCmd(PClient* client) {
   int32_t count = 1;
   if (client->argv_.size() == 3) {
-    if (pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &count) == 0) {
+    if (kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &count) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
@@ -193,7 +193,7 @@ void ZPopMaxCmd::DoCmd(PClient* client) {
     client->AppendArrayLen(static_cast<int64_t>(score_members.size()) * 2);
     for (auto& score_member : score_members) {
       client->AppendString(score_member.member);
-      len = pstd::D2string(buf, sizeof(buf), score_member.score);
+      len = kstd::D2string(buf, sizeof(buf), score_member.score);
       client->AppendString(buf, len);
     }
   } else if (s.IsInvalidArgument()) {
@@ -211,7 +211,7 @@ ZsetUIstoreParentCmd::ZsetUIstoreParentCmd(const std::string& name, int16_t arit
 bool ZsetUIstoreParentCmd::DoInitial(PClient* client) {
   auto argv_ = client->argv_;
   dest_key_ = argv_[1];
-  if (pstd::String2int(argv_[2].data(), argv_[2].size(), &num_keys_) == 0) {
+  if (kstd::String2int(argv_[2].data(), argv_[2].size(), &num_keys_) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return false;
   }
@@ -237,7 +237,7 @@ bool ZsetUIstoreParentCmd::DoInitial(PClient* client) {
       double weight;
       auto base = index;
       for (; index < base + num_keys_; index++) {
-        if (pstd::String2d(argv_[index].data(), argv_[index].size(), &weight) == 0) {
+        if (kstd::String2d(argv_[index].data(), argv_[index].size(), &weight) == 0) {
           client->SetRes(CmdRes::kErrOther, "weight value is not a float");
           return false;
         }
@@ -325,11 +325,11 @@ void ZRevrangeCmd::DoCmd(PClient* client) {
     client->SetRes(CmdRes::kSyntaxErr);
     return;
   }
-  if (pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &start) == 0) {
+  if (kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &start) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-  if (pstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &stop) == 0) {
+  if (kstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &stop) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
@@ -345,7 +345,7 @@ void ZRevrangeCmd::DoCmd(PClient* client) {
       client->AppendArrayLen(score_members.size() * 2);
       for (const auto& sm : score_members) {
         client->AppendString(sm.member);
-        len = pstd::D2string(buf, sizeof(buf), sm.score);
+        len = kstd::D2string(buf, sizeof(buf), sm.score);
         client->AppendString(buf, len);
       }
     } else {
@@ -390,12 +390,12 @@ void ZRangebyscoreCmd::DoCmd(PClient* client) {
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
@@ -432,7 +432,7 @@ void ZRangebyscoreCmd::DoCmd(PClient* client) {
     client->AppendArrayLen(count * 2);
     for (; start < end; start++) {
       client->AppendString(score_members[start].member);
-      len = pstd::D2string(buf, sizeof(buf), score_members[start].score);
+      len = kstd::D2string(buf, sizeof(buf), score_members[start].score);
       client->AppendString(buf, len);
     }
   } else {
@@ -456,11 +456,11 @@ void ZRemrangebyrankCmd::DoCmd(PClient* client) {
   int32_t start = 0;
   int32_t end = 0;
 
-  if (pstd::String2int(client->argv_[2], &start) == 0) {
+  if (kstd::String2int(client->argv_[2], &start) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-  if (pstd::String2int(client->argv_[3], &end) == 0) {
+  if (kstd::String2int(client->argv_[3], &end) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
@@ -508,12 +508,12 @@ void ZRevrangebyscoreCmd::DoCmd(PClient* client) {
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
@@ -551,7 +551,7 @@ void ZRevrangebyscoreCmd::DoCmd(PClient* client) {
     client->AppendArrayLen(count * 2);
     for (; start < end; start++) {
       client->AppendString(score_members[start].member);
-      len = pstd::D2string(buf, sizeof(buf), score_members[start].score);
+      len = kstd::D2string(buf, sizeof(buf), score_members[start].score);
       client->AppendString(buf, len);
     }
   } else {
@@ -622,12 +622,12 @@ void ZRangeCmd::DoCmd(PClient* client) {
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
@@ -717,7 +717,7 @@ void ZRangeCmd::DoCmd(PClient* client) {
       client->AppendArrayLen(count * 2);
       for (; m_start < m_end; m_start++) {
         client->AppendString(score_members[m_start].member);
-        len = pstd::D2string(buf, sizeof(buf), score_members[m_start].score);
+        len = kstd::D2string(buf, sizeof(buf), score_members[m_start].score);
         client->AppendString(buf, len);
       }
     } else {
@@ -744,7 +744,7 @@ void ZScoreCmd::DoCmd(PClient* client) {
   s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZScore(client->Key(), client->argv_[2], &score);
   if (s.ok() || s.IsNotFound()) {
     char buf[32];
-    int64_t len = pstd::D2string(buf, sizeof(buf), score);
+    int64_t len = kstd::D2string(buf, sizeof(buf), score);
     client->AppendString(buf, len);
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
@@ -772,11 +772,11 @@ void ZRangebylexCmd::DoCmd(PClient* client) {
   bool left_close = true;
   bool right_close = true;
   if (argc == 7 && strcasecmp(client->argv_[4].data(), "limit") == 0) {
-    if (pstd::String2int(client->argv_[5].data(), client->argv_[5].size(), &offset) == 0) {
+    if (kstd::String2int(client->argv_[5].data(), client->argv_[5].size(), &offset) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
-    if (pstd::String2int(client->argv_[6].data(), client->argv_[6].size(), &count) == 0) {
+    if (kstd::String2int(client->argv_[6].data(), client->argv_[6].size(), &count) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
@@ -836,11 +836,11 @@ void ZRevrangebylexCmd::DoCmd(PClient* client) {
   bool left_close = true;
   bool right_close = true;
   if (argc == 7 && strcasecmp(client->argv_[4].data(), "limit") == 0) {
-    if (pstd::String2int(client->argv_[5].data(), client->argv_[5].size(), &offset) == 0) {
+    if (kstd::String2int(client->argv_[5].data(), client->argv_[5].size(), &offset) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
-    if (pstd::String2int(client->argv_[6].data(), client->argv_[6].size(), &count) == 0) {
+    if (kstd::String2int(client->argv_[6].data(), client->argv_[6].size(), &count) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
@@ -955,7 +955,7 @@ bool ZIncrbyCmd::DoInitial(PClient* client) {
 void ZIncrbyCmd::DoCmd(PClient* client) {
   double by = .0f;
   double score = .0f;
-  if (pstd::String2d(client->argv_[2].data(), client->argv_[2].size(), &by) == 0) {
+  if (kstd::String2d(client->argv_[2].data(), client->argv_[2].size(), &by) == 0) {
     client->SetRes(CmdRes::kInvalidFloat);
     return;
   }
@@ -965,7 +965,7 @@ void ZIncrbyCmd::DoCmd(PClient* client) {
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZIncrby(client->Key(), member, by, &score);
   if (s.ok()) {
     char buf[32];
-    int64_t len = pstd::D2string(buf, sizeof(buf), score);
+    int64_t len = kstd::D2string(buf, sizeof(buf), score);
     client->AppendString(buf, len);
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);

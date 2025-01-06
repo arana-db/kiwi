@@ -18,8 +18,8 @@
 
 // #include "net/event_loop.h"
 #include "raft/raft.h"
-#include "pstd/log.h"
-#include "pstd/pstd_string.h"
+#include "std/log.h"
+#include "std/std_string.h"
 
 #include "client.h"
 #include "config.h"
@@ -33,7 +33,7 @@ RaftNodeCmd::RaftNodeCmd(const std::string& name, int16_t arity)
 
 bool RaftNodeCmd::DoInitial(PClient* client) {
   auto cmd = client->argv_[1];
-  pstd::StringToUpper(cmd);
+  kstd::StringToUpper(cmd);
 
   if (cmd != kAddCmd && cmd != kRemoveCmd && cmd != kDoSnapshot) {
     client->SetRes(CmdRes::kErrOther, "RAFT.NODE supports ADD / REMOVE / DOSNAPSHOT only");
@@ -44,7 +44,7 @@ bool RaftNodeCmd::DoInitial(PClient* client) {
 
 void RaftNodeCmd::DoCmd(PClient* client) {
   auto cmd = client->argv_[1];
-  pstd::StringToUpper(cmd);
+  kstd::StringToUpper(cmd);
   if (cmd == kAddCmd) {
     DoCmdAdd(client);
   } else if (cmd == kRemoveCmd) {
@@ -140,7 +140,7 @@ RaftClusterCmd::RaftClusterCmd(const std::string& name, int16_t arity)
 
 bool RaftClusterCmd::DoInitial(PClient* client) {
   auto cmd = client->argv_[1];
-  pstd::StringToUpper(cmd);
+  kstd::StringToUpper(cmd);
   if (cmd != kInitCmd && cmd != kJoinCmd) {
     client->SetRes(CmdRes::kErrOther, "RAFT.CLUSTER supports INIT/JOIN only");
     return false;
@@ -154,7 +154,7 @@ void RaftClusterCmd::DoCmd(PClient* client) {
   }
 
   auto cmd = client->argv_[1];
-  pstd::StringToUpper(cmd);
+  kstd::StringToUpper(cmd);
   if (cmd == kInitCmd) {
     DoCmdInit(client);
   } else {
@@ -175,7 +175,7 @@ void RaftClusterCmd::DoCmdInit(PClient* client) {
                             "Cluster id must be " + std::to_string(RAFT_GROUPID_LEN) + " characters");
     }
   } else {
-    cluster_id = pstd::RandomHexChars(RAFT_GROUPID_LEN);
+    cluster_id = kstd::RandomHexChars(RAFT_GROUPID_LEN);
   }
   auto s = RAFT_INST.Init(cluster_id, false);
   if (!s.ok()) {
@@ -191,7 +191,7 @@ static inline std::optional<std::pair<std::string, int32_t>> GetIpAndPortFromEnd
   }
 
   int32_t ret = 0;
-  pstd::String2int(endpoint.substr(pos + 1), &ret);
+  kstd::String2int(endpoint.substr(pos + 1), &ret);
   return {{endpoint.substr(0, pos), ret}};
 }
 

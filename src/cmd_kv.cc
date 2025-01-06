@@ -13,8 +13,8 @@
 #include <cstdint>
 #include "common.h"
 #include "config.h"
-#include "pstd_string.h"
-#include "pstd_util.h"
+#include "std_string.h"
+#include "std_util.h"
 #include "store.h"
 
 namespace kiwi {
@@ -68,7 +68,7 @@ bool SetCmd::DoInitial(PClient* client) {
         client->SetRes(CmdRes::kSyntaxErr);
         return false;
       }
-      if (pstd::String2int(argv_[index].data(), argv_[index].size(), &sec_) == 0) {
+      if (kstd::String2int(argv_[index].data(), argv_[index].size(), &sec_) == 0) {
         client->SetRes(CmdRes::kInvalidInt);
         return false;
       }
@@ -239,8 +239,8 @@ void BitCountCmd::DoCmd(PClient* client) {
   } else {
     int64_t start_offset = 0;
     int64_t end_offset = 0;
-    if (pstd::String2int(client->argv_[2], &start_offset) == 0 ||
-        pstd::String2int(client->argv_[3], &end_offset) == 0) {
+    if (kstd::String2int(client->argv_[2], &start_offset) == 0 ||
+        kstd::String2int(client->argv_[3], &end_offset) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
@@ -307,10 +307,10 @@ BitOpCmd::BitOpCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsWrite, kAclCategoryWrite | kAclCategoryString) {}
 
 bool BitOpCmd::DoInitial(PClient* client) {
-  if (!(pstd::StringEqualCaseInsensitive(client->argv_[1], "and") ||
-        pstd::StringEqualCaseInsensitive(client->argv_[1], "or") ||
-        pstd::StringEqualCaseInsensitive(client->argv_[1], "not") ||
-        pstd::StringEqualCaseInsensitive(client->argv_[1], "xor"))) {
+  if (!(kstd::StringEqualCaseInsensitive(client->argv_[1], "and") ||
+        kstd::StringEqualCaseInsensitive(client->argv_[1], "or") ||
+        kstd::StringEqualCaseInsensitive(client->argv_[1], "not") ||
+        kstd::StringEqualCaseInsensitive(client->argv_[1], "xor"))) {
     client->SetRes(CmdRes::kSyntaxErr, "operation error");
     return false;
   }
@@ -328,16 +328,16 @@ void BitOpCmd::DoCmd(PClient* client) {
   storage::BitOpType op = storage::kBitOpDefault;
 
   if (!keys.empty()) {
-    if (pstd::StringEqualCaseInsensitive(client->argv_[1], "or")) {
+    if (kstd::StringEqualCaseInsensitive(client->argv_[1], "or")) {
       err = kPErrorOK;
       op = storage::kBitOpOr;
-    } else if (pstd::StringEqualCaseInsensitive(client->argv_[1], "xor")) {
+    } else if (kstd::StringEqualCaseInsensitive(client->argv_[1], "xor")) {
       err = kPErrorOK;
       op = storage::kBitOpXor;
-    } else if (pstd::StringEqualCaseInsensitive(client->argv_[1], "and")) {
+    } else if (kstd::StringEqualCaseInsensitive(client->argv_[1], "and")) {
       err = kPErrorOK;
       op = storage::kBitOpAnd;
-    } else if (pstd::StringEqualCaseInsensitive(client->argv_[1], "not")) {
+    } else if (kstd::StringEqualCaseInsensitive(client->argv_[1], "not")) {
       if (keys.size() == 1) {
         err = kPErrorOK;
         op = storage::kBitOpNot;
@@ -389,7 +389,7 @@ SetExCmd::SetExCmd(const std::string& name, int16_t arity)
 bool SetExCmd::DoInitial(PClient* client) {
   client->SetKey(client->argv_[1]);
   int64_t sec = 0;
-  if (pstd::String2int(client->argv_[2], &sec) == 0) {
+  if (kstd::String2int(client->argv_[2], &sec) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return false;
   }
@@ -398,7 +398,7 @@ bool SetExCmd::DoInitial(PClient* client) {
 
 void SetExCmd::DoCmd(PClient* client) {
   int64_t sec = 0;
-  pstd::String2int(client->argv_[2], &sec);
+  kstd::String2int(client->argv_[2], &sec);
   storage::Status s =
       PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setex(client->Key(), client->argv_[3], sec);
   if (s.ok()) {
@@ -416,7 +416,7 @@ PSetExCmd::PSetExCmd(const std::string& name, int16_t arity)
 bool PSetExCmd::DoInitial(PClient* client) {
   client->SetKey(client->argv_[1]);
   int64_t msec = 0;
-  if (pstd::String2int(client->argv_[2], &msec) == 0) {
+  if (kstd::String2int(client->argv_[2], &msec) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return false;
   }
@@ -425,7 +425,7 @@ bool PSetExCmd::DoInitial(PClient* client) {
 
 void PSetExCmd::DoCmd(PClient* client) {
   int64_t msec = 0;
-  pstd::String2int(client->argv_[2], &msec);
+  kstd::String2int(client->argv_[2], &msec);
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->Setex(client->Key(), client->argv_[3], static_cast<int32_t>(msec / 1000));
@@ -443,7 +443,7 @@ IncrbyCmd::IncrbyCmd(const std::string& name, int16_t arity)
 
 bool IncrbyCmd::DoInitial(PClient* client) {
   int64_t by_ = 0;
-  if (!(pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &by_))) {
+  if (!(kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &by_))) {
     client->SetRes(CmdRes::kInvalidInt);
     return false;
   }
@@ -454,7 +454,7 @@ bool IncrbyCmd::DoInitial(PClient* client) {
 void IncrbyCmd::DoCmd(PClient* client) {
   int64_t ret = 0;
   int64_t by = 0;
-  pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &by);
+  kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &by);
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Incrby(client->Key(), by, &ret);
   if (s.ok()) {
     client->AppendInteger(ret);
@@ -475,7 +475,7 @@ DecrbyCmd::DecrbyCmd(const std::string& name, int16_t arity)
 
 bool DecrbyCmd::DoInitial(PClient* client) {
   int64_t by = 0;
-  if (!(pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &by))) {
+  if (!(kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &by))) {
     client->SetRes(CmdRes::kInvalidInt);
     return false;
   }
@@ -486,7 +486,7 @@ bool DecrbyCmd::DoInitial(PClient* client) {
 void DecrbyCmd::DoCmd(PClient* client) {
   int64_t ret = 0;
   int64_t by = 0;
-  if (pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &by) == 0) {
+  if (kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &by) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
@@ -568,7 +568,7 @@ bool GetBitCmd::DoInitial(PClient* client) {
 void GetBitCmd::DoCmd(PClient* client) {
   int32_t bit_val = 0;
   long offset = 0;
-  if (!pstd::String2int(client->argv_[2].c_str(), client->argv_[2].size(), &offset)) {
+  if (!kstd::String2int(client->argv_[2].c_str(), client->argv_[2].size(), &offset)) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
@@ -590,8 +590,8 @@ bool GetRangeCmd::DoInitial(PClient* client) {
   int64_t start = 0;
   int64_t end = 0;
   // ERR value is not an integer or out of range
-  if (!(pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &start)) ||
-      !(pstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &end))) {
+  if (!(kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &start)) ||
+      !(kstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &end))) {
     client->SetRes(CmdRes::kInvalidInt);
     return false;
   }
@@ -603,8 +603,8 @@ void GetRangeCmd::DoCmd(PClient* client) {
   PString ret;
   int64_t start = 0;
   int64_t end = 0;
-  pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &start);
-  pstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &end);
+  kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &start);
+  kstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &end);
   auto s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Getrange(client->Key(), start, end, &ret);
   if (!s.ok()) {
     if (s.IsNotFound()) {
@@ -630,11 +630,11 @@ bool SetBitCmd::DoInitial(PClient* client) {
 void SetBitCmd::DoCmd(PClient* client) {
   long offset = 0;
   long on = 0;
-  if (pstd::String2int(client->argv_[2].c_str(), client->argv_[2].size(), &offset) == 0) {
+  if (kstd::String2int(client->argv_[2].c_str(), client->argv_[2].size(), &offset) == 0) {
     client->SetRes(CmdRes::kInvalidBitOffsetInt);
     return;
   }
-  if (pstd::String2int(client->argv_[3].c_str(), client->argv_[3].size(), &on) == 0) {
+  if (kstd::String2int(client->argv_[3].c_str(), client->argv_[3].size(), &on) == 0) {
     client->SetRes(CmdRes::kInvalidBitInt);
     return;
   }
@@ -675,7 +675,7 @@ bool SetRangeCmd::DoInitial(PClient* client) {
 void SetRangeCmd::DoCmd(PClient* client) {
   int64_t offset = 0;
 
-  if (!(pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &offset))) {
+  if (!(kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &offset))) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }

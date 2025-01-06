@@ -10,10 +10,10 @@
 #include <cstring>
 #include <memory>
 
-#include "pstd/pstd_string.h"
 #include "src/base_data_key_format.h"
 #include "src/base_key_format.h"
 #include "src/coding.h"
+#include "std/std_string.h"
 #include "storage/storage_define.h"
 #include "storage/util.h"
 
@@ -30,21 +30,21 @@ namespace storage {
  *
  * Modified in order to handle signed integers since the original code was
  * designed for unsigned integers. */
-int Int64ToStr(char* dst, size_t dstlen, int64_t svalue) { return pstd::Ll2string(dst, dstlen, svalue); }
+int Int64ToStr(char* dst, size_t dstlen, int64_t svalue) { return kstd::Ll2string(dst, dstlen, svalue); }
 
 /* Convert a string into a long long. Returns 1 if the string could be parsed
  * into a (non-overflowing) long long, 0 otherwise. The value will be set to
  * the parsed value when appropriate. */
-int StrToInt64(const char* s, size_t slen, int64_t* value) { return pstd::String2int(s, slen, value); }
+int StrToInt64(const char* s, size_t slen, int64_t* value) { return kstd::String2int(s, slen, value); }
 
 /* Convert a string into a long long. Returns 1 if all char of string could be parsed
  * into a (non-overflowing) long long, 0 otherwise. The value will be set to
  * the parsed value when appropriate. */
-int StrToInt64Strict(const char* s, size_t slen, int64_t* value) { return pstd::String2intStrict(s, slen, value); }
+int StrToInt64Strict(const char* s, size_t slen, int64_t* value) { return kstd::String2intStrict(s, slen, value); }
 
 /* Glob-style pattern matching. */
 int StringMatch(const char* pattern, uint64_t pattern_len, const char* str, uint64_t string_len, int nocase) {
-  return pstd::StringMatchLen(pattern, static_cast<int32_t>(pattern_len), str, static_cast<int32_t>(string_len),
+  return kstd::StringMatchLen(pattern, static_cast<int32_t>(pattern_len), str, static_cast<int32_t>(string_len),
                               nocase);
 }
 

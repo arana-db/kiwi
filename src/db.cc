@@ -13,7 +13,7 @@
 
 #include "config.h"
 #include "raft/raft.h"
-#include "pstd/log.h"
+#include "std/log.h"
 
 namespace kiwi {
 
@@ -66,7 +66,7 @@ rocksdb::Status DB::Open() {
 
 void DB::CreateCheckpoint(const std::string& checkpoint_path, bool sync) {
   auto checkpoint_sub_path = checkpoint_path + '/' + std::to_string(db_index_);
-  if (0 != pstd::CreatePath(checkpoint_sub_path)) {
+  if (0 != kstd::CreatePath(checkpoint_sub_path)) {
     WARN("Create dir {} fail !", checkpoint_sub_path);
     return;
   }
@@ -82,12 +82,12 @@ void DB::CreateCheckpoint(const std::string& checkpoint_path, bool sync) {
 
 void DB::LoadDBFromCheckpoint(const std::string& checkpoint_path, bool sync [[maybe_unused]]) {
   auto checkpoint_sub_path = checkpoint_path + '/' + std::to_string(db_index_);
-  if (0 != pstd::IsDir(checkpoint_sub_path)) {
+  if (0 != kstd::IsDir(checkpoint_sub_path)) {
     WARN("Checkpoint dir {} does not exist!", checkpoint_sub_path);
     return;
   }
-  if (0 != pstd::IsDir(db_path_)) {
-    if (0 != pstd::CreateDir(db_path_)) {
+  if (0 != kstd::IsDir(db_path_)) {
+    if (0 != kstd::CreateDir(db_path_)) {
       WARN("Create dir {} fail !", db_path_);
       return;
     }
@@ -121,7 +121,7 @@ void DB::LoadDBFromCheckpoint(const std::string& checkpoint_path, bool sync [[ma
       r.AppendLog(log, std::move(promise));
     };
     storage_options.do_snapshot_function =
-        std::bind(&kiwi::KRaft::DoSnapshot, &kiwi::RAFT_INST, std::placeholders::_1, std::placeholders::_2);
+        std::bind(&kiwi::Raft::DoSnapshot, &kiwi::RAFT_INST, std::placeholders::_1, std::placeholders::_2);
   }
 
   if (auto s = storage_->Open(storage_options, db_path_); !s.ok()) {

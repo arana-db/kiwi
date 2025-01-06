@@ -10,7 +10,7 @@
 #include "cmd_set.h"
 #include <memory>
 #include <utility>
-#include "pstd/pstd_string.h"
+#include "std/std_string.h"
 #include "store.h"
 
 namespace kiwi {
@@ -294,7 +294,7 @@ void SPopCmd::DoCmd(PClient* client) {
   } else if ((client->argv_.size()) == 3) {
     std::vector<std::string> delete_members;
     int64_t cnt = 1;
-    if (client->argv_[2].find(".") != std::string::npos || !pstd::String2int(client->argv_[2], &cnt)) {
+    if (client->argv_[2].find(".") != std::string::npos || !kstd::String2int(client->argv_[2], &cnt)) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
@@ -405,15 +405,15 @@ void SScanCmd::DoCmd(PClient* client) {
   int64_t cursor = 0;
   int64_t count = 10;
   std::string pattern{"*"};
-  if (pstd::String2int(argv[2], &cursor) == 0) {
+  if (kstd::String2int(argv[2], &cursor) == 0) {
     client->SetRes(CmdRes::kInvalidCursor, kCmdNameSScan);
     return;
   }
   for (size_t i = 3; i < argv.size(); i += 2) {
-    if (auto lower = pstd::StringToLower(argv[i]); kMatchSymbol == lower) {
+    if (auto lower = kstd::StringToLower(argv[i]); kMatchSymbol == lower) {
       pattern = argv[i + 1];
     } else if (kCountSymbol == lower) {
-      if (pstd::String2int(argv[i + 1], &count) == 0) {
+      if (kstd::String2int(argv[i + 1], &count) == 0) {
         client->SetRes(CmdRes::kInvalidInt, kCmdNameSScan);
         return;
       }

@@ -31,13 +31,13 @@
 
 #include "braft/raft.h"
 #include "log.h"
-#include "pstd_string.h"
+#include "std_string.h"
 #include "resp_encode.h"
 #include "rocksdb/version.h"
 
 #include "kiwi.h"
 #include "raft/raft.h"
-#include "pstd/env.h"
+#include "std/env.h"
 
 #include "client_map.h"
 #include "slow_log.h"
@@ -90,14 +90,14 @@ void FlushdbCmd::DoCmd(PClient* client) {
   std::string db_path = kiwi::PConfig::GetInstance().db_path + std::to_string(currentDBIndex);
   std::string path_temp = db_path;
   path_temp.append("_deleting/");
-  pstd::RenameFile(db_path, path_temp);
+  kstd::RenameFile(db_path, path_temp);
 
   auto s = PSTORE.GetBackend(currentDBIndex)->Open();
   if (!s.ok()) {
     client->SetRes(CmdRes::kErrOther, "flushdb failed");
     return;
   }
-  auto f = std::async(std::launch::async, [&path_temp]() { pstd::DeleteDir(path_temp); });
+  auto f = std::async(std::launch::async, [&path_temp]() { kstd::DeleteDir(path_temp); });
   client->SetRes(CmdRes::kOK);
 }
 
@@ -113,11 +113,11 @@ void FlushallCmd::DoCmd(PClient* client) {
     std::string db_path = kiwi::PConfig::GetInstance().db_path + std::to_string(i);
     std::string path_temp = db_path;
     path_temp.append("_deleting/");
-    pstd::RenameFile(db_path, path_temp);
+    kstd::RenameFile(db_path, path_temp);
 
     auto s = PSTORE.GetBackend(i)->Open();
     assert(s.ok());
-    auto f = std::async(std::launch::async, [&path_temp]() { pstd::DeleteDir(path_temp); });
+    auto f = std::async(std::launch::async, [&path_temp]() { kstd::DeleteDir(path_temp); });
     PSTORE.GetBackend(i).get()->UnLock();
   }
   client->SetRes(CmdRes::kOK);
@@ -200,7 +200,7 @@ bool HelloCmd::DoInitial(PClient* client) {
   }
 
   if (argc > 1) {
-    if (pstd::String2int(client->argv_[1].data(), client->argv_[1].size(), &resp_version) == 0) {
+    if (kstd::String2int(client->argv_[1].data(), client->argv_[1].size(), &resp_version) == 0) {
       client->SetRes(CmdRes::kErrOther, "Protocol version is not an integer or out of range");
       return false;
     }
@@ -587,8 +587,8 @@ bool SortCmd::DoInitial(PClient* client) {
     } else if (strcasecmp(client->argv_[i].data(), "alpha") == 0) {
       alpha_ = 1;
     } else if (strcasecmp(client->argv_[i].data(), "limit") == 0 && leftargs >= 2) {
-      if (pstd::String2int(client->argv_[i + 1], &offset_) == 0 ||
-          pstd::String2int(client->argv_[i + 2], &count_) == 0) {
+      if (kstd::String2int(client->argv_[i + 1], &offset_) == 0 ||
+          kstd::String2int(client->argv_[i + 2], &count_) == 0) {
         client->SetRes(CmdRes::kSyntaxErr);
         return false;
       }
@@ -667,7 +667,7 @@ void SortCmd::DoCmd(PClient* client) {
         sort_ret[i].u = byval;
       } else {
         double double_byval;
-        if (pstd::String2d(byval, &double_byval)) {
+        if (kstd::String2d(byval, &double_byval)) {
           sort_ret[i].u = double_byval;
         } else {
           client->SetRes(CmdRes::kErrOther, "One or more scores can't be converted into double");

@@ -80,7 +80,7 @@ class StringValueArray : public BaseValue {
       : BaseValue(key, std::move(check_func_ptr), rewritable), values_(value_ptr_vec), delimiter_(delimiter) {}
   ~StringValueArray() override = default;
 
-  std::string Value() const override { return pstd::StringConcat(values_, delimiter_); };
+  std::string Value() const override { return kstd::StringConcat(values_, delimiter_); };
 
  private:
   Status SetValue(const std::string& value) override;

@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "praft.pb.h"
+#include "raft.pb.h"
 
 namespace kiwi {
 
@@ -15,12 +15,12 @@ class Raft;
 
 class DummyServiceImpl : public DummyService {
  public:
-  explicit DummyServiceImpl(Raft* praft) : praft_(praft) {}
+  explicit DummyServiceImpl(Raft* raft) : raft_(raft) {}
   void DummyMethod(::google::protobuf::RpcController* controller, const ::kiwi::DummyRequest* request,
                    ::kiwi::DummyResponse* response, ::google::protobuf::Closure* done) override {}
 
  private:
-  Raft* praft_ = nullptr;
+  Raft* raft_ = nullptr;
 };
 
 }  // namespace kiwi

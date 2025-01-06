@@ -10,7 +10,7 @@
 
 #include "cmd_keys.h"
 
-#include "pstd_string.h"
+#include "std_string.h"
 
 #include "store.h"
 
@@ -85,7 +85,7 @@ bool ExpireCmd::DoInitial(PClient* client) {
 
 void ExpireCmd::DoCmd(PClient* client) {
   uint64_t sec = 0;
-  if (pstd::String2int(client->argv_[2], &sec) == 0) {
+  if (kstd::String2int(client->argv_[2], &sec) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
@@ -124,7 +124,7 @@ bool PExpireCmd::DoInitial(PClient* client) {
 
 void PExpireCmd::DoCmd(PClient* client) {
   int64_t msec = 0;
-  if (pstd::String2int(client->argv_[2], &msec) == 0) {
+  if (kstd::String2int(client->argv_[2], &msec) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
@@ -146,7 +146,7 @@ bool ExpireatCmd::DoInitial(PClient* client) {
 
 void ExpireatCmd::DoCmd(PClient* client) {
   int64_t time_stamp = 0;
-  if (pstd::String2int(client->argv_[2], &time_stamp) == 0) {
+  if (kstd::String2int(client->argv_[2], &time_stamp) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
@@ -169,7 +169,7 @@ bool PExpireatCmd::DoInitial(PClient* client) {
 // PExpireatCmd actually invoke Expireat
 void PExpireatCmd::DoCmd(PClient* client) {
   int64_t time_stamp_ms = 0;
-  if (pstd::String2int(client->argv_[2], &time_stamp_ms) == 0) {
+  if (kstd::String2int(client->argv_[2], &time_stamp_ms) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }

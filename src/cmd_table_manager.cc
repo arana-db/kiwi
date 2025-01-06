@@ -19,7 +19,7 @@
 #include "cmd_raft.h"
 #include "cmd_set.h"
 #include "cmd_zset.h"
-#include "pstd_string.h"
+#include "std_string.h"
 
 namespace kiwi {
 
@@ -213,7 +213,7 @@ std::pair<BaseCmd*, CmdRes> CmdTableManager::GetCommand(const std::string& cmdNa
     if (client->argv_.size() < 2) {
       return {nullptr, CmdRes::kWrongNum};
     }
-    return {cmd->second->GetSubCmd(pstd::StringToLower(client->argv_[1])), CmdRes::kUnknownSubCmd};
+    return {cmd->second->GetSubCmd(kstd::StringToLower(client->argv_[1])), CmdRes::kUnknownSubCmd};
   }
   return {cmd->second.get(), CmdRes::kOK};
 }

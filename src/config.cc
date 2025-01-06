@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "config.h"
-#include "pstd/pstd_string.h"
+#include "std/std_string.h"
 #include "store.h"
 
 namespace kiwi {
@@ -38,15 +38,15 @@ static void EraseQuotes(std::string& str) {
 }
 
 static Status CheckYesNo(const std::string& value) {
-  if (!pstd::StringEqualCaseInsensitive(value, "yes") && !pstd::StringEqualCaseInsensitive(value, "no")) {
+  if (!kstd::StringEqualCaseInsensitive(value, "yes") && !kstd::StringEqualCaseInsensitive(value, "no")) {
     return Status::InvalidArgument("The value must be yes or no.");
   }
   return Status::OK();
 }
 
 static Status CheckLogLevel(const std::string& value) {
-  if (!pstd::StringEqualCaseInsensitive(value, "debug") && !pstd::StringEqualCaseInsensitive(value, "verbose") &&
-      !pstd::StringEqualCaseInsensitive(value, "notice") && !pstd::StringEqualCaseInsensitive(value, "warning")) {
+  if (!kstd::StringEqualCaseInsensitive(value, "debug") && !kstd::StringEqualCaseInsensitive(value, "verbose") &&
+      !kstd::StringEqualCaseInsensitive(value, "notice") && !kstd::StringEqualCaseInsensitive(value, "warning")) {
     return Status::InvalidArgument("The value must be debug / verbose / notice / warning.");
   }
   return Status::OK();
@@ -88,7 +88,7 @@ Status StringValueArray::SetValue(const std::string& value) {
 }
 
 Status BoolValue::SetValue(const std::string& value) {
-  if (pstd::StringEqualCaseInsensitive(value, "yes")) {
+  if (kstd::StringEqualCaseInsensitive(value, "yes")) {
     *value_ = true;
   } else {
     *value_ = false;
@@ -209,7 +209,7 @@ bool PConfig::LoadFromFile(const std::string& file_name) {
 void PConfig::Get(const std::string& key, std::vector<std::string>* values) const {
   values->clear();
   for (const auto& [k, v] : config_map_) {
-    if (key == "*" || pstd::StringMatch(key.c_str(), k.c_str(), 1)) {
+    if (key == "*" || kstd::StringMatch(key.c_str(), k.c_str(), 1)) {
       values->emplace_back(k);
       values->emplace_back(v->Value());
     }

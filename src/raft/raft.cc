@@ -15,8 +15,8 @@
 #include "brpc/server.h"
 #include "gflags/gflags.h"
 
-#include "pstd/log.h"
-#include "pstd/pstd_string.h"
+#include "std/log.h"
+#include "std/std_string.h"
 
 #include "binlog.pb.h"
 #include "config.h"
@@ -157,7 +157,7 @@ butil::Status Raft::Init(std::string& group_id, bool initial_conf_is_null) {
   node_options_.fsm = this;
   node_options_.node_owns_fsm = false;
   node_options_.snapshot_interval_s = 0;
-  std::string prefix = "local://" + kiwi::PConfig::GetInstance().db_path + std::to_string(db_id_) + "/_praft";
+  std::string prefix = "local://" + kiwi::PConfig::GetInstance().db_path + std::to_string(db_id_) + "/_raft";
   node_options_.log_uri = prefix + "/log";
   node_options_.raft_meta_uri = prefix + "/raft_meta";
   node_options_.snapshot_uri = prefix + "/snapshot";
@@ -376,20 +376,20 @@ void Raft::CheckRocksDBConfiguration(PClient* client, PClient* join_client, cons
       std::string key = line.substr(0, pos);
       std::string value = line.substr(pos + 1);
 
-      if (key == DATABASES_NUM && pstd::String2int(value, &databases_num) == 0) {
+      if (key == DATABASES_NUM && kstd::String2int(value, &databases_num) == 0) {
         join_client->SetRes(CmdRes::kErrOther, "Config of databases_num invalid");
         join_client->SendPacket();
         //        join_client->Clear();
         // If the join fails, clear clusterContext and set it again by using the join command
         cluster_cmd_ctx_.Clear();
-      } else if (key == ROCKSDB_NUM && pstd::String2int(value, &rocksdb_num) == 0) {
+      } else if (key == ROCKSDB_NUM && kstd::String2int(value, &rocksdb_num) == 0) {
         join_client->SetRes(CmdRes::kErrOther, "Config of rocksdb_num invalid");
         join_client->SendPacket();
         //        join_client->Clear();
         // If the join fails, clear clusterContext and set it again by using the join command
         cluster_cmd_ctx_.Clear();
       } else if (key == ROCKSDB_VERSION) {
-        rockdb_version = pstd::StringTrimRight(value, "\r");
+        rockdb_version = kstd::StringTrimRight(value, "\r");
       }
     }
   }
@@ -411,8 +411,8 @@ void Raft::CheckRocksDBConfiguration(PClient* client, PClient* join_client, cons
 
 void Raft::LeaderRedirection(PClient* join_client, const std::string& reply) {
   // Resolve the ip address of the leader
-  pstd::StringTrimLeft(reply, WRONG_LEADER);
-  pstd::StringTrim(reply);
+  kstd::StringTrimLeft(reply, WRONG_LEADER);
+  kstd::StringTrim(reply);
   braft::PeerId peerId;
   peerId.parse(reply);
   auto peer_ip = std::string(butil::ip2str(peerId.addr.ip).c_str());
@@ -625,7 +625,7 @@ void Raft::AppendLog(const Binlog& log, std::promise<rocksdb::Status>&& promise)
   assert(node_->is_leader());
   butil::IOBuf data;
   butil::IOBufAsZeroCopyOutputStream wrapper(&data);
-  auto done = new PRaftWriteDoneClosure(std::move(promise));
+  auto done = new RaftWriteDoneClosure(std::move(promise));
   if (!log.SerializeToZeroCopyStream(&wrapper)) {
     done->SetStatus(rocksdb::Status::Incomplete("Failed to serialize binlog"));
     done->Run();
@@ -664,7 +664,7 @@ void Raft::on_apply(braft::Iterator& iter) {
       static constexpr std::string_view kMsg = "Failed to parse from protobuf when on_apply";
       ERROR(kMsg);
       if (done) {  // in leader
-        dynamic_cast<PRaftWriteDoneClosure*>(done)->SetStatus(rocksdb::Status::Incomplete(kMsg));
+        dynamic_cast<RaftWriteDoneClosure*>(done)->SetStatus(rocksdb::Status::Incomplete(kMsg));
       }
       braft::run_closure_in_bthread(done_guard.release());
       return;
@@ -672,7 +672,7 @@ void Raft::on_apply(braft::Iterator& iter) {
 
     auto s = PSTORE.GetBackend(log.db_id())->GetStorage()->OnBinlogWrite(log, iter.index());
     if (done) {  // in leader
-      dynamic_cast<PRaftWriteDoneClosure*>(done)->SetStatus(s);
+      dynamic_cast<RaftWriteDoneClosure*>(done)->SetStatus(s);
     }
     //  _applied_index = iter.index(); // consider to maintain a member applied_idx
     braft::run_closure_in_bthread(done_guard.release());

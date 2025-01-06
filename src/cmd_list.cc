@@ -8,7 +8,7 @@
  */
 
 #include "cmd_list.h"
-#include "pstd_string.h"
+#include "std_string.h"
 #include "store.h"
 
 namespace kiwi {
@@ -183,7 +183,7 @@ void LRangeCmd::DoCmd(PClient* client) {
   std::vector<std::string> ret;
   int64_t start_index = 0;
   int64_t end_index = 0;
-  if (pstd::String2int(client->argv_[2], &start_index) == 0 || pstd::String2int(client->argv_[3], &end_index) == 0) {
+  if (kstd::String2int(client->argv_[2], &start_index) == 0 || kstd::String2int(client->argv_[3], &end_index) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
@@ -211,7 +211,7 @@ bool LRemCmd::DoInitial(PClient* client) {
 void LRemCmd::DoCmd(PClient* client) {
   int64_t freq_ = 0;
   std::string count = client->argv_[2];
-  if (pstd::String2int(count, &freq_) == 0) {
+  if (kstd::String2int(count, &freq_) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
@@ -240,7 +240,7 @@ void LTrimCmd::DoCmd(PClient* client) {
   int64_t start_index = 0;
   int64_t end_index = 0;
 
-  if (pstd::String2int(client->argv_[2], &start_index) == 0 || pstd::String2int(client->argv_[3], &end_index) == 0) {
+  if (kstd::String2int(client->argv_[2], &start_index) == 0 || kstd::String2int(client->argv_[3], &end_index) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
@@ -268,9 +268,9 @@ void LSetCmd::DoCmd(PClient* client) {
   // while strtol ensures that the string is within the range of long type
   const std::string index_str = client->argv_[2];
 
-  if (pstd::IsValidNumber(index_str)) {
+  if (kstd::IsValidNumber(index_str)) {
     int64_t val = 0;
-    if (1 != pstd::String2int(index_str, &val)) {
+    if (1 != kstd::String2int(index_str, &val)) {
       client->SetRes(CmdRes::kErrOther, "lset cmd error");  // this will not happend in normal case
       return;
     }
@@ -296,8 +296,8 @@ LInsertCmd::LInsertCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsWrite, kAclCategoryWrite | kAclCategoryList) {}
 
 bool LInsertCmd::DoInitial(PClient* client) {
-  if (!pstd::StringEqualCaseInsensitive(client->argv_[2], "BEFORE") &&
-      !pstd::StringEqualCaseInsensitive(client->argv_[2], "AFTER")) {
+  if (!kstd::StringEqualCaseInsensitive(client->argv_[2], "BEFORE") &&
+      !kstd::StringEqualCaseInsensitive(client->argv_[2], "AFTER")) {
     return false;
   }
   client->SetKey(client->argv_[1]);
@@ -307,7 +307,7 @@ bool LInsertCmd::DoInitial(PClient* client) {
 void LInsertCmd::DoCmd(PClient* client) {
   int64_t ret = 0;
   storage ::BeforeOrAfter before_or_after = storage::Before;
-  if (pstd::StringEqualCaseInsensitive(client->argv_[2], "AFTER")) {
+  if (kstd::StringEqualCaseInsensitive(client->argv_[2], "AFTER")) {
     before_or_after = storage::After;
   }
   storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
@@ -335,7 +335,7 @@ bool LIndexCmd::DoInitial(PClient* client) {
 void LIndexCmd::DoCmd(PClient* client) {
   int64_t freq_ = 0;
   std::string count = client->argv_[2];
-  if (pstd::String2int(count, &freq_) == 0) {
+  if (kstd::String2int(count, &freq_) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }

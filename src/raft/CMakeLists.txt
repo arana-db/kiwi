@@ -50,5 +50,5 @@ ENDIF ()
 
 SET(LIBRARY_OUTPUT_PATH ${PLIB_INSTALL_DIR})
 ADD_DEPENDENCIES(raft protobuf raft_pb binlog_pb)
-TARGET_LINK_LIBRARIES(raft net; dl; fmt; storage; pstd braft brpc ssl crypto zlib protobuf leveldb gflags rocksdb z ${RAFT_INST_LIB})
+TARGET_LINK_LIBRARIES(raft net; dl; fmt; storage; kstd braft brpc ssl crypto zlib protobuf leveldb gflags rocksdb z ${RAFT_INST_LIB})
 SET_TARGET_PROPERTIES(raft PROPERTIES LINKER_LANGUAGE CXX)

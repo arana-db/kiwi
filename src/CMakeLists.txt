@@ -26,7 +26,7 @@ SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin/)
 
 TARGET_INCLUDE_DIRECTORIES(kiwi
         PRIVATE ${PROJECT_SOURCE_DIR}/src
-        PRIVATE ${PROJECT_SOURCE_DIR}/src/pstd
+        PRIVATE ${PROJECT_SOURCE_DIR}/src/std
         PRIVATE ${PROJECT_SOURCE_DIR}/src/net
         PRIVATE ${PROJECT_SOURCE_DIR}/src/storage/include
         PRIVATE ${rocksdb_SOURCE_DIR}/
@@ -45,7 +45,7 @@ ADD_DEPENDENCIES(kiwi
         zlib
         rocksdb
         protobuf
-        pstd
+        kstd
         braft
         brpc
         storage
@@ -63,7 +63,7 @@ TARGET_LINK_LIBRARIES(kiwi
         storage
         gflags
         spdlog
-        pstd
+        kstd
         braft
         brpc
         ssl
@@ -72,8 +72,8 @@ TARGET_LINK_LIBRARIES(kiwi
         protobuf
         leveldb
         z
-        praft
-        praft_pb
+        raft
+        raft_pb
         binlog_pb
         resp
         "${LIB}"

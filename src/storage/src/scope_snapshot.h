@@ -7,10 +7,10 @@
 
 #include "rocksdb/db.h"
 
-#include "pstd/noncopyable.h"
+#include "std/noncopyable.h"
 
 namespace storage {
-class ScopeSnapshot : public pstd::noncopyable {
+class ScopeSnapshot : public kstd::noncopyable {
  public:
   ScopeSnapshot(rocksdb::DB* db, const rocksdb::Snapshot** snapshot) : db_(db), snapshot_(snapshot) {
     *snapshot_ = db_->GetSnapshot();
