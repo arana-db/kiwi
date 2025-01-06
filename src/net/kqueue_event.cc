@@ -109,7 +109,7 @@ void KqueueEvent::EventRead() {
       }
       std::shared_ptr<Connection> conn;
       if (events[i].filter == EVENT_READ) {
-        if (!getListenSocket(events[i].data.u64)) {
+        if (!getListenSocket(events[i].ident)) {
 #  ifdef HAVE_64BIT
           auto connId = reinterpret_cast<uint64_t>(events[i].udata);
 #  else
@@ -168,7 +168,7 @@ void KqueueEvent::EventWrite() {
 }
 
 void KqueueEvent::DoRead(const struct kevent &event, const std::shared_ptr<Connection> &conn) {
-  if (auto listenSocket = getListenSocket(event.data.u64); listenSocket) {
+  if (auto listenSocket = getListenSocket(event.ident); listenSocket) {
     auto newConn = std::make_shared<Connection>(nullptr);
     auto connFd = listenSocket->OnReadable(newConn, nullptr);
     onCreate_(connFd, newConn);
