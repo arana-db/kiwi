@@ -127,7 +127,7 @@ void RaftNodeCmd::DoCmdRemove(PClient* client) {
 }
 
 void RaftNodeCmd::DoCmdSnapshot(PClient* client) {
-  auto self_snapshot_index = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->GetSmallestFlushedLogIndex();
+  auto self_snapshot_index = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->GetSmallestFlushedLogIndex();
   INFO("DoCmdSnapshot self_snapshot_index:{}", self_snapshot_index);
   auto s = RAFT_INST.DoSnapshot(self_snapshot_index);
   if (s.ok()) {

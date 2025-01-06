@@ -25,7 +25,7 @@ bool SIsMemberCmd::DoInitial(PClient* client) {
 void SIsMemberCmd::DoCmd(PClient* client) {
   int32_t reply_Num = 0;  // only change to 1 if ismember . key not exist it is 0
   auto s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SIsmember(client->Key(), client->argv_[2], &reply_Num);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SIsmember(client->Key(), client->argv_[2], &reply_Num);
   if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
     return;
@@ -45,7 +45,7 @@ bool SAddCmd::DoInitial(PClient* client) {
 void SAddCmd::DoCmd(PClient* client) {
   const std::vector<std::string> members(client->argv_.begin() + 2, client->argv_.end());
   int32_t ret = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SAdd(client->Key(), members, &ret);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SAdd(client->Key(), members, &ret);
   if (s.ok()) {
     client->AppendInteger(ret);
   } else if (s.IsInvalidArgument()) {
@@ -68,7 +68,7 @@ void SUnionStoreCmd::DoCmd(PClient* client) {
   std::vector<std::string> keys(client->Keys().begin() + 1, client->Keys().end());
   std::vector<std::string> value_to_dest;
   int32_t ret = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->SUnionstore(client->Keys().at(0), keys, value_to_dest, &ret);
   if (!s.ok()) {
@@ -92,7 +92,7 @@ bool SInterCmd::DoInitial(PClient* client) {
 
 void SInterCmd::DoCmd(PClient* client) {
   std::vector<std::string> res_vt;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SInter(client->Keys(), &res_vt);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SInter(client->Keys(), &res_vt);
   if (!s.ok()) {
     if (s.IsInvalidArgument()) {
       client->SetRes(CmdRes::kMultiKey);
@@ -116,7 +116,7 @@ void SRemCmd::DoCmd(PClient* client) {
   std::vector<std::string> to_delete_members(client->argv_.begin() + 2, client->argv_.end());
   int32_t reply_num = 0;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SRem(client->Key(), to_delete_members, &reply_num);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SRem(client->Key(), to_delete_members, &reply_num);
   if (!s.ok()) {
     if (s.IsInvalidArgument()) {
       client->SetRes(CmdRes::kMultiKey);
@@ -139,7 +139,7 @@ bool SUnionCmd::DoInitial(PClient* client) {
 
 void SUnionCmd::DoCmd(PClient* client) {
   std::vector<std::string> res_vt;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SUnion(client->Keys(), &res_vt);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SUnion(client->Keys(), &res_vt);
   if (!s.ok()) {
     if (s.IsInvalidArgument()) {
       client->SetRes(CmdRes::kMultiKey);
@@ -164,7 +164,7 @@ void SInterStoreCmd::DoCmd(PClient* client) {
   int32_t reply_num = 0;
 
   std::vector<std::string> inter_keys(client->argv_.begin() + 2, client->argv_.end());
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->SInterstore(client->Key(), inter_keys, value_to_dest, &reply_num);
   if (!s.ok()) {
@@ -187,7 +187,7 @@ bool SCardCmd::DoInitial(PClient* client) {
 }
 void SCardCmd::DoCmd(PClient* client) {
   int32_t reply_Num = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SCard(client->Key(), &reply_Num);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SCard(client->Key(), &reply_Num);
   if (!s.ok()) {
     if (s.IsInvalidArgument()) {
       client->SetRes(CmdRes::kMultiKey);
@@ -210,7 +210,7 @@ bool SMoveCmd::DoInitial(PClient* client) { return true; }
 
 void SMoveCmd::DoCmd(PClient* client) {
   int32_t reply_num = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->SMove(client->argv_[1], client->argv_[2], client->argv_[3], &reply_num);
   if (s.ok() || s.IsNotFound()) {
@@ -246,7 +246,7 @@ bool SRandMemberCmd::DoInitial(PClient* client) {
 void SRandMemberCmd::DoCmd(PClient* client) {
   std::vector<std::string> vec_ret;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SRandmember(client->argv_[1], this->num_rand, &vec_ret);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SRandmember(client->argv_[1], this->num_rand, &vec_ret);
   if (s.ok()) {
     if (client->argv_.size() == 3) {
       client->AppendStringVector(vec_ret);
@@ -280,7 +280,7 @@ void SPopCmd::DoCmd(PClient* client) {
     int64_t cnt = 1;
     std::vector<std::string> delete_member;
     storage::Status s =
-        PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SPop(client->Key(), &delete_member, cnt);
+        STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SPop(client->Key(), &delete_member, cnt);
     if (!s.ok()) {
       if (s.IsInvalidArgument()) {
         client->SetRes(CmdRes::kMultiKey);
@@ -299,7 +299,7 @@ void SPopCmd::DoCmd(PClient* client) {
       return;
     }
     storage::Status s =
-        PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SPop(client->Key(), &delete_members, cnt);
+        STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SPop(client->Key(), &delete_members, cnt);
     if (!s.ok()) {
       if (s.IsInvalidArgument()) {
         client->SetRes(CmdRes::kMultiKey);
@@ -326,7 +326,7 @@ bool SMembersCmd::DoInitial(PClient* client) {
 
 void SMembersCmd::DoCmd(PClient* client) {
   std::vector<std::string> delete_members;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SMembers(client->Key(), &delete_members);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SMembers(client->Key(), &delete_members);
   if (!s.ok()) {
     if (s.IsInvalidArgument()) {
       client->SetRes(CmdRes::kMultiKey);
@@ -349,7 +349,7 @@ bool SDiffCmd::DoInitial(PClient* client) {
 void SDiffCmd::DoCmd(PClient* client) {
   std::vector<std::string> diff_members;
   std::vector<std::string> diff_keys(client->argv_.begin() + 1, client->argv_.end());
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SDiff(diff_keys, &diff_members);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SDiff(diff_keys, &diff_members);
   if (!s.ok()) {
     if (s.IsInvalidArgument()) {
       client->SetRes(CmdRes::kMultiKey);
@@ -373,7 +373,7 @@ void SDiffstoreCmd::DoCmd(PClient* client) {
   std::vector<std::string> value_to_dest;
   int32_t reply_num = 0;
   std::vector<std::string> diffstore_keys(client->argv_.begin() + 2, client->argv_.end());
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->SDiffstore(client->Key(), diffstore_keys, value_to_dest, &reply_num);
   if (!s.ok()) {
@@ -430,7 +430,7 @@ void SScanCmd::DoCmd(PClient* client) {
   // execute command
   std::vector<std::string> members;
   int64_t next_cursor{};
-  auto status = PSTORE.GetBackend(client->GetCurrentDB())
+  auto status = STORE_INST.GetBackend(client->GetCurrentDB())
                     ->GetStorage()
                     ->SScan(client->Key(), cursor, pattern, count, &members, &next_cursor);
   if (!status.ok() && !status.IsNotFound()) {

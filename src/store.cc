@@ -20,14 +20,14 @@
 
 namespace kiwi {
 
-PStore::~PStore() { INFO("STORE is closing..."); }
+Store::~Store() { INFO("STORE is closing..."); }
 
-PStore& PStore::Instance() {
-  static PStore store;
+Store& Store::Instance() {
+  static Store store;
   return store;
 }
 
-void PStore::Init(int db_number) {
+void Store::Init(int db_number) {
   db_number_ = db_number;
   backends_.reserve(db_number_);
   for (int i = 0; i < db_number_; i++) {
@@ -39,7 +39,7 @@ void PStore::Init(int db_number) {
   INFO("STORE Init success!");
 }
 
-void PStore::HandleTaskSpecificDB(const TasksVector& tasks) {
+void Store::HandleTaskSpecificDB(const TasksVector& tasks) {
   std::for_each(tasks.begin(), tasks.end(), [this](const auto& task) {
     if (task.db < 0 || task.db >= db_number_) {
       WARN("The database index is out of range.");

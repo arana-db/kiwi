@@ -84,15 +84,15 @@ bool FlushdbCmd::DoInitial(PClient* client) { return true; }
 
 void FlushdbCmd::DoCmd(PClient* client) {
   int currentDBIndex = client->GetCurrentDB();
-  PSTORE.GetBackend(currentDBIndex).get()->Lock();
-  DEFER { PSTORE.GetBackend(currentDBIndex).get()->UnLock(); };
+  STORE_INST.GetBackend(currentDBIndex).get()->Lock();
+  DEFER { STORE_INST.GetBackend(currentDBIndex).get()->UnLock(); };
 
   std::string db_path = g_config.db_path + std::to_string(currentDBIndex);
   std::string path_temp = db_path;
   path_temp.append("_deleting/");
   kstd::RenameFile(db_path, path_temp);
 
-  auto s = PSTORE.GetBackend(currentDBIndex)->Open();
+  auto s = STORE_INST.GetBackend(currentDBIndex)->Open();
   if (!s.ok()) {
     client->SetRes(CmdRes::kErrOther, "flushdb failed");
     return;
@@ -109,16 +109,16 @@ bool FlushallCmd::DoInitial(PClient* client) { return true; }
 
 void FlushallCmd::DoCmd(PClient* client) {
   for (size_t i = 0; i < g_config.databases; ++i) {
-    PSTORE.GetBackend(i).get()->Lock();
+    STORE_INST.GetBackend(i).get()->Lock();
     std::string db_path = g_config.db_path + std::to_string(i);
     std::string path_temp = db_path;
     path_temp.append("_deleting/");
     kstd::RenameFile(db_path, path_temp);
 
-    auto s = PSTORE.GetBackend(i)->Open();
+    auto s = STORE_INST.GetBackend(i)->Open();
     assert(s.ok());
     auto f = std::async(std::launch::async, [&path_temp]() { kstd::DeleteDir(path_temp); });
-    PSTORE.GetBackend(i).get()->UnLock();
+    STORE_INST.GetBackend(i).get()->UnLock();
   }
   client->SetRes(CmdRes::kOK);
 }
@@ -176,9 +176,9 @@ bool ShutdownCmd::DoInitial(PClient* client) {
 }
 
 void ShutdownCmd::DoCmd(PClient* client) {
-  PSTORE.GetBackend(client->GetCurrentDB())->UnLockShared();
+  STORE_INST.GetBackend(client->GetCurrentDB())->UnLockShared();
   g_kiwi->Stop();
-  PSTORE.GetBackend(client->GetCurrentDB())->LockShared();
+  STORE_INST.GetBackend(client->GetCurrentDB())->LockShared();
   client->SetRes(CmdRes::kNone);
 }
 
@@ -612,7 +612,7 @@ bool SortCmd::DoInitial(PClient* client) {
   }
 
   Status s;
-  s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LRange(client->Key(), 0, -1, &ret_);
+  s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LRange(client->Key(), 0, -1, &ret_);
   if (s.ok()) {
     return true;
   } else if (!s.IsNotFound()) {
@@ -620,7 +620,7 @@ bool SortCmd::DoInitial(PClient* client) {
     return false;
   }
 
-  s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SMembers(client->Key(), &ret_);
+  s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SMembers(client->Key(), &ret_);
   if (s.ok()) {
     return true;
   } else if (!s.IsNotFound()) {
@@ -629,7 +629,7 @@ bool SortCmd::DoInitial(PClient* client) {
   }
 
   std::vector<storage::ScoreMember> score_members;
-  s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZRange(client->Key(), 0, -1, &score_members);
+  s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZRange(client->Key(), 0, -1, &score_members);
   if (s.ok()) {
     for (auto& c : score_members) {
       ret_.emplace_back(c.member);
@@ -718,7 +718,7 @@ void SortCmd::DoCmd(PClient* client) {
     client->AppendStringVector(ret_);
   } else {
     uint64_t reply_num = 0;
-    storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPush(store_key_, ret_, &reply_num);
+    storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPush(store_key_, ret_, &reply_num);
     if (s.ok()) {
       client->AppendInteger(reply_num);
     } else {
@@ -750,9 +750,9 @@ std::optional<std::string> SortCmd::lookupKeyByPattern(PClient* client, const st
   std::string value;
   storage::Status s;
   if (!field.empty()) {
-    s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->HGet(key, field, &value);
+    s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->HGet(key, field, &value);
   } else {
-    s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Get(key, &value);
+    s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Get(key, &value);
   }
 
   if (!s.ok()) {

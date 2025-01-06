@@ -670,7 +670,7 @@ void Raft::on_apply(braft::Iterator& iter) {
       return;
     }
 
-    auto s = PSTORE.GetBackend(log.db_id())->GetStorage()->OnBinlogWrite(log, iter.index());
+    auto s = STORE_INST.GetBackend(log.db_id())->GetStorage()->OnBinlogWrite(log, iter.index());
     if (done) {  // in leader
       dynamic_cast<RaftWriteDoneClosure*>(done)->SetStatus(s);
     }
@@ -697,7 +697,7 @@ int Raft::on_snapshot_load(braft::SnapshotReader* reader) {
     2. When a node is improperly shut down and restarted, the minimum flush-index should
        be obtained as the starting point for fault recovery.
     */
-    uint64_t replay_point = PSTORE.GetBackend(db_id_)->GetStorage()->GetSmallestFlushedLogIndex();
+    uint64_t replay_point = STORE_INST.GetBackend(db_id_)->GetStorage()->GetSmallestFlushedLogIndex();
     node_->set_last_applied_index_and_term(replay_point);
     is_node_first_start_up_ = false;
     INFO("set replay_point: {}", replay_point);
@@ -716,7 +716,7 @@ int Raft::on_snapshot_load(braft::SnapshotReader* reader) {
   auto reader_path = reader->get_path();                  // xx/snapshot_0000001
   auto path = g_config.db_path + std::to_string(db_id_);  // db/db_id
   TasksVector tasks(1, {TaskType::kLoadDBFromCheckpoint, db_id_, {{TaskArg::kCheckpointPath, reader_path}}, true});
-  PSTORE.HandleTaskSpecificDB(tasks);
+  STORE_INST.HandleTaskSpecificDB(tasks);
   INFO("load snapshot success!");
   return 0;
 }

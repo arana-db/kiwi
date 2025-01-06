@@ -76,12 +76,12 @@ braft::FileAdaptor* PosixFileSystemAdaptor::open(const std::string& path, int of
       snapshot_meta_memtable.load_from_file(fs, meta_path);
 
       TasksVector tasks(1, {TaskType::kCheckpoint, 0, {{TaskArg::kCheckpointPath, snapshot_path}}, true});
-      PSTORE.HandleTaskSpecificDB(tasks);
+      STORE_INST.HandleTaskSpecificDB(tasks);
       AddAllFiles(snapshot_path, &snapshot_meta_memtable, snapshot_path);
 
       // update snapshot last log index and last_log_term
       auto& new_meta = const_cast<braft::SnapshotMeta&>(snapshot_meta_memtable.meta());
-      auto last_log_index = PSTORE.GetBackend(db_id)->GetStorage()->GetSmallestFlushedLogIndex();
+      auto last_log_index = STORE_INST.GetBackend(db_id)->GetStorage()->GetSmallestFlushedLogIndex();
       new_meta.set_last_included_index(last_log_index);
       auto last_log_term = RAFT_INST.GetTerm(last_log_index);
       new_meta.set_last_included_term(last_log_term);

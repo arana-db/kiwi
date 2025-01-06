@@ -59,11 +59,11 @@ void BaseCmd::Execute(PClient* client) {
 
   auto dbIndex = client->GetCurrentDB();
   if (!HasFlag(kCmdFlagsExclusive)) {
-    PSTORE.GetBackend(dbIndex)->LockShared();
+    STORE_INST.GetBackend(dbIndex)->LockShared();
   }
   DEFER {
     if (!HasFlag(kCmdFlagsExclusive)) {
-      PSTORE.GetBackend(dbIndex)->UnLockShared();
+      STORE_INST.GetBackend(dbIndex)->UnLockShared();
     }
   };
 

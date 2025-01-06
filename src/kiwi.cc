@@ -187,7 +187,7 @@ bool KiwiDB::Init() {
     return false;
   }
 
-  PSTORE.Init(g_config.databases);
+  STORE_INST.Init(g_config.databases);
 
   PSlowLog::Instance().SetThreshold(g_config.slow_log_time);
   PSlowLog::Instance().SetLogLimit(static_cast<std::size_t>(g_config.slow_log_max_len));

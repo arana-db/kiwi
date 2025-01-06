@@ -293,7 +293,7 @@ void PReplication::SaveTmpRdb(const char* data, std::size_t& len) {
   //  if (masterInfo_.rdbRecved == masterInfo_.rdbSize) {
   //    INFO("Rdb recv complete, bytes {}", masterInfo_.rdbSize);
   //
-  //    //PSTORE.ResetDB();
+  //    //STORE_INST.ResetDB();
   //
   //    PDBLoader loader;
   //    loader.Load(slaveRdbFile);
