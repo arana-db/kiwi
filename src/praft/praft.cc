@@ -698,7 +698,7 @@ int PRaft::on_snapshot_load(braft::SnapshotReader* reader) {
        be obtained as the starting point for fault recovery.
     */
     uint64_t replay_point = PSTORE.GetBackend(db_id_)->GetStorage()->GetSmallestFlushedLogIndex();
-    node_->set_self_playback_point(replay_point);
+    node_->set_last_applied_index_and_term(replay_point);
     is_node_first_start_up_ = false;
     INFO("set replay_point: {}", replay_point);
 
