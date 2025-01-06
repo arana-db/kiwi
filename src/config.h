@@ -151,15 +151,13 @@ using ConfigMap = std::unordered_map<std::string, ValuePrt>;
 class Config {
  public:
   /* Some important, globally relevant public interfaces. */
-
   /*------------------------
    * PConfig()
    * Initialize kiwi's config & RocksDB's config.
    */
-  static Config& GetInstance() {
-    static Config instance;
-    return instance;
-  }
+  Config();
+  /*------------------------
+   * ~PConfig()    * Destroy a kiwi's config instance.    */
   Config(const Config&) = delete;
   Config& operator=(const Config&) = delete;
 
