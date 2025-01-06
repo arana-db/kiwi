@@ -24,8 +24,9 @@ bool SIsMemberCmd::DoInitial(PClient* client) {
 }
 void SIsMemberCmd::DoCmd(PClient* client) {
   int32_t reply_Num = 0;  // only change to 1 if ismember . key not exist it is 0
-  auto s =
-      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SIsmember(client->Key(), client->argv_[2], &reply_Num);
+  auto s = STORE_INST.GetBackend(client->GetCurrentDB())
+               ->GetStorage()
+               ->SIsmember(client->Key(), client->argv_[2], &reply_Num);
   if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
     return;
@@ -245,8 +246,9 @@ bool SRandMemberCmd::DoInitial(PClient* client) {
 
 void SRandMemberCmd::DoCmd(PClient* client) {
   std::vector<std::string> vec_ret;
-  storage::Status s =
-      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SRandmember(client->argv_[1], this->num_rand, &vec_ret);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
+                          ->GetStorage()
+                          ->SRandmember(client->argv_[1], this->num_rand, &vec_ret);
   if (s.ok()) {
     if (client->argv_.size() == 3) {
       client->AppendStringVector(vec_ret);
@@ -326,7 +328,8 @@ bool SMembersCmd::DoInitial(PClient* client) {
 
 void SMembersCmd::DoCmd(PClient* client) {
   std::vector<std::string> delete_members;
-  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SMembers(client->Key(), &delete_members);
+  storage::Status s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SMembers(client->Key(), &delete_members);
   if (!s.ok()) {
     if (s.IsInvalidArgument()) {
       client->SetRes(CmdRes::kMultiKey);

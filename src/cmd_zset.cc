@@ -673,7 +673,9 @@ void ZRangeCmd::DoCmd(PClient* client) {
               ->GetStorage()
               ->ZRangebylex(client->Key(), lex_min, lex_max, left_close, right_close, &lex_members);
     } else {
-      s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZRange(client->Key(), start, stop, &score_members);
+      s = STORE_INST.GetBackend(client->GetCurrentDB())
+              ->GetStorage()
+              ->ZRange(client->Key(), start, stop, &score_members);
     }
   } else {
     if (by_score) {
@@ -934,7 +936,8 @@ void ZRemCmd::DoCmd(PClient* client) {
   auto iter = client->argv_.begin() + 2;
   std::vector<std::string> members(iter, client->argv_.end());
   int32_t deleted = 0;
-  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZRem(client->Key(), members, &deleted);
+  storage::Status s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZRem(client->Key(), members, &deleted);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(deleted);
   } else if (s.IsInvalidArgument()) {

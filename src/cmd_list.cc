@@ -71,7 +71,8 @@ bool RPoplpushCmd::DoInitial(PClient* client) {
 
 void RPoplpushCmd::DoCmd(PClient* client) {
   std::string value;
-  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPoplpush(source_, receiver_, &value);
+  storage::Status s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPoplpush(source_, receiver_, &value);
   if (s.ok()) {
     client->AppendString(value);
   } else if (s.IsNotFound()) {
@@ -217,8 +218,9 @@ void LRemCmd::DoCmd(PClient* client) {
   }
 
   uint64_t reply_num = 0;
-  storage::Status s =
-      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LRem(client->Key(), freq_, client->argv_[3], &reply_num);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
+                          ->GetStorage()
+                          ->LRem(client->Key(), freq_, client->argv_[3], &reply_num);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(reply_num);
   } else if (s.IsInvalidArgument()) {

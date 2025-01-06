@@ -30,7 +30,8 @@ bool GetCmd::DoInitial(PClient* client) {
 void GetCmd::DoCmd(PClient* client) {
   PString value;
   int64_t ttl = -1;
-  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->GetWithTTL(client->Key(), &value, &ttl);
+  storage::Status s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->GetWithTTL(client->Key(), &value, &ttl);
   if (s.ok()) {
     client->AppendString(value);
   } else if (s.IsNotFound()) {
@@ -572,7 +573,8 @@ void GetBitCmd::DoCmd(PClient* client) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->GetBit(client->Key(), offset, &bit_val);
+  storage::Status s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->GetBit(client->Key(), offset, &bit_val);
   if (s.ok()) {
     client->AppendInteger(bit_val);
   } else if (s.IsInvalidArgument()) {
@@ -686,8 +688,9 @@ void SetRangeCmd::DoCmd(PClient* client) {
     return;
   }
   int32_t ret = 0;
-  storage::Status s =
-      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Setrange(client->Key(), offset, client->argv_[3], &ret);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
+                          ->GetStorage()
+                          ->Setrange(client->Key(), offset, client->argv_[3], &ret);
   if (!s.ok()) {
     if (s.IsInvalidArgument()) {
       client->SetRes(CmdRes::kMultiKey);

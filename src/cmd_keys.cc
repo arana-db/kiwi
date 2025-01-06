@@ -208,7 +208,8 @@ bool KeysCmd::DoInitial(PClient* client) {
 
 void KeysCmd::DoCmd(PClient* client) {
   std::vector<std::string> keys;
-  auto s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Keys(storage::DataType::kAll, client->Key(), &keys);
+  auto s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Keys(storage::DataType::kAll, client->Key(), &keys);
   if (s.ok()) {
     client->AppendArrayLen(keys.size());
     for (const auto& k : keys) {
@@ -247,7 +248,8 @@ bool RenameCmd::DoInitial(PClient* client) {
 }
 
 void RenameCmd::DoCmd(PClient* client) {
-  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Rename(client->Key(), client->argv_[2]);
+  storage::Status s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Rename(client->Key(), client->argv_[2]);
   if (s.ok()) {
     client->SetRes(CmdRes::kOK);
   } else if (s.IsNotFound()) {
