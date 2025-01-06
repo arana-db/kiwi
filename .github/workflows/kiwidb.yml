@@ -19,6 +19,20 @@ jobs:
       - name: Build
         run: bash ./etc/script/ci/build.sh
 
+      - name: Add LLVM apt repository
+        run: |
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-13 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+
+      - name: Install clang-format-16
+        run: |
+          sudo apt-get install -y clang-format-16
+          sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-16 100
+
+      - name: Verify clang-format version
+        run: clang-format --version
+
       - name: Check Format
         working-directory: ${{ github.workspace }}/build
         run: make check-format
