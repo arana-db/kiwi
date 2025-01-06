@@ -225,8 +225,7 @@ void PReplication::Cron() {
         } else if (master->GetAuth()) {
           // send replconf
           char req[128];
-          auto len =
-              snprintf(req, sizeof req - 1, "replconf listening-port %hu\r\n", kiwi::Config::GetInstance().port);
+          auto len = snprintf(req, sizeof req - 1, "replconf listening-port %hu\r\n", kiwi::Config::GetInstance().port);
           std::string info(req, len);
           master->SendPacket(std::move(info));
           masterInfo_.state = kPReplStateWaitReplconf;

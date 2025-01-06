@@ -682,4 +682,4 @@ Status NewRandomRWFile(const std::string& fname, std::unique_ptr<RandomRWFile>& 
   return s;
 }
 
-}  // namespace std
+}  // namespace kstd

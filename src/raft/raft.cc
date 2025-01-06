@@ -713,7 +713,7 @@ int Raft::on_snapshot_load(braft::SnapshotReader* reader) {
   }
 
   // 3. When a snapshot is installed on a node, you do not need to set a playback point.
-  auto reader_path = reader->get_path();                                      // xx/snapshot_0000001
+  auto reader_path = reader->get_path();                                     // xx/snapshot_0000001
   auto path = kiwi::Config::GetInstance().db_path + std::to_string(db_id_);  // db/db_id
   TasksVector tasks(1, {TaskType::kLoadDBFromCheckpoint, db_id_, {{TaskArg::kCheckpointPath, reader_path}}, true});
   PSTORE.HandleTaskSpecificDB(tasks);

@@ -86,6 +86,7 @@ class RaftWriteDoneClosure : public braft::Closure {
     delete this;
   }
   void SetStatus(rocksdb::Status status) { result_ = std::move(status); }
+
  private:
   std::promise<rocksdb::Status> promise_;
   rocksdb::Status result_{rocksdb::Status::Aborted("Unknown error")};

@@ -31,8 +31,7 @@ rocksdb::Status DB::Open() {
   storage_options.options.periodic_compaction_seconds = kiwi::Config::GetInstance().rocksdb_periodic_second;
 
   storage_options.small_compaction_threshold = kiwi::Config::GetInstance().small_compaction_threshold;
-  storage_options.small_compaction_duration_threshold =
-      kiwi::Config::GetInstance().small_compaction_duration_threshold;
+  storage_options.small_compaction_duration_threshold = kiwi::Config::GetInstance().small_compaction_duration_threshold;
 
   if (kiwi::Config::GetInstance().use_raft) {
     storage_options.append_log_function = [&r = RAFT_INST](const Binlog& log, std::promise<rocksdb::Status>&& promise) {

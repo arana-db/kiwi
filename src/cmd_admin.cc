@@ -31,9 +31,9 @@
 
 #include "braft/raft.h"
 #include "log.h"
-#include "std_string.h"
 #include "resp_encode.h"
 #include "rocksdb/version.h"
+#include "std_string.h"
 
 #include "kiwi.h"
 #include "raft/raft.h"

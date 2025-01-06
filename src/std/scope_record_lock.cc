@@ -76,4 +76,4 @@ void MultiRecordLock::Unlock(const std::vector<std::string>& keys) {
     }
   }
 }
-}  // namespace std::lock
+}  // namespace kstd::lock
