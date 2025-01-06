@@ -98,7 +98,7 @@ void PReplication::TryBgsave() {
   //  if (ret == 0) {
   //    {
   //      PDBSaver qdb;
-  //      qdb.Save(kiwi::Config::GetInstance().rdbfullname.c_str());
+  //      qdb.Save(g_config.rdbfullname.c_str());
   //      DEBUG("PReplication save rdb done, exiting child");
   //    }
   //    _exit(0);
@@ -177,8 +177,7 @@ void PReplication::Cron() {
   if (masterInfo_.addr.IsValid()) {
     switch (masterInfo_.state) {
       case kPReplStateNone: {
-        if (masterInfo_.addr.GetIP() == kiwi::Config::GetInstance().ip &&
-            masterInfo_.addr.GetPort() == kiwi::Config::GetInstance().port) {
+        if (masterInfo_.addr.GetIP() == g_config.ip && masterInfo_.addr.GetPort() == g_config.port) {
           ERROR("Fix config, master addr is self addr!");
           assert(!!!"wrong config for master addr");
         }
@@ -225,13 +224,12 @@ void PReplication::Cron() {
         } else if (master->GetAuth()) {
           // send replconf
           char req[128];
-          auto len =
-              snprintf(req, sizeof req - 1, "replconf listening-port %hu\r\n", kiwi::Config::GetInstance().port);
+          auto len = snprintf(req, sizeof req - 1, "replconf listening-port %hu\r\n", g_config.port);
           std::string info(req, len);
           master->SendPacket(std::move(info));
           masterInfo_.state = kPReplStateWaitReplconf;
 
-          INFO("Send replconf listening-port {}", kiwi::Config::GetInstance().port);
+          INFO("Send replconf listening-port {}", g_config.port);
         } else {
           WARN("Haven't auth to master yet, or check masterauth password");
         }
@@ -295,7 +293,7 @@ void PReplication::SaveTmpRdb(const char* data, std::size_t& len) {
   //  if (masterInfo_.rdbRecved == masterInfo_.rdbSize) {
   //    INFO("Rdb recv complete, bytes {}", masterInfo_.rdbSize);
   //
-  //    //PSTORE.ResetDB();
+  //    //STORE_INST.ResetDB();
   //
   //    PDBLoader loader;
   //    loader.Load(slaveRdbFile);

@@ -42,7 +42,7 @@ void BaseCmd::Execute(PClient* client) {
   DEBUG("execute command: {}", client->CmdName());
 
   // read consistency (lease read) / write redirection
-  if (kiwi::Config::GetInstance().use_raft && (HasFlag(kCmdFlagsReadonly) || HasFlag(kCmdFlagsWrite))) {
+  if (g_config.use_raft && (HasFlag(kCmdFlagsReadonly) || HasFlag(kCmdFlagsWrite))) {
     if (!RAFT_INST.IsInitialized()) {
       return client->SetRes(CmdRes::kErrOther, "RAFT_INST is not initialized");
     }
@@ -59,11 +59,11 @@ void BaseCmd::Execute(PClient* client) {
 
   auto dbIndex = client->GetCurrentDB();
   if (!HasFlag(kCmdFlagsExclusive)) {
-    PSTORE.GetBackend(dbIndex)->LockShared();
+    STORE_INST.GetBackend(dbIndex)->LockShared();
   }
   DEFER {
     if (!HasFlag(kCmdFlagsExclusive)) {
-      PSTORE.GetBackend(dbIndex)->UnLockShared();
+      STORE_INST.GetBackend(dbIndex)->UnLockShared();
     }
   };
 

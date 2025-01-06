@@ -30,7 +30,7 @@ bool GetCmd::DoInitial(PClient* client) {
 void GetCmd::DoCmd(PClient* client) {
   PString value;
   int64_t ttl = -1;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->GetWithTTL(client->Key(), &value, &ttl);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->GetWithTTL(client->Key(), &value, &ttl);
   if (s.ok()) {
     client->AppendString(value);
   } else if (s.IsNotFound()) {
@@ -92,16 +92,16 @@ void SetCmd::DoCmd(PClient* client) {
   auto key_ = client->Key();
   switch (condition_) {
     case SetCmd::kXX:
-      s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setxx(key_, value_, &res, sec_);
+      s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Setxx(key_, value_, &res, sec_);
       break;
     case SetCmd::kNX:
-      s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setnx(key_, value_, &res, sec_);
+      s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Setnx(key_, value_, &res, sec_);
       break;
     case SetCmd::kEXORPX:
-      s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setex(key_, value_, sec_);
+      s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Setex(key_, value_, sec_);
       break;
     default:
-      s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Set(key_, value_);
+      s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Set(key_, value_);
       break;
   }
 
@@ -129,7 +129,7 @@ bool AppendCmd::DoInitial(PClient* client) {
 void AppendCmd::DoCmd(PClient* client) {
   int32_t new_len = 0;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Append(client->Key(), client->argv_[2], &new_len);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Append(client->Key(), client->argv_[2], &new_len);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(new_len);
   } else {
@@ -148,7 +148,7 @@ bool GetSetCmd::DoInitial(PClient* client) {
 void GetSetCmd::DoCmd(PClient* client) {
   std::string old_value;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->GetSet(client->Key(), client->argv_[2], &old_value);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->GetSet(client->Key(), client->argv_[2], &old_value);
   if (s.ok()) {
     if (old_value.empty()) {
       client->AppendString("");
@@ -173,7 +173,7 @@ bool MGetCmd::DoInitial(PClient* client) {
 void MGetCmd::DoCmd(PClient* client) {
   std::vector<storage::ValueStatus> db_value_status_array;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->MGet(client->Keys(), &db_value_status_array);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->MGet(client->Keys(), &db_value_status_array);
   if (s.ok()) {
     client->AppendArrayLen(db_value_status_array.size());
     for (const auto& vs : db_value_status_array) {
@@ -210,7 +210,7 @@ void MSetCmd::DoCmd(PClient* client) {
   for (size_t index = 1; index != client->argv_.size(); index += 2) {
     kvs.push_back({client->argv_[index], client->argv_[index + 1]});
   }
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->MSet(kvs);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->MSet(kvs);
   if (s.ok()) {
     client->SetRes(CmdRes::kOK);
   } else {
@@ -235,7 +235,7 @@ void BitCountCmd::DoCmd(PClient* client) {
   storage::Status s;
   int32_t count = 0;
   if (client->argv_.size() == 2) {
-    s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->BitCount(client->Key(), 0, 0, &count, false);
+    s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->BitCount(client->Key(), 0, 0, &count, false);
   } else {
     int64_t start_offset = 0;
     int64_t end_offset = 0;
@@ -245,7 +245,7 @@ void BitCountCmd::DoCmd(PClient* client) {
       return;
     }
 
-    s = PSTORE.GetBackend(client->GetCurrentDB())
+    s = STORE_INST.GetBackend(client->GetCurrentDB())
             ->GetStorage()
             ->BitCount(client->Key(), start_offset, end_offset, &count, true);
   }
@@ -269,7 +269,7 @@ bool DecrCmd::DoInitial(kiwi::PClient* client) {
 
 void DecrCmd::DoCmd(kiwi::PClient* client) {
   int64_t ret = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Decrby(client->Key(), 1, &ret);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Decrby(client->Key(), 1, &ret);
   if (s.ok()) {
     client->AppendInteger(ret);
   } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a integer") {
@@ -291,7 +291,7 @@ bool IncrCmd::DoInitial(kiwi::PClient* client) {
 
 void IncrCmd::DoCmd(kiwi::PClient* client) {
   int64_t ret = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Incrby(client->Key(), 1, &ret);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Incrby(client->Key(), 1, &ret);
   if (s.ok()) {
     client->AppendInteger(ret);
   } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a integer") {
@@ -350,7 +350,7 @@ void BitOpCmd::DoCmd(PClient* client) {
   } else {
     PString value;
     int64_t result_length = 0;
-    storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+    storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                             ->GetStorage()
                             ->BitOp(op, client->argv_[2], keys, value, &result_length);
     if (s.ok()) {
@@ -373,7 +373,7 @@ bool StrlenCmd::DoInitial(PClient* client) {
 
 void StrlenCmd::DoCmd(PClient* client) {
   int32_t len = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Strlen(client->Key(), &len);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Strlen(client->Key(), &len);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(len);
   } else if (s.IsInvalidArgument()) {
@@ -400,7 +400,7 @@ void SetExCmd::DoCmd(PClient* client) {
   int64_t sec = 0;
   kstd::String2int(client->argv_[2], &sec);
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setex(client->Key(), client->argv_[3], sec);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Setex(client->Key(), client->argv_[3], sec);
   if (s.ok()) {
     client->SetRes(CmdRes::kOK);
   } else if (s.IsInvalidArgument()) {
@@ -426,7 +426,7 @@ bool PSetExCmd::DoInitial(PClient* client) {
 void PSetExCmd::DoCmd(PClient* client) {
   int64_t msec = 0;
   kstd::String2int(client->argv_[2], &msec);
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->Setex(client->Key(), client->argv_[3], static_cast<int32_t>(msec / 1000));
   if (s.ok()) {
@@ -455,7 +455,7 @@ void IncrbyCmd::DoCmd(PClient* client) {
   int64_t ret = 0;
   int64_t by = 0;
   kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &by);
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Incrby(client->Key(), by, &ret);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Incrby(client->Key(), by, &ret);
   if (s.ok()) {
     client->AppendInteger(ret);
   } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a integer") {
@@ -490,7 +490,7 @@ void DecrbyCmd::DoCmd(PClient* client) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Decrby(client->Key(), by, &ret);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Decrby(client->Key(), by, &ret);
   if (s.ok()) {
     client->AppendInteger(ret);
   } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a integer") {
@@ -521,7 +521,7 @@ bool IncrbyFloatCmd::DoInitial(PClient* client) {
 void IncrbyFloatCmd::DoCmd(PClient* client) {
   PString ret;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Incrbyfloat(client->Key(), client->argv_[2], &ret);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Incrbyfloat(client->Key(), client->argv_[2], &ret);
   if (s.ok()) {
     client->AppendString(ret);
   } else if (s.IsCorruption() && s.ToString() == "Corruption: Value is not a valid float") {
@@ -547,7 +547,7 @@ bool SetNXCmd::DoInitial(PClient* client) {
 void SetNXCmd::DoCmd(PClient* client) {
   int32_t success = 0;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setnx(client->Key(), client->argv_[2], &success);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Setnx(client->Key(), client->argv_[2], &success);
   if (s.ok()) {
     client->AppendInteger(success);
   } else if (s.IsInvalidArgument()) {
@@ -572,7 +572,7 @@ void GetBitCmd::DoCmd(PClient* client) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->GetBit(client->Key(), offset, &bit_val);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->GetBit(client->Key(), offset, &bit_val);
   if (s.ok()) {
     client->AppendInteger(bit_val);
   } else if (s.IsInvalidArgument()) {
@@ -605,7 +605,7 @@ void GetRangeCmd::DoCmd(PClient* client) {
   int64_t end = 0;
   kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &start);
   kstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &end);
-  auto s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Getrange(client->Key(), start, end, &ret);
+  auto s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Getrange(client->Key(), start, end, &ret);
   if (!s.ok()) {
     if (s.IsNotFound()) {
       client->AppendString("");
@@ -651,7 +651,7 @@ void SetBitCmd::DoCmd(PClient* client) {
 
   PString value;
   int32_t bit_val = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->SetBit(client->Key(), offset, static_cast<int32_t>(on), &bit_val);
   if (s.ok()) {
@@ -680,14 +680,14 @@ void SetRangeCmd::DoCmd(PClient* client) {
     return;
   }
   // Ref: https://redis.io/docs/latest/commands/setrange/
-  if (kiwi::Config::GetInstance().redis_compatible_mode && std::atoi(client->argv_[2].c_str()) > 536870911) {
+  if (g_config.redis_compatible_mode && std::atoi(client->argv_[2].c_str()) > 536870911) {
     client->SetRes(CmdRes::kErrOther,
                    "When Redis compatibility mode is enabled, the offset parameter must not exceed 536870911");
     return;
   }
   int32_t ret = 0;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Setrange(client->Key(), offset, client->argv_[3], &ret);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Setrange(client->Key(), offset, client->argv_[3], &ret);
   if (!s.ok()) {
     if (s.IsInvalidArgument()) {
       client->SetRes(CmdRes::kMultiKey);
@@ -722,7 +722,7 @@ void MSetnxCmd::DoCmd(PClient* client) {
   for (size_t index = 1; index != client->argv_.size(); index += 2) {
     kvs.push_back({client->argv_[index], client->argv_[index + 1]});
   }
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->MSetnx(kvs, &success);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->MSetnx(kvs, &success);
   if (s.ok()) {
     client->AppendInteger(success);
   } else if (s.IsInvalidArgument()) {
