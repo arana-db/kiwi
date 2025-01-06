@@ -42,7 +42,7 @@ void BaseCmd::Execute(PClient* client) {
   DEBUG("execute command: {}", client->CmdName());
 
   // read consistency (lease read) / write redirection
-  if (kiwi::Config::GetInstance().use_raft && (HasFlag(kCmdFlagsReadonly) || HasFlag(kCmdFlagsWrite))) {
+  if (g_config.use_raft && (HasFlag(kCmdFlagsReadonly) || HasFlag(kCmdFlagsWrite))) {
     if (!RAFT_INST.IsInitialized()) {
       return client->SetRes(CmdRes::kErrOther, "RAFT_INST is not initialized");
     }
