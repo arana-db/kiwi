@@ -34,6 +34,7 @@ jobs:
         run: |
           clang-format --version
           ls -l /usr/bin/clang-format*
+          update-alternatives --display clang-format
 
       - name: Check Format
         working-directory: ${{ github.workspace }}/build
