@@ -31,6 +31,8 @@ using Status = rocksdb::Status;
 using CheckFunc = std::function<Status(const std::string&)>;
 class Config;
 
+extern Config g_config;
+
 class BaseValue {
  public:
   BaseValue(std::string key, CheckFunc check_func_ptr, bool rewritable = false)
@@ -495,6 +497,5 @@ class Config {
 
   // The file name of the config
   std::string config_file_name_;
-  Config();
 };
 }  // namespace kiwi
