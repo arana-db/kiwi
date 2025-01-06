@@ -32,10 +32,7 @@ jobs:
           sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-14 50
 
       - name: Verify clang-format version
-        run: |
-          clang-format --version
-          ls -l /usr/bin/clang-format*
-          update-alternatives --display clang-format
+        run: clang-format --version
 
       - name: Check Format
         working-directory: ${{ github.workspace }}/build

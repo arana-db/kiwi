@@ -440,8 +440,9 @@ void HIncrbyCmd::DoCmd(PClient* client) {
   }
 
   int64_t temp = 0;
-  storage::Status s =
-      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->HIncrby(client->Key(), client->argv_[2], int_by, &temp);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
+                          ->GetStorage()
+                          ->HIncrby(client->Key(), client->argv_[2], int_by, &temp);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(temp);
   } else if (s.IsInvalidArgument() &&
@@ -490,7 +491,8 @@ void HRandFieldCmd::DoCmd(PClient* client) {
 
   // execute command
   std::vector<std::string> res;
-  auto s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->HRandField(client->Key(), count, with_values, &res);
+  auto s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->HRandField(client->Key(), count, with_values, &res);
   if (s.IsNotFound()) {
     client->AppendString("");
     return;

@@ -718,7 +718,8 @@ void SortCmd::DoCmd(PClient* client) {
     client->AppendStringVector(ret_);
   } else {
     uint64_t reply_num = 0;
-    storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPush(store_key_, ret_, &reply_num);
+    storage::Status s =
+        STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPush(store_key_, ret_, &reply_num);
     if (s.ok()) {
       client->AppendInteger(reply_num);
     } else {
