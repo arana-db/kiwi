@@ -24,17 +24,17 @@ DB::~DB() { INFO("DB{} is closing...", db_index_); }
 
 rocksdb::Status DB::Open() {
   storage::StorageOptions storage_options;
-  storage_options.options = kiwi::PConfig::GetInstance().GetRocksDBOptions();
-  storage_options.table_options = kiwi::PConfig::GetInstance().GetRocksDBBlockBasedTableOptions();
+  storage_options.options = kiwi::Config::GetInstance().GetRocksDBOptions();
+  storage_options.table_options = kiwi::Config::GetInstance().GetRocksDBBlockBasedTableOptions();
 
-  storage_options.options.ttl = kiwi::PConfig::GetInstance().rocksdb_ttl_second;
-  storage_options.options.periodic_compaction_seconds = kiwi::PConfig::GetInstance().rocksdb_periodic_second;
+  storage_options.options.ttl = kiwi::Config::GetInstance().rocksdb_ttl_second;
+  storage_options.options.periodic_compaction_seconds = kiwi::Config::GetInstance().rocksdb_periodic_second;
 
-  storage_options.small_compaction_threshold = kiwi::PConfig::GetInstance().small_compaction_threshold;
+  storage_options.small_compaction_threshold = kiwi::Config::GetInstance().small_compaction_threshold;
   storage_options.small_compaction_duration_threshold =
-      kiwi::PConfig::GetInstance().small_compaction_duration_threshold;
+      kiwi::Config::GetInstance().small_compaction_duration_threshold;
 
-  if (kiwi::PConfig::GetInstance().use_raft) {
+  if (kiwi::Config::GetInstance().use_raft) {
     storage_options.append_log_function = [&r = RAFT_INST](const Binlog& log, std::promise<rocksdb::Status>&& promise) {
       r.AppendLog(log, std::move(promise));
     };
@@ -44,7 +44,7 @@ rocksdb::Status DB::Open() {
     };
   }
 
-  storage_options.db_instance_num = kiwi::PConfig::GetInstance().db_instance_num;
+  storage_options.db_instance_num = kiwi::Config::GetInstance().db_instance_num;
   storage_options.db_id = db_index_;
 
   std::unique_ptr<storage::Storage> old_storage = std::move(storage_);
@@ -109,14 +109,14 @@ void DB::LoadDBFromCheckpoint(const std::string& checkpoint_path, bool sync [[ma
   }
 
   storage::StorageOptions storage_options;
-  storage_options.options = kiwi::PConfig::GetInstance().GetRocksDBOptions();
-  storage_options.db_instance_num = kiwi::PConfig::GetInstance().db_instance_num;
+  storage_options.options = kiwi::Config::GetInstance().GetRocksDBOptions();
+  storage_options.db_instance_num = kiwi::Config::GetInstance().db_instance_num;
   storage_options.db_id = db_index_;
 
   // options for CF
-  storage_options.options.ttl = kiwi::PConfig::GetInstance().rocksdb_ttl_second;
-  storage_options.options.periodic_compaction_seconds = kiwi::PConfig::GetInstance().rocksdb_periodic_second;
-  if (kiwi::PConfig::GetInstance().use_raft) {
+  storage_options.options.ttl = kiwi::Config::GetInstance().rocksdb_ttl_second;
+  storage_options.options.periodic_compaction_seconds = kiwi::Config::GetInstance().rocksdb_periodic_second;
+  if (kiwi::Config::GetInstance().use_raft) {
     storage_options.append_log_function = [&r = RAFT_INST](const Binlog& log, std::promise<rocksdb::Status>&& promise) {
       r.AppendLog(log, std::move(promise));
     };
@@ -130,7 +130,7 @@ void DB::LoadDBFromCheckpoint(const std::string& checkpoint_path, bool sync [[ma
   }
 
   // in single-mode, kiwi will enable wal
-  if (!kiwi::PConfig::GetInstance().use_raft) {
+  if (!kiwi::Config::GetInstance().use_raft) {
     storage_->DisableWal(false);
   }
 

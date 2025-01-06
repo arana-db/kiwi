@@ -29,7 +29,7 @@ namespace kiwi {
 
 using Status = rocksdb::Status;
 using CheckFunc = std::function<Status(const std::string&)>;
-class PConfig;
+class Config;
 
 class BaseValue {
  public:
@@ -146,7 +146,7 @@ using ConfigMap = std::unordered_map<std::string, ValuePrt>;
  * PConfig holds information about kiwi
  * server-side runtime information.
  */
-class PConfig {
+class Config {
  public:
   /* Some important, globally relevant public interfaces. */
 
@@ -154,18 +154,18 @@ class PConfig {
    * PConfig()
    * Initialize kiwi's config & RocksDB's config.
    */
-  static PConfig& GetInstance() {
-    static PConfig instance;
+  static Config& GetInstance() {
+    static Config instance;
     return instance;
   }
-  PConfig(const PConfig&) = delete;
-  PConfig& operator=(const PConfig&) = delete;
+  Config(const Config&) = delete;
+  Config& operator=(const Config&) = delete;
 
   /*------------------------
    * ~PConfig()
    * Destroy a kiwi's config instance.
    */
-  ~PConfig() = default;
+  ~Config() = default;
 
   /*------------------------
    * LoadFromFile(const std::string& file_name)
@@ -495,6 +495,6 @@ class PConfig {
 
   // The file name of the config
   std::string config_file_name_;
-  PConfig();
+  Config();
 };
 }  // namespace kiwi

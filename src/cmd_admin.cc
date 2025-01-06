@@ -57,7 +57,7 @@ bool CmdConfigGet::DoInitial(PClient* client) { return true; }
 void CmdConfigGet::DoCmd(PClient* client) {
   std::vector<std::string> results;
   for (int i = 0; i < client->argv_.size() - 2; i++) {
-    kiwi::PConfig::GetInstance().Get(client->argv_[i + 2], &results);
+    kiwi::Config::GetInstance().Get(client->argv_[i + 2], &results);
   }
   client->AppendStringVector(results);
 }
@@ -68,7 +68,7 @@ CmdConfigSet::CmdConfigSet(const std::string& name, int16_t arity)
 bool CmdConfigSet::DoInitial(PClient* client) { return true; }
 
 void CmdConfigSet::DoCmd(PClient* client) {
-  auto s = kiwi::PConfig::GetInstance().Set(client->argv_[2], client->argv_[3]);
+  auto s = kiwi::Config::GetInstance().Set(client->argv_[2], client->argv_[3]);
   if (!s.ok()) {
     client->SetRes(CmdRes::kInvalidParameter);
   } else {
@@ -87,7 +87,7 @@ void FlushdbCmd::DoCmd(PClient* client) {
   PSTORE.GetBackend(currentDBIndex).get()->Lock();
   DEFER { PSTORE.GetBackend(currentDBIndex).get()->UnLock(); };
 
-  std::string db_path = kiwi::PConfig::GetInstance().db_path + std::to_string(currentDBIndex);
+  std::string db_path = kiwi::Config::GetInstance().db_path + std::to_string(currentDBIndex);
   std::string path_temp = db_path;
   path_temp.append("_deleting/");
   kstd::RenameFile(db_path, path_temp);
@@ -108,9 +108,9 @@ FlushallCmd::FlushallCmd(const std::string& name, int16_t arity)
 bool FlushallCmd::DoInitial(PClient* client) { return true; }
 
 void FlushallCmd::DoCmd(PClient* client) {
-  for (size_t i = 0; i < kiwi::PConfig::GetInstance().databases; ++i) {
+  for (size_t i = 0; i < kiwi::Config::GetInstance().databases; ++i) {
     PSTORE.GetBackend(i).get()->Lock();
-    std::string db_path = kiwi::PConfig::GetInstance().db_path + std::to_string(i);
+    std::string db_path = kiwi::Config::GetInstance().db_path + std::to_string(i);
     std::string path_temp = db_path;
     path_temp.append("_deleting/");
     kstd::RenameFile(db_path, path_temp);
@@ -134,12 +134,12 @@ void AuthCmd::DoCmd(PClient* client) {
     return;
   }
 
-  if (kiwi::PConfig::GetInstance().password == "") {
+  if (kiwi::Config::GetInstance().password == "") {
     client->SetRes(CmdRes::kErrOther, "Client sent AUTH, but no password is set");
   }
 
   std::string password = client->argv_[1];
-  if (password != kiwi::PConfig::GetInstance().password) {
+  if (password != kiwi::Config::GetInstance().password) {
     client->SetRes(CmdRes::kInvalidPwd);
   } else {
     client->SetAuth();
@@ -154,7 +154,7 @@ bool SelectCmd::DoInitial(PClient* client) { return true; }
 
 void SelectCmd::DoCmd(PClient* client) {
   int index = atoi(client->argv_[1].c_str());
-  if (index < 0 || index >= kiwi::PConfig::GetInstance().databases) {
+  if (index < 0 || index >= kiwi::Config::GetInstance().databases) {
     client->SetRes(CmdRes::kInvalidIndex, kCmdNameSelect + " DB index is out of range");
     return;
   }
@@ -168,7 +168,7 @@ ShutdownCmd::ShutdownCmd(const std::string& name, int16_t arity)
 bool ShutdownCmd::DoInitial(PClient* client) {
   // For now, only shutdown need check local
   if (client->PeerIP().find("127.0.0.1") == std::string::npos &&
-      client->PeerIP().find(kiwi::PConfig::GetInstance().ip) == std::string::npos) {
+      client->PeerIP().find(kiwi::Config::GetInstance().ip) == std::string::npos) {
     client->SetRes(CmdRes::kErrOther, kCmdNameShutdown + " should be localhost");
     return false;
   }
@@ -233,7 +233,7 @@ void HelloCmd::DoCmd(PClient* client) {
       if (client->GetAuth()) {
         continue;
       }
-      if (client->argv_[next_arg + 1] != kiwi::PConfig::GetInstance().password) {
+      if (client->argv_[next_arg + 1] != kiwi::Config::GetInstance().password) {
         client->SetRes(CmdRes::kErrOther, "invalid password");
         return;
       } else {
@@ -269,7 +269,7 @@ void HelloCmd::Hello(PClient* client) {
   client->AppendInteger(static_cast<int64_t>(client->GetUniqueID()));
   client->AppendString("mode");
 
-  if (!kiwi::PConfig::GetInstance().use_raft) {
+  if (!kiwi::Config::GetInstance().use_raft) {
     client->AppendString("standalone");
   } else {
     client->AppendString("cluster");
@@ -453,8 +453,8 @@ void InfoCmd::InfoServer(std::string& info) {
   tmp_stream << "os:" << host_info.sysname << " " << host_info.release << " " << host_info.machine << "\r\n";
   tmp_stream << "arch_bits:" << (reinterpret_cast<char*>(&host_info.machine) + strlen(host_info.machine) - 2) << "\r\n";
   tmp_stream << "process_id:" << getpid() << "\r\n";
-  tmp_stream << "run_id:" << static_cast<std::string>(kiwi::PConfig::GetInstance().run_id) << "\r\n";
-  tmp_stream << "tcp_port:" << kiwi::PConfig::GetInstance().port << "\r\n";
+  tmp_stream << "run_id:" << static_cast<std::string>(kiwi::Config::GetInstance().run_id) << "\r\n";
+  tmp_stream << "tcp_port:" << kiwi::Config::GetInstance().port << "\r\n";
   tmp_stream << "uptime_in_seconds:" << (current_time_s - g_kiwi->GetStartTime()) << "\r\n";
   tmp_stream << "uptime_in_days:" << (current_time_s / (24 * 3600) - g_kiwi->GetStartTime() / (24 * 3600) + 1)
              << "\r\n";
@@ -497,8 +497,8 @@ void InfoCmd::InfoCPU(std::string& info) {
 }
 
 void InfoCmd::InfoData(std::string& message) {
-  message += DATABASES_NUM + std::string(":") + std::to_string(kiwi::PConfig::GetInstance().databases) + "\r\n";
-  message += ROCKSDB_NUM + std::string(":") + std::to_string(kiwi::PConfig::GetInstance().db_instance_num) + "\r\n";
+  message += DATABASES_NUM + std::string(":") + std::to_string(kiwi::Config::GetInstance().databases) + "\r\n";
+  message += ROCKSDB_NUM + std::string(":") + std::to_string(kiwi::Config::GetInstance().db_instance_num) + "\r\n";
   message += ROCKSDB_VERSION + std::string(":") + ROCKSDB_NAMESPACE::GetRocksVersionAsString() + "\r\n";
 }
 
