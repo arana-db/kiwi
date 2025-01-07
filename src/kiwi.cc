@@ -125,7 +125,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
         unsigned int optarg_long = static_cast<unsigned int>(strlen(optarg));
         char* str = (char*)calloc(optarg_long, sizeof(char*));
         if (str) {
-          if (sscanf(optarg, "%s:%d", str, &master_port_) != 2) {
+          if (sscanf(optarg, "%s:%hu", str, &master_port_) != 2) {
             ERROR("Invalid slaveof format.");
             free(str);
             return false;
