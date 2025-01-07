@@ -45,8 +45,6 @@ bool InputMemoryFile::Open(const char* file) {
   file_ = ::open(file, O_RDONLY);
 
   if (file_ == kInvalidFile) {
-    char err[128];
-    snprintf(err, sizeof(err - 1), "OpenForRead %s failed\n", file);
     return false;
   }
 
@@ -122,14 +120,14 @@ bool OutputMemoryFile::Open(const char* file, bool bAppend) {
     offset_ = 0;
   }
 
-  ::ftruncate(file_, size_);
+  std::ignore = ::ftruncate(file_, size_);
   return MapWriteOnly();
 }
 
 void OutputMemoryFile::Close() {
   if (file_ != kInvalidFile) {
     ::munmap(pMemory_, size_);
-    ::ftruncate(file_, offset_);
+    std::ignore = ::ftruncate(file_, offset_);
     ::close(file_);
 
     file_ = kInvalidFile;
@@ -170,7 +168,7 @@ void OutputMemoryFile::Truncate(std::size_t size) {
   }
 
   size_ = size;
-  ::ftruncate(file_, size);
+  std::ignore = ::ftruncate(file_, size);
 
   if (offset_ > size_) {
     offset_ = size_;

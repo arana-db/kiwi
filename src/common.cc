@@ -84,9 +84,7 @@ size_t FormatBulk(const char* str, size_t len, UnboundedBuffer* reply) {
   }
 
   size_t oldSize = reply->ReadableSize();
-  reply->PushData("$");
-
-  reply->PushData(fmt::format("{}{}", len, CRLF));
+  reply->PushData(fmt::format("${}{}", len, CRLF));
   if (str && len > 0) {
     reply->PushData(str, len);
   }
@@ -104,8 +102,7 @@ size_t PreFormatMultiBulk(size_t nBulk, UnboundedBuffer* reply) {
   }
 
   size_t oldSize = reply->ReadableSize();
-  reply->PushData("*");
-  reply->PushData(fmt::format("{}{}", nBulk, CRLF));
+  reply->PushData(fmt::format("*{}{}", nBulk, CRLF));
 
   return reply->ReadableSize() - oldSize;
 }

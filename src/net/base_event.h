@@ -74,7 +74,7 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
     bool run = true;
     if (running_.compare_exchange_strong(run, false)) {
       char signal_byte = 'X';
-      ::write(pipeFd_[1], &signal_byte, sizeof(signal_byte));  // send signal to pipe，end poll loop
+      std::ignore = ::write(pipeFd_[1], &signal_byte, sizeof(signal_byte));  // send signal to pipe，end poll loop
       close(EvFd());
     }
   }
