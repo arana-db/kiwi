@@ -9,9 +9,11 @@
 
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <variant>
 #include "base_cmd.h"
+#include "client.h"
 #include "config.h"
 
 const std::vector<std::string> debugHelps = {"DEBUG <subcommand> [<arg> [value] [opt] ...]. Subcommands are:",
@@ -135,7 +137,7 @@ class CmdClientId : public BaseCmd {
 
 class CmdClientList : public BaseCmd {
  private:
-  enum class Type { DEFAULT, IDLE, ADDR, ID } list_type_;
+  enum class Type : std::int8_t { DEFAULT, IDLE, ADDR, ID } list_type_;
   std::string info_;
 
  public:
@@ -150,10 +152,21 @@ class CmdClientList : public BaseCmd {
 
 class CmdClientKill : public BaseCmd {
  private:
-  enum class Type { ALL, ADDR, ID } kill_type_;
+  enum class Type : std::int8_t { ALL, ADDR, ID } kill_type_;
 
  public:
   CmdClientKill(const std::string& name, int16_t arity);
+
+ protected:
+  bool DoInitial(PClient* client) override;
+
+ private:
+  void DoCmd(PClient* client) override;
+};
+
+class AuthCmd : public BaseCmd {
+ public:
+  AuthCmd(const std::string& name, int16_t arity);
 
  protected:
   bool DoInitial(PClient* client) override;
@@ -195,6 +208,33 @@ class PingCmd : public BaseCmd {
   void DoCmd(PClient* client) override;
 };
 
+class HelloCmd : public BaseCmd {
+ public:
+  HelloCmd(const std::string& name, int16_t arity);
+
+ protected:
+  bool DoInitial(PClient* client) override;
+
+ private:
+  void DoCmd(PClient* client) override;
+
+  void Hello(PClient* client);
+
+ private:
+  bool authed_ = true;
+};
+
+class EchoCmd : public BaseCmd {
+ public:
+  EchoCmd(const std::string& name, int16_t arity);
+
+ protected:
+  bool DoInitial(PClient* client) override;
+
+ private:
+  void DoCmd(PClient* client) override;
+};
+
 class InfoCmd : public BaseCmd {
  public:
   InfoCmd(const std::string& name, int16_t arity);
@@ -205,7 +245,7 @@ class InfoCmd : public BaseCmd {
  private:
   void DoCmd(PClient* client) override;
 
-  enum InfoSection {
+  enum InfoSection : std::uint8_t {
     kInfoErr = 0x0,
     kInfoServer,
     kInfoStats,

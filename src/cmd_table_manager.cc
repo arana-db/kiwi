@@ -57,6 +57,7 @@ void CmdTableManager::InitCmdTable() {
   ADD_SUBCOMMAND(Config, Get, -3);
   ADD_SUBCOMMAND(Config, Set, -4);
   ADD_COMMAND(Ping, 0);
+  ADD_COMMAND(Echo, 2);
   ADD_COMMAND_GROUP(Debug, -2);
   ADD_SUBCOMMAND(Debug, Help, 2);
   ADD_SUBCOMMAND(Debug, OOM, 2);
@@ -74,8 +75,12 @@ void CmdTableManager::InitCmdTable() {
   // server
   ADD_COMMAND(Flushdb, 1);
   ADD_COMMAND(Flushall, 1);
+  ADD_COMMAND(Auth, -2);
   ADD_COMMAND(Select, 2);
   ADD_COMMAND(Shutdown, 1);
+
+  // hello
+  ADD_COMMAND(Hello, -1);
 
   // info
   ADD_COMMAND(Info, -1);

@@ -54,8 +54,29 @@ jobs:
 
       - name: Build
         run: |
+          brew update
+          brew install ccache
           brew install autoconf
           brew install go
+
+      - name: Configure ccache
+        run: |
+          ccache --set-config=cache_dir=$HOME/.ccache
+          ccache --max-size=10G
+
+      - name: Restore ccache
+        uses: actions/cache@v3
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.cpp','**/*.cc','**/*.c', '**/*.h') }}-clang
+          restore-keys: |
+            ${{ runner.os }}-ccache-
+            ccache-
+
+      - name: Build
+        run: |
+          export LIBRARY_PATH=$(xcrun --show-sdk-path)/usr/lib
+          export DYLD_LIBRARY_PATH=$(xcrun --show-sdk-path)/usr/lib
           bash ./etc/script/build.sh --verbose
 
       - name: Save ccache stats
@@ -132,5 +153,5 @@ jobs:
           set +e
           cd ../tests
           go mod tidy
-          go test -timeout 15m --ginkgo.v
+          go test -timeout 15m --ginkgo.v || exit 1
           sh print_log.sh
