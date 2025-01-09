@@ -170,30 +170,9 @@ int PClient::HandlePacket(std::string&& data) {
     }
   }
 
-  // check transaction
-  if (IsFlagOn(kClientFlagMulti)) {
-    if (cmdName_ != kCmdNameMulti && cmdName_ != kCmdNameExec && cmdName_ != kCmdNameWatch &&
-        cmdName_ != kCmdNameUnWatch && cmdName_ != kCmdNameDiscard) {
-      auto [cmdPtr, ret] = cmd_table_manager_.GetCommand(cmdName_, this);
-      if (!cmdPtr->CheckArg(ParamsSize())) {
-        ERROR("queue failed: cmd {} has params {}", cmdName_, params.size());
-        FlagExecWrong();
-      } else {
-        if (!IsFlagOn(kClientFlagWrongExec)) {
-          queue_cmds_.insert(queue_cmds_.end(), std::make_move_iterator(params.begin()),
-                             std::make_move_iterator(params.end()));
-        }
-        INFO("queue cmd {}", cmdName_);
-        this->SetRes(CmdRes::kQueued);
-        g_kiwi->PushWriteTask(shared_from_this());
-        return 1;
-      }
-    }
-  }
-
-  for (const auto& item : params) {
-    FeedMonitors(item);
-  }
+  // for (const auto& item : params) {
+  //   FeedMonitors(item);
+  // }
 
   auto now = std::chrono::steady_clock::now();
   time_stat_->SetEnqueueTs(now);
@@ -317,6 +296,22 @@ bool PClient::isClusterCmdTarget() const {
 uint64_t PClient::GetUniqueID() const { return GetConnId(); }
 
 ClientInfo PClient::GetClientInfo() const { return {GetUniqueID(), PeerIP().c_str(), PeerPort()}; }
+
+bool PClient::CheckTransation(std::vector<std::string>& param) {
+  if (IsFlagOn(kClientFlagMulti)) {
+    if (cmdName_ != kCmdNameMulti && cmdName_ != kCmdNameExec && cmdName_ != kCmdNameWatch &&
+        cmdName_ != kCmdNameUnWatch && cmdName_ != kCmdNameDiscard) {
+      if (!IsFlagOn(kClientFlagWrongExec)) {
+        queue_cmds_.push_back(param);
+      }
+      INFO("queue cmd {}", cmdName_);
+      this->SetRes(CmdRes::kQueued);
+      g_kiwi->PushWriteTask(shared_from_this());
+      return true;
+    }
+  }
+  return false;
+}
 
 bool PClient::Watch(int dbno, const std::string& key) {
   DEBUG("Client {} watch {}, db {}", name_, key, dbno);

@@ -35,14 +35,17 @@ void CmdWorkThreadPoolWorker::Work() {
         if (!cmdPtr) {
           if (ret == CmdRes::kUnknownCmd) {
             task->Client()->SetRes(CmdRes::kUnknownCmd, fmt::format("unknown command '{}'", param[0]));
+            task->Client()->FlagExecWrong();
             WARN("client IP:{},port:{} unknown command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
                  param[0]);
           } else if (ret == CmdRes::kUnknownSubCmd) {
             task->Client()->SetRes(CmdRes::kUnknownSubCmd, task->Client()->argv_[1]);
+            task->Client()->FlagExecWrong();
             WARN("client IP:{},port:{} unknown sub command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
                  task->Client()->argv_[1]);
           } else {
             task->Client()->SetRes(CmdRes::kWrongNum, param[0]);
+            task->Client()->FlagExecWrong();
             WARN("client IP:{},port:{} unknown command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
                  param[0]);
           }
@@ -50,29 +53,36 @@ void CmdWorkThreadPoolWorker::Work() {
           continue;
         }
 
-      if (!cmdPtr->CheckArg(task->Client()->ParamsSize())) {
-        task->Client()->SetRes(CmdRes::kWrongNum, param[0]);
-        task->Client()->FlagExecWrong();
+        if (!cmdPtr->CheckArg(task->Client()->ParamsSize())) {
+          task->Client()->SetRes(CmdRes::kWrongNum, param[0]);
+          task->Client()->FlagExecWrong();
+          g_kiwi->PushWriteTask(task->Client());
+          continue;
+        }
+
+        // check transaction
+        if (task->Client()->CheckTransation(param)) {
+          continue;
+        }
+
+        task->Client()->FeedMonitors(param);
+
+        auto cmdstat_map = task->Client()->GetCommandStatMap();
+        CommandStatistics statistics;
+        if (cmdstat_map->find(param[0]) == cmdstat_map->end()) {
+          cmdstat_map->emplace(param[0], statistics);
+        }
+        auto now = std::chrono::steady_clock::now();
+        task->Client()->GetTimeStat()->SetDequeueTs(now);
+        task->Run(cmdPtr);
+
+        // Info Commandstats used
+        now = std::chrono::steady_clock::now();
+        task->Client()->GetTimeStat()->SetProcessDoneTs(now);
+        (*cmdstat_map)[param[0]].cmd_count_.fetch_add(1);
+        (*cmdstat_map)[param[0]].cmd_time_consuming_.fetch_add(task->Client()->GetTimeStat()->GetTotalTime());
+
         g_kiwi->PushWriteTask(task->Client());
-        continue;
-      }
-
-      auto cmdstat_map = task->Client()->GetCommandStatMap();
-      CommandStatistics statistics;
-      if (cmdstat_map->find(param[0]) == cmdstat_map->end()) {
-        cmdstat_map->emplace(param[0], statistics);
-      }
-      auto now = std::chrono::steady_clock::now();
-      task->Client()->GetTimeStat()->SetDequeueTs(now);
-      task->Run(cmdPtr);
-      
-      // Info Commandstats used
-      now = std::chrono::steady_clock::now();
-      task->Client()->GetTimeStat()->SetProcessDoneTs(now);
-      (*cmdstat_map)[param[0]].cmd_count_.fetch_add(1);
-      (*cmdstat_map)[param[0]].cmd_time_consuming_.fetch_add(task->Client()->GetTimeStat()->GetTotalTime());
-
-      g_kiwi->PushWriteTask(task->Client());
       }
     }
     self_task_.clear();
