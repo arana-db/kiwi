@@ -10,6 +10,8 @@
 #include <cstring>
 #include <memory>
 
+#include <fmt/core.h>
+
 #include "src/base_data_key_format.h"
 #include "src/base_key_format.h"
 #include "src/coding.h"
@@ -161,6 +163,7 @@ int delete_dir(const char* dirname) {
   if (nullptr == dir) {
     return -1;
   }
+  std::string tmp;
   while ((ptr = readdir(dir)) != nullptr) {
     ret = strcmp(ptr->d_name, ".");
     if (0 == ret) {
@@ -170,8 +173,8 @@ int delete_dir(const char* dirname) {
     if (0 == ret) {
       continue;
     }
-    snprintf(chBuf, sizeof(chBuf), "%s/%s", dirname, ptr->d_name);
-    ret = is_dir(chBuf);
+    tmp = fmt::format("{}/{}", dirname, ptr->d_name);
+    ret = is_dir(tmp.data());
     if (0 == ret) {
       // is dir
       ret = delete_dir(chBuf);
