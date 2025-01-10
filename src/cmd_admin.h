@@ -291,7 +291,7 @@ class CmdDebug : public BaseCmdGroup {
   bool HasSubCommand() const override;
 
  protected:
-  bool DoInitial(PClient* client) override {return true; };
+  bool DoInitial(PClient* client) override { return true; };
 
  private:
   void DoCmd(PClient* client) override {};
