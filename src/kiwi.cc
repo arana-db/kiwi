@@ -85,10 +85,15 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
       {"slaveof", required_argument, 0, 's'}, {"redis-compatible-mode", no_argument, 0, 'c'},
   };
   // kiwi [/path/to/kiwi.conf] [options]
-  if (options_.GetConfigName().empty() && argc > 1 && ::access(argv[1], R_OK) == 0) {
-    options_.SetConfigName(argv[1]);
-    argc = argc - 1;
-    argv = argv + 1;
+  if (options_.GetConfigName().empty() && argc > 1) {
+    if (::access(argv[1], R_OK) == 0) {
+      options_.SetConfigName(argv[1]);
+      argc = argc - 1;
+      argv = argv + 1;
+    } else {
+      std::cerr << "Configuration file [" << argv[1] << "] is not accessible or dose not exist.\n";
+      return false;
+    }
   }
   while (1) {
     int this_option_optind = optind ? optind : 1;
