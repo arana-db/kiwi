@@ -16,8 +16,8 @@ IF (CMAKE_BUILD_TYPE STREQUAL "Release")
     MESSAGE(STATUS "Git commit id: ${GIT_COMMIT_ID}")
 
     TARGET_COMPILE_DEFINITIONS(kiwi
-            PRIVATE Kkiwi_GIT_COMMIT_ID="${GIT_COMMIT_HASH}"
-            PRIVATE Kkiwi_BUILD_DATE="${BUILD_DATE}"
+            PRIVATE Kkiwi_GIT_COMMIT_ID="${GIT_COMMIT_ID}"
+            PRIVATE Kkiwi_BUILD_DATE="${BUILD_TIMESTAMP}"
     )
 ENDIF ()
 
@@ -50,6 +50,10 @@ ADD_DEPENDENCIES(kiwi
         brpc
         storage
         resp
+        leveldb
+        raft
+        raft_pb
+        binlog_pb
 )
 
 TARGET_LINK_LIBRARIES(kiwi
@@ -76,6 +80,7 @@ TARGET_LINK_LIBRARIES(kiwi
         raft_pb
         binlog_pb
         resp
+        event
         "${LIB}"
 )
 
