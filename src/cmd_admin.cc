@@ -465,8 +465,7 @@ void InfoCmd::InfoServer(std::string& info) {
 
 void InfoCmd::InfoStats(std::string& info) {
   std::stringstream tmp_stream;
-  tmp_stream << "# Stats"
-             << "\r\n";
+  tmp_stream << "# Stats" << "\r\n";
 
   tmp_stream << "is_bgsaving:" << (PREPL.IsBgsaving() ? "Yes" : "No") << "\r\n";
   tmp_stream << "slow_logs_count:" << PSlowLog::Instance().GetLogsCount() << "\r\n";
@@ -479,8 +478,7 @@ void InfoCmd::InfoCPU(std::string& info) {
   getrusage(RUSAGE_SELF, &self_ru);
   getrusage(RUSAGE_CHILDREN, &c_ru);
   std::stringstream tmp_stream;
-  tmp_stream << "# CPU"
-             << "\r\n";
+  tmp_stream << "# CPU" << "\r\n";
   tmp_stream << "used_cpu_sys:" << std::setiosflags(std::ios::fixed) << std::setprecision(2)
              << static_cast<float>(self_ru.ru_stime.tv_sec) + static_cast<float>(self_ru.ru_stime.tv_usec) / 1000000
              << "\r\n";
@@ -514,8 +512,7 @@ void InfoCmd::InfoCommandStats(PClient* client, std::string& info) {
   std::stringstream tmp_stream;
   tmp_stream.precision(2);
   tmp_stream.setf(std::ios::fixed);
-  tmp_stream << "# Commandstats"
-             << "\r\n";
+  tmp_stream << "# Commandstats" << "\r\n";
   auto cmdstat_map = client->GetCommandStatMap();
   for (auto iter : *cmdstat_map) {
     if (iter.second.cmd_count_ != 0) {

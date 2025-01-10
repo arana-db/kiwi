@@ -8,8 +8,8 @@
  */
 
 #include "common.h"
-#include <math.h>
 #include <fmt/core.h>
+#include <math.h>
 
 #include <algorithm>
 #include <cerrno>
