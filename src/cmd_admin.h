@@ -297,15 +297,15 @@ class CmdDebug : public BaseCmdGroup {
   void DoCmd(PClient* client) override {};
 };
 
-class CmdDebugHelp : public BaseCmd {
+class CmdDebugHelp : public BaseCmd{
  public:
-  CmdDebugHelp(const std::string& name, int16_t arity);
+  CmdDebugHelp(const std::string& name,int16_t arity);
 
  protected:
-  bool DoInitial(PClient* client) override;
+  bool DoInitial(PClient* client)override;
 
  private:
-  void DoCmd(PClient* client) override;
+  void DoCmd(PClient* client)override;
 };
 
 class CmdDebugOOM : public BaseCmd {

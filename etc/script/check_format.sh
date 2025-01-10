@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Check if clang-format is installed
+if ! command -v clang-format &> /dev/null; then
+    echo "Error: clang-format is not installed"
+    echo "Please install clang-format first"
+    exit 1
+fi
+
 # Set color output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
