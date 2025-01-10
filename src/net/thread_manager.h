@@ -95,18 +95,20 @@ class ThreadManager {
   void clientCountIncrement() { clientCount_.fetch_add(1, std::memory_order_relaxed); }
 
   void clientCountDecrement() { clientCount_.fetch_sub(1, std::memory_order_relaxed); }
+
  private:
   const int8_t index_ = 0;            // The index of the thread
   std::atomic<bool> running_ = true;  // Whether the thread is running
 
   NetOptions netOptions_;
 
-  inline static std::atomic<uint32_t> clientCount_{0};  
+  inline static std::atomic<uint32_t> clientCount_{0};
 
   std::unique_ptr<IOThread> readThread_;   // Read thread
   std::unique_ptr<IOThread> writeThread_;  // Write thread
 
-  std::unordered_map<uint64_t, std::pair<T, std::shared_ptr<Connection>>> connections_;   // All connections for the current thread
+  std::unordered_map<uint64_t, std::pair<T, std::shared_ptr<Connection>>>
+      connections_;  // All connections for the current thread
 
   std::shared_mutex mutex_;
 
@@ -121,10 +123,11 @@ class ThreadManager {
   OnClose<T> onClose_;
 };
 
-
-
 template <typename T>
-requires HasSetFdFunction<T> ThreadManager<T>::~ThreadManager() { Stop(); }
+requires HasSetFdFunction<T>
+ThreadManager<T>::~ThreadManager() {
+  Stop();
+}
 
 template <typename T>
 requires HasSetFdFunction<T>
@@ -153,7 +156,10 @@ void ThreadManager<T>::Stop() {
 template <typename T>
 requires HasSetFdFunction<T>
 void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection> &conn) {
-  if(getClientCount() >= netOptions_.GetMaxClients()){
+  if (getClientCount() >= netOptions_.GetMaxClients()) {
+    INFO("Max client connentions, refuse new connection fd:{%d}", fd);
+    std::string response = "-ERR max clients reached\r\n";
+    ::send(fd, response.c_str(), response.size(), 0);
     ::close(fd);
     return;
   }
@@ -221,7 +227,9 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
 
 template <typename T>
 requires HasSetFdFunction<T>
-void ThreadManager<T>::CloseConnection(uint64_t connId) { OnNetEventClose(connId, ""); }
+void ThreadManager<T>::CloseConnection(uint64_t connId) {
+  OnNetEventClose(connId, "");
+}
 
 template <typename T>
 requires HasSetFdFunction<T>
@@ -345,8 +353,8 @@ bool ThreadManager<T>::CreateWriteThread() {
 }
 
 template <typename T>
-requires HasSetFdFunction<T> uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd,
-                                                                     const std::shared_ptr<Connection> &conn) {
+requires HasSetFdFunction<T>
+uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd, const std::shared_ptr<Connection> &conn) {
   auto connId = getConnId();
   if constexpr (IsPointer_v<T>) {
     t->SetConnId(connId);
