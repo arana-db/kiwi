@@ -239,16 +239,16 @@ ADD_CUSTOM_TARGET(check-format
   --source_dirs ${FORMAT_DIRS}
 )
 
-FIND_PROGRAM(CLANG_FORMAT "clang-format")
-IF(CLANG_FORMAT)
-  ADD_CUSTOM_TARGET(
-    format-check
-    COMMAND ${CMAKE_SOURCE_DIR}/etc/script/check-format.sh
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMENT "Checking code format..."
-    VERBATIM
-  )
-ENDIF()
+# FIND_PROGRAM(CLANG_FORMAT "clang-format")
+# IF(CLANG_FORMAT)
+#   ADD_CUSTOM_TARGET(
+#     format-check
+#     COMMAND ${CMAKE_SOURCE_DIR}/etc/script/check-format.sh
+#     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+#     COMMENT "Checking code format..."
+#     VERBATIM
+#   )
+# ENDIF()
 
 ADD_CUSTOM_TARGET(clang-tidy
   COMMAND ${BUILD_SUPPORT_DIR}/run_clang_tidy.py
