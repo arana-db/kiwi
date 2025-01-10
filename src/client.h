@@ -10,7 +10,9 @@
 
 #pragma once
 
+#include <fmt/format.h>
 #include <chrono>
+#include <cstdint>
 #include <set>
 #include <span>
 #include <unordered_map>
@@ -59,14 +61,14 @@ struct TimeStat {
   TimePoint process_done_ts_ = TimePoint::min();
 };
 
-enum ClientFlag {
+enum ClientFlag : std::int8_t {
   kClientFlagMulti = (1 << 0),
   kClientFlagDirty = (1 << 1),
   kClientFlagWrongExec = (1 << 2),
   kClientFlagMaster = (1 << 3),
 };
 
-enum class ClientState {
+enum class ClientState : std::int8_t {
   kOK,
   kClosed,
 };
@@ -96,7 +98,7 @@ class PClient : public std::enable_shared_from_this<PClient> {
   bool SendPacket();
   bool SendPacket(std::string&& msg);
   bool SendPacket(UnboundedBuffer& data);
-  inline void SendOver() { reset(); }
+  void SendOver() { reset(); }
 
   // active close
   void Close();
@@ -131,19 +133,22 @@ class PClient : public std::enable_shared_from_this<PClient> {
   void ClearWatch();
 
   // reply
-  inline void SetRes(CmdRes _ret, const std::string& content = "") { resp_encode_->SetRes(_ret, content); };
-  inline void AppendArrayLen(int64_t ori) { resp_encode_->AppendArrayLen(ori); }
-  inline void AppendArrayLen(uint64_t ori) { resp_encode_->AppendArrayLen(static_cast<int64_t>(ori)); }
-  inline void AppendInteger(int64_t value) { resp_encode_->AppendInteger(value); }
-  inline void AppendStringRaw(const std::string& value) { resp_encode_->AppendStringRaw(value); }
-  inline void AppendSimpleString(const std::string& value) { resp_encode_->AppendSimpleString(value); }
-  inline void AppendString(const std::string& value) { resp_encode_->AppendString(value); }
-  inline void AppendStringVector(const std::vector<std::string>& strArray) {
-    resp_encode_->AppendStringVector(strArray);
-  };
-  inline void AppendString(const char* value, int64_t size) { resp_encode_->AppendString(value, size); }
-  inline void SetLineString(const std::string& value) { resp_encode_->SetLineString(value); }
-  inline void Reply(std::string& str) { resp_encode_->Reply(str); }
+  void SetRes(CmdRes _ret, const std::string& content = "") { resp_encode_->SetRes(_ret, content); };
+
+  // If T is of type string, then the contents of string must be numbers
+  template <typename T>
+  requires(std::integral<T> || std::same_as<T, std::string>) void AppendArrayLen(T value) {
+    AppendStringRaw(fmt::format("*{}\r\n", value));
+  }
+
+  void AppendInteger(int64_t value) { resp_encode_->AppendInteger(value); }
+  void AppendStringRaw(const std::string& value) { resp_encode_->AppendStringRaw(value); }
+  void AppendSimpleString(const std::string& value) { resp_encode_->AppendSimpleString(value); }
+  void AppendString(const std::string& value) { resp_encode_->AppendString(value); }
+  void AppendStringVector(const std::vector<std::string>& strArray) { resp_encode_->AppendStringVector(strArray); };
+  void AppendString(const char* value, int64_t size) { resp_encode_->AppendString(value, size); }
+  void SetLineString(const std::string& value) { resp_encode_->SetLineString(value); }
+  void Reply(std::string& str) { resp_encode_->Reply(str); }
   // reply
 
   // pubsub
@@ -196,19 +201,19 @@ class PClient : public std::enable_shared_from_this<PClient> {
   bool GetAuth() const { return auth_; }
   uint64_t GetUniqueID() const;
 
-  inline size_t ParamsSize() const { return argv_.size(); }
+  size_t ParamsSize() const { return argv_.size(); }
 
-  inline ClientState State() const { return state_; }
+  ClientState State() const { return state_; }
 
-  inline void SetState(ClientState state) { state_ = state; }
+  void SetState(ClientState state) { state_ = state; }
 
-  inline void SetConnId(uint64_t id) { net_id_ = id; }
-  inline uint64_t GetConnId() const { return net_id_; }
-  inline void SetThreadIndex(int8_t index) { net_thread_index_ = index; }
-  inline int8_t GetThreadIndex() const { return net_thread_index_; }
-  inline void SetSocketAddr(const net::SocketAddr& addr) { addr_ = addr; }
+  void SetConnId(uint64_t id) { net_id_ = id; }
+  uint64_t GetConnId() const { return net_id_; }
+  void SetThreadIndex(int8_t index) { net_thread_index_ = index; }
+  int8_t GetThreadIndex() const { return net_thread_index_; }
+  void SetSocketAddr(const net::SocketAddr& addr) { addr_ = addr; }
 
-  inline void SetArgv(std::vector<std::string>& argv) { argv_ = argv; }
+  void SetArgv(std::vector<std::string>& argv) { argv_ = argv; }
 
   // Info Commandstats used
   std::unordered_map<std::string, CommandStatistics>* GetCommandStatMap();

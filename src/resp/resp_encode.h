@@ -5,11 +5,12 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 #include "pstd_string.h"
 
-enum class CmdRes {
+enum class CmdRes : std::int8_t {
   kNone = 0,
   kOK,
   kPong,
@@ -49,7 +50,7 @@ class RespEncode {
   static void AppendBulkString(std::string& str, const std::string& value);
   static void SetBulkStringLen(std::string& str, int64_t ori, const std::string& prefix);
 
-  inline void Reply(std::string& str) { str.swap(reply_); }
+  void Reply(std::string& str) { str.swap(reply_); }
 
   virtual void SetRes(CmdRes ret, const std::string& content = "") = 0;
   virtual void AppendArrayLen(int64_t ori) = 0;

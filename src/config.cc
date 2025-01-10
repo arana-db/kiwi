@@ -67,12 +67,22 @@ Status BaseValue::Set(const std::string& value, bool init_stage) {
 }
 
 Status StringValue::SetValue(const std::string& value) {
+  *values_ = value;
+  return Status::OK();
+}
+
+Status StringValueArray::SetValue(const std::string& value) {
   auto values = SplitString(value, delimiter_);
-  if (values.size() != values_.size()) {
-    return Status::InvalidArgument("The number of parameters does not match.");
+  if (!values_.empty()) {  // if the value_ is not empty, check the number of parameters
+    if (values.size() != values_.size()) {
+      return Status::InvalidArgument("The number of parameters does not match.");
+    }
+  } else {  // if the value_ is empty, resize the value_ to the size of the values
+    values_.resize(values.size());
   }
-  for (int i = 0; i < values_.size(); i++) {
-    *values_[i] = std::move(values[i]);
+
+  for (int i = 0; i < values.size(); i++) {
+    values_[i] = std::move(values[i]);
   }
   return Status::OK();
 }
@@ -103,18 +113,35 @@ Status NumberValue<T>::SetValue(const std::string& value) {
   return Status::OK();
 }
 
+Status MemorySize::SetValue(const std::string& value) {
+  auto status = NumberValue<size_t>::SetValue(value);
+  if (!status.ok()) {
+    return status;
+  }
+  char unit = value[value.size() - 1];
+  if (unit == 'k' || unit == 'K') {
+    *value_ *= (1 << 10);
+  } else if (unit == 'm' || unit == 'M') {
+    *value_ *= (1 << 20);
+  } else if (unit == 'g' || unit == 'G') {
+    *value_ *= (1 << 30);
+  }
+
+  return Status::OK();
+}
+
 PConfig::PConfig() {
-  AddBool("redis-compatible-mode", &CheckYesNo, true, {&redis_compatible_mode});
+  AddBool("redis-compatible-mode", &CheckYesNo, true, &redis_compatible_mode);
   AddBool("daemonize", &CheckYesNo, false, &daemonize);
-  AddString("ip", false, {&ip});
+  AddString("ip", false, &ip);
   AddNumberWithLimit<uint16_t>("port", false, &port, PORT_LIMIT_MIN, PORT_LIMIT_MAX);
   AddNumber("raft-port-offset", true, &raft_port_offset);
   AddNumber("timeout", true, &timeout);
-  AddString("db-path", false, {&db_path});
-  AddStringWithFunc("loglevel", &CheckLogLevel, false, {&log_level});
-  AddString("logfile", false, {&log_dir});
+  AddString("db-path", false, &db_path);
+  AddStringWithFunc("loglevel", &CheckLogLevel, false, &log_level);
+  AddString("logfile", false, &log_dir);
   AddNumberWithLimit<size_t>("databases", false, &databases, 1, DBNUMBER_MAX);
-  AddString("requirepass", true, {&password});
+  AddString("requirepass", true, &password);
   AddNumber("maxclients", true, &max_clients);
   AddNumberWithLimit<uint32_t>("worker-threads", false, &worker_threads_num, 1, THREAD_MAX);
   AddNumberWithLimit<uint32_t>("slave-threads", false, &worker_threads_num, 1, THREAD_MAX);
@@ -124,7 +151,7 @@ PConfig::PConfig() {
   AddNumberWithLimit<int32_t>("fast-cmd-threads-num", false, &fast_cmd_threads_num, 1, THREAD_MAX);
   AddNumberWithLimit<int32_t>("slow-cmd-threads-num", false, &slow_cmd_threads_num, 1, THREAD_MAX);
   AddNumber("max-client-response-size", true, &max_client_response_size);
-  AddString("runid", false, {&run_id});
+  AddString("runid", false, &run_id);
   AddNumber("small-compaction-threshold", true, &small_compaction_threshold);
   AddNumber("small-compaction-duration-threshold", true, &small_compaction_duration_threshold);
   AddBool("use-raft", &CheckYesNo, false, &use_raft);
@@ -137,7 +164,7 @@ PConfig::PConfig() {
   AddNumber("rocksdb-write-buffer-size", false, &rocksdb_write_buffer_size);
   AddNumber("rocksdb-level0-file-num-compaction-trigger", false, &rocksdb_level0_file_num_compaction_trigger);
   AddNumber("rocksdb-number-levels", true, &rocksdb_num_levels);
-  AddBool("rocksdb-enable-pipelined-write", CheckYesNo, false, &rocksdb_enable_pipelined_write);
+  AddBool("rocksdb-enable-pipelined-write", &CheckYesNo, false, &rocksdb_enable_pipelined_write);
   AddNumber("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
   AddNumber("rocksdb-level0-stop-writes-trigger", false, &rocksdb_level0_stop_writes_trigger);
   AddNumber("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
