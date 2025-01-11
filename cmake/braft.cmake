@@ -5,7 +5,7 @@
 
 INCLUDE(ExternalProject)
 
-SET(BRAFT_SOURCES_DIR ${LIB_INSTALL_PREFIX})
+SET(BRAFT_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_braft" CACHE PATH "Path to braft sources")
 SET(BRAFT_INSTALL_DIR ${LIB_INSTALL_PREFIX})
 SET(BRAFT_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "brpc include directory." FORCE)
 SET(BRAFT_LIBRARIES "${LIB_INSTALL_DIR}/libbraft.a" CACHE FILEPATH "brpc library." FORCE)
@@ -20,11 +20,10 @@ ExternalProject_Add(
         extern_braft
         ${EXTERNAL_PROJECT_LOG_ARGS}
         DEPENDS brpc
-        # The pr on braft is not merged, so I am using my own warehouse to run the test for the time being
-        GIT_REPOSITORY "https://github.com/pikiwidb/braft.git"
-        GIT_TAG v1.1.2-alpha2
-        URL_HASH SHA256=6afed189e97b7e6bf5864c5162fab3365b07d515fe0de4c1b0d61eff96cf772f
+        GIT_REPOSITORY "https://github.com/arana-db/braft.git"
+        GIT_TAG v1.1.2-beta20250101
         GIT_SHALLOW true
+        SOURCE_DIR ${BRAFT_SOURCES_DIR}
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
         ${EXTERNAL_PROJECT_CXX}
@@ -53,6 +52,7 @@ ExternalProject_Add(
         -DOPENSSL_INCLUDE_DIR=${OPENSSL_INCLUDE_DIR}
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
         BUILD_COMMAND make -j${CPU_CORE}
+        UPDATE_COMMAND ""
 )
 
 ADD_DEPENDENCIES(extern_braft brpc gflags)

@@ -7,6 +7,8 @@ FIND_PROGRAM(AUTOCONF autoconf PATHS /usr/bin /usr/local/bin)
 
 IF (${AUTOCONF} MATCHES AUTOCONF-NOTFOUND)
     MESSAGE(FATAL_ERROR "not find autoconf on localhost")
+ELSE()
+    MESSAGE(STATUS "found autoconf at ${AUTOCONF}")
 ENDIF ()
 
 FIND_PROGRAM(CLANG_FORMAT_BIN

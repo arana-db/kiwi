@@ -37,6 +37,8 @@ jobs:
         run: |
           brew update
           brew install ccache
+          brew install autoconf
+          brew install go
 
       - name: Configure ccache
         run: |
@@ -54,8 +56,8 @@ jobs:
 
       - name: Build
         run: |
-          brew install autoconf
-          brew install go
+          export LIBRARY_PATH=$(xcrun --show-sdk-path)/usr/lib
+          export DYLD_LIBRARY_PATH=$(xcrun --show-sdk-path)/usr/lib
           bash ./etc/script/build.sh --verbose
 
       - name: Save ccache stats
@@ -132,5 +134,5 @@ jobs:
           set +e
           cd ../tests
           go mod tidy
-          go test -timeout 15m --ginkgo.v
+          go test -timeout 15m --ginkgo.v || exit 1
           sh print_log.sh

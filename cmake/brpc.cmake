@@ -3,7 +3,7 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(BRPC_SOURCES_DIR ${LIB_INSTALL_PREFIX})
+SET(BRPC_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_brpc" CACHE PATH "Path to brpc sources")
 SET(BRPC_INSTALL_DIR ${LIB_INSTALL_PREFIX})
 SET(BRPC_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "brpc include directory." FORCE)
 SET(BRPC_LIBRARIES "${LIB_INSTALL_DIR}/libbrpc.a" CACHE FILEPATH "brpc library." FORCE)
@@ -19,6 +19,10 @@ ExternalProject_Add(
         DEPENDS ssl crypto zlib protobuf leveldb gflags
         URL https://github.com/apache/brpc/archive/refs/tags/1.8.0.tar.gz
         URL_HASH SHA256=13ffb2f1f57c679379a20367c744b3e597614a793ec036cd7580aae90798019d
+        DOWNLOAD_NO_PROGRESS 1
+        DOWNLOAD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download"
+        DOWNLOAD_NAME "brpc-1.8.0.tar.gz"
+        SOURCE_DIR ${BRPC_SOURCES_DIR}
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
         ${EXTERNAL_PROJECT_CXX}
@@ -51,6 +55,7 @@ ExternalProject_Add(
         -DWITH_GLOG=OFF
         -DDOWNLOAD_GTEST=OFF
         BUILD_COMMAND make -j${CPU_CORE}
+        UPDATE_COMMAND ""
 )
 ADD_DEPENDENCIES(extern_brpc ssl crypto zlib protobuf leveldb gflags)
 ADD_LIBRARY(brpc STATIC IMPORTED GLOBAL)

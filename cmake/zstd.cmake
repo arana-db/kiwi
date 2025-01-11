@@ -3,6 +3,7 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
+SET(zstd_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_zstd" CACHE PATH "Path to zstd sources")
 SET(zstd_INCLUDE_DIRS "${LIB_INCLUDE_DIR}" CACHE PATH "zstd include directory." FORCE)
 SET(zstd_LIBRARIES "${LIB_INSTALL_DIR}/libzstd.a" CACHE FILEPATH "zstd include directory." FORCE)
 
@@ -11,6 +12,10 @@ ExternalProject_Add(
         ${EXTERNAL_PROJECT_LOG_ARGS}
         URL https://github.com/facebook/zstd/releases/download/v1.5.4/zstd-1.5.4.tar.gz
         URL_HASH SHA256=0f470992aedad543126d06efab344dc5f3e171893810455787d38347343a4424
+        DOWNLOAD_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download"
+        DOWNLOAD_NAME "zstd-1.5.4.tar.gz"
+        SOURCE_DIR ${zstd_SOURCES_DIR}
+        DOWNLOAD_NO_PROGRESS 1
         SOURCE_SUBDIR build/cmake
         CMAKE_ARGS
         ${EXTERNAL_PROJECT_C}
@@ -24,6 +29,7 @@ ExternalProject_Add(
         -DZSTD_BUILD_STATIC=ON
         -DZSTD_BUILD_SHARED=OFF
         BUILD_COMMAND make -j${CPU_CORE}
+        UPDATE_COMMAND ""
 )
 
 ADD_LIBRARY(zstd STATIC IMPORTED GLOBAL)

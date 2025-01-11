@@ -3,16 +3,13 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-CMAKE_MINIMUM_REQUIRED(VERSION 3.14)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.25)
 PROJECT(kiwi)
 include(GNUInstallDirs)
 
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror=return-type")
 
-# Avoid warning about DOWNLOAD_EXTRACT_TIMESTAMP in CMake 3.24:
-IF (CMAKE_VERSION VERSION_GREATER_EQUAL "3.24.0")
-    CMAKE_POLICY(SET CMP0135 NEW)
-ENDIF ()
+CMAKE_POLICY(SET CMP0135 NEW)
 
 SET(CMAKE_CXX_STANDARD 20)
 SET(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -64,8 +61,10 @@ ELSE()
     ENDIF()
 ENDIF()
 
-EXECUTE_PROCESS(COMMAND uname -p OUTPUT_VARIABLE HOST_ARCH)
-STRING(TOLOWER ${HOST_ARCH} HOST_ARCH)
+IF (NOT HOST_ARCH)
+    EXECUTE_PROCESS(COMMAND uname -p OUTPUT_VARIABLE HOST_ARCH)
+    STRING(TOLOWER ${HOST_ARCH} HOST_ARCH)
+ENDIF ()
 
 IF (NOT CMAKE_BUILD_TYPE)
     SET(CMAKE_BUILD_TYPE RELEASE)
@@ -126,12 +125,12 @@ SET(PLIB_INSTALL_DIR ${CMAKE_BINARY_DIR}/${CMAKE_INSTALL_LIBDIR})
 SET(LIB_INSTALL_PREFIX ${CMAKE_CURRENT_SOURCE_DIR}/${LIB_SUFFIX})
 SET(LIB_INCLUDE_DIR ${LIB_INSTALL_PREFIX}/include)
 SET(LIB_INSTALL_DIR ${LIB_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
-SET(LIB_SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/${EP_BASE_SUFFIX}/Source)
+SET(LIB_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/download/source")
 
 SET(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_DEBUG ${LIB_INSTALL_DIR})
 SET(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_RELEASE ${LIB_INSTALL_DIR})
 SET(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${LIB_INSTALL_DIR})
-SET(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${LIB_INSTALL_DIR}) 
+SET(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${LIB_INSTALL_DIR})
 SET(CMAKE_INSTALL_PREFIX ${LIB_INSTALL_DIR})
 SET(LIBDIR ${CMAKE_INSTALL_LIBDIR})
 SET(FIND_LIBRARY_USE_LIB32_PATHS true)
@@ -193,7 +192,6 @@ INCLUDE(cmake/protobuf.cmake)
 INCLUDE(cmake/zstd.cmake)
 INCLUDE(cmake/snappy.cmake)
 INCLUDE(cmake/leveldb.cmake)
-INCLUDE(cmake/llhttp.cmake)
 INCLUDE(cmake/fmt.cmake)
 INCLUDE(cmake/spdlog.cmake)
 INCLUDE(cmake/gtest.cmake)
@@ -214,14 +212,14 @@ ADD_SUBDIRECTORY(src/resp)
 
 ADD_SUBDIRECTORY(src)
 
-#############################################################################
-###			custom target
-#############################################################################
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
+# # #                   custom target                     # # #
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 # Add files which should be ignored while formatting
 LIST(APPEND CLANG_FORMAT_IGNORE_FILES "${PROJECT_SOURCE_DIR}/src/storage/src/storage_murmur3.h")
 FILE(WRITE ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt "")
 FOREACH(IGNORE_FILE ${CLANG_FORMAT_IGNORE_FILES})
-  FILE(APPEND ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt "${IGNORE_FILE}\n")
+    FILE(APPEND ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt "${IGNORE_FILE}\n")
 ENDFOREACH()
 
 STRING(CONCAT FORMAT_DIRS "${PROJECT_SOURCE_DIR}/src,")
@@ -247,7 +245,7 @@ ADD_CUSTOM_TARGET(clang-tidy
   -extra-arg=-std=c++17
 )
 
-ADD_CUSTOM_TARGET(clang-tidy-fix 
+ADD_CUSTOM_TARGET(clang-tidy-fix
   COMMAND ${BUILD_SUPPORT_DIR}/run_clang_tidy.py
   -clang-tidy-binary ${CLANG_TIDY_BIN}
   -p ${CMAKE_BINARY_DIR}
