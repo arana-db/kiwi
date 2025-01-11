@@ -39,6 +39,7 @@ ExternalProject_Add(
         TEST_COMMAND ""
         INSTALL_COMMAND make install_sw
         INSTALL_DIR ${OPENSSL_INSTALL_DIR}
+        UPDATE_COMMAND ""
 )
 
 SET(OPENSSL_LIB "lib")
