@@ -32,6 +32,7 @@ ExternalProject_Add(
         -DLEVELDB_BUILD_BENCHMARKS=OFF
         -DCMAKE_BUILD_TYPE=${THIRD_PARTY_BUILD_TYPE}
         BUILD_COMMAND make -j${CPU_CORE}
+        UPDATE_COMMAND ""
 )
 
 ADD_DEPENDENCIES(extern_leveldb snappy)
