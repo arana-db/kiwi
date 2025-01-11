@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "unstable" ]
   pull_request:
-    branches: [ "unstable" ]
+    branches: [ "*" ]
 
 env:
   BUILD_DIR: cmake-build-release
@@ -22,7 +22,7 @@ jobs:
       - name: Add LLVM apt repository
         run: |
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-16 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-18 main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt update
 
       - name: Install clang-format-18
