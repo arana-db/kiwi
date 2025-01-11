@@ -29,6 +29,7 @@ ExternalProject_Add(
         -DZSTD_BUILD_STATIC=ON
         -DZSTD_BUILD_SHARED=OFF
         BUILD_COMMAND make -j${CPU_CORE}
+        UPDATE_COMMAND ""
 )
 
 ADD_LIBRARY(zstd STATIC IMPORTED GLOBAL)

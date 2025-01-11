@@ -80,7 +80,6 @@ TARGET_LINK_LIBRARIES(kiwi
         raft_pb
         binlog_pb
         resp
-        event
         "${LIB}"
 )
 
