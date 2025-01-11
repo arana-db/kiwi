@@ -3,9 +3,9 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-AUX_SOURCE_DIRECTORY(. kiwi_SRC)
+AUX_SOURCE_DIRECTORY(. KIWI_SRC)
 
-ADD_EXECUTABLE(kiwi ${kiwi_SRC})
+ADD_EXECUTABLE(kiwi ${KIWI_SRC})
 
 IF (CMAKE_BUILD_TYPE STREQUAL "Release")
     # get current date and time and git commit id

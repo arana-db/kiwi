@@ -184,6 +184,7 @@ ENDIF()
 SET(LIB ${LIB} CACHE INTERNAL "libs which should be linked for executable target")
 
 INCLUDE(ExternalProject)
+INCLUDE(cmake/precommit.cmake)
 INCLUDE(cmake/findTools.cmake)
 INCLUDE(cmake/openssl.cmake)
 INCLUDE(cmake/gflags.cmake)
@@ -223,6 +224,15 @@ FOREACH(IGNORE_FILE ${CLANG_FORMAT_IGNORE_FILES})
     FILE(APPEND ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt "${IGNORE_FILE}\n")
 ENDFOREACH()
 
+# install git hooks when configure
+EXECUTE_PROCESS(
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${GIT_HOOKS_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${HOOKS_SOURCE_DIR}/precommit.sh
+        ${GIT_HOOKS_DIR}/pre-commit
+    COMMAND ${CMAKE_COMMAND} -E chmod 755 ${GIT_HOOKS_DIR}/pre-commit
+)
+
 STRING(CONCAT FORMAT_DIRS "${PROJECT_SOURCE_DIR}/src,")
 ADD_CUSTOM_TARGET(format
   COMMAND ${BUILD_SUPPORT_DIR}/run_clang_format.py
@@ -238,17 +248,6 @@ ADD_CUSTOM_TARGET(check-format
   ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt
   --source_dirs ${FORMAT_DIRS}
 )
-
-# FIND_PROGRAM(CLANG_FORMAT "clang-format")
-# IF(CLANG_FORMAT)
-#   ADD_CUSTOM_TARGET(
-#     format-check
-#     COMMAND ${CMAKE_SOURCE_DIR}/etc/script/check-format.sh
-#     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-#     COMMENT "Checking code format..."
-#     VERBATIM
-#   )
-# ENDIF()
 
 ADD_CUSTOM_TARGET(clang-tidy
   COMMAND ${BUILD_SUPPORT_DIR}/run_clang_tidy.py

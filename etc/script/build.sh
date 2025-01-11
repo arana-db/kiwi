@@ -16,18 +16,7 @@ PWD=`pwd`
 PROJECT_HOME="${PWD}/"
 CONF="${PROJECT_HOME}/etc/conf/kiwi.conf"
 
-function precommit() {
-  # Copy pre-commit hook to the .git/hooks directory
-
-  if [ ! -f "./git/hooks/pre-commit" ];then
-    cp etc/script/pre_commit.sh .git/hooks/pre-commit
-    chmod +x .git/hooks/pre-commit
-    echo "Git hooks installed."
-  fi
-}
-
 function build() {
-  precommit
   if [ ! -f "/proc/cpuinfo" ];then
     CPU_CORE=$(sysctl -n hw.ncpu)
   else
