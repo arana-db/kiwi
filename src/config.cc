@@ -74,8 +74,8 @@ Status StringValue::SetValue(const std::string& value) {
 Status StringValueArray::SetValue(const std::string& value) {
   auto values = SplitString(value, delimiter_);
   if (!values_.empty()) {  // if the value_ is not empty, check the number of parameters
-    if (values.size() != values_.size()) {
-      return Status::InvalidArgument("The number of parameters does not match.");
+    if (values.size() < values_.size()) {
+      return Status::InvalidArgument("The number of parameters is less than required.");
     }
   } else {  // if the value_ is empty, resize the value_ to the size of the values
     values_.resize(values.size());
