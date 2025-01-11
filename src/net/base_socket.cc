@@ -61,12 +61,12 @@ void BaseSocket::SetNodelay() {
 }
 
 void BaseSocket::SetTcpKeepAlive() {
-  if (tcpKeepAlive_ == 0) {
+  if (tcp_keep_alive_ == 0) {
     return;
   }
 
   int enabled = 1;
-  uint32_t idle = tcpKeepAlive_;
+  uint32_t idle = tcp_keep_alive_;
   uint32_t intvl = idle / 3;
   int cnt = 3;
 

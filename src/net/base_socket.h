@@ -34,7 +34,7 @@ class BaseSocket : public NetEvent {
 
   ~BaseSocket() override = default;
 
-  void OnError() override{};
+  void OnError() override {};
 
   void Close() override;
 
@@ -67,7 +67,7 @@ class BaseSocket : public NetEvent {
 
   void SetSocketType(int type) { type_ = type; }
 
-  inline void SetBSTcpKeepAlive(uint32_t keepAlive) { tcpKeepAlive_ = keepAlive; }
+  inline void SetBSTcpKeepAlive(uint32_t keepAlive) { tcp_keep_alive_ = keepAlive; }
 
  protected:
   bool NoBlock() const { return noBlock_; }
