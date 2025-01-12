@@ -157,7 +157,7 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(res.Val()).To(Equal("OK"))
 
 		resAuth := client.Conn().Auth(ctx, "password")
-		Expect(resAuth.Err()).To(MatchError("ERR Client sent AUTH, but no password is set"))
+		Expect(resAuth.Err()).To(MatchError("ERR invalid password"))
 
 		resAuth = client.Conn().Auth(ctx, "123456")
 		Expect(resAuth.Err()).NotTo(HaveOccurred())

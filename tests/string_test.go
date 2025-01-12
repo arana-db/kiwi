@@ -221,7 +221,7 @@ var _ = Describe("String", Ordered, func() {
 
 		mGet := client.MGet(ctx, "key1", "key2", "_")
 		Expect(mGet.Err()).NotTo(HaveOccurred())
-		Expect(mGet.Val()).To(Equal([]interface{}{"hello1", "hello2", nil}))
+		Expect(mGet.Val()).To(Equal([]interface{}{"hello1", "hello2", ""}))
 
 		// MSet struct
 		type set struct {
