@@ -138,9 +138,9 @@ PConfig::PConfig() {
   AddNumber("raft-port-offset", true, &raft_port_offset);
   AddNumber("timeout", true, &timeout);
   AddNumber("tcp-keepalive", true, &tcp_keepalive);
-  AddString("db-path", false, {&db_path});
-  AddStringWithFunc("loglevel", &CheckLogLevel, false, {&log_level});
-  AddString("logfile", false, {&log_dir});
+  AddString("db-path", false, &db_path);
+  AddStringWithFunc("loglevel", &CheckLogLevel, false, &log_level);
+  AddString("logfile", false, &log_dir);
   AddString("db-path", false, &db_path);
   AddStringWithFunc("loglevel", &CheckLogLevel, false, &log_level);
   AddString("logfile", false, &log_dir);
