@@ -89,7 +89,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
     return false;
   }
   if (options_.GetConfigName().empty() && argc > 1 && argv[1] != nullptr) {
-    struct stat st{};
+    struct stat st {};
     if (stat(argv[1], &st) == 0 && S_ISREG(st.st_mode) && ::access(argv[1], R_OK) == 0) {
       options_.SetConfigName(argv[1]);
       argc = argc - 1;
