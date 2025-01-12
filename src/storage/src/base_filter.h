@@ -112,7 +112,7 @@ class BaseDataFilter : public rocksdb::CompactionFilter {
     UNUSED(new_value);
     UNUSED(value_changed);
     ParsedBaseDataKey parsed_base_data_key(key);
-    TRACE("[DataFilter], key: %s, data = %s, version = %llu", parsed_base_data_key.Key().ToString().c_str(),
+    TRACE("[DataFilter], key: %s, data = %s, version = %lu", parsed_base_data_key.Key().ToString().c_str(),
           parsed_base_data_key.Data().ToString().c_str(), parsed_base_data_key.Version());
 
     const char* ptr = key.data();
