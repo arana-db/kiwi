@@ -19,6 +19,9 @@ download/
 CMakeFiles/
 CMakeCache.txt
 
+# clang-format
+temp.txt
+
 # Precompiled Headers
 *.gch
 *.pch
