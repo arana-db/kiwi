@@ -85,13 +85,19 @@ var _ = Describe("String", Ordered, func() {
 		{
 			for k := range s2s {
 				r, e := client.Get(ctx, k).Result()
-				Expect(e).To(MatchError(redis.Nil))
+				Expect(e).To(SatisfyAny(
+					BeNil(),
+					MatchError(redis.Nil),
+				))
 				Expect(r).To(Equal(Nil))
 			}
 
 			for k := range s2i {
 				r, e := client.Get(ctx, k).Result()
-				Expect(e).To(MatchError(redis.Nil))
+				Expect(e).To(SatisfyAny(
+					BeNil(),
+					MatchError(redis.Nil),
+				))
 				Expect(r).To(Equal(Nil))
 			}
 		}

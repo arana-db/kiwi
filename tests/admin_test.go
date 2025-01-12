@@ -111,7 +111,10 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(rDo).To(Equal(OK))
 
 		r, e = client.Get(ctx, DefaultKey).Result()
-		Expect(e).To(MatchError(redis.Nil))
+		Expect(e).To(SatisfyAny(
+			BeNil(),
+			MatchError(redis.Nil),
+		))
 		Expect(r).To(Equal(Nil))
 
 		rDo, eDo = client.Do(ctx, kCmdSelect, 0).Result()

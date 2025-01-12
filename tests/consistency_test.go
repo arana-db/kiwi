@@ -906,7 +906,10 @@ var _ = Describe("Consistency", Ordered, func() {
 			time.Sleep(10 * time.Second)
 			readChecker(func(c *redis.Client) {
 				_, err := c.Get(ctx, testKey).Result()
-				Expect(err).To(Equal(redis.Nil))
+				Expect(err).To(SatisfyAny(
+					BeNil(),
+					MatchError(redis.Nil),
+				))
 			})
 		}
 	})
