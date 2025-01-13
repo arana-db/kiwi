@@ -12,9 +12,6 @@
 
 #include "binlog.pb.h"
 #include "config.h"
-#include "pstd/kiwi_slot.h"
-#include "pstd/log.h"
-#include "pstd/pstd_string.h"
 #include "rocksdb/utilities/checkpoint.h"
 #include "scope_snapshot.h"
 #include "src/lru_cache.h"
@@ -23,11 +20,14 @@
 #include "src/redis.h"
 #include "src/redis_hyperloglog.h"
 #include "src/type_iterator.h"
+#include "std/kiwi_slot.h"
+#include "std/log.h"
+#include "std/std_string.h"
 #include "storage/slot_indexer.h"
 #include "storage/storage.h"
 #include "storage/util.h"
 
-#define PRAFT_SNAPSHOT_META_FILE "__raft_snapshot_meta"
+#define RAFT_INST_SNAPSHOT_META_FILE "__raft_snapshot_meta"
 #define SST_FILE_EXTENSION ".sst"
 
 namespace storage {
@@ -105,7 +105,7 @@ static std::string AppendSubDirectory(const std::string& db_path, int index) {
 
 static int RecursiveLinkAndCopy(const std::filesystem::path& source, const std::filesystem::path& destination) {
   if (std::filesystem::is_regular_file(source)) {
-    if (source.filename() == PRAFT_SNAPSHOT_META_FILE) {
+    if (source.filename() == RAFT_INST_SNAPSHOT_META_FILE) {
       return 0;
     } else if (source.extension() == SST_FILE_EXTENSION) {
       // Create a hard link
@@ -123,8 +123,8 @@ static int RecursiveLinkAndCopy(const std::filesystem::path& source, const std::
       DEBUG("copy success! source_file = {} , destination_file = {}", source.string(), destination.string());
     }
   } else {
-    if (!pstd::FileExists(destination)) {
-      if (pstd::CreateDir(destination) != 0) {
+    if (!kstd::FileExists(destination)) {
+      if (kstd::CreateDir(destination) != 0) {
         WARN("create dir {} fail", destination.string());
         return -1;
       }
@@ -182,7 +182,7 @@ Status Storage::CreateCheckpointInternal(const std::string& checkpoint_path, int
 
   auto tmp_dir = source_dir + ".tmp";
   // 1) Make sure the temporary directory does not exist
-  if (!pstd::DeleteDirIfExist(tmp_dir)) {
+  if (!kstd::DeleteDirIfExist(tmp_dir)) {
     WARN("DB{}'s RocksDB {} delete directory fail!", db_id_, index);
     return Status::IOError("DeleteDirIfExist() fail! dir_name : {} ", tmp_dir);
   }
@@ -205,19 +205,19 @@ Status Storage::CreateCheckpointInternal(const std::string& checkpoint_path, int
   }
 
   // 4) Make sure the source directory does not exist
-  if (!pstd::DeleteDirIfExist(source_dir)) {
+  if (!kstd::DeleteDirIfExist(source_dir)) {
     WARN("DB{}'s RocksDB {} delete directory {} fail!", db_id_, index, source_dir);
-    if (!pstd::DeleteDirIfExist(tmp_dir)) {
+    if (!kstd::DeleteDirIfExist(tmp_dir)) {
       WARN("DB{}'s RocksDB {} fail to delete the temporary directory {} ", db_id_, index, tmp_dir);
     }
     return Status::IOError("DeleteDirIfExist() fail! dir_name : {} ", source_dir);
   }
 
   // 5) Rename the temporary directory to source directory
-  if (auto status = pstd::RenameFile(tmp_dir, source_dir); status != 0) {
+  if (auto status = kstd::RenameFile(tmp_dir, source_dir); status != 0) {
     WARN("DB{}'s RocksDB {} rename temporary directory {} to source directory {} fail!", db_id_, index, tmp_dir,
          source_dir);
-    if (!pstd::DeleteDirIfExist(tmp_dir)) {
+    if (!kstd::DeleteDirIfExist(tmp_dir)) {
       WARN("DB{}'s RocksDB {} fail to delete the rename failed directory {} ", db_id_, index, tmp_dir);
     }
     return Status::IOError("Rename directory {} fail!", tmp_dir);
@@ -249,21 +249,21 @@ Status Storage::LoadCheckpointInternal(const std::string& checkpoint_sub_path, c
   auto source_dir = AppendSubDirectory(checkpoint_sub_path, index);
   // 1) Rename the original db to db.tmp, and only perform the maximum possible recovery of data
   // when loading the checkpoint fails.
-  if (auto status = pstd::RenameFile(rocksdb_path, tmp_rocksdb_path); status != 0) {
+  if (auto status = kstd::RenameFile(rocksdb_path, tmp_rocksdb_path); status != 0) {
     WARN("DB{}'s RocksDB {} rename db directory {} to temporary directory {} fail!", db_id_, index, rocksdb_path,
          tmp_rocksdb_path);
     return Status::IOError("Rename directory {} fail!", rocksdb_path);
   }
 
   // 2) Create a db directory to save the checkpoint.
-  if (0 != pstd::CreatePath(rocksdb_path)) {
-    pstd::RenameFile(tmp_rocksdb_path, rocksdb_path);
+  if (0 != kstd::CreatePath(rocksdb_path)) {
+    kstd::RenameFile(tmp_rocksdb_path, rocksdb_path);
     WARN("DB{}'s RocksDB {} load a checkpoint from {} fail!", db_id_, index, checkpoint_sub_path);
     return Status::IOError("Create directory {} fail!", rocksdb_path);
   }
   if (RecursiveLinkAndCopy(source_dir, rocksdb_path) != 0) {
-    pstd::DeleteDir(rocksdb_path);
-    pstd::RenameFile(tmp_rocksdb_path, rocksdb_path);
+    kstd::DeleteDir(rocksdb_path);
+    kstd::RenameFile(tmp_rocksdb_path, rocksdb_path);
     WARN("DB{}'s RocksDB {} load a checkpoint from {} fail!", db_id_, index, source_dir);
     return Status::IOError("recursive link and copy directory {} fail!", rocksdb_path);
   }

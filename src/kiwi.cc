@@ -27,10 +27,10 @@
 #include "kiwi.h"
 #include "kiwi_logo.h"
 #include "options.h"
-#include "praft/praft.h"
-#include "pstd/log.h"
-#include "pstd/pstd_util.h"
+#include "raft/raft.h"
 #include "slow_log.h"
+#include "std/log.h"
+#include "std/std_util.h"
 #include "store.h"
 
 // g_kiwi is a global abstraction of the server-side process
@@ -110,11 +110,10 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
 
     switch (c) {
       case 'v': {
-        std::cerr << "kiwi Server version: " << Kkiwi_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32)
-                  << std::endl;
-        std::cerr << "kiwi Server Build Type: " << Kkiwi_BUILD_TYPE << std::endl;
-        std::cerr << "kiwi Server Build Date: " << Kkiwi_BUILD_DATE << std::endl;
-        std::cerr << "kiwi Server Build GIT SHA: " << Kkiwi_GIT_COMMIT_ID << std::endl;
+        std::cerr << "kiwi Server version: " << KIWI_VERSION << " bits=" << (sizeof(void*) == 8 ? 64 : 32) << std::endl;
+        std::cerr << "kiwi Server Build Type: " << KIWI_BUILD_TYPE << std::endl;
+        std::cerr << "kiwi Server Build Date: " << KIWI_BUILD_DATE << std::endl;
+        std::cerr << "kiwi Server Build GIT SHA: " << KIWI_GIT_COMMIT_ID << std::endl;
         std::exit(0);
         break;
       }
@@ -135,7 +134,7 @@ bool KiwiDB::ParseArgs(int argc, char* argv[]) {
         unsigned int optarg_long = static_cast<unsigned int>(strlen(optarg));
         char* str = (char*)calloc(optarg_long, sizeof(char*));
         if (str) {
-          if (sscanf(optarg, "%s:%d", str, &master_port_) != 2) {
+          if (sscanf(optarg, "%s:%hu", str, &master_port_) != 2) {
             ERROR("Invalid slaveof format.");
             free(str);
             return false;
@@ -196,7 +195,7 @@ bool KiwiDB::Init() {
     return false;
   }
 
-  PSTORE.Init(g_config.databases);
+  STORE_INST.Init(g_config.databases);
 
   PSlowLog::Instance().SetThreshold(g_config.slow_log_time);
   PSlowLog::Instance().SetLogLimit(static_cast<std::size_t>(g_config.slow_log_max_len));
@@ -255,9 +254,9 @@ void KiwiDB::Run() {
 }
 
 void KiwiDB::Stop() {
-  kiwi::PRAFT.ShutDown();
-  kiwi::PRAFT.Join();
-  kiwi::PRAFT.Clear();
+  kiwi::RAFT_INST.ShutDown();
+  kiwi::RAFT_INST.Join();
+  kiwi::RAFT_INST.Clear();
   cmd_threads_.Stop();
   event_server_->StopServer();
 }
@@ -343,7 +342,7 @@ int main(int argc, char* argv[]) {
     daemonize();
   }
 
-  pstd::InitRandom();
+  kstd::InitRandom();
   SignalSetup();
   InitLogs();
   InitLimit();
@@ -355,7 +354,7 @@ int main(int argc, char* argv[]) {
   if (g_kiwi->Init()) {
     // output logo to console
     char logo[1024] = "";
-    snprintf(logo, sizeof logo - 1, kiwiLogo, Kkiwi_VERSION, static_cast<int>(sizeof(void*)) * 8,
+    snprintf(logo, sizeof logo - 1, kiwiLogo, KIWI_VERSION, static_cast<int>(sizeof(void*)) * 8,
              static_cast<int>(g_config.port));
     std::cout << logo;
     g_kiwi->Run();

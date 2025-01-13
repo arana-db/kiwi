@@ -11,13 +11,13 @@
 
 #include "fmt/core.h"
 
-#include "praft/praft.h"
+#include "raft/raft.h"
 
 #include "common.h"
 #include "config.h"
 #include "kiwi.h"
 #include "log.h"
-#include "praft/praft.h"
+#include "raft/raft.h"
 
 namespace kiwi {
 
@@ -43,12 +43,12 @@ void BaseCmd::Execute(PClient* client) {
 
   // read consistency (lease read) / write redirection
   if (g_config.use_raft && (HasFlag(kCmdFlagsReadonly) || HasFlag(kCmdFlagsWrite))) {
-    if (!PRAFT.IsInitialized()) {
-      return client->SetRes(CmdRes::kErrOther, "PRAFT is not initialized");
+    if (!RAFT_INST.IsInitialized()) {
+      return client->SetRes(CmdRes::kErrOther, "RAFT_INST is not initialized");
     }
 
-    if (!PRAFT.IsLeader()) {
-      auto leader_addr = PRAFT.GetLeaderAddress();
+    if (!RAFT_INST.IsLeader()) {
+      auto leader_addr = RAFT_INST.GetLeaderAddress();
       if (leader_addr.empty()) {
         return client->SetRes(CmdRes::kErrOther, std::string("-CLUSTERDOWN No Raft leader"));
       }
@@ -59,11 +59,11 @@ void BaseCmd::Execute(PClient* client) {
 
   auto dbIndex = client->GetCurrentDB();
   if (!HasFlag(kCmdFlagsExclusive)) {
-    PSTORE.GetBackend(dbIndex)->LockShared();
+    STORE_INST.GetBackend(dbIndex)->LockShared();
   }
   DEFER {
     if (!HasFlag(kCmdFlagsExclusive)) {
-      PSTORE.GetBackend(dbIndex)->UnLockShared();
+      STORE_INST.GetBackend(dbIndex)->UnLockShared();
     }
   };
 

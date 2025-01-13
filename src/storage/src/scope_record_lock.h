@@ -10,13 +10,13 @@
 #include <utility>
 #include <vector>
 
-#include "pstd/scope_record_lock.h"
 #include "src/lock_mgr.h"
+#include "std/scope_record_lock.h"
 #include "storage/storage.h"
 
 namespace storage {
 
-using ScopeRecordLock = pstd::lock::ScopeRecordLock;
-using MultiScopeRecordLock = pstd::lock::MultiScopeRecordLock;
+using ScopeRecordLock = kstd::lock::ScopeRecordLock;
+using MultiScopeRecordLock = kstd::lock::MultiScopeRecordLock;
 
 }  // namespace storage

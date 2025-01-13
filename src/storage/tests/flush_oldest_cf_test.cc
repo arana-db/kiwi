@@ -21,10 +21,10 @@
 #include "rocksdb/metadata.h"
 #include "rocksdb/options.h"
 
-#include "pstd/log.h"
-#include "pstd/thread_pool.h"
 #include "src/log_index.h"
 #include "src/redis.h"
+#include "std/log.h"
+#include "std/thread_pool.h"
 #include "storage/storage.h"
 #include "storage/util.h"
 
@@ -40,7 +40,7 @@ LogIniter log_initer;
 
 using LogIndex = int64_t;
 
-class LogQueue : public pstd::noncopyable {
+class LogQueue : public kstd::noncopyable {
  public:
   using WriteCallback = std::function<rocksdb::Status(const kiwi::Binlog&, LogIndex idx)>;
 
@@ -57,7 +57,7 @@ class LogQueue : public pstd::noncopyable {
 
  private:
   WriteCallback write_cb_ = nullptr;
-  pstd::ThreadPool consumer_;
+  kstd::ThreadPool consumer_;
   std::atomic<LogIndex> next_log_idx_{1};
 };
 

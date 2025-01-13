@@ -30,7 +30,7 @@ static size_t SkipBlank(const char* data, size_t len, size_t off) {
 }
 
 bool ConfigParser::Load(const char* FileName) {
-  pstd::InputMemoryFile file;
+  kstd::InputMemoryFile file;
   if (!file.Open(FileName)) {
     return false;  // no such file
   }

@@ -137,7 +137,8 @@ class PClient : public std::enable_shared_from_this<PClient> {
 
   // If T is of type string, then the contents of string must be numbers
   template <typename T>
-  requires(std::integral<T> || std::same_as<T, std::string>) void AppendArrayLen(T value) {
+  requires(std::integral<T> || std::same_as<T, std::string>)
+  void AppendArrayLen(T value) {
     AppendStringRaw(fmt::format("*{}\r\n", value));
   }
 

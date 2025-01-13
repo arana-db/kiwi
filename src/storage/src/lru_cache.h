@@ -12,7 +12,7 @@
 
 #include "rocksdb/status.h"
 
-#include "pstd/pstd_mutex.h"
+#include "std/std_mutex.h"
 
 namespace storage {
 
@@ -113,7 +113,7 @@ class LRUCache {
   size_t usage_ = 0;
   size_t size_ = 0;
 
-  pstd::Mutex mutex_;
+  kstd::Mutex mutex_;
 
   // Dummy head of LRU list.
   // lru.prev is newest entry, lru.next is oldest entry.
