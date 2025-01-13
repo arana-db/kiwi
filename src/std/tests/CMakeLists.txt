@@ -10,9 +10,9 @@ set(CMAKE_CXX_STANDARD 20)
 
 aux_source_directory(.. DIR_SRCS)
 
-file(GLOB_RECURSE PSTD_TEST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/*.cc")
+file(GLOB_RECURSE KSTD_TEST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/*.cc")
 
-foreach (std_test_source ${PSTD_TEST_SOURCE})
+foreach (std_test_source ${KSTD_TEST_SOURCE})
     get_filename_component(std_test_filename ${std_test_source} NAME)
     string(REPLACE ".cc" "" std_test_name ${std_test_filename})
 
