@@ -16,6 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure CMake
+        run: cmake -S . -B cmake-build-release
+
+      - name: Build
+        run: cmake --build cmake-build-release
+
       - name: Add LLVM apt repository
         run: |
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -

@@ -274,18 +274,6 @@ ADD_CUSTOM_TARGET(cpplint echo '${LINT_FILES}' | xargs -n12 -P8
   --filter=-legal/copyright,-build/header_guard,-runtime/references
 )
 
-IF(NOT DEFINED K_VERSION)
-    MESSAGE(FATAL_ERROR "K_VERSION must be defined")
-ENDIF()
-
-IF(NOT DEFINED BUILD_TIME)
-    MESSAGE(FATAL_ERROR "BUILD_TIME must be defined")
-ENDIF()
-
-IF(NOT DEFINED GIT_COMMIT_ID)
-    MESSAGE(FATAL_ERROR "GIT_COMMIT_ID must be defined")
-ENDIF()
-
 TARGET_COMPILE_DEFINITIONS(kiwi PRIVATE
         KIWI_VERSION="${K_VERSION}"
         KIWI_BUILD_TYPE="${BUILD_TYPE}"

@@ -13,6 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure CMake
+        run: cmake -S . -B cmake-build-release
+
+      - name: Build
+        run: cmake --build cmake-build-release
+
       - name: Check Format
         working-directory: ${{ github.workspace }}/build
         run: make check-format
