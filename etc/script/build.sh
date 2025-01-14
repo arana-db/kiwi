@@ -19,10 +19,26 @@ CONF="${PROJECT_HOME}/etc/conf/kiwi.conf"
 
 # Get build time and commit ID
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/get_gitinfo_func.sh"
-GIT_INFO=$(get_gitinfo)
-BUILD_TIME=$(echo $GIT_INFO | awk '{print $1}')
-SHORT_COMMIT_ID=$(echo $GIT_INFO | awk '{print $2}')
+
+BUILD_TIME="unknown"
+SHORT_COMMIT_ID="unknown"
+
+function get_git_info() {
+    time=$(git log -1 --format=%ai 2>/dev/null || echo "unknown")
+    if [ "$time" != "unknown" ]; then
+        time=${time:0:10}
+    fi
+    export BUILD_TIME=$time
+
+    id=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+    id=$([ "$id" != "unknown" ] && echo ${id:0:8} || echo "unknown")
+    if [ "$id" = "unknown" ]; then
+        echo "no git commit id"
+        id="kiwi"
+    fi
+    export SHORT_COMMIT_ID=$id
+    # echo "$BUILD_TIME $SHORT_COMMIT_ID"
+}
 
 function build() {
     if [ ! -f "/proc/cpuinfo" ]; then
@@ -85,6 +101,7 @@ function clear() {
 
 function show_help() {
   echo "
+  sh $0 --gitinfo   get git info
   sh $0 --debug     compile with debug
   sh $0 --clang     use clang compiler
   sh $0 --kiwi      only compile kiwi
@@ -105,6 +122,10 @@ while true; do
   case "$1" in
   -c|--clear)
     clear
+    shift ;;
+
+  --gitinfo)
+    get_git_info
     shift ;;
 
   --debug)
@@ -147,4 +168,6 @@ while true; do
   shift
 done
 
+get_git_info
 build
+
