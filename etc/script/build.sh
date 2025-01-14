@@ -6,6 +6,7 @@ C_GREEN="\033[32m"
 C_END="\033[0m"
 
 # Build configuration
+K_VERSION="1.0.0"
 BUILD_TYPE="Release"
 VERBOSE=0
 CMAKE_FLAGS=""
@@ -56,6 +57,7 @@ function build() {
     cp CMakeLists.txt ${PREFIX}/
 
     cmake -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+          -DK_VERSION=$K_VERSION \
           -DBUILD_TIME=$BUILD_TIME \
           -DGIT_COMMIT_ID=$SHORT_COMMIT_ID \
           -DKIWI_BUILD_DATE="$BUILD_TIME" \
