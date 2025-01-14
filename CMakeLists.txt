@@ -273,3 +273,10 @@ ADD_CUSTOM_TARGET(cpplint echo '${LINT_FILES}' | xargs -n12 -P8
   --linelength=120
   --filter=-legal/copyright,-build/header_guard,-runtime/references
 )
+
+target_compile_definitions(kiwi PRIVATE
+        KIWI_VERSION="4.0.0"
+        KIWI_BUILD_TYPE="${BUILD_TYPE}"
+        KIWI_GIT_COMMIT_ID="${GIT_COMMIT_ID}"
+        KIWI_BUILD_DATE="${BUILD_TIME}"
+)

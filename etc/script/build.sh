@@ -1,57 +1,74 @@
 #!/bin/bash
 
-#color code
+# Color codes
 C_RED="\033[31m"
 C_GREEN="\033[32m"
-
 C_END="\033[0m"
 
-BUILD_TYPE=Release
+# Build configuration
+BUILD_TYPE="Release"
 VERBOSE=0
 CMAKE_FLAGS=""
 MAKE_FLAGS=""
 PREFIX="cmake-build"
 
-PWD=`pwd`
+PWD=$(pwd)
 PROJECT_HOME="${PWD}/"
 CONF="${PROJECT_HOME}/etc/conf/kiwi.conf"
 
+# Get build time and commit ID
+BUILD_TIME=$(git log -1 --format=%ai)
+BUILD_TIME=${BUILD_TIME:0:10}
+
+COMMIT_ID=$(git rev-parse HEAD)
+SHORT_COMMIT_ID=${COMMIT_ID:0:8}
+
+if [ -z "$SHORT_COMMIT_ID" ]; then
+    echo "no git commit id"
+    SHORT_COMMIT_ID="kiwi"
+fi
+
 function build() {
-  if [ ! -f "/proc/cpuinfo" ];then
-    CPU_CORE=$(sysctl -n hw.ncpu)
-  else
-    CPU_CORE=$(cat /proc/cpuinfo| grep "processor"| wc -l)
-  fi
-  if [ ${CPU_CORE} -eq 0 ]; then
-    CPU_CORE=1
-  fi
+    if [ ! -f "/proc/cpuinfo" ]; then
+        CPU_CORE=$(sysctl -n hw.ncpu)
+    else
+        CPU_CORE=$(cat /proc/cpuinfo | grep "processor" | wc -l)
+    fi
+    if [ ${CPU_CORE} -eq 0 ]; then
+        CPU_CORE=1
+    fi
 
-  echo "cpu core ${CPU_CORE}"
+    echo "CPU cores: ${CPU_CORE}"
+    echo "BUILD_TIME: $BUILD_TIME"
+    echo "COMMIT_ID: $SHORT_COMMIT_ID"
+    echo "BUILD_TYPE: $BUILD_TYPE"
+    echo "CMAKE_FLAGS: $CMAKE_FLAGS"
+    echo "MAKE_FLAGS: $MAKE_FLAGS"
 
-  echo "BUILD_TYPE:" $BUILD_TYPE
-  echo "CMAKE_FLAGS:" $CMAKE_FLAGS
-  echo "MAKE_FLAGS:" $MAKE_FLAGS
+    if [ "${BUILD_TYPE}" == "Release" ]; then
+        PREFIX="${PREFIX}-release"
+    else
+        PREFIX="${PREFIX}-debug"
+    fi
 
-  if [ "${BUILD_TYPE}" == "Release" ]; then
-    PREFIX="${PREFIX}-release"
-  else
-    PREFIX="${PREFIX}-debug"
-  fi
+    mkdir -p download
+    mkdir -p ${PREFIX}
+    cp CMakeLists.txt ${PREFIX}/
 
-  mkdir -p download
-  mkdir -p ${PREFIX}
-  cp CMakeLists.txt ${PREFIX}/
+    cmake -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+          -DBUILD_TIME=$BUILD_TIME \
+          -DGIT_COMMIT_ID=$SHORT_COMMIT_ID \
+          -DKIWI_BUILD_DATE="$BUILD_TIME" \
+          -DKIWI_GIT_COMMIT_ID="$SHORT_COMMIT_ID" \
+          ${CMAKE_FLAGS} -S . -B ${PREFIX}
+    cmake --build ${PREFIX} -- ${MAKE_FLAGS} -j ${CPU_CORE}
 
-  cmake -DCMAKE_BUILD_TYPE=${BUILD_TYPE} ${CMAKE_FLAGS} -S . -B ${PREFIX}
-  cmake --build ${PREFIX} -- ${MAKE_FLAGS} -j ${CPU_CORE}
-
-  if [ $? -eq 0 ]; then
-    # echo -e "kiwi compile complete, output file ${C_GREEN} ${PREFIX}/bin/kiwi ${C_END}"
-    echo -e "kiwi compile complete, output file ${C_GREEN} ./bin/kiwi ${C_END}"
-  else
-    echo -e "${C_RED} kiwi compile fail ${C_END}"
-    exit 1
-  fi
+    if [ $? -eq 0 ]; then
+        echo -e "kiwi compile complete, output file ${C_GREEN} ./bin/kiwi ${C_END}"
+    else
+        echo -e "${C_RED} kiwi compile fail ${C_END}"
+        exit 1
+    fi
 }
 
 # ":?" makes sure the bash var is not empty.
@@ -134,4 +151,3 @@ while true; do
 done
 
 build
-
