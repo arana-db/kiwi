@@ -18,7 +18,8 @@ PROJECT_HOME="${PWD}/"
 CONF="${PROJECT_HOME}/etc/conf/kiwi.conf"
 
 # Get build time and commit ID
-source ./get_gitinfo_func.sh
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/get_gitinfo_func.sh"
 GIT_INFO=$(get_gitinfo)
 BUILD_TIME=$(echo $GIT_INFO | awk '{print $1}')
 SHORT_COMMIT_ID=$(echo $GIT_INFO | awk '{print $2}')
