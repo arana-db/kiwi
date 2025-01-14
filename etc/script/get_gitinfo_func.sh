@@ -20,10 +20,3 @@ function get_gitinfo() {
 
     echo "$BUILD_TIME $SHORT_COMMIT_ID"
 }
-
-GIT_INFO=$(get_gitinfo)
-BUILD_TIME=$(echo $GIT_INFO | awk '{print $1}')
-SHORT_COMMIT_ID=$(echo $GIT_INFO | awk '{print $2}')
-
-echo "Build Time: $BUILD_TIME"
-echo "Short Commit ID: $SHORT_COMMIT_ID"
