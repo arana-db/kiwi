@@ -13,9 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build
-        run: bash ./etc/script/ci/build.sh
-
       - name: Check Format
         working-directory: ${{ github.workspace }}/build
         run: make check-format
