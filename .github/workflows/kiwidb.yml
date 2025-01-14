@@ -16,11 +16,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure CMake
-        run: cmake -S . -B cmake-build-release
-
       - name: Build
-        run: cmake --build cmake-build-release
+        run: bash ./etc/script/ci/build.sh
 
       - name: Add LLVM apt repository
         run: |

@@ -18,19 +18,10 @@ PROJECT_HOME="${PWD}/"
 CONF="${PROJECT_HOME}/etc/conf/kiwi.conf"
 
 # Get build time and commit ID
-# Get build time and commit ID
-BUILD_TIME=$(git log -1 --format=%ai 2>/dev/null || echo "unknown")
-if [ "$BUILD_TIME" != "unknown" ]; then
-    BUILD_TIME=${BUILD_TIME:0:10}
-fi
-
-COMMIT_ID=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-SHORT_COMMIT_ID=$([ "$COMMIT_ID" != "unknown" ] && echo ${COMMIT_ID:0:8} || echo "unknown")
-
-if [ "$SHORT_COMMIT_ID" = "unknown" ]; then
-    echo "no git commit id"
-    SHORT_COMMIT_ID="kiwi"
-fi
+source ./get_gitinfo_func.sh
+GIT_INFO=$(get_gitinfo)
+BUILD_TIME=$(echo $GIT_INFO | awk '{print $1}')
+SHORT_COMMIT_ID=$(echo $GIT_INFO | awk '{print $2}')
 
 function build() {
     if [ ! -f "/proc/cpuinfo" ]; then
