@@ -34,7 +34,7 @@ jobs:
         run: clang-format --version
 
       - name: Check Format
-        working-directory: ${{ github.workspace }}/build
+        working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
         run: make check-format
 
   build_on_macos:
