@@ -16,8 +16,8 @@ PTransaction& PTransaction::Instance() {
   return mt;
 }
 
-void PTransaction::Watch(PClient* client, int dbno, const std::vector<PString> &keys) {
-  for(const auto& key : keys) {
+void PTransaction::Watch(PClient* client, int dbno, const std::vector<PString>& keys) {
+  for (const auto& key : keys) {
     if (client->Watch(dbno, key)) {
       Clients& cls = clients_[dbno][key];
       cls.push_back(std::static_pointer_cast<PClient>(client->shared_from_this()));
@@ -125,7 +125,7 @@ void WatchCmd::DoCmd(PClient* client) {
 
   std::vector<PString> watch_keys(client->argv_.begin() + 1, client->argv_.end());
   PTransaction::Instance().Watch(client, client->GetCurrentDB(), watch_keys);
-  
+
   client->SetRes(CmdRes::kOK);
 }
 

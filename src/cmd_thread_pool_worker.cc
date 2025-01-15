@@ -65,7 +65,9 @@ void CmdWorkThreadPoolWorker::Work() {
           continue;
         }
 
-        task->Client()->FeedMonitors(param);
+        if (param[0] != kCmdNameExec) {
+          task->Client()->FeedMonitors(param);
+        }
 
         auto cmdstat_map = task->Client()->GetCommandStatMap();
         CommandStatistics statistics;

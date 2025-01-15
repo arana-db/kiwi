@@ -170,10 +170,6 @@ int PClient::HandlePacket(std::string&& data) {
     }
   }
 
-  // for (const auto& item : params) {
-  //   FeedMonitors(item);
-  // }
-
   auto now = std::chrono::steady_clock::now();
   time_stat_->SetEnqueueTs(now);
 
@@ -351,18 +347,31 @@ bool PClient::Exec() {
   }
   resp_encode_->ClearReply();
   AppendArrayLen(queue_cmds_.size());
-  for (auto cmd : queue_cmds_) {
-    DEBUG("EXEC {}, for client {}", cmd[0], GetUniqueID());
-    auto client = std::make_shared<PClient>();
-    client->cmdName_ = cmd[0];
-    client->params_ = cmd;
-    client->argv_ = client->params_;
+
+  auto client = shared_from_this();
+  for (auto& cmd : queue_cmds_) {
+    SetCmdName(pstd::StringToLower(cmd[0]));
+    SetArgv(cmd);
     pstd::StringToLower(client->cmdName_);
     auto [cmdPtr, ret] = cmd_table_manager_.GetCommand(client->CmdName(), client.get());
+
+    auto cmdstat_map = GetCommandStatMap();
+    CommandStatistics statistics;
+    if (cmdstat_map->find(cmd[0]) == cmdstat_map->end()) {
+      cmdstat_map->emplace(cmd[0], statistics);
+    }
+    auto now = std::chrono::steady_clock::now();
+    GetTimeStat()->SetDequeueTs(now);
     cmdPtr->Execute(client.get());
-    AppendContentv1(client->message_);
-    Propagate(client->params_, GetCurrentDB());
+
+    // Info Commandstats used
+    now = std::chrono::steady_clock::now();
+    GetTimeStat()->SetProcessDoneTs(now);
+    (*cmdstat_map)[cmd[0]].cmd_count_.fetch_add(1);
+    (*cmdstat_map)[cmd[0]].cmd_time_consuming_.fetch_add(GetTimeStat()->GetTotalTime());
   }
+  g_kiwi->PushWriteTask(client);
+  // Propagate(client->params_, GetCurrentDB());
   return true;
 }
 
