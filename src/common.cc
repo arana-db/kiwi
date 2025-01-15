@@ -8,7 +8,9 @@
  */
 
 #include "common.h"
+#include <fmt/core.h>
 #include <math.h>
+
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -17,6 +19,7 @@
 #include <iostream>
 #include <limits>
 #include <sstream>
+
 #include "unbounded_buffer.h"
 
 namespace kiwi {
@@ -69,12 +72,8 @@ size_t FormatInt(long value, UnboundedBuffer* reply) {
     return 0;
   }
 
-  char val[32];
-  int len = snprintf(val, sizeof val, "%ld", CRLF, value);
-
   size_t oldSize = reply->ReadableSize();
-  reply->PushData(":");
-  reply->PushData(val, len);
+  reply->PushData(fmt::format(":{}{}", value, CRLF));
 
   return reply->ReadableSize() - oldSize;
 }
@@ -85,12 +84,7 @@ size_t FormatBulk(const char* str, size_t len, UnboundedBuffer* reply) {
   }
 
   size_t oldSize = reply->ReadableSize();
-  reply->PushData("$");
-
-  char val[32];
-  int tmp = snprintf(val, sizeof val - 1, "%lu", CRLF, len);
-  reply->PushData(val, tmp);
-
+  reply->PushData(fmt::format("${}{}", len, CRLF));
   if (str && len > 0) {
     reply->PushData(str, len);
   }
@@ -108,11 +102,7 @@ size_t PreFormatMultiBulk(size_t nBulk, UnboundedBuffer* reply) {
   }
 
   size_t oldSize = reply->ReadableSize();
-  reply->PushData("*");
-
-  char val[32];
-  int tmp = snprintf(val, sizeof val - 1, "%lu", CRLF, nBulk);
-  reply->PushData(val, tmp);
+  reply->PushData(fmt::format("*{}{}", nBulk, CRLF));
 
   return reply->ReadableSize() - oldSize;
 }

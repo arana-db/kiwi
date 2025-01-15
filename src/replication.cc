@@ -15,8 +15,8 @@
 #include "config.h"
 #include "kiwi.h"
 #include "log.h"
-#include "pstd/pstd_string.h"
 #include "replication.h"
+#include "std/std_string.h"
 
 namespace kiwi {
 
@@ -50,7 +50,7 @@ bool PReplication::HasAnyWaitingBgsave() const {
 void PReplication::OnRdbSaveDone() {
   bgsaving_ = false;
 
-  pstd::InputMemoryFile rdb;
+  kstd::InputMemoryFile rdb;
 
   // send rdb to slaves that wait rdb end, set state
   for (auto& wptr : slaves_) {
@@ -293,7 +293,7 @@ void PReplication::SaveTmpRdb(const char* data, std::size_t& len) {
   //  if (masterInfo_.rdbRecved == masterInfo_.rdbSize) {
   //    INFO("Rdb recv complete, bytes {}", masterInfo_.rdbSize);
   //
-  //    //PSTORE.ResetDB();
+  //    //STORE_INST.ResetDB();
   //
   //    PDBLoader loader;
   //    loader.Load(slaveRdbFile);
@@ -332,7 +332,7 @@ PError replconf(const std::vector<PString>& params, UnboundedBuffer* reply) {
   for (size_t i = 1; i < params.size(); i += 2) {
     if (strncasecmp(params[i].c_str(), "listening-port", 14) == 0) {
       long port;
-      if (!pstd::String2int(params[i + 1].c_str(), params[i + 1].size(), &port)) {
+      if (!kstd::String2int(params[i + 1].c_str(), params[i + 1].size(), &port)) {
         ReplyError(kPErrorParam, reply);
         return kPErrorParam;
       }
@@ -423,7 +423,7 @@ PError slaveof(const std::vector<PString>& params, UnboundedBuffer* reply) {
     PREPL.SetMasterAddr(nullptr, 0);
   } else {
     long tmpPort = 0;
-    pstd::String2int(params[2].c_str(), params[2].size(), &tmpPort);
+    kstd::String2int(params[2].c_str(), params[2].size(), &tmpPort);
     uint16_t port = static_cast<uint16_t>(tmpPort);
 
     net::SocketAddr reqMaster(params[1].c_str(), port);

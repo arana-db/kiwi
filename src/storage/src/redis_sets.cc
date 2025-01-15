@@ -14,12 +14,12 @@
 
 #include <fmt/core.h>
 
-#include "pstd/env.h"
-#include "pstd/log.h"
 #include "src/base_data_value_format.h"
 #include "src/base_filter.h"
 #include "src/scope_record_lock.h"
 #include "src/scope_snapshot.h"
+#include "std/env.h"
+#include "std/log.h"
 #include "storage/util.h"
 
 namespace storage {
@@ -805,7 +805,7 @@ rocksdb::Status Redis::SPop(const Slice& key, std::vector<std::string>* members,
   auto batch = Batch::CreateBatch(this);
   ScopeRecordLock l(lock_mgr_, key);
 
-  uint64_t start_us = pstd::NowMicros();
+  uint64_t start_us = kstd::NowMicros();
 
   BaseMetaKey base_meta_key(key);
   Status s = db_->Get(default_read_options_, handles_[kMetaCF], base_meta_key.Encode(), &meta_value);
@@ -899,7 +899,7 @@ rocksdb::Status Redis::SRandmember(const Slice& key, int32_t count, std::vector<
   }
 
   members->clear();
-  auto last_seed = pstd::NowMicros();
+  auto last_seed = kstd::NowMicros();
   std::default_random_engine engine;
 
   std::string meta_value;

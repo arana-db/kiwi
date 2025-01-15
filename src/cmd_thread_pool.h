@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 #include "base_cmd.h"
-#include "pstd/pstd_status.h"
+#include "std/std_status.h"
 
 namespace kiwi {
 
@@ -56,7 +56,7 @@ class CmdThreadPool {
 
   explicit CmdThreadPool(std::string name);
 
-  pstd::Status Init(int fast_thread, int slow_thread, std::string name);
+  kstd::Status Init(int fast_thread, int slow_thread, std::string name);
 
   // start the thread pool
   void Start();

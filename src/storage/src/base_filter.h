@@ -10,7 +10,6 @@
 #include <string>
 #include <vector>
 
-#include "pstd/log.h"
 #include "rocksdb/compaction_filter.h"
 #include "rocksdb/db.h"
 #include "src/base_data_key_format.h"
@@ -21,6 +20,7 @@
 #include "src/lists_meta_value_format.h"
 #include "src/strings_value_format.h"
 #include "src/zsets_data_key_format.h"
+#include "std/log.h"
 
 namespace storage {
 
@@ -112,7 +112,7 @@ class BaseDataFilter : public rocksdb::CompactionFilter {
     UNUSED(new_value);
     UNUSED(value_changed);
     ParsedBaseDataKey parsed_base_data_key(key);
-    TRACE("[DataFilter], key: %s, data = %s, version = %llu", parsed_base_data_key.Key().ToString().c_str(),
+    TRACE("[DataFilter], key: %s, data = %s, version = %lu", parsed_base_data_key.Key().ToString().c_str(),
           parsed_base_data_key.Data().ToString().c_str(), parsed_base_data_key.Version());
 
     const char* ptr = key.data();

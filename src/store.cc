@@ -15,20 +15,20 @@
 
 #include "config.h"
 #include "db.h"
-#include "pstd/log.h"
-#include "pstd/pstd_string.h"
+#include "std/log.h"
+#include "std/std_string.h"
 #include "transaction.h"
 
 namespace kiwi {
 
-PStore::~PStore() { INFO("STORE is closing..."); }
+Store::~Store() { INFO("STORE is closing..."); }
 
-PStore& PStore::Instance() {
-  static PStore store;
+Store& Store::Instance() {
+  static Store store;
   return store;
 }
 
-void PStore::Init(int db_number) {
+void Store::Init(int db_number) {
   db_number_ = db_number;
   backends_.reserve(db_number_);
   for (int i = 0; i < db_number_; i++) {
@@ -40,7 +40,7 @@ void PStore::Init(int db_number) {
   INFO("STORE Init success!");
 }
 
-void PStore::HandleTaskSpecificDB(const TasksVector& tasks) {
+void Store::HandleTaskSpecificDB(const TasksVector& tasks) {
   std::for_each(tasks.begin(), tasks.end(), [this](const auto& task) {
     if (task.db < 0 || task.db >= db_number_) {
       WARN("The database index is out of range.");
@@ -54,7 +54,7 @@ void PStore::HandleTaskSpecificDB(const TasksVector& tasks) {
           return;
         }
         auto path = task.args.find(kCheckpointPath)->second;
-        pstd::TrimSlash(path);
+        kstd::TrimSlash(path);
         db->CreateCheckpoint(path, task.sync);
         break;
       }
@@ -64,7 +64,7 @@ void PStore::HandleTaskSpecificDB(const TasksVector& tasks) {
           return;
         }
         auto path = task.args.find(kCheckpointPath)->second;
-        pstd::TrimSlash(path);
+        kstd::TrimSlash(path);
         db->LoadDBFromCheckpoint(path, task.sync);
         break;
       }

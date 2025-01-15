@@ -30,7 +30,7 @@ FOREACH (TEST_SOURCE ${TEST_SOURCES})
             PRIVATE gtest_main
             PRIVATE fmt
             PRIVATE spdlog
-            PRIVATE pstd
+            PRIVATE kstd
             PRIVATE rocksdb
             PRIVATE snappy
             PRIVATE lz4

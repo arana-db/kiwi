@@ -21,9 +21,9 @@ foreach (gtest_test_source ${GTEST_TEST_SOURCE})
             PRIVATE ${GTEST_INCLUDE_DIR}
     )
 
-    add_dependencies(${gtest_test_name} pstd gtest)
+    add_dependencies(${gtest_test_name} kstd gtest)
     target_link_libraries(${gtest_test_name}
-            PUBLIC pstd
+            PUBLIC kstd
             PUBLIC gtest
     )
     gtest_discover_tests(${gtest_test_name})
