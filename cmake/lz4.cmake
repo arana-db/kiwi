@@ -29,6 +29,7 @@ ExternalProject_Add(
         -DBUILD_STATIC_LIBS=ON
         -DBUILD_SHARED_LIBS=OFF
         BUILD_COMMAND make -j${CPU_CORE}
+        UPDATE_COMMAND ""
 )
 
 ADD_LIBRARY(lz4 STATIC IMPORTED GLOBAL)

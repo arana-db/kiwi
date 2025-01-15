@@ -58,8 +58,8 @@ Checks:     '
 #   - { key: readability-identifier-naming.VariableCase,        value: lower_case }
 
 WarningsAsErrors: '*'
-# HeaderFilterRegex: '(|/src|/src/net|/src/pstd|/src/storage)/include'
-# HeaderFilterRegex: '/src/(net|storage|pstd)/include'
+# HeaderFilterRegex: '(|/src|/src/net|/src/std|/src/storage)/include'
+# HeaderFilterRegex: '/src/(net|storage|std)/include'
 
 #### Disabled checks and why: #####
 #

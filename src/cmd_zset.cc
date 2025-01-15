@@ -11,7 +11,7 @@
 
 #include <memory>
 
-#include "pstd/pstd_string.h"
+#include "std/std_string.h"
 #include "store.h"
 
 namespace kiwi {
@@ -32,7 +32,7 @@ int32_t DoScoreStrRange(std::string begin_score, std::string end_score, bool* le
     *min_score = storage::ZSET_SCORE_MIN;
   } else if (begin_score == "inf" || begin_score == "+inf") {
     *min_score = storage::ZSET_SCORE_MAX;
-  } else if (pstd::String2d(begin_score.data(), begin_score.size(), min_score) == 0) {
+  } else if (kstd::String2d(begin_score.data(), begin_score.size(), min_score) == 0) {
     return -1;
   }
 
@@ -44,7 +44,7 @@ int32_t DoScoreStrRange(std::string begin_score, std::string end_score, bool* le
     *max_score = storage::ZSET_SCORE_MAX;
   } else if (end_score == "-inf") {
     *max_score = storage::ZSET_SCORE_MIN;
-  } else if (pstd::String2d(end_score.data(), end_score.size(), max_score) == 0) {
+  } else if (kstd::String2d(end_score.data(), end_score.size(), max_score) == 0) {
     return -1;
   }
   return 0;
@@ -102,7 +102,7 @@ void ZAddCmd::DoCmd(PClient* client) {
   double score = 0.0;
   size_t index = 2;
   for (; index < argc; index += 2) {
-    if (pstd::String2d(client->argv_[index].data(), client->argv_[index].size(), &score) == 0) {
+    if (kstd::String2d(client->argv_[index].data(), client->argv_[index].size(), &score) == 0) {
       client->SetRes(CmdRes::kInvalidFloat);
       return;
     }
@@ -111,7 +111,7 @@ void ZAddCmd::DoCmd(PClient* client) {
   client->SetKey(client->argv_[1]);
   int32_t count = 0;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZAdd(client->Key(), score_members_, &count);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZAdd(client->Key(), score_members_, &count);
   if (s.ok()) {
     client->AppendInteger(count);
   } else if (s.IsInvalidArgument()) {
@@ -137,7 +137,7 @@ bool ZPopMinCmd::DoInitial(PClient* client) {
 void ZPopMinCmd::DoCmd(PClient* client) {
   int32_t count = 1;
   if (client->argv_.size() == 3) {
-    if (pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &count) == 0) {
+    if (kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &count) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
@@ -145,14 +145,14 @@ void ZPopMinCmd::DoCmd(PClient* client) {
 
   std::vector<storage::ScoreMember> score_members;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZPopMin(client->Key(), count, &score_members);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZPopMin(client->Key(), count, &score_members);
   if (s.ok()) {
     char buf[32];
     int64_t len = 0;
     client->AppendArrayLen(static_cast<int64_t>(score_members.size()) * 2);
     for (auto& score_member : score_members) {
       client->AppendString(score_member.member);
-      len = pstd::D2string(buf, sizeof(buf), score_member.score);
+      len = kstd::D2string(buf, sizeof(buf), score_member.score);
       client->AppendString(buf, len);
     }
   } else if (s.IsInvalidArgument()) {
@@ -178,7 +178,7 @@ bool ZPopMaxCmd::DoInitial(PClient* client) {
 void ZPopMaxCmd::DoCmd(PClient* client) {
   int32_t count = 1;
   if (client->argv_.size() == 3) {
-    if (pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &count) == 0) {
+    if (kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &count) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
@@ -186,14 +186,14 @@ void ZPopMaxCmd::DoCmd(PClient* client) {
 
   std::vector<storage::ScoreMember> score_members;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZPopMax(client->Key(), count, &score_members);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZPopMax(client->Key(), count, &score_members);
   if (s.ok()) {
     char buf[32];
     int64_t len = 0;
     client->AppendArrayLen(static_cast<int64_t>(score_members.size()) * 2);
     for (auto& score_member : score_members) {
       client->AppendString(score_member.member);
-      len = pstd::D2string(buf, sizeof(buf), score_member.score);
+      len = kstd::D2string(buf, sizeof(buf), score_member.score);
       client->AppendString(buf, len);
     }
   } else if (s.IsInvalidArgument()) {
@@ -211,7 +211,7 @@ ZsetUIstoreParentCmd::ZsetUIstoreParentCmd(const std::string& name, int16_t arit
 bool ZsetUIstoreParentCmd::DoInitial(PClient* client) {
   auto argv_ = client->argv_;
   dest_key_ = argv_[1];
-  if (pstd::String2int(argv_[2].data(), argv_[2].size(), &num_keys_) == 0) {
+  if (kstd::String2int(argv_[2].data(), argv_[2].size(), &num_keys_) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return false;
   }
@@ -237,7 +237,7 @@ bool ZsetUIstoreParentCmd::DoInitial(PClient* client) {
       double weight;
       auto base = index;
       for (; index < base + num_keys_; index++) {
-        if (pstd::String2d(argv_[index].data(), argv_[index].size(), &weight) == 0) {
+        if (kstd::String2d(argv_[index].data(), argv_[index].size(), &weight) == 0) {
           client->SetRes(CmdRes::kErrOther, "weight value is not a float");
           return false;
         }
@@ -275,7 +275,7 @@ bool ZInterstoreCmd::DoInitial(PClient* client) { return ZsetUIstoreParentCmd::D
 void ZInterstoreCmd::DoCmd(PClient* client) {
   int32_t count = 0;
   std::vector<storage::ScoreMember> value_to_dest_;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->ZInterstore(dest_key_, keys_, weights_, aggregate_, value_to_dest_, &count);
   if (s.ok()) {
@@ -294,7 +294,7 @@ bool ZUnionstoreCmd::DoInitial(PClient* client) { return ZsetUIstoreParentCmd::D
 void ZUnionstoreCmd::DoCmd(PClient* client) {
   int32_t count = 0;
   std::map<std::string, double> value_to_dest;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->ZUnionstore(dest_key_, keys_, weights_, aggregate_, value_to_dest, &count);
   if (s.ok()) {
@@ -325,17 +325,17 @@ void ZRevrangeCmd::DoCmd(PClient* client) {
     client->SetRes(CmdRes::kSyntaxErr);
     return;
   }
-  if (pstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &start) == 0) {
+  if (kstd::String2int(client->argv_[2].data(), client->argv_[2].size(), &start) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-  if (pstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &stop) == 0) {
+  if (kstd::String2int(client->argv_[3].data(), client->argv_[3].size(), &stop) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
   std::vector<storage::ScoreMember> score_members;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())
+      STORE_INST.GetBackend(client->GetCurrentDB())
           ->GetStorage()
           ->ZRevrange(client->Key(), static_cast<int32_t>(start), static_cast<int32_t>(stop), &score_members);
   if (s.ok() || s.IsNotFound()) {
@@ -345,7 +345,7 @@ void ZRevrangeCmd::DoCmd(PClient* client) {
       client->AppendArrayLen(score_members.size() * 2);
       for (const auto& sm : score_members) {
         client->AppendString(sm.member);
-        len = pstd::D2string(buf, sizeof(buf), sm.score);
+        len = kstd::D2string(buf, sizeof(buf), sm.score);
         client->AppendString(buf, len);
       }
     } else {
@@ -390,12 +390,12 @@ void ZRangebyscoreCmd::DoCmd(PClient* client) {
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
@@ -412,7 +412,7 @@ void ZRangebyscoreCmd::DoCmd(PClient* client) {
     return;
   }
   std::vector<storage::ScoreMember> score_members;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->ZRangebyscore(client->Key(), min_score, max_score, left_close, right_close, &score_members);
   if (!s.ok() && !s.IsNotFound()) {
@@ -432,7 +432,7 @@ void ZRangebyscoreCmd::DoCmd(PClient* client) {
     client->AppendArrayLen(count * 2);
     for (; start < end; start++) {
       client->AppendString(score_members[start].member);
-      len = pstd::D2string(buf, sizeof(buf), score_members[start].score);
+      len = kstd::D2string(buf, sizeof(buf), score_members[start].score);
       client->AppendString(buf, len);
     }
   } else {
@@ -456,17 +456,17 @@ void ZRemrangebyrankCmd::DoCmd(PClient* client) {
   int32_t start = 0;
   int32_t end = 0;
 
-  if (pstd::String2int(client->argv_[2], &start) == 0) {
+  if (kstd::String2int(client->argv_[2], &start) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-  if (pstd::String2int(client->argv_[3], &end) == 0) {
+  if (kstd::String2int(client->argv_[3], &end) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
 
   storage::Status s;
-  s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZRemrangebyrank(client->Key(), start, end, &ret);
+  s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZRemrangebyrank(client->Key(), start, end, &ret);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(ret);
   } else if (s.IsInvalidArgument()) {
@@ -508,12 +508,12 @@ void ZRevrangebyscoreCmd::DoCmd(PClient* client) {
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
@@ -531,7 +531,7 @@ void ZRevrangebyscoreCmd::DoCmd(PClient* client) {
   }
   std::vector<storage::ScoreMember> score_members;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())
+      STORE_INST.GetBackend(client->GetCurrentDB())
           ->GetStorage()
           ->ZRevrangebyscore(client->Key(), min_score, max_score, left_close, right_close, &score_members);
   if (!s.ok() && !s.IsNotFound()) {
@@ -551,7 +551,7 @@ void ZRevrangebyscoreCmd::DoCmd(PClient* client) {
     client->AppendArrayLen(count * 2);
     for (; start < end; start++) {
       client->AppendString(score_members[start].member);
-      len = pstd::D2string(buf, sizeof(buf), score_members[start].score);
+      len = kstd::D2string(buf, sizeof(buf), score_members[start].score);
       client->AppendString(buf, len);
     }
   } else {
@@ -572,7 +572,7 @@ bool ZCardCmd::DoInitial(PClient* client) {
 
 void ZCardCmd::DoCmd(PClient* client) {
   int32_t reply_Num = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(client->Key(), &reply_Num);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZCard(client->Key(), &reply_Num);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(reply_Num);
   } else {
@@ -622,12 +622,12 @@ void ZRangeCmd::DoCmd(PClient* client) {
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &offset) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
         index++;
-        if (pstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
+        if (kstd::String2int(client->argv_[index].data(), client->argv_[index].size(), &count) == 0) {
           client->SetRes(CmdRes::kInvalidInt);
           return;
         }
@@ -665,27 +665,29 @@ void ZRangeCmd::DoCmd(PClient* client) {
   storage::Status s;
   if (!is_rev) {
     if (by_score) {
-      s = PSTORE.GetBackend(client->GetCurrentDB())
+      s = STORE_INST.GetBackend(client->GetCurrentDB())
               ->GetStorage()
               ->ZRangebyscore(client->Key(), start, stop, left_close, right_close, &score_members);
     } else if (by_lex) {
-      s = PSTORE.GetBackend(client->GetCurrentDB())
+      s = STORE_INST.GetBackend(client->GetCurrentDB())
               ->GetStorage()
               ->ZRangebylex(client->Key(), lex_min, lex_max, left_close, right_close, &lex_members);
     } else {
-      s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZRange(client->Key(), start, stop, &score_members);
+      s = STORE_INST.GetBackend(client->GetCurrentDB())
+              ->GetStorage()
+              ->ZRange(client->Key(), start, stop, &score_members);
     }
   } else {
     if (by_score) {
-      s = PSTORE.GetBackend(client->GetCurrentDB())
+      s = STORE_INST.GetBackend(client->GetCurrentDB())
               ->GetStorage()
               ->ZRevrangebyscore(client->Key(), start, stop, left_close, right_close, &score_members);
     } else if (by_lex) {
-      s = PSTORE.GetBackend(client->GetCurrentDB())
+      s = STORE_INST.GetBackend(client->GetCurrentDB())
               ->GetStorage()
               ->ZRangebylex(client->Key(), lex_min, lex_max, left_close, right_close, &lex_members);
     } else {
-      s = PSTORE.GetBackend(client->GetCurrentDB())
+      s = STORE_INST.GetBackend(client->GetCurrentDB())
               ->GetStorage()
               ->ZRevrange(client->Key(), start, stop, &score_members);
     }
@@ -717,7 +719,7 @@ void ZRangeCmd::DoCmd(PClient* client) {
       client->AppendArrayLen(count * 2);
       for (; m_start < m_end; m_start++) {
         client->AppendString(score_members[m_start].member);
-        len = pstd::D2string(buf, sizeof(buf), score_members[m_start].score);
+        len = kstd::D2string(buf, sizeof(buf), score_members[m_start].score);
         client->AppendString(buf, len);
       }
     } else {
@@ -741,10 +743,10 @@ void ZScoreCmd::DoCmd(PClient* client) {
   double score = 0;
 
   storage::Status s;
-  s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZScore(client->Key(), client->argv_[2], &score);
+  s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZScore(client->Key(), client->argv_[2], &score);
   if (s.ok() || s.IsNotFound()) {
     char buf[32];
-    int64_t len = pstd::D2string(buf, sizeof(buf), score);
+    int64_t len = kstd::D2string(buf, sizeof(buf), score);
     client->AppendString(buf, len);
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
@@ -772,11 +774,11 @@ void ZRangebylexCmd::DoCmd(PClient* client) {
   bool left_close = true;
   bool right_close = true;
   if (argc == 7 && strcasecmp(client->argv_[4].data(), "limit") == 0) {
-    if (pstd::String2int(client->argv_[5].data(), client->argv_[5].size(), &offset) == 0) {
+    if (kstd::String2int(client->argv_[5].data(), client->argv_[5].size(), &offset) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
-    if (pstd::String2int(client->argv_[6].data(), client->argv_[6].size(), &count) == 0) {
+    if (kstd::String2int(client->argv_[6].data(), client->argv_[6].size(), &count) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
@@ -795,7 +797,7 @@ void ZRangebylexCmd::DoCmd(PClient* client) {
   }
   std::vector<std::string> members;
   storage::Status s;
-  s = PSTORE.GetBackend(client->GetCurrentDB())
+  s = STORE_INST.GetBackend(client->GetCurrentDB())
           ->GetStorage()
           ->ZRangebylex(client->Key(), min_member, max_member, left_close, right_close, &members);
   if (!s.ok() && !s.IsNotFound()) {
@@ -836,11 +838,11 @@ void ZRevrangebylexCmd::DoCmd(PClient* client) {
   bool left_close = true;
   bool right_close = true;
   if (argc == 7 && strcasecmp(client->argv_[4].data(), "limit") == 0) {
-    if (pstd::String2int(client->argv_[5].data(), client->argv_[5].size(), &offset) == 0) {
+    if (kstd::String2int(client->argv_[5].data(), client->argv_[5].size(), &offset) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
-    if (pstd::String2int(client->argv_[6].data(), client->argv_[6].size(), &count) == 0) {
+    if (kstd::String2int(client->argv_[6].data(), client->argv_[6].size(), &count) == 0) {
       client->SetRes(CmdRes::kInvalidInt);
       return;
     }
@@ -855,7 +857,7 @@ void ZRevrangebylexCmd::DoCmd(PClient* client) {
   int32_t ret = DoMemberRange(client->argv_[2], client->argv_[3], &left_close, &right_close, &min_member, &max_member);
   std::vector<std::string> members;
   storage::Status s;
-  s = PSTORE.GetBackend(client->GetCurrentDB())
+  s = STORE_INST.GetBackend(client->GetCurrentDB())
           ->GetStorage()
           ->ZRangebylex(client->Key(), min_member, max_member, left_close, right_close, &members);
   if (!s.ok() && !s.IsNotFound()) {
@@ -887,7 +889,7 @@ bool ZRankCmd::DoInitial(PClient* client) {
 void ZRankCmd::DoCmd(PClient* client) {
   int32_t rank = 0;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZRank(client->Key(), client->argv_[2], &rank);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZRank(client->Key(), client->argv_[2], &rank);
   if (s.ok()) {
     client->AppendInteger(rank);
   } else if (s.IsNotFound()) {
@@ -910,7 +912,7 @@ bool ZRevrankCmd::DoInitial(PClient* client) {
 void ZRevrankCmd::DoCmd(PClient* client) {
   int32_t revrank = 0;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZRevrank(client->Key(), client->argv_[2], &revrank);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZRevrank(client->Key(), client->argv_[2], &revrank);
   if (s.ok()) {
     client->AppendInteger(revrank);
   } else if (s.IsNotFound()) {
@@ -934,7 +936,8 @@ void ZRemCmd::DoCmd(PClient* client) {
   auto iter = client->argv_.begin() + 2;
   std::vector<std::string> members(iter, client->argv_.end());
   int32_t deleted = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZRem(client->Key(), members, &deleted);
+  storage::Status s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZRem(client->Key(), members, &deleted);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(deleted);
   } else if (s.IsInvalidArgument()) {
@@ -955,17 +958,17 @@ bool ZIncrbyCmd::DoInitial(PClient* client) {
 void ZIncrbyCmd::DoCmd(PClient* client) {
   double by = .0f;
   double score = .0f;
-  if (pstd::String2d(client->argv_[2].data(), client->argv_[2].size(), &by) == 0) {
+  if (kstd::String2d(client->argv_[2].data(), client->argv_[2].size(), &by) == 0) {
     client->SetRes(CmdRes::kInvalidFloat);
     return;
   }
 
   std::string member = client->argv_[3];
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZIncrby(client->Key(), member, by, &score);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZIncrby(client->Key(), member, by, &score);
   if (s.ok()) {
     char buf[32];
-    int64_t len = pstd::D2string(buf, sizeof(buf), score);
+    int64_t len = kstd::D2string(buf, sizeof(buf), score);
     client->AppendString(buf, len);
   } else if (s.IsInvalidArgument()) {
     client->SetRes(CmdRes::kMultiKey);
@@ -994,7 +997,7 @@ void ZRemrangebyscoreCmd::DoCmd(PClient* client) {
   }
 
   int32_t s_ret = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->ZRemrangebyscore(client->Key(), min_score, max_score, left_close, right_close, &s_ret);
   if (s.ok()) {

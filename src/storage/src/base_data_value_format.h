@@ -14,7 +14,7 @@
 #include "base_value_format.h"
 #include "coding.h"
 #include "mutex.h"
-#include "pstd/pstd_coding.h"
+#include "std/std_coding.h"
 #include "storage/storage_define.h"
 
 namespace storage {
@@ -97,7 +97,7 @@ class ParsedBaseDataValue : public ParsedInternalValue {
   }
 
  protected:
-  virtual void SetVersionToValue() override{};
+  virtual void SetVersionToValue() override {};
 
  private:
   const size_t kBaseDataValueSuffixLength = kSuffixReserveLength + kTimestampLength;

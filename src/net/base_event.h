@@ -47,7 +47,7 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
   const static int EVENT_NULL;
 
   BaseEvent(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, int8_t mode, int8_t type)
-      : listenSockets_(listenSockets), mode_(mode), type_(type){};
+      : listenSockets_(listenSockets), mode_(mode), type_(type) {};
 
   virtual ~BaseEvent() = default;
 
@@ -75,7 +75,7 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
     bool run = true;
     if (running_.compare_exchange_strong(run, false)) {
       char signal_byte = 'X';
-      ::write(pipeFd_[1], &signal_byte, sizeof(signal_byte));  // send signal to pipe，end poll loop
+      std::ignore = ::write(pipeFd_[1], &signal_byte, sizeof(signal_byte));  // send signal to pipe，end poll loop
       close(EvFd());
     }
   }

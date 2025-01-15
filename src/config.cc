@@ -13,7 +13,8 @@
 #include <vector>
 
 #include "config.h"
-#include "pstd/pstd_string.h"
+#include "std/std_string.h"
+#include "store.h"
 
 namespace kiwi {
 
@@ -23,7 +24,7 @@ constexpr int DBNUMBER_MAX = 16;
 constexpr int THREAD_MAX = 129;
 constexpr int ROCKSDB_INSTANCE_NUMBER_MAX = 10;
 
-PConfig g_config;
+Config g_config;
 
 // preprocess func
 static void EraseQuotes(std::string& str) {
@@ -38,15 +39,15 @@ static void EraseQuotes(std::string& str) {
 }
 
 static Status CheckYesNo(const std::string& value) {
-  if (!pstd::StringEqualCaseInsensitive(value, "yes") && !pstd::StringEqualCaseInsensitive(value, "no")) {
+  if (!kstd::StringEqualCaseInsensitive(value, "yes") && !kstd::StringEqualCaseInsensitive(value, "no")) {
     return Status::InvalidArgument("The value must be yes or no.");
   }
   return Status::OK();
 }
 
 static Status CheckLogLevel(const std::string& value) {
-  if (!pstd::StringEqualCaseInsensitive(value, "debug") && !pstd::StringEqualCaseInsensitive(value, "verbose") &&
-      !pstd::StringEqualCaseInsensitive(value, "notice") && !pstd::StringEqualCaseInsensitive(value, "warning")) {
+  if (!kstd::StringEqualCaseInsensitive(value, "debug") && !kstd::StringEqualCaseInsensitive(value, "verbose") &&
+      !kstd::StringEqualCaseInsensitive(value, "notice") && !kstd::StringEqualCaseInsensitive(value, "warning")) {
     return Status::InvalidArgument("The value must be debug / verbose / notice / warning.");
   }
   return Status::OK();
@@ -88,7 +89,7 @@ Status StringValueArray::SetValue(const std::string& value) {
 }
 
 Status BoolValue::SetValue(const std::string& value) {
-  if (pstd::StringEqualCaseInsensitive(value, "yes")) {
+  if (kstd::StringEqualCaseInsensitive(value, "yes")) {
     *value_ = true;
   } else {
     *value_ = false;
@@ -130,7 +131,7 @@ Status MemorySize::SetValue(const std::string& value) {
   return Status::OK();
 }
 
-PConfig::PConfig() {
+Config::Config() {
   AddBool("redis-compatible-mode", &CheckYesNo, true, &redis_compatible_mode);
   AddBool("daemonize", &CheckYesNo, false, &daemonize);
   AddStringArray("ips", false, ips);
@@ -171,7 +172,7 @@ PConfig::PConfig() {
   AddNumber("rocksdb-level0-slowdown-writes-trigger", false, &rocksdb_level0_slowdown_writes_trigger);
 }
 
-bool PConfig::LoadFromFile(const std::string& file_name) {
+bool Config::LoadFromFile(const std::string& file_name) {
   config_file_name_ = file_name;
   if (!parser_.Load(file_name.c_str())) {
     return false;
@@ -207,17 +208,17 @@ bool PConfig::LoadFromFile(const std::string& file_name) {
   return true;
 }
 
-void PConfig::Get(const std::string& key, std::vector<std::string>* values) const {
+void Config::Get(const std::string& key, std::vector<std::string>* values) const {
   values->clear();
   for (const auto& [k, v] : config_map_) {
-    if (key == "*" || pstd::StringMatch(key.c_str(), k.c_str(), 1)) {
+    if (key == "*" || kstd::StringMatch(key.c_str(), k.c_str(), 1)) {
       values->emplace_back(k);
       values->emplace_back(v->Value());
     }
   }
 }
 
-Status PConfig::Set(std::string key, const std::string& value, bool init_stage) {
+Status Config::Set(std::string key, const std::string& value, bool init_stage) {
   std::transform(key.begin(), key.end(), key.begin(), ::tolower);
   auto iter = config_map_.find(key);
   if (iter == config_map_.end()) {
@@ -226,7 +227,7 @@ Status PConfig::Set(std::string key, const std::string& value, bool init_stage) 
   return iter->second->Set(value, init_stage);
 }
 
-rocksdb::Options PConfig::GetRocksDBOptions() {
+rocksdb::Options Config::GetRocksDBOptions() {
   rocksdb::Options options;
   options.create_if_missing = true;
   options.create_missing_column_families = true;
@@ -243,7 +244,7 @@ rocksdb::Options PConfig::GetRocksDBOptions() {
   return options;
 }
 
-rocksdb::BlockBasedTableOptions PConfig::GetRocksDBBlockBasedTableOptions() {
+rocksdb::BlockBasedTableOptions Config::GetRocksDBBlockBasedTableOptions() {
   rocksdb::BlockBasedTableOptions options;
   return options;
 }

@@ -17,7 +17,7 @@
 
 #include "common.h"
 #include "net/socket_addr.h"
-#include "pstd/memory_file.h"
+#include "std/memory_file.h"
 
 namespace kiwi {
 
@@ -155,7 +155,7 @@ class PReplication {
   // slave side
   PMasterInfo masterInfo_;
   std::weak_ptr<PClient> master_;
-  pstd::OutputMemoryFile rdb_;
+  kstd::OutputMemoryFile rdb_;
 
   // Callback function that failed to connect to the master node
   std::function<void(std::string)> on_fail_ = nullptr;
