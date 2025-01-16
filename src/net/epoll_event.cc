@@ -42,7 +42,7 @@ bool EpollEvent::Init() {
 }
 
 void EpollEvent::AddEvent(uint64_t id, int fd, int mask) {
-  struct epoll_event ev{};
+  struct epoll_event ev {};
   ev.events = mask;
   ev.data.u64 = id;
   if (epoll_ctl(EvFd(), EPOLL_CTL_ADD, fd, &ev) == -1) {
@@ -61,7 +61,7 @@ void EpollEvent::EventPoll() {
 }
 
 void EpollEvent::AddWriteEvent(uint64_t id, int fd) {
-  struct epoll_event ev{};
+  struct epoll_event ev {};
   ev.events = EVENT_WRITE;
   ev.data.u64 = id;
   if (mode_ & EVENT_MODE_READ) {  // If it is a read multiplex, modify the event
@@ -77,7 +77,7 @@ void EpollEvent::AddWriteEvent(uint64_t id, int fd) {
 }
 
 void EpollEvent::DelWriteEvent(uint64_t id, int fd) {
-  struct epoll_event ev{};
+  struct epoll_event ev {};
   ev.data.u64 = id;
   if (mode_ & EVENT_MODE_READ) {  // If it is a read multiplex, modify the event to rea
     ev.events = EVENT_READ;
