@@ -20,7 +20,7 @@ const int ListenSocket::LISTENQ = 1024;
 bool ListenSocket::REUSE_PORT = true;
 
 int ListenSocket::OnReadable(const std::shared_ptr<Connection> &conn, std::string *readBuff) {
-  struct sockaddr_in clientAddr {};
+  struct sockaddr_in clientAddr{};
   auto newConnFd = Accept(&clientAddr);
   if (newConnFd == 0) {
     ERROR("ListenSocket fd:{},Accept error:{}", Fd(), errno);
