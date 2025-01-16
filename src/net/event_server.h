@@ -253,7 +253,7 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
       std::shared_ptr<ListenSocket> listen(ListenSocket::CreateTCPListen());
       listen->SetListenAddr(listenAddr);
       listenSockets.push_back(listen);
-      if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
+      if (auto ret = (listen->Init() != static_cast<int>(NetListen::OK))) {
         listenSockets.clear();  // Clean up all sockets
         return ret;
       }
@@ -267,7 +267,7 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
         auto listenAddr = listen->GetListenAddr();
         listen.reset(ListenSocket::CreateTCPListen());
         listen->SetListenAddr(listenAddr);
-        if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
+        if (auto ret = (listen->Init() != static_cast<int>(NetListen::OK))) {
           listenSockets.clear();  // Clean up all sockets
           return ret;
         }
