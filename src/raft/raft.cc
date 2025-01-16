@@ -126,7 +126,8 @@ butil::Status Raft::Init(std::string& group_id, bool initial_conf_is_null) {
   assert(group_id.size() == RAFT_GROUPID_LEN);
   this->group_id_ = group_id;
 
-  // FIXME: g_config.ip is default to 127.0.0.1, which may not work in cluster.
+  // NOTE: Default raft_ip is 127.0.0.1. For cluster setup, configure the appropriate
+  // IP address in kiwi.conf using the 'raft-ip' directive.
   raw_addr_ = g_config.raft_ip + ":" + std::to_string(port);
   butil::ip_t ip;
   auto ret = butil::str2ip(g_config.raft_ip.c_str(), &ip);

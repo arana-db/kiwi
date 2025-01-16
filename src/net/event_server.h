@@ -254,6 +254,7 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
       listen->SetListenAddr(listenAddr);
       listenSockets.push_back(listen);
       if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
+        listenSockets.clear();  // Clean up all sockets
         return ret;
       }
     }
@@ -267,6 +268,7 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
         listen.reset(ListenSocket::CreateTCPListen());
         listen->SetListenAddr(listenAddr);
         if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
+          listenSockets.clear();  // Clean up all sockets
           return ret;
         }
       }

@@ -43,7 +43,9 @@ struct SocketAddr {
       addr_.addr4_.sin_port = htons(hostPort);
       return;
     }
-    ::inet_pton(AF_INET6, ip.c_str(), &addr_.addr6_.sin6_addr);
+    if (::inet_pton(AF_INET6, ip.c_str(), &addr_.addr6_.sin6_addr) != 1) {
+      throw std::invalid_argument("Invalid IP address format");
+    }
     addr_.addr6_.sin6_family = AF_INET6;
     addr_.addr6_.sin6_port = htons(hostPort);
   }
@@ -70,7 +72,9 @@ struct SocketAddr {
       }
     }
     char ipv6_buf[INET6_ADDRSTRLEN] = {0};
-    ::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, ipv6_buf, sizeof(ipv6_buf));
+    if (!::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, ipv6_buf, sizeof(ipv6_buf))) {
+      throw std::runtime_error("Failed to convert IPv6 address to string");
+    }
     return ipv6_buf;
   }
 
