@@ -65,10 +65,6 @@ void CmdWorkThreadPoolWorker::Work() {
           continue;
         }
 
-        if (param[0] != kCmdNameExec) {
-          task->Client()->FeedMonitors(param);
-        }
-
         auto cmdstat_map = task->Client()->GetCommandStatMap();
         CommandStatistics statistics;
         if (cmdstat_map->find(param[0]) == cmdstat_map->end()) {
@@ -83,6 +79,8 @@ void CmdWorkThreadPoolWorker::Work() {
         task->Client()->GetTimeStat()->SetProcessDoneTs(now);
         (*cmdstat_map)[param[0]].cmd_count_.fetch_add(1);
         (*cmdstat_map)[param[0]].cmd_time_consuming_.fetch_add(task->Client()->GetTimeStat()->GetTotalTime());
+
+        task->Client()->FeedMonitors(param);
 
         g_kiwi->PushWriteTask(task->Client());
       }

@@ -37,9 +37,10 @@ class PTransaction {
   PTransaction() = default;
 
   using Clients = std::vector<std::weak_ptr<PClient>>;
-  using WatchedClients = std::map<int, std::map<PString, Clients>>;
+  using WatchedClients = std::unordered_map<int, std::unordered_map<PString, Clients>>;
 
   WatchedClients clients_;
+  std::unordered_map<int, std::shared_mutex> watched_clients_mutex_;
 };
 
 class MultiCmd : public BaseCmd {

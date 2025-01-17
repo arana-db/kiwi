@@ -7,7 +7,7 @@
 
 #include "transaction.h"
 #include "client.h"
-#include "log.h"
+#include "std/log.h"
 
 namespace kiwi {
 
@@ -43,8 +43,8 @@ void PTransaction::Discard(PClient* client) {
 }
 
 void PTransaction::NotifyDirty(int dbno, const PString& key) {
-  // std::map<int, std::map<PString, Clients>>  clients_;
-  // using Clients = std::vector<std::weak_ptr<PClient>>;
+  std::shared_lock<std::shared_mutex> r_lock(watched_clients_mutex_[dbno]);
+
   auto tmpDBIter = clients_.find(dbno);
   // 判断 db-id 对应的 clients 是否存在
   if (tmpDBIter == clients_.end()) {
@@ -60,7 +60,10 @@ void PTransaction::NotifyDirty(int dbno, const PString& key) {
   }
 
   // 取出这个被 watch 的一批连接池
-  Clients& cls = it->second;
+  Clients cls = std::move(it->second);
+  r_lock.unlock();
+
+  std::unique_lock<std::shared_mutex> w_lock(watched_clients_mutex_[dbno]);
   for (auto itCli(cls.begin()); itCli != cls.end();) {
     auto client(itCli->lock());
     if (!client) {
@@ -77,6 +80,7 @@ void PTransaction::NotifyDirty(int dbno, const PString& key) {
   }
 
   if (cls.empty()) {
+    it = dbWatchedKeys.find(key);
     dbWatchedKeys.erase(it);
   }
 }

@@ -350,9 +350,9 @@ bool PClient::Exec() {
 
   auto client = shared_from_this();
   for (auto& cmd : queue_cmds_) {
-    SetCmdName(pstd::StringToLower(cmd[0]));
+    SetCmdName(kstd::StringToLower(cmd[0]));
     SetArgv(cmd);
-    pstd::StringToLower(client->cmdName_);
+    kstd::StringToLower(client->cmdName_);
     auto [cmdPtr, ret] = cmd_table_manager_.GetCommand(client->CmdName(), client.get());
 
     auto cmdstat_map = GetCommandStatMap();
@@ -369,7 +369,10 @@ bool PClient::Exec() {
     GetTimeStat()->SetProcessDoneTs(now);
     (*cmdstat_map)[cmd[0]].cmd_count_.fetch_add(1);
     (*cmdstat_map)[cmd[0]].cmd_time_consuming_.fetch_add(GetTimeStat()->GetTotalTime());
+
+    FeedMonitors(cmd);
   }
+
   g_kiwi->PushWriteTask(client);
   // Propagate(client->params_, GetCurrentDB());
   return true;

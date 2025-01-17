@@ -71,5 +71,5 @@ class Store {
 extern std::vector<PString> g_dirtyKeys;
 extern void Propagate(const std::vector<PString>& params, int dbno);
 extern void Propagate(int dbno, const std::vector<PString>& params);
-
+void signalModifiedKey(const std::vector<PString>& keys, int dbno);
 }  // namespace kiwi

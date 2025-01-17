@@ -100,4 +100,11 @@ void Propagate(int dbno, const std::vector<PString>& params) {
   Propagate(params, dbno);
 }
 
+void signalModifiedKey(const std::vector<PString>& keys, int dbno) {
+  if (keys.size() > 1) {
+    for (const auto& key : keys) {
+      PTransaction::Instance().NotifyDirty(dbno, key);
+    }
+  }
+
 }  // namespace kiwi
