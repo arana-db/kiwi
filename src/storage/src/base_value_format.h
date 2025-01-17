@@ -11,9 +11,9 @@
 #include "rocksdb/env.h"
 #include "rocksdb/slice.h"
 
-#include "pstd/env.h"
 #include "src/coding.h"
 #include "src/mutex.h"
+#include "std/env.h"
 
 namespace storage {
 
@@ -33,7 +33,7 @@ const char DataTypeToTag(DataType type);
 class InternalValue {
  public:
   explicit InternalValue(DataType type, const Slice& user_value) : type_(type), user_value_(user_value) {
-    ctime_ = pstd::NowMicros() / 1e6;
+    ctime_ = kstd::NowMicros() / 1e6;
   }
 
   virtual ~InternalValue() {

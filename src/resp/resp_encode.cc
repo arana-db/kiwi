@@ -13,6 +13,6 @@ void RespEncode::AppendBulkString(std::string& str, const std::string& value) {
 
 void RespEncode::SetBulkStringLen(std::string& str, int64_t ori, const std::string& prefix) {
   str.append(prefix);
-  str.append(pstd::Int2string(ori));
+  str.append(kstd::Int2string(ori));
   str.append(CRLF);
 }

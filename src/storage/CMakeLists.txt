@@ -23,7 +23,7 @@ TARGET_INCLUDE_DIRECTORIES(storage
 )
 
 TARGET_LINK_LIBRARIES(storage
-        pstd
+        kstd
         braft
         brpc
         ssl
@@ -41,7 +41,7 @@ SET_TARGET_PROPERTIES(storage PROPERTIES LINKER_LANGUAGE CXX)
 ADD_SUBDIRECTORY(tests)
 
 ADD_DEPENDENCIES(storage
-        pstd
+        kstd
         braft
         brpc
         ssl

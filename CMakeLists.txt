@@ -183,6 +183,7 @@ ENDIF()
 SET(LIB ${LIB} CACHE INTERNAL "libs which should be linked for executable target")
 
 INCLUDE(ExternalProject)
+INCLUDE(cmake/precommit.cmake)
 INCLUDE(cmake/findTools.cmake)
 INCLUDE(cmake/openssl.cmake)
 INCLUDE(cmake/gflags.cmake)
@@ -204,9 +205,9 @@ FILE(MAKE_DIRECTORY "${PROTO_OUTPUT_DIR}")
 
 #INCLUDE(cmake/protogen.cmake)
 
-ADD_SUBDIRECTORY(src/pstd)
+ADD_SUBDIRECTORY(src/std)
 ADD_SUBDIRECTORY(src/net)
-ADD_SUBDIRECTORY(src/praft)
+ADD_SUBDIRECTORY(src/raft)
 ADD_SUBDIRECTORY(src/storage)
 ADD_SUBDIRECTORY(src/resp)
 
@@ -221,6 +222,15 @@ FILE(WRITE ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt "")
 FOREACH(IGNORE_FILE ${CLANG_FORMAT_IGNORE_FILES})
     FILE(APPEND ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt "${IGNORE_FILE}\n")
 ENDFOREACH()
+
+# install git hooks when configure
+EXECUTE_PROCESS(
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${GIT_HOOKS_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${HOOKS_SOURCE_DIR}/precommit.sh
+        ${GIT_HOOKS_DIR}/pre-commit
+    COMMAND ${CMAKE_COMMAND} -E chmod 755 ${GIT_HOOKS_DIR}/pre-commit
+)
 
 STRING(CONCAT FORMAT_DIRS "${PROJECT_SOURCE_DIR}/src,")
 ADD_CUSTOM_TARGET(format

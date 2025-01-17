@@ -7,12 +7,12 @@
 
 #include "src/mutex.h"
 
-#include "pstd/mutex_impl.h"
+#include "std/mutex_impl.h"
 
 #include <memory>
 
 namespace storage {
 
-using MutexFactoryImpl = pstd::lock::MutexFactoryImpl;
+using MutexFactoryImpl = kstd::lock::MutexFactoryImpl;
 
 }  //  namespace storage
