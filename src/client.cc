@@ -345,12 +345,12 @@ bool PClient::Exec() {
     resp_encode_->Reply(message_);
     return true;
   }
+
   resp_encode_->ClearReply();
-  DEBUG("size : {}", queue_cmds_.size());
   AppendArrayLen(queue_cmds_.size());
-  DEBUG("judge");
   auto client = shared_from_this();
   cmd_table_manager.InitCmdTable();
+
   for (auto& cmd : queue_cmds_) {
     SetCmdName(kstd::StringToLower(cmd[0]));
     SetArgv(cmd);
@@ -374,8 +374,6 @@ bool PClient::Exec() {
 
     FeedMonitors(cmd);
   }
-  DEBUG("over");
-  g_kiwi->PushWriteTask(client);
   // Propagate(client->params_, GetCurrentDB());
   return true;
 }

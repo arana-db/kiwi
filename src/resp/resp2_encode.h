@@ -17,6 +17,6 @@ class Resp2Encode : public RespEncode {
   void AppendString(const std::string& value) override { AppendBulkString(reply_, value); }
   void AppendString(const char* value, int64_t size) override;
   void AppendStringVector(const std::vector<std::string>& strArray) override;
-  void SetLineString(const std::string& value) override { reply_ = value + CRLF; }
+  void SetLineString(const std::string& value) override { reply_.append(value + CRLF); }
   void ClearReply() override { reply_.clear(); }
 };
