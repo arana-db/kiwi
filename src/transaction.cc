@@ -149,10 +149,7 @@ void UnWatchCmd::DoCmd(PClient* client) {
 MultiCmd::MultiCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryTransaction) {}
 
-bool MultiCmd::DoInitial(PClient* client) {
-  client->SetKey(client->argv_[1]);
-  return true;
-}
+bool MultiCmd::DoInitial(PClient* client) { return true; }
 
 void MultiCmd::DoCmd(PClient* client) {
   if (PTransaction::Instance().Multi(client)) {
@@ -165,10 +162,7 @@ void MultiCmd::DoCmd(PClient* client) {
 ExecCmd::ExecCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsReadonly, kAclCategoryRead | kAclCategoryTransaction) {}
 
-bool ExecCmd::DoInitial(PClient* client) {
-  client->SetKey(client->argv_[1]);
-  return true;
-}
+bool ExecCmd::DoInitial(PClient* client) { return true; }
 
 void ExecCmd::DoCmd(PClient* client) {
   if (!client->IsFlagOn(kClientFlagMulti)) {

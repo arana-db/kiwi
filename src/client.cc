@@ -24,7 +24,7 @@
 
 namespace kiwi {
 
-extern kiwi::CmdTableManager cmd_table_manager_;
+CmdTableManager cmd_table_manager;
 
 const ClientInfo ClientInfo::invalidClientInfo = {0, "", -1};
 
@@ -335,7 +335,7 @@ bool PClient::Exec() {
     this->ClearMulti();
     this->ClearWatch();
   };
-
+  DEBUG("Exec");
   if (IsFlagOn(kClientFlagWrongExec)) {
     return false;
   }
@@ -346,14 +346,16 @@ bool PClient::Exec() {
     return true;
   }
   resp_encode_->ClearReply();
+  DEBUG("size : {}", queue_cmds_.size());
   AppendArrayLen(queue_cmds_.size());
-
+  DEBUG("judge");
   auto client = shared_from_this();
+  cmd_table_manager.InitCmdTable();
   for (auto& cmd : queue_cmds_) {
     SetCmdName(kstd::StringToLower(cmd[0]));
     SetArgv(cmd);
     kstd::StringToLower(client->cmdName_);
-    auto [cmdPtr, ret] = cmd_table_manager_.GetCommand(client->CmdName(), client.get());
+    auto [cmdPtr, ret] = cmd_table_manager.GetCommand(client->CmdName(), client.get());
 
     auto cmdstat_map = GetCommandStatMap();
     CommandStatistics statistics;
@@ -372,7 +374,7 @@ bool PClient::Exec() {
 
     FeedMonitors(cmd);
   }
-
+  DEBUG("over");
   g_kiwi->PushWriteTask(client);
   // Propagate(client->params_, GetCurrentDB());
   return true;

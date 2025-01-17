@@ -52,6 +52,10 @@ CmdTableManager::CmdTableManager() {
 void CmdTableManager::InitCmdTable() {
   std::unique_lock wl(mutex_);
 
+  if (cmds_->size() != 0) {
+    return;
+  }
+
   // admin
   ADD_COMMAND_GROUP(Config, -2);
   ADD_SUBCOMMAND(Config, Get, -3);
