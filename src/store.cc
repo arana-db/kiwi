@@ -106,5 +106,5 @@ void signalModifiedKey(const std::vector<PString>& keys, int dbno) {
       PTransaction::Instance().NotifyDirty(dbno, key);
     }
   }
-
+}
 }  // namespace kiwi
