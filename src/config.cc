@@ -14,6 +14,7 @@
 #include "config.h"
 #include "std/std_string.h"
 #include "store.h"
+#include "kiwi.h"
 
 namespace kiwi {
 
@@ -221,6 +222,20 @@ Status Config::Set(std::string key, const std::string& value, bool init_stage) {
   auto iter = config_map_.find(key);
   if (iter == config_map_.end()) {
     return Status::NotFound("Non-existent configuration items.");
+  }
+  if(key=="log_level")
+  g_kiwi->options_.SetLogLevel(value);
+  if(key=="redis_compatible_mode")
+  g_kiwi->options_.SetRedisCompatibleMode(stoi(value));
+  if(key=="worker_threads_num")
+  {
+  g_kiwi->options_.SetThreadNum(stoi(value)+stoi((config_map_.find("salve_threads_num"))->second->Value()));
+  g_kiwi->GetEventServer()->UpdateOptions(g_kiwi->options_);
+  }
+  if(key=="salve_threads_num")
+  {
+  g_kiwi->options_.SetThreadNum(stoi(value)+stoi((config_map_.find("worker_threads_num"))->second->Value()));
+  g_kiwi->GetEventServer()->UpdateOptions(g_kiwi->options_);
   }
   return iter->second->Set(value, init_stage);
 }

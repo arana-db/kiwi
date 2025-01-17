@@ -72,6 +72,11 @@ class EventServer final {
 
   void TCPConnect(const SocketAddr &addr, const std::function<void(std::string)> &cb);
 
+  void UpdateOptions(const NetOptions& newOptions){
+    opt_ = newOptions;
+    threadsManager_.reserve(opt_.GetThreadNum());
+  }
+
  private:
   int StartThreadManager(bool serverMode);
 
@@ -272,5 +277,7 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
 
   return static_cast<int>(NetListen::OK);
 }
+
+
 
 }  // namespace net
