@@ -59,11 +59,15 @@ void PTransaction::NotifyDirty(int dbno, const PString& key) {
     return;
   }
 
-  // 取出这个被 watch 的一批连接池
-  Clients cls = std::move(it->second);
   r_lock.unlock();
-
   std::unique_lock<std::shared_mutex> w_lock(watched_clients_mutex_[dbno]);
+
+  // 取出这个被 watch 的一批连接池
+  it = dbWatchedKeys.find(key);
+  if (it == dbWatchedKeys.end()) {
+    return;
+  }
+  Clients& cls = it->second;
   for (auto itCli(cls.begin()); itCli != cls.end();) {
     auto client(itCli->lock());
     if (!client) {
@@ -80,7 +84,6 @@ void PTransaction::NotifyDirty(int dbno, const PString& key) {
   }
 
   if (cls.empty()) {
-    it = dbWatchedKeys.find(key);
     dbWatchedKeys.erase(it);
   }
 }
