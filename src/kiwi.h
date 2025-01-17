@@ -76,9 +76,7 @@ class KiwiDB final {
 
   time_t GetStartTime() { return start_time_s_; }
 
-  net::EventServer<std::shared_ptr<kiwi::PClient>>* GetEventServer() {
-        return event_server_.get();
-    }
+  net::EventServer<std::shared_ptr<kiwi::PClient>>* GetEventServer() { return event_server_.get(); }
 
  public:
   uint16_t port_{0};
