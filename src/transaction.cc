@@ -17,6 +17,8 @@ PTransaction& PTransaction::Instance() {
 }
 
 void PTransaction::Watch(PClient* client, int dbno, const std::vector<PString>& keys) {
+  std::unique_lock<std::shared_mutex> w_lock(watched_clients_mutex_[dbno]);
+
   for (const auto& key : keys) {
     if (client->Watch(dbno, key)) {
       Clients& cls = clients_[dbno][key];
