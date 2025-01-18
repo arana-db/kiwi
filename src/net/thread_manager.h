@@ -93,6 +93,7 @@ class ThreadManager {
 
  private:
   const int8_t index_ = 0;            // The index of the thread
+  uint32_t tcpKeepAlive_ = 300;       // The timeout of the keepalive connection in seconds
   std::atomic<bool> running_ = true;  // Whether the thread is running
 
   NetOptions netOptions_;

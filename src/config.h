@@ -209,6 +209,13 @@ class Config {
    * 0 means no timeout limit, otherwise it is the specified number of seconds.
    */
   uint32_t timeout = 0;
+
+  /*
+   *Enable the tcp keep-alive function.
+   *0 indicates that the TCP keep-alive function is disabled
+   */
+  uint32_t tcp_keepalive = 300;
+
   /*
    * Client connect to kiwi server may need password
    */
