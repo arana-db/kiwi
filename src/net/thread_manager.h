@@ -90,11 +90,11 @@ class ThreadManager {
 
   uint64_t DoTCPConnect(T &t, int fd, const std::shared_ptr<Connection> &conn);
 
-  uint32_t getClientCount() const { return clientCount_.load(); }
+  uint32_t get_client_count() const { return clientCount_.load(); }
 
-  void clientCountIncrement() { clientCount_.fetch_add(1, std::memory_order_relaxed); }
+  void client_count_increment() { clientCount_.fetch_add(1, std::memory_order_relaxed); }
 
-  void clientCountDecrement() { clientCount_.fetch_sub(1, std::memory_order_relaxed); }
+  void client_count_decrement() { clientCount_.fetch_sub(1, std::memory_order_relaxed); }
 
  private:
   const int8_t index_ = 0;            // The index of the thread
@@ -157,11 +157,21 @@ void ThreadManager<T>::Stop() {
 template <typename T>
 requires HasSetFdFunction<T>
 void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection> &conn) {
-  if (getClientCount() >= netOptions_.GetMaxClients()) {
+  if (!clientCount_.compare_exchange_strong(
+          expected,
+          expected + 1,
+          std::memory_order_seq_cst,
+          std::memory_order_seq_cst) ||
+      expected >= netOptions_.GetMaxClients()) {
     INFO("Max client connetions, refuse new connection fd: %d", fd);
     std::string response = "-ERR max clients reached\r\n";
-    ::send(fd, response.c_str(), response.size(), 0);
-    ::close(fd);
+    ssize_t sent = ::send(fd, response.c_str(), response.size(), 0);
+    if (sent < 0) {
+        ERROR("Failed to send error response to fd: %d, errno: %d", fd, errno);
+    }
+    if (::close(fd) < 0) {
+        ERROR("Failed to close fd: %d, errno: %d", fd, errno);
+    }
     return;
   }
 
@@ -186,7 +196,7 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
   }
 
   onCreate_(connId, t, conn->addr_);
-  clientCountIncrement();
+  client_count_increment();
 }
 
 template <typename T>
@@ -223,7 +233,7 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
   iter->second.second->netEvent_->Close();  // close socket
   onClose_(iter->second.first, std::move(err));
   connections_.erase(iter);
-  clientCountDecrement();
+  client_count_decrement();
 }
 
 template <typename T>
