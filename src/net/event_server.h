@@ -244,9 +244,10 @@ template <typename T>
 requires HasSetFdFunction<T>
 int EventServer<T>::StartThreadManager(bool serverMode) {
   std::shared_ptr<ListenSocket> listen(ListenSocket::CreateTCPListen());
+  auto tcpKeepAlive = opt_.GetOpTcpKeepAlive();
   if (serverMode) {
     listen->SetListenAddr(listenAddrs_);
-
+    listen->SetBSTcpKeepAlive(tcpKeepAlive);
     if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
       return ret;
     }
@@ -257,6 +258,7 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
     if (i > 0 && ListenSocket::REUSE_PORT && serverMode) {
       listen.reset(ListenSocket::CreateTCPListen());
       listen->SetListenAddr(listenAddrs_);
+      listen->SetBSTcpKeepAlive(tcpKeepAlive);
       if (auto ret = listen->Init() != static_cast<int>(NetListen::OK)) {
         return ret;
       }
