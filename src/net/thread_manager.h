@@ -158,7 +158,7 @@ template <typename T>
 requires HasSetFdFunction<T>
 void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection> &conn) {
   if (!clientCount_.compare_exchange_strong(expected, expected + 1, std::memory_order_seq_cst,
-                                            std::memory_order_seq_cst) || 
+                                            std::memory_order_seq_cst) ||
       expected >= netOptions_.GetMaxClients()) {
     INFO("Max client connetions, refuse new connection fd: %d", fd);
     std::string response = "-ERR max clients reached\r\n";
