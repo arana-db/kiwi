@@ -104,6 +104,7 @@ while true; do
   --kiwi)
     MAKE_FLAGS="${MAKE_FLAGS} kiwi"
     ;;
+
   -h|--help)
     show_help
     ;;
@@ -133,3 +134,4 @@ while true; do
 done
 
 build
+

@@ -15,14 +15,14 @@
 #include "rocksdb/status.h"
 
 #include "log_index.h"
-#include "pstd/env.h"
-#include "pstd/log.h"
 #include "src/custom_comparator.h"
 #include "src/debug.h"
 #include "src/lock_mgr.h"
 #include "src/lru_cache.h"
 #include "src/mutex_impl.h"
 #include "src/type_iterator.h"
+#include "std/env.h"
+#include "std/log.h"
 #include "storage/storage.h"
 #include "storage/storage_define.h"
 
@@ -84,9 +84,9 @@ class Redis {
     uint64_t start_us;
     DataType dtype;
     KeyStatisticsDurationGuard(Redis* that, const DataType type, const std::string& key)
-        : ctx(that), key(key), start_us(pstd::NowMicros()), dtype(type) {}
+        : ctx(that), key(key), start_us(kstd::NowMicros()), dtype(type) {}
     ~KeyStatisticsDurationGuard() {
-      uint64_t end_us = pstd::NowMicros();
+      uint64_t end_us = kstd::NowMicros();
       uint64_t duration = end_us > start_us ? end_us - start_us : 0;
       ctx->UpdateSpecificKeyDuration(dtype, key, duration);
     }

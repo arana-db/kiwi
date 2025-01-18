@@ -6,7 +6,7 @@
 #ifndef SRC_LISTS_DATA_KEY_FORMAT_H_
 #define SRC_LISTS_DATA_KEY_FORMAT_H_
 
-#include "pstd/pstd_coding.h"
+#include "std/std_coding.h"
 #include "storage/storage_define.h"
 
 namespace storage {
@@ -91,9 +91,9 @@ class ParsedListsDataKey {
     end_ptr -= sizeof(reserve2_);
 
     ptr = DecodeUserKey(ptr, std::distance(ptr, end_ptr), &key_str_);
-    version_ = pstd::DecodeFixed64(ptr);
+    version_ = kstd::DecodeFixed64(ptr);
     ptr += sizeof(version_);
-    index_ = pstd::DecodeFixed64(ptr);
+    index_ = kstd::DecodeFixed64(ptr);
   }
 
   virtual ~ParsedListsDataKey() = default;

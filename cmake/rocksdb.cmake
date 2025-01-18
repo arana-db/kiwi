@@ -42,6 +42,7 @@ ExternalProject_Add(
         -DWITH_GFLAGS=ON
         -DUSE_RTTI=ON
         BUILD_COMMAND make -j${CPU_CORE}
+        UPDATE_COMMAND ""
 )
 
 ADD_DEPENDENCIES(extern_rocksdb snappy gflags zlib lz4)

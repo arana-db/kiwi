@@ -29,9 +29,9 @@ namespace kiwi {
 
 using Status = rocksdb::Status;
 using CheckFunc = std::function<Status(const std::string&)>;
-class PConfig;
+class Config;
 
-extern PConfig g_config;
+extern Config g_config;
 
 class BaseValue {
  public:
@@ -82,7 +82,7 @@ class StringValueArray : public BaseValue {
       : BaseValue(key, std::move(check_func_ptr), rewritable), values_(value_ptr_vec), delimiter_(delimiter) {}
   ~StringValueArray() override = default;
 
-  std::string Value() const override { return pstd::StringConcat(values_, delimiter_); };
+  std::string Value() const override { return kstd::StringConcat(values_, delimiter_); };
 
  private:
   Status SetValue(const std::string& value) override;
@@ -148,21 +148,24 @@ using ConfigMap = std::unordered_map<std::string, ValuePrt>;
  * PConfig holds information about kiwi
  * server-side runtime information.
  */
-class PConfig {
+class Config {
  public:
   /* Some important, globally relevant public interfaces. */
-
   /*------------------------
    * PConfig()
    * Initialize kiwi's config & RocksDB's config.
    */
-  PConfig();
+  Config();
+  /*------------------------
+   * ~PConfig()    * Destroy a kiwi's config instance.    */
+  Config(const Config&) = delete;
+  Config& operator=(const Config&) = delete;
 
   /*------------------------
    * ~PConfig()
    * Destroy a kiwi's config instance.
    */
-  ~PConfig() = default;
+  ~Config() = default;
 
   /*------------------------
    * LoadFromFile(const std::string& file_name)
@@ -206,6 +209,13 @@ class PConfig {
    * 0 means no timeout limit, otherwise it is the specified number of seconds.
    */
   uint32_t timeout = 0;
+
+  /*
+   *Enable the tcp keep-alive function.
+   *0 indicates that the TCP keep-alive function is disabled
+   */
+  uint32_t tcp_keepalive = 300;
+
   /*
    * Client connect to kiwi server may need password
    */

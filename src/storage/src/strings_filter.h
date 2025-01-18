@@ -25,7 +25,7 @@ class StringsFilter : public rocksdb::CompactionFilter {
     auto cur_time = static_cast<int32_t>(unix_time);
     ParsedStringsValue parsed_strings_value(value);
     TRACE("==========================START==========================");
-    TRACE("[StringsFilter], key: %s, value = %s, timestamp: %llu, cur_time: %d", key.ToString().c_str(),
+    TRACE("[StringsFilter], key: %s, value = %s, timestamp: %lu, cur_time: %d", key.ToString().c_str(),
           parsed_strings_value.UserValue().ToString().c_str(), parsed_strings_value.Etime(), cur_time);
 
     if (parsed_strings_value.Etime() != 0 && parsed_strings_value.Etime() < cur_time) {

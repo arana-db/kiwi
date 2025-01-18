@@ -8,12 +8,12 @@
 #include <memory>
 #include <string>
 
-#include "pstd/lock_mgr.h"
+#include "std/lock_mgr.h"
 
 #include "src/mutex.h"
 
 namespace storage {
 
-using LockMgr = pstd::lock::LockMgr;
+using LockMgr = kstd::lock::LockMgr;
 
 }  //  namespace storage
