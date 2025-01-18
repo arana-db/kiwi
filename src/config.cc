@@ -80,7 +80,7 @@ Status StringValueArray::SetValue(const std::string& value, bool check) {
       return Status::InvalidArgument("The number of parameters does not match.");
     }
   } else {
-    if (values_.empty()) {
+    if (values.size() != values_.size()) {
       values_.resize(values.size());
     }
     for (size_t i = 0; i < values.size(); i++) {
