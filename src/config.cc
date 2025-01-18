@@ -81,7 +81,7 @@ Status StringValueArray::SetValue(const std::string& value, bool check) {
     }
   } else {
     if (values_.empty()) {
-      values_.resize(values.size());  
+      values_.resize(values.size());
     }
     for (size_t i = 0; i < values.size(); i++) {
       values_[i] = std::move(values[i]);
