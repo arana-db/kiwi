@@ -34,7 +34,7 @@ class NetOptions {
 
   int8_t threadNum_ = 1;  // The number of threads
 
-  uint32_t maxClients_ = 1;  // The maximum number of connections(default 40000)
+  uint32_t maxClients_ = 1;      // The maximum number of connections(default 40000)
   uint32_t tcpKeepAlive_ = 300;  // The timeout of the keepalive connection in seconds
 };
 
