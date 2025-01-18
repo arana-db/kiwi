@@ -8,6 +8,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -17,6 +18,8 @@
 #include "config.h"
 #include "io_thread.h"
 #include "net_options.h"
+
+#include "log.h"
 
 #if defined(HAVE_EPOLL)
 
@@ -92,8 +95,6 @@ class ThreadManager {
 
   uint32_t get_client_count() const { return clientCount_.load(); }
 
-  void client_count_increment() { clientCount_.fetch_add(1, std::memory_order_relaxed); }
-
   void client_count_decrement() { clientCount_.fetch_sub(1, std::memory_order_relaxed); }
 
  private:
@@ -157,10 +158,11 @@ void ThreadManager<T>::Stop() {
 template <typename T>
 requires HasSetFdFunction<T>
 void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection> &conn) {
+  uint32_t expected = get_client_count();
   if (!clientCount_.compare_exchange_strong(expected, expected + 1, std::memory_order_seq_cst,
                                             std::memory_order_seq_cst) ||
       expected >= netOptions_.GetMaxClients()) {
-    INFO("Max client connetions, refuse new connection fd: %d", fd);
+    INFO("Max client connections, refuse new connection fd: %d", fd);
     std::string response = "-ERR max clients reached\r\n";
     ssize_t sent = ::send(fd, response.c_str(), response.size(), 0);
     if (sent < 0) {
@@ -193,7 +195,6 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
   }
 
   onCreate_(connId, t, conn->addr_);
-  client_count_increment();
 }
 
 template <typename T>
