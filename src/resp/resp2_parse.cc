@@ -5,7 +5,7 @@
 
 #include "resp2_parse.h"
 #include "log.h"
-#include "pstd_string.h"
+#include "std_string.h"
 
 RespType Resp2Parse::PetRespType(char prefix) {
   switch (prefix) {
@@ -73,7 +73,7 @@ RespResult Resp2Parse::ParseInline() {
     singleParamsSize_ = 0;
     return RespResult::OK;
   }
-  pstd::StringSplit(line, ' ', singleParams_);
+  kstd::StringSplit(line, ' ', singleParams_);
   return RespResult::OK;
 }
 
@@ -110,7 +110,7 @@ RespResult Resp2Parse::ParseBulkString() {
     return RespResult::WAIT;
   }
   int length;
-  if (!pstd::String2int(line, &length)) {
+  if (!kstd::String2int(line, &length)) {
     return RespResult::ERROR;
   }
 
@@ -137,7 +137,7 @@ RespResult Resp2Parse::ParseBulkString() {
 RespResult Resp2Parse::ParseArray() {
   auto [line, result] = ReadLine();
   int count;
-  if (!pstd::String2int(line, &count)) {
+  if (!kstd::String2int(line, &count)) {
     return RespResult::ERROR;
   }
   if (count <= 0) {  // Null array

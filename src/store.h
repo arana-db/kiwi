@@ -44,13 +44,13 @@ struct TaskContext {
 
 using TasksVector = std::vector<TaskContext>;
 
-class PStore {
+class Store {
  public:
-  static PStore& Instance();
+  static Store& Instance();
 
-  PStore(const PStore&) = delete;
-  void operator=(const PStore&) = delete;
-  ~PStore();
+  Store(const Store&) = delete;
+  void operator=(const Store&) = delete;
+  ~Store();
 
   void Init(int db_number);
 
@@ -61,11 +61,11 @@ class PStore {
   int GetDBNumber() const { return db_number_; }
 
  private:
-  PStore() = default;
+  Store() = default;
   int db_number_ = 0;
   std::vector<std::unique_ptr<DB>> backends_;
 };
 
-#define PSTORE PStore::Instance()
+#define STORE_INST Store::Instance()
 
 }  // namespace kiwi

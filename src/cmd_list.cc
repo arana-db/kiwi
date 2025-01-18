@@ -25,7 +25,7 @@ void LPushCmd::DoCmd(PClient* client) {
   std::vector<std::string> list_values(client->argv_.begin() + 2, client->argv_.end());
   uint64_t reply_num = 0;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LPush(client->Key(), list_values, &reply_num);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LPush(client->Key(), list_values, &reply_num);
   if (s.ok()) {
     client->AppendInteger(reply_num);
     ServeAndUnblockConns(client);
@@ -48,7 +48,7 @@ void LPushxCmd::DoCmd(PClient* client) {
   std::vector<std::string> list_values(client->argv_.begin() + 2, client->argv_.end());
   uint64_t reply_num = 0;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LPushx(client->Key(), list_values, &reply_num);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LPushx(client->Key(), list_values, &reply_num);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(reply_num);
   } else if (s.IsInvalidArgument()) {
@@ -69,7 +69,8 @@ bool RPoplpushCmd::DoInitial(PClient* client) {
 
 void RPoplpushCmd::DoCmd(PClient* client) {
   std::string value;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPoplpush(source_, receiver_, &value);
+  storage::Status s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPoplpush(source_, receiver_, &value);
   if (s.ok()) {
     client->AppendString(value);
     client->SetKey(receiver_);
@@ -95,7 +96,7 @@ void RPushCmd::DoCmd(PClient* client) {
   std::vector<std::string> list_values(client->argv_.begin() + 2, client->argv_.end());
   uint64_t reply_num = 0;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPush(client->Key(), list_values, &reply_num);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPush(client->Key(), list_values, &reply_num);
   if (s.ok()) {
     client->AppendInteger(reply_num);
     ServeAndUnblockConns(client);
@@ -118,7 +119,7 @@ void RPushxCmd::DoCmd(PClient* client) {
   std::vector<std::string> list_values(client->argv_.begin() + 2, client->argv_.end());
   uint64_t reply_num = 0;
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPushx(client->Key(), list_values, &reply_num);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPushx(client->Key(), list_values, &reply_num);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(reply_num);
   } else if (s.IsInvalidArgument()) {
@@ -138,7 +139,7 @@ bool LPopCmd::DoInitial(PClient* client) {
 
 void LPopCmd::DoCmd(PClient* client) {
   std::vector<std::string> elements;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LPop(client->Key(), 1, &elements);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LPop(client->Key(), 1, &elements);
   if (s.ok()) {
     client->AppendString(elements[0]);
   } else if (s.IsNotFound()) {
@@ -160,7 +161,7 @@ bool RPopCmd::DoInitial(PClient* client) {
 
 void RPopCmd::DoCmd(PClient* client) {
   std::vector<std::string> elements;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPop(client->Key(), 1, &elements);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPop(client->Key(), 1, &elements);
   if (s.ok()) {
     client->AppendString(elements[0]);
   } else if (s.IsNotFound()) {
@@ -237,12 +238,12 @@ void LRangeCmd::DoCmd(PClient* client) {
   std::vector<std::string> ret;
   int64_t start_index = 0;
   int64_t end_index = 0;
-  if (pstd::String2int(client->argv_[2], &start_index) == 0 || pstd::String2int(client->argv_[3], &end_index) == 0) {
+  if (kstd::String2int(client->argv_[2], &start_index) == 0 || kstd::String2int(client->argv_[3], &end_index) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LRange(client->Key(), start_index, end_index, &ret);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LRange(client->Key(), start_index, end_index, &ret);
   if (!s.ok() && !s.IsNotFound()) {
     if (s.IsInvalidArgument()) {
       client->SetRes(CmdRes::kMultiKey);
@@ -265,14 +266,15 @@ bool LRemCmd::DoInitial(PClient* client) {
 void LRemCmd::DoCmd(PClient* client) {
   int64_t freq_ = 0;
   std::string count = client->argv_[2];
-  if (pstd::String2int(count, &freq_) == 0) {
+  if (kstd::String2int(count, &freq_) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
 
   uint64_t reply_num = 0;
-  storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LRem(client->Key(), freq_, client->argv_[3], &reply_num);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
+                          ->GetStorage()
+                          ->LRem(client->Key(), freq_, client->argv_[3], &reply_num);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(reply_num);
   } else if (s.IsInvalidArgument()) {
@@ -294,12 +296,12 @@ void LTrimCmd::DoCmd(PClient* client) {
   int64_t start_index = 0;
   int64_t end_index = 0;
 
-  if (pstd::String2int(client->argv_[2], &start_index) == 0 || pstd::String2int(client->argv_[3], &end_index) == 0) {
+  if (kstd::String2int(client->argv_[2], &start_index) == 0 || kstd::String2int(client->argv_[3], &end_index) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LTrim(client->Key(), start_index, end_index);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LTrim(client->Key(), start_index, end_index);
   if (s.ok() || s.IsNotFound()) {
     client->SetRes(CmdRes::kOK);
   } else if (s.IsInvalidArgument()) {
@@ -322,14 +324,14 @@ void LSetCmd::DoCmd(PClient* client) {
   // while strtol ensures that the string is within the range of long type
   const std::string index_str = client->argv_[2];
 
-  if (pstd::IsValidNumber(index_str)) {
+  if (kstd::IsValidNumber(index_str)) {
     int64_t val = 0;
-    if (1 != pstd::String2int(index_str, &val)) {
+    if (1 != kstd::String2int(index_str, &val)) {
       client->SetRes(CmdRes::kErrOther, "lset cmd error");  // this will not happend in normal case
       return;
     }
     storage::Status s =
-        PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LSet(client->Key(), val, client->argv_[3]);
+        STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LSet(client->Key(), val, client->argv_[3]);
     if (s.ok()) {
       client->SetRes(CmdRes::kOK);
     } else if (s.IsNotFound()) {
@@ -350,8 +352,8 @@ LInsertCmd::LInsertCmd(const std::string& name, int16_t arity)
     : BaseCmd(name, arity, kCmdFlagsWrite, kAclCategoryWrite | kAclCategoryList) {}
 
 bool LInsertCmd::DoInitial(PClient* client) {
-  if (!pstd::StringEqualCaseInsensitive(client->argv_[2], "BEFORE") &&
-      !pstd::StringEqualCaseInsensitive(client->argv_[2], "AFTER")) {
+  if (!kstd::StringEqualCaseInsensitive(client->argv_[2], "BEFORE") &&
+      !kstd::StringEqualCaseInsensitive(client->argv_[2], "AFTER")) {
     return false;
   }
   client->SetKey(client->argv_[1]);
@@ -361,10 +363,10 @@ bool LInsertCmd::DoInitial(PClient* client) {
 void LInsertCmd::DoCmd(PClient* client) {
   int64_t ret = 0;
   storage ::BeforeOrAfter before_or_after = storage::Before;
-  if (pstd::StringEqualCaseInsensitive(client->argv_[2], "AFTER")) {
+  if (kstd::StringEqualCaseInsensitive(client->argv_[2], "AFTER")) {
     before_or_after = storage::After;
   }
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())
                           ->GetStorage()
                           ->LInsert(client->Key(), before_or_after, client->argv_[3], client->argv_[4], &ret);
   if (!s.ok() && !s.IsNotFound()) {
@@ -389,13 +391,13 @@ bool LIndexCmd::DoInitial(PClient* client) {
 void LIndexCmd::DoCmd(PClient* client) {
   int64_t freq_ = 0;
   std::string count = client->argv_[2];
-  if (pstd::String2int(count, &freq_) == 0) {
+  if (kstd::String2int(count, &freq_) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
 
   std::string value;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LIndex(client->Key(), freq_, &value);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LIndex(client->Key(), freq_, &value);
   if (s.ok()) {
     client->AppendString(value);
   } else if (s.IsNotFound()) {
@@ -417,7 +419,7 @@ bool LLenCmd::DoInitial(PClient* client) {
 
 void LLenCmd::DoCmd(PClient* client) {
   uint64_t llen = 0;
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LLen(client->Key(), &llen);
+  storage::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LLen(client->Key(), &llen);
   if (s.ok() || s.IsNotFound()) {
     client->AppendInteger(static_cast<int64_t>(llen));
   } else if (s.IsInvalidArgument()) {

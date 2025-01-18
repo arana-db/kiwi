@@ -15,16 +15,16 @@ namespace kiwi {
 
 CmdThreadPool::CmdThreadPool(std::string name) : name_(std::move(name)) {}
 
-pstd::Status CmdThreadPool::Init(int fast_thread, int slow_thread, std::string name) {
+kstd::Status CmdThreadPool::Init(int fast_thread, int slow_thread, std::string name) {
   if (fast_thread <= 0) {
-    return pstd::Status::InvalidArgument("thread num must be positive");
+    return kstd::Status::InvalidArgument("thread num must be positive");
   }
   name_ = std::move(name);
   fast_thread_num_ = fast_thread;
   slow_thread_num_ = slow_thread;
   threads_.reserve(fast_thread_num_ + slow_thread_num_);
   workers_.reserve(fast_thread_num_ + slow_thread_num_);
-  return pstd::Status::OK();
+  return kstd::Status::OK();
 }
 
 void CmdThreadPool::Start() {

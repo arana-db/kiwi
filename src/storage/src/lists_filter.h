@@ -31,7 +31,7 @@ class ListsDataFilter : public rocksdb::CompactionFilter {
     UNUSED(value_changed);
     ParsedListsDataKey parsed_lists_data_key(key);
     TRACE("==========================START==========================");
-    TRACE("[DataFilter], key: %s, index = %llu, data = %s, version = %llu",
+    TRACE("[DataFilter], key: %s, index = %lu, data = %s, version = %lu",
           parsed_lists_data_key.key().ToString().c_str(), parsed_lists_data_key.index(), value.ToString().c_str(),
           parsed_lists_data_key.Version());
 

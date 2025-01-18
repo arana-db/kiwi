@@ -15,24 +15,24 @@
 #include "net/event_server.h"
 #include "options.h"
 
-#define Kkiwi_VERSION "4.0.0"
+#define KIWI_VERSION "4.0.0"
 
 #ifdef BUILD_DEBUG
-#  define Kkiwi_BUILD_TYPE "DEBUG"
+#  define KIWI_BUILD_TYPE "DEBUG"
 #else
-#  define Kkiwi_BUILD_TYPE "RELEASE"
+#  define KIWI_BUILD_TYPE "RELEASE"
 #endif
 
-#ifndef Kkiwi_GIT_COMMIT_ID
-#  define Kkiwi_GIT_COMMIT_ID "unknown"
+#ifndef KIWI_GIT_COMMIT_ID
+#  define KIWI_GIT_COMMIT_ID "unknown"
 #endif
 
-#ifndef Kkiwi_BUILD_DATE
-#  define Kkiwi_BUILD_DATE "unknown"
+#ifndef KIWI_BUILD_DATE
+#  define KIWI_BUILD_DATE "unknown"
 #endif
 
 namespace kiwi {
-class PRaft;
+class Raft;
 }  // namespace kiwi
 
 class KiwiDB final {
@@ -84,7 +84,7 @@ class KiwiDB final {
       const std::function<void(uint64_t, std::shared_ptr<kiwi::PClient>&, const net::SocketAddr&)>& onConnect,
       const std::function<void(std::string)>& cb);
 
-  time_t Start_time_s() { return start_time_s_; }
+  time_t GetStartTime() { return start_time_s_; }
 
  public:
   uint16_t port_{0};

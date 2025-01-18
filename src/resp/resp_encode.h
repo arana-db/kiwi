@@ -5,11 +5,12 @@
 
 #pragma once
 
+#include <cstdint>
 #include <string>
 
-#include "pstd_string.h"
+#include "std_string.h"
 
-enum class CmdRes {
+enum class CmdRes : std::int8_t {
   kNone = 0,
   kOK,
   kPong,

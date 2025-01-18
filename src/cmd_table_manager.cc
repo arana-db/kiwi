@@ -19,7 +19,7 @@
 #include "cmd_raft.h"
 #include "cmd_set.h"
 #include "cmd_zset.h"
-#include "pstd_string.h"
+#include "std_string.h"
 
 namespace kiwi {
 
@@ -56,6 +56,7 @@ void CmdTableManager::InitCmdTable() {
   ADD_SUBCOMMAND(Config, Get, -3);
   ADD_SUBCOMMAND(Config, Set, -4);
   ADD_COMMAND(Ping, 0);
+  ADD_COMMAND(Echo, 2);
   ADD_COMMAND_GROUP(Debug, -2);
   ADD_SUBCOMMAND(Debug, Help, 2);
   ADD_SUBCOMMAND(Debug, OOM, 2);
@@ -73,8 +74,12 @@ void CmdTableManager::InitCmdTable() {
   // server
   ADD_COMMAND(Flushdb, 1);
   ADD_COMMAND(Flushall, 1);
+  ADD_COMMAND(Auth, -2);
   ADD_COMMAND(Select, 2);
   ADD_COMMAND(Shutdown, 1);
+
+  // hello
+  ADD_COMMAND(Hello, -1);
 
   // info
   ADD_COMMAND(Info, -1);
@@ -210,7 +215,7 @@ std::pair<BaseCmd*, CmdRes> CmdTableManager::GetCommand(const std::string& cmdNa
     if (client->argv_.size() < 2) {
       return {nullptr, CmdRes::kWrongNum};
     }
-    return {cmd->second->GetSubCmd(pstd::StringToLower(client->argv_[1])), CmdRes::kUnknownSubCmd};
+    return {cmd->second->GetSubCmd(kstd::StringToLower(client->argv_[1])), CmdRes::kUnknownSubCmd};
   }
   return {cmd->second.get(), CmdRes::kOK};
 }

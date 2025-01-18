@@ -6,13 +6,13 @@
 #ifndef SRC_BASE_DATA_KEY_FORMAT_H_
 #define SRC_BASE_DATA_KEY_FORMAT_H_
 
-#include "pstd/pstd_coding.h"
+#include "std/std_coding.h"
 #include "storage/storage_define.h"
 
 namespace storage {
 
 using Slice = rocksdb::Slice;
-using namespace pstd;
+using namespace kstd;
 /*
  * used for Hash/Set/Zset's member data key. format:
  * | reserve1 | key | version | data | reserve2 |
@@ -129,7 +129,7 @@ class ParsedBaseDataKey {
     // user key
     ptr = DecodeUserKey(ptr, std::distance(ptr, end_ptr), &key_str_);
 
-    version_ = pstd::DecodeFixed64(ptr);
+    version_ = kstd::DecodeFixed64(ptr);
     ptr += sizeof(version_);
     data_ = Slice(ptr, std::distance(ptr, end_ptr));
   }

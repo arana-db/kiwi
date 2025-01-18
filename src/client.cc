@@ -16,10 +16,10 @@
 #include "config.h"
 #include "env.h"
 #include "kiwi.h"
-#include "praft/praft.h"
-#include "pstd/log.h"
-#include "pstd/pstd_string.h"
+#include "raft/raft.h"
 #include "slow_log.h"
+#include "std/log.h"
+#include "std/std_string.h"
 
 namespace kiwi {
 
@@ -119,7 +119,7 @@ int PClient::HandlePacket(std::string&& data) {
   if (isPeerMaster()) {
     if (isClusterCmdTarget()) {
       // Proccees the packet at one turn.
-      int len = PRAFT.ProcessClusterCmdResponse(this, start, bytes);  // @todo
+      int len = RAFT_INST.ProcessClusterCmdResponse(this, start, bytes);  // @todo
       if (len > 0) {
         return len;
       }
@@ -150,7 +150,8 @@ int PClient::HandlePacket(std::string&& data) {
   }
 
   if (!auth_) {
-    if (params[0][0] == kCmdNameAuth) {
+    // auth and hello command can be executed without auth
+    if (params[0][0] == kCmdNameAuth || params[0][0] == kCmdNameHello) {
       auto now = ::time(nullptr);
       if (now <= last_auth_ + 1) {
         // avoid guess password.
@@ -243,7 +244,7 @@ void PClient::OnConnect() {
     }
 
     if (isClusterCmdTarget()) {
-      PRAFT.SendNodeRequest(this);
+      RAFT_INST.SendNodeRequest(this);
     }
   } else {
     if (g_config.password.empty()) {
@@ -303,7 +304,7 @@ bool PClient::isPeerMaster() const {
 }
 
 bool PClient::isClusterCmdTarget() const {
-  return PRAFT.GetClusterCmdCtx().GetPeerIp() == PeerIP() && PRAFT.GetClusterCmdCtx().GetPort() == PeerPort();
+  return RAFT_INST.GetClusterCmdCtx().GetPeerIp() == PeerIP() && RAFT_INST.GetClusterCmdCtx().GetPort() == PeerPort();
 }
 
 uint64_t PClient::GetUniqueID() const { return GetConnId(); }

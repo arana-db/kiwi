@@ -10,7 +10,7 @@
 
 #include "cmd_keys.h"
 
-#include "pstd_string.h"
+#include "std_string.h"
 
 #include "store.h"
 
@@ -26,7 +26,7 @@ bool DelCmd::DoInitial(PClient* client) {
 }
 
 void DelCmd::DoCmd(PClient* client) {
-  int64_t count = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Del(client->Keys());
+  int64_t count = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Del(client->Keys());
   if (count >= 0) {
     client->AppendInteger(count);
   } else {
@@ -44,10 +44,10 @@ bool ExistsCmd::DoInitial(PClient* client) {
 }
 
 void ExistsCmd::DoCmd(PClient* client) {
-  int64_t count = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Exists(client->Keys());
+  int64_t count = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Exists(client->Keys());
   if (count >= 0) {
     client->AppendInteger(count);
-    //    if (PSTORE.ExistsKey(client->Key())) {
+    //    if (STORE_INST.ExistsKey(client->Key())) {
     //      client->AppendInteger(1);
     //    } else {
     //      client->SetRes(RespRet::kErrOther, "exists internal error");
@@ -67,7 +67,7 @@ bool TypeCmd::DoInitial(PClient* client) {
 
 void TypeCmd::DoCmd(PClient* client) {
   storage::DataType type = storage::DataType::kNones;
-  rocksdb::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->GetType(client->Key(), type);
+  rocksdb::Status s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->GetType(client->Key(), type);
   if (s.ok()) {
     client->AppendSimpleString(std::string(storage::DataTypeToString(type)));
   } else {
@@ -85,11 +85,11 @@ bool ExpireCmd::DoInitial(PClient* client) {
 
 void ExpireCmd::DoCmd(PClient* client) {
   uint64_t sec = 0;
-  if (pstd::String2int(client->argv_[2], &sec) == 0) {
+  if (kstd::String2int(client->argv_[2], &sec) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-  auto res = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Expire(client->Key(), sec);
+  auto res = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Expire(client->Key(), sec);
   if (res != -1) {
     client->AppendInteger(res);
   } else {
@@ -106,7 +106,7 @@ bool TtlCmd::DoInitial(PClient* client) {
 }
 
 void TtlCmd::DoCmd(PClient* client) {
-  auto timestamp = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->TTL(client->Key());
+  auto timestamp = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->TTL(client->Key());
   if (timestamp == -3) {
     client->SetRes(CmdRes::kErrOther, "ttl internal error");
   } else {
@@ -124,11 +124,11 @@ bool PExpireCmd::DoInitial(PClient* client) {
 
 void PExpireCmd::DoCmd(PClient* client) {
   int64_t msec = 0;
-  if (pstd::String2int(client->argv_[2], &msec) == 0) {
+  if (kstd::String2int(client->argv_[2], &msec) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-  auto res = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Expire(client->Key(), msec / 1000);
+  auto res = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Expire(client->Key(), msec / 1000);
   if (res != -1) {
     client->AppendInteger(res);
   } else {
@@ -146,11 +146,11 @@ bool ExpireatCmd::DoInitial(PClient* client) {
 
 void ExpireatCmd::DoCmd(PClient* client) {
   int64_t time_stamp = 0;
-  if (pstd::String2int(client->argv_[2], &time_stamp) == 0) {
+  if (kstd::String2int(client->argv_[2], &time_stamp) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-  auto res = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Expireat(client->Key(), time_stamp);
+  auto res = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Expireat(client->Key(), time_stamp);
   if (res != -1) {
     client->AppendInteger(res);
   } else {
@@ -169,11 +169,11 @@ bool PExpireatCmd::DoInitial(PClient* client) {
 // PExpireatCmd actually invoke Expireat
 void PExpireatCmd::DoCmd(PClient* client) {
   int64_t time_stamp_ms = 0;
-  if (pstd::String2int(client->argv_[2], &time_stamp_ms) == 0) {
+  if (kstd::String2int(client->argv_[2], &time_stamp_ms) == 0) {
     client->SetRes(CmdRes::kInvalidInt);
     return;
   }
-  auto res = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Expireat(client->Key(), time_stamp_ms / 1000);
+  auto res = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Expireat(client->Key(), time_stamp_ms / 1000);
   if (res != -1) {
     client->AppendInteger(res);
   } else {
@@ -190,7 +190,7 @@ bool PersistCmd::DoInitial(PClient* client) {
 }
 
 void PersistCmd::DoCmd(PClient* client) {
-  auto res = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Persist(client->Key());
+  auto res = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Persist(client->Key());
   if (res != -1) {
     client->AppendInteger(res);
   } else {
@@ -208,7 +208,8 @@ bool KeysCmd::DoInitial(PClient* client) {
 
 void KeysCmd::DoCmd(PClient* client) {
   std::vector<std::string> keys;
-  auto s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Keys(storage::DataType::kAll, client->Key(), &keys);
+  auto s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Keys(storage::DataType::kAll, client->Key(), &keys);
   if (s.ok()) {
     client->AppendArrayLen(keys.size());
     for (const auto& k : keys) {
@@ -229,7 +230,7 @@ bool PttlCmd::DoInitial(PClient* client) {
 
 // like Blackwidow , Floyd still possible has same key in different data structure
 void PttlCmd::DoCmd(PClient* client) {
-  auto timestamp = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->TTL(client->Key());
+  auto timestamp = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->TTL(client->Key());
   // mean operation exception errors happen in database
   if (timestamp == -3) {
     client->SetRes(CmdRes::kErrOther, "ttl internal error");
@@ -247,7 +248,8 @@ bool RenameCmd::DoInitial(PClient* client) {
 }
 
 void RenameCmd::DoCmd(PClient* client) {
-  storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Rename(client->Key(), client->argv_[2]);
+  storage::Status s =
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Rename(client->Key(), client->argv_[2]);
   if (s.ok()) {
     client->SetRes(CmdRes::kOK);
     client->SetKey(client->argv_[2]);
@@ -268,7 +270,7 @@ bool RenameNXCmd::DoInitial(PClient* client) {
 
 void RenameNXCmd::DoCmd(PClient* client) {
   storage::Status s =
-      PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Renamenx(client->Key(), client->argv_[2]);
+      STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Renamenx(client->Key(), client->argv_[2]);
   if (s.ok()) {
     client->SetRes(CmdRes::kOK);
   } else if (s.IsNotFound()) {

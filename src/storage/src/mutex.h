@@ -9,14 +9,14 @@
 
 #include "rocksdb/status.h"
 
-#include "pstd/mutex.h"
+#include "std/mutex.h"
 
 namespace storage {
 
 using Status = rocksdb::Status;
 
-using Mutex = pstd::lock::Mutex;
-using CondVar = pstd::lock::CondVar;
-using MutexFactory = pstd::lock::MutexFactory;
+using Mutex = kstd::lock::Mutex;
+using CondVar = kstd::lock::CondVar;
+using MutexFactory = kstd::lock::MutexFactory;
 
 }  // namespace storage

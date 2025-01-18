@@ -15,8 +15,12 @@ cmake-build-release-release/
 build/
 build-debug/
 build-release/
+download/
 CMakeFiles/
 CMakeCache.txt
+
+# clang-format
+temp.txt
 
 # Precompiled Headers
 *.gch

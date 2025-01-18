@@ -24,19 +24,22 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "base_cmd.h"
 #include "cmd_admin.h"
+#include "config.h"
 #include "db.h"
 
 #include "braft/raft.h"
-#include "pstd_string.h"
+#include "log.h"
+#include "resp_encode.h"
 #include "rocksdb/version.h"
+#include "std_string.h"
 
 #include "kiwi.h"
-#include "praft/praft.h"
-#include "pstd/env.h"
+#include "raft/raft.h"
+#include "std/env.h"
 
 #include "client_map.h"
-#include "cmd_table_manager.h"
 #include "slow_log.h"
 #include "store.h"
 
@@ -81,20 +84,20 @@ bool FlushdbCmd::DoInitial(PClient* client) { return true; }
 
 void FlushdbCmd::DoCmd(PClient* client) {
   int currentDBIndex = client->GetCurrentDB();
-  PSTORE.GetBackend(currentDBIndex).get()->Lock();
-  DEFER { PSTORE.GetBackend(currentDBIndex).get()->UnLock(); };
+  STORE_INST.GetBackend(currentDBIndex).get()->Lock();
+  DEFER { STORE_INST.GetBackend(currentDBIndex).get()->UnLock(); };
 
   std::string db_path = g_config.db_path + std::to_string(currentDBIndex);
   std::string path_temp = db_path;
   path_temp.append("_deleting/");
-  pstd::RenameFile(db_path, path_temp);
+  kstd::RenameFile(db_path, path_temp);
 
-  auto s = PSTORE.GetBackend(currentDBIndex)->Open();
+  auto s = STORE_INST.GetBackend(currentDBIndex)->Open();
   if (!s.ok()) {
     client->SetRes(CmdRes::kErrOther, "flushdb failed");
     return;
   }
-  auto f = std::async(std::launch::async, [&path_temp]() { pstd::DeleteDir(path_temp); });
+  auto f = std::async(std::launch::async, [&path_temp]() { kstd::DeleteDir(path_temp); });
   client->SetRes(CmdRes::kOK);
 }
 
@@ -106,18 +109,42 @@ bool FlushallCmd::DoInitial(PClient* client) { return true; }
 
 void FlushallCmd::DoCmd(PClient* client) {
   for (size_t i = 0; i < g_config.databases; ++i) {
-    PSTORE.GetBackend(i).get()->Lock();
+    STORE_INST.GetBackend(i).get()->Lock();
     std::string db_path = g_config.db_path + std::to_string(i);
     std::string path_temp = db_path;
     path_temp.append("_deleting/");
-    pstd::RenameFile(db_path, path_temp);
+    kstd::RenameFile(db_path, path_temp);
 
-    auto s = PSTORE.GetBackend(i)->Open();
+    auto s = STORE_INST.GetBackend(i)->Open();
     assert(s.ok());
-    auto f = std::async(std::launch::async, [&path_temp]() { pstd::DeleteDir(path_temp); });
-    PSTORE.GetBackend(i).get()->UnLock();
+    auto f = std::async(std::launch::async, [&path_temp]() { kstd::DeleteDir(path_temp); });
+    STORE_INST.GetBackend(i).get()->UnLock();
   }
   client->SetRes(CmdRes::kOK);
+}
+
+AuthCmd::AuthCmd(const std::string& name, int16_t arity)
+    : BaseCmd(name, arity, kCmdFlagsFast, kAclCategoryFast | kAclCategoryConnection) {}
+
+bool AuthCmd::DoInitial(PClient* client) { return true; }
+
+void AuthCmd::DoCmd(PClient* client) {
+  if (!client) {
+    client->SetRes(CmdRes::kErrOther, "Client is null");
+    return;
+  }
+
+  if (g_config.password == "") {
+    client->SetRes(CmdRes::kErrOther, "Client sent AUTH, but no password is set");
+  }
+
+  std::string password = client->argv_[1];
+  if (password != g_config.password) {
+    client->SetRes(CmdRes::kInvalidPwd);
+  } else {
+    client->SetAuth();
+    client->SetRes(CmdRes::kOK);
+  }
 }
 
 SelectCmd::SelectCmd(const std::string& name, int16_t arity)
@@ -149,9 +176,9 @@ bool ShutdownCmd::DoInitial(PClient* client) {
 }
 
 void ShutdownCmd::DoCmd(PClient* client) {
-  PSTORE.GetBackend(client->GetCurrentDB())->UnLockShared();
+  STORE_INST.GetBackend(client->GetCurrentDB())->UnLockShared();
   g_kiwi->Stop();
-  PSTORE.GetBackend(client->GetCurrentDB())->LockShared();
+  STORE_INST.GetBackend(client->GetCurrentDB())->LockShared();
   client->SetRes(CmdRes::kNone);
 }
 
@@ -160,6 +187,107 @@ PingCmd::PingCmd(const std::string& name, int16_t arity) : BaseCmd(name, arity, 
 bool PingCmd::DoInitial(PClient* client) { return true; }
 
 void PingCmd::DoCmd(PClient* client) { client->SetRes(CmdRes::kPong, "PONG"); }
+
+HelloCmd::HelloCmd(const std::string& name, int16_t arity)
+    : BaseCmd(name, arity, kCmdFlagsFast, kAclCategoryFast | kAclCategoryConnection) {}
+
+bool HelloCmd::DoInitial(PClient* client) {
+  size_t argc = client->argv_.size();
+  int resp_version = 2;
+
+  if (!client->GetAuth()) {
+    authed_ = false;
+  }
+
+  if (argc > 1) {
+    if (kstd::String2int(client->argv_[1].data(), client->argv_[1].size(), &resp_version) == 0) {
+      client->SetRes(CmdRes::kErrOther, "Protocol version is not an integer or out of range");
+      return false;
+    }
+  }
+
+  if (resp_version != 2) {
+    client->SetRes(CmdRes::kErrOther, "unsupported protocol version");
+    return false;
+  }
+
+  return true;
+}
+
+void HelloCmd::DoCmd(PClient* client) {
+  size_t argc = client->argv_.size();
+  size_t next_arg = 2;
+
+  for (; next_arg < argc; next_arg++) {
+    size_t more_args = argc - next_arg;
+    const std::string& arg = client->argv_[next_arg];
+    // TODO(marsevilspirit): support auth acl
+    // like: hello 2 auth username password
+    // now only support hello auth password
+    // do not support username (need acl)
+    if ((strcasecmp(arg.data(), "SETNAME") == 0) && more_args) {
+      client->SetName(client->argv_[next_arg + 1]);
+      next_arg++;
+    } else if (strcasecmp(arg.data(), "AUTH") == 0 && more_args) {
+      authed_ = true;
+      if (client->GetAuth()) {
+        continue;
+      }
+      if (client->argv_[next_arg + 1] != g_config.password) {
+        client->SetRes(CmdRes::kErrOther, "invalid password");
+        return;
+      } else {
+        client->SetAuth();
+      }
+      next_arg++;
+    } else {
+      client->SetRes(CmdRes::kSyntaxErr, "Syntax error");
+      return;
+    }
+  }
+
+  if (!authed_) {
+    client->SetRes(CmdRes::kErrOther,
+                   "NOAUTH HELLO must be called with the client already authenticated, \
+        otherwise the HELLO <proto> AUTH <pass> option can be used to authenticate the client and \
+        select the RESP protocol version at the same time");
+    return;
+  }
+
+  Hello(client);
+}
+
+void HelloCmd::Hello(PClient* client) {
+  client->AppendArrayLen(static_cast<int64_t>(12));
+  client->AppendString("server");
+  client->AppendString("kiwi");
+  client->AppendString("version");
+  client->AppendString(KIWI_VERSION);
+  client->AppendString("proto");
+  client->AppendInteger(static_cast<int64_t>(2));
+  client->AppendString("id");
+  client->AppendInteger(static_cast<int64_t>(client->GetUniqueID()));
+  client->AppendString("mode");
+
+  if (!g_config.use_raft) {
+    client->AppendString("standalone");
+  } else {
+    client->AppendString("cluster");
+  }
+
+  client->AppendString("role");
+  if (client->GetAuth()) {
+    client->AppendString("master");
+  } else {
+    client->AppendString("slave");
+  }
+}
+
+EchoCmd::EchoCmd(const std::string& name, int16_t arity) : BaseCmd(name, arity, kCmdFlagsFast, kAclCategoryFast) {}
+
+bool EchoCmd::DoInitial(PClient* client) { return true; }
+
+void EchoCmd::DoCmd(PClient* client) { client->AppendString(client->argv_[1]); }
 
 const std::string InfoCmd::kInfoSection = "info";
 const std::string InfoCmd::kAllSection = "all";
@@ -179,7 +307,7 @@ bool InfoCmd::DoInitial(PClient* client) {
     return true;
   }
 
-  std::string argv_ = client->argv_[1].data();
+  std::string argv_ = client->argv_[1];
   // convert section to lowercase
   std::transform(argv_.begin(), argv_.end(), argv_.begin(), [](unsigned char c) { return std::tolower(c); });
   if (argc == 2) {
@@ -262,12 +390,12 @@ void InfoCmd::DoCmd(PClient* client) {
     raft_node1:id=1733428433,state=connected,voting=yes,addr=localhost,port=5001,last_conn_secs=5,conn_errors=0,conn_oks=1
 */
 void InfoCmd::InfoRaft(std::string& message) {
-  if (!PRAFT.IsInitialized()) {
+  if (!RAFT_INST.IsInitialized()) {
     message += "-ERR Not a cluster member.\r\n";
     return;
   }
 
-  auto node_status = PRAFT.GetNodeStatus();
+  auto node_status = RAFT_INST.GetNodeStatus();
   if (node_status.state == braft::State::STATE_END) {
     message += "-ERR Node is not initialized.\r\n";
     return;
@@ -275,9 +403,9 @@ void InfoCmd::InfoRaft(std::string& message) {
 
   std::stringstream tmp_stream;
 
-  tmp_stream << "raft_group_id:" << PRAFT.GetGroupID() << "\r\n";
-  tmp_stream << "raft_node_id:" << PRAFT.GetNodeID() << "\r\n";
-  tmp_stream << "raft_peer_id:" << PRAFT.GetPeerID() << "\r\n";
+  tmp_stream << "raft_group_id:" << RAFT_INST.GetGroupID() << "\r\n";
+  tmp_stream << "raft_node_id:" << RAFT_INST.GetNodeID() << "\r\n";
+  tmp_stream << "raft_peer_id:" << RAFT_INST.GetPeerID() << "\r\n";
   if (braft::is_active_state(node_status.state)) {
     tmp_stream << "raft_state:up\r\n";
   } else {
@@ -287,9 +415,9 @@ void InfoCmd::InfoRaft(std::string& message) {
   tmp_stream << "raft_leader_id:" << node_status.leader_id.to_string() << "\r\n";
   tmp_stream << "raft_current_term:" << std::to_string(node_status.term) << "\r\n";
 
-  if (PRAFT.IsLeader()) {
+  if (RAFT_INST.IsLeader()) {
     std::vector<braft::PeerId> peers;
-    auto status = PRAFT.GetListPeers(&peers);
+    auto status = RAFT_INST.GetListPeers(&peers);
     if (!status.ok()) {
       tmp_stream.str("-ERR ");
       tmp_stream << status.error_str() << "\r\n";
@@ -316,19 +444,19 @@ void InfoCmd::InfoServer(std::string& info) {
   time_t current_time_s = time(nullptr);
   std::stringstream tmp_stream;
   char version[32];
-  snprintf(version, sizeof(version), "%s", Kkiwi_VERSION);
+  snprintf(version, sizeof(version), "%s", KIWI_VERSION);
 
   tmp_stream << "# Server\r\n";
   tmp_stream << "kiwi_version:" << version << "\r\n";
-  tmp_stream << "kiwi_build_git_sha:" << Kkiwi_GIT_COMMIT_ID << "\r\n";
-  tmp_stream << "kiwi_build_compile_date: " << Kkiwi_BUILD_DATE << "\r\n";
+  tmp_stream << "kiwi_build_git_sha:" << KIWI_GIT_COMMIT_ID << "\r\n";
+  tmp_stream << "kiwi_build_compile_date: " << KIWI_BUILD_DATE << "\r\n";
   tmp_stream << "os:" << host_info.sysname << " " << host_info.release << " " << host_info.machine << "\r\n";
   tmp_stream << "arch_bits:" << (reinterpret_cast<char*>(&host_info.machine) + strlen(host_info.machine) - 2) << "\r\n";
   tmp_stream << "process_id:" << getpid() << "\r\n";
   tmp_stream << "run_id:" << static_cast<std::string>(g_config.run_id) << "\r\n";
   tmp_stream << "tcp_port:" << g_config.port << "\r\n";
-  tmp_stream << "uptime_in_seconds:" << (current_time_s - g_kiwi->Start_time_s()) << "\r\n";
-  tmp_stream << "uptime_in_days:" << (current_time_s / (24 * 3600) - g_kiwi->Start_time_s() / (24 * 3600) + 1)
+  tmp_stream << "uptime_in_seconds:" << (current_time_s - g_kiwi->GetStartTime()) << "\r\n";
+  tmp_stream << "uptime_in_days:" << (current_time_s / (24 * 3600) - g_kiwi->GetStartTime() / (24 * 3600) + 1)
              << "\r\n";
   tmp_stream << "config_file:" << g_kiwi->GetConfigName() << "\r\n";
 
@@ -337,8 +465,7 @@ void InfoCmd::InfoServer(std::string& info) {
 
 void InfoCmd::InfoStats(std::string& info) {
   std::stringstream tmp_stream;
-  tmp_stream << "# Stats"
-             << "\r\n";
+  tmp_stream << "# Stats" << "\r\n";
 
   tmp_stream << "is_bgsaving:" << (PREPL.IsBgsaving() ? "Yes" : "No") << "\r\n";
   tmp_stream << "slow_logs_count:" << PSlowLog::Instance().GetLogsCount() << "\r\n";
@@ -351,8 +478,7 @@ void InfoCmd::InfoCPU(std::string& info) {
   getrusage(RUSAGE_SELF, &self_ru);
   getrusage(RUSAGE_CHILDREN, &c_ru);
   std::stringstream tmp_stream;
-  tmp_stream << "# CPU"
-             << "\r\n";
+  tmp_stream << "# CPU" << "\r\n";
   tmp_stream << "used_cpu_sys:" << std::setiosflags(std::ios::fixed) << std::setprecision(2)
              << static_cast<float>(self_ru.ru_stime.tv_sec) + static_cast<float>(self_ru.ru_stime.tv_usec) / 1000000
              << "\r\n";
@@ -386,8 +512,7 @@ void InfoCmd::InfoCommandStats(PClient* client, std::string& info) {
   std::stringstream tmp_stream;
   tmp_stream.precision(2);
   tmp_stream.setf(std::ios::fixed);
-  tmp_stream << "# Commandstats"
-             << "\r\n";
+  tmp_stream << "# Commandstats" << "\r\n";
   auto cmdstat_map = client->GetCommandStatMap();
   for (auto iter : *cmdstat_map) {
     if (iter.second.cmd_count_ != 0) {
@@ -459,8 +584,8 @@ bool SortCmd::DoInitial(PClient* client) {
     } else if (strcasecmp(client->argv_[i].data(), "alpha") == 0) {
       alpha_ = 1;
     } else if (strcasecmp(client->argv_[i].data(), "limit") == 0 && leftargs >= 2) {
-      if (pstd::String2int(client->argv_[i + 1], &offset_) == 0 ||
-          pstd::String2int(client->argv_[i + 2], &count_) == 0) {
+      if (kstd::String2int(client->argv_[i + 1], &offset_) == 0 ||
+          kstd::String2int(client->argv_[i + 2], &count_) == 0) {
         client->SetRes(CmdRes::kSyntaxErr);
         return false;
       }
@@ -484,7 +609,7 @@ bool SortCmd::DoInitial(PClient* client) {
   }
 
   Status s;
-  s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LRange(client->Key(), 0, -1, &ret_);
+  s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LRange(client->Key(), 0, -1, &ret_);
   if (s.ok()) {
     return true;
   } else if (!s.IsNotFound()) {
@@ -492,7 +617,7 @@ bool SortCmd::DoInitial(PClient* client) {
     return false;
   }
 
-  s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->SMembers(client->Key(), &ret_);
+  s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->SMembers(client->Key(), &ret_);
   if (s.ok()) {
     return true;
   } else if (!s.IsNotFound()) {
@@ -501,7 +626,7 @@ bool SortCmd::DoInitial(PClient* client) {
   }
 
   std::vector<storage::ScoreMember> score_members;
-  s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->ZRange(client->Key(), 0, -1, &score_members);
+  s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->ZRange(client->Key(), 0, -1, &score_members);
   if (s.ok()) {
     for (auto& c : score_members) {
       ret_.emplace_back(c.member);
@@ -539,7 +664,7 @@ void SortCmd::DoCmd(PClient* client) {
         sort_ret[i].u = byval;
       } else {
         double double_byval;
-        if (pstd::String2d(byval, &double_byval)) {
+        if (kstd::String2d(byval, &double_byval)) {
           sort_ret[i].u = double_byval;
         } else {
           client->SetRes(CmdRes::kErrOther, "One or more scores can't be converted into double");
@@ -590,7 +715,8 @@ void SortCmd::DoCmd(PClient* client) {
     client->AppendStringVector(ret_);
   } else {
     uint64_t reply_num = 0;
-    storage::Status s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPush(store_key_, ret_, &reply_num);
+    storage::Status s =
+        STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPush(store_key_, ret_, &reply_num);
     if (s.ok()) {
       client->AppendInteger(reply_num);
       client->SetKey(store_key_);
@@ -624,9 +750,9 @@ std::optional<std::string> SortCmd::lookupKeyByPattern(PClient* client, const st
   std::string value;
   storage::Status s;
   if (!field.empty()) {
-    s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->HGet(key, field, &value);
+    s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->HGet(key, field, &value);
   } else {
-    s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->Get(key, &value);
+    s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->Get(key, &value);
   }
 
   if (!s.ok()) {

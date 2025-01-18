@@ -38,6 +38,7 @@ function build() {
     PREFIX="${PREFIX}-debug"
   fi
 
+  mkdir -p download
   mkdir -p ${PREFIX}
   cp CMakeLists.txt ${PREFIX}/
 
@@ -61,6 +62,7 @@ function clear() {
   rm -rf ${PROJECT_HOME:?}/cmake-build-release
   rm -rf ${PROJECT_HOME:?}/cmake-build-release-release
   rm -rf ${PROJECT_HOME:?}/build
+  rm -rf ${PROJECT_HOME:?}/download
   rm -rf ${PROJECT_HOME:?}/build-release
   rm -rf ${PROJECT_HOME:?}/build-debug
   rm -rf ${PROJECT_HOME:?}/bin
@@ -102,6 +104,7 @@ while true; do
   --kiwi)
     MAKE_FLAGS="${MAKE_FLAGS} kiwi"
     ;;
+
   -h|--help)
     show_help
     ;;
@@ -131,3 +134,4 @@ while true; do
 done
 
 build
+

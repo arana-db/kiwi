@@ -17,26 +17,26 @@
 #include <map>
 #include <memory>
 #include <unordered_map>
+#include <utility>
 #include <vector>
-
-#include "rocksdb/options.h"
-#include "rocksdb/table.h"
 
 #include "common.h"
 #include "config_parser.h"
+#include "rocksdb/options.h"
+#include "rocksdb/table.h"
 
 namespace kiwi {
 
 using Status = rocksdb::Status;
 using CheckFunc = std::function<Status(const std::string&)>;
-class PConfig;
+class Config;
 
-extern PConfig g_config;
+extern Config g_config;
 
 class BaseValue {
  public:
-  BaseValue(const std::string& key, CheckFunc check_func_ptr, bool rewritable = false)
-      : key_(key), custom_check_func_ptr_(check_func_ptr), rewritable_(rewritable) {}
+  BaseValue(std::string key, CheckFunc check_func_ptr, bool rewritable = false)
+      : key_(std::move(key)), custom_check_func_ptr_(std::move(check_func_ptr)), rewritable_(rewritable) {}
 
   virtual ~BaseValue() = default;
 
@@ -63,19 +63,31 @@ class BaseValue {
 
 class StringValue : public BaseValue {
  public:
-  StringValue(const std::string& key, CheckFunc check_func_ptr, bool rewritable,
-              const std::vector<std::string*>& value_ptr_vec, char delimiter = ' ')
-      : BaseValue(key, check_func_ptr, rewritable), values_(value_ptr_vec), delimiter_(delimiter) {
-    assert(!values_.empty());
-  }
+  StringValue(const std::string& key, CheckFunc check_func_ptr, bool rewritable, std::string* value_ptr_vec)
+      : BaseValue(key, std::move(check_func_ptr), rewritable), values_(value_ptr_vec) {}
   ~StringValue() override = default;
 
-  std::string Value() const override { return MergeString(values_, delimiter_); };
+  std::string Value() const override { return *values_; };
 
  private:
   Status SetValue(const std::string& value) override;
 
-  std::vector<std::string*> values_;
+  std::string* values_;
+};
+
+class StringValueArray : public BaseValue {
+ public:
+  StringValueArray(const std::string& key, CheckFunc check_func_ptr, bool rewritable,
+                   std::vector<std::string>& value_ptr_vec, char delimiter = ' ')
+      : BaseValue(key, std::move(check_func_ptr), rewritable), values_(value_ptr_vec), delimiter_(delimiter) {}
+  ~StringValueArray() override = default;
+
+  std::string Value() const override { return kstd::StringConcat(values_, delimiter_); };
+
+ private:
+  Status SetValue(const std::string& value) override;
+
+  std::vector<std::string> values_;
   char delimiter_ = 0;
 };
 
@@ -91,18 +103,34 @@ class NumberValue : public BaseValue {
 
   std::string Value() const override { return std::to_string(*value_); }
 
- private:
-  Status SetValue(const std::string& value) override;
-
+ protected:
   T* value_ = nullptr;
+
+ private:
   T value_min_;
   T value_max_;
+
+ protected:
+  Status SetValue(const std::string& value) override;
+};
+
+class MemorySize : public NumberValue<size_t> {
+ public:
+  MemorySize(const std::string& key, CheckFunc check_func_ptr, bool rewritable, size_t* value_ptr)
+      : NumberValue<size_t>(key, std::move(check_func_ptr), rewritable, value_ptr) {
+    assert(value_ptr != nullptr);
+  };
+
+  std::string Value() const override { return std::to_string(*value_); };
+
+ protected:
+  Status SetValue(const std::string& value) override;
 };
 
 class BoolValue : public BaseValue {
  public:
   BoolValue(const std::string& key, CheckFunc check_func_ptr, bool rewritable, bool* value_ptr)
-      : BaseValue(key, check_func_ptr, rewritable), value_(value_ptr) {
+      : BaseValue(key, std::move(check_func_ptr), rewritable), value_(value_ptr) {
     assert(value_ != nullptr);
   };
 
@@ -120,21 +148,24 @@ using ConfigMap = std::unordered_map<std::string, ValuePrt>;
  * PConfig holds information about kiwi
  * server-side runtime information.
  */
-class PConfig {
+class Config {
  public:
   /* Some important, globally relevant public interfaces. */
-
   /*------------------------
    * PConfig()
    * Initialize kiwi's config & RocksDB's config.
    */
-  PConfig();
+  Config();
+  /*------------------------
+   * ~PConfig()    * Destroy a kiwi's config instance.    */
+  Config(const Config&) = delete;
+  Config& operator=(const Config&) = delete;
 
   /*------------------------
    * ~PConfig()
    * Destroy a kiwi's config instance.
    */
-  ~PConfig() = default;
+  ~Config() = default;
 
   /*------------------------
    * LoadFromFile(const std::string& file_name)
@@ -356,7 +387,7 @@ class PConfig {
   // Some functions and variables set up for internal work.
 
   /*------------------------
-   * AddString (const std::string& key, bool rewritable, * std::vector<std::string*> values_ptr_vector)
+   * AddString (const std::string& key, bool rewritable, std::string* values_ptr_vector)
    * Introduce a new string key-value pair into the
    * configuration data layer.
    * A key may correspond to multiple values, so we use std::vector
@@ -364,8 +395,22 @@ class PConfig {
    * rewritable represents whether to overwrite existing settings
    * when a key-value pair is duplicated.
    */
-  void AddString(const std::string& key, bool rewritable, std::vector<std::string*> values_ptr_vector) {
-    config_map_.emplace(key, std::make_unique<StringValue>(key, nullptr, rewritable, values_ptr_vector));
+  void AddString(const std::string& key, bool rewritable, std::string* values_ptr) {
+    config_map_.emplace(key, std::make_unique<StringValue>(key, nullptr, rewritable, values_ptr));
+  }
+
+  /*
+   * AddStringArray (const std::string& key, bool rewritable, std::vector<std::string*> values_ptr_vector)
+   * Introduce a new string key-value pair into the
+   * configuration data layer.
+   * A key may correspond to multiple values, so we use std::vector
+   * to store the data.
+   * rewritable represents whether to overwrite existing settings
+   * when a key-value pair is duplicated.
+   * support read string array from config file,default delimiter is ' '
+   */
+  void AddStringArray(const std::string& key, bool rewritable, std::vector<std::string> values_ptr_vector) {
+    config_map_.emplace(key, std::make_unique<StringValueArray>(key, nullptr, rewritable, values_ptr_vector));
   }
 
   /*------------------------
@@ -378,7 +423,7 @@ class PConfig {
    * and the return value should refer to rocksdb::Status.
    */
   void AddStringWithFunc(const std::string& key, const CheckFunc& checkfunc, bool rewritable,
-                         std::vector<std::string*> values_ptr_vector) {
+                         std::string* values_ptr_vector) {
     config_map_.emplace(key, std::make_unique<StringValue>(key, checkfunc, rewritable, values_ptr_vector));
   }
 
@@ -423,6 +468,22 @@ class PConfig {
   template <typename T>
   void AddNumberWithLimit(const std::string& key, bool rewritable, T* value_ptr, T min, T max) {
     config_map_.emplace(key, std::make_unique<NumberValue<T>>(key, nullptr, rewritable, value_ptr, min, max));
+  }
+
+  /*
+   * AddMemorySize (const std::string& key, bool rewritable, size_t* value_ptr)
+   * Introduce a new string key-value pair into the
+   * configuration data layer, with a check function.
+   * key is a string and value_ptr is a set of numbers.
+   * rewritable represents whether to overwrite existing settings
+   * when a key-value pair is duplicated.
+   * This function is used to set the memory size.
+   * The memory size is a special case of the number, so we use
+   * the MemorySize class to handle it.
+   * support the unit of memory size: B, KB, MB, GB,default is B.
+   */
+  void AddMemorySize(const std::string& key, bool rewritable, size_t* value_ptr) {
+    config_map_.emplace(key, std::make_unique<MemorySize>(key, nullptr, rewritable, value_ptr));
   }
 
  private:
