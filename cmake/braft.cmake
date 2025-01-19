@@ -5,7 +5,7 @@
 
 INCLUDE(ExternalProject)
 
-SET(BRAFT_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_braft" CACHE PATH "Path to braft sources")
+SET(BRAFT_SOURCES_DIR "${LIB_SOURCE_DIR}/braft" CACHE PATH "Path to braft sources")
 SET(BRAFT_INSTALL_DIR ${LIB_INSTALL_PREFIX})
 SET(BRAFT_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "brpc include directory." FORCE)
 SET(BRAFT_LIBRARIES "${LIB_INSTALL_DIR}/libbraft.a" CACHE FILEPATH "brpc library." FORCE)
@@ -17,7 +17,7 @@ ELSE ()
 ENDIF ()
 
 ExternalProject_Add(
-        extern_braft
+        braft
         ${EXTERNAL_PROJECT_LOG_ARGS}
         DEPENDS brpc
         GIT_REPOSITORY "https://github.com/arana-db/braft.git"
@@ -51,11 +51,7 @@ ExternalProject_Add(
         -DPROTOBUF_PROTOC_EXECUTABLE=${PROTOBUF_PROTOC}
         -DOPENSSL_INCLUDE_DIR=${OPENSSL_INCLUDE_DIR}
         -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-        BUILD_COMMAND make -j${CPU_CORE}
-        UPDATE_COMMAND ""
+        ${EXTERNAL_GENERATOR}
+        BUILD_COMMAND ${EXTERNAL_BUILD} -j${CPU_CORE}
+        BUILD_BYPRODUCTS ${BRAFT_LIBRARIES}
 )
-
-ADD_DEPENDENCIES(extern_braft brpc gflags)
-ADD_LIBRARY(braft STATIC IMPORTED GLOBAL)
-SET_PROPERTY(TARGET braft PROPERTY IMPORTED_LOCATION ${BRAFT_LIBRARIES})
-ADD_DEPENDENCIES(braft extern_braft)

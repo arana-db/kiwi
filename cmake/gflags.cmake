@@ -9,15 +9,13 @@ ELSE ()
     SET(LIB_GFLAGS libgflags.a)
 ENDIF ()
 
-SET(GFLAGS_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_gflags" CACHE PATH "Path to gflags sources")
+SET(GFLAGS_SOURCES_DIR "${LIB_SOURCE_DIR}/gflags" CACHE PATH "Path to gflags sources")
 SET(GFLAGS_INCLUDE_DIR ${LIB_INCLUDE_DIR} CACHE PATH "gflags include directory." FORCE)
 SET(GFLAGS_LIBRARIES ${LIB_INSTALL_DIR}/${LIB_GFLAGS} CACHE FILEPATH "gflags library." FORCE)
 SET(GFLAGS_LIBRARY ${LIB_INSTALL_DIR}/${LIB_GFLAGS} CACHE FILEPATH "gflags library." FORCE)
 
-# SET(GFLAGS_INCLUDE_PATH "${LIB_INCLUDE_DIR}/gflags" CACHE PATH "gflags include directory." FORCE)
-
 ExternalProject_Add(
-        extern_gflags
+        gflags
         URL https://github.com/gflags/gflags/archive/v2.2.2.zip
         URL_HASH SHA256=19713a36c9f32b33df59d1c79b4958434cb005b5b47dc5400a7a4b078111d9b5
         DOWNLOAD_NO_PROGRESS 1
@@ -25,6 +23,7 @@ ExternalProject_Add(
         DOWNLOAD_NAME "gflags-2.2.2.zip"
         SOURCE_DIR ${GFLAGS_SOURCES_DIR}
         CMAKE_ARGS
+        ${EXTERNAL_GENERATOR}
         ${EXTERNAL_PROJECT_C}
         ${EXTERNAL_PROJECT_CXX}
         ${EXTERNAL_PROJECT_CXX_FLAGS}
@@ -39,10 +38,7 @@ ExternalProject_Add(
         -DGFLAGS_NAMESPACE=gflags
         -DGFLAGS_BUILD_TESTING=OFF
         -DCMAKE_INSTALL_PREFIX=${LIB_INSTALL_PREFIX}
-        BUILD_COMMAND make -j${CPU_CORE}
+        BUILD_COMMAND ${EXTERNAL_BUILD} -j${CPU_CORE}
         UPDATE_COMMAND ""
+        BUILD_BYPRODUCTS ${GFLAGS_LIBRARY}
 )
-
-ADD_LIBRARY(gflags STATIC IMPORTED GLOBAL)
-SET_PROPERTY(TARGET gflags PROPERTY IMPORTED_LOCATION ${GFLAGS_LIBRARIES})
-ADD_DEPENDENCIES(gflags extern_gflags)

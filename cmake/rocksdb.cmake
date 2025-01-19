@@ -3,12 +3,12 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(ROCKSDB_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_rocksdb" CACHE PATH "Path to RocksDB sources")
+SET(ROCKSDB_SOURCES_DIR "${LIB_SOURCE_DIR}/rocksdb" CACHE PATH "Path to RocksDB sources")
 SET(ROCKSDB_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "rocksdb include directory." FORCE)
 SET(ROCKSDB_LIBRARIES "${LIB_INSTALL_DIR}/librocksdb.a" CACHE FILEPATH "rocksdb include directory." FORCE)
 
 ExternalProject_Add(
-        extern_rocksdb
+        rocksdb
         ${EXTERNAL_PROJECT_LOG_ARGS}
         DEPENDS gflags snappy zlib lz4 zstd
         GIT_REPOSITORY https://github.com/facebook/rocksdb.git
@@ -41,11 +41,8 @@ ExternalProject_Add(
         -DWITH_ZSTD=ON
         -DWITH_GFLAGS=ON
         -DUSE_RTTI=ON
-        BUILD_COMMAND make -j${CPU_CORE}
+        ${EXTERNAL_GENERATOR}
+        BUILD_COMMAND ${EXTERNAL_BUILD} -j${CPU_CORE}
         UPDATE_COMMAND ""
+        BUILD_BYPRODUCTS ${ROCKSDB_LIBRARIES}
 )
-
-ADD_DEPENDENCIES(extern_rocksdb snappy gflags zlib lz4)
-ADD_LIBRARY(rocksdb STATIC IMPORTED GLOBAL)
-SET_PROPERTY(TARGET rocksdb PROPERTY IMPORTED_LOCATION ${ROCKSDB_LIBRARIES})
-ADD_DEPENDENCIES(rocksdb extern_rocksdb)
