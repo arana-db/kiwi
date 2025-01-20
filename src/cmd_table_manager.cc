@@ -20,6 +20,7 @@
 #include "cmd_set.h"
 #include "cmd_zset.h"
 #include "std_string.h"
+#include "transaction.h"
 
 namespace kiwi {
 
@@ -50,6 +51,10 @@ CmdTableManager::CmdTableManager() {
 
 void CmdTableManager::InitCmdTable() {
   std::unique_lock wl(mutex_);
+
+  if (cmds_->size() != 0) {
+    return;
+  }
 
   // admin
   ADD_COMMAND_GROUP(Config, -2);
@@ -198,6 +203,13 @@ void CmdTableManager::InitCmdTable() {
   ADD_COMMAND(ZRevrank, 3);
   ADD_COMMAND(ZRem, -3);
   ADD_COMMAND(ZIncrby, 4);
+
+  // multi
+  ADD_COMMAND(Multi, 1);
+  ADD_COMMAND(Watch, -2);
+  ADD_COMMAND(UnWatch, 1);
+  ADD_COMMAND(Exec, 1);
+  ADD_COMMAND(Discard, 1);
 }
 
 std::pair<BaseCmd*, CmdRes> CmdTableManager::GetCommand(const std::string& cmdName, PClient* client) {

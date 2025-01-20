@@ -13,6 +13,7 @@
 
 #include "base_cmd.h"
 #include "client.h"
+#include "cmd_thread_pool_worker.h"
 #include "config.h"
 #include "env.h"
 #include "kiwi.h"
@@ -22,6 +23,8 @@
 #include "std/std_string.h"
 
 namespace kiwi {
+
+CmdTableManager cmd_table_manager;
 
 const ClientInfo ClientInfo::invalidClientInfo = {0, "", -1};
 
@@ -167,10 +170,6 @@ int PClient::HandlePacket(std::string&& data) {
     }
   }
 
-  for (const auto& item : params) {
-    FeedMonitors(item);
-  }
-
   auto now = std::chrono::steady_clock::now();
   time_stat_->SetEnqueueTs(now);
 
@@ -180,26 +179,9 @@ int PClient::HandlePacket(std::string&& data) {
     g_kiwi->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this(), std::move(params)));
   }
 
-  // check transaction
-  //  if (IsFlagOn(ClientFlag_multi)) {
-  //    if (cmdName_ != kCmdNameMulti && cmdName_ != kCmdNameExec && cmdName_ != kCmdNameWatch &&
-  //        cmdName_ != kCmdNameUnwatch && cmdName_ != kCmdNameDiscard) {
-  //      if (!info->CheckParamsCount(static_cast<int>(params.size()))) {
-  //        ERROR("queue failed: cmd {} has params {}", cmdName_, params.size());
-  //        ReplyError(info ? PError_param : PError_unknowCmd, &reply_);
-  //        FlagExecWrong();
-  //      } else {
-  //        if (!IsFlagOn(ClientFlag_wrongExec)) {
-  //          queue_cmds_.push_back(params);
-  //        }
-  //
-  //        reply_.PushData("+QUEUED\r\n", 9);
-  //        INFO("queue cmd {}", cmdName_);
-  //      }
-  //
-  //      return static_cast<int>(ptr - start);
-  //    }
-  //  }
+  // Propagate(params, GetCurrentDB());
+
+  // g_kiwi->SubmitFast(std::make_shared<CmdThreadPoolTask>(shared_from_this()));
 
   // check readonly slave and execute command
   //  PError err = PError_ok;
@@ -311,6 +293,22 @@ uint64_t PClient::GetUniqueID() const { return GetConnId(); }
 
 ClientInfo PClient::GetClientInfo() const { return {GetUniqueID(), PeerIP().c_str(), PeerPort()}; }
 
+bool PClient::CheckTransation(std::vector<std::string>& param) {
+  if (IsFlagOn(kClientFlagMulti)) {
+    if (cmdName_ != kCmdNameMulti && cmdName_ != kCmdNameExec && cmdName_ != kCmdNameWatch &&
+        cmdName_ != kCmdNameUnWatch && cmdName_ != kCmdNameDiscard) {
+      if (!IsFlagOn(kClientFlagWrongExec)) {
+        queue_cmds_.push_back(param);
+      }
+      INFO("queue cmd {}", cmdName_);
+      this->SetRes(CmdRes::kQueued);
+      g_kiwi->PushWriteTask(shared_from_this());
+      return true;
+    }
+  }
+  return false;
+}
+
 bool PClient::Watch(int dbno, const std::string& key) {
   DEBUG("Client {} watch {}, db {}", name_, key, dbno);
   return watch_keys_[dbno].insert(key).second;
@@ -321,7 +319,6 @@ bool PClient::NotifyDirty(int dbno, const std::string& key) {
     INFO("client is already dirty {}", GetUniqueID());
     return true;
   }
-
   if (watch_keys_[dbno].contains(key)) {
     INFO("{} client become dirty because key {} in db {}", GetUniqueID(), key, dbno);
     SetFlag(kClientFlagDirty);
@@ -338,29 +335,46 @@ bool PClient::Exec() {
     this->ClearMulti();
     this->ClearWatch();
   };
-
+  DEBUG("Exec");
   if (IsFlagOn(kClientFlagWrongExec)) {
     return false;
   }
 
   if (IsFlagOn(kClientFlagDirty)) {
-    //    FormatNullArray(&reply_);
-    AppendString("");
+    std::string message_ = "$-1\r\n";
+    resp_encode_->Reply(message_);
     return true;
   }
 
-  //  PreFormatMultiBulk(queue_cmds_.size(), &reply_);
-  //  for (const auto& cmd : queue_cmds_) {
-  //    DEBUG("EXEC {}, for client {}", cmd[0], UniqueId());
-  //    const PCommandInfo* info = PCommandTable::GetCommandInfo(cmd[0]);
-  //    PError err = PCommandTable::ExecuteCmd(cmd, info, &reply_);
+  resp_encode_->ClearReply();
+  AppendArrayLen(queue_cmds_.size());
+  auto client = shared_from_this();
+  cmd_table_manager.InitCmdTable();
 
-  // may dirty clients;
-  //    if (err == PError_ok && (info->attr & PAttr_write)) {
-  //      Propagate(cmd);
-  //    }
-  //  }
+  for (auto& cmd : queue_cmds_) {
+    SetCmdName(kstd::StringToLower(cmd[0]));
+    SetArgv(cmd);
+    kstd::StringToLower(client->cmdName_);
+    auto [cmdPtr, ret] = cmd_table_manager.GetCommand(client->CmdName(), client.get());
 
+    auto cmdstat_map = GetCommandStatMap();
+    CommandStatistics statistics;
+    if (cmdstat_map->find(cmd[0]) == cmdstat_map->end()) {
+      cmdstat_map->emplace(cmd[0], statistics);
+    }
+    auto now = std::chrono::steady_clock::now();
+    GetTimeStat()->SetDequeueTs(now);
+    cmdPtr->Execute(client.get());
+
+    // Info Commandstats used
+    now = std::chrono::steady_clock::now();
+    GetTimeStat()->SetProcessDoneTs(now);
+    (*cmdstat_map)[cmd[0]].cmd_count_.fetch_add(1);
+    (*cmdstat_map)[cmd[0]].cmd_time_consuming_.fetch_add(GetTimeStat()->GetTotalTime());
+
+    FeedMonitors(cmd);
+  }
+  // Propagate(client->params_, GetCurrentDB());
   return true;
 }
 

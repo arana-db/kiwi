@@ -55,7 +55,6 @@ class Store {
   void Init(int db_number);
 
   std::unique_ptr<DB>& GetBackend(int32_t index) { return backends_[index]; };
-
   void HandleTaskSpecificDB(const TasksVector& tasks);
 
   int GetDBNumber() const { return db_number_; }
@@ -68,4 +67,9 @@ class Store {
 
 #define STORE_INST Store::Instance()
 
+// ugly, but I don't want to write signalModifiedKey() every where
+extern std::vector<PString> g_dirtyKeys;
+extern void Propagate(const std::vector<PString>& params, int dbno);
+extern void Propagate(int dbno, const std::vector<PString>& params);
+void signalModifiedKey(const std::vector<PString>& keys, int dbno);
 }  // namespace kiwi

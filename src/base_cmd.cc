@@ -70,6 +70,12 @@ void BaseCmd::Execute(PClient* client) {
   if (!DoInitial(client)) {
     return;
   }
+
+  // Check whether the watch key is modified
+  if (HasFlag(kCmdFlagsWrite)) {
+    signalModifiedKey(client->Keys(), client->GetCurrentDB());
+  }
+
   DoCmd(client);
 }
 

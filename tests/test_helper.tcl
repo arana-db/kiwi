@@ -15,7 +15,7 @@ set ::all_tests {
    # unit/printver
    unit/basic
    # unit/scan
-   # unit/multi
+   unit/multi
    unit/quit
    # unit/type/list
    # unit/pubsub

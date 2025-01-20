@@ -35,14 +35,17 @@ void CmdWorkThreadPoolWorker::Work() {
         if (!cmdPtr) {
           if (ret == CmdRes::kUnknownCmd) {
             task->Client()->SetRes(CmdRes::kUnknownCmd, fmt::format("unknown command '{}'", param[0]));
+            task->Client()->FlagExecWrong();
             WARN("client IP:{},port:{} unknown command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
                  param[0]);
           } else if (ret == CmdRes::kUnknownSubCmd) {
             task->Client()->SetRes(CmdRes::kUnknownSubCmd, task->Client()->argv_[1]);
+            task->Client()->FlagExecWrong();
             WARN("client IP:{},port:{} unknown sub command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
                  task->Client()->argv_[1]);
           } else {
             task->Client()->SetRes(CmdRes::kWrongNum, param[0]);
+            task->Client()->FlagExecWrong();
             WARN("client IP:{},port:{} unknown command '{}'", task->Client()->PeerIP(), task->Client()->PeerPort(),
                  param[0]);
           }
@@ -52,7 +55,13 @@ void CmdWorkThreadPoolWorker::Work() {
 
         if (!cmdPtr->CheckArg(task->Client()->ParamsSize())) {
           task->Client()->SetRes(CmdRes::kWrongNum, param[0]);
+          task->Client()->FlagExecWrong();
           g_kiwi->PushWriteTask(task->Client());
+          continue;
+        }
+
+        // check transaction
+        if (task->Client()->CheckTransation(param)) {
           continue;
         }
 
@@ -70,6 +79,8 @@ void CmdWorkThreadPoolWorker::Work() {
         task->Client()->GetTimeStat()->SetProcessDoneTs(now);
         (*cmdstat_map)[param[0]].cmd_count_.fetch_add(1);
         (*cmdstat_map)[param[0]].cmd_time_consuming_.fetch_add(task->Client()->GetTimeStat()->GetTotalTime());
+
+        task->Client()->FeedMonitors(param);
 
         g_kiwi->PushWriteTask(task->Client());
       }

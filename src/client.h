@@ -126,6 +126,7 @@ class PClient : public std::enable_shared_from_this<PClient> {
     }
   }
 
+  bool CheckTransation(std::vector<std::string>& param);
   bool Watch(int dbno, const std::string& key);
   bool NotifyDirty(int dbno, const std::string& key);
   bool Exec();
@@ -239,8 +240,8 @@ class PClient : public std::enable_shared_from_this<PClient> {
   std::unordered_set<std::string> pattern_channels_;
 
   uint32_t flag_ = 0;
-  std::unordered_map<int32_t, std::unordered_set<std::string> > watch_keys_;
-  std::vector<std::vector<std::string> > queue_cmds_;
+  std::unordered_map<int32_t, std::unordered_set<std::string>> watch_keys_;
+  std::vector<std::vector<std::string>> queue_cmds_;
 
   // blocked list
   std::unordered_set<std::string> waiting_keys_;
@@ -262,7 +263,6 @@ class PClient : public std::enable_shared_from_this<PClient> {
   time_t last_auth_ = 0;
 
   ClientState state_;
-
   uint64_t net_id_ = 0;
   int8_t net_thread_index_ = 0;
   net::SocketAddr addr_;

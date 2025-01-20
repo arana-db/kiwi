@@ -17,6 +17,7 @@
 #include "db.h"
 #include "std/log.h"
 #include "std/std_string.h"
+#include "transaction.h"
 
 namespace kiwi {
 
@@ -75,5 +76,35 @@ void Store::HandleTaskSpecificDB(const TasksVector& tasks) {
         break;
     }
   });
+}
+
+void Propagate(const std::vector<PString>& params, int dbno) {
+  assert(!params.empty());
+  //
+  //  if (!g_dirtyKeys.empty()) {
+  //    for (const auto& k : g_dirtyKeys) {
+  //      PTransaction::Instance().NotifyDirty(PSTORE.GetDBNumber(), k);
+  //
+  //    }
+  //    g_dirtyKeys.clear();
+  //  } else if (params.size() > 1) {
+  //    PTransaction::Instance().NotifyDirty(PSTORE.GetDBNumber(), params[1]);
+  //  }
+  if (params.size() > 1) {
+    PTransaction::Instance().NotifyDirty(dbno, params[1]);
+  }
+}
+
+void Propagate(int dbno, const std::vector<PString>& params) {
+  PTransaction::Instance().NotifyDirtyAll(dbno);
+  Propagate(params, dbno);
+}
+
+void signalModifiedKey(const std::vector<PString>& keys, int dbno) {
+  if (keys.size() > 1) {
+    for (const auto& key : keys) {
+      PTransaction::Instance().NotifyDirty(dbno, key);
+    }
+  }
 }
 }  // namespace kiwi

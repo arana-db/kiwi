@@ -18,6 +18,8 @@ enum class CmdRes : std::int8_t {
   kInvalidInt,
   kInvalidBitInt,
   kInvalidBitOffsetInt,
+  kInvalidBitPosArgument,
+  kWrongBitOpNotNum,
   kInvalidFloat,
   kOverFlow,
   kNotFound,
@@ -38,6 +40,9 @@ enum class CmdRes : std::int8_t {
   kInvalidCursor,
   kWrongLeader,
   kMultiKey,
+  kDirtyExec,
+  kPErrorWatch,
+  kQueued,
   kNoAuth,
 };
 
