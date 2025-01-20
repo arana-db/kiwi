@@ -9,7 +9,6 @@ package kiwi_test
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strconv"
 
