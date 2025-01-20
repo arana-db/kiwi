@@ -69,6 +69,7 @@ IF (CMAKE_SYSTEM_NAME MATCHES "Darwin")
         "-Wl,-U,_MallocExtension_ReleaseFreeMemory"
         "-Wl,-U,_ProfilerStart"
         "-Wl,-U,_ProfilerStop"
+        "-Wl,-U,__Z13GetStackTracePPvii"
     )
 ENDIF()
 
