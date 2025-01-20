@@ -50,40 +50,43 @@ var _ = Describe("Consistency", Ordered, func() {
 				Expect(leader).NotTo(BeNil())
 				// TODO don't assert FlushDB's result, bug will fixed by issue #401
 				//Expect(leader.FlushDB(ctx).Err().Error()).To(Equal("ERR PRAFT is not initialized"))
-				if res := leader.FlushDB(ctx); res.Err() == nil || res.Err().Error() != "ERR PRAFT is not initialized" {
-					fmt.Println("[Consistency]FlushDB error: ", res.Err())
-				}
+// 				if res := leader.FlushDB(ctx); res.Err() == nil || res.Err().Error() != "ERR PRAFT is not initialized" {
+// 					fmt.Println("[Consistency]FlushDB error: ", res.Err())
+// 				}
+                Expect(leader.FlushDB(ctx).Err().Error()).To(Equal("ERR RAFT_INST is not initialized"))
 			} else {
 				c := s.NewClient()
 				Expect(c).NotTo(BeNil())
 				// TODO don't assert FlushDB's result, bug will fixed by issue #401
 				//Expect(c.FlushDB(ctx).Err().Error()).To(Equal("ERR PRAFT is not initialized"))
-				if res := c.FlushDB(ctx); res.Err() == nil || res.Err().Error() != "ERR PRAFT is not initialized" {
-					fmt.Println("[Consistency]FlushDB error: ", res.Err())
-				}
+				Expect(leader.FlushDB(ctx).Err().Error()).To(Equal("ERR RAFT_INST is not initialized"))
 				followers = append(followers, c)
 			}
 		}
 
 		res, err := leader.Do(ctx, "RAFT.CLUSTER", "INIT").Result()
-		Expect(err).NotTo(HaveOccurred())
-		msg, ok := res.(string)
-		Expect(ok).To(BeTrue())
-		Expect(msg).To(Equal("OK"))
-		err = leader.Close()
-		Expect(err).NotTo(HaveOccurred())
-		leader = nil
+        Expect(err).NotTo(HaveOccurred())
+        msg, ok := res.(string)
+        Expect(ok).To(BeTrue())
+        Expect(msg).To(Equal("OK"))
 
-		for _, f := range followers {
-			res, err := f.Do(ctx, "RAFT.CLUSTER", "JOIN", "127.0.0.1:12111").Result()
-			Expect(err).NotTo(HaveOccurred())
-			msg, ok := res.(string)
-			Expect(ok).To(BeTrue())
-			Expect(msg).To(Equal("OK"))
-			err = f.Close()
-			Expect(err).NotTo(HaveOccurred())
-		}
-		followers = nil
+        for _, f := range followers {
+            res, err := f.Do(ctx, "RAFT.CLUSTER", "JOIN", "127.0.0.1:12111").Result()
+            Expect(err).NotTo(HaveOccurred())
+            msg, ok := res.(string)
+            Expect(ok).To(BeTrue())
+            Expect(msg).To(Equal("OK"))
+        }
+
+        err = leader.Close()
+        Expect(err).NotTo(HaveOccurred())
+        leader = nil
+
+        for _, f := range followers {
+            err = f.Close()
+            Expect(err).NotTo(HaveOccurred())
+        }
+        followers = nil
 	})
 
 	AfterAll(func() {
@@ -102,10 +105,10 @@ var _ = Describe("Consistency", Ordered, func() {
 				leader = s.NewClient()
 				Expect(leader).NotTo(BeNil())
 				// TODO don't assert FlushDB's result, bug will fixed by issue #401
-				//Expect(leader.FlushDB(ctx).Err()).NotTo(HaveOccurred())
-				if res := leader.FlushDB(ctx); res.Err() != nil {
-					fmt.Println("[Consistency]FlushDB error: ", res.Err())
-				}
+				Expect(leader.FlushDB(ctx).Err()).NotTo(HaveOccurred())
+// 				if res := leader.FlushDB(ctx); res.Err() != nil {
+// 					fmt.Println("[Consistency]FlushDB error: ", res.Err())
+// 				}
 
 				info, err := leader.Do(ctx, "info", "raft").Result()
 				Expect(err).NotTo(HaveOccurred())
@@ -121,10 +124,10 @@ var _ = Describe("Consistency", Ordered, func() {
 				c := s.NewClient()
 				Expect(c).NotTo(BeNil())
 				// TODO don't assert FlushDB's result, bug will fixed by issue #401
-				//Expect(c.FlushDB(ctx).Err().Error()).To(Equal("ERR -MOVED 127.0.0.1:12111"))
-				if res := c.FlushDB(ctx); res.Err() != nil {
-					fmt.Println("[Consistency]FlushDB error: ", res.Err())
-				}
+				Expect(c.FlushDB(ctx).Err().Error()).To(Equal("ERR -MOVED 127.0.0.1:12111"))
+// 				if res := c.FlushDB(ctx); res.Err() != nil {
+// 					fmt.Println("[Consistency]FlushDB error: ", res.Err())
+// 				}
 				followers = append(followers, c)
 
 				info, err := c.Do(ctx, "info", "raft").Result()
