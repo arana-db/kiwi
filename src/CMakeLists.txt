@@ -58,6 +58,10 @@ ADD_DEPENDENCIES(kiwi
         OpenSSL
 )
 
+IF (CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    SET(EXTRA_LINK_LIB "-framework CoreFoundation -framework CoreGraphics -framework CoreData -framework CoreText -framework Security -framework Foundation")
+ENDIF()
+
 TARGET_LINK_LIBRARIES(kiwi
         net
         dl
@@ -79,6 +83,7 @@ TARGET_LINK_LIBRARIES(kiwi
         ${Snappy_LIBRARIES}
         ${zstd_LIBRARIES}
         ${OPENSSL_CRYPTO_LIBRARY}
+        ${EXTRA_LINK_LIB}
 )
 
 SET_TARGET_PROPERTIES(kiwi PROPERTIES LINKER_LANGUAGE CXX)
