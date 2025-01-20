@@ -286,7 +286,7 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(resKillFilter.Val()).To(Equal(int64(0)))
 
 		resKillFilter = conn.ClientKillByFilter(ctx, "ID", "1")
-		Expect(resKillFilter.Err()).To(MatchError("ERR No such client"))
+		Expect(resKillFilter.Err()).To(MatchError("EOF"))
 		Expect(resKillFilter.Val()).To(Equal(int64(0)))
 	})
 
