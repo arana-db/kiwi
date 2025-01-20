@@ -151,17 +151,17 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(res.Val()).To(Equal(map[string]string{"timeout": "60"}))
 	})
 
-// 	It("Cmd Auth", func() {
-// 		res := client.ConfigSet(ctx, "requirepass", "123456")
-// 		Expect(res.Err()).NotTo(HaveOccurred())
-// 		Expect(res.Val()).To(Equal("OK"))
-//
-// 		resAuth := client.Conn().Auth(ctx, "password")
-// 		Expect(resAuth.Err()).To(MatchError("ERR invalid password"))
-//
-// 		resAuth = client.Conn().Auth(ctx, "123456")
-// 		Expect(resAuth.Err()).NotTo(HaveOccurred())
-// 	})
+	It("Cmd Auth", func() {
+		res := client.ConfigSet(ctx, "requirepass", "123456")
+		Expect(res.Err()).NotTo(HaveOccurred())
+		Expect(res.Val()).To(Equal("OK"))
+
+		resAuth := client.Conn().Auth(ctx, "password")
+		Expect(resAuth.Err()).To(MatchError("ERR invalid password"))
+
+		resAuth = client.Conn().Auth(ctx, "123456")
+		Expect(resAuth.Err()).NotTo(HaveOccurred())
+	})
 
 	It("PING", func() {
 		ping := client.Ping(ctx)
@@ -229,7 +229,7 @@ var _ = Describe("Admin", Ordered, func() {
 				Get: []string{"object_*"},
 			}).Result()
 			Expect(err).NotTo(HaveOccurred())
-			Expect(els).To(Equal([]interface{}{nil, "value2", nil}))
+			Expect(els).To(Equal([]interface{}{"", "value2", ""}))
 		}
 		del := client.Del(ctx, "list")
 		Expect(del.Err()).NotTo(HaveOccurred())
