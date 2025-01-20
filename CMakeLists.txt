@@ -43,6 +43,9 @@ EXECUTE_PROCESS(
 MESSAGE(STATUS "GIT_COMMIT_HASH: ${GIT_COMMIT_HASH}")
 MESSAGE(STATUS "GIT_COMMIT_DATE: ${BUILD_DATE}")
 
+ADD_DEFINITIONS(-DKIWI_GIT_COMMIT_ID="${GIT_COMMIT_HASH}")
+ADD_DEFINITIONS(-DKIWI_BUILD_DATE="${BUILD_DATE}")
+
 IF(CMAKE_BUILD_TYPE STREQUAL "Release")
     MESSAGE("Building in Release mode")
 ELSE()
@@ -272,11 +275,4 @@ ADD_CUSTOM_TARGET(cpplint echo '${LINT_FILES}' | xargs -n12 -P8
   --verbose=2 --quiet
   --linelength=120
   --filter=-legal/copyright,-build/header_guard,-runtime/references
-)
-
-TARGET_COMPILE_DEFINITIONS(kiwi PRIVATE
-        KIWI_VERSION="${K_VERSION}"
-        KIWI_BUILD_TYPE="${BUILD_TYPE}"
-        KIWI_GIT_COMMIT_ID="${GIT_COMMIT_ID}"
-        KIWI_BUILD_DATE="${BUILD_TIME}"
 )

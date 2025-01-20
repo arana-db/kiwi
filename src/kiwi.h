@@ -15,7 +15,7 @@
 #include "net/event_server.h"
 #include "options.h"
 
-// #define KIWI_VERSION "4.0.0"
+#define KIWI_VERSION "4.0.0"
 
 #ifdef BUILD_DEBUG
 #  define KIWI_BUILD_TYPE "DEBUG"
