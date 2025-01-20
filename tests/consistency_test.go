@@ -10,7 +10,6 @@ package kiwi_test
 import (
 	"bufio"
 	"context"
-	"fmt"
 	"log"
 	"os/exec"
 	"strconv"
