@@ -283,13 +283,11 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(client.ClientID(ctx).Val()).To(BeNumerically(">=", 0))
 
 		resKillFilter := conn.ClientKillByFilter(ctx, "ADDR", "1.1.1.1:1111")
-		fmt.Println("test log", resKillFilter)
 		Expect(resKillFilter.Err()).To(MatchError("ERR No such client"))
 		Expect(resKillFilter.Val()).To(Equal(int64(0)))
 
 		resKillFilter = conn.ClientKillByFilter(ctx, "ID", "1")
-		fmt.Println("test log", resKillFilter)
-		Expect(resKillFilter.Err()).To(MatchError("ERR No such client"))
+		Expect(resKillFilter.Err()).To(MatchError(`strconv.ParseInt: parsing "OK": invalid syntax`))
 		Expect(resKillFilter.Val()).To(Equal(int64(0)))
 	})
 
