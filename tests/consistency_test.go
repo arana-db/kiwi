@@ -50,17 +50,17 @@ var _ = Describe("Consistency", Ordered, func() {
 				Expect(leader).NotTo(BeNil())
 				// TODO don't assert FlushDB's result, bug will fixed by issue #401
 				//Expect(leader.FlushDB(ctx).Err().Error()).To(Equal("ERR PRAFT is not initialized"))
-// 				if res := leader.FlushDB(ctx); res.Err() == nil || res.Err().Error() != "ERR PRAFT is not initialized" {
-// 					fmt.Println("[Consistency]FlushDB error: ", res.Err())
-// 				}
+				if res := leader.FlushDB(ctx); res.Err() == nil || res.Err().Error() != "ERR PRAFT is not initialized" {
+					fmt.Println("[Consistency]FlushDB error: ", res.Err())
+				}
 			} else {
 				c := s.NewClient()
 				Expect(c).NotTo(BeNil())
 				// TODO don't assert FlushDB's result, bug will fixed by issue #401
 				//Expect(c.FlushDB(ctx).Err().Error()).To(Equal("ERR PRAFT is not initialized"))
-// 				if res := c.FlushDB(ctx); res.Err() == nil || res.Err().Error() != "ERR PRAFT is not initialized" {
-// 					fmt.Println("[Consistency]FlushDB error: ", res.Err())
-// 				}
+				if res := c.FlushDB(ctx); res.Err() == nil || res.Err().Error() != "ERR PRAFT is not initialized" {
+					fmt.Println("[Consistency]FlushDB error: ", res.Err())
+				}
 				followers = append(followers, c)
 			}
 		}
@@ -103,9 +103,9 @@ var _ = Describe("Consistency", Ordered, func() {
 				Expect(leader).NotTo(BeNil())
 				// TODO don't assert FlushDB's result, bug will fixed by issue #401
 				//Expect(leader.FlushDB(ctx).Err()).NotTo(HaveOccurred())
-// 				if res := leader.FlushDB(ctx); res.Err() != nil {
-// 					fmt.Println("[Consistency]FlushDB error: ", res.Err())
-// 				}
+				if res := leader.FlushDB(ctx); res.Err() != nil {
+					fmt.Println("[Consistency]FlushDB error: ", res.Err())
+				}
 
 				info, err := leader.Do(ctx, "info", "raft").Result()
 				Expect(err).NotTo(HaveOccurred())
@@ -122,9 +122,9 @@ var _ = Describe("Consistency", Ordered, func() {
 				Expect(c).NotTo(BeNil())
 				// TODO don't assert FlushDB's result, bug will fixed by issue #401
 				//Expect(c.FlushDB(ctx).Err().Error()).To(Equal("ERR -MOVED 127.0.0.1:12111"))
-// 				if res := c.FlushDB(ctx); res.Err() != nil {
-// 					fmt.Println("[Consistency]FlushDB error: ", res.Err())
-// 				}
+				if res := c.FlushDB(ctx); res.Err() != nil {
+					fmt.Println("[Consistency]FlushDB error: ", res.Err())
+				}
 				followers = append(followers, c)
 
 				info, err := c.Do(ctx, "info", "raft").Result()
