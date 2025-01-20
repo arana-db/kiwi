@@ -258,7 +258,7 @@ var _ = Describe("String", Ordered, func() {
 
 		mGet := client.MGet(ctx, "keynx1", "keynx2", "_")
 		Expect(mGet.Err()).NotTo(HaveOccurred())
-		Expect(mGet.Val()).To(Equal([]interface{}{"hello1", "hello2", nil}))
+		Expect(mGet.Val()).To(Equal([]interface{}{"hello1", "hello2", ""}))
 
 		mSetnx = client.MSetNX(ctx, "keynx3", "hello3", "keynx2", "hello22")
 		Expect(mSetnx.Err()).NotTo(HaveOccurred())
