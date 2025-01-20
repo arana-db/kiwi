@@ -59,7 +59,17 @@ ADD_DEPENDENCIES(kiwi
 )
 
 IF (CMAKE_SYSTEM_NAME MATCHES "Darwin")
-    SET(EXTRA_LINK_LIB "-framework CoreFoundation -framework CoreGraphics -framework CoreData -framework CoreText -framework Security -framework Foundation")
+    SET(EXTRA_LINK_LIB 
+        "-framework CoreFoundation"
+        "-framework CoreGraphics"
+        "-framework CoreData"
+        "-framework CoreText"
+        "-framework Security"
+        "-framework Foundation"
+        "-Wl,-U,_MallocExtension_ReleaseFreeMemory"
+        "-Wl,-U,_ProfilerStart"
+        "-Wl,-U,_ProfilerStop"
+    )
 ENDIF()
 
 TARGET_LINK_LIBRARIES(kiwi
