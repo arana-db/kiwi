@@ -266,7 +266,7 @@ var _ = Describe("String", Ordered, func() {
 
 		mGet = client.MGet(ctx, "keynx2", "keynx3")
 		Expect(mGet.Err()).NotTo(HaveOccurred())
-		Expect(mGet.Val()).To(Equal([]interface{}{"hello2", nil}))
+		Expect(mGet.Val()).To(Equal([]interface{}{"hello2", ""}))
 
 		mSetnx = client.MSetNX(ctx, "keynx1")
 		Expect(mSetnx.Err()).To(HaveOccurred())
