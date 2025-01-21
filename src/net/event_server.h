@@ -251,11 +251,11 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
 
   if (serverMode) {
     for (auto &addr : listen_addrs_) {
-      std::shared_ptr<ListenSocket> listen(ListenSocket::CreateTCPListen());
-      listen->SetListenAddr(addr);
-      listen->SetBSTcpKeepAlive(tcpKeepAlive);
-      listen_sockets.push_back(listen);
-      if (auto ret = (listen->Init() != static_cast<int>(NetListen::OK))) {
+      std::shared_ptr<ListenSocket> s(ListenSocket::CreateTCPListen());
+      s->SetListenAddr(addr);
+      s->SetBSTcpKeepAlive(tcpKeepAlive);
+      listen_sockets.push_back(s);
+      if (auto ret = (s->Init() != static_cast<int>(NetListen::OK))) {
         listen_sockets.clear();  // Clean up all sockets
         return ret;
       }
@@ -265,12 +265,12 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
   int i = 0;
   for (const auto &thread : threadsManager_) {
     if (i > 0 && ListenSocket::REUSE_PORT && serverMode) {
-      for (auto &listen : listen_sockets) {
-        auto listenAddr = listen->GetListenAddr();
-        listen.reset(ListenSocket::CreateTCPListen());
-        listen->SetListenAddr(listenAddr);
-        listen->SetBSTcpKeepAlive(tcpKeepAlive);
-        if (auto ret = (listen->Init() != static_cast<int>(NetListen::OK))) {
+      for (auto &s : listen_sockets) {
+        auto listenAddr = s->GetListenAddr();
+        s.reset(ListenSocket::CreateTCPListen());
+        s->SetListenAddr(listenAddr);
+        s->SetBSTcpKeepAlive(tcpKeepAlive);
+        if (auto ret = (s->Init() != static_cast<int>(NetListen::OK))) {
           listen_sockets.clear();  // Clean up all sockets
           return ret;
         }

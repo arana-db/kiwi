@@ -23,8 +23,8 @@ namespace net {
 
 class KqueueEvent : public BaseEvent {
  public:
-  explicit KqueueEvent(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, int8_t mode)
-      : BaseEvent(std::move(listenSockets), mode, BaseEvent::EVENT_TYPE_KQUEUE) {};
+  explicit KqueueEvent(const std::vector<std::shared_ptr<ListenSocket>> &listen_sockets, int8_t mode)
+      : BaseEvent(std::move(listen_sockets), mode, BaseEvent::EVENT_TYPE_KQUEUE) {};
 
   ~KqueueEvent() override { Close(); }
 
