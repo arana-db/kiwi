@@ -27,8 +27,8 @@ bool EpollEvent::Init() {
     return false;
   }
   if (mode_ & EVENT_MODE_READ) {  // Add the listen socket to epoll for read
-    for (auto &listenSocket : listen_sockets_) {
-      AddEvent(listenSocket->Fd(), listenSocket->Fd(), EVENT_READ);
+    for (auto &s : listen_sockets_) {
+      AddEvent(s->Fd(), s->Fd(), EVENT_READ);
     }
   }
   if (pipe(pipeFd_) == -1) {
@@ -153,9 +153,9 @@ void EpollEvent::EventWrite() {
 }
 
 void EpollEvent::DoRead(const epoll_event &event, const std::shared_ptr<Connection> &conn) {
-  if (auto listen_socket = getListenSocket(event.data.u64); listen_socket) {
+  if (auto s = getListenSocket(event.data.u64); s) {
     auto newConn = std::make_shared<Connection>(nullptr);
-    auto connFd = listen_socket->OnReadable(newConn, nullptr);
+    auto connFd = s->OnReadable(newConn, nullptr);
     if (connFd < 0) {
       DoError(event, "accept error");
       return;

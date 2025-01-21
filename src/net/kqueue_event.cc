@@ -25,7 +25,7 @@ bool KqueueEvent::Init() {
     return false;
   }
   if (mode_ & EVENT_MODE_READ) {
-    for (auto &listenSocket : listenSockets_) {
+    for (auto &listenSocket : listen_sockets_) {
       AddEvent(listenSocket->Fd(), listenSocket->Fd(), EVENT_READ);
     }
   }
@@ -168,9 +168,9 @@ void KqueueEvent::EventWrite() {
 }
 
 void KqueueEvent::DoRead(const struct kevent &event, const std::shared_ptr<Connection> &conn) {
-  if (auto listenSocket = getListenSocket(event.ident); listenSocket) {
+  if (auto s = getListenSocket(event.ident); s) {
     auto newConn = std::make_shared<Connection>(nullptr);
-    auto connFd = listenSocket->OnReadable(newConn, nullptr);
+    auto connFd = s->OnReadable(newConn, nullptr);
     onCreate_(connFd, newConn);
   } else if (conn) {
     std::string readBuff;
