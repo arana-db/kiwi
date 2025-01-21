@@ -18,6 +18,7 @@ int BaseSocket::CreateTCPSocket(const SocketAddr &addr) {
   if (addr.IsIPV6()) {
     return ::socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
   }
+
   return ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 }
 

@@ -223,7 +223,7 @@ void ThreadManager<T>::TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEve
   newConn->addr_ = addr;
   T t;
   onInit_(&t);
-  auto connId = DoTCPConnect(t, newConn->netEvent_->Fd(), newConn);
+  auto connId = DoTCPConnect(t, newConn->net_event_->Fd(), newConn);
   onConnect_(connId, t, addr);
 }
 
@@ -234,7 +234,7 @@ void ThreadManager<T>::TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEve
   newConn->addr_ = addr;
   T t;
   onInit_(&t);
-  auto connId = DoTCPConnect(t, newConn->netEvent_->Fd(), newConn);
+  auto connId = DoTCPConnect(t, newConn->net_event_->Fd(), newConn);
   onConnect(connId, t, addr);
 }
 
@@ -266,7 +266,7 @@ void ThreadManager<T>::SendPacket(const T &conn, std::string &&msg) {
     connPtr = iter->second.second;
   }
 
-  connPtr->netEvent_->SendPacket(std::move(msg));
+  connPtr->net_event_->SendPacket(std::move(msg));
   if (netOptions_.GetRwSeparation()) {
     writeThread_->SetWriteEvent(connId, connPtr->fd_);
   } else {

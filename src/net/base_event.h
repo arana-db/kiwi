@@ -47,7 +47,7 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
   const static int EVENT_NULL;
 
   BaseEvent(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, int8_t mode, int8_t type)
-      : listenSockets_(listenSockets), mode_(mode), type_(type) {};
+      : listen_sockets_(listenSockets), mode_(mode), type_(type) {};
 
   virtual ~BaseEvent() = default;
 
@@ -95,7 +95,7 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
   int8_t Type() const { return type_; }
 
   std::shared_ptr<net::ListenSocket> getListenSocket(int fd) {
-    for (const auto &listen : listenSockets_) {
+    for (const auto &listen : listen_sockets_) {
       if (fd == listen->Fd()) {
         return listen;
       }
@@ -120,7 +120,7 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
   std::shared_ptr<Timer> timer_;
 
   // listening sockets
-  std::vector<std::shared_ptr<ListenSocket>> listenSockets_;
+  std::vector<std::shared_ptr<ListenSocket>> listen_sockets_;
 
   // callback function when a new connection is created
   std::function<void(uint64_t, std::shared_ptr<Connection>)> onCreate_;

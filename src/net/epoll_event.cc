@@ -27,7 +27,7 @@ bool EpollEvent::Init() {
     return false;
   }
   if (mode_ & EVENT_MODE_READ) {  // Add the listen socket to epoll for read
-    for (auto &listenSocket : listenSockets_) {
+    for (auto &listenSocket : listen_sockets_) {
       AddEvent(listenSocket->Fd(), listenSocket->Fd(), EVENT_READ);
     }
   }
@@ -153,9 +153,9 @@ void EpollEvent::EventWrite() {
 }
 
 void EpollEvent::DoRead(const epoll_event &event, const std::shared_ptr<Connection> &conn) {
-  if (auto listenSocket = getListenSocket(event.data.u64); listenSocket) {
+  if (auto listen_socket = getListenSocket(event.data.u64); listen_socket) {
     auto newConn = std::make_shared<Connection>(nullptr);
-    auto connFd = listenSocket->OnReadable(newConn, nullptr);
+    auto connFd = listen_socket->OnReadable(newConn, nullptr);
     if (connFd < 0) {
       DoError(event, "accept error");
       return;
@@ -163,7 +163,7 @@ void EpollEvent::DoRead(const epoll_event &event, const std::shared_ptr<Connecti
     onCreate_(connFd, newConn);
   } else if (conn) {
     std::string readBuff;
-    int ret = conn->netEvent_->OnReadable(conn, &readBuff);
+    int ret = conn->net_event_->OnReadable(conn, &readBuff);
     if (ret == NE_ERROR) {
       DoError(event, "read error,errno: " + std::to_string(errno));
       return;
@@ -178,7 +178,7 @@ void EpollEvent::DoRead(const epoll_event &event, const std::shared_ptr<Connecti
 }
 
 void EpollEvent::DoWrite(const epoll_event &event, const std::shared_ptr<Connection> &conn) {
-  auto ret = conn->netEvent_->OnWritable();
+  auto ret = conn->net_event_->OnWritable();
   if (ret == NE_ERROR) {
     DoError(event, "write error,errno: " + std::to_string(errno));
     return;

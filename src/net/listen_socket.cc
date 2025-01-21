@@ -33,7 +33,7 @@ int ListenSocket::OnReadable(const std::shared_ptr<Connection> &conn, std::strin
   inet_ntop(AF_INET, &(clientAddr.sin_addr), clientIP, INET_ADDRSTRLEN);
 
   newConn->OnCreate();
-  conn->netEvent_ = std::move(newConn);
+  conn->net_event_ = std::move(newConn);
   conn->fd_ = newConnFd;
   conn->addr_.Init(clientAddr);
 
