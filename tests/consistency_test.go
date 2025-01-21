@@ -35,58 +35,48 @@ var _ = Describe("Consistency", Ordered, func() {
 	)
 
 	BeforeAll(func() {
-        cmd := exec.Command("ulimit", "-n", "999999")
-        _ = cmd.Run()
+		cmd := exec.Command("ulimit", "-n", "999999")
+		_ = cmd.Run()
+		for i := 0; i < 3; i++ {
+			config := util.GetConfPath(false, int64(i))
+			s := util.StartServer(config, map[string]string{"port": strconv.Itoa(12000 + (i+1)*111),
+				"use-raft": "yes"}, true)
+			Expect(s).NotTo(BeNil())
+			servers = append(servers, s)
 
-        for i := 0; i < 3; i++ {
-            config := util.GetConfPath(false, int64(i))
-            s := util.StartServer(config, map[string]string{
-                "port":     strconv.Itoa(12000 + (i+1)*111),
-                "use-raft": "yes",
-            }, true)
-            Expect(s).NotTo(BeNil())
-            servers = append(servers, s)
-
-            if i == 0 {
-                leader = s.NewClient()
-                Expect(leader).NotTo(BeNil())
+			if i == 0 {
+				leader = s.NewClient()
+				Expect(leader).NotTo(BeNil())
+				// TODO don't assert FlushDB's result, bug will fixed by issue #401
+				//Expect(leader.FlushDB(ctx).Err().Error()).To(Equal("ERR PRAFT is not initialized"))
+// 				if res := leader.FlushDB(ctx); res.Err() == nil || res.Err().Error() != "ERR PRAFT is not initialized" {
+// 					fmt.Println("[Consistency]FlushDB error: ", res.Err())
+// 				}
                 Expect(leader.FlushDB(ctx).Err().Error()).To(Equal("ERR RAFT_INST is not initialized"))
-            } else {
-                c := s.NewClient()
-                Expect(c).NotTo(BeNil())
-                Expect(c.FlushDB(ctx).Err().Error()).To(Equal("ERR RAFT_INST is not initialized"))
-                followers = append(followers, c)
-            }
-        }
+			} else {
+				c := s.NewClient()
+				Expect(c).NotTo(BeNil())
+				// TODO don't assert FlushDB's result, bug will fixed by issue #401
+				//Expect(c.FlushDB(ctx).Err().Error()).To(Equal("ERR PRAFT is not initialized"))
+				Expect(leader.FlushDB(ctx).Err().Error()).To(Equal("ERR RAFT_INST is not initialized"))
+				followers = append(followers, c)
+			}
+		}
 
-        res, err := leader.Do(ctx, "RAFT.CLUSTER", "INIT").Result()
+		res, err := leader.Do(ctx, "RAFT.CLUSTER", "INIT").Result()
         Expect(err).NotTo(HaveOccurred())
         msg, ok := res.(string)
         Expect(ok).To(BeTrue())
         Expect(msg).To(Equal("OK"))
 
-        time.Sleep(3 * time.Second)
-
-        ctxWithTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
-        defer cancel()
-
         for _, f := range followers {
-            var joinErr error
-            for retries := 0; retries < 3; retries++ {
-                res, err := f.Do(ctxWithTimeout, "RAFT.CLUSTER", "JOIN", "127.0.0.1:12111").Result()
-                if err == nil {
-                    msg, ok := res.(string)
-                    Expect(ok).To(BeTrue())
-                    Expect(msg).To(Equal("OK"))
-                    joinErr = nil
-                    break
-                }
-                joinErr = err
-                time.Sleep(2 * time.Second)
-            }
-            Expect(joinErr).NotTo(HaveOccurred())
-
-            time.Sleep(2 * time.Second)
+            res, err := f.Do(ctx, "RAFT.CLUSTER", "JOIN", "127.0.0.1:12111").Result()
+            log.Println("test log", res, " | ", err)
+            Expect(err).NotTo(HaveOccurred())
+            msg, ok := res.(string)
+            log.Println("test log", msg, " | ", ok)
+            Expect(ok).To(BeTrue())
+            Expect(msg).To(Equal("OK"))
         }
 
         err = leader.Close()
@@ -98,7 +88,7 @@ var _ = Describe("Consistency", Ordered, func() {
             Expect(err).NotTo(HaveOccurred())
         }
         followers = nil
-    })
+	})
 
 	AfterAll(func() {
 		for _, s := range servers {
