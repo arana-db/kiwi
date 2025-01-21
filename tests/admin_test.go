@@ -163,7 +163,7 @@ var _ = Describe("Admin", Ordered, func() {
 		resAuth = conn.Auth(ctx, "123456")
 		Expect(resAuth.Err()).NotTo(HaveOccurred())
 
-		res = client.ConfigSet(ctx, "requirepass", "")
+		res = conn.ConfigSet(ctx, "requirepass", "")
         Expect(res.Err()).NotTo(HaveOccurred())
         Expect(res.Val()).To(Equal("OK"))
 	})
