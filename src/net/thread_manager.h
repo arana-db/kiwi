@@ -36,7 +36,7 @@ template <typename T>
 requires HasSetFdFunction<T>
 class ThreadManager {
  public:
-  explicit ThreadManager(int8_t index, NetOptions &netOptions) : index_(index), netOptions_(netOptions) {}
+  explicit ThreadManager(int8_t index, NetOptions &net_options) : index_(index), net_options_(net_options) {}
 
   ~ThreadManager();
 
@@ -93,13 +93,13 @@ class ThreadManager {
 
  private:
   const int8_t index_ = 0;            // The index of the thread
-  uint32_t tcpKeepAlive_ = 300;       // The timeout of the keepalive connection in seconds
+  uint32_t tcp_keep_alive_ = 300;       // The timeout of the keepalive connection in seconds
   std::atomic<bool> running_ = true;  // Whether the thread is running
 
-  NetOptions netOptions_;
+  NetOptions net_options_;
 
-  std::unique_ptr<IOThread> readThread_;   // Read thread
-  std::unique_ptr<IOThread> writeThread_;  // Write thread
+  std::unique_ptr<IOThread> read_thread_;   // Read thread
+  std::unique_ptr<IOThread> write_thread_;  // Write thread
 
   // All connections for the current thread
   std::unordered_map<uint64_t, std::pair<T, std::shared_ptr<Connection>>> connections_;
@@ -130,7 +130,7 @@ bool ThreadManager<T>::Start(const std::vector<std::shared_ptr<ListenSocket>> &l
   if (!CreateReadThread(listenSockets, timer)) {
     return false;
   }
-  if (netOptions_.GetRwSeparation()) {
+  if (net_options_.GetRwSeparation()) {
     return CreateWriteThread();
   }
   return true;
@@ -141,9 +141,9 @@ requires HasSetFdFunction<T>
 void ThreadManager<T>::Stop() {
   bool expected = true;
   if (running_.compare_exchange_strong(expected, false)) {
-    readThread_->Stop();
-    if (netOptions_.GetRwSeparation()) {
-      writeThread_->Stop();
+    read_thread_->Stop();
+    if (net_options_.GetRwSeparation()) {
+      write_thread_->Stop();
     }
   }
 }
@@ -166,9 +166,9 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     std::lock_guard lock(mutex_);
     connections_.emplace(connId, std::make_pair(t, conn));
   }
-  readThread_->AddNewEvent(connId, fd, BaseEvent::EVENT_READ);
-  if (writeThread_) {
-    writeThread_->AddNewEvent(connId, fd, BaseEvent::EVENT_NULL);  // add null event to write_thread epoll
+  read_thread_->AddNewEvent(connId, fd, BaseEvent::EVENT_READ);
+  if (write_thread_) {
+    write_thread_->AddNewEvent(connId, fd, BaseEvent::EVENT_NULL);  // add null event to write_thread epoll
   }
 
   on_create_(connId, t, conn->addr_);
@@ -200,9 +200,9 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
   }
   fd = iter->second.second->fd_;
 
-  readThread_->CloseConnection(fd);
-  if (netOptions_.GetRwSeparation()) {
-    writeThread_->CloseConnection(fd);
+  read_thread_->CloseConnection(fd);
+  if (net_options_.GetRwSeparation()) {
+    write_thread_->CloseConnection(fd);
   }
 
   iter->second.second->netEvent_->Close();  // close socket
@@ -241,9 +241,9 @@ void ThreadManager<T>::TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEve
 template <typename T>
 requires HasSetFdFunction<T>
 void ThreadManager<T>::Wait() {
-  readThread_->Wait();
-  if (netOptions_.GetRwSeparation()) {
-    writeThread_->Wait();
+  read_thread_->Wait();
+  if (net_options_.GetRwSeparation()) {
+    write_thread_->Wait();
   }
 }
 
@@ -267,10 +267,10 @@ void ThreadManager<T>::SendPacket(const T &conn, std::string &&msg) {
   }
 
   connPtr->net_event_->SendPacket(std::move(msg));
-  if (netOptions_.GetRwSeparation()) {
-    writeThread_->SetWriteEvent(connId, connPtr->fd_);
+  if (net_options_.GetRwSeparation()) {
+    write_thread_->SetWriteEvent(connId, connPtr->fd_);
   } else {
-    readThread_->SetWriteEvent(connId, connPtr->fd_);
+    read_thread_->SetWriteEvent(connId, connPtr->fd_);
   }
 }
 
@@ -280,7 +280,7 @@ bool ThreadManager<T>::CreateReadThread(const std::vector<std::shared_ptr<Listen
                                         const std::shared_ptr<Timer> &timer) {
   std::shared_ptr<BaseEvent> event;
   int8_t eventMode = BaseEvent::EVENT_MODE_READ;
-  if (!netOptions_.GetRwSeparation()) {
+  if (!net_options_.GetRwSeparation()) {
     eventMode |= BaseEvent::EVENT_MODE_WRITE;
   }
 
@@ -309,8 +309,8 @@ bool ThreadManager<T>::CreateReadThread(const std::vector<std::shared_ptr<Listen
     return iter->second.second;
   });
 
-  readThread_ = std::make_unique<IOThread>(event);
-  return readThread_->Run();
+  read_thread_ = std::make_unique<IOThread>(event);
+  return read_thread_->Run();
 }
 
 template <typename T>
@@ -334,8 +334,8 @@ bool ThreadManager<T>::CreateWriteThread() {
     return iter->second.second;
   });
 
-  writeThread_ = std::make_unique<IOThread>(event);
-  return writeThread_->Run();
+  write_thread_ = std::make_unique<IOThread>(event);
+  return write_thread_->Run();
 }
 
 template <typename T>
@@ -356,7 +356,7 @@ uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd, const std::shared_ptr<Conn
     connections_.emplace(connId, std::make_pair(t, conn));
   }
 
-  readThread_->AddNewEvent(connId, fd, BaseEvent::EVENT_READ);
+  read_thread_->AddNewEvent(connId, fd, BaseEvent::EVENT_READ);
   return connId;
 }
 
