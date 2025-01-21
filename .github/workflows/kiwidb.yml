@@ -59,14 +59,14 @@ jobs:
           ccache --set-config=cache_dir=$HOME/.ccache
           ccache --max-size=10G
 
-      - name: Restore ccache
-        uses: actions/cache@v3
-        with:
-          path: ~/.ccache
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.cpp','**/*.cc','**/*.c', '**/*.h') }}-clang
-          restore-keys: |
-            ${{ runner.os }}-ccache-
-            ccache-
+      # - name: Restore ccache
+      #   uses: actions/cache@v3
+      #   with:
+      #     path: ~/.ccache
+      #     key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.cpp','**/*.cc','**/*.c', '**/*.h') }}-clang
+      #     restore-keys: |
+      #       ${{ runner.os }}-ccache-
+      #       ccache-
 
       - name: Build
         run: |
