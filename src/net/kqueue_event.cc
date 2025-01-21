@@ -174,7 +174,7 @@ void KqueueEvent::DoRead(const struct kevent &event, const std::shared_ptr<Conne
     onCreate_(connFd, newConn);
   } else if (conn) {
     std::string readBuff;
-    int ret = conn->netEvent_->OnReadable(conn, &readBuff);
+    int ret = conn->net_event_->OnReadable(conn, &readBuff);
     if (ret == NE_ERROR) {
       DoError(event, "read error,errno: " + std::to_string(errno));
       return;
@@ -195,7 +195,7 @@ void KqueueEvent::DoRead(const struct kevent &event, const std::shared_ptr<Conne
 }
 
 void KqueueEvent::DoWrite(const struct kevent &event, const std::shared_ptr<Connection> &conn) {
-  auto ret = conn->netEvent_->OnWritable();
+  auto ret = conn->net_event_->OnWritable();
   if (ret == NE_ERROR) {
     DoError(event, "DoWrite error,errno: " + std::to_string(errno));
     return;

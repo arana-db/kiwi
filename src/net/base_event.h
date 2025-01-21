@@ -46,8 +46,8 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
   const static int EVENT_HUB;
   const static int EVENT_NULL;
 
-  BaseEvent(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, int8_t mode, int8_t type)
-      : listen_sockets_(listenSockets), mode_(mode), type_(type) {};
+  BaseEvent(const std::vector<std::shared_ptr<ListenSocket>> &listen_sockets, int8_t mode, int8_t type)
+      : listen_sockets_(listen_sockets), mode_(mode), type_(type) {};
 
   virtual ~BaseEvent() = default;
 
