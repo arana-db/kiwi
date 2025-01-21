@@ -38,6 +38,9 @@ struct SocketAddr {
   void Init(const sockaddr_in6 &addr) { memcpy(&addr_, &addr, sizeof(addr)); }
 
   void Init(const std::string &ip, uint16_t hostPort) {
+    if (hostPort > 65535) {
+      return;
+    }
     if (::inet_pton(AF_INET, ip.c_str(), &addr_.addr4_.sin_addr) == 1) {
       addr_.addr4_.sin_family = AF_INET;
       addr_.addr4_.sin_port = htons(hostPort);
@@ -48,6 +51,7 @@ struct SocketAddr {
       addr_.addr6_.sin6_port = htons(hostPort);
       return;
     }
+    Clear();  // Reset the address if parsing fails
   }
 
   const sockaddr *Get() const {
@@ -80,11 +84,9 @@ struct SocketAddr {
 
   std::string GetIP(char *buf, socklen_t size) const {
     if (IsIPV4()) {
-      ::inet_ntop(AF_INET, &addr_.addr4_.sin_addr, buf, size);
-      return buf;
+      return ::inet_ntop(AF_INET, &addr_.addr4_.sin_addr, buf, size) ? buf : "";
     }
-    ::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, buf, size);
-    return buf;
+    return ::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, buf, size) ? buf : "";
   }
 
   uint16_t GetPort() const {
