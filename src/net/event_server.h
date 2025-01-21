@@ -29,7 +29,9 @@ template <typename T>
 requires HasSetFdFunction<T>
 class EventServer final {
  public:
-  explicit EventServer(NetOptions net_options) : opt_(net_options) { threadsManager_.reserve(net_options.GetThreadNum()); }
+  explicit EventServer(NetOptions net_options) : opt_(net_options) {
+    threadsManager_.reserve(net_options.GetThreadNum());
+  }
 
   ~EventServer() = default;
 
