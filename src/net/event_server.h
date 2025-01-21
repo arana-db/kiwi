@@ -29,7 +29,7 @@ template <typename T>
 requires HasSetFdFunction<T>
 class EventServer final {
  public:
-  explicit EventServer(NetOptions netOptions) : opt_(netOptions) { threadsManager_.reserve(netOptions.GetThreadNum()); }
+  explicit EventServer(NetOptions net_options) : opt_(net_options) { threadsManager_.reserve(net_options.GetThreadNum()); }
 
   ~EventServer() = default;
 
@@ -43,13 +43,13 @@ class EventServer final {
 
   void SetOnClose(OnClose<T> &&func) { onClose_ = std::move(func); }
 
-  inline void AddListenAddr(const SocketAddr &addr) { listen_addrs_.emplace_back(addr); }
+  void AddListenAddr(const SocketAddr &addr) { listen_addrs_.emplace_back(addr); }
 
   void InitTimer(int64_t interval) { timer_ = std::make_shared<Timer>(interval); }
 
   int64_t AddTimerTask(const std::shared_ptr<ITimerTask> &task) { return timer_->AddTask(task); }
 
-  void DelTimerTask(int64_t timerId) { timer_->DelTask(timerId); }
+  void DelTimerTask(int64_t timer_id) { timer_->DelTask(timer_id); }
 
   std::pair<bool, std::string> StartServer(int64_t interval = 0);
 
@@ -71,12 +71,12 @@ class EventServer final {
     cv_.wait(lock, [this] { return !running_.load(); });
   }
 
-  void TCPConnect(const SocketAddr &addr, OnCreate<T> onConnect, const std::function<void(std::string)> &cb);
+  void TCPConnect(const SocketAddr &addr, OnCreate<T> on_connect, const std::function<void(std::string)> &cb);
 
   void TCPConnect(const SocketAddr &addr, const std::function<void(std::string)> &cb);
 
  private:
-  int StartThreadManager(bool serverMode);
+  int StartThreadManager(bool server_mode);
 
  private:
   OnInit<T> onInit_;  // The callback function used to initialize data before creating a connection
@@ -220,7 +220,7 @@ void EventServer<T>::CloseConnection(const T &conn) {
 
 template <typename T>
 requires HasSetFdFunction<T>
-void EventServer<T>::TCPConnect(const SocketAddr &addr, OnCreate<T> onConnect,
+void EventServer<T>::TCPConnect(const SocketAddr &addr, OnCreate<T> on_connect,
                                 const std::function<void(std::string)> &cb) {
   auto clientSocket = std::make_unique<ClientSocket>(addr);
   clientSocket->SetFailCallback(cb);
@@ -228,7 +228,7 @@ void EventServer<T>::TCPConnect(const SocketAddr &addr, OnCreate<T> onConnect,
     return;
   }
 
-  threadsManager_[0]->TCPConnect(addr, std::move(clientSocket), onConnect);
+  threadsManager_[0]->TCPConnect(addr, std::move(clientSocket), on_connect);
 }
 
 template <typename T>
@@ -245,11 +245,11 @@ void EventServer<T>::TCPConnect(const SocketAddr &addr, const std::function<void
 
 template <typename T>
 requires HasSetFdFunction<T>
-int EventServer<T>::StartThreadManager(bool serverMode) {
+int EventServer<T>::StartThreadManager(bool server_mode) {
   std::vector<std::shared_ptr<ListenSocket>> listen_sockets;
   auto tcpKeepAlive = opt_.GetOpTcpKeepAlive();
 
-  if (serverMode) {
+  if (server_mode) {
     for (auto &addr : listen_addrs_) {
       std::shared_ptr<ListenSocket> s(ListenSocket::CreateTCPListen());
       s->SetListenAddr(addr);
@@ -264,7 +264,7 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
 
   int i = 0;
   for (const auto &thread : threadsManager_) {
-    if (i > 0 && ListenSocket::REUSE_PORT && serverMode) {
+    if (i > 0 && ListenSocket::REUSE_PORT && server_mode) {
       for (auto &s : listen_sockets) {
         auto listenAddr = s->GetListenAddr();
         s.reset(ListenSocket::CreateTCPListen());

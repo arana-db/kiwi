@@ -55,7 +55,7 @@ class ThreadManager {
   void SetOnClose(const OnClose<T> &func) { on_close_ = func; }
 
   // Start the thread and initialize the event
-  bool Start(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, const std::shared_ptr<Timer> &timer);
+  bool Start(const std::vector<std::shared_ptr<ListenSocket>> &listen_sockets, const std::shared_ptr<Timer> &timer);
 
   // Stop the thread
   void Stop();
@@ -64,17 +64,17 @@ class ThreadManager {
   void OnNetEventCreate(int fd, const std::shared_ptr<Connection> &conn);
 
   // Read message callback function
-  void OnNetEventMessage(uint64_t connId, std::string &&readData);
+  void OnNetEventMessage(uint64_t conn_id, std::string &&read_data);
 
   // Close connection callback function
-  void OnNetEventClose(uint64_t connId, std::string &&err);
+  void OnNetEventClose(uint64_t conn_id, std::string &&err);
 
   // Server actively closes the connection
-  void CloseConnection(uint64_t connId);
+  void CloseConnection(uint64_t conn_id);
 
-  void TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEvent> netEvent);
+  void TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEvent> net_event);
 
-  void TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEvent> netEvent, OnCreate<T> onConnect);
+  void TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEvent> net_event, OnCreate<T> on_connect);
 
   void Wait();
 
@@ -83,7 +83,7 @@ class ThreadManager {
 
  private:
   // Create read thread
-  bool CreateReadThread(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets,
+  bool CreateReadThread(const std::vector<std::shared_ptr<ListenSocket>> &listen_sockets,
                         const std::shared_ptr<Timer> &timer);
 
   // Create write thread if rwSeparation_ is true
@@ -125,9 +125,9 @@ ThreadManager<T>::~ThreadManager() {
 
 template <typename T>
 requires HasSetFdFunction<T>
-bool ThreadManager<T>::Start(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets,
+bool ThreadManager<T>::Start(const std::vector<std::shared_ptr<ListenSocket>> &listen_sockets,
                              const std::shared_ptr<Timer> &timer) {
-  if (!CreateReadThread(listenSockets, timer)) {
+  if (!CreateReadThread(listen_sockets, timer)) {
     return false;
   }
   if (net_options_.GetRwSeparation()) {
@@ -153,48 +153,48 @@ requires HasSetFdFunction<T>
 void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection> &conn) {
   T t;
   on_init_(&t);
-  auto connId = getConnId();
+  auto conn_id = getConnId();
   if constexpr (IsPointer_v<T>) {
-    t->SetConnId(connId);
+    t->SetConnId(conn_id);
     t->SetThreadIndex(index_);
   } else {
-    t.SetConnId(connId);
+    t.SetConnId(conn_id);
     t.SetThreadIndex(index_);
   }
 
   {
     std::lock_guard lock(mutex_);
-    connections_.emplace(connId, std::make_pair(t, conn));
+    connections_.emplace(conn_id, std::make_pair(t, conn));
   }
-  read_thread_->AddNewEvent(connId, fd, BaseEvent::EVENT_READ);
+  read_thread_->AddNewEvent(conn_id, fd, BaseEvent::EVENT_READ);
   if (write_thread_) {
-    write_thread_->AddNewEvent(connId, fd, BaseEvent::EVENT_NULL);  // add null event to write_thread epoll
+    write_thread_->AddNewEvent(conn_id, fd, BaseEvent::EVENT_NULL);  // add null event to write_thread epoll
   }
 
-  on_create_(connId, t, conn->addr_);
+  on_create_(conn_id, t, conn->addr_);
 }
 
 template <typename T>
 requires HasSetFdFunction<T>
-void ThreadManager<T>::OnNetEventMessage(uint64_t connId, std::string &&readData) {
+void ThreadManager<T>::OnNetEventMessage(uint64_t conn_id, std::string &&read_data) {
   T t;
   {
     std::shared_lock lock(mutex_);
-    auto iter = connections_.find(connId);
+    auto iter = connections_.find(conn_id);
     if (iter == connections_.end()) {
       return;
     }
     t = iter->second.first;
   }
-  on_message_(std::move(readData), t);
+  on_message_(std::move(read_data), t);
 }
 
 template <typename T>
 requires HasSetFdFunction<T>
-void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
+void ThreadManager<T>::OnNetEventClose(uint64_t conn_id, std::string &&err) {
   int fd;
   std::lock_guard lock(mutex_);
-  auto iter = connections_.find(connId);
+  auto iter = connections_.find(conn_id);
   if (iter == connections_.end()) {
     return;
   }
@@ -212,14 +212,14 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
 
 template <typename T>
 requires HasSetFdFunction<T>
-void ThreadManager<T>::CloseConnection(uint64_t connId) {
-  OnNetEventClose(connId, "");
+void ThreadManager<T>::CloseConnection(uint64_t conn_id) {
+  OnNetEventClose(conn_id, "");
 }
 
 template <typename T>
 requires HasSetFdFunction<T>
-void ThreadManager<T>::TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEvent> netEvent) {
-  auto newConn = std::make_shared<Connection>(std::move(netEvent));
+void ThreadManager<T>::TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEvent> net_event) {
+  auto newConn = std::make_shared<Connection>(std::move(net_event));
   newConn->addr_ = addr;
   T t;
   on_init_(&t);
@@ -229,13 +229,13 @@ void ThreadManager<T>::TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEve
 
 template <typename T>
 requires HasSetFdFunction<T>
-void ThreadManager<T>::TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEvent> netEvent, OnCreate<T> onConnect) {
-  auto newConn = std::make_shared<Connection>(std::move(netEvent));
-  newConn->addr_ = addr;
+void ThreadManager<T>::TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEvent> net_event, OnCreate<T> on_connect) {
+  auto new_conn = std::make_shared<Connection>(std::move(net_event));
+  new_conn->addr_ = addr;
   T t;
   on_init_(&t);
-  auto connId = DoTCPConnect(t, newConn->net_event_->Fd(), newConn);
-  onConnect(connId, t, addr);
+  auto conn_id = DoTCPConnect(t, new_conn->net_event_->Fd(), new_conn);
+  on_connect(conn_id, t, addr);
 }
 
 template <typename T>
@@ -251,58 +251,58 @@ template <typename T>
 requires HasSetFdFunction<T>
 void ThreadManager<T>::SendPacket(const T &conn, std::string &&msg) {
   std::shared_lock lock(mutex_);
-  uint64_t connId = 0;
+  uint64_t conn_id = 0;
   if constexpr (IsPointer_v<T>) {
-    connId = conn->GetConnId();
+    conn_id = conn->GetConnId();
   } else {
-    connId = conn.GetConnId();
+    conn_id = conn.GetConnId();
   }
-  std::shared_ptr<Connection> connPtr;
+  std::shared_ptr<Connection> conn_ptr;
   {
-    auto iter = connections_.find(connId);
+    auto iter = connections_.find(conn_id);
     if (iter == connections_.end()) {
       return;
     }
-    connPtr = iter->second.second;
+    conn_ptr = iter->second.second;
   }
 
-  connPtr->net_event_->SendPacket(std::move(msg));
+  conn_ptr->net_event_->SendPacket(std::move(msg));
   if (net_options_.GetRwSeparation()) {
-    write_thread_->SetWriteEvent(connId, connPtr->fd_);
+    write_thread_->SetWriteEvent(conn_id, conn_ptr->fd_);
   } else {
-    read_thread_->SetWriteEvent(connId, connPtr->fd_);
+    read_thread_->SetWriteEvent(conn_id, conn_ptr->fd_);
   }
 }
 
 template <typename T>
 requires HasSetFdFunction<T>
-bool ThreadManager<T>::CreateReadThread(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets,
+bool ThreadManager<T>::CreateReadThread(const std::vector<std::shared_ptr<ListenSocket>> &listen_sockets,
                                         const std::shared_ptr<Timer> &timer) {
   std::shared_ptr<BaseEvent> event;
-  int8_t eventMode = BaseEvent::EVENT_MODE_READ;
+  int8_t event_mode = BaseEvent::EVENT_MODE_READ;
   if (!net_options_.GetRwSeparation()) {
-    eventMode |= BaseEvent::EVENT_MODE_WRITE;
+    event_mode |= BaseEvent::EVENT_MODE_WRITE;
   }
 
 #if defined(HAVE_EPOLL)
-  event = std::make_shared<EpollEvent>(listenSockets, eventMode);
+  event = std::make_shared<EpollEvent>(listen_sockets, event_mode);
 #elif defined(HAVE_KQUEUE)
-  event = std::make_shared<KqueueEvent>(listenSockets, eventMode);
+  event = std::make_shared<KqueueEvent>(listen_sockets, event_mode);
 #endif
 
   event->AddTimer(timer);
 
   event->SetOnCreate(
-      [this](uint64_t connId, const std::shared_ptr<Connection> &conn) { OnNetEventCreate(connId, conn); });
+      [this](uint64_t conn_id, const std::shared_ptr<Connection> &conn) { OnNetEventCreate(conn_id, conn); });
 
   event->SetOnMessage(
-      [this](uint64_t connId, std::string &&readData) { OnNetEventMessage(connId, std::move(readData)); });
+      [this](uint64_t conn_id, std::string &&read_data) { OnNetEventMessage(conn_id, std::move(read_data)); });
 
-  event->SetOnClose([this](uint64_t connId, std::string &&err) { OnNetEventClose(connId, std::move(err)); });
+  event->SetOnClose([this](uint64_t conn_id, std::string &&err) { OnNetEventClose(conn_id, std::move(err)); });
 
-  event->SetGetConn([this](uint64_t connId) -> std::shared_ptr<Connection> {
+  event->SetGetConn([this](uint64_t conn_id) -> std::shared_ptr<Connection> {
     std::shared_lock lock(mutex_);
-    auto iter = connections_.find(connId);
+    auto iter = connections_.find(conn_id);
     if (iter == connections_.end()) {
       return nullptr;
     }
@@ -324,10 +324,10 @@ bool ThreadManager<T>::CreateWriteThread() {
   event = std::make_shared<KqueueEvent>(std::vector<std::shared_ptr<ListenSocket>>(), BaseEvent::EVENT_MODE_WRITE);
 #endif
 
-  event->SetOnClose([this](uint64_t connId, std::string &&msg) { OnNetEventClose(connId, std::move(msg)); });
-  event->SetGetConn([this](uint64_t connId) -> std::shared_ptr<Connection> {
+  event->SetOnClose([this](uint64_t conn_id, std::string &&msg) { OnNetEventClose(conn_id, std::move(msg)); });
+  event->SetGetConn([this](uint64_t conn_id) -> std::shared_ptr<Connection> {
     std::shared_lock lock(mutex_);
-    auto iter = connections_.find(connId);
+    auto iter = connections_.find(conn_id);
     if (iter == connections_.end()) {
       return nullptr;
     }
@@ -341,23 +341,23 @@ bool ThreadManager<T>::CreateWriteThread() {
 template <typename T>
 requires HasSetFdFunction<T>
 uint64_t ThreadManager<T>::DoTCPConnect(T &t, int fd, const std::shared_ptr<Connection> &conn) {
-  auto connId = getConnId();
+  auto conn_id = getConnId();
   if constexpr (IsPointer_v<T>) {
-    t->SetConnId(connId);
+    t->SetConnId(conn_id);
     t->SetThreadIndex(index_);
   } else {
-    t.SetConnId(connId);
+    t.SetConnId(conn_id);
     t.SetThreadIndex(index_);
   }
   conn->fd_ = fd;
 
   {
     std::lock_guard lock(mutex_);
-    connections_.emplace(connId, std::make_pair(t, conn));
+    connections_.emplace(conn_id, std::make_pair(t, conn));
   }
 
-  read_thread_->AddNewEvent(connId, fd, BaseEvent::EVENT_READ);
-  return connId;
+  read_thread_->AddNewEvent(conn_id, fd, BaseEvent::EVENT_READ);
+  return conn_id;
 }
 
 }  // namespace net
