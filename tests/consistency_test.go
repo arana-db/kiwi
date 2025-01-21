@@ -10,6 +10,7 @@ package kiwi_test
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"log"
 	"os/exec"
 	"strconv"
@@ -64,17 +65,19 @@ var _ = Describe("Consistency", Ordered, func() {
 		}
 
 		res, err := leader.Do(ctx, "RAFT.CLUSTER", "INIT").Result()
+        fmt.Println("test log", res, " | ", err)
         Expect(err).NotTo(HaveOccurred())
         msg, ok := res.(string)
+        fmt.Println("test log", msg, " | ", ok)
         Expect(ok).To(BeTrue())
         Expect(msg).To(Equal("OK"))
 
         for _, f := range followers {
             res, err := f.Do(ctx, "RAFT.CLUSTER", "JOIN", "127.0.0.1:12111").Result()
-            log.Println("test log", res, " | ", err)
+            fmt.Println("test log", res, " | ", err)
             Expect(err).NotTo(HaveOccurred())
             msg, ok := res.(string)
-            log.Println("test log", msg, " | ", ok)
+            fmt.Println("test log", msg, " | ", ok)
             Expect(ok).To(BeTrue())
             Expect(msg).To(Equal("OK"))
         }
