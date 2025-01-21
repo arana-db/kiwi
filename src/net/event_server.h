@@ -250,9 +250,9 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
   auto tcpKeepAlive = opt_.GetOpTcpKeepAlive();
 
   if (serverMode) {
-    for (auto &listenAddr : listen_addrs_) {
+    for (auto &addr : listen_addrs_) {
       std::shared_ptr<ListenSocket> listen(ListenSocket::CreateTCPListen());
-      listen->SetListenAddr(listenAddr);
+      listen->SetListenAddr(addr);
       listen->SetBSTcpKeepAlive(tcpKeepAlive);
       listen_sockets.push_back(listen);
       if (auto ret = (listen->Init() != static_cast<int>(NetListen::OK))) {

@@ -38,9 +38,6 @@ struct SocketAddr {
   void Init(const sockaddr_in6 &addr) { memcpy(&addr_, &addr, sizeof(addr)); }
 
   void Init(const std::string &ip, uint16_t hostPort) {
-    if (hostPort > 65535) {
-      return;
-    }
     if (::inet_pton(AF_INET, ip.c_str(), &addr_.addr4_.sin_addr) == 1) {
       addr_.addr4_.sin_family = AF_INET;
       addr_.addr4_.sin_port = htons(hostPort);
