@@ -205,7 +205,7 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
     write_thread_->CloseConnection(fd);
   }
 
-  iter->second.second->netEvent_->Close();  // close socket
+  iter->second.second->net_event_->Close();  // close socket
   on_close_(iter->second.first, std::move(err));
   connections_.erase(iter);
 }
