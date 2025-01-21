@@ -92,7 +92,7 @@ void KqueueEvent::EventPoll() {
 void KqueueEvent::EventRead() {
   struct kevent events[eventsSize];
   struct timespec *pTimeout = nullptr;
-  struct timespec timeout{};
+  struct timespec timeout {};
   if (timer_) {
     pTimeout = &timeout;
     int waitInterval = static_cast<int>(timer_->Interval());
