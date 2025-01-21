@@ -41,18 +41,18 @@ class ThreadManager {
   ~ThreadManager();
 
   // set new connect create before callback function
-  void SetOnInit(const OnInit<T> &func) { onInit_ = func; }
+  void SetOnInit(const OnInit<T> &func) { on_init_ = func; }
 
   // set new connect create callback function
-  void SetOnCreate(const OnCreate<T> &func) { onCreate_ = func; }
+  void SetOnCreate(const OnCreate<T> &func) { on_create_ = func; }
 
-  void SetOnConnect(const OnCreate<T> &func) { onConnect_ = func; }
+  void SetOnConnect(const OnCreate<T> &func) { on_connect_ = func; }
 
   // set read message callback function
-  void SetOnMessage(const OnMessage<T> &func) { onMessage_ = func; }
+  void SetOnMessage(const OnMessage<T> &func) { on_message_ = func; }
 
   // set close connect callback function
-  void SetOnClose(const OnClose<T> &func) { onClose_ = func; }
+  void SetOnClose(const OnClose<T> &func) { on_close_ = func; }
 
   // Start the thread and initialize the event
   bool Start(const std::vector<std::shared_ptr<ListenSocket>> &listenSockets, const std::shared_ptr<Timer> &timer);
@@ -106,15 +106,15 @@ class ThreadManager {
 
   std::shared_mutex mutex_;
 
-  OnInit<T> onInit_;
+  OnInit<T> on_init_;
 
-  OnCreate<T> onCreate_;
+  OnCreate<T> on_create_;
 
-  OnCreate<T> onConnect_;
+  OnCreate<T> on_connect_;
 
-  OnMessage<T> onMessage_;
+  OnMessage<T> on_message_;
 
-  OnClose<T> onClose_;
+  OnClose<T> on_close_;
 };
 
 template <typename T>
@@ -152,7 +152,7 @@ template <typename T>
 requires HasSetFdFunction<T>
 void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection> &conn) {
   T t;
-  onInit_(&t);
+  on_init_(&t);
   auto connId = getConnId();
   if constexpr (IsPointer_v<T>) {
     t->SetConnId(connId);
@@ -171,7 +171,7 @@ void ThreadManager<T>::OnNetEventCreate(int fd, const std::shared_ptr<Connection
     writeThread_->AddNewEvent(connId, fd, BaseEvent::EVENT_NULL);  // add null event to write_thread epoll
   }
 
-  onCreate_(connId, t, conn->addr_);
+  on_create_(connId, t, conn->addr_);
 }
 
 template <typename T>
@@ -186,7 +186,7 @@ void ThreadManager<T>::OnNetEventMessage(uint64_t connId, std::string &&readData
     }
     t = iter->second.first;
   }
-  onMessage_(std::move(readData), t);
+  on_message_(std::move(readData), t);
 }
 
 template <typename T>
@@ -206,7 +206,7 @@ void ThreadManager<T>::OnNetEventClose(uint64_t connId, std::string &&err) {
   }
 
   iter->second.second->netEvent_->Close();  // close socket
-  onClose_(iter->second.first, std::move(err));
+  on_close_(iter->second.first, std::move(err));
   connections_.erase(iter);
 }
 
@@ -222,9 +222,9 @@ void ThreadManager<T>::TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEve
   auto newConn = std::make_shared<Connection>(std::move(netEvent));
   newConn->addr_ = addr;
   T t;
-  onInit_(&t);
+  on_init_(&t);
   auto connId = DoTCPConnect(t, newConn->net_event_->Fd(), newConn);
-  onConnect_(connId, t, addr);
+  on_connect_(connId, t, addr);
 }
 
 template <typename T>
@@ -233,7 +233,7 @@ void ThreadManager<T>::TCPConnect(const SocketAddr &addr, std::unique_ptr<NetEve
   auto newConn = std::make_shared<Connection>(std::move(netEvent));
   newConn->addr_ = addr;
   T t;
-  onInit_(&t);
+  on_init_(&t);
   auto connId = DoTCPConnect(t, newConn->net_event_->Fd(), newConn);
   onConnect(connId, t, addr);
 }
