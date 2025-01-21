@@ -72,6 +72,9 @@ var _ = Describe("Consistency", Ordered, func() {
         Expect(ok).To(BeTrue())
         Expect(msg).To(Equal("OK"))
 
+        leaderStatus, err := leader.Do(ctx, "RAFT.INFO").Result()
+        fmt.Println("leader info", leaderStatus, err)
+
         for _, f := range followers {
             res, err := f.Do(ctx, "RAFT.CLUSTER", "JOIN", "127.0.0.1:12111").Result()
             fmt.Println("test log", res, " | ", err)
