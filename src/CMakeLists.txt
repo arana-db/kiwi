@@ -35,6 +35,7 @@ TARGET_INCLUDE_DIRECTORIES(kiwi
         PRIVATE ${BRPC_INCLUDE_DIR}
         PRIVATE ${RESP_INCLUDE_DIR}
         PRIVATE ${LIBEVENT_INCLUDE_DIRS}
+        PRIVATE ${OPENSSL_INCLUDE_DIR}
 )
 
 ADD_DEPENDENCIES(kiwi
@@ -54,33 +55,46 @@ ADD_DEPENDENCIES(kiwi
         raft
         raft_pb
         binlog_pb
+        OpenSSL
 )
+
+IF (CMAKE_SYSTEM_NAME MATCHES "Darwin")
+    SET(EXTRA_LINK_LIB 
+        "-framework CoreFoundation"
+        "-framework CoreGraphics"
+        "-framework CoreData"
+        "-framework CoreText"
+        "-framework Security"
+        "-framework Foundation"
+        "-Wl,-U,_MallocExtension_ReleaseFreeMemory"
+        "-Wl,-U,_ProfilerStart"
+        "-Wl,-U,_ProfilerStop"
+        "-Wl,-U,__Z13GetStackTracePPvii"
+    )
+ENDIF()
 
 TARGET_LINK_LIBRARIES(kiwi
         net
         dl
-        fmt
-        rocksdb
-        snappy
-        lz4
-        zstd
         storage
-        gflags
-        spdlog
         kstd
-        braft
-        brpc
-        ssl
-        crypto
-        zlib
-        protobuf
-        leveldb
-        z
         raft
         raft_pb
         binlog_pb
         resp
-        "${LIB}"
+        ${FMT_LIBRARIES}
+        ${ROCKSDB_LIBRARIES}
+        ${SPDLOG_LIBRARIES}
+        ${BRAFT_LIBRARIES}
+        ${PROTOBUF_LIBRARY}
+        ${LZ4_LIBRARIES}
+        ${ZLIB_LIBRARIES}
+        ${OPENSSL_SSL_LIBRARY}
+        ${LEVELDB_LIBRARIES}
+        ${Snappy_LIBRARIES}
+        ${zstd_LIBRARIES}
+        ${OPENSSL_CRYPTO_LIBRARY}
+        ${EXTRA_LINK_LIB}
 )
 
 SET_TARGET_PROPERTIES(kiwi PROPERTIES LINKER_LANGUAGE CXX)

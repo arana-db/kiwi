@@ -3,13 +3,13 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(LEVELDB_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_leveldb" CACHE PATH "Path to leveldb sources")
+SET(LEVELDB_SOURCES_DIR "${LIB_SOURCE_DIR}/leveldb" CACHE PATH "Path to leveldb sources")
 SET(LEVELDB_INCLUDE_DIR "${LIB_INCLUDE_DIR}/leveldb" CACHE PATH "leveldb include directory." FORCE)
 SET(LEVELDB_LIBRARIES "${LIB_INSTALL_DIR}/libleveldb.a" CACHE FILEPATH "leveldb include directory." FORCE)
 SET(LEVELDB_INSTALL_LIBDIR "${LIB_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}")
 
 ExternalProject_Add(
-        extern_leveldb
+        leveldb
         ${EXTERNAL_PROJECT_LOG_ARGS}
         DEPENDS snappy
         GIT_REPOSITORY "https://github.com/google/leveldb.git"
@@ -31,11 +31,8 @@ ExternalProject_Add(
         -DLEVELDB_BUILD_TESTS=OFF
         -DLEVELDB_BUILD_BENCHMARKS=OFF
         -DCMAKE_BUILD_TYPE=${THIRD_PARTY_BUILD_TYPE}
-        BUILD_COMMAND make -j${CPU_CORE}
+        ${EXTERNAL_GENERATOR}
+        BUILD_COMMAND ${EXTERNAL_BUILD} -j${CPU_CORE}
         UPDATE_COMMAND ""
+        BUILD_BYPRODUCTS ${LEVELDB_LIBRARIES}
 )
-
-ADD_DEPENDENCIES(extern_leveldb snappy)
-ADD_LIBRARY(leveldb STATIC IMPORTED GLOBAL)
-SET_PROPERTY(TARGET leveldb PROPERTY IMPORTED_LOCATION ${LEVELDB_LIBRARIES})
-ADD_DEPENDENCIES(leveldb extern_leveldb)

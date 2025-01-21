@@ -9,14 +9,14 @@ ELSE ()
     SET(SPDLOG_LIB "libspdlog.a")
 ENDIF ()
 
-SET(SPDLOG_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_spdlog" CACHE PATH "Path to spdlog sources")
+SET(SPDLOG_SOURCES_DIR "${LIB_SOURCE_DIR}/spdlog" CACHE PATH "Path to spdlog sources")
 SET(SPDLOG_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "spdlog include directory." FORCE)
 SET(SPDLOG_LIBRARIES "${LIB_INSTALL_DIR}/${SPDLOG_LIB}" CACHE FILEPATH "spdlog library directory." FORCE)
 
 ADD_DEFINITIONS(-DSPDLOG_FMT_EXTERNAL)
 
 ExternalProject_Add(
-        extern_spdlog
+        spdlog
         ${EXTERNAL_PROJECT_LOG_ARGS}
         DEPENDS fmt
         URL https://github.com/gabime/spdlog/archive/v1.12.0.zip
@@ -35,9 +35,7 @@ ExternalProject_Add(
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
         -DSPDLOG_BUILD_EXAMPLE=OFF
         -DSPDLOG_FMT_EXTERNAL=OFF
-        BUILD_COMMAND make -j${CPU_CORE}
+        ${EXTERNAL_GENERATOR}
+        BUILD_COMMAND ${EXTERNAL_BUILD} -j${CPU_CORE}
+        BUILD_BYPRODUCTS ${SPDLOG_LIBRARIES}
 )
-
-ADD_LIBRARY(spdlog STATIC IMPORTED GLOBAL)
-SET_PROPERTY(TARGET spdlog PROPERTY IMPORTED_LOCATION ${SPDLOG_LIBRARIES})
-ADD_DEPENDENCIES(spdlog extern_spdlog)
