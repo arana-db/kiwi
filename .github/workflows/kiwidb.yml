@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build
-        run: bash ./etc/script/build.sh gitinfo
+        run: cmake -S . -B build
 
       - name: Add LLVM apt repository
         run: |
@@ -34,7 +34,7 @@ jobs:
         run: clang-format --version
 
       - name: Check Format
-        working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
+        working-directory: ${{ github.workspace }}/build
         run: make check-format
 
   build_on_macos:
@@ -119,7 +119,7 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.ccache
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.cpp','**/*.cc','**/*.c', '**/*.h') }}-${{ matrix.compiler || 'gcc' }}
+          key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.cpp','**/*.cc','**/*.c', '**/*.h') }}
           restore-keys: |
             ${{ runner.os }}-ccache-
             ccache-

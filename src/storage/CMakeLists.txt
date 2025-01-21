@@ -20,20 +20,18 @@ TARGET_INCLUDE_DIRECTORIES(storage
         PRIVATE ${PROTO_OUTPUT_DIR}
         PRIVATE ${PROTOBUF_INCLUDE_DIR}
         PRIVATE ${SPDLOG_INCLUDE_DIR}
+        PRIVATE ${PSTD_INCLUDE_DIR}
 )
 
 TARGET_LINK_LIBRARIES(storage
-        kstd
-        braft
-        brpc
-        ssl
-        crypto
-        zlib
-        leveldb
-        gflags
-        rocksdb
-        protobuf
-        spdlog
+       PRIVATE kstd
+       PRIVATE ${FMT_LIBRARIES}
+       PRIVATE ${ZLIB_LIBRARIES}
+       PRIVATE ${LEVELDB_LIBRARIES}
+       PRIVATE ${GFLAGS_LIBRARIES}
+       PRIVATE ${ROCKSDB_LIBRARIES}
+       PRIVATE ${PROTOBUF_LIBRARY}
+       PRIVATE ${SPDLOG_LIBRARIES}
 )
 
 SET_TARGET_PROPERTIES(storage PROPERTIES LINKER_LANGUAGE CXX)
@@ -42,10 +40,6 @@ ADD_SUBDIRECTORY(tests)
 
 ADD_DEPENDENCIES(storage
         kstd
-        braft
-        brpc
-        ssl
-        crypto
         zlib
         leveldb
         gflags

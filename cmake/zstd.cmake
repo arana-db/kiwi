@@ -3,12 +3,12 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-SET(zstd_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_zstd" CACHE PATH "Path to zstd sources")
+SET(zstd_SOURCES_DIR "${LIB_SOURCE_DIR}/zstd" CACHE PATH "Path to zstd sources")
 SET(zstd_INCLUDE_DIRS "${LIB_INCLUDE_DIR}" CACHE PATH "zstd include directory." FORCE)
 SET(zstd_LIBRARIES "${LIB_INSTALL_DIR}/libzstd.a" CACHE FILEPATH "zstd include directory." FORCE)
 
 ExternalProject_Add(
-        extern_zstd
+        zstd
         ${EXTERNAL_PROJECT_LOG_ARGS}
         URL https://github.com/facebook/zstd/releases/download/v1.5.4/zstd-1.5.4.tar.gz
         URL_HASH SHA256=0f470992aedad543126d06efab344dc5f3e171893810455787d38347343a4424
@@ -28,10 +28,8 @@ ExternalProject_Add(
         -DBUILD_TESTING=OFF
         -DZSTD_BUILD_STATIC=ON
         -DZSTD_BUILD_SHARED=OFF
-        BUILD_COMMAND make -j${CPU_CORE}
+        ${EXTERNAL_GENERATOR}
+        BUILD_COMMAND ${EXTERNAL_BUILD} -j${CPU_CORE}
         UPDATE_COMMAND ""
+        BUILD_BYPRODUCTS ${zstd_LIBRARIES}
 )
-
-ADD_LIBRARY(zstd STATIC IMPORTED GLOBAL)
-SET_PROPERTY(TARGET zstd PROPERTY IMPORTED_LOCATION ${zstd_LIBRARIES})
-ADD_DEPENDENCIES(zstd extern_zstd)

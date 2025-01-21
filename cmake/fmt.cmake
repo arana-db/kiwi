@@ -10,12 +10,12 @@ ELSE ()
     SET(LIB_FMT libfmt.a)
 ENDIF ()
 
-SET(FMT_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_fmt" CACHE PATH "Path to fmt sources")
+SET(FMT_SOURCES_DIR "${LIB_SOURCE_DIR}/fmt" CACHE PATH "Path to fmt sources")
 SET(FMT_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "fmt include directory." FORCE)
 SET(FMT_LIBRARIES "${LIB_INSTALL_DIR}/${LIB_FMT}" CACHE FILEPATH "fmt library directory." FORCE)
 
 ExternalProject_Add(
-        extern_fmt
+        fmt
         URL https://github.com/fmtlib/fmt/archive/10.1.1.zip
         URL_HASH SHA256=3c2e73019178ad72b0614a3124f25de454b9ca3a1afe81d5447b8d3cbdb6d322
         DOWNLOAD_NO_PROGRESS 1
@@ -33,11 +33,8 @@ ExternalProject_Add(
         -DFMT_DOC=FALSE
         -DFMT_TEST=FALSE
         -DSHARED_LIBS=FALSE
-        BUILD_COMMAND make -j${CPU_CORE}
+        ${EXTERNAL_GENERATOR}
+        BUILD_BYPRODUCTS ${FMT_LIBRARIES}
+        BUILD_COMMAND ${EXTERNAL_BUILD} -j${CPU_CORE}
         UPDATE_COMMAND ""
 )
-
-
-ADD_LIBRARY(fmt STATIC IMPORTED GLOBAL)
-SET_PROPERTY(TARGET fmt PROPERTY IMPORTED_LOCATION ${FMT_LIBRARIES})
-ADD_DEPENDENCIES(fmt extern_fmt)
