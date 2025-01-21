@@ -55,8 +55,6 @@ class BaseSocket : public NetEvent {
 
   bool SetReusePort();
 
-  bool SetDisableIpv6Only();
-
   bool GetLocalAddr(SocketAddr &);
 
   bool GetPeerAddr(SocketAddr &);
@@ -65,7 +63,7 @@ class BaseSocket : public NetEvent {
 
   void SetSocketType(int type) { type_ = type; }
 
-  inline void SetBSTcpKeepAlive(uint32_t keepAlive) { tcp_keep_alive_ = keepAlive; }
+  void SetBSTcpKeepAlive(uint32_t keep_alive) { tcp_keep_alive_ = keep_alive; }
 
  protected:
   bool NoBlock() const { return noBlock_; }

@@ -137,16 +137,6 @@ bool BaseSocket::SetReusePort() {
   return false;
 }
 
-bool BaseSocket::SetDisableIpv6Only() {
-  int ipv6only = 0;
-  if (::setsockopt(Fd(), IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char *>(&ipv6only), sizeof(ipv6only)) ==
-      -1) {
-    WARN("SetIpv6Only fd:{} error:{}", Fd(), errno);
-    return false;
-  }
-  return true;
-}
-
 bool BaseSocket::GetLocalAddr(SocketAddr &addr) {
   sockaddr_in localAddr{};
   socklen_t len = sizeof(localAddr);
