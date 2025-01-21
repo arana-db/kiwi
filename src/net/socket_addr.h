@@ -43,21 +43,21 @@ struct SocketAddr {
       addr_.addr4_.sin_port = htons(hostPort);
       return;
     }
-    if (::inet_pton(AF_INET6, ip.c_str(), &addr_.addr6_.sin6_addr) != 1) {
-      throw std::invalid_argument("Invalid IP address format");
-    }
+    if (::inet_pton(AF_INET6, ip.c_str(), &addr_.addr6_.sin6_addr) == 1) {
     addr_.addr6_.sin6_family = AF_INET6;
     addr_.addr6_.sin6_port = htons(hostPort);
+      return;
+    }
   }
 
-  const sockaddr *GetAddr() const {
+  const sockaddr *Get() const {
     if (IsIPV4()) {
       return reinterpret_cast<const sockaddr *>(&addr_.addr4_);
     }
     return reinterpret_cast<const sockaddr *>(&addr_.addr6_);
   }
 
-  socklen_t GetAddrLen() const {
+  socklen_t Len() const {
     if (IsIPV4()) {
       return sizeof(addr_.addr4_);
     }
@@ -72,10 +72,10 @@ struct SocketAddr {
       }
     }
     char ipv6_buf[INET6_ADDRSTRLEN] = {0};
-    if (!::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, ipv6_buf, sizeof(ipv6_buf))) {
-      throw std::runtime_error("Failed to convert IPv6 address to string");
+    if (::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, ipv6_buf, sizeof(ipv6_buf))) {
+      return ipv6_buf;
     }
-    return ipv6_buf;
+    return "";
   }
 
   std::string GetIP(char *buf, socklen_t size) const {

@@ -93,7 +93,7 @@ bool ListenSocket::Bind() {
     SetDisableIpv6Only();
   }
 
-  int ret = ::bind(Fd(), addr_.GetAddr(), addr_.GetAddrLen());
+  int ret = ::bind(Fd(), addr_.Get(), addr_.Len());
   if (0 != ret) {
     ERROR("ListenSocket fd:{},Bind error:{}", Fd(), errno);
     Close();

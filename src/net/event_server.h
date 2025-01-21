@@ -43,7 +43,7 @@ class EventServer final {
 
   void SetOnClose(OnClose<T> &&func) { onClose_ = std::move(func); }
 
-  inline void AddListenAddr(const SocketAddr &addr) { listenAddrs_.emplace_back(addr); }
+  inline void AddListenAddr(const SocketAddr &addr) { listen_addrs_.emplace_back(addr); }
 
   void InitTimer(int64_t interval) { timer_ = std::make_shared<Timer>(interval); }
 
@@ -89,7 +89,7 @@ class EventServer final {
 
   OnClose<T> onClose_;  // The callback function when the connection is closed
 
-  std::vector<SocketAddr> listenAddrs_;  // The address to listen on
+  std::vector<SocketAddr> listen_addrs_;  // The address to listen on
 
   std::atomic<bool> running_ = true;  // Whether the server is running
 
@@ -246,17 +246,17 @@ void EventServer<T>::TCPConnect(const SocketAddr &addr, const std::function<void
 template <typename T>
 requires HasSetFdFunction<T>
 int EventServer<T>::StartThreadManager(bool serverMode) {
-  std::vector<std::shared_ptr<ListenSocket>> listenSockets;
+  std::vector<std::shared_ptr<ListenSocket>> listen_sockets;
   auto tcpKeepAlive = opt_.GetOpTcpKeepAlive();
 
   if (serverMode) {
-    for (auto &listenAddr : listenAddrs_) {
+    for (auto &listenAddr : listen_addrs_) {
       std::shared_ptr<ListenSocket> listen(ListenSocket::CreateTCPListen());
       listen->SetListenAddr(listenAddr);
       listen->SetBSTcpKeepAlive(tcpKeepAlive);
-      listenSockets.push_back(listen);
+      listen_sockets.push_back(listen);
       if (auto ret = (listen->Init() != static_cast<int>(NetListen::OK))) {
-        listenSockets.clear();  // Clean up all sockets
+        listen_sockets.clear();  // Clean up all sockets
         return ret;
       }
     }
@@ -265,20 +265,20 @@ int EventServer<T>::StartThreadManager(bool serverMode) {
   int i = 0;
   for (const auto &thread : threadsManager_) {
     if (i > 0 && ListenSocket::REUSE_PORT && serverMode) {
-      for (auto &listen : listenSockets) {
+      for (auto &listen : listen_sockets) {
         auto listenAddr = listen->GetListenAddr();
         listen.reset(ListenSocket::CreateTCPListen());
         listen->SetListenAddr(listenAddr);
         listen->SetBSTcpKeepAlive(tcpKeepAlive);
         if (auto ret = (listen->Init() != static_cast<int>(NetListen::OK))) {
-          listenSockets.clear();  // Clean up all sockets
+          listen_sockets.clear();  // Clean up all sockets
           return ret;
         }
       }
     }
 
     // timer only works in the first thread
-    bool ret = i == 0 ? thread->Start(listenSockets, timer_) : thread->Start(listenSockets, nullptr);
+    bool ret = i == 0 ? thread->Start(listen_sockets, timer_) : thread->Start(listen_sockets, nullptr);
     if (!ret) {
       return -1;
     }
