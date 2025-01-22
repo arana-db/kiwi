@@ -59,7 +59,9 @@ jobs:
             ${{ github.workspace }}/deps-release
           key: |
             ${{ runner.os }}-cache-${{ hashFiles('**/CMakeLists.txt') }}-clang
-            ${{ runner.os }}-
+          restore-keys: |
+            ${{ runner.os }}-cache-${{ hashFiles('**/CMakeLists.txt') }}-clang
+            ${{ runner.os }}-cache-
 
       - name: Build
         run: |
@@ -103,7 +105,9 @@ jobs:
             ${{ github.workspace }}/deps-release
           key: |
             ${{ runner.os }}-cache-${{ hashFiles('**/CMakeLists.txt') }}-gcc
-            ${{ runner.os }}-
+          restore-keys: |
+            ${{ runner.os }}-cache-${{ hashFiles('**/CMakeLists.txt') }}-gcc
+            ${{ runner.os }}-cache-
 
       - name: Build
         run: |
