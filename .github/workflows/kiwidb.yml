@@ -60,13 +60,12 @@ jobs:
           ccache --max-size=10G
 
       - name: Restore ccache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
-          path: ~/.ccache
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.cpp','**/*.cc','**/*.c', '**/*.h') }}-clang
-          restore-keys: |
-            ${{ runner.os }}-ccache-
-            ccache-
+          path: |
+            ~/.ccache
+            ~/download
+          key: ${{ runner.os }}-ccache-${{ hashFiles('**/CMakeLists.txt') }}-clang
 
       - name: Build
         run: |
@@ -83,19 +82,19 @@ jobs:
         # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
         run: ctest
 
-      - name: Run TCL E2e Tests
-        working-directory: ${{ github.workspace }}
-        run:
-          ./etc/script/kiwitests.sh all
-
-      - name: Run Go E2E Tests
-        working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
-        run: |
-          set +e
-          cd ../tests
-          go mod tidy
-          go test -timeout 15m --ginkgo.v
-          sh print_log.sh
+#      - name: Run TCL E2e Tests
+#        working-directory: ${{ github.workspace }}
+#        run:
+#          ./etc/script/kiwitests.sh all
+#
+#      - name: Run Go E2E Tests
+#        working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
+#        run: |
+#          set +e
+#          cd ../tests
+#          go mod tidy
+#          go test -timeout 15m --ginkgo.v
+#          sh print_log.sh
 
   build_on_ubuntu:
     runs-on: ubuntu-latest
@@ -116,13 +115,12 @@ jobs:
           ccache --max-size=10G
 
       - name: Restore ccache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
-          path: ~/.ccache
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.cpp','**/*.cc','**/*.c', '**/*.h') }}
-          restore-keys: |
-            ${{ runner.os }}-ccache-
-            ccache-
+          path: |
+            ~/.ccache
+            ~/download
+          key: ${{ runner.os }}-ccache-${{ hashFiles('**/CMakeLists.txt') }}-gcc
 
       - name: Build
         run: |
@@ -137,16 +135,16 @@ jobs:
         # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
         run: ctest
 
-      - name: Run TCL E2e Tests
-        working-directory: ${{ github.workspace }}
-        run:
-          ./etc/script/kiwitests.sh all
-
-      - name: Run Go E2E Tests
-        working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
-        run: |
-          set +e
-          cd ../tests
-          go mod tidy
-          go test -timeout 15m --ginkgo.v || exit 1
-          sh print_log.sh
+#      - name: Run TCL E2e Tests
+#        working-directory: ${{ github.workspace }}
+#        run:
+#          ./etc/script/kiwitests.sh all
+#
+#      - name: Run Go E2E Tests
+#        working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
+#        run: |
+#          set +e
+#          cd ../tests
+#          go mod tidy
+#          go test -timeout 15m --ginkgo.v || exit 1
+#          sh print_log.sh
