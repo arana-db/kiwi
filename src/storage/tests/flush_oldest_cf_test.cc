@@ -460,17 +460,17 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
         rocksdb->GetLogIndexOfColumnFamilies().GetSmallestLogIndex(-1);
 
     // 除了 cf 0 之外, 其余的 cf 都没有未持久化数据, 所以不在我们统计范围之内.
-        ASSERT_EQ(smallest_applied_log_index_cf, 0);
-        ASSERT_EQ(smallest_applied_log_index, 35);
+    ASSERT_EQ(smallest_applied_log_index_cf, 0);
+    ASSERT_EQ(smallest_applied_log_index, 35);
 
-        ASSERT_EQ(smallest_flushed_log_index_cf, 0);
-        ASSERT_EQ(smallest_flushed_log_index, 30);
-        ASSERT_EQ(smallest_flushed_seqno, 50);
+    ASSERT_EQ(smallest_flushed_log_index_cf, 0);
+    ASSERT_EQ(smallest_flushed_log_index, 30);
+    ASSERT_EQ(smallest_flushed_seqno, 50);
 
-        auto size = rocksdb->GetCollector().GetSize();
-        ASSERT_EQ(size, 6);
+    auto size = rocksdb->GetCollector().GetSize();
+    ASSERT_EQ(size, 6);
 
-        auto is_pending_flush = rocksdb->GetCollector().IsFlushPending();
-        ASSERT_TRUE(!is_pending_flush);
-    }
+    auto is_pending_flush = rocksdb->GetCollector().IsFlushPending();
+    ASSERT_TRUE(!is_pending_flush);
+  }
 };
