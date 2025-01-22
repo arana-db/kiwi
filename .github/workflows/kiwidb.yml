@@ -57,7 +57,9 @@ jobs:
             ${{ github.workspace }}/download
             ${{ github.workspace }}/build-release
             ${{ github.workspace }}/deps-release
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/CMakeLists.txt') }}-clang
+          key: |
+            ${{ runner.os }}-cache-${{ hashFiles('**/CMakeLists.txt') }}-clang
+            ${{ runner.os }}-
 
       - name: Build
         run: |
@@ -71,19 +73,19 @@ jobs:
         # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
         run: ctest
 
-#      - name: Run TCL E2e Tests
-#        working-directory: ${{ github.workspace }}
-#        run:
-#          ./etc/script/kiwitests.sh all
-#
-#      - name: Run Go E2E Tests
-#        working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
-#        run: |
-#          set +e
-#          cd ../tests
-#          go mod tidy
-#          go test -timeout 15m --ginkgo.v
-#          sh print_log.sh
+      - name: Run TCL E2e Tests
+        working-directory: ${{ github.workspace }}
+        run:
+          ./etc/script/kiwitests.sh all
+
+      - name: Run Go E2E Tests
+        working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
+        run: |
+          set +e
+          cd ../tests
+          go mod tidy
+          go test -timeout 15m --ginkgo.v
+          sh print_log.sh
 
   build_on_ubuntu:
     runs-on: ubuntu-latest
@@ -99,7 +101,9 @@ jobs:
             ${{ github.workspace }}/download
             ${{ github.workspace }}/build-release
             ${{ github.workspace }}/deps-release
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/CMakeLists.txt') }}-gcc
+          key: |
+            ${{ runner.os }}-cache-${{ hashFiles('**/CMakeLists.txt') }}-gcc
+            ${{ runner.os }}-
 
       - name: Build
         run: |
@@ -111,16 +115,16 @@ jobs:
         # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
         run: ctest
 
-#      - name: Run TCL E2e Tests
-#        working-directory: ${{ github.workspace }}
-#        run:
-#          ./etc/script/kiwitests.sh all
-#
-#      - name: Run Go E2E Tests
-#        working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
-#        run: |
-#          set +e
-#          cd ../tests
-#          go mod tidy
-#          go test -timeout 15m --ginkgo.v || exit 1
-#          sh print_log.sh
+      - name: Run TCL E2e Tests
+        working-directory: ${{ github.workspace }}
+        run:
+          ./etc/script/kiwitests.sh all
+
+      - name: Run Go E2E Tests
+        working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
+        run: |
+          set +e
+          cd ../tests
+          go mod tidy
+          go test -timeout 15m --ginkgo.v || exit 1
+          sh print_log.sh
