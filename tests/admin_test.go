@@ -156,7 +156,7 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(res.Err()).NotTo(HaveOccurred())
 		Expect(res.Val()).To(Equal("OK"))
 
-        conn := client.Conn()
+		conn := client.Conn()
 		resAuth := conn.Auth(ctx, "password")
 		Expect(resAuth.Err()).To(MatchError("ERR invalid password"))
 
@@ -164,8 +164,8 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(resAuth.Err()).NotTo(HaveOccurred())
 
 		res = conn.ConfigSet(ctx, "requirepass", "")
-        Expect(res.Err()).NotTo(HaveOccurred())
-        Expect(res.Val()).To(Equal("OK"))
+		Expect(res.Err()).NotTo(HaveOccurred())
+		Expect(res.Val()).To(Equal("OK"))
 	})
 
 	It("PING", func() {
