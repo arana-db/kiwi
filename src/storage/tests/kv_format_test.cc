@@ -11,7 +11,6 @@
 #include "src/base_data_key_format.h"
 #include "src/base_key_format.h"
 #include "src/coding.h"
-#include "src/debug.h"
 #include "src/lists_data_key_format.h"
 #include "src/zsets_data_key_format.h"
 #include "storage/storage_define.h"

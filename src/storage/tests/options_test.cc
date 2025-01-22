@@ -4,7 +4,6 @@
 //  of patent rights can be found in the PATENTS file in the same directory.
 
 #include <gtest/gtest.h>
-#include <iostream>
 #include <unordered_map>
 
 #include "storage/storage.h"

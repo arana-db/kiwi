@@ -36,4 +36,5 @@ FOREACH (TEST_SOURCE ${TEST_SOURCES})
             PRIVATE ${zstd_LIBRARIES}
             PRIVATE binlog_pb
     )
+    GTEST_DISCOVER_TESTS(${TEST_NAME})
 ENDFOREACH ()

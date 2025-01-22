@@ -15,10 +15,7 @@
 #include <vector>
 
 #include "fmt/core.h"
-#include "gtest/gtest.h"
 #include "rocksdb/db.h"
-#include "rocksdb/listener.h"
-#include "rocksdb/metadata.h"
 #include "rocksdb/options.h"
 
 #include "src/log_index.h"

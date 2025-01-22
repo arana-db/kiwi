@@ -15,7 +15,6 @@
 #include "fmt/core.h"
 #include "gtest/gtest.h"
 #include "rocksdb/db.h"
-#include "rocksdb/listener.h"
 #include "rocksdb/metadata.h"
 #include "rocksdb/options.h"
 
@@ -23,7 +22,6 @@
 #include "src/redis.h"
 #include "std/log.h"
 #include "std/thread_pool.h"
-// #include "storage/storage.h"
 #include "storage/util.h"
 
 using namespace storage;  // NOLINT

@@ -5,7 +5,6 @@
 
 #include <gtest/gtest.h>
 #include <filesystem>
-#include <iostream>
 #include <thread>
 
 #include "std/env.h"
