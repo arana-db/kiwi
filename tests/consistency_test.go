@@ -58,7 +58,7 @@ var _ = XDescribe("Consistency [Skipped]", Ordered, func() {
 				Expect(c).NotTo(BeNil())
 				// TODO don't assert FlushDB's result, bug will fixed by issue #401
 				//Expect(c.FlushDB(ctx).Err().Error()).To(Equal("ERR PRAFT is not initialized"))
-				if res := c.FlushDB(ctx); res.Err() == nil || re     s.Err().Error() != "ERR PRAFT is not initialized" {
+				if res := c.FlushDB(ctx); res.Err() == nil || res.Err().Error() != "ERR PRAFT is not initialized" {
 					fmt.Println("[Consistency]FlushDB error: ", res.Err())
 				}
 				followers = append(followers, c)
