@@ -30,7 +30,7 @@ class ListsFilterTest : public ::testing::Test {
     s = rocksdb::DB::Open(options, db_path, &meta_db);
     if (s.ok()) {
       // create column family
-      rocksdb::ColumnFamilyHandle* cf;
+      rocksdb::ColumnFamilyHandle *cf;
       s = meta_db->CreateColumnFamily(rocksdb::ColumnFamilyOptions(), "data_cf", &cf);
       delete cf;
       delete meta_db;
@@ -46,9 +46,11 @@ class ListsFilterTest : public ::testing::Test {
 
     s = rocksdb::DB::Open(options, db_path, column_families, &handles, &meta_db);
   }
+
   ~ListsFilterTest() override = default;
 
   void SetUp() override {}
+
   void TearDown() override {
     for (auto handle : handles) {
       delete handle;
@@ -57,11 +59,11 @@ class ListsFilterTest : public ::testing::Test {
   }
 
   storage::Options options;
-  rocksdb::DB* meta_db;
+  rocksdb::DB *meta_db;
   storage::Status s;
 
   std::vector<rocksdb::ColumnFamilyDescriptor> column_families;
-  std::vector<rocksdb::ColumnFamilyHandle*> handles;
+  std::vector<rocksdb::ColumnFamilyHandle *> handles;
 };
 
 // Data Filter
@@ -244,7 +246,7 @@ TEST_F(ListsFilterTest, DataFilterTest) {
   ASSERT_TRUE(s.ok());
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }

@@ -13,9 +13,11 @@ using namespace storage;
 class StorageOptionsTest : public ::testing::Test {
  public:
   StorageOptionsTest() = default;
+
   ~StorageOptionsTest() override = default;
 
   static void SetUpTestSuite() {}
+
   static void TearDownTestSuite() {}
 
   StorageOptions storage_options;
@@ -53,7 +55,7 @@ TEST_F(StorageOptionsTest, ResetOptionsTest) {
   ASSERT_EQ(storage_options.options.max_background_compactions, 32);
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }

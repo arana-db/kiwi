@@ -22,15 +22,18 @@ template <typename T, T STEP>
 class NumberCreator {
  public:
   explicit NumberCreator(T start = 0) : next_num_(start) {}
+
   auto Next() -> T { return next_num_.fetch_add(STEP); }
 
  private:
   std::atomic<T> next_num_;
 };
+
 using SequenceNumberCreator = NumberCreator<SequenceNumber, 2>;
 using LogIndexCreator = NumberCreator<LogIndex, 1>;
 
-TEST(LogIndexAndSequenceCollectorTest, OneStepTest) {  // NOLINT
+TEST(LogIndexAndSequenceCollectorTest, OneStepTest) {
+  // NOLINT
   LogIndexAndSequenceCollector collector;
   SequenceNumberCreator seqno_creator(100);
   LogIndexCreator logidx_creator(4);
@@ -74,7 +77,8 @@ TEST(LogIndexAndSequenceCollectorTest, OneStepTest) {  // NOLINT
   }
 }
 
-TEST(LogIndexAndSequenceCollectorTest, MutiStepTest) {  // NOLINT
+TEST(LogIndexAndSequenceCollectorTest, MutiStepTest) {
+  // NOLINT
   SequenceNumberCreator seqno_creator(100);
   LogIndexCreator logidx_creator(4);
   LogIndexAndSequenceCollector collector(2);  // update only when log index is multiple of 4
@@ -130,6 +134,7 @@ TEST(LogIndexAndSequenceCollectorTest, MutiStepTest) {  // NOLINT
 
 struct TimerGuard {
   TimerGuard(std::string_view name = "Test") : name_(name), start_(std::chrono::system_clock::now()) {}
+
   ~TimerGuard() {
     auto end = std::chrono::system_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_);

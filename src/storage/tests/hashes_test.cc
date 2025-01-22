@@ -6,7 +6,6 @@
 #include <dirent.h>
 #include <gtest/gtest.h>
 #include <unistd.h>
-#include <iostream>
 #include <iterator>
 #include <thread>
 
@@ -30,6 +29,7 @@ LogIniter log_initer;
 class HashesTest : public ::testing::Test {
  public:
   HashesTest() = default;
+
   ~HashesTest() override = default;
 
   void SetUp() override {
@@ -46,6 +46,7 @@ class HashesTest : public ::testing::Test {
   void TearDown() override { db.Close(); }
 
   static void SetUpTestSuite() {}
+
   static void TearDownTestSuite() {}
 
   std::string db_path{"./test_db/hashes_test"};
@@ -54,8 +55,8 @@ class HashesTest : public ::testing::Test {
   storage::Status s;
 };
 
-static bool field_value_match(storage::Storage* const db, const Slice& key,
-                              const std::vector<FieldValue>& expect_field_value) {
+static bool field_value_match(storage::Storage *const db, const Slice &key,
+                              const std::vector<FieldValue> &expect_field_value) {
   std::vector<FieldValue> field_value_out;
   Status s = db->HGetall(key, &field_value_out);
   if (!s.ok() && !s.IsNotFound()) {
@@ -67,7 +68,7 @@ static bool field_value_match(storage::Storage* const db, const Slice& key,
   if (s.IsNotFound() && expect_field_value.empty()) {
     return true;
   }
-  for (const auto& field_value : expect_field_value) {
+  for (const auto &field_value : expect_field_value) {
     if (find(field_value_out.begin(), field_value_out.end(), field_value) == field_value_out.end()) {
       return false;
     }
@@ -75,12 +76,12 @@ static bool field_value_match(storage::Storage* const db, const Slice& key,
   return true;
 }
 
-static bool field_value_match(const std::vector<FieldValue>& field_value_out,
-                              const std::vector<FieldValue>& expect_field_value) {
+static bool field_value_match(const std::vector<FieldValue> &field_value_out,
+                              const std::vector<FieldValue> &expect_field_value) {
   if (field_value_out.size() != expect_field_value.size()) {
     return false;
   }
-  for (const auto& field_value : expect_field_value) {
+  for (const auto &field_value : expect_field_value) {
     if (find(field_value_out.begin(), field_value_out.end(), field_value) == field_value_out.end()) {
       return false;
     }
@@ -88,7 +89,7 @@ static bool field_value_match(const std::vector<FieldValue>& field_value_out,
   return true;
 }
 
-static bool size_match(storage::Storage* const db, const Slice& key, int32_t expect_size) {
+static bool size_match(storage::Storage *const db, const Slice &key, int32_t expect_size) {
   int32_t size = 0;
   Status s = db->HLen(key, &size);
   if (!s.ok() && !s.IsNotFound()) {
@@ -100,7 +101,7 @@ static bool size_match(storage::Storage* const db, const Slice& key, int32_t exp
   return size == expect_size;
 }
 
-static bool make_expired(storage::Storage* const db, const Slice& key) {
+static bool make_expired(storage::Storage *const db, const Slice &key) {
   std::map<storage::DataType, rocksdb::Status> type_status;
   int ret = db->Expire(key, 1);
   if ((ret == 0) || !type_status[storage::DataType::kHashes].ok()) {
@@ -1000,7 +1001,8 @@ TEST_F(HashesTest, HStrlenTest) {
 }
 
 // HScan
-TEST_F(HashesTest, HScanTest) {  // NOLINT
+TEST_F(HashesTest, HScanTest) {
+  // NOLINT
   int64_t cursor = 0;
   int64_t next_cursor = 0;
   std::vector<FieldValue> field_value_out;
@@ -2440,7 +2442,7 @@ TEST_F(HashesTest, PKHRScanRangeTest) {
   ASSERT_EQ(next_field, "i");
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   if (!kstd::FileExists("./log")) {
     kstd::CreatePath("./log");
   }

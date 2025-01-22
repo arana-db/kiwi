@@ -10,7 +10,7 @@
 
 using namespace storage;
 
-void Func(LockMgr* mgr, int id, const std::string& key) {
+void Func(LockMgr *mgr, int id, const std::string &key) {
   mgr->TryLock(key);
   printf("thread %d TryLock %s success\n", id, key.c_str());
   std::this_thread::sleep_for(std::chrono::seconds(3));

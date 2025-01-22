@@ -14,8 +14,8 @@
 
 using namespace storage;
 
-static bool elements_match(storage::Storage* const db, const Slice& key,
-                           const std::vector<std::string>& expect_elements) {
+static bool elements_match(storage::Storage *const db, const Slice &key,
+                           const std::vector<std::string> &expect_elements) {
   std::vector<std::string> elements_out;
   Status s = db->LRange(key, 0, -1, &elements_out);
   WARN("status: {} elements_out size: {}", s.ToString(), elements_out.size());
@@ -37,8 +37,8 @@ static bool elements_match(storage::Storage* const db, const Slice& key,
   return true;
 }
 
-static bool elements_match(const std::vector<std::string>& elements_out,
-                           const std::vector<std::string>& expect_elements) {
+static bool elements_match(const std::vector<std::string> &elements_out,
+                           const std::vector<std::string> &expect_elements) {
   if (elements_out.size() != expect_elements.size()) {
     return false;
   }
@@ -50,7 +50,7 @@ static bool elements_match(const std::vector<std::string>& elements_out,
   return true;
 }
 
-static bool len_match(storage::Storage* const db, const Slice& key, uint64_t expect_len) {
+static bool len_match(storage::Storage *const db, const Slice &key, uint64_t expect_len) {
   uint64_t len = 0;
   Status s = db->LLen(key, &len);
   if (!s.ok() && !s.IsNotFound()) {
@@ -62,7 +62,7 @@ static bool len_match(storage::Storage* const db, const Slice& key, uint64_t exp
   return len == expect_len;
 }
 
-static bool make_expired(storage::Storage* const db, const Slice& key) {
+static bool make_expired(storage::Storage *const db, const Slice &key) {
   std::map<storage::DataType, rocksdb::Status> type_status;
   int ret = db->Expire(key, 1);
   if ((ret == 0) || !type_status[storage::DataType::kLists].ok()) {
@@ -85,6 +85,7 @@ LogIniter log_initer;
 class ListsTest : public ::testing::Test {
  public:
   ListsTest() = default;
+
   ~ListsTest() override = default;
 
   void SetUp() override {
@@ -101,6 +102,7 @@ class ListsTest : public ::testing::Test {
   void TearDown() override { db.Close(); }
 
   static void SetUpTestSuite() {}
+
   static void TearDownTestSuite() {}
 
   std::string db_path{"./test_db/lists_test"};
@@ -110,7 +112,8 @@ class ListsTest : public ::testing::Test {
 };
 
 // LIndex
-TEST_F(ListsTest, LIndexTest) {  // NOLINT
+TEST_F(ListsTest, LIndexTest) {
+  // NOLINT
   uint64_t num;
   std::string element;
   std::vector<std::string> elements;
@@ -274,7 +277,8 @@ TEST_F(ListsTest, LIndexTest) {  // NOLINT
 }
 
 // LInsert
-TEST_F(ListsTest, LInsertTest) {  // NOLINT
+TEST_F(ListsTest, LInsertTest) {
+  // NOLINT
   int64_t ret;
   uint64_t num;
 
@@ -466,7 +470,8 @@ TEST_F(ListsTest, LInsertTest) {  // NOLINT
 }
 
 // LLen
-TEST_F(ListsTest, LLenTest) {  // NOLINT
+TEST_F(ListsTest, LLenTest) {
+  // NOLINT
   uint64_t num;
 
   // ***************** Group 1 Test *****************
@@ -500,7 +505,8 @@ TEST_F(ListsTest, LLenTest) {  // NOLINT
 }
 
 // LPop
-TEST_F(ListsTest, LPopTest) {  // NOLINT
+TEST_F(ListsTest, LPopTest) {
+  // NOLINT
   uint64_t num;
   std::string element;
   std::vector<std::string> elements;
@@ -572,7 +578,8 @@ TEST_F(ListsTest, LPopTest) {  // NOLINT
 }
 
 // LPush
-TEST_F(ListsTest, LPushTest) {  // NOLINT
+TEST_F(ListsTest, LPushTest) {
+  // NOLINT
   int32_t ret;
   uint64_t num;
   std::string element;
@@ -710,7 +717,8 @@ TEST_F(ListsTest, LPushTest) {  // NOLINT
 }
 
 // LPushx
-TEST_F(ListsTest, LPushxTest) {  // NOLINT
+TEST_F(ListsTest, LPushxTest) {
+  // NOLINT
   int64_t ret;
   uint64_t num;
 
@@ -821,7 +829,8 @@ TEST_F(ListsTest, LPushxTest) {  // NOLINT
 }
 
 // LRange
-TEST_F(ListsTest, LRangeTest) {  // NOLINT
+TEST_F(ListsTest, LRangeTest) {
+  // NOLINT
   uint64_t num;
 
   // ***************** Group 1 Test *****************
@@ -1074,7 +1083,8 @@ TEST_F(ListsTest, LRangeTest) {  // NOLINT
 }
 
 // LRem
-TEST_F(ListsTest, LRemTest) {  // NOLINT
+TEST_F(ListsTest, LRemTest) {
+  // NOLINT
   int64_t ret;
   uint64_t num;
 
@@ -1446,7 +1456,8 @@ TEST_F(ListsTest, LRemTest) {  // NOLINT
 }
 
 // LSet
-TEST_F(ListsTest, LSetTest) {  // NOLINT
+TEST_F(ListsTest, LSetTest) {
+  // NOLINT
   int64_t ret;
   uint64_t num;
 
@@ -1543,7 +1554,8 @@ TEST_F(ListsTest, LSetTest) {  // NOLINT
 }
 
 // LTrim
-TEST_F(ListsTest, LTrimTest) {  // NOLINT
+TEST_F(ListsTest, LTrimTest) {
+  // NOLINT
   uint64_t num;
   // ***************** Group 1 Test *****************
   //  "a" -> "b" -> "c" -> "d" -> "e"
@@ -2041,7 +2053,8 @@ TEST_F(ListsTest, LTrimTest) {  // NOLINT
 }
 
 // RPop
-TEST_F(ListsTest, RPopTest) {  // NOLINT
+TEST_F(ListsTest, RPopTest) {
+  // NOLINT
   uint64_t num;
   std::string element;
   std::vector<std::string> elements;
@@ -2111,7 +2124,8 @@ TEST_F(ListsTest, RPopTest) {  // NOLINT
 }
 
 // RPoplpush
-TEST_F(ListsTest, RPoplpushTest) {  // NOLINT
+TEST_F(ListsTest, RPoplpushTest) {
+  // NOLINT
   int64_t ret;
   uint64_t num;
   // std::string element;
@@ -2463,7 +2477,8 @@ TEST_F(ListsTest, RPoplpushTest) {  // NOLINT
 }
 
 // RPush
-TEST_F(ListsTest, RPushTest) {  // NOLINT
+TEST_F(ListsTest, RPushTest) {
+  // NOLINT
   int32_t ret;
   uint64_t num;
   std::vector<std::string> elements;
@@ -2601,7 +2616,8 @@ TEST_F(ListsTest, RPushTest) {  // NOLINT
 }
 
 // RPushx
-TEST_F(ListsTest, RPushxTest) {  // NOLINT
+TEST_F(ListsTest, RPushxTest) {
+  // NOLINT
   int64_t ret;
   uint64_t num;
 
@@ -2710,7 +2726,7 @@ TEST_F(ListsTest, RPushxTest) {  // NOLINT
   ASSERT_TRUE(s.ok());
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   if (!kstd::FileExists("./log")) {
     kstd::CreatePath("./log");
   }

@@ -27,6 +27,7 @@ LogIniter log_initer;
 class StringsTest : public ::testing::Test {
  public:
   StringsTest() = default;
+
   ~StringsTest() override = default;
 
   void SetUp() override {
@@ -43,6 +44,7 @@ class StringsTest : public ::testing::Test {
   void TearDown() override { db.Close(); }
 
   static void SetUpTestSuite() {}
+
   static void TearDownTestSuite() {}
 
   std::string db_path{"./test_db/string_test"};
@@ -51,7 +53,7 @@ class StringsTest : public ::testing::Test {
   storage::Status s;
 };
 
-static bool make_expired(storage::Storage* const db, const Slice& key) {
+static bool make_expired(storage::Storage *const db, const Slice &key) {
   std::map<storage::DataType, rocksdb::Status> type_status;
   int ret = db->Expire(key, 1);
   if ((ret == 0) || !type_status[storage::DataType::kStrings].ok()) {
@@ -61,11 +63,11 @@ static bool make_expired(storage::Storage* const db, const Slice& key) {
   return true;
 }
 
-static bool string_ttl(storage::Storage* const db, const Slice& key, int32_t* ttl) {
+static bool string_ttl(storage::Storage *const db, const Slice &key, int32_t *ttl) {
   int64_t type_ttl;
   std::map<storage::DataType, Status> type_status;
   type_ttl = db->TTL(key);
-  for (const auto& item : type_status) {
+  for (const auto &item : type_status) {
     if (item.second != Status::OK() && item.second != Status::NotFound()) {
       return false;
     }
@@ -1012,7 +1014,7 @@ TEST_F(StringsTest, PKSetexAtTest) {
   ASSERT_EQ(ttl_ret, -2);
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   if (!kstd::FileExists("./log")) {
     kstd::CreatePath("./log");
   }
