@@ -149,10 +149,10 @@ void BaseCmd::ServeAndUnblockConns(PClient* client) {
 
     switch (conn_blocked->GetCmdType()) {
       case BlockedConnNode::Type::BLPop:
-        s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->LPop(client->Key(), 1, &elements);
+        s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LPop(client->Key(), 1, &elements);
         break;
       case BlockedConnNode::Type::BRPop:
-        s = PSTORE.GetBackend(client->GetCurrentDB())->GetStorage()->RPop(client->Key(), 1, &elements);
+        s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPop(client->Key(), 1, &elements);
         break;
     }
 
