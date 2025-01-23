@@ -4,13 +4,14 @@
 //  of patent rights can be found in the PATENTS file in the same directory.
 
 #include <thread>
+#include <gtest/gtest.h>
 
 #include "src/lock_mgr.h"
 #include "src/mutex_impl.h"
 
 using namespace storage;
 
-void Func(LockMgr *mgr, int id, const std::string &key) {
+void Func(LockMgr* mgr, int id, const std::string& key) {
   mgr->TryLock(key);
   printf("thread %d TryLock %s success\n", id, key.c_str());
   std::this_thread::sleep_for(std::chrono::seconds(3));
@@ -18,7 +19,7 @@ void Func(LockMgr *mgr, int id, const std::string &key) {
   printf("thread %d UnLock %s\n", id, key.c_str());
 }
 
-int main() {
+TEST(LockMgr, LockMgrTest) {
   std::shared_ptr<MutexFactory> factory = std::make_shared<MutexFactoryImpl>();
   LockMgr mgr(1, 3, factory);
 
@@ -40,5 +41,9 @@ int main() {
   t2.join();
   t3.join();
   t4.join();
-  return 0;
+}
+
+int main(int argc, char** argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }

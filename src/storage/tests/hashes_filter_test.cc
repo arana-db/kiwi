@@ -4,8 +4,8 @@
 //  of patent rights can be found in the PATENTS file in the same directory.
 
 #include <gtest/gtest.h>
-#include <rocksdb/status.h>
 #include <thread>
+#include <rocksdb/status.h>
 
 #include "src/base_filter.h"
 #include "src/base_meta_value_format.h"
