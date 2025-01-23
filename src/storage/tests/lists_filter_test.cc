@@ -21,13 +21,18 @@ using storage::Status;
 
 class ListsFilterTest : public ::testing::Test {
  public:
-  ListsFilterTest() {
-    std::string db_path = "./db/list_meta";
+  ListsFilterTest() {}
+
+  ~ListsFilterTest() override = default;
+
+  void SetUp() override {
+    std::string db_path = "./test_db/list_meta";
     if (access(db_path.c_str(), F_OK) != 0) {
       mkdir(db_path.c_str(), 0755);
     }
     options.create_if_missing = true;
     s = rocksdb::DB::Open(options, db_path, &meta_db);
+    ASSERT_TRUE(s.ok()) << s.ToString();
     if (s.ok()) {
       // create column family
       rocksdb::ColumnFamilyHandle *cf;
@@ -45,11 +50,8 @@ class ListsFilterTest : public ::testing::Test {
     column_families.emplace_back("data_cf", data_cf_ops);
 
     s = rocksdb::DB::Open(options, db_path, column_families, &handles, &meta_db);
+    ASSERT_TRUE(s.ok()) << s.ToString();
   }
-
-  ~ListsFilterTest() override = default;
-
-  void SetUp() override {}
 
   void TearDown() override {
     for (auto handle : handles) {

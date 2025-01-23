@@ -28,7 +28,7 @@ LogIniter log_initer;
 // Filter
 TEST(HashesFilterTest, FilterTest) {
   rocksdb::DB* meta_db;
-  std::string db_path = "./db/hash_filter";
+  std::string db_path = "./hash_filter_db";
   std::vector<rocksdb::ColumnFamilyHandle*> handles;
 
   storage::Options options;
