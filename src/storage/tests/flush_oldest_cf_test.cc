@@ -26,7 +26,7 @@
 #include "storage/util.h"
 
 class LogIniter {
-public:
+ public:
   LogIniter() {
     logger::Init("./flush_oldest_cf_test.log");
     spdlog::set_level(spdlog::level::info);
@@ -38,11 +38,10 @@ LogIniter log_initer;
 using LogIndex = int64_t;
 
 class LogQueue : public kstd::noncopyable {
-public:
+ public:
   using WriteCallback = std::function<rocksdb::Status(const kiwi::Binlog&, LogIndex idx)>;
 
-  explicit LogQueue(WriteCallback&& cb)
-    : write_cb_(std::move(cb)) { consumer_.SetMaxIdleThread(1); }
+  explicit LogQueue(WriteCallback&& cb) : write_cb_(std::move(cb)) { consumer_.SetMaxIdleThread(1); }
 
   void AppendLog(const kiwi::Binlog& log, std::promise<rocksdb::Status>&& promise) {
     auto task = [&] {
@@ -53,16 +52,16 @@ public:
     consumer_.ExecuteTask(std::move(task));
   }
 
-private:
+ private:
   WriteCallback write_cb_ = nullptr;
   kstd::ThreadPool consumer_;
   std::atomic<LogIndex> next_log_idx_{1};
 };
 
 class FlushOldestCFTest : public ::testing::Test {
-public:
+ public:
   FlushOldestCFTest()
-    : log_queue_([this](const kiwi::Binlog& log, LogIndex log_idx) { return db_.OnBinlogWrite(log, log_idx); }) {
+      : log_queue_([this](const kiwi::Binlog& log, LogIndex log_idx) { return db_.OnBinlogWrite(log, log_idx); }) {
     options_.options.create_if_missing = true;
     options_.options.max_background_jobs = 10;
     options_.db_instance_num = 1;
@@ -70,8 +69,7 @@ public:
     options_.append_log_function = [this](const kiwi::Binlog& log, std::promise<rocksdb::Status>&& promise) {
       log_queue_.AppendLog(log, std::move(promise));
     };
-    options_.do_snapshot_function = [](int64_t log_index, bool sync) {
-    };
+    options_.do_snapshot_function = [](int64_t log_index, bool sync) {};
     options_.max_gap = 15;
     write_options_.disableWAL = true;
   }
@@ -127,7 +125,8 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
   auto flush_cf = [&](size_t cf) {
     auto s = rocksdb->GetDB()->Flush(rocksdb::FlushOptions(), rocksdb->GetColumnFamilyHandles()[cf]);
     ASSERT_TRUE(s.ok());
-  }; {
+  };
+  {
     //  type    kv            kv
     // entry  [1:1] -> ... [10:10]
     //
@@ -157,7 +156,8 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
     ASSERT_EQ(smallest_applied_log_index, 10);
     auto size = rocksdb->GetCollector().GetSize();
     ASSERT_EQ(size, 10);
-  } {
+  }
+  {
     //  type     kv            kv         hash        hash                 hash
     // entry   [1:1] -> ... [10:10]  -> [11:11]  -> [12:13]  -> ...  -> [30:49]
     //
@@ -199,7 +199,8 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
 
     auto is_pending_flush = rocksdb->GetCollector().IsFlushPending();
     ASSERT_TRUE(is_pending_flush);
-  } {
+  }
+  {
     //  type    kv            kv         hash        hash                 hash
     // entry  [1:1] -> ... [10:10]  -> [11:11]  -> [12:13]  -> ...  -> [30:49]
     auto cur_par = rocksdb->GetCollector().GetList().begin();
@@ -220,7 +221,8 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
       logindex++;
       cur_par = std::next(cur_par);
     }
-  } {
+  }
+  {
     //  type       kv            kv         hash        hash                 hash
     // entry     [1:1] -> ... [10:10]  -> [11:11]  -> [12:13]  -> ...  -> [30:49]
     //
@@ -236,7 +238,7 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
     auto gap = rocksdb->GetLogIndexOfColumnFamilies().GetPendingFlushGap();
     ASSERT_EQ(gap, 30);
     flush_cf(1);
-    sleep(5); // sleep flush complete.
+    sleep(5);  // sleep flush complete.
     // 1) 根据 cf 1 的 latest SequenceNumber = 49 查到对应的 log index 为 30. 设置 cf 1 的 flushed_log_index 和
     // flushed_sequence_number 为 30 49.
     //
@@ -411,7 +413,8 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
     ASSERT_EQ(cf_3_status.flushed_index.seqno, 50);
     ASSERT_EQ(cf_3_status.applied_index.log_index, 0);
     ASSERT_EQ(cf_3_status.applied_index.seqno, 0);
-  } {
+  }
+  {
     add_kvs(30, 35);
     //  type     hash    ->   kv    ->  ...  ->  kv
     // entry   [30:49]     [31:51]             [35:55]

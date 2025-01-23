@@ -4,8 +4,8 @@
 //  of patent rights can be found in the PATENTS file in the same directory.
 
 #include <gtest/gtest.h>
-#include <thread>
 #include <rocksdb/status.h>
+#include <thread>
 
 #include "src/base_filter.h"
 #include "src/base_meta_value_format.h"
@@ -27,9 +27,9 @@ LogIniter log_initer;
 
 // Filter
 TEST(HashesFilterTest, FilterTest) {
-  rocksdb::DB *meta_db;
+  rocksdb::DB* meta_db;
   std::string db_path = "./db/hash_filter";
-  std::vector<rocksdb::ColumnFamilyHandle *> handles;
+  std::vector<rocksdb::ColumnFamilyHandle*> handles;
 
   storage::Options options;
   options.create_if_missing = true;
@@ -55,7 +55,7 @@ TEST(HashesFilterTest, FilterTest) {
   std::string new_value = "";
 
   /*************** TEST META FILTER ***************/
-  HashesMetaFilter *hashes_meta_filter = new HashesMetaFilter();
+  HashesMetaFilter* hashes_meta_filter = new HashesMetaFilter();
   ASSERT_TRUE(hashes_meta_filter != nullptr);
 
   // Timeout timestamp is not set, but it's an empty hash table.
@@ -107,7 +107,7 @@ TEST(HashesFilterTest, FilterTest) {
   /*************** TEST DATA FILTER ***************/
 
   // No timeout is set, version not outmoded.
-  HashesDataFilter *hashes_data_filter1 = new HashesDataFilter(meta_db, &handles, DataType::kHashes);
+  HashesDataFilter* hashes_data_filter1 = new HashesDataFilter(meta_db, &handles, DataType::kHashes);
   ASSERT_TRUE(hashes_data_filter1 != nullptr);
   storage::EncodeFixed32(str, 1);
   HashesMetaValue tdf_meta_value1(DataType::kHashes, std::string(str, sizeof(int32_t)));
@@ -123,7 +123,7 @@ TEST(HashesFilterTest, FilterTest) {
   delete hashes_data_filter1;
 
   // timeout timestamp is set, but not timeout.
-  HashesDataFilter *hashes_data_filter2 = new HashesDataFilter(meta_db, &handles, DataType::kHashes);
+  HashesDataFilter* hashes_data_filter2 = new HashesDataFilter(meta_db, &handles, DataType::kHashes);
   ASSERT_TRUE(hashes_data_filter2 != nullptr);
   storage::EncodeFixed32(str, 1);
   HashesMetaValue tdf_meta_value2(DataType::kHashes, std::string(str, sizeof(int32_t)));
@@ -140,7 +140,7 @@ TEST(HashesFilterTest, FilterTest) {
   delete hashes_data_filter2;
 
   // timeout timestamp is set, already timeout.
-  HashesDataFilter *hashes_data_filter3 = new HashesDataFilter(meta_db, &handles, DataType::kHashes);
+  HashesDataFilter* hashes_data_filter3 = new HashesDataFilter(meta_db, &handles, DataType::kHashes);
   ASSERT_TRUE(hashes_data_filter3 != nullptr);
   storage::EncodeFixed32(str, 1);
   HashesMetaValue tdf_meta_value3(DataType::kHashes, std::string(str, sizeof(int32_t)));
@@ -158,7 +158,7 @@ TEST(HashesFilterTest, FilterTest) {
   delete hashes_data_filter3;
 
   // No timeout is set, version outmoded.
-  HashesDataFilter *hashes_data_filter4 = new HashesDataFilter(meta_db, &handles, DataType::kHashes);
+  HashesDataFilter* hashes_data_filter4 = new HashesDataFilter(meta_db, &handles, DataType::kHashes);
   ASSERT_TRUE(hashes_data_filter4 != nullptr);
   storage::EncodeFixed32(str, 1);
   HashesMetaValue tdf_meta_value4(DataType::kHashes, std::string(str, sizeof(int32_t)));
@@ -177,7 +177,7 @@ TEST(HashesFilterTest, FilterTest) {
   delete hashes_data_filter4;
 
   // Hash table meta data has been clear.
-  HashesDataFilter *hashes_data_filter5 = new HashesDataFilter(meta_db, &handles, DataType::kHashes);
+  HashesDataFilter* hashes_data_filter5 = new HashesDataFilter(meta_db, &handles, DataType::kHashes);
   ASSERT_TRUE(hashes_data_filter5 != nullptr);
   storage::EncodeFixed32(str, 1);
   HashesMetaValue tdf_meta_value5(DataType::kHashes, std::string(str, sizeof(int32_t)));
@@ -198,7 +198,7 @@ TEST(HashesFilterTest, FilterTest) {
   meta_db->Close();
 }
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
