@@ -387,7 +387,7 @@ TEST_F(FlushOldestCFTest, SimpleTest) {
     auto after_flush_size = rocksdb->GetCollector().GetSize();
     ASSERT_EQ(after_flush_size, 1);
 
-    //todo fail
+    // todo fail
     /*
     auto& cf_0_status = rocksdb->GetLogIndexOfColumnFamilies().GetCFStatus(storage::kMetaCF);
     ASSERT_EQ(cf_0_status.flushed_index.log_index, 30);

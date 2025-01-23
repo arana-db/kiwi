@@ -355,7 +355,7 @@ TEST_F(HashesTest, HIncrby) {
 }
 
 // HIncrbyfloat
-//todo fail on macos
+// todo fail on macos
 
 // TEST_F(HashesTest, HIncrbyfloat) {
 //   int32_t ret;
