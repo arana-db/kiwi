@@ -27,7 +27,7 @@ class StreamSocket : public BaseSocket {
 
   int OnReadable(const std::shared_ptr<Connection> &conn, std::string *readBuff) override;
 
-  int OnWritable() override;
+  int OnWritable(uint64_t id, int fd, BaseEvent *event) override;
 
   bool SendPacket(std::string &&msg) override;
 
