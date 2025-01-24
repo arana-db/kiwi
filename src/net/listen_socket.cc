@@ -6,6 +6,7 @@
  */
 
 #include <netinet/tcp.h>
+#include <sys/socket.h>
 
 #include "config.h"
 #include "listen_socket.h"
@@ -18,7 +19,7 @@ const int ListenSocket::LISTENQ = 1024;
 
 bool ListenSocket::REUSE_PORT = true;
 
-int ListenSocket::OnReadable(const std::shared_ptr<Connection> &conn, std::string *readBuff) {
+int ListenSocket::OnReadable(const std::shared_ptr<Connection> &conn, std::string *read_buff) {
   struct sockaddr_in clientAddr {};
   auto newConnFd = Accept(&clientAddr);
   if (newConnFd == 0) {
@@ -32,7 +33,7 @@ int ListenSocket::OnReadable(const std::shared_ptr<Connection> &conn, std::strin
   inet_ntop(AF_INET, &(clientAddr.sin_addr), clientIP, INET_ADDRSTRLEN);
 
   newConn->OnCreate();
-  conn->netEvent_ = std::move(newConn);
+  conn->net_event_ = std::move(newConn);
   conn->fd_ = newConnFd;
   conn->addr_.Init(clientAddr);
 
@@ -68,7 +69,7 @@ bool ListenSocket::Open() {
   }
 
   if (SocketType() == SOCKET_LISTEN_TCP) {
-    fd_ = CreateTCPSocket();
+    fd_ = CreateTCPSocket(addr_);
   } else if (SocketType() == SOCKET_LISTEN_UDP) {
     fd_ = CreateUDPSocket();
   } else {
@@ -89,14 +90,13 @@ bool ListenSocket::Bind() {
     REUSE_PORT = false;
   }
 
-  struct sockaddr_in serv = addr_.GetAddr();
-
-  int ret = ::bind(Fd(), reinterpret_cast<struct sockaddr *>(&serv), sizeof serv);
+  int ret = ::bind(Fd(), addr_.Get(), addr_.Len());
   if (0 != ret) {
     ERROR("ListenSocket fd:{},Bind error:{}", Fd(), errno);
     Close();
     return false;
   }
+
   return true;
 }
 

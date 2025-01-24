@@ -27,7 +27,9 @@ bool EpollEvent::Init() {
     return false;
   }
   if (mode_ & EVENT_MODE_READ) {  // Add the listen socket to epoll for read
-    AddEvent(listen_->Fd(), listen_->Fd(), EVENT_READ);
+    for (auto &s : listen_sockets_) {
+      AddEvent(s->Fd(), s->Fd(), EVENT_READ);
+    }
   }
   if (pipe(pipeFd_) == -1) {
     ERROR("pipe error errno:{}", errno);
@@ -107,7 +109,8 @@ void EpollEvent::EventRead() {
       std::shared_ptr<Connection> conn;
       if (events[i].events & EVENT_READ) {
         // If the event is less than the listen socket, it is a new connection
-        if (events[i].data.u64 != listen_->Fd()) {
+        // If getListenSocket is nullptr, it means the event is not a listen socket
+        if (!getListenSocket(events[i].data.u64)) {
           conn = getConn_(events[i].data.u64);
         }
         DoRead(events[i], conn);
@@ -150,9 +153,9 @@ void EpollEvent::EventWrite() {
 }
 
 void EpollEvent::DoRead(const epoll_event &event, const std::shared_ptr<Connection> &conn) {
-  if (event.data.u64 == listen_->Fd()) {
+  if (auto s = getListenSocket(event.data.u64); s) {
     auto newConn = std::make_shared<Connection>(nullptr);
-    auto connFd = listen_->OnReadable(newConn, nullptr);
+    auto connFd = s->OnReadable(newConn, nullptr);
     if (connFd < 0) {
       DoError(event, "accept error");
       return;
@@ -160,7 +163,7 @@ void EpollEvent::DoRead(const epoll_event &event, const std::shared_ptr<Connecti
     onCreate_(connFd, newConn);
   } else if (conn) {
     std::string readBuff;
-    int ret = conn->netEvent_->OnReadable(conn, &readBuff);
+    int ret = conn->net_event_->OnReadable(conn, &readBuff);
     if (ret == NE_ERROR) {
       DoError(event, "read error,errno: " + std::to_string(errno));
       return;
@@ -175,7 +178,7 @@ void EpollEvent::DoRead(const epoll_event &event, const std::shared_ptr<Connecti
 }
 
 void EpollEvent::DoWrite(const epoll_event &event, const std::shared_ptr<Connection> &conn) {
-  auto ret = conn->netEvent_->OnWritable();
+  auto ret = conn->net_event_->OnWritable();
   if (ret == NE_ERROR) {
     DoError(event, "write error,errno: " + std::to_string(errno));
     return;

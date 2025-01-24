@@ -14,7 +14,13 @@
 
 namespace net {
 
-int BaseSocket::CreateTCPSocket() { return ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); }
+int BaseSocket::CreateTCPSocket(const SocketAddr &addr) {
+  if (addr.IsIPV6()) {
+    return ::socket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
+  }
+
+  return ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+}
 
 int BaseSocket::CreateUDPSocket() { return ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); }
 

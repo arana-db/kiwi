@@ -18,57 +18,109 @@ namespace net {
 struct SocketAddr {
   SocketAddr() { Clear(); }
 
-  SocketAddr(const SocketAddr &other) { memcpy(&addr_, &other.addr_, sizeof addr_); }
+  SocketAddr(const SocketAddr &other) { memcpy(&addr_, &other.addr_, sizeof(addr_)); }
 
   SocketAddr &operator=(const SocketAddr &other) {
     if (this != &other) {
-      memcpy(&addr_, &other.addr_, sizeof addr_);
+      memcpy(&addr_, &other.addr_, sizeof(addr_));
     }
     return *this;
   }
 
   explicit SocketAddr(const sockaddr_in &addr) { Init(addr); }
 
-  SocketAddr(uint32_t netip, uint16_t netport) { Init(netip, netport); }
+  explicit SocketAddr(const sockaddr_in6 &addr) { Init(addr); }
 
   SocketAddr(const std::string &ip, uint16_t hostport) { Init(ip, hostport); }
 
   void Init(const sockaddr_in &addr) { memcpy(&addr_, &addr, sizeof(addr)); }
 
-  void Init(uint32_t netIp, uint16_t netPort) {
-    addr_.sin_family = AF_INET;
-    addr_.sin_addr.s_addr = netIp;
-    addr_.sin_port = netPort;
-  }
+  void Init(const sockaddr_in6 &addr) { memcpy(&addr_, &addr, sizeof(addr)); }
 
   void Init(const std::string &ip, uint16_t hostPort) {
-    addr_.sin_family = AF_INET;
-    addr_.sin_addr.s_addr = ::inet_addr(ip.data());
-    addr_.sin_port = htons(hostPort);
+    if (::inet_pton(AF_INET, ip.c_str(), &addr_.addr4_.sin_addr) == 1) {
+      addr_.addr4_.sin_family = AF_INET;
+      addr_.addr4_.sin_port = htons(hostPort);
+      return;
+    }
+    if (::inet_pton(AF_INET6, ip.c_str(), &addr_.addr6_.sin6_addr) == 1) {
+      addr_.addr6_.sin6_family = AF_INET6;
+      addr_.addr6_.sin6_port = htons(hostPort);
+      return;
+    }
+    Clear();  // Reset the address if parsing fails
   }
 
-  const sockaddr_in &GetAddr() const { return addr_; }
+  const sockaddr *Get() const {
+    if (IsIPV4()) {
+      return reinterpret_cast<const sockaddr *>(&addr_.addr4_);
+    }
+    return reinterpret_cast<const sockaddr *>(&addr_.addr6_);
+  }
 
-  std::string GetIP() const { return ::inet_ntoa(addr_.sin_addr); }
+  socklen_t Len() const {
+    if (IsIPV4()) {
+      return sizeof(addr_.addr4_);
+    }
+    return sizeof(addr_.addr6_);
+  }
+
+  std::string GetIP() const {
+    if (IsIPV4()) {
+      char ipv4_buf[INET_ADDRSTRLEN] = {0};
+      if (::inet_ntop(AF_INET, &addr_.addr4_.sin_addr, ipv4_buf, sizeof(ipv4_buf))) {
+        return ipv4_buf;
+      }
+    }
+    char ipv6_buf[INET6_ADDRSTRLEN] = {0};
+    if (::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, ipv6_buf, sizeof(ipv6_buf))) {
+      return ipv6_buf;
+    }
+    return "";
+  }
 
   std::string GetIP(char *buf, socklen_t size) const {
-    return ::inet_ntop(AF_INET, reinterpret_cast<const char *>(&addr_.sin_addr), buf, size);
+    if (IsIPV4()) {
+      return ::inet_ntop(AF_INET, &addr_.addr4_.sin_addr, buf, size) ? buf : "";
+    }
+    return ::inet_ntop(AF_INET6, &addr_.addr6_.sin6_addr, buf, size) ? buf : "";
   }
 
-  uint16_t GetPort() const { return ntohs(addr_.sin_port); }
+  uint16_t GetPort() const {
+    if (IsIPV4()) {
+      return ntohs(addr_.addr4_.sin_port);
+    }
+    return ntohs(addr_.addr6_.sin6_port);
+  }
 
-  bool IsValid() const { return 0 != addr_.sin_family; }
+  bool IsValid() const { return IsIPV4() || IsIPV6(); }
 
-  void Clear() { memset(&addr_, 0, sizeof addr_); }
+  bool IsIPV6() const { return addr_.addr6_.sin6_family == AF_INET6; }
+
+  bool IsIPV4() const { return addr_.addr4_.sin_family == AF_INET; }
+
+  void Clear() { memset(&addr_, 0, sizeof(addr_)); }
 
   friend bool operator==(const SocketAddr &a, const SocketAddr &b) {
-    return a.addr_.sin_family == b.addr_.sin_family && a.addr_.sin_addr.s_addr == b.addr_.sin_addr.s_addr &&
-           a.addr_.sin_port == b.addr_.sin_port;
+    if (a.IsIPV4() != b.IsIPV4()) {
+      return false;
+    }
+
+    if (a.IsIPV4()) {
+      return a.addr_.addr4_.sin_addr.s_addr == b.addr_.addr4_.sin_addr.s_addr &&
+             a.addr_.addr4_.sin_port == b.addr_.addr4_.sin_port;
+    }
+
+    return memcmp(&a.addr_.addr6_.sin6_addr, &b.addr_.addr6_.sin6_addr, sizeof(in6_addr)) == 0 &&
+           a.addr_.addr6_.sin6_port == b.addr_.addr6_.sin6_port;
   }
 
   friend bool operator!=(const SocketAddr &a, const SocketAddr &b) { return !(a == b); }
 
-  sockaddr_in addr_{};
+  union {
+    sockaddr_in addr4_;
+    sockaddr_in6 addr6_;
+  } addr_;
 };
 
 }  // namespace net

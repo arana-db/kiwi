@@ -25,7 +25,9 @@ bool KqueueEvent::Init() {
     return false;
   }
   if (mode_ & EVENT_MODE_READ) {
-    AddEvent(0, listen_->Fd(), EVENT_READ);
+    for (auto &listenSocket : listen_sockets_) {
+      AddEvent(listenSocket->Fd(), listenSocket->Fd(), EVENT_READ);
+    }
   }
   if (pipe(pipeFd_) == -1) {
     ERROR("pipe error:{}", errno);
@@ -107,7 +109,7 @@ void KqueueEvent::EventRead() {
       }
       std::shared_ptr<Connection> conn;
       if (events[i].filter == EVENT_READ) {
-        if (events[i].ident != listen_->Fd()) {
+        if (!getListenSocket(events[i].ident)) {
 #  ifdef HAVE_64BIT
           auto connId = reinterpret_cast<uint64_t>(events[i].udata);
 #  else
@@ -166,13 +168,13 @@ void KqueueEvent::EventWrite() {
 }
 
 void KqueueEvent::DoRead(const struct kevent &event, const std::shared_ptr<Connection> &conn) {
-  if (event.ident == listen_->Fd()) {
+  if (auto s = getListenSocket(event.ident); s) {
     auto newConn = std::make_shared<Connection>(nullptr);
-    auto connFd = listen_->OnReadable(newConn, nullptr);
+    auto connFd = s->OnReadable(newConn, nullptr);
     onCreate_(connFd, newConn);
   } else if (conn) {
     std::string readBuff;
-    int ret = conn->netEvent_->OnReadable(conn, &readBuff);
+    int ret = conn->net_event_->OnReadable(conn, &readBuff);
     if (ret == NE_ERROR) {
       DoError(event, "read error,errno: " + std::to_string(errno));
       return;
@@ -193,7 +195,7 @@ void KqueueEvent::DoRead(const struct kevent &event, const std::shared_ptr<Conne
 }
 
 void KqueueEvent::DoWrite(const struct kevent &event, const std::shared_ptr<Connection> &conn) {
-  auto ret = conn->netEvent_->OnWritable();
+  auto ret = conn->net_event_->OnWritable();
   if (ret == NE_ERROR) {
     DoError(event, "DoWrite error,errno: " + std::to_string(errno));
     return;

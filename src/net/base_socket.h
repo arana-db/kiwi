@@ -9,10 +9,6 @@
 
 #include <sys/socket.h>
 
-#include <functional>
-#include <string>
-
-#include "base_event.h"
 #include "net_event.h"
 #include "socket_addr.h"
 
@@ -38,7 +34,7 @@ class BaseSocket : public NetEvent {
 
   void Close() override;
 
-  static int CreateTCPSocket();
+  static int CreateTCPSocket(const SocketAddr &addr);
 
   static int CreateUDPSocket();
 
@@ -67,7 +63,7 @@ class BaseSocket : public NetEvent {
 
   void SetSocketType(int type) { type_ = type; }
 
-  inline void SetBSTcpKeepAlive(uint32_t keepAlive) { tcp_keep_alive_ = keepAlive; }
+  void SetBSTcpKeepAlive(uint32_t keep_alive) { tcp_keep_alive_ = keep_alive; }
 
  protected:
   bool NoBlock() const { return noBlock_; }

@@ -7,12 +7,13 @@
 
 #include <sstream>
 
+#include <sys/socket.h>
 #include "client_socket.h"
 
 namespace net {
 
 bool ClientSocket::Connect() {
-  fd_ = CreateTCPSocket();
+  fd_ = CreateTCPSocket(addr_);
   if (fd_ == -1) {
     onConnectFail_("CreateTCPSocket open socket failed");
     return false;
@@ -22,7 +23,7 @@ bool ClientSocket::Connect() {
   SetRcvBuf();
   SetSndBuf();
 
-  auto ret = connect(Fd(), (sockaddr*)&addr_.GetAddr(), sizeof(sockaddr_in));
+  auto ret = connect(Fd(), addr_.Get(), addr_.Len());
   if (0 != ret) {
     if (EINPROGRESS == errno) {
       return true;

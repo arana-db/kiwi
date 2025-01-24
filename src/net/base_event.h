@@ -17,6 +17,7 @@
 #include <utility>
 
 #include "callback_function.h"
+#include "listen_socket.h"
 #include "net_event.h"
 #include "timer.h"
 
@@ -45,8 +46,8 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
   const static int EVENT_HUB;
   const static int EVENT_NULL;
 
-  BaseEvent(const std::shared_ptr<NetEvent> &listen, int8_t mode, int8_t type)
-      : listen_(listen), mode_(mode), type_(type) {};
+  BaseEvent(const std::vector<std::shared_ptr<ListenSocket>> &listen_sockets, int8_t mode, int8_t type)
+      : listen_sockets_(listen_sockets), mode_(mode), type_(type) {};
 
   virtual ~BaseEvent() = default;
 
@@ -93,6 +94,15 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
 
   int8_t Type() const { return type_; }
 
+  std::shared_ptr<net::ListenSocket> getListenSocket(int fd) {
+    for (const auto &listen : listen_sockets_) {
+      if (fd == listen->Fd()) {
+        return listen;
+      }
+    }
+    return nullptr;
+  }
+
  protected:
   int evFd_ = 0;  // event fd
   std::atomic<bool> running_ = true;
@@ -109,8 +119,8 @@ class BaseEvent : public std::enable_shared_from_this<BaseEvent> {
 
   std::shared_ptr<Timer> timer_;
 
-  // listening socket
-  std::shared_ptr<NetEvent> listen_;
+  // listening sockets
+  std::vector<std::shared_ptr<ListenSocket>> listen_sockets_;
 
   // callback function when a new connection is created
   std::function<void(uint64_t, std::shared_ptr<Connection>)> onCreate_;
