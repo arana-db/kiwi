@@ -4,7 +4,7 @@
 //  of patent rights can be found in the PATENTS file in the same directory.
 
 #include <gtest/gtest.h>
-#include <iostream>
+#include <rocksdb/status.h>
 #include <thread>
 
 #include "src/base_filter.h"
@@ -28,7 +28,7 @@ LogIniter log_initer;
 // Filter
 TEST(HashesFilterTest, FilterTest) {
   rocksdb::DB* meta_db;
-  std::string db_path = "./db/hash_filter";
+  std::string db_path = "./hash_filter_db";
   std::vector<rocksdb::ColumnFamilyHandle*> handles;
 
   storage::Options options;

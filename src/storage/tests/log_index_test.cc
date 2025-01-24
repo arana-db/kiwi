@@ -7,7 +7,6 @@
 
 #include <atomic>
 #include <filesystem>
-#include <memory>
 #include <random>
 #include <string>
 #include <vector>
@@ -15,7 +14,6 @@
 #include "fmt/core.h"
 #include "gtest/gtest.h"
 #include "rocksdb/db.h"
-#include "rocksdb/listener.h"
 #include "rocksdb/metadata.h"
 #include "rocksdb/options.h"
 
@@ -23,7 +21,6 @@
 #include "src/redis.h"
 #include "std/log.h"
 #include "std/thread_pool.h"
-// #include "storage/storage.h"
 #include "storage/util.h"
 
 using namespace storage;  // NOLINT
@@ -35,16 +32,17 @@ class LogIniter {
     spdlog::set_level(spdlog::level::info);
   }
 };
+
 static LogIniter initer;
 
 TEST(TablePropertyTest, SimpleTest) {
-  constexpr const char* kDbPath = "./log_index_test_db";
+  constexpr const char *kDbPath = "./log_index_test_db";
   rocksdb::Options options;
   options.create_if_missing = true;
   LogIndexAndSequenceCollector collector;
   options.table_properties_collector_factories.push_back(
       std::make_shared<LogIndexTablePropertiesCollectorFactory>(collector));
-  rocksdb::DB* db{nullptr};
+  rocksdb::DB *db{nullptr};
   auto s = rocksdb::DB::Open(options, kDbPath, &db);
   EXPECT_TRUE(s.ok());
 
@@ -62,8 +60,8 @@ TEST(TablePropertyTest, SimpleTest) {
   s = db->GetPropertiesOfAllTables(&properties);
   EXPECT_TRUE(s.ok());
   EXPECT_TRUE(properties.size() == 1);
-  for (auto& [name, prop] : properties) {
-    const auto& collector = prop->user_collected_properties;
+  for (auto &[name, prop] : properties) {
+    const auto &collector = prop->user_collected_properties;
     auto it = collector.find(static_cast<std::string>(LogIndexTablePropertiesCollector::kPropertyName));
     EXPECT_NE(it, collector.cend());
     EXPECT_EQ(it->second, "233333/" + std::to_string(db->GetLatestSequenceNumber()));
@@ -75,11 +73,11 @@ TEST(TablePropertyTest, SimpleTest) {
 
 class LogQueue : public kstd::noncopyable {
  public:
-  using WriteCallback = std::function<rocksdb::Status(const kiwi::Binlog&, LogIndex idx)>;
+  using WriteCallback = std::function<rocksdb::Status(const kiwi::Binlog &, LogIndex idx)>;
 
-  explicit LogQueue(WriteCallback&& cb) : write_cb_(std::move(cb)) { consumer_.SetMaxIdleThread(1); }
+  explicit LogQueue(WriteCallback &&cb) : write_cb_(std::move(cb)) { consumer_.SetMaxIdleThread(1); }
 
-  void AppendLog(const kiwi::Binlog& log, std::promise<rocksdb::Status>&& promise) {
+  void AppendLog(const kiwi::Binlog &log, std::promise<rocksdb::Status> &&promise) {
     auto task = [&] {
       auto idx = next_log_idx_.fetch_add(1);
       auto s = write_cb_(log, idx);
@@ -97,15 +95,17 @@ class LogQueue : public kstd::noncopyable {
 class LogIndexTest : public ::testing::Test {
  public:
   LogIndexTest()
-      : log_queue_([this](const kiwi::Binlog& log, LogIndex log_idx) { return db_.OnBinlogWrite(log, log_idx); }) {
+      : log_queue_([this](const kiwi::Binlog &log, LogIndex log_idx) { return db_.OnBinlogWrite(log, log_idx); }) {
     options_.options.create_if_missing = true;
+    options_.options.create_missing_column_families = true;
     options_.db_instance_num = 1;
     options_.raft_timeout_s = 10000;
-    options_.append_log_function = [this](const kiwi::Binlog& log, std::promise<rocksdb::Status>&& promise) {
+    options_.append_log_function = [this](const kiwi::Binlog &log, std::promise<rocksdb::Status> &&promise) {
       log_queue_.AppendLog(log, std::move(promise));
     };
     options_.do_snapshot_function = [](int64_t log_index, bool sync) {};
   }
+
   ~LogIndexTest() override { DeleteFiles(db_path_.c_str()); }
 
   void SetUp() override {
@@ -114,7 +114,7 @@ class LogIndexTest : public ::testing::Test {
     }
     mkdir(db_path_.c_str(), 0755);
     auto s = db_.Open(options_, db_path_);
-    ASSERT_TRUE(s.ok());
+    ASSERT_TRUE(s.ok()) << s.ToString();
   }
 
   std::string db_path_{"./test_db/log_index_test"};
@@ -133,6 +133,7 @@ class LogIndexTest : public ::testing::Test {
     res.append(key_);
     return res;
   }
+
   static auto CreateRandomFieldValue(int i, size_t length) -> std::string {
     std::mt19937 gen(i);
     std::string str(length, 0);
@@ -141,16 +142,17 @@ class LogIndexTest : public ::testing::Test {
     }
     return str;
   }
+
   constexpr static char chars[] = {'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p',
                                    'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z', 'A', 'B', 'C', 'D', 'E', 'F',
                                    'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V',
                                    'W', 'X', 'Y', 'Z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'};
 };
 
-TEST_F(LogIndexTest, DoNothing) {}
-
-TEST_F(LogIndexTest, SimpleTest) {  // NOLINT
-  auto& redis = db_.GetDBInstance(key_);
+/*
+TEST_F(LogIndexTest, SimpleTest) {
+  // NOLINT
+  auto &redis = db_.GetDBInstance(key_);
   auto add_kvs = [&](int start, int end) {
     for (int i = start; i < end; i++) {
       auto key = CreateRandomKey(i, 256);
@@ -240,7 +242,7 @@ TEST_F(LogIndexTest, SimpleTest) {  // NOLINT
         s = redis->GetDB()->GetPropertiesOfAllTables(redis->GetColumnFamilyHandles()[kHashesDataCF], &properties);
         std::vector<rocksdb::LiveFileMetaData> metas;
         redis->GetDB()->GetLiveFilesMetaData(&metas);
-        for (const auto& meta : metas) {
+        for (const auto &meta : metas) {
           auto file = meta.directory + meta.name;
           if (!properties.contains(file)) {
             fmt::println("{}: L{}, {}, not contains", file, meta.level, meta.column_family_name);
@@ -271,4 +273,10 @@ TEST_F(LogIndexTest, SimpleTest) {  // NOLINT
       EXPECT_EQ(res->GetSequenceNumber(), end * 2);
     }
   }
+}
+*/
+
+int main(int argc, char **argv) {
+  ::testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
 }

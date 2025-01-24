@@ -11,7 +11,6 @@
 #include "src/base_data_key_format.h"
 #include "src/base_key_format.h"
 #include "src/coding.h"
-#include "src/debug.h"
 #include "src/lists_data_key_format.h"
 #include "src/zsets_data_key_format.h"
 #include "storage/storage_define.h"
@@ -73,8 +72,8 @@ TEST(KVFormatTest, ZsetsScoreKeyFormat) {
   storage::EncodeFixed64(dst, version);
   expect_enc.append(dst, 8);
   // score
-  const void* addr_score = reinterpret_cast<const void*>(&score);
-  storage::EncodeFixed64(dst, *reinterpret_cast<const uint64_t*>(addr_score));
+  const void *addr_score = reinterpret_cast<const void *>(&score);
+  storage::EncodeFixed64(dst, *reinterpret_cast<const uint64_t *>(addr_score));
   expect_enc.append(dst, 8);
   // data
   expect_enc.append("\u0000\u0001data\u0000", 7);
@@ -113,7 +112,7 @@ TEST(KVFormatTest, ListDataKeyFormat) {
   ASSERT_EQ(pldk.Version(), version);
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }

@@ -4,7 +4,6 @@
 //  of patent rights can be found in the PATENTS file in the same directory.
 
 #include <gtest/gtest.h>
-#include <iostream>
 #include <thread>
 
 #include "std/env.h"
@@ -31,6 +30,7 @@ LogIniter log_initer;
 class ZSetsTest : public ::testing::Test {
  public:
   ZSetsTest() = default;
+
   ~ZSetsTest() override = default;
 
   void SetUp() override {
@@ -47,6 +47,7 @@ class ZSetsTest : public ::testing::Test {
   void TearDown() override { db.Close(); }
 
   static void SetUpTestSuite() {}
+
   static void TearDownTestSuite() {}
 
   std::string db_path{"./test_db/zsets_test"};
@@ -55,11 +56,11 @@ class ZSetsTest : public ::testing::Test {
   storage::Status s;
 };
 
-static bool members_match(const std::vector<std::string>& mm_out, const std::vector<std::string>& expect_members) {
+static bool members_match(const std::vector<std::string> &mm_out, const std::vector<std::string> &expect_members) {
   if (mm_out.size() != expect_members.size()) {
     return false;
   }
-  for (const auto& member : expect_members) {
+  for (const auto &member : expect_members) {
     if (find(mm_out.begin(), mm_out.end(), member) == mm_out.end()) {
       return false;
     }
@@ -67,8 +68,8 @@ static bool members_match(const std::vector<std::string>& mm_out, const std::vec
   return true;
 }
 
-static bool score_members_match(storage::Storage* const db, const Slice& key,
-                                const std::vector<storage::ScoreMember>& expect_sm) {
+static bool score_members_match(storage::Storage *const db, const Slice &key,
+                                const std::vector<storage::ScoreMember> &expect_sm) {
   std::vector<storage::ScoreMember> sm_out;
   storage::Status s = db->ZRange(key, 0, -1, &sm_out);
   if (!s.ok() && !s.IsNotFound()) {
@@ -88,8 +89,8 @@ static bool score_members_match(storage::Storage* const db, const Slice& key,
   return true;
 }
 
-static bool score_members_match(const std::vector<storage::ScoreMember>& sm_out,
-                                const std::vector<storage::ScoreMember>& expect_sm) {
+static bool score_members_match(const std::vector<storage::ScoreMember> &sm_out,
+                                const std::vector<storage::ScoreMember> &expect_sm) {
   if (sm_out.size() != expect_sm.size()) {
     return false;
   }
@@ -101,7 +102,7 @@ static bool score_members_match(const std::vector<storage::ScoreMember>& sm_out,
   return true;
 }
 
-static bool size_match(storage::Storage* const db, const Slice& key, int32_t expect_size) {
+static bool size_match(storage::Storage *const db, const Slice &key, int32_t expect_size) {
   int32_t size = 0;
   storage::Status s = db->ZCard(key, &size);
   if (!s.ok() && !s.IsNotFound()) {
@@ -114,7 +115,7 @@ static bool size_match(storage::Storage* const db, const Slice& key, int32_t exp
   return size == expect_size;
 }
 
-static bool make_expired(storage::Storage* const db, const storage::Slice& key) {
+static bool make_expired(storage::Storage *const db, const storage::Slice &key) {
   std::map<storage::DataType, rocksdb::Status> type_status;
   int ret = db->Expire(key, 1);
   if ((ret == 0) || !type_status[storage::DataType::kZSets].ok()) {
@@ -124,7 +125,7 @@ static bool make_expired(storage::Storage* const db, const storage::Slice& key) 
   return true;
 }
 
-static bool delete_key(storage::Storage* const db, const storage::Slice& key) {
+static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
   std::vector<std::string> del_keys = {key.ToString()};
   std::map<storage::DataType, storage::Status> type_status;
   db->Del(del_keys);
@@ -132,7 +133,8 @@ static bool delete_key(storage::Storage* const db, const storage::Slice& key) {
 }
 
 // ZPopMax
-TEST_F(ZSetsTest, ZPopMaxTest) {  // NOLINT
+TEST_F(ZSetsTest, ZPopMaxTest) {
+  // NOLINT
   int32_t ret;
   int64_t type_ttl;
   std::map<storage::DataType, rocksdb::Status> type_status;
@@ -280,7 +282,8 @@ TEST_F(ZSetsTest, ZPopMaxTest) {  // NOLINT
 }
 
 // ZPopMin
-TEST_F(ZSetsTest, ZPopMinTest) {  // NOLINT
+TEST_F(ZSetsTest, ZPopMinTest) {
+  // NOLINT
   int32_t ret;
   std::map<DataType, int64_t> type_ttl;
   std::map<storage::DataType, rocksdb::Status> type_status;
@@ -428,7 +431,8 @@ TEST_F(ZSetsTest, ZPopMinTest) {  // NOLINT
 }
 
 // ZAdd
-TEST_F(ZSetsTest, ZAddTest) {  // NOLINT
+TEST_F(ZSetsTest, ZAddTest) {
+  // NOLINT
   int32_t ret;
   int64_t type_ttl;
   std::map<storage::DataType, rocksdb::Status> type_status;
@@ -707,7 +711,8 @@ TEST_F(ZSetsTest, ZAddTest) {  // NOLINT
 }
 
 // ZCard
-TEST_F(ZSetsTest, ZCardTest) {  // NOLINT
+TEST_F(ZSetsTest, ZCardTest) {
+  // NOLINT
   int32_t ret;
   double score;
 
@@ -752,7 +757,8 @@ TEST_F(ZSetsTest, ZCardTest) {  // NOLINT
 }
 
 // ZCount
-TEST_F(ZSetsTest, ZCountTest) {  // NOLINT
+TEST_F(ZSetsTest, ZCountTest) {
+  // NOLINT
   int32_t ret;
 
   // ***************** Group 1 Test *****************
@@ -939,7 +945,8 @@ TEST_F(ZSetsTest, ZCountTest) {  // NOLINT
 }
 
 // ZIncrby
-TEST_F(ZSetsTest, ZIncrbyTest) {  // NOLINT
+TEST_F(ZSetsTest, ZIncrbyTest) {
+  // NOLINT
   int32_t ret;
   double score;
   int64_t type_ttl;
@@ -1089,7 +1096,8 @@ TEST_F(ZSetsTest, ZIncrbyTest) {  // NOLINT
 }
 
 // ZRange
-TEST_F(ZSetsTest, ZRangeTest) {  // NOLINT
+TEST_F(ZSetsTest, ZRangeTest) {
+  // NOLINT
   int32_t ret;
   std::vector<storage::ScoreMember> score_members;
 
@@ -1274,7 +1282,8 @@ TEST_F(ZSetsTest, ZRangeTest) {  // NOLINT
 }
 
 // ZRangebyscore
-TEST_F(ZSetsTest, ZRangebyscoreTest) {  // NOLINT
+TEST_F(ZSetsTest, ZRangebyscoreTest) {
+  // NOLINT
   int32_t ret;
   std::vector<storage::ScoreMember> score_members;
 
@@ -1730,7 +1739,8 @@ TEST_F(ZSetsTest, ZRangebyscoreTest) {  // NOLINT
 // }
 
 // ZRem
-TEST_F(ZSetsTest, ZRemTest) {  // NOLINT
+TEST_F(ZSetsTest, ZRemTest) {
+  // NOLINT
   int32_t ret;
 
   // ***************** Group 1 Test *****************
@@ -1841,7 +1851,8 @@ TEST_F(ZSetsTest, ZRemTest) {  // NOLINT
 }
 
 // ZRemrangebyrank
-TEST_F(ZSetsTest, ZRemrangebyrankTest) {  // NOLINT
+TEST_F(ZSetsTest, ZRemrangebyrankTest) {
+  // NOLINT
   int32_t ret;
   std::vector<storage::ScoreMember> score_members;
 
@@ -2442,7 +2453,8 @@ TEST_F(ZSetsTest, ZRemrangebyrankTest) {  // NOLINT
 }
 
 // ZRemrangebyscore
-TEST_F(ZSetsTest, ZRemrangebyscoreTest) {  // NOLINT
+TEST_F(ZSetsTest, ZRemrangebyscoreTest) {
+  // NOLINT
   int32_t ret;
 
   // ***************** Group 1 Test *****************
@@ -3063,7 +3075,8 @@ TEST_F(ZSetsTest, ZRemrangebyscoreTest) {  // NOLINT
 }
 
 // ZRevrange
-TEST_F(ZSetsTest, ZRevrangeTest) {  // NOLINT
+TEST_F(ZSetsTest, ZRevrangeTest) {
+  // NOLINT
   int32_t ret;
   std::vector<storage::ScoreMember> score_members;
 
@@ -3589,7 +3602,8 @@ TEST_F(ZSetsTest, ZRevrangeTest) {  // NOLINT
 // }
 
 // ZRevrank
-TEST_F(ZSetsTest, ZRevrankTest) {  // NOLINT
+TEST_F(ZSetsTest, ZRevrankTest) {
+  // NOLINT
   int32_t ret;
   int32_t rank;
 
@@ -3641,7 +3655,8 @@ TEST_F(ZSetsTest, ZRevrankTest) {  // NOLINT
 }
 
 // ZSCORE
-TEST_F(ZSetsTest, ZScoreTest) {  // NOLINT
+TEST_F(ZSetsTest, ZScoreTest) {
+  // NOLINT
   int32_t ret;
   double score;
 
@@ -3706,7 +3721,8 @@ TEST_F(ZSetsTest, ZScoreTest) {  // NOLINT
 }
 
 // ZUNIONSTORE
-TEST_F(ZSetsTest, ZUnionstoreTest) {  // NOLINT
+TEST_F(ZSetsTest, ZUnionstoreTest) {
+  // NOLINT
   int32_t ret;
 
   // ***************** Group 1 Test *****************
@@ -3952,7 +3968,8 @@ TEST_F(ZSetsTest, ZUnionstoreTest) {  // NOLINT
 }
 
 // ZINTERSTORE
-TEST_F(ZSetsTest, ZInterstoreTest) {  // NOLINT
+TEST_F(ZSetsTest, ZInterstoreTest) {
+  // NOLINT
   int32_t ret;
 
   // ***************** Group 1 Test *****************
@@ -4182,7 +4199,8 @@ TEST_F(ZSetsTest, ZInterstoreTest) {  // NOLINT
 }
 
 // ZRANGEBYLEX
-TEST_F(ZSetsTest, ZRangebylexTest) {  // NOLINT
+TEST_F(ZSetsTest, ZRangebylexTest) {
+  // NOLINT
   int32_t ret;
 
   std::vector<std::string> members;
@@ -4312,7 +4330,8 @@ TEST_F(ZSetsTest, ZRangebylexTest) {  // NOLINT
 }
 
 // ZLEXCOUNT
-TEST_F(ZSetsTest, ZLexcountTest) {  // NOLINT
+TEST_F(ZSetsTest, ZLexcountTest) {
+  // NOLINT
   int32_t ret;
 
   std::vector<std::string> members;
@@ -4442,7 +4461,8 @@ TEST_F(ZSetsTest, ZLexcountTest) {  // NOLINT
 }
 
 // ZREMRANGEBYLEX
-TEST_F(ZSetsTest, ZRemrangebylexTest) {  // NOLINT
+TEST_F(ZSetsTest, ZRemrangebylexTest) {
+  // NOLINT
   int32_t ret;
   std::vector<std::string> members;
 
@@ -4843,7 +4863,8 @@ TEST_F(ZSetsTest, ZRemrangebylexTest) {  // NOLINT
 }
 
 // ZScan
-TEST_F(ZSetsTest, ZScanTest) {  // NOLINT
+TEST_F(ZSetsTest, ZScanTest) {
+  // NOLINT
   int32_t ret = 0;
   int64_t cursor = 0;
   int64_t next_cursor = 0;
@@ -5250,7 +5271,7 @@ TEST_F(ZSetsTest, ZScanTest) {  // NOLINT
   ASSERT_TRUE(score_members_match(score_member_out, {}));
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   if (!kstd::FileExists("./log")) {
     kstd::CreatePath("./log");
   }
