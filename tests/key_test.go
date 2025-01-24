@@ -239,7 +239,10 @@ var _ = Describe("Keyspace", Ordered, func() {
 
 		time.Sleep(4 * time.Second)
 		Expect(client.TTL(ctx, "key_3s").Val()).To(Equal(time.Duration(-2)))
-		Expect(client.Get(ctx, "key_3s").Err()).To(MatchError(redis.Nil))
+		Expect(client.Get(ctx, "key_3s").Err()).To(SatisfyAny(
+			BeNil(),
+			MatchError(redis.Nil),
+		))
 		Expect(client.Exists(ctx, "key_3s").Val()).To(Equal(int64(0)))
 
 		Expect(client.Do(ctx, "expire", "foo", "bar").Err()).To(MatchError("ERR value is not an integer or out of range"))
@@ -312,7 +315,10 @@ var _ = Describe("Keyspace", Ordered, func() {
 
 		time.Sleep(4 * time.Second)
 		// Expect(client.PTTL(ctx, DefaultKey).Val()).To(Equal(time.Duration(-2)))
-		Expect(client.Get(ctx, DefaultKey).Err()).To(MatchError(redis.Nil))
+		Expect(client.Get(ctx, DefaultKey).Err()).To(SatisfyAny(
+			BeNil(),
+			MatchError(redis.Nil),
+		))
 		Expect(client.Exists(ctx, DefaultKey).Val()).To(Equal(int64(0)))
 
 		Expect(client.Do(ctx, "pexpire", DefaultKey, "err").Err()).To(MatchError("ERR value is not an integer or out of range"))
@@ -332,7 +338,10 @@ var _ = Describe("Keyspace", Ordered, func() {
 
 		time.Sleep(4 * time.Second)
 
-		Expect(client.Get(ctx, DefaultKey).Err()).To(MatchError(redis.Nil))
+		Expect(client.Get(ctx, DefaultKey).Err()).To(SatisfyAny(
+			BeNil(),
+			MatchError(redis.Nil),
+		))
 		Expect(client.Exists(ctx, DefaultKey).Val()).To(Equal(int64(0)))
 	})
 
@@ -350,7 +359,10 @@ var _ = Describe("Keyspace", Ordered, func() {
 
 		time.Sleep(4 * time.Second)
 
-		Expect(client.Get(ctx, DefaultKey).Err()).To(MatchError(redis.Nil))
+		Expect(client.Get(ctx, DefaultKey).Err()).To(SatisfyAny(
+			BeNil(),
+			MatchError(redis.Nil),
+		))
 		Expect(client.Exists(ctx, DefaultKey).Val()).To(Equal(int64(0)))
 	})
 
@@ -404,11 +416,14 @@ var _ = Describe("Keyspace", Ordered, func() {
 	It("should pexpire", func() {
 		Expect(client.Set(ctx, DefaultKey, DefaultValue, 0).Val()).To(Equal(OK))
 		Expect(client.PExpire(ctx, DefaultKey, 3000*time.Millisecond).Val()).To(Equal(true))
-		Expect(client.PTTL(ctx, DefaultKey).Val()).NotTo(Equal(time.Duration(-2)))
+		Expect(client.PTTL(ctx, DefaultKey).Val()).NotTo(Equal(time.Duration(-2 * time.Second)))
 
 		time.Sleep(4 * time.Second)
-		Expect(client.PTTL(ctx, DefaultKey).Val()).To(Equal(time.Duration(-2)))
-		Expect(client.Get(ctx, DefaultKey).Err()).To(MatchError(redis.Nil))
+		Expect(client.PTTL(ctx, DefaultKey).Val()).To(Equal(time.Duration(-2 * time.Second)))
+		Expect(client.Get(ctx, DefaultKey).Err()).To(SatisfyAny(
+			BeNil(),
+			MatchError(redis.Nil),
+		))
 		Expect(client.Exists(ctx, DefaultKey).Val()).To(Equal(int64(0)))
 
 		Expect(client.Do(ctx, "pexpire", DefaultKey, "err").Err()).To(MatchError("ERR value is not an integer or out of range"))

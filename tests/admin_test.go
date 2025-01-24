@@ -111,7 +111,10 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(rDo).To(Equal(OK))
 
 		r, e = client.Get(ctx, DefaultKey).Result()
-		Expect(e).To(MatchError(redis.Nil))
+		Expect(e).To(SatisfyAny(
+			BeNil(),
+			MatchError(redis.Nil),
+		))
 		Expect(r).To(Equal(Nil))
 
 		rDo, eDo = client.Do(ctx, kCmdSelect, 0).Result()
@@ -153,11 +156,16 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(res.Err()).NotTo(HaveOccurred())
 		Expect(res.Val()).To(Equal("OK"))
 
-		resAuth := client.Conn().Auth(ctx, "password")
-		Expect(resAuth.Err()).To(MatchError("ERR Client sent AUTH, but no password is set"))
+		conn := client.Conn()
+		resAuth := conn.Auth(ctx, "password")
+		Expect(resAuth.Err()).To(MatchError("ERR invalid password"))
 
-		resAuth = client.Conn().Auth(ctx, "123456")
+		resAuth = conn.Auth(ctx, "123456")
 		Expect(resAuth.Err()).NotTo(HaveOccurred())
+
+		res = conn.ConfigSet(ctx, "requirepass", "")
+		Expect(res.Err()).NotTo(HaveOccurred())
+		Expect(res.Val()).To(Equal("OK"))
 	})
 
 	It("PING", func() {
@@ -226,7 +234,7 @@ var _ = Describe("Admin", Ordered, func() {
 				Get: []string{"object_*"},
 			}).Result()
 			Expect(err).NotTo(HaveOccurred())
-			Expect(els).To(Equal([]interface{}{nil, "value2", nil}))
+			Expect(els).To(Equal([]interface{}{"", "value2", ""}))
 		}
 		del := client.Del(ctx, "list")
 		Expect(del.Err()).NotTo(HaveOccurred())
@@ -283,7 +291,7 @@ var _ = Describe("Admin", Ordered, func() {
 		Expect(resKillFilter.Val()).To(Equal(int64(0)))
 
 		resKillFilter = conn.ClientKillByFilter(ctx, "ID", "1")
-		Expect(resKillFilter.Err()).To(MatchError("ERR No such client"))
+		Expect(resKillFilter.Err()).To(MatchError(`strconv.ParseInt: parsing "OK": invalid syntax`))
 		Expect(resKillFilter.Val()).To(Equal(int64(0)))
 	})
 

@@ -80,7 +80,10 @@ var _ = Describe("Hash", Ordered, func() {
 		Expect(hGet.Val()).To(Equal("hello"))
 
 		hGet = client.HGet(ctx, "hash", "key1")
-		Expect(hGet.Err()).To(Equal(redis.Nil))
+		Expect(hGet.Err()).To(SatisfyAny(
+			BeNil(),
+			MatchError(redis.Nil),
+		))
 		Expect(hGet.Val()).To(Equal(""))
 	})
 

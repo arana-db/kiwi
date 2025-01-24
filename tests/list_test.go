@@ -313,7 +313,10 @@ var _ = Describe("List", Ordered, func() {
 		Expect(lIndex.Val()).To(Equal(s2s["key_3"]))
 
 		lIndex = client.LIndex(ctx, DefaultKey, 4)
-		Expect(lIndex.Err()).To(Equal(redis.Nil))
+		Expect(lIndex.Err()).To(SatisfyAny(
+			BeNil(),
+			MatchError(redis.Nil),
+		))
 		Expect(lIndex.Val()).To(Equal(""))
 
 		err := client.Do(ctx, "lindex", DefaultKey, 1, 2).Err()

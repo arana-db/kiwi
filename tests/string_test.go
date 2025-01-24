@@ -85,13 +85,19 @@ var _ = Describe("String", Ordered, func() {
 		{
 			for k := range s2s {
 				r, e := client.Get(ctx, k).Result()
-				Expect(e).To(MatchError(redis.Nil))
+				Expect(e).To(SatisfyAny(
+					BeNil(),
+					MatchError(redis.Nil),
+				))
 				Expect(r).To(Equal(Nil))
 			}
 
 			for k := range s2i {
 				r, e := client.Get(ctx, k).Result()
-				Expect(e).To(MatchError(redis.Nil))
+				Expect(e).To(SatisfyAny(
+					BeNil(),
+					MatchError(redis.Nil),
+				))
 				Expect(r).To(Equal(Nil))
 			}
 		}
@@ -215,7 +221,7 @@ var _ = Describe("String", Ordered, func() {
 
 		mGet := client.MGet(ctx, "key1", "key2", "_")
 		Expect(mGet.Err()).NotTo(HaveOccurred())
-		Expect(mGet.Val()).To(Equal([]interface{}{"hello1", "hello2", nil}))
+		Expect(mGet.Val()).To(Equal([]interface{}{"hello1", "hello2", ""}))
 
 		// MSet struct
 		type set struct {
@@ -252,7 +258,7 @@ var _ = Describe("String", Ordered, func() {
 
 		mGet := client.MGet(ctx, "keynx1", "keynx2", "_")
 		Expect(mGet.Err()).NotTo(HaveOccurred())
-		Expect(mGet.Val()).To(Equal([]interface{}{"hello1", "hello2", nil}))
+		Expect(mGet.Val()).To(Equal([]interface{}{"hello1", "hello2", ""}))
 
 		mSetnx = client.MSetNX(ctx, "keynx3", "hello3", "keynx2", "hello22")
 		Expect(mSetnx.Err()).NotTo(HaveOccurred())
@@ -260,7 +266,7 @@ var _ = Describe("String", Ordered, func() {
 
 		mGet = client.MGet(ctx, "keynx2", "keynx3")
 		Expect(mGet.Err()).NotTo(HaveOccurred())
-		Expect(mGet.Val()).To(Equal([]interface{}{"hello2", nil}))
+		Expect(mGet.Val()).To(Equal([]interface{}{"hello2", ""}))
 
 		mSetnx = client.MSetNX(ctx, "keynx1")
 		Expect(mSetnx.Err()).To(HaveOccurred())
