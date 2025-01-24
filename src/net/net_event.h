@@ -44,7 +44,7 @@ class NetEvent {
   virtual int OnReadable(const std::shared_ptr<Connection> &conn, std::string *readBuff) = 0;
 
   // Handle write event when the connection is writable and the data can be sent
-  virtual int OnWritable(unsigned long int id, int fd, BaseEvent *event) = 0;
+  virtual int OnWritable(uint64_t id, int fd, BaseEvent *event) = 0;
 
   virtual void OnError() = 0;
 
