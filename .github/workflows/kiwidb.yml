@@ -40,9 +40,6 @@ jobs:
   build_on_macos:
     runs-on: macos-14
     needs: check_format
-    env:
-      CMAKE_C_COMPILER_LAUNCHER: "ccache"
-      CMAKE_CXX_COMPILER_LAUNCHER: "ccache"
 
     steps:
       - uses: actions/checkout@v4
@@ -50,32 +47,25 @@ jobs:
       - name: Install dependencies
         run: |
           brew update
-          brew install ccache
           brew install autoconf
           brew install go
 
-      - name: Configure ccache
-        run: |
-          ccache --set-config=cache_dir=$HOME/.ccache
-          ccache --max-size=10G
-
-      - name: Restore ccache
-        uses: actions/cache@v3
+      - name: Restore cache
+        uses: actions/cache@v4
         with:
-          path: ~/.ccache
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.cpp','**/*.cc','**/*.c', '**/*.h') }}-clang
+          path: |
+            ${{ github.workspace }}/download
+            ${{ github.workspace }}/build-release
+            ${{ github.workspace }}/deps-release
+          key: ${{ runner.os }}-cache-${{ hashFiles('**/CMakeLists.txt') }}-clang
           restore-keys: |
-            ${{ runner.os }}-ccache-
-            ccache-
+            ${{ runner.os }}-cache-
 
       - name: Build
         run: |
           export LIBRARY_PATH=$(xcrun --show-sdk-path)/usr/lib
           export DYLD_LIBRARY_PATH=$(xcrun --show-sdk-path)/usr/lib
           bash ./etc/script/build.sh --verbose
-
-      - name: Save ccache stats
-        run: ccache -s
 
       - name: GTest
         working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
@@ -100,36 +90,24 @@ jobs:
   build_on_ubuntu:
     runs-on: ubuntu-latest
     needs: check_format
-    env:
-      CMAKE_C_COMPILER_LAUNCHER: "ccache"
-      CMAKE_CXX_COMPILER_LAUNCHER: "ccache"
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: sudo apt install -y ccache
-
-      - name: Configure ccache
-        run: |
-          ccache --set-config=cache_dir=$HOME/.ccache
-          ccache --max-size=10G
-
       - name: Restore ccache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
-          path: ~/.ccache
-          key: ${{ runner.os }}-ccache-${{ hashFiles('**/*.cpp','**/*.cc','**/*.c', '**/*.h') }}
+          path: |
+            ${{ github.workspace }}/download
+            ${{ github.workspace }}/build-release
+            ${{ github.workspace }}/deps-release
+          key: ${{ runner.os }}-cache-${{ hashFiles('**/CMakeLists.txt') }}-gcc
           restore-keys: |
-            ${{ runner.os }}-ccache-
-            ccache-
+            ${{ runner.os }}-cache-
 
       - name: Build
         run: |
           bash ./etc/script/build.sh --verbose
-
-      - name: Save ccache stats
-        run: ccache -s
 
       - name: GTest
         working-directory: ${{ github.workspace }}/${{ env.BUILD_DIR }}
