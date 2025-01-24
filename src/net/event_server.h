@@ -95,6 +95,7 @@ class EventServer final {
   std::vector<std::unique_ptr<ThreadManager<T>>> threadsManager_;
 
   std::mutex mtx_;
+
   std::condition_variable cv_;
 
   std::shared_ptr<Timer> timer_;

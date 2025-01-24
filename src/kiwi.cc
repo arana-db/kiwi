@@ -188,6 +188,8 @@ bool KiwiDB::Init() {
   auto num = g_config.worker_threads_num + g_config.slave_threads_num;
   options_.SetThreadNum(num);
 
+  options_.SetMaxClients(g_config.max_clients);
+
   // now we only use fast cmd thread pool
   auto status = cmd_threads_.Init(g_config.fast_cmd_threads_num, 1, "kiwi-cmd");
   if (!status.ok()) {
