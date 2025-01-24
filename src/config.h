@@ -84,9 +84,10 @@ class StringValueArray : public BaseValue {
 
   std::string Value() const override { return kstd::StringConcat(values_, delimiter_); };
 
+  Status SetValue(const std::string& value, bool check);
+
  private:
   Status SetValue(const std::string& value) override;
-
   std::vector<std::string> values_;
   char delimiter_ = 0;
 };
