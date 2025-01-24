@@ -13,10 +13,11 @@ namespace net {
 int StreamSocket::OnReadable(const std::shared_ptr<Connection> &conn, std::string *readBuff) { return Read(readBuff); }
 
 // return bytes that have not yet been sent
-int StreamSocket::OnWritable() {
+int StreamSocket::OnWritable(uint64_t id, int fd, BaseEvent *event) {
   if (sendData_.empty()) {
     if (!writeQueue_.Pop(sendData_)) {  // no data to send
       writeReady_.store(false);
+      event->DelWriteEvent(id, fd);
       return NE_OK;
     }
   }
@@ -36,6 +37,7 @@ int StreamSocket::OnWritable() {
     // determine if there is still data in the queue
     if (writeQueue_.Empty()) {
       writeReady_.store(false);
+      event->DelWriteEvent(id, fd);
       return NE_OK;
     }
   }
@@ -47,7 +49,7 @@ bool StreamSocket::SendPacket(std::string &&msg) {
   do {
     sendOver = writeQueue_.Push(msg);
   } while (!sendOver);
-  return !writeReady_.exchange(true);
+  return writeReady_.exchange(true);
 }
 
 // Read data from the socket
@@ -58,11 +60,11 @@ int StreamSocket::Read(std::string *readBuff) {
     if (ret == -1) {
       if (EAGAIN == errno || EWOULDBLOCK == errno || ECONNRESET == errno) {
         return NE_OK;
-      } else {
-        ERROR("StreamSocket fd: {} read error: {}", Fd(), errno);
-        return NE_ERROR;
       }
-    } else if (ret == 0) {
+      ERROR("StreamSocket fd: {} read error: {}", Fd(), errno);
+      return NE_ERROR;
+    }
+    if (ret == 0) {
       return NE_CLOSE;
     }
 

@@ -32,7 +32,7 @@ class ListenSocket : public BaseSocket {
   int OnReadable(const std::shared_ptr<Connection> &conn, std::string *readBuff) override;
 
   // The function is cant be used
-  int OnWritable() override;
+  int OnWritable(uint64_t id, int fd, BaseEvent *event) override;
 
   // The function is cant be used
   bool SendPacket(std::string &&msg) override;

@@ -5,7 +5,7 @@
  * of patent rights can be found in the PATENTS file in the same directory.
  */
 
-#pragma
+#pragma once
 
 #include <chrono>
 #include <cstdint>
@@ -24,6 +24,8 @@ class ITimerTask {
     }
     start_ = start;
   }
+
+  virtual ~ITimerTask() = default;
 
   virtual void TimeOut() = 0;
 

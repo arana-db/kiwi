@@ -264,7 +264,9 @@ void ThreadManager<T>::SendPacket(const T &conn, std::string &&msg) {
     connPtr = iter->second.second;
   }
 
-  connPtr->netEvent_->SendPacket(std::move(msg));
+  if (connPtr->netEvent_->SendPacket(std::move(msg))) {
+    return;
+  }
   if (netOptions_.GetRwSeparation()) {
     writeThread_->SetWriteEvent(connId, connPtr->fd_);
   } else {
