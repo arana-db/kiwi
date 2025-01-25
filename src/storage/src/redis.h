@@ -35,7 +35,7 @@ using Slice = rocksdb::Slice;
 
 class Redis {
  public:
-  Redis(Storage* storage, int32_t index);
+  Redis(Storage* storage, int32_t index, std::shared_ptr<LockMgr> lock_mgr);
   virtual ~Redis();
 
   rocksdb::DB* GetDB() { return db_; }
@@ -251,6 +251,7 @@ class Redis {
   Status LSet(const Slice& key, int64_t index, const Slice& value);
   Status LTrim(const Slice& key, int64_t start, int64_t stop);
   Status RPop(const Slice& key, int64_t count, std::vector<std::string>* elements);
+  Status RPopWithoutLock(const Slice& key, int64_t count, std::vector<std::string>* elements);
   Status RPoplpush(const Slice& source, const Slice& destination, std::string* element);
   Status RPush(const Slice& key, const std::vector<std::string>& values, uint64_t* ret);
   Status RPushx(const Slice& key, const std::vector<std::string>& values, uint64_t* len);

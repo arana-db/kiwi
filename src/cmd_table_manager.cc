@@ -166,6 +166,8 @@ void CmdTableManager::InitCmdTable() {
   ADD_COMMAND(LPush, -3);
   ADD_COMMAND(RPush, -3);
   ADD_COMMAND(RPop, 2);
+  ADD_COMMAND(BLPop, -3);
+  ADD_COMMAND(BRPop, -3);
   ADD_COMMAND(LRem, 4);
   ADD_COMMAND(LRange, 4);
   ADD_COMMAND(LTrim, 4);

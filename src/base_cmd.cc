@@ -106,6 +106,84 @@ BaseCmd* BaseCmdGroup::GetSubCmd(const std::string& cmdName) {
   return subCmd->second.get();
 }
 
+void BaseCmd::BlockThisClientToWaitLRPush(std::vector<std::string>& keys, int64_t expire_time,
+                                          std::shared_ptr<PClient> client, BlockedConnNode::Type type) {
+  std::lock_guard<std::shared_mutex> map_lock(g_kiwi->GetBlockMtx());
+  auto& key_to_conns = g_kiwi->GetMapFromKeyToConns();
+  for (auto key : keys) {
+    kiwi::BlockKey blpop_key{client->GetCurrentDB(), key};
+
+    auto it = key_to_conns.find(blpop_key);
+    if (it == key_to_conns.end()) {
+      key_to_conns.emplace(blpop_key, std::make_unique<std::list<BlockedConnNode>>());
+      it = key_to_conns.find(blpop_key);
+    }
+    it->second->emplace_back(expire_time, client, type);
+  }
+}
+
+void BaseCmd::ServeAndUnblockConns(PClient* client) {
+  kiwi::BlockKey key{client->GetCurrentDB(), client->Key()};
+
+  std::lock_guard<std::shared_mutex> map_lock(g_kiwi->GetBlockMtx());
+  auto& key_to_conns = g_kiwi->GetMapFromKeyToConns();
+  auto it = key_to_conns.find(key);
+  if (it == key_to_conns.end()) {
+    // no client is waitting for this key
+    return;
+  }
+
+  auto& waitting_list = it->second;
+  std::vector<std::string> elements;
+  storage::Status s;
+
+  // traverse this list from head to tail(in the order of adding sequence) ,means "first blocked, first get served“
+  for (auto conn_blocked = waitting_list->begin(); conn_blocked != waitting_list->end();) {
+    auto BlockedClient = conn_blocked->GetBlockedClient();
+
+    if (BlockedClient->State() == ClientState::kClosed) {
+      conn_blocked = waitting_list->erase(conn_blocked);
+      g_kiwi->CleanBlockedNodes(BlockedClient);
+      continue;
+    }
+
+    switch (conn_blocked->GetCmdType()) {
+      case BlockedConnNode::Type::BLPop:
+        s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->LPop(client->Key(), 1, &elements);
+        break;
+      case BlockedConnNode::Type::BRPop:
+        s = STORE_INST.GetBackend(client->GetCurrentDB())->GetStorage()->RPop(client->Key(), 1, &elements);
+        break;
+    }
+
+    if (s.ok()) {
+      BlockedClient->AppendArrayLen(2);
+      BlockedClient->AppendString(client->Key());
+      BlockedClient->AppendString(elements[0]);
+    } else if (s.IsNotFound()) {
+      // this key has no more elements to serve more blocked conn.
+      break;
+    } else {
+      BlockedClient->SetRes(CmdRes::kErrOther, s.ToString());
+    }
+    BlockedClient->SendPacket();
+    // remove this conn from current waiting list
+    conn_blocked = waitting_list->erase(conn_blocked);
+    g_kiwi->CleanBlockedNodes(BlockedClient);
+  }
+}
+
+bool BlockedConnNode::IsExpired(std::chrono::system_clock::time_point now) {
+  if (expire_time_ == 0) {
+    return false;
+  }
+  int64_t now_in_ms = std::chrono::time_point_cast<std::chrono::milliseconds>(now).time_since_epoch().count();
+  if (expire_time_ <= now_in_ms) {
+    return true;
+  }
+  return false;
+}
+
 bool BaseCmdGroup::DoInitial(PClient* client) {
   client->SetSubCmdName(client->argv_[1]);
   if (!subCmds_.contains(client->SubCmdName())) {

@@ -26,6 +26,7 @@
 #include "rocksdb/table.h"
 
 #include "src/base_data_value_format.h"
+#include "src/lock_mgr.h"
 #include "std/env.h"
 #include "std/std_mutex.h"
 #include "storage/slot_indexer.h"
@@ -190,6 +191,8 @@ class Storage {
   std::unique_ptr<Redis>& GetDBInstance(const Slice& key);
 
   std::unique_ptr<Redis>& GetDBInstance(const std::string& key);
+
+  std::shared_ptr<LockMgr> GetLockMgr() { return lock_mgr_; }
 
   // Strings Commands
 
@@ -572,6 +575,8 @@ class Storage {
 
   // Removes and returns the last elements of the list stored at key.
   Status RPop(const Slice& key, int64_t count, std::vector<std::string>* elements);
+
+  Status RPopWithoutLock(const Slice& key, int64_t count, std::vector<std::string>* elements);
 
   // Returns the element at index index in the list stored at key. The index is
   // zero-based, so 0 means the first element, 1 the second element and so on.
@@ -1111,6 +1116,8 @@ class Storage {
   std::vector<std::unique_ptr<Redis>> insts_;
   std::unique_ptr<SlotIndexer> slot_indexer_;
   std::atomic<bool> is_opened_ = false;
+
+  std::shared_ptr<LockMgr> lock_mgr_;
 
   std::unique_ptr<LRUCache<std::string, std::string>> cursors_store_;
 
