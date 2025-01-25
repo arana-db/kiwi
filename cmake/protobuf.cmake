@@ -13,14 +13,14 @@ ELSE ()
     SET(LIB_PROTOC "libprotoc.a")
 ENDIF ()
 
-SET(PROTOBUF_SOURCES_DIR "${LIB_SOURCE_DIR}/extern_protobuf" CACHE PATH "Path to protobuf sources")
+SET(PROTOBUF_SOURCES_DIR "${LIB_SOURCE_DIR}/protobuf" CACHE PATH "Path to protobuf sources")
 SET(PROTOBUF_INCLUDE_DIR "${LIB_INCLUDE_DIR}" CACHE PATH "protobuf include directory." FORCE)
 SET(PROTOBUF_LIBRARY "${LIB_INSTALL_DIR}/${LIB_PROTOBUF}" CACHE FILEPATH "protobuf install directory." FORCE)
 SET(PROTOC_LIBRARY "${LIB_INSTALL_DIR}/${LIB_PROTOC}" CACHE FILEPATH "protoc install directory." FORCE)
 SET(PROTOBUF_PROTOC "${LIB_INSTALL_PREFIX}/bin/protoc")
 
 ExternalProject_Add(
-        extern_protobuf
+        protobuf
         UPDATE_COMMAND ""
         LOG_CONFIGURE 1
         LOG_BUILD 1
@@ -45,9 +45,7 @@ ExternalProject_Add(
         -DBUILD_SHARED_LIBS=OFF
         -Dprotobuf_BUILD_TESTS=OFF
         -Dprotobuf_BUILD_LIBPROTOC=ON
-        BUILD_COMMAND make -j${CPU_CORE}
+        ${EXTERNAL_GENERATOR}
+        BUILD_COMMAND ${EXTERNAL_BUILD} -j${CPU_CORE}
+        BUILD_BYPRODUCTS ${LIB_PROTOBUF}
 )
-
-ADD_LIBRARY(protobuf STATIC IMPORTED GLOBAL)
-SET_PROPERTY(TARGET protobuf PROPERTY IMPORTED_LOCATION ${PROTOBUF_LIBRARY})
-ADD_DEPENDENCIES(protobuf extern_protobuf)

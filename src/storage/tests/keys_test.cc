@@ -4,7 +4,6 @@
 //  of patent rights can be found in the PATENTS file in the same directory.
 
 #include <gtest/gtest.h>
-#include <iostream>
 #include <thread>
 
 #include "std/env.h"
@@ -30,6 +29,7 @@ LogIniter log_initer;
 class KeysTest : public ::testing::Test {
  public:
   KeysTest() = default;
+
   ~KeysTest() override = default;
 
   void SetUp() override {
@@ -46,6 +46,7 @@ class KeysTest : public ::testing::Test {
   void TearDown() override { db.Close(); }
 
   static void SetUpTestSuite() {}
+
   static void TearDownTestSuite() {}
 
   std::string db_path{"./test_db/keys_test"};
@@ -54,7 +55,7 @@ class KeysTest : public ::testing::Test {
   storage::Status s;
 };
 
-static bool make_expired(storage::Storage* const db, const Slice& key) {
+static bool make_expired(storage::Storage *const db, const Slice &key) {
   std::map<storage::DataType, rocksdb::Status> type_status;
   int32_t ret = db->Expire(key, 1);
   if ((ret == 0) || !type_status[storage::DataType::kStrings].ok()) {
@@ -64,8 +65,8 @@ static bool make_expired(storage::Storage* const db, const Slice& key) {
   return true;
 }
 
-static bool key_value_match(const std::vector<storage::KeyValue>& key_value_out,
-                            const std::vector<storage::KeyValue>& expect_key_value) {
+static bool key_value_match(const std::vector<storage::KeyValue> &key_value_out,
+                            const std::vector<storage::KeyValue> &expect_key_value) {
   if (key_value_out.size() != expect_key_value.size()) {
     WARN("key_value_out.size: {} expect_key_value.size: {}", key_value_out.size(), expect_key_value.size());
   }
@@ -79,7 +80,7 @@ static bool key_value_match(const std::vector<storage::KeyValue>& key_value_out,
   return true;
 }
 
-static bool key_match(const std::vector<std::string>& keys_out, const std::vector<std::string>& expect_keys) {
+static bool key_match(const std::vector<std::string> &keys_out, const std::vector<std::string> &expect_keys) {
   if (keys_out.size() != expect_keys.size()) {
     return false;
   }
@@ -94,7 +95,8 @@ static bool key_match(const std::vector<std::string>& keys_out, const std::vecto
 // PKScanRange
 // Note: This test needs to execute at first because all of the data is
 // predetermined.
-TEST_F(KeysTest, PKScanRangeTest) {  // NOLINT
+TEST_F(KeysTest, PKScanRangeTest) {
+  // NOLINT
   int32_t ret;
   uint64_t ret_u64;
   std::string next_key;
@@ -109,7 +111,7 @@ TEST_F(KeysTest, PKScanRangeTest) {  // NOLINT
                                      {"PKSCANRANGE_M", "VALUE"}, {"PKSCANRANGE_O", "VALUE"}, {"PKSCANRANGE_Q", "VALUE"},
                                      {"PKSCANRANGE_S", "VALUE"}};
   keys_del.reserve(kvs.size());
-  for (const auto& kv : kvs) {
+  for (const auto &kv : kvs) {
     keys_del.push_back(kv.key);
   }
 
@@ -289,7 +291,7 @@ TEST_F(KeysTest, PKScanRangeTest) {  // NOLINT
                                        {"PKSCANRANGE_I1", "VALUE"}, {"PKSCANRANGE_K1", "VALUE"},
                                        {"PKSCANRANGE_M1", "VALUE"}, {"PKSCANRANGE_O1", "VALUE"},
                                        {"PKSCANRANGE_Q1", "VALUE"}, {"PKSCANRANGE_S1", "VALUE"}};
-  for (const auto& kv : kvset) {
+  for (const auto &kv : kvset) {
     s = db.SAdd(kv.key, {"MEMBER"}, &ret);
   }
 
@@ -484,7 +486,7 @@ TEST_F(KeysTest, PKScanRangeTest) {  // NOLINT
                                         {"PKSCANRANGE_I2", "VALUE"}, {"PKSCANRANGE_K2", "VALUE"},
                                         {"PKSCANRANGE_M2", "VALUE"}, {"PKSCANRANGE_O2", "VALUE"},
                                         {"PKSCANRANGE_Q2", "VALUE"}, {"PKSCANRANGE_S2", "VALUE"}};
-  for (const auto& kv : kvhash) {
+  for (const auto &kv : kvhash) {
     s = db.HMSet(kv.key, {{"FIELD", "VALUE"}});
   }
 
@@ -676,7 +678,7 @@ TEST_F(KeysTest, PKScanRangeTest) {  // NOLINT
                                         {"PKSCANRANGE_I3", "VALUE"}, {"PKSCANRANGE_K3", "VALUE"},
                                         {"PKSCANRANGE_M3", "VALUE"}, {"PKSCANRANGE_O3", "VALUE"},
                                         {"PKSCANRANGE_Q3", "VALUE"}, {"PKSCANRANGE_S3", "VALUE"}};
-  for (const auto& kv : kvzset) {
+  for (const auto &kv : kvzset) {
     s = db.ZAdd(kv.key, {{1, "MEMBER"}}, &ret);
   }
 
@@ -869,7 +871,7 @@ TEST_F(KeysTest, PKScanRangeTest) {  // NOLINT
                                         {"PKSCANRANGE_I4", "VALUE"}, {"PKSCANRANGE_K4", "VALUE"},
                                         {"PKSCANRANGE_M4", "VALUE"}, {"PKSCANRANGE_O4", "VALUE"},
                                         {"PKSCANRANGE_Q4", "VALUE"}, {"PKSCANRANGE_S4", "VALUE"}};
-  for (const auto& kv : kvlist) {
+  for (const auto &kv : kvlist) {
     s = db.LPush(kv.key, {"NODE"}, &ret_u64);
   }
 
@@ -1065,7 +1067,8 @@ TEST_F(KeysTest, PKScanRangeTest) {  // NOLINT
 // PKRScanRange
 // Note: This test needs to execute at first because all of the data is
 // predetermined.
-TEST_F(KeysTest, PKRScanRangeTest) {  // NOLINT
+TEST_F(KeysTest, PKRScanRangeTest) {
+  // NOLINT
   int32_t ret;
   uint64_t ret_u64;
   std::string next_key;
@@ -1081,7 +1084,7 @@ TEST_F(KeysTest, PKRScanRangeTest) {  // NOLINT
                                      {"PKRSCANRANGE_M", "VALUE"}, {"PKRSCANRANGE_O", "VALUE"},
                                      {"PKRSCANRANGE_Q", "VALUE"}, {"PKRSCANRANGE_S", "VALUE"}};
   keys_del.reserve(kvs.size());
-  for (const auto& kv : kvs) {
+  for (const auto &kv : kvs) {
     keys_del.push_back(kv.key);
   }
 
@@ -1260,7 +1263,7 @@ TEST_F(KeysTest, PKRScanRangeTest) {  // NOLINT
                                        {"PKRSCANRANGE_I1", "VALUE"}, {"PKRSCANRANGE_K1", "VALUE"},
                                        {"PKRSCANRANGE_M1", "VALUE"}, {"PKRSCANRANGE_O1", "VALUE"},
                                        {"PKRSCANRANGE_Q1", "VALUE"}, {"PKRSCANRANGE_S1", "VALUE"}};
-  for (const auto& kv : kvset) {
+  for (const auto &kv : kvset) {
     s = db.SAdd(kv.key, {"MEMBER"}, &ret);
   }
 
@@ -1471,7 +1474,7 @@ TEST_F(KeysTest, PKRScanRangeTest) {  // NOLINT
                                         {"PKRSCANRANGE_I2", "VALUE"}, {"PKRSCANRANGE_K2", "VALUE"},
                                         {"PKRSCANRANGE_M2", "VALUE"}, {"PKRSCANRANGE_O2", "VALUE"},
                                         {"PKRSCANRANGE_Q2", "VALUE"}, {"PKRSCANRANGE_S2", "VALUE"}};
-  for (const auto& kv : kvhash) {
+  for (const auto &kv : kvhash) {
     s = db.HMSet(kv.key, {{"FIELD", "VALUE"}});
   }
 
@@ -1682,7 +1685,7 @@ TEST_F(KeysTest, PKRScanRangeTest) {  // NOLINT
                                         {"PKRSCANRANGE_I3", "VALUE"}, {"PKRSCANRANGE_K3", "VALUE"},
                                         {"PKRSCANRANGE_M3", "VALUE"}, {"PKRSCANRANGE_O3", "VALUE"},
                                         {"PKRSCANRANGE_Q3", "VALUE"}, {"PKRSCANRANGE_S3", "VALUE"}};
-  for (const auto& kv : kvzset) {
+  for (const auto &kv : kvzset) {
     s = db.ZAdd(kv.key, {{1, "MEMBER"}}, &ret);
   }
 
@@ -1893,7 +1896,7 @@ TEST_F(KeysTest, PKRScanRangeTest) {  // NOLINT
                                         {"PKRSCANRANGE_I4", "VALUE"}, {"PKRSCANRANGE_K4", "VALUE"},
                                         {"PKRSCANRANGE_M4", "VALUE"}, {"PKRSCANRANGE_O4", "VALUE"},
                                         {"PKRSCANRANGE_Q4", "VALUE"}, {"PKRSCANRANGE_S4", "VALUE"}};
-  for (const auto& kv : kvlist) {
+  for (const auto &kv : kvlist) {
     s = db.LPush(kv.key, {"NODE"}, &ret_u64);
   }
 
@@ -2621,7 +2624,8 @@ TEST_F(KeysTest, PKPatternMatchDel) {
 // Scan
 // Note: This test needs to execute at first because all of the data is
 // predetermined.
-TEST_F(KeysTest, ScanCaseAllTest) {  // NOLINT
+TEST_F(KeysTest, ScanCaseAllTest) {
+  // NOLINT
   int64_t cursor;
   int64_t next_cursor;
   int64_t del_num;
@@ -3723,7 +3727,8 @@ TEST_F(KeysTest, ScanCaseAllTest) {  // NOLINT
 // Scan
 // Note: This test needs to execute at first because all of the data is
 // predetermined.
-TEST_F(KeysTest, ScanCaseSingleTest) {  // NOLINT
+TEST_F(KeysTest, ScanCaseSingleTest) {
+  // NOLINT
   int64_t cursor;
   int64_t next_cursor;
   int64_t del_num;
@@ -5064,7 +5069,7 @@ TEST_F(KeysTest, ExpireTest) {
   ret = db.Expire("GP3_EXPIRE_LISTS_KEY", 1);
   ret = db.Expire("GP3_EXPIRE_LISTS_KEY", 1);
   WARN("ret: {}", ret);
-  for (const auto& ts : type_status) {
+  for (const auto &ts : type_status) {
     WARN("type: {} status: {}", storage::DataTypeStrings[static_cast<int>(ts.first)], ts.second.ToString());
   }
   ASSERT_EQ(ret, 0);
@@ -5195,7 +5200,7 @@ TEST_F(KeysTest, TTLTest) {
   ttl_ret = db.TTL("TTL_KEY");
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   if (!kstd::FileExists("./log")) {
     kstd::CreatePath("./log");
   }

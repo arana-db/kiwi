@@ -4,7 +4,6 @@
 //  of patent rights can be found in the PATENTS file in the same directory.
 
 #include <gtest/gtest.h>
-#include <iostream>
 #include <thread>
 
 #include "src/custom_comparator.h"
@@ -152,7 +151,7 @@ TEST(ZSetScoreKeyComparator, FindShortestSeparatorTest) {
   ASSERT_TRUE(impl.Compare(start_10, limit_10) < 0);
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }

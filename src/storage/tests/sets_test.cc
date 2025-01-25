@@ -4,7 +4,6 @@
 //  of patent rights can be found in the PATENTS file in the same directory.
 
 #include <gtest/gtest.h>
-#include <iostream>
 #include <thread>
 
 #include "std/env.h"
@@ -27,6 +26,7 @@ LogIniter log_initer;
 class SetsTest : public ::testing::Test {
  public:
   SetsTest() = default;
+
   ~SetsTest() override = default;
 
   void SetUp() override {
@@ -51,8 +51,8 @@ class SetsTest : public ::testing::Test {
   storage::Status s;
 };
 
-static bool members_match(storage::Storage* const db, const Slice& key,
-                          const std::vector<std::string>& expect_members) {
+static bool members_match(storage::Storage *const db, const Slice &key,
+                          const std::vector<std::string> &expect_members) {
   std::vector<std::string> mm_out;
   Status s = db->SMembers(key, &mm_out);
   if (!s.ok() && !s.IsNotFound()) {
@@ -64,7 +64,7 @@ static bool members_match(storage::Storage* const db, const Slice& key,
   if (s.IsNotFound() && expect_members.empty()) {
     return true;
   }
-  for (const auto& member : expect_members) {
+  for (const auto &member : expect_members) {
     if (find(mm_out.begin(), mm_out.end(), member) == mm_out.end()) {
       return false;
     }
@@ -72,11 +72,11 @@ static bool members_match(storage::Storage* const db, const Slice& key,
   return true;
 }
 
-static bool members_match(const std::vector<std::string>& mm_out, const std::vector<std::string>& expect_members) {
+static bool members_match(const std::vector<std::string> &mm_out, const std::vector<std::string> &expect_members) {
   if (mm_out.size() != expect_members.size()) {
     return false;
   }
-  for (const auto& member : expect_members) {
+  for (const auto &member : expect_members) {
     if (find(mm_out.begin(), mm_out.end(), member) == mm_out.end()) {
       return false;
     }
@@ -84,8 +84,8 @@ static bool members_match(const std::vector<std::string>& mm_out, const std::vec
   return true;
 }
 
-static bool members_contains(const std::vector<std::string>& mm_out, const std::vector<std::string>& total_members) {
-  for (const auto& member : mm_out) {
+static bool members_contains(const std::vector<std::string> &mm_out, const std::vector<std::string> &total_members) {
+  for (const auto &member : mm_out) {
     if (find(total_members.begin(), total_members.end(), member) == total_members.end()) {
       return false;
     }
@@ -93,7 +93,7 @@ static bool members_contains(const std::vector<std::string>& mm_out, const std::
   return true;
 }
 
-static bool members_uniquen(const std::vector<std::string>& members) {
+static bool members_uniquen(const std::vector<std::string> &members) {
   for (int32_t idx = 0; idx < members.size(); ++idx) {
     for (int32_t sidx = idx + 1; sidx < members.size(); ++sidx) {
       if (members[idx] == members[sidx]) {
@@ -104,7 +104,7 @@ static bool members_uniquen(const std::vector<std::string>& members) {
   return true;
 }
 
-static bool size_match(storage::Storage* const db, const Slice& key, int32_t expect_size) {
+static bool size_match(storage::Storage *const db, const Slice &key, int32_t expect_size) {
   int32_t size = 0;
   Status s = db->SCard(key, &size);
   if (!s.ok() && !s.IsNotFound()) {
@@ -116,7 +116,7 @@ static bool size_match(storage::Storage* const db, const Slice& key, int32_t exp
   return size == expect_size;
 }
 
-static bool make_expired(storage::Storage* const db, const Slice& key) {
+static bool make_expired(storage::Storage *const db, const Slice &key) {
   std::map<storage::DataType, rocksdb::Status> type_status;
   int ret = db->Expire(key, 1);
   if ((ret == 0) || !type_status[storage::DataType::kSets].ok()) {
@@ -127,7 +127,8 @@ static bool make_expired(storage::Storage* const db, const Slice& key) {
 }
 
 // SAdd
-TEST_F(SetsTest, SAddTest) {  // NOLINT
+TEST_F(SetsTest, SAddTest) {
+  // NOLINT
   int32_t ret = 0;
   std::vector<std::string> members1{"a", "b", "c", "b"};
   s = db.SAdd("SADD_KEY", members1, &ret);
@@ -178,7 +179,8 @@ TEST_F(SetsTest, SAddTest) {  // NOLINT
 }
 
 // SCard
-TEST_F(SetsTest, SCardTest) {  // NOLINT
+TEST_F(SetsTest, SCardTest) {
+  // NOLINT
   int32_t ret = 0;
   std::vector<std::string> members{"MM1", "MM2", "MM3"};
   s = db.SAdd("SCARD_KEY", members, &ret);
@@ -190,7 +192,8 @@ TEST_F(SetsTest, SCardTest) {  // NOLINT
 }
 
 // SDiff
-TEST_F(SetsTest, SDiffTest) {  // NOLINT
+TEST_F(SetsTest, SDiffTest) {
+  // NOLINT
   int32_t ret = 0;
 
   // ***************** Group 1 Test *****************
@@ -347,7 +350,8 @@ TEST_F(SetsTest, SDiffTest) {  // NOLINT
 }
 
 // SDiffstore
-TEST_F(SetsTest, SDiffstoreTest) {  // NOLINT
+TEST_F(SetsTest, SDiffstoreTest) {
+  // NOLINT
   int32_t ret = 0;
 
   // ***************** Group 1 Test *****************
@@ -586,7 +590,8 @@ TEST_F(SetsTest, SDiffstoreTest) {  // NOLINT
 }
 
 // SInter
-TEST_F(SetsTest, SInterTest) {  // NOLINT
+TEST_F(SetsTest, SInterTest) {
+  // NOLINT
   int32_t ret = 0;
 
   // ***************** Group 1 Test *****************
@@ -744,7 +749,8 @@ TEST_F(SetsTest, SInterTest) {  // NOLINT
 }
 
 // SInterstore
-TEST_F(SetsTest, SInterstoreTest) {  // NOLINT
+TEST_F(SetsTest, SInterstoreTest) {
+  // NOLINT
   int32_t ret = 0;
 
   // ***************** Group 1 Test *****************
@@ -990,7 +996,8 @@ TEST_F(SetsTest, SInterstoreTest) {  // NOLINT
 }
 
 // SIsmember
-TEST_F(SetsTest, SIsmemberTest) {  // NOLINT
+TEST_F(SetsTest, SIsmemberTest) {
+  // NOLINT
   int32_t ret = 0;
   std::vector<std::string> members{"MEMBER"};
   s = db.SAdd("SISMEMBER_KEY", members, &ret);
@@ -1022,7 +1029,8 @@ TEST_F(SetsTest, SIsmemberTest) {  // NOLINT
 }
 
 // SMembers
-TEST_F(SetsTest, SMembersTest) {  // NOLINT
+TEST_F(SetsTest, SMembersTest) {
+  // NOLINT
   int32_t ret = 0;
   std::vector<std::string> mid_members_in;
   mid_members_in.emplace_back("MID_MEMBER1");
@@ -1072,7 +1080,8 @@ TEST_F(SetsTest, SMembersTest) {  // NOLINT
 }
 
 // SMove
-TEST_F(SetsTest, SMoveTest) {  // NOLINT
+TEST_F(SetsTest, SMoveTest) {
+  // NOLINT
   int32_t ret = 0;
   // ***************** Group 1 Test *****************
   // source = {a, b, c, d}
@@ -1297,7 +1306,8 @@ TEST_F(SetsTest, SMoveTest) {  // NOLINT
 }
 
 // SPop
-TEST_F(SetsTest, SPopTest) {  // NOLINT
+TEST_F(SetsTest, SPopTest) {
+  // NOLINT
   int32_t ret = 0;
   std::vector<std::string> members;
 
@@ -1445,7 +1455,8 @@ TEST_F(SetsTest, SPopTest) {  // NOLINT
 }
 
 // SRandmember
-TEST_F(SetsTest, SRanmemberTest) {  // NOLINT
+TEST_F(SetsTest, SRanmemberTest) {
+  // NOLINT
   int32_t ret = 0;
 
   // ***************** Group 1 Test *****************
@@ -1552,7 +1563,8 @@ TEST_F(SetsTest, SRanmemberTest) {  // NOLINT
 }
 
 // SRem
-TEST_F(SetsTest, SRemTest) {  // NOLINT
+TEST_F(SetsTest, SRemTest) {
+  // NOLINT
   int32_t ret = 0;
 
   // ***************** Group 1 Test *****************
@@ -1610,7 +1622,8 @@ TEST_F(SetsTest, SRemTest) {  // NOLINT
 }
 
 // SUnion
-TEST_F(SetsTest, SUnionTest) {  // NOLINT
+TEST_F(SetsTest, SUnionTest) {
+  // NOLINT
   int32_t ret = 0;
 
   // ***************** Group 1 Test *****************
@@ -1726,7 +1739,8 @@ TEST_F(SetsTest, SUnionTest) {  // NOLINT
 }
 
 // SUnionstore
-TEST_F(SetsTest, SUnionstoreTest) {  // NOLINT
+TEST_F(SetsTest, SUnionstoreTest) {
+  // NOLINT
   int32_t ret = 0;
 
   // ***************** Group 1 Test *****************
@@ -1852,7 +1866,8 @@ TEST_F(SetsTest, SUnionstoreTest) {  // NOLINT
 }
 
 // SScan
-TEST_F(SetsTest, SScanTest) {  // NOLINT
+TEST_F(SetsTest, SScanTest) {
+  // NOLINT
   int32_t ret = 0;
   int64_t cursor = 0;
   int64_t next_cursor = 0;
@@ -2244,7 +2259,7 @@ TEST_F(SetsTest, SScanTest) {  // NOLINT
   ASSERT_TRUE(members_match(member_out, {}));
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
   if (!kstd::FileExists("./log")) {
     kstd::CreatePath("./log");
   }

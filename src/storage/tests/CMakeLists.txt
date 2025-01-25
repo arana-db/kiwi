@@ -13,28 +13,32 @@ FOREACH (TEST_SOURCE ${TEST_SOURCES})
 
     ADD_EXECUTABLE(${TEST_NAME} ${TEST_SOURCE})
 
+    ADD_DEPENDENCIES(${TEST_NAME} storage)
     TARGET_INCLUDE_DIRECTORIES(${TEST_NAME}
-            PUBLIC storage
+            PRIVATE storage
             PRIVATE ${ROCKSDB_SOURCES_DIR}
             PRIVATE ${ROCKSDB_SOURCES_DIR}/include
             PRIVATE ${BRAFT_INCLUDE_DIR}
-            PRIVATE ${BRPC_INCLUDE_DIR}
-            PRIVATE ${PROTOBUF_INCLUDE_DIR}
-            PRIVATE ${PROTO_OUTPUT_DIR}
             PRIVATE ${GTEST_INCLUDE_DIR}
+            PRIVATE ${PROTO_OUTPUT_DIR}
+            PRIVATE ${PROTOBUF_INCLUDE_DIR}
+            PRIVATE ${SPDLOG_INCLUDE_DIR}
+            PRIVATE ${PSTD_INCLUDE_DIR}
     )
 
     TARGET_LINK_LIBRARIES(${TEST_NAME}
-            PUBLIC storage
-            PRIVATE gtest
-            PRIVATE gtest_main
-            PRIVATE fmt
-            PRIVATE spdlog
+            PRIVATE storage
+            PRIVATE ${GTEST_LIBRARIES}
+            PRIVATE ${GTEST_MAIN_LIBRARIES}
+            PRIVATE ${FMT_LIBRARIES}
+            PRIVATE ${SPDLOG_LIBRARIES}
             PRIVATE kstd
-            PRIVATE rocksdb
-            PRIVATE snappy
-            PRIVATE lz4
-            PRIVATE zstd
+            PRIVATE ${ROCKSDB_LIBRARIES}
+            PRIVATE ${Snappy_LIBRARIES}
+            PRIVATE ${LZ4_LIBRARIES}
+            PRIVATE ${zstd_LIBRARIES}
+            PRIVATE ${PROTOBUF_LIBRARY}
             PRIVATE binlog_pb
     )
+    GTEST_DISCOVER_TESTS(${TEST_NAME})
 ENDFOREACH ()

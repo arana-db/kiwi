@@ -19,14 +19,14 @@ foreach (std_test_source ${KSTD_TEST_SOURCE})
 #    set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
     add_executable(${std_test_name} ${std_test_source})
     target_include_directories(${std_test_name}
-            PUBLIC ${PROJECT_SOURCE_DIR}/src
+            PRIVATE ${PROJECT_SOURCE_DIR}/src
             PRIVATE ${GTEST_INCLUDE_DIR}
             )
 
     add_dependencies(${std_test_name} kstd gtest)
     target_link_libraries(${std_test_name}
-            PUBLIC kstd
-            PUBLIC gtest
+             PRIVATE kstd
+             PRIVATE ${GTEST_LIBRARIES}
             )
     gtest_discover_tests(${std_test_name})
 endforeach ()
