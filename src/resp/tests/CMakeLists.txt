@@ -3,28 +3,28 @@
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-cmake_minimum_required(VERSION 3.18)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.25)
 
-include(GoogleTest)
-set(CMAKE_CXX_STANDARD 20)
+INCLUDE(GoogleTest)
+SET(CMAKE_CXX_STANDARD 20)
 
 AUX_SOURCE_DIRECTORY(../ DIR_SRCS)
 
-file(GLOB_RECURSE GTEST_TEST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/*.cc")
+FILE(GLOB_RECURSE GTEST_TEST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/*.cc")
 
-foreach (gtest_test_source ${GTEST_TEST_SOURCE})
-    get_filename_component(gtest_test_filename ${gtest_test_source} NAME)
-    string(REPLACE ".cc" "" gtest_test_name ${gtest_test_filename})
+FOREACH (gtest_test_source ${GTEST_TEST_SOURCE})
+    GET_FILENAME_COMPONENT(gtest_test_filename ${gtest_test_source} NAME)
+    STRING(REPLACE ".cc" "" gtest_test_name ${gtest_test_filename})
 
-    add_executable(${gtest_test_name} ${gtest_test_source} ${DIR_SRCS})
-    target_include_directories(${gtest_test_name}
+    ADD_EXECUTABLE(${gtest_test_name} ${gtest_test_source} ${DIR_SRCS})
+    TARGET_INCLUDE_DIRECTORIES(${gtest_test_name}
             PRIVATE ${GTEST_INCLUDE_DIR}
     )
 
-    add_dependencies(${gtest_test_name} kstd gtest)
-    target_link_libraries(${gtest_test_name}
+    ADD_DEPENDENCIES(${gtest_test_name} kstd gtest)
+    TARGET_LINK_LIBRARIES(${gtest_test_name}
             PUBLIC kstd
             PUBLIC gtest
     )
-    gtest_discover_tests(${gtest_test_name})
-endforeach ()
+    GTEST_DISCOVER_TESTS(${gtest_test_name})
+ENDFOREACH ()
