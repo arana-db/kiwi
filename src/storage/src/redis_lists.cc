@@ -721,7 +721,7 @@ Status Redis::RPop(const Slice& key, int64_t count, std::vector<std::string>* el
       auto size = static_cast<int64_t>(parsed_lists_meta_value.Count());
       uint64_t version = parsed_lists_meta_value.Version();
       int32_t start_index = 0;
-      auto stop_index = static_cast<int32_t>(count <= size ? count - 1 : size - 1);
+      auto stop_index = static_cast<int32_t>(std::min(count, size) - 1);
       int32_t cur_index = 0;
       ListsDataKey lists_data_key(key, version, parsed_lists_meta_value.RightIndex() - 1);
       rocksdb::Iterator* iter = db_->NewIterator(default_read_options_, handles_[kListsDataCF]);
@@ -768,7 +768,7 @@ Status Redis::RPopWithoutLock(const Slice& key, int64_t count, std::vector<std::
       auto size = static_cast<int64_t>(parsed_lists_meta_value.Count());
       uint64_t version = parsed_lists_meta_value.Version();
       int32_t start_index = 0;
-      auto stop_index = static_cast<int32_t>(count <= size ? count - 1 : size - 1);
+      auto stop_index = static_cast<int32_t>(std::min(count, size) - 1);
       int32_t cur_index = 0;
       ListsDataKey lists_data_key(key, version, parsed_lists_meta_value.RightIndex() - 1);
       rocksdb::Iterator* iter = db_->NewIterator(default_read_options_, handles_[kListsDataCF]);
