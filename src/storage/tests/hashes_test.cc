@@ -19,7 +19,7 @@ using namespace storage;
 class LogIniter {
  public:
   LogIniter() {
-    logger::Init("./string_test.log");
+    logger::Init("./hashes_test.log");
     spdlog::set_level(spdlog::level::info);
   }
 };

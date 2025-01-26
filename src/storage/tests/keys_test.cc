@@ -19,7 +19,7 @@ using storage::Status;
 class LogIniter {
  public:
   LogIniter() {
-    logger::Init("./string_test.log");
+    logger::Init("./keys_test.log");
     spdlog::set_level(spdlog::level::info);
   }
 };

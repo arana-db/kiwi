@@ -326,8 +326,166 @@ static void closeStd() {
   }
 }
 
+#include "std/env.h"
+#include "std/log.h"
+#include "storage/storage.h"
+#include "storage/util.h"
+
+#include <cstdint>
+
+// using namespace storage;
+using storage::DataType;
+using storage::ScoreMember;
+using storage::Slice;
+using storage::Status;
+using namespace std;
+
+class LogIniter {
+ public:
+  LogIniter() {
+    logger::Init("./zsets_test.log");
+    spdlog::set_level(spdlog::level::info);
+  }
+};
+
+LogIniter log_initer;
+
+class ZSetsTest {
+ public:
+  ZSetsTest() {
+    kstd::DeleteDirIfExist(db_path);
+    mkdir(db_path.c_str(), 0755);
+    options.options.create_if_missing = true;
+    options.options.create_missing_column_families = true;
+    options.options.max_background_jobs = 10;
+    options.db_instance_num = 1;
+    db.Open(options, db_path);
+    // ASSERT_TRUE(s.ok());
+  }
+
+  ~ZSetsTest()  { db.Close(); }
+
+public:
+  std::string db_path{"./test_db/zsets_test"};
+  storage::StorageOptions options;
+  storage::Storage db;
+  storage::Status s;
+};
+
+static bool members_match(const std::vector<std::string> &mm_out, const std::vector<std::string> &expect_members) {
+  if (mm_out.size() != expect_members.size()) {
+    return false;
+  }
+  for (const auto &member : expect_members) {
+    if (find(mm_out.begin(), mm_out.end(), member) == mm_out.end()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool score_members_match(storage::Storage *const db, const Slice &key,
+                                const std::vector<storage::ScoreMember> &expect_sm) {
+  std::vector<storage::ScoreMember> sm_out;
+  storage::Status s = db->ZRange(key, 0, -1, &sm_out);
+  if (!s.ok() && !s.IsNotFound()) {
+    return false;
+  }
+  if (sm_out.size() != expect_sm.size()) {
+    return false;
+  }
+  if (s.IsNotFound() && expect_sm.empty()) {
+    return true;
+  }
+  for (int idx = 0; idx < sm_out.size(); ++idx) {
+    if (expect_sm[idx].score != sm_out[idx].score || expect_sm[idx].member != sm_out[idx].member) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool score_members_match(const std::vector<storage::ScoreMember> &sm_out,
+                                const std::vector<storage::ScoreMember> &expect_sm) {
+  if (sm_out.size() != expect_sm.size()) {
+    return false;
+  }
+  for (int idx = 0; idx < sm_out.size(); ++idx) {
+    if (expect_sm[idx].score != sm_out[idx].score || expect_sm[idx].member != sm_out[idx].member) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool size_match(storage::Storage *const db, const Slice &key, int32_t expect_size) {
+  int32_t size = 0;
+  storage::Status s = db->ZCard(key, &size);
+  if (!s.ok() && !s.IsNotFound()) {
+    return false;
+  }
+  if (s.IsNotFound() && (expect_size == 0)) {
+    return true;
+  }
+  WARN("size_match ? size: {} expect_size: {}", size, expect_size);
+  return size == expect_size;
+}
+
+static bool make_expired(storage::Storage *const db, const storage::Slice &key) {
+  std::map<storage::DataType, rocksdb::Status> type_status;
+  int ret = db->Expire(key, 1);
+  if ((ret == 0) || !type_status[storage::DataType::kZSets].ok()) {
+    return false;
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+  return true;
+}
+
+static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
+  std::vector<std::string> del_keys = {key.ToString()};
+  std::map<storage::DataType, storage::Status> type_status;
+  db->Del(del_keys);
+  return type_status[storage::DataType::kZSets].ok();
+}
+
+void test() {
+    // NOLINT
+  ZSetsTest zt;
+  int32_t ret = 0;
+
+  // ***************** Group 1 Test *****************
+  // {      1, MM1} {      10, MM2} {      100, MM3}  weight 1
+  // {   1000, MM1} {   10000, MM2} {   100000, MM3}  weight 1
+  // {1000000, MM1} {10000000, MM2} {100000000, MM3}  weight 1
+  //
+  // {1001001, MM1} {10010010, MM2} {100100100, MM3}
+  //
+  std::vector<storage::ScoreMember> gp1_sm1{{1, "MM1"}, {10, "MM2"}, {100, "MM3"}};
+  std::vector<storage::ScoreMember> gp1_sm2{{1000, "MM1"}, {10000, "MM2"}, {100000, "MM3"}};
+  std::vector<storage::ScoreMember> gp1_sm3{{1000000, "MM1"}, {10000000, "MM2"}, {100000000, "MM3"}};
+  zt.s = zt.db.ZAdd("GP1_ZUNIONSTORE_SM1", gp1_sm1, &ret);
+  printf("sm1 ret = %d\n", ret);
+  zt.s = zt.db.ZAdd("GP1_ZUNIONSTORE_SM2", gp1_sm2, &ret);
+  printf("sm2 ret = %d\n", ret);
+  zt.s = zt.db.ZAdd("GP1_ZUNIONSTORE_SM3", gp1_sm3, &ret);
+  printf("sm3 ret = %d\n", ret);
+  std::map<std::string, double> value_to_dest;
+  zt.s = zt.db.ZUnionstore("GP1_ZUNIONSTORE_DESTINATION",
+                     {"GP1_ZUNIONSTORE_SM1", "GP1_ZUNIONSTORE_SM2", "GP1_ZUNIONSTORE_SM3"}, {1, 1, 1}, storage::SUM,
+                     value_to_dest, &ret);
+  printf("after union store, sm3 ret = %d\n", ret);
+  // ASSERT_TRUE(s.ok());
+  // ASSERT_EQ(ret, 3);
+  // ASSERT_TRUE(size_match(&db, "GP1_ZUNIONSTORE_DESTINATION", 3));
+  // ASSERT_TRUE(score_members_match(&db, "GP1_ZUNIONSTORE_DESTINATION",
+  //                                 {{1001001, "MM1"}, {10010010, "MM2"}, {100100100, "MM3"}}));
+}
+
 // Any kiwi server process begins execution here.
 int main(int argc, char* argv[]) {
+  test();
+  return 0;
+
   g_kiwi = std::make_unique<KiwiDB>();
   if (!g_kiwi->ParseArgs(argc, argv)) {
     Usage();
