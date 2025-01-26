@@ -251,7 +251,8 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //   ASSERT_TRUE(score_members_match(
 //       score_members, {{2e5 + 3.98, "MM9"}, {2e5 + 3.98, "MM10"}, {1, "MM2"}, {1, "MM1"}, {0.532445, "MM8"}}));
 //   ASSERT_TRUE(score_members_match(&db, "GP3_ZPOPMAX_KEY",
-//                                   {{-1, "MM3"}, {-1, "MM4"}, {1 / 6.0, "MM5"}, {1 / 6.0, "MM6"}, {0.532445, "MM7"}}));
+//                                   {{-1, "MM3"}, {-1, "MM4"}, {1 / 6.0, "MM5"}, {1 / 6.0, "MM6"}, {0.532445,
+//                                   "MM7"}}));
 
 //   // ***************** Group 4 Test *****************
 //   //
@@ -398,9 +399,11 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //   ASSERT_EQ(5, score_members.size());
 //   ASSERT_TRUE(size_match(&db, "GP3_ZPOPMIN_KEY", 5));
 //   ASSERT_TRUE(score_members_match(
-//       &db, "GP3_ZPOPMIN_KEY", {{0.532445, "MM8"}, {1, "MM1"}, {1, "MM2"}, {2e5 + 3.98, "MM10"}, {2e5 + 3.98, "MM9"}}));
+//       &db, "GP3_ZPOPMIN_KEY", {{0.532445, "MM8"}, {1, "MM1"}, {1, "MM2"}, {2e5 + 3.98, "MM10"}, {2e5 + 3.98,
+//       "MM9"}}));
 //   ASSERT_TRUE(score_members_match(score_members,
-//                                   {{-1, "MM3"}, {-1, "MM4"}, {1 / 6.0, "MM5"}, {1 / 6.0, "MM6"}, {0.532445, "MM7"}}));
+//                                   {{-1, "MM3"}, {-1, "MM4"}, {1 / 6.0, "MM5"}, {1 / 6.0, "MM6"}, {0.532445,
+//                                   "MM7"}}));
 
 //   // ***************** Group 4 Test *****************
 //   //
@@ -443,7 +446,8 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //   ASSERT_TRUE(s.ok());
 //   ASSERT_EQ(4, ret);
 //   ASSERT_TRUE(size_match(&db, "GP1_ZADD_KEY", 4));
-//   ASSERT_TRUE(score_members_match(&db, "GP1_ZADD_KEY", {{-0.54, "MM4"}, {0, "MM2"}, {3.23, "MM1"}, {8.0004, "MM3"}}));
+//   ASSERT_TRUE(score_members_match(&db, "GP1_ZADD_KEY", {{-0.54, "MM4"}, {0, "MM2"}, {3.23, "MM1"}, {8.0004,
+//   "MM3"}}));
 
 //   // ***************** Group 2 Test *****************
 //   std::vector<storage::ScoreMember> gp2_sm{{0, "MM1"}, {0, "MM1"}, {0, "MM2"}, {0, "MM3"}};
@@ -463,10 +467,8 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //                                   {{1 / 7.0, "MM4"}, {1 / 6.0, "MM3"}, {1 / 3.0, "MM2"}, {1 / 1.0, "MM1"}}));
 
 //   // ***************** Group 4 Test *****************
-//   std::vector<storage::ScoreMember> gp4_sm{{-1 / 1.0, "MM1"}, {-1 / 3.0, "MM2"}, {-1 / 6.0, "MM3"}, {-1 / 7.0, "MM4"}};
-//   s = db.ZAdd("GP4_ZADD_KEY", gp4_sm, &ret);
-//   ASSERT_TRUE(s.ok());
-//   ASSERT_EQ(4, ret);
+//   std::vector<storage::ScoreMember> gp4_sm{{-1 / 1.0, "MM1"}, {-1 / 3.0, "MM2"}, {-1 / 6.0, "MM3"}, {-1 / 7.0,
+//   "MM4"}}; s = db.ZAdd("GP4_ZADD_KEY", gp4_sm, &ret); ASSERT_TRUE(s.ok()); ASSERT_EQ(4, ret);
 //   ASSERT_TRUE(size_match(&db, "GP4_ZADD_KEY", 4));
 //   ASSERT_TRUE(score_members_match(&db, "GP4_ZADD_KEY",
 //                                   {{-1 / 1.0, "MM1"}, {-1 / 3.0, "MM2"}, {-1 / 6.0, "MM3"}, {-1 / 7.0, "MM4"}}));
@@ -505,7 +507,8 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //   ASSERT_EQ(1, ret);
 //   ASSERT_TRUE(size_match(&db, "GP5_ZADD_KEY", 4));
 //   ASSERT_TRUE(
-//       score_members_match(&db, "GP5_ZADD_KEY", {{-0.5333, "MM2"}, {0, "MM1"}, {50000, "MM4"}, {1.79769e+308, "MM3"}}));
+//       score_members_match(&db, "GP5_ZADD_KEY", {{-0.5333, "MM2"}, {0, "MM1"}, {50000, "MM4"}, {1.79769e+308,
+//       "MM3"}}));
 
 //   // [-1.79769e+308, MM5]
 //   // [-0.5333,       MM2]
@@ -546,7 +549,8 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //   ASSERT_TRUE(size_match(&db, "GP5_ZADD_KEY", 6));
 //   ASSERT_TRUE(score_members_match(
 //       &db, "GP5_ZADD_KEY",
-//       {{-1.79769e+308, "MM5"}, {-0.5333, "MM2"}, {0, "MM1"}, {50000, "MM4"}, {100000, "MM6"}, {1.79769e+308, "MM3"}}));
+//       {{-1.79769e+308, "MM5"}, {-0.5333, "MM2"}, {0, "MM1"}, {50000, "MM4"}, {100000, "MM6"}, {1.79769e+308,
+//       "MM3"}}));
 
 //   // [-1.79769e+308, MM5]
 //   // [-0.5333,       MM2]
@@ -733,10 +737,8 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //   ASSERT_TRUE(s.ok());
 //   ASSERT_EQ(5, ret);
 //   ASSERT_TRUE(size_match(&db, "GP2_ZCARD_KEY", 5));
-//   ASSERT_TRUE(score_members_match(&db, "GP2_ZCARD_KEY", {{1, "MM1"}, {2, "MM2"}, {3, "MM3"}, {4, "MM4"}, {5, "MM5"}}));
-//   s = db.ZCard("GP2_ZCARD_KEY", &ret);
-//   ASSERT_TRUE(s.ok());
-//   ASSERT_EQ(5, ret);
+//   ASSERT_TRUE(score_members_match(&db, "GP2_ZCARD_KEY", {{1, "MM1"}, {2, "MM2"}, {3, "MM3"}, {4, "MM4"}, {5,
+//   "MM5"}})); s = db.ZCard("GP2_ZCARD_KEY", &ret); ASSERT_TRUE(s.ok()); ASSERT_EQ(5, ret);
 
 //   // ***************** Group 3 Test *****************
 //   std::vector<storage::ScoreMember> gp3_sm{{1, "MM1"}, {2, "MM2"}, {3, "MM3"}, {4, "MM4"}, {5, "MM5"}};
@@ -744,9 +746,8 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //   ASSERT_TRUE(s.ok());
 //   ASSERT_EQ(5, ret);
 //   ASSERT_TRUE(size_match(&db, "GP3_ZCARD_KEY", 5));
-//   ASSERT_TRUE(score_members_match(&db, "GP3_ZCARD_KEY", {{1, "MM1"}, {2, "MM2"}, {3, "MM3"}, {4, "MM4"}, {5, "MM5"}}));
-//   ASSERT_TRUE(make_expired(&db, "GP3_ZCARD_KEY"));
-//   s = db.ZCard("GP3_ZCARD_KEY", &ret);
+//   ASSERT_TRUE(score_members_match(&db, "GP3_ZCARD_KEY", {{1, "MM1"}, {2, "MM2"}, {3, "MM3"}, {4, "MM4"}, {5,
+//   "MM5"}})); ASSERT_TRUE(make_expired(&db, "GP3_ZCARD_KEY")); s = db.ZCard("GP3_ZCARD_KEY", &ret);
 //   ASSERT_TRUE(s.IsNotFound());
 //   ASSERT_EQ(0, ret);
 
@@ -763,7 +764,8 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 
 //   // ***************** Group 1 Test *****************
 //   std::vector<storage::ScoreMember> gp1_sm{{101010.1010101, "MM1"}, {101010.0101010, "MM2"}, {-100.000000001, "MM3"},
-//                                            {-100.000000002, "MM4"}, {-100.000000001, "MM5"}, {-100.000000002, "MM6"}};
+//                                            {-100.000000002, "MM4"}, {-100.000000001, "MM5"}, {-100.000000002,
+//                                            "MM6"}};
 //   s = db.ZAdd("GP1_ZCOUNT_KEY", gp1_sm, &ret);
 //   ASSERT_TRUE(s.ok());
 //   ASSERT_EQ(6, ret);
@@ -1456,7 +1458,8 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //   ASSERT_TRUE(s.ok());
 //   ASSERT_TRUE(score_members_match(score_members, {}));
 
-//   s = db.ZRangebyscore("GP1_ZRANGEBYSCORE_KEY", std::numeric_limits<double>::lowest(), -1000.000000000001, true, true,
+//   s = db.ZRangebyscore("GP1_ZRANGEBYSCORE_KEY", std::numeric_limits<double>::lowest(), -1000.000000000001, true,
+//   true,
 //                        &score_members);
 //   ASSERT_TRUE(s.ok());
 //   ASSERT_TRUE(score_members_match(score_members, {{-987654321.0000001, "MM1"},
@@ -1469,7 +1472,8 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //                                                   {-1000.000000000001, "MM8"},
 //                                                   {-1000.000000000001, "MM9"}}));
 
-//   s = db.ZRangebyscore("GP1_ZRANGEBYSCORE_KEY", std::numeric_limits<double>::lowest(), -1000.000000000001, true, false,
+//   s = db.ZRangebyscore("GP1_ZRANGEBYSCORE_KEY", std::numeric_limits<double>::lowest(), -1000.000000000001, true,
+//   false,
 //                        &score_members);
 //   ASSERT_TRUE(s.ok());
 //   ASSERT_TRUE(score_members_match(score_members, {{-987654321.0000001, "MM1"},
@@ -1574,9 +1578,9 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //   ASSERT_TRUE(score_members_match(
 //       score_members, {{-654321.0000000001, "MM4"}, {-54321.00000000001, "MM5"}, {-4321.000000000001, "MM6"}}));
 
-//   s = db.ZRangebyscore("GP1_ZRANGEBYSCORE_KEY", -654321.0000000001, -4321.000000000001, false, false, &score_members);
-//   ASSERT_TRUE(s.ok());
-//   ASSERT_TRUE(score_members_match(score_members, {{-54321.00000000001, "MM5"}}));
+//   s = db.ZRangebyscore("GP1_ZRANGEBYSCORE_KEY", -654321.0000000001, -4321.000000000001, false, false,
+//   &score_members); ASSERT_TRUE(s.ok()); ASSERT_TRUE(score_members_match(score_members, {{-54321.00000000001,
+//   "MM5"}}));
 
 //   s = db.ZRangebyscore("GP1_ZRANGEBYSCORE_KEY", 0, 0, true, true, &score_members);
 //   ASSERT_TRUE(s.ok());
@@ -3661,8 +3665,10 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 //   double score;
 
 //   // ***************** Group 1 Test *****************
-//   std::vector<storage::ScoreMember> gp1_sm{{54354.497895352, "MM1"}, {100.987654321, "MM2"},  {-100.000000001, "MM3"},
-//                                            {-100.000000002, "MM4"},  {-100.000000001, "MM5"}, {-100.000000002, "MM6"}};
+//   std::vector<storage::ScoreMember> gp1_sm{{54354.497895352, "MM1"}, {100.987654321, "MM2"},  {-100.000000001,
+//   "MM3"},
+//                                            {-100.000000002, "MM4"},  {-100.000000001, "MM5"}, {-100.000000002,
+//                                            "MM6"}};
 //   s = db.ZAdd("GP1_ZSCORE_KEY", gp1_sm, &ret);
 //   ASSERT_TRUE(s.ok());
 //   ASSERT_EQ(6, ret);
@@ -4193,8 +4199,8 @@ TEST_F(ZSetsTest, ZUnionstoreTest) {
 //   s = db.ZAdd("GP10_ZINTERSTORE_SM2", gp10_sm2, &ret);
 //   s = db.ZAdd("GP10_ZINTERSTORE_SM3", gp10_sm3, &ret);
 //   s = db.ZInterstore("GP10_ZINTERSTORE_DESTINATION",
-//                      {"GP10_ZINTERSTORE_SM1", "GP10_ZINTERSTORE_SM2", "GP10_ZINTERSTORE_SM3", "GP10_ZINTERSTORE_SM4"},
-//                      {1, 1, 1, 1}, storage::SUM, value_to_dest, &ret);
+//                      {"GP10_ZINTERSTORE_SM1", "GP10_ZINTERSTORE_SM2", "GP10_ZINTERSTORE_SM3",
+//                      "GP10_ZINTERSTORE_SM4"}, {1, 1, 1, 1}, storage::SUM, value_to_dest, &ret);
 //   ASSERT_TRUE(s.ok());
 //   ASSERT_EQ(ret, 0);
 //   ASSERT_TRUE(size_match(&db, "GP10_ZINTERSTORE_DESTINATION", 0));
@@ -4623,7 +4629,8 @@ TEST_F(ZSetsTest, ZUnionstoreTest) {
 //   ASSERT_TRUE(size_match(&db, "GP10_ZREMRANGEBYLEX", 9));
 //   ASSERT_TRUE(
 //       score_members_match(&db, "GP10_ZREMRANGEBYLEX",
-//                           {{1, "e"}, {1, "f"}, {1, "g"}, {1, "h"}, {1, "i"}, {1, "j"}, {1, "k"}, {1, "l"}, {1, "m"}}));
+//                           {{1, "e"}, {1, "f"}, {1, "g"}, {1, "h"}, {1, "i"}, {1, "j"}, {1, "k"}, {1, "l"}, {1,
+//                           "m"}}));
 
 //   // ***************** Group 11 Test *****************
 //   // {1, e} {1, f} {1, g} {1, h} {1, i} {1, j} {1, k} {1, l} {1, m}
@@ -4640,7 +4647,8 @@ TEST_F(ZSetsTest, ZUnionstoreTest) {
 //   ASSERT_TRUE(size_match(&db, "GP11_ZREMRANGEBYLEX", 9));
 //   ASSERT_TRUE(
 //       score_members_match(&db, "GP11_ZREMRANGEBYLEX",
-//                           {{1, "e"}, {1, "f"}, {1, "g"}, {1, "h"}, {1, "i"}, {1, "j"}, {1, "k"}, {1, "l"}, {1, "m"}}));
+//                           {{1, "e"}, {1, "f"}, {1, "g"}, {1, "h"}, {1, "i"}, {1, "j"}, {1, "k"}, {1, "l"}, {1,
+//                           "m"}}));
 
 //   // ***************** Group 12 Test *****************
 //   // {1, e} {1, f} {1, g} {1, h} {1, i} {1, j} {1, k} {1, l} {1, m}
@@ -4657,7 +4665,8 @@ TEST_F(ZSetsTest, ZUnionstoreTest) {
 //   ASSERT_TRUE(size_match(&db, "GP12_ZREMRANGEBYLEX", 9));
 //   ASSERT_TRUE(
 //       score_members_match(&db, "GP12_ZREMRANGEBYLEX",
-//                           {{1, "e"}, {1, "f"}, {1, "g"}, {1, "h"}, {1, "i"}, {1, "j"}, {1, "k"}, {1, "l"}, {1, "m"}}));
+//                           {{1, "e"}, {1, "f"}, {1, "g"}, {1, "h"}, {1, "i"}, {1, "j"}, {1, "k"}, {1, "l"}, {1,
+//                           "m"}}));
 
 //   // ***************** Group 13 Test *****************
 //   // {1, e} {1, f} {1, g} {1, h} {1, i} {1, j} {1, k} {1, l} {1, m}
@@ -4810,7 +4819,8 @@ TEST_F(ZSetsTest, ZUnionstoreTest) {
 //   ASSERT_TRUE(size_match(&db, "GP22_ZREMRANGEBYLEX", 9));
 //   ASSERT_TRUE(
 //       score_members_match(&db, "GP22_ZREMRANGEBYLEX",
-//                           {{1, "e"}, {1, "f"}, {1, "g"}, {1, "h"}, {1, "i"}, {1, "j"}, {1, "k"}, {1, "l"}, {1, "m"}}));
+//                           {{1, "e"}, {1, "f"}, {1, "g"}, {1, "h"}, {1, "i"}, {1, "j"}, {1, "k"}, {1, "l"}, {1,
+//                           "m"}}));
 
 //   // ***************** Group 23 Test *****************
 //   // {1, e} {1, f} {1, g} {1, h} {1, i} {1, j} {1, k} {1, l} {1, m}
@@ -4843,7 +4853,8 @@ TEST_F(ZSetsTest, ZUnionstoreTest) {
 //   ASSERT_TRUE(size_match(&db, "GP24_ZREMRANGEBYLEX", 9));
 //   ASSERT_TRUE(
 //       score_members_match(&db, "GP24_ZREMRANGEBYLEX",
-//                           {{1, "e"}, {1, "f"}, {1, "g"}, {1, "h"}, {1, "i"}, {1, "j"}, {1, "k"}, {1, "l"}, {1, "m"}}));
+//                           {{1, "e"}, {1, "f"}, {1, "g"}, {1, "h"}, {1, "i"}, {1, "j"}, {1, "k"}, {1, "l"}, {1,
+//                           "m"}}));
 
 //   // ***************** Group 25 Test *****************
 //   // {1, e} {1, f} {1, g} {1, h} {1, i} {1, j} {1, k} {1, l} {1, m}   (expire)

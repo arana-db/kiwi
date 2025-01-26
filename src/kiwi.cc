@@ -363,20 +363,20 @@ class ZSetsTest {
     // ASSERT_TRUE(s.ok());
   }
 
-  ~ZSetsTest()  { db.Close(); }
+  ~ZSetsTest() { db.Close(); }
 
-public:
+ public:
   std::string db_path{"./test_db/zsets_test"};
   storage::StorageOptions options;
   storage::Storage db;
   storage::Status s;
 };
 
-static bool members_match(const std::vector<std::string> &mm_out, const std::vector<std::string> &expect_members) {
+static bool members_match(const std::vector<std::string>& mm_out, const std::vector<std::string>& expect_members) {
   if (mm_out.size() != expect_members.size()) {
     return false;
   }
-  for (const auto &member : expect_members) {
+  for (const auto& member : expect_members) {
     if (find(mm_out.begin(), mm_out.end(), member) == mm_out.end()) {
       return false;
     }
@@ -384,8 +384,8 @@ static bool members_match(const std::vector<std::string> &mm_out, const std::vec
   return true;
 }
 
-static bool score_members_match(storage::Storage *const db, const Slice &key,
-                                const std::vector<storage::ScoreMember> &expect_sm) {
+static bool score_members_match(storage::Storage* const db, const Slice& key,
+                                const std::vector<storage::ScoreMember>& expect_sm) {
   std::vector<storage::ScoreMember> sm_out;
   storage::Status s = db->ZRange(key, 0, -1, &sm_out);
   if (!s.ok() && !s.IsNotFound()) {
@@ -405,8 +405,8 @@ static bool score_members_match(storage::Storage *const db, const Slice &key,
   return true;
 }
 
-static bool score_members_match(const std::vector<storage::ScoreMember> &sm_out,
-                                const std::vector<storage::ScoreMember> &expect_sm) {
+static bool score_members_match(const std::vector<storage::ScoreMember>& sm_out,
+                                const std::vector<storage::ScoreMember>& expect_sm) {
   if (sm_out.size() != expect_sm.size()) {
     return false;
   }
@@ -418,7 +418,7 @@ static bool score_members_match(const std::vector<storage::ScoreMember> &sm_out,
   return true;
 }
 
-static bool size_match(storage::Storage *const db, const Slice &key, int32_t expect_size) {
+static bool size_match(storage::Storage* const db, const Slice& key, int32_t expect_size) {
   int32_t size = 0;
   storage::Status s = db->ZCard(key, &size);
   if (!s.ok() && !s.IsNotFound()) {
@@ -431,7 +431,7 @@ static bool size_match(storage::Storage *const db, const Slice &key, int32_t exp
   return size == expect_size;
 }
 
-static bool make_expired(storage::Storage *const db, const storage::Slice &key) {
+static bool make_expired(storage::Storage* const db, const storage::Slice& key) {
   std::map<storage::DataType, rocksdb::Status> type_status;
   int ret = db->Expire(key, 1);
   if ((ret == 0) || !type_status[storage::DataType::kZSets].ok()) {
@@ -441,7 +441,7 @@ static bool make_expired(storage::Storage *const db, const storage::Slice &key) 
   return true;
 }
 
-static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
+static bool delete_key(storage::Storage* const db, const storage::Slice& key) {
   std::vector<std::string> del_keys = {key.ToString()};
   std::map<storage::DataType, storage::Status> type_status;
   db->Del(del_keys);
@@ -449,7 +449,7 @@ static bool delete_key(storage::Storage *const db, const storage::Slice &key) {
 }
 
 void test() {
-    // NOLINT
+  // NOLINT
   ZSetsTest zt;
   int32_t ret = 0;
 
@@ -471,8 +471,8 @@ void test() {
   printf("sm3 ret = %d\n", ret);
   std::map<std::string, double> value_to_dest;
   zt.s = zt.db.ZUnionstore("GP1_ZUNIONSTORE_DESTINATION",
-                     {"GP1_ZUNIONSTORE_SM1", "GP1_ZUNIONSTORE_SM2", "GP1_ZUNIONSTORE_SM3"}, {1, 1, 1}, storage::SUM,
-                     value_to_dest, &ret);
+                           {"GP1_ZUNIONSTORE_SM1", "GP1_ZUNIONSTORE_SM2", "GP1_ZUNIONSTORE_SM3"}, {1, 1, 1},
+                           storage::SUM, value_to_dest, &ret);
   printf("after union store, sm3 ret = %d\n", ret);
   // ASSERT_TRUE(s.ok());
   // ASSERT_EQ(ret, 3);
