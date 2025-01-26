@@ -1,9 +1,9 @@
-# Copyright (c) 2023-present, Arana/Kiwi Community.  All rights reserved.
+# Copyright (c) 2023-present, arana-db Community.  All rights reserved.
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree. An additional grant
 # of patent rights can be found in the PATENTS file in the same directory.
 
-cmake_minimum_required(VERSION 3.25)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.25)
 
 INCLUDE(GoogleTest)
 SET(CMAKE_CXX_STANDARD 20)

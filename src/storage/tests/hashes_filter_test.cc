@@ -1,4 +1,4 @@
-//  Copyright (c) 2017-present, Arana/Kiwi Community.  All rights reserved.
+//  Copyright (c) 2017-present, arana-db Community.  All rights reserved.
 //  This source code is licensed under the BSD-style license found in the
 //  LICENSE file in the root directory of this source tree. An additional grant
 //  of patent rights can be found in the PATENTS file in the same directory.
@@ -18,7 +18,7 @@ using namespace storage;
 class LogIniter {
  public:
   LogIniter() {
-    logger::Init("./string_test.log");
+    logger::Init("./hashes_filter_test.log");
     spdlog::set_level(spdlog::level::info);
   }
 };
