@@ -197,6 +197,8 @@ where
             unsafe {
                 let old_chain = self.origin.as_ref().next;
                 cut_out(old_chain);
+                // TODO: Add the key to the chain, directly search for the key in the hashmap,
+                // making the time complexity go from O(n) to O(1).
                 if let Some((key, charge)) = self.map.iter().find_map(|(key, cache)| {
                     if cache.chain == old_chain {
                         Some((key.clone(), cache.charge))
