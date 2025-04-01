@@ -772,6 +772,18 @@ mod tests {
     }
 
     #[test]
+    fn test_insert_usage() {
+        let mut lru_cache = LRUCache::with_capacity(100);
+
+        lru_cache.insert("k1".to_string(), "v1".to_string(), 1);
+        assert_eq!(lru_cache.size(), 1);
+        assert_eq!(lru_cache.usage(), 1);
+        lru_cache.insert("k1".to_string(), "big".to_string(), 100);
+        assert_eq!(lru_cache.size(), 1);
+        assert_eq!(lru_cache.usage(), 100);
+    }
+
+    #[test]
     fn test_remove_case1() {
         let mut lru_cache = LRUCache::new();
         lru_cache.set_capacity(5);
