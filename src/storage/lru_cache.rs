@@ -157,8 +157,10 @@ where
     // charge is the value of the memory size.
     pub fn insert(&mut self, key: K, value: V, charge: usize) {
         if let Some(cache) = self.map.get_mut(&key) {
+            self.usage -= cache.charge;
             cut_out(cache.chain);
             cache.value = value;
+            self.usage += charge;
         } else {
             let chain = Box::leak(Box::new(Chain::new())).into();
 
