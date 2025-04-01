@@ -40,10 +40,10 @@ impl<V> Cache<V>
 where
     V: Clone,
 {
-    fn new(value: V, charge: usize, chain: NonNull<Chain>) -> Cache<V> {
+    fn new<U: Into<usize>>(value: V, charge: U, chain: NonNull<Chain>) -> Cache<V> {
         Cache {
             value,
-            charge,
+            charge: charge.into(),
             chain,
         }
     }
@@ -177,14 +177,15 @@ where
     }
 
     pub fn lookup(&mut self, key: &K) -> Option<V> {
-        if let Some(cache) = self.map.get_mut(key) {
-            let chain = cache.chain;
-            let value = cache.value.clone();
-            cut_out(chain);
-            self.move_to_head(chain);
-            Some(value)
-        } else {
-            None
+        match self.map.get_mut(key) {
+            Some(cache) => {
+                let chain = cache.chain;
+                let value = cache.value.clone();
+                cut_out(chain);
+                self.move_to_head(chain);
+                Some(value)
+            }
+            None => None,
         }
     }
 
@@ -192,18 +193,19 @@ where
     fn trim(&mut self) {
         while self.usage > self.capacity {
             unsafe {
-                let old_cache = self.origin.as_ref().next;
-                cut_out(old_cache);
-                let old_cache = self
-                    .map
-                    .iter()
-                    .find(|(_, cache)| cache.chain == old_cache)
-                    .map(|(k, _)| k.clone());
-
-                if let Some(key) = old_cache {
-                    let cache = self.map.remove(&key).unwrap();
-                    self.usage -= cache.charge;
+                let old_chain = self.origin.as_ref().next;
+                cut_out(old_chain);
+                if let Some((key, charge)) = self.map.iter().find_map(|(key, cache)| {
+                    if cache.chain == old_chain {
+                        Some((key.clone(), cache.charge))
+                    } else {
+                        None
+                    }
+                }) {
+                    self.map.remove(&key);
+                    self.usage -= charge;
                 }
+
                 self.size -= 1;
             }
         }
