@@ -85,6 +85,16 @@ fn cut_out(cache: NonNull<Chain>) {
     unsafe { connect(cache.as_ref().prev, cache.as_ref().next) }
 }
 
+impl<K, V> Default for LRUCache<K, V>
+where
+    K: std::hash::Hash + Eq + Clone,
+    V: Clone,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<K, V> LRUCache<K, V>
 where
     K: std::hash::Hash + Eq + Clone,
@@ -103,10 +113,6 @@ where
             size: 0,
             origin,
         }
-    }
-
-    fn default() -> Self {
-        Self::new()
     }
 
     /// Create a LRUCache with capacity.
