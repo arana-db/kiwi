@@ -69,7 +69,7 @@ mod tests {
     use std::u64;
 
     #[test]
-    fn test_encode_decode_u64_fixed() {
+    fn test_encode_decode_u32_fixed() {
         let mut buf = [0u8; 4];
         let original = 0x12345678u32;
 
@@ -80,7 +80,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encode_decode_u32_fixed() {
+    fn test_encode_decode_u64_fixed() {
         let mut buf = [0u8; 8];
         let original = 0x1234567890ABCDEFu64;
 
