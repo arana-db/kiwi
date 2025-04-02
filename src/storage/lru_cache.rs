@@ -105,6 +105,10 @@ where
         }
     }
 
+    fn default() -> Self {
+        Self::new()
+    }
+
     /// Create a LRUCache with capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         let origin = Box::leak(Box::new(Chain::new())).into();
