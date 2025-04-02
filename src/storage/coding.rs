@@ -64,7 +64,7 @@ pub fn decode_fixed<T: FixedInt>(buf: &[u8]) -> T {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::coding::{encode_fixed, decode_fixed};
+    use crate::storage::coding::{decode_fixed, encode_fixed};
     use std::u32;
     use std::u64;
 
@@ -76,7 +76,10 @@ mod tests {
         encode_fixed(&mut buf, original);
         let decoded = decode_fixed(&buf);
 
-        assert_eq!(original, decoded, "Value should be the same after encode/decode cycle");
+        assert_eq!(
+            original, decoded,
+            "Value should be the same after encode/decode cycle"
+        );
     }
 
     #[test]
@@ -87,7 +90,10 @@ mod tests {
         encode_fixed(&mut buf, original);
         let decoded = decode_fixed(&buf);
 
-        assert_eq!(original, decoded, "Value should be the same after encode/decode cycle");
+        assert_eq!(
+            original, decoded,
+            "Value should be the same after encode/decode cycle"
+        );
     }
 
     #[test]
@@ -95,22 +101,43 @@ mod tests {
         let mut buf = [0u8; 4];
 
         encode_fixed(&mut buf, 0);
-        assert_eq!(decode_fixed::<u32>(&buf), 0, "Minimum u32 value should encode/decode correctly");
+        assert_eq!(
+            decode_fixed::<u32>(&buf),
+            0,
+            "Minimum u32 value should encode/decode correctly"
+        );
 
         encode_fixed(&mut buf, u32::MAX);
-        assert_eq!(decode_fixed::<u32>(&buf), u32::MAX, "Maximum u32 value should encode/decode correctly");
+        assert_eq!(
+            decode_fixed::<u32>(&buf),
+            u32::MAX,
+            "Maximum u32 value should encode/decode correctly"
+        );
 
         let powers = [1u32, 2, 4, 16, 256, 65536, 16777216];
         for &power in &powers {
             encode_fixed(&mut buf, power);
-            assert_eq!(decode_fixed::<u32>(&buf), power, "Power of 2 value {} should encode/decode correctly", power);
+            assert_eq!(
+                decode_fixed::<u32>(&buf),
+                power,
+                "Power of 2 value {} should encode/decode correctly",
+                power
+            );
         }
 
         encode_fixed::<u32>(&mut buf, 0xAAAAAAAA);
-        assert_eq!(decode_fixed::<u32>(&buf), 0xAAAAAAAA, "Alternating bits should encode/decode correctly");
+        assert_eq!(
+            decode_fixed::<u32>(&buf),
+            0xAAAAAAAA,
+            "Alternating bits should encode/decode correctly"
+        );
 
         encode_fixed(&mut buf, 0x55555555);
-        assert_eq!(decode_fixed::<u32>(&buf), 0x55555555, "Alternating bits should encode/decode correctly");
+        assert_eq!(
+            decode_fixed::<u32>(&buf),
+            0x55555555,
+            "Alternating bits should encode/decode correctly"
+        );
     }
 
     #[test]
@@ -118,33 +145,69 @@ mod tests {
         let mut buf = [0u8; 8];
 
         encode_fixed(&mut buf, 0);
-        assert_eq!(decode_fixed::<u64>(&buf), 0, "Minimum u64 value should encode/decode correctly");
+        assert_eq!(
+            decode_fixed::<u64>(&buf),
+            0,
+            "Minimum u64 value should encode/decode correctly"
+        );
 
         encode_fixed(&mut buf, u64::MAX);
-        assert_eq!(decode_fixed::<u64>(&buf), u64::MAX, "Maximum u64 value should encode/decode correctly");
+        assert_eq!(
+            decode_fixed::<u64>(&buf),
+            u64::MAX,
+            "Maximum u64 value should encode/decode correctly"
+        );
 
-        let powers = [1u64, 2, 4, 16, 256, 65536, 1u64 << 32, 1u64 << 48, 1u64 << 63];
+        let powers = [
+            1u64,
+            2,
+            4,
+            16,
+            256,
+            65536,
+            1u64 << 32,
+            1u64 << 48,
+            1u64 << 63,
+        ];
         for &power in &powers {
             encode_fixed(&mut buf, power);
-            assert_eq!(decode_fixed::<u64>(&buf), power, "Power of 2 value {} should encode/decode correctly", power);
+            assert_eq!(
+                decode_fixed::<u64>(&buf),
+                power,
+                "Power of 2 value {} should encode/decode correctly",
+                power
+            );
         }
 
         encode_fixed::<u64>(&mut buf, 0xAAAAAAAAAAAAAAAA);
-        assert_eq!(decode_fixed::<u64>(&buf), 0xAAAAAAAAAAAAAAAA, "Alternating bits should encode/decode correctly");
+        assert_eq!(
+            decode_fixed::<u64>(&buf),
+            0xAAAAAAAAAAAAAAAA,
+            "Alternating bits should encode/decode correctly"
+        );
 
         encode_fixed::<u64>(&mut buf, 0x5555555555555555);
-        assert_eq!(decode_fixed::<u64>(&buf), 0x5555555555555555, "Alternating bits should encode/decode correctly");
+        assert_eq!(
+            decode_fixed::<u64>(&buf),
+            0x5555555555555555,
+            "Alternating bits should encode/decode correctly"
+        );
 
         let patterns = [
             0x00000000FFFFFFFF, // Upper half all zeros, lower half all ones
             0xFFFFFFFF00000000, // Upper half all ones, lower half all zeros
             0x00FF00FF00FF00FF, // Alternating bytes of zeros and ones
-            0xFF00FF00FF00FF00  // Alternating bytes of ones and zeros
+            0xFF00FF00FF00FF00, // Alternating bytes of ones and zeros
         ];
 
         for &pattern in &patterns {
             encode_fixed(&mut buf, pattern);
-            assert_eq!(decode_fixed::<u64>(&buf), pattern, "Byte pattern {:X} should encode/decode correctly", pattern);
+            assert_eq!(
+                decode_fixed::<u64>(&buf),
+                pattern,
+                "Byte pattern {:X} should encode/decode correctly",
+                pattern
+            );
         }
     }
 
@@ -205,16 +268,8 @@ mod tests {
         let mut buf = [0u8; 4];
 
         let values = [
-            0x12345678,
-            0xFEDCBA98,
-            0x01234567,
-            0x89ABCDEF,
-            0x55AA55AA,
-            0xA55AA55A,
-            0xFFFFFFFF,
-            0x00000000,
-            0x80000000,
-            0x7FFFFFFF
+            0x12345678, 0xFEDCBA98, 0x01234567, 0x89ABCDEF, 0x55AA55AA, 0xA55AA55A, 0xFFFFFFFF,
+            0x00000000, 0x80000000, 0x7FFFFFFF,
         ];
 
         for &value in &values {
@@ -238,7 +293,7 @@ mod tests {
             0xFFFFFFFFFFFFFFFF,
             0x0000000000000000,
             0x8000000000000000,
-            0x7FFFFFFFFFFFFFFF
+            0x7FFFFFFFFFFFFFFF,
         ];
 
         for &value in &values {
