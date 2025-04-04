@@ -38,14 +38,14 @@ version-resolver:
   default: patch
 template: |
   $CHANGES
-  
+
   Version tags:
   - `https://github.com/$OWNER/$REPOSITORY/releases/tag/v$RESOLVED_VERSION`
-  
+
   **📒 Documentation**: kiwi-rs
-  
+
   **Full Changelog**: https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
-  
+
   Thanks to $CONTRIBUTORS for making this release possible.
 
 autolabeler:
