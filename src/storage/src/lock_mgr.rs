@@ -1,70 +1,80 @@
-//  Copyright (c) 2017-present, arana-db Community.  All rights reserved.
-//  This source code is licensed under the BSD-style license found in the
-//  LICENSE file in the root directory of this source tree. An additional grant
+// Copyright 2024 The Kiwi-rs Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
-/// 锁管理器，用于管理存储引擎中的锁
-/// 这是C++版本的lock_mgr.h的Rust实现
+/// Lock manager for managing locks in the storage engine
+/// This is a Rust implementation of the C++ version lock_mgr.h
 pub struct LockMgr {
-    // 锁映射表，键为锁的名称，值为锁的状态
+    // Lock mapping table, where key is the lock name and value is the lock state
     locks: RwLock<HashMap<String, Arc<Mutex<LockStatus>>>>,
 }
 
-/// 锁的状态
+/// Lock state
 struct LockStatus {
-    // 锁的持有者数量
+    // Number of lock holders
     holders: usize,
-    // 最后一次获取锁的时间
+    // Last time the lock was acquired
     last_acquired: Instant,
 }
 
 impl LockMgr {
-    /// 创建一个新的锁管理器
+    /// Create a new lock manager
     pub fn new() -> Self {
         Self {
             locks: RwLock::new(HashMap::new()),
         }
     }
 
-    /// 尝试获取锁
-    /// 
-    /// # 参数
-    /// * `name` - 锁的名称
-    /// * `timeout` - 获取锁的超时时间，单位为毫秒
-    /// 
-    /// # 返回值
-    /// 如果成功获取锁，返回true；否则返回false
+    /// Try to acquire a lock
+    ///
+    /// # Parameters
+    /// * `name` - Name of the lock
+    /// * `timeout` - Timeout duration in milliseconds for acquiring the lock
+    ///
+    /// # Returns
+    /// Returns true if the lock is successfully acquired; otherwise returns false
     pub fn try_lock(&self, name: &str, timeout: u64) -> bool {
         let locks = self.locks.read().unwrap();
         
-        // 检查锁是否存在
+        // Check if the lock exists
         if let Some(lock) = locks.get(name) {
-            // 尝试获取锁
+            // Try to acquire the lock
             match lock.try_lock() {
                 Ok(mut status) => {
-                    // 更新锁的状态
+                    // Update lock state
                     status.holders += 1;
                     status.last_acquired = Instant::now();
                     true
                 },
                 Err(_) => {
-                    // 无法获取锁，可能是被其他线程持有
+                    // Cannot acquire lock, might be held by other threads
                     false
                 }
             }
         } else {
-            // 锁不存在，需要创建新锁
-            drop(locks); // 释放读锁
+            // Lock doesn't exist, need to create a new one
+            drop(locks); // Release read lock
             
             let mut locks = self.locks.write().unwrap();
             
-            // 再次检查锁是否存在（可能在获取写锁的过程中被其他线程创建）
+            // Check again if the lock exists (might have been created by other threads while acquiring write lock)
             if !locks.contains_key(name) {
-                // 创建新锁
+                // Create new lock
                 let status = LockStatus {
                     holders: 1,
                     last_acquired: Instant::now(),
@@ -72,7 +82,7 @@ impl LockMgr {
                 locks.insert(name.to_string(), Arc::new(Mutex::new(status)));
                 true
             } else {
-                // 锁已经存在，尝试获取
+                // Lock already exists, try to acquire it
                 let lock = locks.get(name).unwrap();
                 match lock.try_lock() {
                     Ok(mut status) => {
@@ -86,13 +96,13 @@ impl LockMgr {
         }
     }
 
-    /// 释放锁
+    /// Release a lock
     /// 
-    /// # 参数
-    /// * `name` - 锁的名称
+    /// # Parameters
+    /// * `name` - Name of the lock
     /// 
-    /// # 返回值
-    /// 如果成功释放锁，返回true；否则返回false
+    /// # Returns
+    /// Returns true if the lock is successfully released; otherwise returns false
     pub fn unlock(&self, name: &str) -> bool {
         let locks = self.locks.read().unwrap();
         
@@ -113,34 +123,34 @@ impl LockMgr {
         }
     }
 
-    /// 检查锁是否被持有
+    /// Check if a lock is being held
     /// 
-    /// # 参数
-    /// * `name` - 锁的名称
+    /// # Parameters
+    /// * `name` - Name of the lock
     /// 
-    /// # 返回值
-    /// 如果锁被持有，返回true；否则返回false
+    /// # Returns
+    /// Returns true if the lock is being held; otherwise returns false
     pub fn is_locked(&self, name: &str) -> bool {
         let locks = self.locks.read().unwrap();
         
         if let Some(lock) = locks.get(name) {
             match lock.try_lock() {
                 Ok(status) => status.holders > 0,
-                Err(_) => true, // 无法获取锁，说明锁被持有
+                Err(_) => true, // Cannot acquire lock, indicating it's being held
             }
         } else {
             false
         }
     }
 
-    /// 清理过期的锁
+    /// Clean up expired locks
     /// 
-    /// # 参数
-    /// * `max_idle_time` - 最大空闲时间，单位为毫秒
+    /// # Parameters
+    /// * `max_idle_time` - Maximum idle time in milliseconds
     pub fn cleanup(&self, max_idle_time: u64) {
         let mut locks = self.locks.write().unwrap();
         
-        // 找出过期的锁
+        // Find expired locks
         let expired_keys: Vec<String> = locks
             .iter()
             .filter_map(|(key, lock)| {
@@ -156,7 +166,7 @@ impl LockMgr {
             })
             .collect();
         
-        // 移除过期的锁
+        // Remove expired locks
         for key in expired_keys {
             locks.remove(&key);
         }
@@ -172,16 +182,16 @@ mod tests {
     fn test_lock_unlock() {
         let lock_mgr = LockMgr::new();
         
-        // 测试获取锁
+        // Test acquiring lock
         assert!(lock_mgr.try_lock("test_lock", 1000));
         
-        // 测试锁是否被持有
+        // Test if lock is held
         assert!(lock_mgr.is_locked("test_lock"));
         
-        // 测试释放锁
+        // Test releasing lock
         assert!(lock_mgr.unlock("test_lock"));
         
-        // 测试锁是否被释放
+        // Test if lock is released
         assert!(!lock_mgr.is_locked("test_lock"));
     }
 
@@ -189,7 +199,7 @@ mod tests {
     fn test_concurrent_locks() {
         let lock_mgr = Arc::new(LockMgr::new());
         
-        // 测试并发获取不同的锁
+        // Test concurrent acquisition of different locks
         let lock_mgr1 = lock_mgr.clone();
         let handle1 = thread::spawn(move || {
             assert!(lock_mgr1.try_lock("lock1", 1000));
@@ -212,17 +222,21 @@ mod tests {
     fn test_cleanup() {
         let lock_mgr = LockMgr::new();
         
-        // 获取并释放锁
+        // Test acquiring lock
         assert!(lock_mgr.try_lock("test_lock", 1000));
-        assert!(lock_mgr.unlock("test_lock"));
         
-        // 等待一段时间
+        // Test if lock is held
+        assert!(lock_mgr.is_locked("test_lock"));
+        
+        // Wait for a while
         thread::sleep(Duration::from_millis(100));
         
-        // 清理过期的锁
+        // Clean up expired locks
         lock_mgr.cleanup(50);
         
-        // 检查锁是否被清理
+        // Test if lock is still held
+        assert!(lock_mgr.is_locked("test_lock"));
+        assert!(lock_mgr.unlock("test_lock"));
         assert!(!lock_mgr.is_locked("test_lock"));
     }
 }

@@ -1,7 +1,16 @@
 //  Copyright (c) 2017-present, arana-db Community.  All rights reserved.
-//  This source code is licensed under the BSD-style license found in the
-//  LICENSE file in the root directory of this source tree. An additional grant
-//  of patent rights can be found in the PATENTS file in the same directory.
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
 
 use std::collections::{HashMap, VecDeque};
 use std::f64;
@@ -16,7 +25,7 @@ use crate::base_data_value_format::DataType;
 use crate::lock_mgr::LockMgr;
 use crate::slot_indexer::SlotIndexer;
 
-// 常量定义
+// Constant definitions
 pub const ZSET_SCORE_MAX: f64 = f64::MAX;
 pub const ZSET_SCORE_MIN: f64 = f64::MIN;
 
@@ -30,13 +39,13 @@ pub const COMPACT_THRESHOLD_COUNT: usize = 2000;
 pub const NO_FLUSH: u64 = u64::MAX;
 pub const FLUSH: u64 = 0;
 
-// 类型别名
+// Type aliases
 pub type Status = Result<(), String>;
 pub type LogIndex = i64;
 pub type AppendLogFunction = Arc<dyn Fn(Binlog, Pin<Box<dyn Future<Output = Status> + Send>>) + Send + Sync>;
 pub type DoSnapshotFunction = Arc<dyn Fn(LogIndex, bool) + Send + Sync>;
 
-// 结构体定义
+// Struct definitions
 pub struct Binlog {
     // Implementation of Binlog struct
     // This needs to be completed based on the specific implementation of kiwi::Binlog
@@ -83,7 +92,7 @@ impl Default for StorageOptions {
 
 impl StorageOptions {
     pub fn reset_options(&mut self, option_type: OptionType, options_map: &HashMap<String, String>) -> Status {
-        // 实现重置选项的逻辑
+        // Implementation of reset options logic
         Ok(())
     }
 }
@@ -214,7 +223,7 @@ impl PartialEq for ScoreMember {
     }
 }
 
-// 枚举定义
+// Enum definitions
 pub enum BeforeOrAfter {
     Before,
     After,
@@ -284,7 +293,7 @@ pub struct LRUCache<K, V> {
     // This needs to be completed based on the LRUCache class in C++ version
 }
 
-// Storage类的Rust实现
+// Rust implementation of Storage class
 pub struct Storage {
     insts: Vec<Box<Redis>>,
     slot_indexer: Option<Box<SlotIndexer>>,
@@ -294,14 +303,14 @@ pub struct Storage {
     
     cursors_store: Option<Box<LRUCache<String, String>>>,
     
-    // 后台任务相关
+    // Background task related
     bg_tasks_mutex: Mutex<()>,
     bg_tasks_queue: Mutex<VecDeque<BGTask>>,
     bg_tasks_should_exit: AtomicBool,
     
     current_task_type: AtomicI32,
     
-    // 扫描键相关
+    // Key scanning related
     scan_keynum_exit: AtomicBool,
     db_instance_num: usize,
     db_id: i32,
@@ -331,12 +340,12 @@ impl Storage {
     }
     
     pub fn open(&mut self, storage_options: &StorageOptions, db_path: &str) -> Status {
-        // 实现打开存储的逻辑
+        // Implementation of storage open logic
         Ok(())
     }
     
     pub fn close(&mut self) -> Status {
-        // 实现关闭存储的逻辑
+        // Implementation of storage close logic
         Ok(())
     }
     
@@ -348,62 +357,62 @@ impl Storage {
     // Set key to hold the string value. if key
     // already holds a value, it is overwritten
     pub fn set(&self, key: &[u8], value: &[u8]) -> Status {
-        // 实现设置键值的逻辑
+        // Implementation of key-value set logic
         Ok(())
     }
     
     // Set key to hold the string value. if key exist
     pub fn setxx(&self, key: &[u8], value: &[u8], ret: &mut i32, ttl: i64) -> Status {
-        // 实现setxx的逻辑
+        // Implementation of setxx logic
         Ok(())
     }
     
     // Get the value of key. If the key does not exist
     // the special value nil is returned
     pub fn get(&self, key: &[u8], value: &mut String) -> Status {
-        // 实现获取键值的逻辑
+        // Implementation of key-value get logic
         Ok(())
     }
     
     // Get the value and ttl of key. If the key does not exist
     // the special value nil is returned. If the key has no ttl, ttl is -1
     pub fn get_with_ttl(&self, key: &[u8], value: &mut String, ttl: &mut i64) -> Status {
-        // 实现带TTL的获取键值的逻辑
+        // Implementation of key-value get with TTL logic
         Ok(())
     }
     
-    // 其他方法可以按照相同的模式实现
+    // Other methods can be implemented following the same pattern
     
-    // 获取锁管理器
+    // Get lock manager
     pub fn get_lock_mgr(&self) -> Arc<LockMgr> {
         self.lock_mgr.clone()
     }
     
     // Background task related methods
     pub fn start_bg_thread(&self) -> Status {
-        // 实现启动后台线程的逻辑
+        // Implementation of background thread start logic
         Ok(())
     }
     
     pub fn run_bg_task(&self) -> Status {
-        // 实现运行后台任务的逻辑
+        // Implementation of background task execution logic
         Ok(())
     }
     
     pub fn add_bg_task(&self, bg_task: BGTask) -> Status {
-        // 实现添加后台任务的逻辑
+        // Implementation of background task addition logic
         Ok(())
     }
     
-    // 获取当前任务类型
+    // Get current task type
     pub fn get_current_task_type(&self) -> String {
-        // 实现获取当前任务类型的逻辑
+        // Implementation of current task type retrieval logic
         String::new()
     }
     
-    // 获取最小的已刷新日志索引
+    // Get minimum flushed log index
     pub fn get_smallest_flushed_log_index(&self) -> LogIndex {
-        // 实现获取最小已刷新日志索引的逻辑
+        // Implementation of minimum flushed log index retrieval logic
         0
     }
 }

@@ -1,3 +1,17 @@
+// Copyright 2024 The Kiwi-rs Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 //! Redis implementation for KiwiDB storage engine
 //! This module provides Redis-compatible storage operations using RocksDB
 
@@ -224,7 +238,7 @@ impl Redis {
         // List column family
         let mut list_data_cf_opts = options.options.clone();
         let mut list_data_cf_table_opts = BlockBasedOptions::default();
-        list_data_cf_table_opts.set_block_size(16 * 1024); // 使用16KB作为默认块大小
+        list_data_cf_table_opts.set_block_size(16 * 1024); // Use 16KB as default block size
         if !options.share_block_cache && options.block_cache_size > 0 {
             let cache = rocksdb::Cache::new_lru_cache(options.block_cache_size);
             list_data_cf_table_opts.set_block_cache(&cache);
@@ -235,7 +249,7 @@ impl Redis {
         // ZSet column families
         let mut zset_data_cf_opts = options.options.clone();
         let mut zset_data_cf_table_opts = BlockBasedOptions::default();
-        zset_data_cf_table_opts.set_block_size(16 * 1024); // 使用16KB作为默认块大小
+        zset_data_cf_table_opts.set_block_size(16 * 1024); // Use 16KB as default block size
         if !options.share_block_cache && options.block_cache_size > 0 {
             let cache = rocksdb::Cache::new_lru_cache(options.block_cache_size);
             zset_data_cf_table_opts.set_block_cache(&cache);
@@ -245,7 +259,7 @@ impl Redis {
         
         let mut zset_score_cf_opts = options.options.clone();
         let mut zset_score_cf_table_opts = BlockBasedOptions::default();
-        zset_score_cf_table_opts.set_block_size(16 * 1024); // 使用16KB作为默认块大小
+        zset_score_cf_table_opts.set_block_size(16 * 1024); // Use 16KB as default block size
         if !options.share_block_cache && options.block_cache_size > 0 {
             let cache = rocksdb::Cache::new_lru_cache(options.block_cache_size);
             zset_score_cf_table_opts.set_block_cache(&cache);
