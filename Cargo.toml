@@ -1,7 +1,7 @@
 [package]
-name = "kiwi-storage"
+name = "kiwi"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 rocksdb = "0.21.0"
@@ -16,10 +16,6 @@ once_cell = "1.18"
 num_cpus = "1.16"
 murmur3 = "0.5"
 lru = "0.12"
-
-[lib]
-name = "kiwi_storage"
-path = "src/lib.rs"
 
 [features]
 default = []
