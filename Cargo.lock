@@ -212,7 +212,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kiwi-storage"
+name = "kiwi"
 version = "0.1.0"
 dependencies = [
  "anyhow",
