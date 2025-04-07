@@ -14,10 +14,11 @@
 
 //! Storage engine options and configurations
 
-use rocksdb::{BlockBasedOptions, Cache, Env, Options};
-use std::collections::HashMap;
+use rocksdb::{BlockBasedOptions, Options};
 
 /// Column family types
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ColumnFamilyType {
     /// For metadata storage
@@ -28,6 +29,8 @@ pub enum ColumnFamilyType {
     MetaAndData,
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 /// Storage engine options
 pub struct StorageOptions {
     /// RocksDB options
@@ -88,6 +91,8 @@ impl Default for StorageOptions {
     }
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl StorageOptions {
     /// Create a new StorageOptions with default values
     pub fn new() -> Self {

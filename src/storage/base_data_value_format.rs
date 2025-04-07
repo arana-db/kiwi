@@ -13,7 +13,11 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
+use std::fmt;
+
 /// Data type enumeration, corresponding to the DataType in C++ version
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DataType {
     /// String type
@@ -30,9 +34,11 @@ pub enum DataType {
     All,
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl DataType {
     /// Convert data type to character
-    pub fn to_char(&self) -> char {
+    pub fn to_char(self) -> char {
         match self {
             DataType::String => 'k',
             DataType::Hash => 'h',
@@ -44,7 +50,7 @@ impl DataType {
     }
 
     /// Convert data type to tag string
-    pub fn to_tag(&self) -> &'static str {
+    pub fn to_tag(self) -> &'static str {
         match self {
             DataType::String => "k",
             DataType::Hash => "h",
@@ -67,21 +73,25 @@ impl DataType {
             _ => None,
         }
     }
+}
 
-    /// Get string representation of data type
-    pub fn to_string(&self) -> String {
-        match self {
-            DataType::String => "string".to_string(),
-            DataType::Hash => "hash".to_string(),
-            DataType::List => "list".to_string(),
-            DataType::Set => "set".to_string(),
-            DataType::Zset => "zset".to_string(),
-            DataType::All => "all".to_string(),
-        }
+impl fmt::Display for DataType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
+            DataType::String => "string",
+            DataType::Hash => "hash",
+            DataType::List => "list",
+            DataType::Set => "set",
+            DataType::Zset => "zset",
+            DataType::All => "all",
+        };
+        write!(f, "{}", s)
     }
 }
 
 /// Convert data type to tag string
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 pub fn data_type_to_tag(data_type: DataType) -> &'static str {
     match data_type {
         DataType::String => "k",
@@ -94,6 +104,8 @@ pub fn data_type_to_tag(data_type: DataType) -> &'static str {
 }
 
 /// Encoding type enumeration, corresponding to the EncodeType in C++ version
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeType {
     /// String encoding
@@ -108,9 +120,11 @@ pub enum EncodeType {
     Zset,
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl EncodeType {
     /// Convert encoding type to character
-    pub fn to_char(&self) -> char {
+    pub fn to_char(self) -> char {
         match self {
             EncodeType::String => 'k',
             EncodeType::Hash => 'h',
@@ -134,6 +148,8 @@ impl EncodeType {
 }
 
 /// Value type enumeration, corresponding to the ValueType in C++ version
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueType {
     /// Deletion type
@@ -146,9 +162,11 @@ pub enum ValueType {
     Other,
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl ValueType {
     /// Convert value type to u8
-    pub fn to_u8(&self) -> u8 {
+    pub fn to_u8(self) -> u8 {
         match self {
             ValueType::Deletion => 0,
             ValueType::Value => 1,
@@ -170,6 +188,8 @@ impl ValueType {
 }
 
 /// Internal value structure for storing Redis data
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct InternalValue {
     /// The type of data stored
@@ -182,6 +202,8 @@ pub struct InternalValue {
     timestamp: u64,
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl InternalValue {
     /// Create a new internal value
     pub fn new(data_type: DataType, value: &[u8]) -> Self {
@@ -194,7 +216,8 @@ impl InternalValue {
     }
 
     /// Set the size of the collection
-    pub fn set_size(&mut self, size: u64) {
+    /// TODO: implement
+    pub fn set_size(&mut self, _size: u64) {
         // In a real implementation, this would encode the size into the value
         // For now, we just implement the method to fix compilation errors
     }
@@ -251,6 +274,8 @@ impl InternalValue {
 }
 
 /// Parsed internal value structure
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct ParsedInternalValue {
     /// The type of data stored
@@ -265,6 +290,8 @@ pub struct ParsedInternalValue {
     size: u64,
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl ParsedInternalValue {
     /// Create a new parsed internal value
     pub fn new(data_type: DataType, value: String) -> Self {
@@ -406,4 +433,3 @@ mod tests {
         assert_eq!(ValueType::from_u8(4), None);
     }
 }
-
