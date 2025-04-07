@@ -42,7 +42,7 @@ impl DataType {
             DataType::All => 'a',
         }
     }
-    
+
     /// Convert data type to tag string
     pub fn to_tag(&self) -> &'static str {
         match self {
@@ -192,7 +192,7 @@ impl InternalValue {
             timestamp: 0,
         }
     }
-    
+
     /// Set the size of the collection
     pub fn set_size(&mut self, size: u64) {
         // In a real implementation, this would encode the size into the value
@@ -276,22 +276,22 @@ impl ParsedInternalValue {
             size: 0,
         }
     }
-    
+
     /// Get the size of the collection
     pub fn get_size(&self) -> Option<u64> {
         Some(self.size)
     }
-    
+
     /// Set the size of the collection
     pub fn set_size(&mut self, size: u64) {
         self.size = size;
     }
-    
+
     /// Get the size directly
     pub fn size(&self) -> u64 {
         self.size
     }
-    
+
     /// Encode the parsed internal value
     pub fn encode(&self) -> Vec<u8> {
         // Simple implementation - in a real scenario this would properly serialize all fields
@@ -406,3 +406,4 @@ mod tests {
         assert_eq!(ValueType::from_u8(4), None);
     }
 }
+
