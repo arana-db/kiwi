@@ -1,27 +1,38 @@
 use std::collections::HashMap;
+use std::mem::MaybeUninit;
 use std::ptr::NonNull;
 
 /// The chain connects prev and next cache.
-struct Chain {
-    prev: NonNull<Chain>,
-    next: NonNull<Chain>,
+struct Chain<K> {
+    prev: NonNull<Chain<K>>,
+    next: NonNull<Chain<K>>,
+    key: MaybeUninit<K>,
 }
 
-impl Chain {
-    fn new() -> Chain {
-        Chain {
+impl<K> Chain<K> {
+    fn new(key: MaybeUninit<K>) -> Chain<K> {
+        Self {
             prev: NonNull::dangling(),
             next: NonNull::dangling(),
+            key,
         }
     }
 }
 
-impl Drop for Chain {
-    fn drop(&mut self) {
-        unsafe {
-            drop(Box::from_raw(self.prev.as_ptr()));
-            drop(Box::from_raw(self.next.as_ptr()));
-        }
+/// connect chains.
+#[inline]
+fn connect<K>(mut front: NonNull<Chain<K>>, mut back: NonNull<Chain<K>>) {
+    unsafe {
+        front.as_mut().next = back;
+        back.as_mut().prev = front;
+    }
+}
+
+/// cut chain.
+#[inline]
+fn cut_out<K>(chain: NonNull<Chain<K>>) {
+    unsafe {
+        connect(chain.as_ref().prev, chain.as_ref().next);
     }
 }
 
@@ -29,22 +40,22 @@ impl Drop for Chain {
 /// Inside chain will help cache remember prev and next.
 /// TODO: remove allow dead code
 #[allow(dead_code)]
-struct Cache<V>
+struct Cache<K, V>
 where
     V: Clone,
 {
     value: V,
     charge: usize, // the value size
-    chain: NonNull<Chain>,
+    chain: NonNull<Chain<K>>,
 }
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
-impl<V> Cache<V>
+impl<K, V> Cache<K, V>
 where
     V: Clone,
 {
-    fn new<U: Into<usize>>(value: V, charge: U, chain: NonNull<Chain>) -> Cache<V> {
+    fn new<U: Into<usize>>(value: V, charge: U, chain: NonNull<Chain<K>>) -> Cache<K, V> {
         Cache {
             value,
             charge: charge.into(),
@@ -69,26 +80,11 @@ where
     K: std::hash::Hash + Eq + Clone,
     V: Clone,
 {
-    map: HashMap<K, Cache<V>>,
+    map: HashMap<K, Cache<K, V>>,
     capacity: usize,
     usage: usize, // total charge
     size: usize,
-    origin: NonNull<Chain>, // start and end node.
-}
-
-/// connect caches.
-#[inline]
-fn connect(mut front: NonNull<Chain>, mut back: NonNull<Chain>) {
-    unsafe {
-        front.as_mut().next = back;
-        back.as_mut().prev = front;
-    }
-}
-
-/// cut caches.
-#[inline]
-fn cut_out(cache: NonNull<Chain>) {
-    unsafe { connect(cache.as_ref().prev, cache.as_ref().next) }
+    origin: NonNull<Chain<K>>, // start and end node.
 }
 
 impl<K, V> Default for LRUCache<K, V>
@@ -109,7 +105,7 @@ where
     V: Clone,
 {
     pub fn new() -> Self {
-        let origin = Box::leak(Box::new(Chain::new())).into();
+        let origin = Box::leak(Box::new(Chain::new(MaybeUninit::uninit()))).into();
         // Form a circular linked list.
         // At first, connect itself.
         connect(origin, origin);
@@ -125,7 +121,7 @@ where
 
     /// Create a LRUCache with capacity.
     pub fn with_capacity(capacity: usize) -> Self {
-        let origin = Box::leak(Box::new(Chain::new())).into();
+        let origin = Box::leak(Box::new(Chain::new(MaybeUninit::uninit()))).into();
         // Form a circular linked list.
         // At first, connect itself.
         connect(origin, origin);
@@ -165,7 +161,7 @@ where
     }
 
     /// Move the cache to the front.
-    fn move_to_head(&mut self, chain: NonNull<Chain>) {
+    fn move_to_head(&mut self, chain: NonNull<Chain<K>>) {
         unsafe {
             connect(self.origin.as_ref().prev, chain);
             connect(chain, self.origin);
@@ -180,7 +176,7 @@ where
             cache.value = value;
             self.usage += charge;
         } else {
-            let chain = Box::leak(Box::new(Chain::new())).into();
+            let chain = Box::leak(Box::new(Chain::new(MaybeUninit::new(key.clone())))).into();
 
             self.map
                 .insert(key.clone(), Cache::new(value, charge, chain));
@@ -213,22 +209,15 @@ where
     fn trim(&mut self) {
         while self.usage > self.capacity {
             unsafe {
-                let old_chain = self.origin.as_ref().next;
-                cut_out(old_chain);
-                // TODO: Add the key to the chain, directly search for the key in the hashmap,
-                // making the time complexity go from O(n) to O(1).
-                if let Some((key, charge)) = self.map.iter().find_map(|(key, cache)| {
-                    if cache.chain == old_chain {
-                        Some((key.clone(), cache.charge))
-                    } else {
-                        None
-                    }
-                }) {
-                    self.map.remove(&key);
-                    self.usage -= charge;
+                let tail_chain = self.origin.as_ref().next;
+                let tail_key = tail_chain.as_ref().key.assume_init_ref();
+                if let Some(tail_cache) = self.map.get(&tail_key) {
+                    self.usage -= tail_cache.charge;
                 }
-
+                self.map.remove(&tail_key);
                 self.size -= 1;
+
+                cut_out(tail_chain);
             }
         }
     }
@@ -262,7 +251,6 @@ where
 }
 
 /// just for test
-/// TODO: remove allow dead code
 #[allow(dead_code)]
 impl<K, V> LRUCache<K, V>
 where
@@ -287,7 +275,6 @@ where
 }
 
 /// just for test
-/// TODO: remove allow dead code
 #[allow(dead_code)]
 impl<K, V> LRUCache<K, V>
 where
