@@ -14,8 +14,8 @@
 
 //! Storage engine options and configurations
 
+use rocksdb::{BlockBasedOptions, Cache, Env, Options};
 use std::collections::HashMap;
-use rocksdb::{Options, BlockBasedOptions, Cache, Env};
 
 /// Column family types
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -29,7 +29,6 @@ pub enum ColumnFamilyType {
 }
 
 /// Storage engine options
-#[derive(Debug, Clone)]
 pub struct StorageOptions {
     /// RocksDB options
     pub options: Options,
@@ -126,15 +125,13 @@ impl StorageOptions {
     }
 
     /// Set database instance number
-    pub fn set_db_instance_num(&mut self, num: usize) -> &mut Self {
+    pub fn set_db_instance_num(&mut self, num: usize) {
         self.db_instance_num = num;
-        self
     }
 
     /// Set database ID
-    pub fn set_db_id(&mut self, id: i32) -> &mut Self {
+    pub fn set_db_id(&mut self, id: i32) {
         self.db_id = id;
-        self
     }
 
     /// Set Raft timeout
