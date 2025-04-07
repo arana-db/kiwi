@@ -4,7 +4,8 @@
     "color": "B60205"
   },
   "CHECKS": {
-    "regexp": "(?i)^(feat|fix|test|refactor|chore|upgrade|bump|style|docs|perf|build|ci|revert)(\\(.*\\))?[: ]+.*",
+    "prefixes":["Bump "],
+    "regexp": "^(feat|fix|test|refactor|chore|upgrade|bump|style|docs|perf|build|ci|revert)(\\(.*\\))?:.*",
     "ignoreLabels": [
       "ignore-title"
     ]
