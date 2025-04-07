@@ -211,10 +211,10 @@ where
             unsafe {
                 let tail_chain = self.origin.as_ref().next;
                 let tail_key = tail_chain.as_ref().key.assume_init_ref();
-                if let Some(tail_cache) = self.map.get(&tail_key) {
+                if let Some(tail_cache) = self.map.get(tail_key) {
                     self.usage -= tail_cache.charge;
                 }
-                self.map.remove(&tail_key);
+                self.map.remove(tail_key);
                 self.size -= 1;
 
                 cut_out(tail_chain);
