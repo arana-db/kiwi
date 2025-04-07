@@ -19,6 +19,8 @@ pub struct SlotIndexer {
     instance_num: usize,
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl SlotIndexer {
     /// Create a new SlotIndexer with a defined instance number.
     pub fn new(instance_num: usize) -> Self {

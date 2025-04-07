@@ -19,12 +19,16 @@ use std::time::{Duration, Instant};
 
 /// Lock manager for managing locks in the storage engine
 /// This is a Rust implementation of the C++ version lock_mgr.h
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 pub struct LockMgr {
     // Lock mapping table, where key is the lock name and value is the lock state
     locks: RwLock<HashMap<String, Arc<Mutex<LockStatus>>>>,
 }
 
 /// Lock state
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 struct LockStatus {
     // Number of lock holders
     holders: usize,
@@ -32,6 +36,14 @@ struct LockStatus {
     last_acquired: Instant,
 }
 
+impl Default for LockMgr {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl LockMgr {
     /// Create a new lock manager
     pub fn new() -> Self {
@@ -48,7 +60,8 @@ impl LockMgr {
     ///
     /// # Returns
     /// Returns true if the lock is successfully acquired; otherwise returns false
-    pub fn try_lock(&self, name: &str, timeout: u64) -> bool {
+    /// TODO: implement
+    pub fn try_lock(&self, name: &str, _timeout: u64) -> bool {
         let locks = self.locks.read().unwrap();
 
         // Check if the lock exists

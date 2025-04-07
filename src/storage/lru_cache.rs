@@ -27,6 +27,8 @@ impl Drop for Chain {
 
 /// Cache is record the key and value.
 /// Inside chain will help cache remember prev and next.
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 struct Cache<V>
 where
     V: Clone,
@@ -36,6 +38,8 @@ where
     chain: NonNull<Chain>,
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl<V> Cache<V>
 where
     V: Clone,
@@ -58,6 +62,8 @@ where
 /// a circular doubly linked list, with a time complexity of O(1).
 /// NOTE: LRUCache is thread-unsafe.
 /// We may currently need to wrap mutex externally to access LRUCache.
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 pub struct LRUCache<K, V>
 where
     K: std::hash::Hash + Eq + Clone,
@@ -95,6 +101,8 @@ where
     }
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl<K, V> LRUCache<K, V>
 where
     K: std::hash::Hash + Eq + Clone,
@@ -254,6 +262,8 @@ where
 }
 
 /// just for test
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl<K, V> LRUCache<K, V>
 where
     K: std::hash::Hash + Eq + Clone,
@@ -277,6 +287,8 @@ where
 }
 
 /// just for test
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl<K, V> LRUCache<K, V>
 where
     K: std::hash::Hash + Eq + Clone,

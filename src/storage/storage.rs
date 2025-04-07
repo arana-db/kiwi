@@ -127,6 +127,12 @@ pub struct FieldValue {
     pub value: String,
 }
 
+impl Default for FieldValue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FieldValue {
     pub fn new() -> Self {
         Self {
@@ -160,6 +166,12 @@ impl PartialEq for KeyVersion {
 pub struct ScoreMember {
     pub score: f64,
     pub member: String,
+}
+
+impl Default for ScoreMember {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ScoreMember {
@@ -224,6 +236,12 @@ pub struct BGTask {
     pub argv: Vec<String>,
 }
 
+impl Default for BGTask {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BGTask {
     pub fn new() -> Self {
         Self {
@@ -269,6 +287,12 @@ pub struct Storage {
     scan_keynum_exit: AtomicBool,
     db_instance_num: usize,
     db_id: i32,
+}
+
+impl Default for Storage {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Storage {
