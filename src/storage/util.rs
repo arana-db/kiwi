@@ -14,112 +14,108 @@
 
 //! Utility functions and data structures for the storage engine
 
-use lru::LruCache;
-use murmur3::murmur3_32;
-use std::hash::Hasher;
-use std::num::Wrapping;
-use std::sync::Arc;
-use parking_lot::Mutex;
+use std::fs;
+use std::io;
+use std::path::Path;
 
-/// Thread-safe LRU cache implementation
-pub struct Cache<K, V> {
-    inner: Arc<Mutex<LruCache<K, V>>>,
+pub fn is_dir<P: AsRef<Path>>(path: P) -> io::Result<bool> {
+    let metadata = fs::metadata(path)?;
+    Ok(metadata.is_dir())
 }
 
-impl<K: Clone + Eq + std::hash::Hash, V: Clone> Cache<K, V> {
-    pub fn new(cap: usize) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(LruCache::new(cap))),
-        }
+/// Creates a directory and all its parent directories with the specified mode.
+/// This corresponds to the 'mkpath' functionality.
+pub fn mkdir_with_path<P: AsRef<Path>>(path: P, mode: u32) -> io::Result<()> {
+    // Use the fs::create_dir_all method to create the directory path.
+    // It does not handle mode settings, so additional steps are required to set modes.
+    fs::create_dir_all(&path)?;
+
+    // Optionally, we can set the mode using 'chmod' if the platform supports it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(mode))?;
     }
 
-    pub fn get(&self, key: &K) -> Option<V> {
-        self.inner.lock().get(key).cloned()
-    }
-
-    pub fn put(&self, key: K, value: V) -> Option<V> {
-        self.inner.lock().put(key, value)
-    }
-
-    pub fn remove(&self, key: &K) -> Option<V> {
-        self.inner.lock().pop(key)
-    }
-
-    pub fn clear(&self) {
-        self.inner.lock().clear();
-    }
-
-    pub fn len(&self) -> usize {
-        self.inner.lock().len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.inner.lock().is_empty()
-    }
+    Ok(())
 }
 
-/// MurmurHash implementation
-pub fn murmurhash(data: &[u8], seed: u32) -> u32 {
-    murmur3_32(data, seed)
-}
+pub fn delete_dir<P: AsRef<Path>>(dirname: P) -> io::Result<()> {
+    let path = dirname.as_ref();
 
-/// Utility functions for byte manipulation
-pub mod bytes {
-    use std::mem;
+    // Open the directory.
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
 
-    pub fn copy_bytes<T: Copy>(value: &T) -> Vec<u8> {
-        unsafe {
-            let ptr = value as *const T as *const u8;
-            std::slice::from_raw_parts(ptr, mem::size_of::<T>()).to_vec()
-        }
-    }
-
-    pub fn read_bytes<T: Copy>(bytes: &[u8]) -> Option<T> {
-        if bytes.len() != mem::size_of::<T>() {
-            return None;
-        }
-        unsafe {
-            let mut value = mem::MaybeUninit::uninit();
-            std::ptr::copy_nonoverlapping(
-                bytes.as_ptr(),
-                value.as_mut_ptr() as *mut u8,
-                mem::size_of::<T>(),
-            );
-            Some(value.assume_init())
-        }
-    }
-}
-
-/// CRC64 implementation
-pub mod crc64 {
-    const POLY: u64 = 0xC96C5795D7870F42;
-    static mut TABLE: [u64; 256] = [0; 256];
-    static INITIALIZED: std::sync::Once = std::sync::Once::new();
-
-    fn init_table() {
-        for i in 0..256 {
-            let mut crc = i as u64;
-            for _ in 0..8 {
-                if crc & 1 == 1 {
-                    crc = (crc >> 1) ^ POLY;
-                } else {
-                    crc >>= 1;
-                }
-            }
-            unsafe {
-                TABLE[i] = crc;
+        // Skip '.' and '..'
+        if let Some(name) = entry.file_name().to_str() {
+            if name == "." || name == ".." {
+                continue;
             }
         }
+
+        // Check if the path is a directory or a file.
+        if is_dir(&entry_path)? {
+            // It's a directory, recurse into it.
+            delete_dir(&entry_path)?;
+        } else {
+            // It's a file, remove it.
+            fs::remove_file(&entry_path)?;
+        }
     }
 
-    pub fn checksum(data: &[u8]) -> u64 {
-        INITIALIZED.call_once(init_table);
-        let mut crc = 0u64;
-        for &b in data {
-            unsafe {
-                crc = TABLE[((crc as u8) ^ b) as usize] ^ (crc >> 8);
-            }
-        }
-        crc
+    // Finally, remove the main directory.
+    fs::remove_dir(path)?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+
+    #[test]
+    fn test_is_dir() {
+        let dir_path = "test_dir";
+        fs::create_dir(dir_path).unwrap();
+        let result = is_dir(dir_path);
+        assert!(result.is_ok());
+        assert!(result.unwrap());
+
+        fs::remove_dir(dir_path).unwrap();
+    }
+
+    #[test]
+    fn test_mkdir_with_path() {
+        let dir_path = "nested/test/dir";
+        let mode = 0o755; // Unix specific mode (read, write, exec for owner; read, exec for others)
+        let result = mkdir_with_path(dir_path, mode);
+        assert!(result.is_ok());
+        // Check if the directory exists and the permissions are set correctly
+        let metadata = fs::metadata(dir_path).unwrap();
+        assert!(metadata.permissions().mode() & 0o777 == mode);
+        // Clean up
+        fs::remove_dir_all("nested").unwrap();
+    }
+
+    #[test]
+    fn test_delete_dir() {
+        let dir_path = "test_delete_dir";
+        fs::create_dir_all(format!("{}/subdir", dir_path)).unwrap();
+        fs::File::create(format!("{}/subdir/file.txt", dir_path))
+            .unwrap()
+            .write_all(b"data")
+            .unwrap();
+        assert!(Path::new(&format!("{}/subdir", dir_path)).exists());
+        assert!(Path::new(&format!("{}/subdir/file.txt", dir_path)).exists());
+        let result = delete_dir(dir_path);
+        assert!(result.is_ok());
+
+        assert!(!Path::new(dir_path).exists());
     }
 }
