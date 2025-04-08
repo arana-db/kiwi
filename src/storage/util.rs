@@ -18,6 +18,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 pub fn is_dir<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     let metadata = fs::metadata(path)?;
     Ok(metadata.is_dir())
@@ -25,6 +27,8 @@ pub fn is_dir<P: AsRef<Path>>(path: P) -> io::Result<bool> {
 
 /// Creates a directory and all its parent directories with the specified mode.
 /// This corresponds to the 'mkpath' functionality.
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 pub fn mkdir_with_path<P: AsRef<Path>>(path: P, mode: u32) -> io::Result<()> {
     // Use the fs::create_dir_all method to create the directory path.
     // It does not handle mode settings, so additional steps are required to set modes.
@@ -40,6 +44,8 @@ pub fn mkdir_with_path<P: AsRef<Path>>(path: P, mode: u32) -> io::Result<()> {
     Ok(())
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 pub fn delete_dir<P: AsRef<Path>>(dirname: P) -> io::Result<()> {
     let path = dirname.as_ref();
 

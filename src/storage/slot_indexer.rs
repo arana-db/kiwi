@@ -13,6 +13,8 @@
 //  limitations under the License.
 
 /// Manage slots to rocksdb indexes
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 pub struct SlotIndexer {
     // Number of instances
     instance_num: usize,
@@ -25,6 +27,8 @@ impl Default for SlotIndexer {
     }
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl SlotIndexer {
     /// Create a new SlotIndexer with a defined instance number.
     pub fn new(instance_num: usize) -> Self {
