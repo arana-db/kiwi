@@ -56,7 +56,7 @@ pub struct StorageOptions {
     /// Maximum gap between log indices
     pub max_gap: i64,
     /// Memory manager size
-    pub mem_manager_size: u64,
+    pub mem_manager_size: usize,
 }
 
 impl Default for StorageOptions {
@@ -152,7 +152,7 @@ impl StorageOptions {
     }
 
     /// Set memory manager size
-    pub fn set_mem_manager_size(&mut self, size: u64) -> &mut Self {
+    pub fn set_mem_manager_size(&mut self, size: usize) -> &mut Self {
         self.mem_manager_size = size;
         self
     }
