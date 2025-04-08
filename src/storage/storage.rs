@@ -16,16 +16,17 @@ use std::collections::VecDeque;
 use std::f64;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::Ordering;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, AtomicI32},
 };
 
 use crate::storage::base_data_value_format::DataType;
-use crate::storage::lock_mgr::LockMgr;
 use crate::storage::lru_cache::LRUCache;
 use crate::storage::options::StorageOptions;
 use crate::storage::slot_indexer::SlotIndexer;
+use crate::storage::util;
 
 // Constant definitions
 pub const ZSET_SCORE_MAX: f64 = f64::MAX;
@@ -269,12 +270,10 @@ pub struct Redis {
 // Rust implementation of Storage class
 pub struct Storage {
     insts: Vec<Box<Redis>>,
-    slot_indexer: Option<Box<SlotIndexer>>,
+    slot_indexer: SlotIndexer,
     is_opened: AtomicBool,
 
-    lock_mgr: Arc<LockMgr>,
-
-    cursors_store: Option<Box<LRUCache<String, String>>>,
+    cursors_store: LRUCache<String, String>,
 
     // Background task related
     bg_tasks_mutex: Mutex<()>,
@@ -299,12 +298,10 @@ impl Storage {
     pub fn new() -> Self {
         Self {
             insts: Vec::new(),
-            slot_indexer: None,
+            slot_indexer: SlotIndexer::default(),
             is_opened: AtomicBool::new(false),
 
-            lock_mgr: Arc::new(LockMgr::new()),
-
-            cursors_store: None,
+            cursors_store: LRUCache::with_capacity(5000),
 
             bg_tasks_mutex: Mutex::new(()),
             bg_tasks_queue: Mutex::new(VecDeque::new()),
@@ -318,8 +315,37 @@ impl Storage {
         }
     }
 
-    pub fn open(&mut self, storage_options: &StorageOptions, db_path: &str) -> Status {
+    pub fn open(&mut self, storage_options: &mut StorageOptions, db_path: &str) -> Status {
         // Implementation of storage open logic
+        if let Err(err) = util::mkdir_with_path(db_path, 0o755) {
+            return Err(format!("Failed to create db directory: {}", err));
+        }
+
+        self.db_instance_num = storage_options.db_instance_num;
+
+        // TODO: allow_stall should configure.
+        let write_buffer_manager = rocksdb::WriteBufferManager::new_write_buffer_manager(
+            storage_options.mem_manager_size,
+            true,
+        );
+
+        storage_options
+            .options
+            .set_write_buffer_manager(&write_buffer_manager);
+
+        for index in 0..self.db_instance_num {
+            // insts.add(create_redis(index))
+            // status s = insts.open(storage_options)
+            // if !s.ok() {
+            //     ERROR(err message);
+            //     return Err(err);
+            // }
+            // INFO("open Rocksdb{} success", index);
+        }
+
+        self.slot_indexer = SlotIndexer::new(self.db_instance_num);
+        self.db_id = self.db_id;
+        self.is_opened.store(true, Ordering::Relaxed);
         Ok(())
     }
 
@@ -361,11 +387,6 @@ impl Storage {
     }
 
     // Other methods can be implemented following the same pattern
-
-    // Get lock manager
-    pub fn get_lock_mgr(&self) -> Arc<LockMgr> {
-        self.lock_mgr.clone()
-    }
 
     // Background task related methods
     pub fn start_bg_thread(&self) -> Status {

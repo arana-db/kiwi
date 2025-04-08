@@ -13,14 +13,18 @@
 //  limitations under the License.
 
 /// Manage slots to rocksdb indexes
-/// TODO: temporarily mock return
 pub struct SlotIndexer {
     // Number of instances
     instance_num: usize,
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
+/// NOTE: default instance number is 3.
+impl Default for SlotIndexer {
+    fn default() -> Self {
+        Self { instance_num: 3 }
+    }
+}
+
 impl SlotIndexer {
     /// Create a new SlotIndexer with a defined instance number.
     pub fn new(instance_num: usize) -> Self {
