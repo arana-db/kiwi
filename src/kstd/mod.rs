@@ -1,2 +1,2 @@
-mod lock_mgr;
-mod status;
+pub mod lock_mgr;
+pub mod status;

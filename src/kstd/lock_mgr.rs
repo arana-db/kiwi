@@ -101,12 +101,12 @@ impl LockMgr {
 
     fn acquire_locked(&self, keys: &mut MutexGuard<HashSet<String>>, key: &str) -> Status {
         if keys.contains(key) {
-            return Status::busy("AlreadyLock");
+            return Status::busy("Lock already held");
         }
         if self.max_num_locks > 0
             && self.lock_map.lock_cnt.load(Ordering::Acquire) >= self.max_num_locks
         {
-            return Status::busy("LockLimit");
+            return Status::busy("Lock limit reached");
         }
         keys.insert(key.to_string());
 
