@@ -102,4 +102,3 @@ mod tests {
         assert_eq!(murmur3_32("€", 0), 0x5b43fca5);
     }
 }
-
