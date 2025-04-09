@@ -43,7 +43,6 @@ impl Status {
 
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // 直接在这里实现格式化，不再调用 to_string 方法
         write!(f, "{:?}: {}", self.code, self.message)
     }
 }
