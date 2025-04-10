@@ -25,6 +25,7 @@ use std::sync::{
 use crate::storage::base_data_value_format::DataType;
 use crate::storage::lru_cache::LRUCache;
 use crate::storage::options::StorageOptions;
+use crate::storage::redis::Redis;
 use crate::storage::slot_indexer::SlotIndexer;
 use crate::storage::util;
 
@@ -261,12 +262,6 @@ impl BGTask {
     }
 }
 
-// Redis implementation
-pub struct Redis {
-    // Implementation of Redis struct
-    // This needs to be completed based on the Redis class in C++ version
-}
-
 // Rust implementation of Storage class
 pub struct Storage {
     insts: Vec<Box<Redis>>,
@@ -334,7 +329,7 @@ impl Storage {
             .set_write_buffer_manager(&write_buffer_manager);
 
         for index in 0..self.db_instance_num {
-            // insts.add(create_redis(index))
+            // insts.add(Redis::new(&self, index as i32))
             // status s = insts.open(storage_options)
             // if !s.ok() {
             //     ERROR(err message);
