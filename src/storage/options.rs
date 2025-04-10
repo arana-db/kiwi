@@ -35,8 +35,6 @@ pub enum ColumnFamilyType {
 pub struct StorageOptions {
     /// RocksDB options
     pub options: Options,
-    /// Table options for RocksDB
-    pub table_options: BlockBasedOptions,
     /// Block cache size in bytes
     pub block_cache_size: usize,
     /// Whether to share block cache across column families
@@ -69,14 +67,8 @@ impl Default for StorageOptions {
         options.set_target_file_size_base(64 << 20); // 64MB
         options.set_level_compaction_dynamic_level_bytes(true);
 
-        let mut table_options = BlockBasedOptions::default();
-        table_options.set_block_size(4 * 1024); // 4KB
-        table_options.set_cache_index_and_filter_blocks(true);
-        table_options.set_pin_l0_filter_and_index_blocks_in_cache(true);
-
         Self {
             options,
-            table_options,
             block_cache_size: 8 << 30, // 8GB
             share_block_cache: true,
             statistics_max_size: 0,
