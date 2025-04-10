@@ -93,7 +93,7 @@ where
     V: Clone,
 {
     fn default() -> Self {
-        Self::new()
+        Self::new(0, 0, 0)
     }
 }
 
@@ -104,23 +104,7 @@ where
     K: std::hash::Hash + Eq + Clone,
     V: Clone,
 {
-    pub fn new() -> Self {
-        let origin = Box::leak(Box::new(Chain::new(MaybeUninit::uninit()))).into();
-        // Form a circular linked list.
-        // At first, connect itself.
-        connect(origin, origin);
-
-        Self {
-            map: HashMap::default(),
-            capacity: 0,
-            usage: 0,
-            size: 0,
-            origin,
-        }
-    }
-
-    /// Create a LRUCache with capacity.
-    pub fn with_capacity(capacity: usize) -> Self {
+    pub fn new(capacity: usize, usage: usize, size: usize) -> Self {
         let origin = Box::leak(Box::new(Chain::new(MaybeUninit::uninit()))).into();
         // Form a circular linked list.
         // At first, connect itself.
@@ -128,10 +112,15 @@ where
         Self {
             map: HashMap::default(),
             capacity,
-            usage: 0,
-            size: 0,
+            usage,
+            size,
             origin,
         }
+    }
+
+    /// Create a LRUCache with capacity.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self::new(capacity, 0, 0)
     }
 
     /// Get the LRUCache's current size.
@@ -363,8 +352,7 @@ mod tests {
 
     #[test]
     fn test_lookup_case1() {
-        let mut lru_cache = LRUCache::new();
-        lru_cache.set_capacity(5);
+        let mut lru_cache = LRUCache::with_capacity(5);
 
         // ***************** Step 1 *****************
         lru_cache.insert("k1".to_string(), "v1".to_string(), 1);
@@ -456,8 +444,7 @@ mod tests {
 
     #[test]
     fn test_insert_case1() {
-        let mut lru_cache = LRUCache::new();
-        lru_cache.set_capacity(3);
+        let mut lru_cache = LRUCache::with_capacity(3);
 
         // ***************** Step 1 *****************
         lru_cache.insert("k1".to_string(), "v1".to_string(), 1);
@@ -512,8 +499,7 @@ mod tests {
 
     #[test]
     fn test_insert_case2() {
-        let mut lru_cache = LRUCache::new();
-        lru_cache.set_capacity(5);
+        let mut lru_cache = LRUCache::with_capacity(5);
 
         // ***************** Step 1 *****************
         lru_cache.insert("k1".to_string(), "v1".to_string(), 1);
@@ -600,8 +586,7 @@ mod tests {
 
     #[test]
     fn test_insert_case3() {
-        let mut lru_cache = LRUCache::new();
-        lru_cache.set_capacity(10);
+        let mut lru_cache = LRUCache::with_capacity(10);
 
         // ***************** Step 1 *****************
         lru_cache.insert("k1".to_string(), "v1".to_string(), 1);
@@ -663,8 +648,7 @@ mod tests {
 
     #[test]
     fn test_insert_case4() {
-        let mut lru_cache = LRUCache::new();
-        lru_cache.set_capacity(10);
+        let mut lru_cache = LRUCache::with_capacity(10);
 
         // ***************** Step 1 *****************
         lru_cache.insert("k1".to_string(), "v1".to_string(), 1);
@@ -796,8 +780,7 @@ mod tests {
 
     #[test]
     fn test_remove_case1() {
-        let mut lru_cache = LRUCache::new();
-        lru_cache.set_capacity(5);
+        let mut lru_cache = LRUCache::with_capacity(5);
 
         // ***************** Step 1 *****************
         lru_cache.insert("k1".to_string(), "v1".to_string(), 1);
