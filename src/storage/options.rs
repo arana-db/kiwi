@@ -14,7 +14,7 @@
 
 //! Storage engine options and configurations
 
-use rocksdb::{BlockBasedOptions, Options};
+use rocksdb::Options;
 
 /// Column family types
 /// TODO: remove allow dead code

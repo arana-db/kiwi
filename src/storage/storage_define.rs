@@ -15,14 +15,14 @@
 use crate::kstd::slice::Slice;
 
 pub const PREFIX_RESERVE_LENGTH: usize = 8;
-const VERSION_LENGTH: usize = 8;
-const SCORE_LENGTH: usize = 8;
+// const VERSION_LENGTH: usize = 8;
+// const SCORE_LENGTH: usize = 8;
 pub const SUFFIX_RESERVE_LENGTH: usize = 16;
-const LIST_VALUE_INDEX_LENGTH: usize = 16;
+// const LIST_VALUE_INDEX_LENGTH: usize = 16;
 
 // used to store a fixed-size value for the Type field.
-const TYPE_LENGTH: usize = 1;
-const TIMESTAMP_LENGTH: usize = 8;
+// const TYPE_LENGTH: usize = 1;
+// const TIMESTAMP_LENGTH: usize = 8;
 
 // TODO: maybe we can change \u{0000} to \0,
 // it will be more readable.
@@ -40,9 +40,9 @@ pub const ENCODED_KEY_DELIM_SIZE: usize = 2;
 ///
 /// Returns: Pointer to the new encoded location
 pub fn encode_user_key(user_key: &Slice, mut dst: *mut u8, nzero: usize) -> *mut u8 {
-    unsafe {
-        // no \u0000 exists in user_key, memcopy user_key directly.
-        if nzero == 0 {
+    // no \u0000 exists in user_key, memcopy user_key directly.
+    if nzero == 0 {
+        unsafe {
             std::ptr::copy_nonoverlapping(user_key.data(), dst, user_key.size());
             dst = dst.add(user_key.size());
             std::ptr::copy_nonoverlapping(
@@ -51,36 +51,44 @@ pub fn encode_user_key(user_key: &Slice, mut dst: *mut u8, nzero: usize) -> *mut
                 ENCODED_KEY_DELIM_SIZE,
             );
             dst = dst.add(ENCODED_KEY_DELIM_SIZE);
-            return dst;
         }
+        return dst;
+    }
 
-        // \u0000 exists in user_key, iterate and replace.
-        let mut pos = 0;
-        let user_data = unsafe { std::slice::from_raw_parts(user_key.data(), user_key.size()) };
-        for i in 0..user_key.size() {
-            if user_data[i] == NEED_TRANSFORM_CHARACTER as u8 {
-                let sub_len = i - pos;
-                if sub_len != 0 {
+    // \u0000 exists in user_key, iterate and replace.
+    let mut pos = 0;
+    let user_data = unsafe { std::slice::from_raw_parts(user_key.data(), user_key.size()) };
+    for i in 0..user_key.size() {
+        if user_data[i] == NEED_TRANSFORM_CHARACTER as u8 {
+            let sub_len = i - pos;
+            if sub_len != 0 {
+                unsafe {
                     std::ptr::copy_nonoverlapping(user_data.as_ptr().add(pos), dst, sub_len);
                     dst = dst.add(sub_len);
                 }
+            }
+            unsafe {
                 std::ptr::copy_nonoverlapping(
                     ENCODED_TRANSFORM_CHARACTER.as_bytes().as_ptr(),
                     dst,
                     ENCODED_TRANSFORM_CHARACTER.len(),
                 );
                 dst = dst.add(ENCODED_TRANSFORM_CHARACTER.len());
-                pos = i + 1;
             }
+            pos = i + 1;
         }
+    }
 
-        // Copy the remaining part
-        if pos != user_key.size() {
+    // Copy the remaining part
+    if pos != user_key.size() {
+        unsafe {
             std::ptr::copy_nonoverlapping(user_data.as_ptr().add(pos), dst, user_key.size() - pos);
             dst = dst.add(user_key.size() - pos);
         }
+    }
 
-        // add delimiter
+    // add delimiter
+    unsafe {
         std::ptr::copy_nonoverlapping(
             ENCODED_KEY_DELIM.as_bytes().as_ptr(),
             dst,
@@ -88,6 +96,7 @@ pub fn encode_user_key(user_key: &Slice, mut dst: *mut u8, nzero: usize) -> *mut
         );
         dst = dst.add(ENCODED_KEY_DELIM_SIZE);
     }
+
     dst
 }
 
