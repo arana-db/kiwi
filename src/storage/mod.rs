@@ -27,7 +27,7 @@ mod util;
 
 // pub mod storage;
 
-mod coding;
+// mod coding;
 #[cfg(test)]
 mod tests;
 // mod db;
