@@ -17,6 +17,8 @@ use rocksdb::compaction_filter::{CompactionFilter, Decision};
 use std::ffi::CStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::storage::base_key_format::ParsedBaseKey;
+
 struct MetaCompactionFilter {}
 
 impl CompactionFilter for MetaCompactionFilter {
@@ -25,6 +27,8 @@ impl CompactionFilter for MetaCompactionFilter {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
+
+        let parsed = ParsedBaseKey::new(key);
     }
 
     fn name(&self) -> &CStr {}

@@ -17,6 +17,8 @@ use crate::storage::storage_define::{
     decode_user_key, encode_user_key,
 };
 
+use crate::kstd::slice::Slice;
+
 //
 // used for string data key or hash/zset/set/list's meta key. format:
 // | reserve1 | key | reserve2 |
@@ -27,17 +29,17 @@ struct BaseKey {
     start: *mut u8,
     space: [u8; 200],
     reserve1: [u8; 8],
-    key: Vec<u8>,
+    key: Slice,
     reserve2: [u8; 16],
 }
 
 impl BaseKey {
-    pub fn new(key: Vec<u8>) -> Self {
+    pub fn new(key: &Slice) -> Self {
         let mut base_key = BaseKey {
             start: std::ptr::null_mut(),
             space: [0; 200],
             reserve1: [0; 8],
-            key,
+            key: key.clone(),
             reserve2: [0; 16],
         };
         // Initialize `start` based on internal logic or availability
@@ -47,12 +49,8 @@ impl BaseKey {
 
     fn encode(&mut self) -> &[u8] {
         let meta_size = self.reserve1.len() + self.reserve2.len();
-        let nzero = self
-            .key
-            .iter()
-            .filter(|&&x| x == NEED_TRANSFORM_CHARACTER as u8)
-            .count();
-        let usize = nzero + ENCODED_KEY_DELIM_SIZE + self.key.len();
+        let nzero = self.key.count_byte(NEED_TRANSFORM_CHARACTER as u8);
+        let usize = nzero + ENCODED_KEY_DELIM_SIZE + self.key.size();
         let needed = meta_size + usize;
         let mut offset_ptr: *mut u8;
 
@@ -64,7 +62,6 @@ impl BaseKey {
         }
 
         self.start = offset_ptr;
-
         // copy reserve1
         unsafe { std::ptr::copy(self.reserve1.as_ptr(), self.start, self.reserve1.len()) }
 
@@ -73,11 +70,10 @@ impl BaseKey {
         }
 
         // encode user key
-        offset_ptr = encode_user_key(self.key.as_slice(), offset_ptr, nzero);
+        offset_ptr = encode_user_key(&self.key, offset_ptr, nzero);
 
-        self.start = offset_ptr;
         // copy reserve2
-        unsafe { std::ptr::copy(self.reserve2.as_ptr(), self.start, self.reserve2.len()) }
+        unsafe { std::ptr::copy(self.reserve2.as_ptr(), offset_ptr, self.reserve2.len()) }
 
         // return encode slice
         unsafe { std::slice::from_raw_parts(self.start, needed) }
@@ -89,26 +85,54 @@ pub struct ParsedBaseKey {
 }
 
 impl ParsedBaseKey {
-    pub fn new(&mut self, key: &str) {
-        let ptr = key.as_ptr();
-        let end_ptr = unsafe { key.as_ptr().add(key.len()) };
-        self.decode(ptr, end_ptr);
+    pub fn new(encoded_key: &[u8]) -> Self {
+        let mut key_str = Vec::new();
+        Self::decode(encoded_key, &mut key_str);
+        ParsedBaseKey { key_str }
     }
 
-    pub fn decode(&mut self, ptr: *const u8, end_ptr: *const u8) {
-        unsafe {
-            // skip head reserve1_
-            let ptr = ptr.add(PREFIX_RESERVE_LENGTH);
-            // skip tail reserve2_
-            let end_ptr = end_ptr.sub(SUFFIX_RESERVE_LENGTH);
-
-            let len = end_ptr.offset_from(ptr) as usize;
-
-            decode_user_key(ptr, len, &mut self.key_str);
+    fn decode(encoded_key: &[u8], key_str: &mut Vec<u8>) {
+        if encoded_key.len() > (PREFIX_RESERVE_LENGTH + SUFFIX_RESERVE_LENGTH) {
+            let start_idx = PREFIX_RESERVE_LENGTH;
+            let end_idx = encoded_key.len() - SUFFIX_RESERVE_LENGTH;
+            let data_slice = &encoded_key[start_idx..end_idx];
+            decode_user_key(data_slice.as_ptr(), data_slice.len(), key_str);
         }
     }
 
-    pub fn key(&self) -> Vec<u8> {
-        self.key_str.clone()
+    pub fn key(&self) -> &[u8] {
+        &self.key_str
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_and_decode() {
+        let test_key = Slice::new_with_str("test_key");
+
+        let mut base_key = BaseKey::new(&test_key);
+        let encoded_data = base_key.encode();
+
+        // there is no zero, so no need to transform.
+        // reserve1 + key.size + delim.size + reserve2
+        assert_eq!(
+            encoded_data.len(),
+            PREFIX_RESERVE_LENGTH
+                + test_key.size()
+                + ENCODED_KEY_DELIM_SIZE
+                + SUFFIX_RESERVE_LENGTH
+        );
+
+        println!("Encoded data: {:?}", encoded_data);
+
+        let additional_data: Vec<u8> = encoded_data.iter().copied().collect();
+        let encoded_str = std::str::from_utf8(&additional_data).unwrap();
+
+        let decode_key = ParsedBaseKey::new(encoded_str.as_bytes());
+
+        assert_eq!(decode_key.key(), test_key.as_bytes());
     }
 }

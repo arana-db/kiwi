@@ -14,7 +14,7 @@
 
 mod base_data_value_format;
 mod base_key_format;
-// mod compaction_filter;
+mod compaction_filter;
 mod error;
 mod lru_cache;
 mod options;
