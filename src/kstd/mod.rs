@@ -16,4 +16,5 @@ pub mod lock_mgr;
 pub mod slice;
 pub mod status;
 
+#[cfg(test)]
 mod tests;
