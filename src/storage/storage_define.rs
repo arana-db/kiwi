@@ -12,6 +12,8 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+use crate::kstd::slice::Slice;
+
 pub const PREFIX_RESERVE_LENGTH: usize = 8;
 const VERSION_LENGTH: usize = 8;
 const SCORE_LENGTH: usize = 8;
@@ -22,6 +24,8 @@ const LIST_VALUE_INDEX_LENGTH: usize = 16;
 const TYPE_LENGTH: usize = 1;
 const TIMESTAMP_LENGTH: usize = 8;
 
+// TODO: maybe we can change \u{0000} to \0,
+// it will be more readable.
 pub const NEED_TRANSFORM_CHARACTER: char = '\u{0000}';
 const ENCODED_TRANSFORM_CHARACTER: &str = "\u{0000}\u{0001}";
 const ENCODED_KEY_DELIM: &str = "\u{0000}\u{0000}";
@@ -35,12 +39,12 @@ pub const ENCODED_KEY_DELIM_SIZE: usize = 2;
 /// - nzero: Number of zero bytes contained in the key
 ///
 /// Returns: Pointer to the new encoded location
-pub fn encode_user_key(user_key: &[u8], mut dst: *mut u8, nzero: usize) -> *mut u8 {
+pub fn encode_user_key(user_key: &Slice, mut dst: *mut u8, nzero: usize) -> *mut u8 {
     unsafe {
         // no \u0000 exists in user_key, memcopy user_key directly.
         if nzero == 0 {
-            std::ptr::copy_nonoverlapping(user_key.as_ptr(), dst, user_key.len());
-            dst = dst.add(user_key.len());
+            std::ptr::copy_nonoverlapping(user_key.data(), dst, user_key.size());
+            dst = dst.add(user_key.size());
             std::ptr::copy_nonoverlapping(
                 ENCODED_KEY_DELIM.as_bytes().as_ptr(),
                 dst,
@@ -52,11 +56,12 @@ pub fn encode_user_key(user_key: &[u8], mut dst: *mut u8, nzero: usize) -> *mut 
 
         // \u0000 exists in user_key, iterate and replace.
         let mut pos = 0;
-        for (i, &byte) in user_key.iter().enumerate() {
-            if byte == NEED_TRANSFORM_CHARACTER as u8 {
+        let user_data = unsafe { std::slice::from_raw_parts(user_key.data(), user_key.size()) };
+        for i in 0..user_key.size() {
+            if user_data[i] == NEED_TRANSFORM_CHARACTER as u8 {
                 let sub_len = i - pos;
                 if sub_len != 0 {
-                    std::ptr::copy_nonoverlapping(user_key.as_ptr().add(pos), dst, sub_len);
+                    std::ptr::copy_nonoverlapping(user_data.as_ptr().add(pos), dst, sub_len);
                     dst = dst.add(sub_len);
                 }
                 std::ptr::copy_nonoverlapping(
@@ -70,10 +75,9 @@ pub fn encode_user_key(user_key: &[u8], mut dst: *mut u8, nzero: usize) -> *mut 
         }
 
         // Copy the remaining part
-        if pos != user_key.len() {
-            let remaining = user_key.len() - pos;
-            std::ptr::copy_nonoverlapping(user_key.as_ptr().add(pos), dst, remaining);
-            dst = dst.add(remaining);
+        if pos != user_key.size() {
+            std::ptr::copy_nonoverlapping(user_data.as_ptr().add(pos), dst, user_key.size() - pos);
+            dst = dst.add(user_key.size() - pos);
         }
 
         // add delimiter
@@ -87,12 +91,12 @@ pub fn encode_user_key(user_key: &[u8], mut dst: *mut u8, nzero: usize) -> *mut 
     dst
 }
 
-pub fn decode_user_key(ptr: *const u8, ptr_len: usize, user_key: &mut Vec<u8>) -> *const u8 {
-    user_key.resize(ptr_len - ENCODED_KEY_DELIM_SIZE, 0);
+pub fn decode_user_key(ptr: *const u8, len: usize, user_key: &mut Vec<u8>) -> *const u8 {
+    user_key.resize(len - ENCODED_KEY_DELIM_SIZE, 0);
     let mut zero_ahead = false;
     let mut delim_found = false;
     let mut output_idx = 0;
-    let slice = unsafe { std::slice::from_raw_parts(ptr, ptr_len) };
+    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
     let mut ret_ptr = ptr;
     for (idx, &byte) in slice.iter().enumerate() {
         match byte {
@@ -123,13 +127,14 @@ pub fn decode_user_key(ptr: *const u8, ptr_len: usize, user_key: &mut Vec<u8>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn test_encode_user_key_no_zero() {
-        let user_key = "testkey".as_bytes();
-        let mut encoded: Vec<u8> = vec![0; user_key.len() + ENCODED_KEY_DELIM_SIZE];
+        let user_key = Slice::new_with_str("testkey");
+        let mut encoded: Vec<u8> = vec![0; user_key.size() + ENCODED_KEY_DELIM_SIZE];
         // Create a raw pointer for the encoded buffer
         let dst = encoded.as_mut_ptr();
-        let new_ptr = encode_user_key(user_key, dst, 0);
+        let new_ptr = encode_user_key(&user_key, dst, 0);
 
         // Expect the encoded key to be the same as user_key with the delimiter appended at the end
         let expected_encoded = "testkey\u{0000}\u{0000}".as_bytes();
@@ -141,10 +146,10 @@ mod tests {
 
     #[test]
     fn test_encode_user_key_with_zero() {
-        let user_key = "test\u{0000}key".as_bytes();
-        let mut encoded: Vec<u8> = vec![0; user_key.len() + 1 + ENCODED_KEY_DELIM_SIZE];
+        let user_key = Slice::new_with_str("test\u{0000}key");
+        let mut encoded: Vec<u8> = vec![0; user_key.size() + 1 + ENCODED_KEY_DELIM_SIZE];
         let dst = encoded.as_mut_ptr();
-        let new_ptr = encode_user_key(user_key, dst, 1);
+        let new_ptr = encode_user_key(&user_key, dst, 1);
 
         // Expect the encoded key to replace \0 with ENCODED_TRANSFORM_CHARACTER
         let expected_encoded = "test\u{0000}\u{0001}key\u{0000}\u{0000}".as_bytes();
@@ -167,26 +172,23 @@ mod tests {
 
     #[test]
     fn test_encode_and_decode_user_key() {
-        let original_user_key = "example\u{0000}key\u{0000}value".as_bytes();
-        let nzero = original_user_key
-            .iter()
-            .filter(|&&byte| byte == NEED_TRANSFORM_CHARACTER as u8)
-            .count();
+        let original_user_key = Slice::new_with_str("example\u{0000}key\u{0000}value");
+        let nzero = original_user_key.count_byte(NEED_TRANSFORM_CHARACTER as u8);
         // Allocate a buffer large enough to hold the encoded key
         let mut encoded: Vec<u8> = vec![
             0;
-            original_user_key.len()
+            original_user_key.size()
                 + nzero * (ENCODED_TRANSFORM_CHARACTER.len() - 1)
                 + ENCODED_KEY_DELIM_SIZE
         ];
         let dst = encoded.as_mut_ptr();
         // Encode the user key
-        encode_user_key(original_user_key, dst, nzero);
+        encode_user_key(&original_user_key, dst, nzero);
         // Prepare a buffer for the decoded key
         let mut decoded_user_key = Vec::new();
         // Decode the user key
         decode_user_key(encoded.as_ptr(), encoded.len(), &mut decoded_user_key);
         // Assert that the decoded key is the same as the original
-        assert_eq!(decoded_user_key, original_user_key);
+        assert_eq!(decoded_user_key, original_user_key.as_bytes());
     }
 }

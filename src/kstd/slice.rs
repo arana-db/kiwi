@@ -20,7 +20,7 @@ impl Slice {
     }
 
     // Creates a slice referring to the contents of a string.
-    pub fn new_with_string(s: &str) -> Self {
+    pub fn new_with_str(s: &str) -> Self {
         Slice {
             data: s.as_ptr(),
             size: s.len(),
@@ -67,6 +67,26 @@ impl Slice {
             return String::from_utf8_lossy(slice).into_owned();
         }
     }
+
+    // Returns a u8 slice containing the copy of the referenced data.
+    pub fn as_bytes(&self) -> &[u8] {
+        if self.data.is_null() || self.size == 0 {
+            return &[];
+        }
+
+        // Safely convert the raw pointer and size into a slice.
+        let slice = unsafe { std::slice::from_raw_parts(self.data, self.size) };
+
+        slice
+    }
+
+    pub fn count_byte(&self, byte: u8) -> usize {
+        if self.data.is_null() {
+            return 0;
+        }
+        let slice = unsafe { std::slice::from_raw_parts(self.data, self.size) };
+        slice.iter().filter(|&&x| x == byte).count()
+    }
 }
 
 #[cfg(test)]
@@ -108,7 +128,7 @@ mod tests {
     #[test]
     fn test_new_with_string() {
         let s = "hello";
-        let slice = Slice::new_with_string(s);
+        let slice = Slice::new_with_str(s);
         assert_eq!(
             slice.size(),
             s.len(),
@@ -152,7 +172,7 @@ mod tests {
     #[test]
     fn test_to_string() {
         let s = "hello";
-        let slice = Slice::new_with_string(s);
+        let slice = Slice::new_with_str(s);
         assert_eq!(
             slice.to_string(false),
             s,
