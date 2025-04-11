@@ -19,17 +19,15 @@ pub struct Slice {
     size: usize,
 }
 
-impl Slice {
-    // Creates an empty slice.
-    pub fn new() -> Self {
-        Slice {
-            data: std::ptr::null(),
-            size: 0,
-        }
+impl Default for Slice {
+    fn default() -> Self {
+        Self::new(std::ptr::null(), 0)
     }
+}
 
+impl Slice {
     // Creates a slice referring to d[0,n-1].
-    pub fn new_with_parts(data: *const u8, size: usize) -> Self {
+    pub fn new(data: *const u8, size: usize) -> Self {
         Slice { data, size }
     }
 
@@ -76,9 +74,15 @@ impl Slice {
         }
         let slice = unsafe { std::slice::from_raw_parts(self.data, self.size) };
         if hex {
-            return slice.iter().map(|byte| format!("{:02X}", byte)).collect();
+            slice
+                .iter()
+                .fold(String::with_capacity(slice.len() * 2), |mut acc, byte| {
+                    use std::fmt::Write;
+                    write!(&mut acc, "{:02X}", byte).unwrap();
+                    acc
+                })
         } else {
-            return String::from_utf8_lossy(slice).into_owned();
+            String::from_utf8_lossy(slice).into_owned()
         }
     }
 
@@ -87,19 +91,20 @@ impl Slice {
         if self.data.is_null() || self.size == 0 {
             return &[];
         }
-
         // Safely convert the raw pointer and size into a slice.
-        let slice = unsafe { std::slice::from_raw_parts(self.data, self.size) };
-
-        slice
+        unsafe { std::slice::from_raw_parts(self.data, self.size) }
     }
 
     pub fn count_byte(&self, byte: u8) -> usize {
         if self.data.is_null() {
             return 0;
         }
-        let slice = unsafe { std::slice::from_raw_parts(self.data, self.size) };
-        slice.iter().filter(|&&x| x == byte).count()
+        unsafe {
+            std::slice::from_raw_parts(self.data, self.size)
+                .iter()
+                .filter(|&&x| x == byte)
+                .count()
+        }
     }
 }
 
@@ -108,8 +113,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new() {
-        let slice = Slice::new();
+    fn test_default() {
+        let slice = Slice::default();
         assert!(slice.empty(), "Newly created slice should be empty");
         assert_eq!(
             slice.size(),
@@ -124,9 +129,9 @@ mod tests {
     }
 
     #[test]
-    fn test_new_with_parts() {
+    fn test_new() {
         let data = [1, 2, 3, 4, 5];
-        let slice = Slice::new_with_parts(data.as_ptr(), data.len());
+        let slice = Slice::new(data.as_ptr(), data.len());
         assert_eq!(
             slice.size(),
             data.len(),
@@ -155,7 +160,7 @@ mod tests {
     #[test]
     fn test_at() {
         let data = [10, 20, 30];
-        let slice = Slice::new_with_parts(data.as_ptr(), data.len());
+        let slice = Slice::new(data.as_ptr(), data.len());
         assert_eq!(slice.at(0), 10, "First element should be 10");
         assert_eq!(slice.at(1), 20, "Second element should be 20");
         assert_eq!(slice.at(2), 30, "Third element should be 30");
@@ -165,14 +170,14 @@ mod tests {
     #[should_panic(expected = "Index out of bounds")]
     fn test_at_out_of_bounds() {
         let data = [10, 20, 30];
-        let slice = Slice::new_with_parts(data.as_ptr(), data.len());
+        let slice = Slice::new(data.as_ptr(), data.len());
         slice.at(3); // This should panic
     }
 
     #[test]
     fn test_clear() {
         let data = [1, 2, 3];
-        let mut slice = Slice::new_with_parts(data.as_ptr(), data.len());
+        let mut slice = Slice::new(data.as_ptr(), data.len());
         slice.clear();
         assert!(slice.empty(), "Slice should be empty after clear");
         assert_eq!(slice.size(), 0, "Size should be zero after clear");

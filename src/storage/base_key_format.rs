@@ -25,6 +25,8 @@ use crate::kstd::slice::Slice;
 // |    8B    |     |   16B    |
 //
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 struct BaseKey {
     start: *mut u8,
     space: [u8; 200],
@@ -33,6 +35,8 @@ struct BaseKey {
     reserve2: [u8; 16],
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl BaseKey {
     pub fn new(key: &Slice) -> Self {
         let mut base_key = BaseKey {
@@ -80,10 +84,14 @@ impl BaseKey {
     }
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 pub struct ParsedBaseKey {
     key_str: Vec<u8>,
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 impl ParsedBaseKey {
     pub fn new(encoded_key: &[u8]) -> Self {
         let mut key_str = Vec::new();

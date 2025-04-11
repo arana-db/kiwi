@@ -14,15 +14,15 @@
 
 mod base_data_value_format;
 mod base_key_format;
-mod compaction_filter;
-mod error;
+// mod compaction_filter;
+// mod error;
 mod lru_cache;
 mod options;
-mod redis;
+// mod redis;
 mod slot_indexer;
 mod storage_define;
 mod storage_murmur3;
-mod types;
+// mod types;
 mod util;
 
-pub mod storage;
+// pub mod storage;
