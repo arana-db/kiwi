@@ -26,3 +26,11 @@ mod storage_murmur3;
 mod util;
 
 // pub mod storage;
+
+mod coding;
+#[cfg(test)]
+mod tests;
+mod db;
+// mod engine;
+// mod compaction_filter;
+// mod column_family;

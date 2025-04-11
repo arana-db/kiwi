@@ -15,3 +15,5 @@
 pub mod lock_mgr;
 pub mod slice;
 pub mod status;
+
+mod tests;

@@ -17,7 +17,8 @@
 use rocksdb::*;
 use std::path::Path;
 
-use crate::{Result, StorageError, StorageOptions};
+use crate::storage::error::{Result, StorageError};
+use crate::storage::options::StorageOptions;
 
 pub struct Engine {
     db: DB,

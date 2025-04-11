@@ -27,7 +27,7 @@ use crate::kstd::slice::Slice;
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
-struct BaseKey {
+pub struct BaseKey {
     start: *mut u8,
     space: [u8; 200],
     reserve1: [u8; 8],
@@ -51,7 +51,7 @@ impl BaseKey {
         base_key
     }
 
-    fn encode(&mut self) -> &[u8] {
+    pub(crate) fn encode(&mut self) -> &[u8] {
         let meta_size = self.reserve1.len() + self.reserve2.len();
         let nzero = self.key.count_byte(NEED_TRANSFORM_CHARACTER as u8);
         let usize = nzero + ENCODED_KEY_DELIM_SIZE + self.key.size();
@@ -110,37 +110,5 @@ impl ParsedBaseKey {
 
     pub fn key(&self) -> &[u8] {
         &self.key_str
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_encode_and_decode() {
-        let test_key = Slice::new_with_str("test_key");
-
-        let mut base_key = BaseKey::new(&test_key);
-        let encoded_data = base_key.encode();
-
-        // there is no zero, so no need to transform.
-        // reserve1 + key.size + delim.size + reserve2
-        assert_eq!(
-            encoded_data.len(),
-            PREFIX_RESERVE_LENGTH
-                + test_key.size()
-                + ENCODED_KEY_DELIM_SIZE
-                + SUFFIX_RESERVE_LENGTH
-        );
-
-        println!("Encoded data: {:?}", encoded_data);
-
-        let additional_data: Vec<u8> = encoded_data.iter().copied().collect();
-        let encoded_str = std::str::from_utf8(&additional_data).unwrap();
-
-        let decode_key = ParsedBaseKey::new(encoded_str.as_bytes());
-
-        assert_eq!(decode_key.key(), test_key.as_bytes());
     }
 }
