@@ -1,4 +1,4 @@
-use crate::kstd::slice::*;
+use crate::kstd::slice::Slice;
 
 #[test]
 fn test_default() {

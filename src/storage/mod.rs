@@ -30,7 +30,7 @@ mod util;
 mod coding;
 #[cfg(test)]
 mod tests;
-mod db;
+// mod db;
 // mod engine;
 // mod compaction_filter;
 // mod column_family;

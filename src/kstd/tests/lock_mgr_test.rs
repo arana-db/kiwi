@@ -1,4 +1,4 @@
-use crate::kstd::lock_mgr::*;
+use crate::kstd::lock_mgr::LockMgr;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;

@@ -1,4 +1,4 @@
-use crate::kstd::status::*;
+use crate::kstd::status::{Code, Status};
 
 #[test]
 fn test_status_ok() {
