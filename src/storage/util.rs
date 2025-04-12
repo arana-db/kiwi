@@ -29,7 +29,7 @@ pub fn is_dir<P: AsRef<Path>>(path: P) -> io::Result<bool> {
 /// This corresponds to the 'mkpath' functionality.
 /// TODO: remove allow dead code
 #[allow(dead_code)]
-pub fn mkdir_with_path<P: AsRef<Path>>(path: P, mode: u32) -> io::Result<()> {
+pub fn mkdir_with_path<P: AsRef<Path>>(path: P, _mode: u32) -> io::Result<()> {
     // Use the fs::create_dir_all method to create the directory path.
     // It does not handle mode settings, so additional steps are required to set modes.
     fs::create_dir_all(&path)?;
@@ -38,7 +38,7 @@ pub fn mkdir_with_path<P: AsRef<Path>>(path: P, mode: u32) -> io::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(mode))?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(_mode))?;
     }
 
     Ok(())
@@ -82,6 +82,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Write;
+    #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
@@ -97,6 +98,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn test_mkdir_with_path() {
         let dir_path = "nested/test/dir";
         let mode = 0o755; // Unix specific mode (read, write, exec for owner; read, exec for others)
@@ -105,6 +107,19 @@ mod tests {
         // Check if the directory exists and the permissions are set correctly
         let metadata = fs::metadata(dir_path).unwrap();
         assert!(metadata.permissions().mode() & 0o777 == mode);
+        // Clean up
+        fs::remove_dir_all("nested").unwrap();
+    }
+
+    #[test]
+    #[cfg(not(unix))]
+    fn test_mkdir_with_path() {
+        let dir_path = "nested/test/dir";
+        let mode = 0o755; // Mode will be ignored on non-Unix systems
+        let result = mkdir_with_path(dir_path, mode);
+        assert!(result.is_ok());
+        // Only check if directory exists on non-Unix systems
+        assert!(Path::new(dir_path).exists());
         // Clean up
         fs::remove_dir_all("nested").unwrap();
     }
