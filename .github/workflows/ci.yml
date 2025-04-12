@@ -45,3 +45,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - run: cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings
+
+  miri:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+          - os: ubuntu-latest
+    name: cargo miri
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: miri
+
+      - run: cargo +nightly miri test --manifest-path ./Cargo.toml --all-features --workspace
