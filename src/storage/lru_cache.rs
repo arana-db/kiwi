@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::mem::MaybeUninit;
 use std::ptr::NonNull;
 
+// TODO: reuse chain.
+
 /// The chain connects prev and next cache.
 struct Chain<K> {
     prev: NonNull<Chain<K>>,
@@ -207,6 +209,9 @@ where
                 self.size -= 1;
 
                 cut_out(tail_chain);
+
+                // must after cut_out drop
+                std::ptr::drop_in_place(Box::from_raw(tail_chain.as_ptr()).key.as_mut_ptr());
             }
         }
     }
@@ -214,8 +219,10 @@ where
     /// Remove a key-value pair from the cache.
     pub fn remove(&mut self, key: &K) -> Option<V> {
         if let Some(cache) = self.map.remove(key) {
-            cut_out(cache.chain);
-            // Deal with memory if needed (e.g., deallocate or reuse).
+            unsafe {
+                cut_out(cache.chain);
+                std::ptr::drop_in_place(Box::from_raw(cache.chain.as_ptr()).key.as_mut_ptr());
+            }
             self.size -= 1;
             self.usage -= cache.charge;
             return Some(cache.value);
@@ -225,7 +232,16 @@ where
 
     pub fn clear(&mut self) {
         self.map.clear();
-        connect(self.origin, self.origin);
+        unsafe {
+            let mut cur = self.origin.as_ref().prev;
+            while cur != self.origin {
+                let tmp = cur.as_ref().prev;
+                std::ptr::drop_in_place(Box::from_raw(cur.as_ptr()).key.as_mut_ptr());
+                cur = tmp;
+            }
+            connect(self.origin, self.origin);
+            drop(Box::from_raw(self.origin.as_ptr()));
+        }
     }
 }
 
