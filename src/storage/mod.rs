@@ -24,5 +24,5 @@ mod storage_define;
 mod storage_murmur3;
 // mod types;
 mod util;
-
+mod coding;
 // pub mod storage;
