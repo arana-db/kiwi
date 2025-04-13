@@ -15,3 +15,4 @@
 pub mod lock_mgr;
 pub mod slice;
 pub mod status;
+pub mod defer;
