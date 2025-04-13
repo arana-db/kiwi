@@ -23,6 +23,6 @@ mod slot_indexer;
 mod storage_define;
 mod storage_murmur3;
 // mod types;
+mod coding;
 mod util;
-
 // pub mod storage;
