@@ -12,6 +12,7 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+#[allow(dead_code)]
 pub trait FixedInt: Copy {
     /// convert self to little-endian bytes
     fn to_le_bytes(self) -> Vec<u8>;
@@ -62,6 +63,7 @@ impl_fixed_int_64!(i64, u64);
 
 /// encode a fixed-width int into a byte buffer
 #[inline]
+#[allow(dead_code)]
 pub fn encode_fixed<T: FixedInt>(buf: &mut [u8], value: T) {
     let size = T::byte_size();
     assert!(buf.len() >= size, "buffer too small for fixed int");
@@ -70,6 +72,7 @@ pub fn encode_fixed<T: FixedInt>(buf: &mut [u8], value: T) {
 
 /// decode a fixed-width int from a byte buffer
 #[inline]
+#[allow(dead_code)]
 pub fn decode_fixed<T: FixedInt>(buf: &[u8]) -> T {
     let size = T::byte_size();
     assert!(buf.len() >= size, "buffer too small for fixed int");
