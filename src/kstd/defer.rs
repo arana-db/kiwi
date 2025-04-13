@@ -34,7 +34,6 @@ mod tests {
     fn test_defer() {
         let v = Rc::new(RefCell::new(Vec::new()));
 
-        // 捕获外部变量的克隆
         let v_clone = v.clone();
         defer! {
             v_clone.borrow_mut().push(1);
