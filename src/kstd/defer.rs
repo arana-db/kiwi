@@ -1,11 +1,11 @@
 pub struct Defer<F: FnOnce()> {
-    action: Option<F>
+    action: Option<F>,
 }
 
 impl<F: FnOnce()> Defer<F> {
     pub fn new(action: F) -> Self {
         Self {
-            action: Some(action)
+            action: Some(action),
         }
     }
 }
