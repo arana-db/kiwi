@@ -11,6 +11,7 @@ jobs:
         include:
           - os: macos-latest
           - os: ubuntu-latest
+          - os: windows-latest
     name: cargo fmt
     runs-on: ${{ matrix.os }}
     steps:
@@ -31,6 +32,7 @@ jobs:
         include:
           - os: macos-latest
           - os: ubuntu-latest
+          - os: windows-latest
     name: cargo clippy
     runs-on: ${{ matrix.os }}
     steps:
@@ -52,6 +54,7 @@ jobs:
         include:
           - os: macos-latest
           - os: ubuntu-latest
+          - os: windows-latest
     name: cargo miri
     runs-on: ${{ matrix.os }}
     steps:
