@@ -46,16 +46,18 @@ impl BaseKey {
             key: key.clone(),
             reserve2: [0; 16],
         };
+
         // Initialize `start` based on internal logic or availability
         base_key.start = base_key.space.as_mut_ptr();
+
         base_key
     }
 
     fn encode(&mut self) -> &[u8] {
         let meta_size = self.reserve1.len() + self.reserve2.len();
-        let nzero = self.key.count_byte(NEED_TRANSFORM_CHARACTER as u8);
-        let usize = nzero + ENCODED_KEY_DELIM_SIZE + self.key.size();
-        let needed = meta_size + usize;
+        let zero_num = self.key.count_byte(NEED_TRANSFORM_CHARACTER as u8);
+        let encode_key_size = zero_num + ENCODED_KEY_DELIM_SIZE + self.key.size();
+        let needed = meta_size + encode_key_size;
         let mut offset_ptr: *mut u8;
 
         if needed <= self.space.len() {
@@ -74,7 +76,7 @@ impl BaseKey {
         }
 
         // encode user key
-        offset_ptr = encode_user_key(&self.key, offset_ptr, nzero);
+        offset_ptr = encode_user_key(&self.key, offset_ptr, zero_num);
 
         // copy reserve2
         unsafe { std::ptr::copy(self.reserve2.as_ptr(), offset_ptr, self.reserve2.len()) }
@@ -118,7 +120,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_encode_and_decode() {
+    fn test_base_key_encode_and_decode() {
         let test_key = Slice::new_with_str("test_key");
 
         let mut base_key = BaseKey::new(&test_key);
@@ -133,8 +135,6 @@ mod tests {
                 + ENCODED_KEY_DELIM_SIZE
                 + SUFFIX_RESERVE_LENGTH
         );
-
-        println!("Encoded data: {:?}", encoded_data);
 
         let additional_data: Vec<u8> = encoded_data.iter().copied().collect();
         let encoded_str = std::str::from_utf8(&additional_data).unwrap();

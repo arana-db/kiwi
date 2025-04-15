@@ -22,7 +22,7 @@ pub const SUFFIX_RESERVE_LENGTH: usize = 16;
 
 // used to store a fixed-size value for the Type field.
 // const TYPE_LENGTH: usize = 1;
-// const TIMESTAMP_LENGTH: usize = 8;
+pub const TIMESTAMP_LENGTH: usize = 8;
 
 // TODO: maybe we can change \u{0000} to \0,
 // it will be more readable.

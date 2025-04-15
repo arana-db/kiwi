@@ -12,17 +12,10 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-mod base_key_format;
-mod base_value_format;
-// mod compaction_filter;
-// mod error;
-mod lru_cache;
-mod options;
-// mod redis;
-mod slot_indexer;
-mod storage_define;
-mod storage_murmur3;
-// mod types;
-mod coding;
-mod util;
-// pub mod storage;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+pub fn now_micros() -> u64 {
+    let now = SystemTime::now();
+    let duration_since_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
+    duration_since_epoch.as_micros() as u64
+}
