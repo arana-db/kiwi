@@ -119,6 +119,7 @@ impl BaseDataValue {
 
     pub fn set_relative_expire_time(&mut self, ttl: u64) {
         self.etime = now_micros() + ttl;
+        println!("self.etime: {}", self.etime);
     }
 
     pub fn set_version(&mut self, version: u64) {
@@ -265,20 +266,27 @@ impl ParsedBaseDataValue {
         }
     }
 
-    pub fn is_permanent_survival(&mut self) {
+    pub fn set_permanent(&mut self) {
         self.etime = 0;
     }
 
-    pub fn is_stale(&self) -> bool {
-        if self.etime == 0 {
+    pub fn is_permanent(&self) -> bool {
+        self.etime == 0
+    }
+
+    pub fn is_expired(&self) -> bool {
+        if self.is_permanent() {
+            println!("here!!!!!!!!");
             return false;
         }
         let unix_time = now_micros();
+        println!("etime: {}, unix_time: {}", self.etime, unix_time);
         self.etime < unix_time
     }
 
     pub fn is_valid(&self) -> bool {
-        !self.is_stale()
+        println!("enter is valid function");
+        !self.is_expired()
     }
 }
 
@@ -296,5 +304,27 @@ mod tests {
         let decode_key = ParsedBaseDataValue::new(&encoded_data);
 
         assert_eq!(decode_key.user_value().as_bytes(), test_value.as_bytes());
+    }
+
+    #[test]
+    fn test_data_type_to_string() {
+        assert_eq!(data_type_to_string(DataType::String), "string");
+        assert_eq!(data_type_to_string(DataType::Hash), "hash");
+        assert_eq!(data_type_to_string(DataType::Set), "set");
+        assert_eq!(data_type_to_string(DataType::List), "list");
+        assert_eq!(data_type_to_string(DataType::ZSet), "zset");
+        assert_eq!(data_type_to_string(DataType::None), "none");
+        assert_eq!(data_type_to_string(DataType::All), "all");
+    }
+
+    #[test]
+    fn test_data_type_to_tag() {
+        assert_eq!(data_type_to_tag(DataType::String), 'k');
+        assert_eq!(data_type_to_tag(DataType::Hash), 'h');
+        assert_eq!(data_type_to_tag(DataType::Set), 's');
+        assert_eq!(data_type_to_tag(DataType::List), 'l');
+        assert_eq!(data_type_to_tag(DataType::ZSet), 'z');
+        assert_eq!(data_type_to_tag(DataType::None), 'n');
+        assert_eq!(data_type_to_tag(DataType::All), 'a');
     }
 }
