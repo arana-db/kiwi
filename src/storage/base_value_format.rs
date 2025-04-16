@@ -15,6 +15,7 @@
 
 use crate::kstd::env::now_micros;
 use crate::kstd::slice::Slice;
+use crate::storage::storage_define::{SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH};
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
@@ -62,6 +63,16 @@ pub struct InternalValue {
     pub reserve: [u8; 16],
 }
 
+impl Drop for InternalValue {
+    fn drop(&mut self) {
+        if !self.start.is_null() && self.start != self.space.as_mut_ptr() {
+            // Convert raw pointer back to Box and let it drop
+            let len = self.user_value.size() + SUFFIX_RESERVE_LENGTH + TIMESTAMP_LENGTH;
+            let _ = unsafe { Box::from_raw(std::slice::from_raw_parts_mut(self.start, len)) };
+        }
+    }
+}
+
 impl InternalValue {
     pub fn new(typ: DataType, value: &Slice) -> Self {
         let mut internal_value = Self {
@@ -97,7 +108,6 @@ impl InternalValue {
     #[allow(dead_code)]
     pub fn set_relative_expire_time(&mut self, ttl: u64) {
         self.etime = now_micros() + ttl;
-        println!("self.etime: {}", self.etime);
     }
 
     /// TODO: remove allow dead code
