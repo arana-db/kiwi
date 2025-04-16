@@ -68,7 +68,7 @@ impl Slice {
     }
 
     // Returns a string that contains the copy of the referenced data.
-    pub fn to_string(&self, hex: bool) -> String {
+    pub fn as_string(&self, hex: bool) -> String {
         if self.data.is_null() {
             return String::new();
         }
@@ -153,7 +153,7 @@ mod tests {
             s.len(),
             "Size should match the length of the string"
         );
-        let result_str = slice.to_string(false);
+        let result_str = slice.as_string(false);
         assert_eq!(result_str, s, "The strings should match");
     }
 
@@ -193,11 +193,11 @@ mod tests {
         let s = "hello";
         let slice = Slice::new_with_str(s);
         assert_eq!(
-            slice.to_string(false),
+            slice.as_string(false),
             s,
             "String conversion should match original"
         );
-        let hex_str = slice.to_string(true);
+        let hex_str = slice.as_string(true);
         assert_eq!(hex_str, "68656C6C6F", "Hex string should match");
     }
 }

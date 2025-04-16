@@ -14,9 +14,6 @@ jobs:
           - os: windows-latest
     name: cargo fmt
     runs-on: ${{ matrix.os }}
-    env:
-
-      MIRIFLAGS: "-Zmiri-disable-isolation"
     steps:
       - uses: actions/checkout@v4
 
