@@ -12,12 +12,11 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+use crate::kstd::slice::Slice;
 use crate::storage::storage_define::{
     ENCODED_KEY_DELIM_SIZE, NEED_TRANSFORM_CHARACTER, PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH,
     decode_user_key, encode_user_key,
 };
-
-use crate::kstd::slice::Slice;
 
 //
 // used for string data key or hash/zset/set/list's meta key. format:
@@ -25,8 +24,6 @@ use crate::kstd::slice::Slice;
 // |    8B    |     |   16B    |
 //
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 struct BaseKey {
     start: *mut u8,
     space: [u8; 200],
@@ -86,8 +83,6 @@ impl BaseKey {
     }
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 pub struct ParsedBaseKey {
     key_str: Vec<u8>,
 }

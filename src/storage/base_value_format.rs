@@ -13,6 +13,7 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
+use crate::kstd::env::now_micros;
 use crate::kstd::slice::Slice;
 
 /// TODO: remove allow dead code
@@ -46,19 +47,142 @@ pub fn data_type_to_tag(data_type: DataType) -> char {
     DATA_TYPE_TAG[data_type as usize]
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
-pub trait InternalValue {
-    fn encode(&mut self) -> Slice;
+pub struct InternalValue {
+    pub start: *mut u8,
+    pub space: Vec<u8>,
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub typ: DataType,
+
+    pub user_value: Slice,
+    pub version: u64,
+    pub etime: u64, // expire time
+    pub ctime: u64, // create time
+    pub reserve: [u8; 16],
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
-pub trait ParsedInternalValue {
-    fn set_version_to_value(&mut self);
-    fn set_etime_to_value(&mut self);
-    fn set_ctime_to_value(&mut self);
-    fn strip_suffix(&mut self);
+impl InternalValue {
+    pub fn new(typ: DataType, value: &Slice) -> Self {
+        let mut internal_value = Self {
+            start: std::ptr::null_mut(),
+            space: Vec::with_capacity(200),
+            typ,
+            user_value: value.clone(),
+            version: 0,
+            etime: 0,
+            ctime: now_micros(),
+            reserve: [0; 16],
+        };
+
+        // Initialize `start` based on internal logic or availability
+        internal_value.start = internal_value.space.as_mut_ptr();
+
+        internal_value
+    }
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub fn set_etime(&mut self, etime: u64) {
+        self.etime = etime;
+    }
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub fn set_ctime(&mut self, ctime: u64) {
+        self.ctime = ctime;
+    }
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub fn set_relative_expire_time(&mut self, ttl: u64) {
+        self.etime = now_micros() + ttl;
+        println!("self.etime: {}", self.etime);
+    }
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub fn set_version(&mut self, version: u64) {
+        self.version = version;
+    }
+}
+
+pub struct ParsedInternalValue {
+    pub value: String,
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub typ: DataType,
+
+    pub user_value: Slice,
+    pub version: u64,
+    pub ctime: u64,
+    pub etime: u64,
+    pub reserve: [u8; 16],
+}
+
+impl ParsedInternalValue {
+    /// Use this constructor in rocksdb::CompactionFilter::Filter(),
+    /// since we use this in Compaction process, all we need to do is parsing
+    /// the rocksdb::Slice, so don't need to modify the original value, value_ can be
+    /// set to nullptr
+    pub fn new_with_slice(_value: &Slice) -> Self {
+        Self {
+            value: String::default(),
+            typ: DataType::None,
+            user_value: Slice::default(),
+            version: 0,
+            etime: 0,
+            ctime: 0,
+            reserve: [0; 16],
+        }
+    }
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub fn user_value(&self) -> Slice {
+        self.user_value.clone()
+    }
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub fn etime(&self) -> u64 {
+        self.etime
+    }
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub fn set_permanent(&mut self) {
+        self.etime = 0;
+    }
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub fn is_permanent(&self) -> bool {
+        self.etime == 0
+    }
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub fn is_expired(&self) -> bool {
+        if self.is_permanent() {
+            return false;
+        }
+        let unix_time = now_micros();
+        self.etime < unix_time
+    }
+
+    /// TODO: remove allow dead code
+    #[allow(dead_code)]
+    pub fn is_valid(&self) -> bool {
+        !self.is_expired()
+    }
 }
 
 #[cfg(test)]
