@@ -12,6 +12,7 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+mod base_data_value_format;
 mod base_key_format;
 mod base_value_format;
 // mod compaction_filter;

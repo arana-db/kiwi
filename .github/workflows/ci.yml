@@ -14,6 +14,9 @@ jobs:
           - os: windows-latest
     name: cargo fmt
     runs-on: ${{ matrix.os }}
+    env:
+
+      MIRIFLAGS: "-Zmiri-disable-isolation"
     steps:
       - uses: actions/checkout@v4
 
@@ -57,13 +60,13 @@ jobs:
           - os: windows-latest
     name: cargo miri
     runs-on: ${{ matrix.os }}
+    env:
+      # for using system time function.
+      MIRIFLAGS: "-Zmiri-disable-isolation"
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup toolchain
-        env:
-          # for using system time function.
-          MIRIFLAGS: "-Zmiri-disable-isolation"
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
