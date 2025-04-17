@@ -13,7 +13,7 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
-use crate::kstd::env::now_micros;
+use crate::kstd::env::get_current_time;
 use crate::kstd::slice::Slice;
 use crate::storage::storage_define::{SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH};
 
@@ -82,7 +82,7 @@ impl InternalValue {
             user_value: value.clone(),
             version: 0,
             etime: 0,
-            ctime: now_micros(),
+            ctime: get_current_time(),
             reserve: [0; 16],
         };
 
@@ -107,7 +107,7 @@ impl InternalValue {
     /// TODO: remove allow dead code
     #[allow(dead_code)]
     pub fn set_relative_expire_time(&mut self, ttl: u64) {
-        self.etime = now_micros() + ttl;
+        self.etime = get_current_time() + ttl;
     }
 
     /// TODO: remove allow dead code
@@ -184,7 +184,7 @@ impl ParsedInternalValue {
         if self.is_permanent() {
             return false;
         }
-        let unix_time = now_micros();
+        let unix_time = get_current_time();
         self.etime < unix_time
     }
 

@@ -12,10 +12,12 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use chrono::{TimeZone, Utc};
 
-pub fn now_micros() -> u64 {
-    let now = SystemTime::now();
-    let duration_since_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
-    duration_since_epoch.as_micros() as u64
+pub fn get_current_time() -> u64 {
+    let now = Utc::now();
+    let epoch = Utc.timestamp_opt(0, 0).single().unwrap();
+    let epoch_micros = epoch.timestamp_micros();
+    let current_micros = now.timestamp_micros();
+    (current_micros - epoch_micros) as u64
 }
