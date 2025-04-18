@@ -17,12 +17,12 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+#[inline]
 pub fn get_current_time() -> u64 {
     Utc::now().timestamp_micros() as u64
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
+#[inline]
 pub fn is_dir<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     let metadata = fs::metadata(path)?;
     Ok(metadata.is_dir())
