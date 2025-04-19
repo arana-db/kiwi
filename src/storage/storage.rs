@@ -22,12 +22,12 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI32},
 };
 
+use crate::kstd::env;
 use crate::storage::base_data_value_format::DataType;
 use crate::storage::lru_cache::LRUCache;
 use crate::storage::options::StorageOptions;
 use crate::storage::redis::Redis;
 use crate::storage::slot_indexer::SlotIndexer;
-use crate::storage::util;
 
 // Constant definitions
 pub const ZSET_SCORE_MAX: f64 = f64::MAX;
@@ -312,7 +312,7 @@ impl Storage {
 
     pub fn open(&mut self, storage_options: &mut StorageOptions, db_path: &str) -> Status {
         // Implementation of storage open logic
-        if let Err(err) = util::mkdir_with_path(db_path, 0o755) {
+        if let Err(err) = env::mkdir_with_path(db_path, 0o755) {
             return Err(format!("Failed to create db directory: {}", err));
         }
 

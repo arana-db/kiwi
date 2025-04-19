@@ -12,10 +12,64 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::fs;
+use std::io;
+use std::path::Path;
 
-pub fn now_micros() -> u64 {
-    let now = SystemTime::now();
-    let duration_since_epoch = now.duration_since(UNIX_EPOCH).expect("Time went backwards");
-    duration_since_epoch.as_micros() as u64
+pub fn is_dir<P: AsRef<Path>>(path: P) -> io::Result<bool> {
+    let metadata = fs::metadata(path)?;
+    Ok(metadata.is_dir())
+}
+
+/// Creates a directory and all its parent directories with the specified mode.
+/// This corresponds to the 'mkpath' functionality.
+/// TODO: remove allow dead code
+#[allow(dead_code)]
+pub fn mkdir_with_path<P: AsRef<Path>>(path: P, _mode: u32) -> io::Result<()> {
+    // Use the fs::create_dir_all method to create the directory path.
+    // It does not handle mode settings, so additional steps are required to set modes.
+    fs::create_dir_all(&path)?;
+
+    // Optionally, we can set the mode using 'chmod' if the platform supports it.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(_mode))?;
+    }
+
+    Ok(())
+}
+
+/// TODO: remove allow dead code
+#[allow(dead_code)]
+pub fn delete_dir<P: AsRef<Path>>(dirname: P) -> io::Result<()> {
+    let path = dirname.as_ref();
+
+    // Open the directory.
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+
+        // Skip '.' and '..'
+        if let Some(name) = entry.file_name().to_str() {
+            if name == "." || name == ".." {
+                continue;
+            }
+        }
+
+        // Check if the path is a directory or a file.
+        let metadata = fs::metadata(path)?;
+        if metadata.is_dir() {
+            // It's a directory, recurse into it.
+            delete_dir(&entry_path)?;
+        } else {
+            // It's a file, remove it.
+            fs::remove_file(&entry_path)?;
+        }
+    }
+
+    // Finally, remove the main directory.
+    fs::remove_dir(path)?;
+
+    Ok(())
 }

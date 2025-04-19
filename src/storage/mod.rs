@@ -21,6 +21,5 @@ mod options;
 mod slot_indexer;
 mod storage_define;
 mod storage_murmur3;
-mod util;
 
 // pub mod storage;
