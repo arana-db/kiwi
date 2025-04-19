@@ -12,17 +12,10 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use chrono::Utc;
 use std::fs;
 use std::io;
 use std::path::Path;
 
-#[inline]
-pub fn get_current_time() -> u64 {
-    Utc::now().timestamp_micros() as u64
-}
-
-#[inline]
 pub fn is_dir<P: AsRef<Path>>(path: P) -> io::Result<bool> {
     let metadata = fs::metadata(path)?;
     Ok(metadata.is_dir())
@@ -65,7 +58,8 @@ pub fn delete_dir<P: AsRef<Path>>(dirname: P) -> io::Result<()> {
         }
 
         // Check if the path is a directory or a file.
-        if is_dir(&entry_path)? {
+        let metadata = fs::metadata(path)?;
+        if metadata.is_dir() {
             // It's a directory, recurse into it.
             delete_dir(&entry_path)?;
         } else {
