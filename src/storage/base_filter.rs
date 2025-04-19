@@ -54,7 +54,7 @@ impl CompactionFilter for BaseMetaFilter {
             Ok(dt) => dt,
             Err(_) => {
                 debug!(
-                    "BaseMetaFilter: Invalid data type byte {} for key {:?}, remove",
+                    "BaseMetaFilter: Invalid data type byte {} for key {:?}, remove.",
                     value[0],
                     parsed_key.key()
                 );
