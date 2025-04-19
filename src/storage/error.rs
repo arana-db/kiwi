@@ -17,6 +17,8 @@
 use std::io;
 use thiserror::Error;
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 #[derive(Error, Debug)]
 pub enum StorageError {
     #[error("IO error: {0}")]

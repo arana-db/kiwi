@@ -8,5 +8,7 @@ edition = "2024"
 
 [dependencies]
 rocksdb = "0.23.0"
-chrono = "0.4.40"
 log = "0.4"
+bytes = "1"
+chrono = "0.4.40"
+thiserror = "1.0"

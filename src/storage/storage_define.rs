@@ -21,7 +21,7 @@ pub const SUFFIX_RESERVE_LENGTH: usize = 16;
 // const LIST_VALUE_INDEX_LENGTH: usize = 16;
 
 // used to store a fixed-size value for the Type field.
-// const TYPE_LENGTH: usize = 1;
+pub const TYPE_LENGTH: usize = 1;
 pub const TIMESTAMP_LENGTH: usize = 8;
 
 // TODO: maybe we can change \u{0000} to \0,
@@ -30,6 +30,8 @@ pub const NEED_TRANSFORM_CHARACTER: char = '\u{0000}';
 const ENCODED_TRANSFORM_CHARACTER: &str = "\u{0000}\u{0001}";
 const ENCODED_KEY_DELIM: &str = "\u{0000}\u{0000}";
 pub const ENCODED_KEY_DELIM_SIZE: usize = 2;
+
+pub const STRING_VALUE_SUFFIXLENGTH: usize = 2 * TIMESTAMP_LENGTH + SUFFIX_RESERVE_LENGTH;
 
 /// Encode user key
 ///
