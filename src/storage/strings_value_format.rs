@@ -13,19 +13,15 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
-use crate::storage::error::StorageError;
-
-use super::base_value_format::DataType;
-use super::base_value_format::InternalValue;
-use super::base_value_format::ParsedInternalValue;
-use super::error::Result;
-use super::storage_define::{
-    STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
+use crate::storage::{
+    base_value_format::{DataType, InternalValue, ParsedInternalValue},
+    error::{Result, StorageError},
+    storage_define::{
+        STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
+    },
 };
-use bytes::Buf;
-use bytes::BufMut;
-use bytes::Bytes;
-use bytes::BytesMut;
+
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use chrono::Utc;
 use std::ops::Range;
 
