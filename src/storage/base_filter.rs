@@ -108,7 +108,7 @@ mod tests {
 
         let string_val: &'static [u8] = b"filter_val";
         let mut string_val = crate::storage::strings_value_format::StringValue::new(string_val);
-        let ttl = 1_000_000; 
+        let ttl = 1_000_000;
         crate::storage::base_value_format::InternalValue::set_relative_timestamp(
             &mut string_val,
             ttl,
