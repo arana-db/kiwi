@@ -13,12 +13,14 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
+use bytes::BytesMut;
 use chrono::Utc;
 use log::debug;
 use rocksdb::{
-    CompactionDecision, compaction_filter::CompactionFilter,
+    ColumnFamily, CompactionDecision, DB, ReadOptions, compaction_filter::CompactionFilter,
     compaction_filter_factory::CompactionFilterFactory,
 };
+use std::sync::Arc;
 
 use crate::storage::{
     base_key_format::ParsedBaseKey,
@@ -32,6 +34,19 @@ pub struct BaseMetaFilter;
 #[derive(Debug, Default)]
 pub struct BaseMetaFilterFactory;
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
+pub struct BaseDataFilter {
+    db: Arc<DB>,
+    cf_handles: Arc<Vec<Arc<ColumnFamily>>>,
+    target_data_type: DataType,
+    default_read_opts: ReadOptions,
+    cur_key: BytesMut,
+    meta_not_found: bool,
+    cur_meta_version: u64,
+    cur_meta_etime: u64,
+}
+
 impl CompactionFilter for BaseMetaFilter {
     fn name(&self) -> &std::ffi::CStr {
         c"BaseMetaFilter"
@@ -40,7 +55,15 @@ impl CompactionFilter for BaseMetaFilter {
     fn filter(&mut self, _level: u32, key: &[u8], value: &[u8]) -> CompactionDecision {
         let current_time = Utc::now().timestamp_micros() as u64;
 
-        let parsed_key = ParsedBaseKey::new(key);
+        let parsed_key_result = ParsedBaseKey::new(key);
+        if let Err(e) = parsed_key_result {
+            debug!(
+                "BaseMetaFilter: Failed to parse key {:?}: {}, remove.",
+                key, e
+            );
+            return CompactionDecision::Remove;
+        }
+        let parsed_key = parsed_key_result.unwrap();
 
         if value.is_empty() {
             debug!(
@@ -98,34 +121,53 @@ impl CompactionFilterFactory for BaseMetaFilterFactory {
     }
 }
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
+impl BaseDataFilter {
+    pub fn new(
+        db: Arc<DB>,
+        cf_handles: Arc<Vec<Arc<ColumnFamily>>>,
+        target_data_type: DataType,
+    ) -> Self {
+        Self {
+            db,
+            cf_handles,
+            target_data_type,
+            default_read_opts: ReadOptions::default(),
+            cur_key: BytesMut::new(),
+            meta_not_found: false,
+            cur_meta_version: 0,
+            cur_meta_etime: 0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
     use super::*;
+    use crate::storage::{base_value_format::InternalValue, strings_value_format::StringValue};
 
     #[test]
-    fn test_strings_filter() {
+    fn test_strings_base_filter() {
         let mut filter = BaseMetaFilter::default();
+        let ttl = 1_000_000;
 
         let string_val: &'static [u8] = b"filter_val";
-        let mut string_val = crate::storage::strings_value_format::StringValue::new(string_val);
-        let ttl = 1_000_000;
-        crate::storage::base_value_format::InternalValue::set_relative_timestamp(
-            &mut string_val,
-            ttl,
-        );
+        let mut string_val = StringValue::new(string_val);
+        string_val.set_relative_timestamp(ttl);
 
         let decision = filter.filter(
             0,
-            b"filter_key",
+            string_val.encode().as_ref(),
             &crate::storage::base_value_format::InternalValue::encode(&string_val),
         );
         assert!(matches!(decision, CompactionDecision::Keep));
 
         std::thread::sleep(std::time::Duration::from_secs(2));
-
         let decision = filter.filter(
             0,
-            b"filter_key",
+            string_val.encode().as_ref(),
             &crate::storage::base_value_format::InternalValue::encode(&string_val),
         );
         assert!(matches!(decision, CompactionDecision::Remove));

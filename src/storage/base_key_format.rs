@@ -12,11 +12,14 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use crate::kstd::slice::Slice;
-use crate::storage::storage_define::{
-    ENCODED_KEY_DELIM_SIZE, NEED_TRANSFORM_CHARACTER, PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH,
-    decode_user_key, encode_user_key,
+use crate::storage::{
+    error::{Result, StorageError},
+    storage_define::{
+        ENCODED_KEY_DELIM_SIZE, PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, decode_user_key,
+        encode_user_key,
+    },
 };
+use bytes::{BufMut, Bytes, BytesMut};
 
 //
 // used for string data key or hash/zset/set/list's meta key. format:
@@ -24,89 +27,64 @@ use crate::storage::storage_define::{
 // |    8B    |     |   16B    |
 //
 
+/// TODO: remove allow dead code
+#[allow(dead_code)]
 struct BaseKey {
-    start: *mut u8,
-    space: [u8; 200],
     reserve1: [u8; 8],
-    key: Slice,
+    key: Bytes,
     reserve2: [u8; 16],
 }
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
 impl BaseKey {
-    pub fn new(key: &Slice) -> Self {
-        let mut base_key = BaseKey {
-            start: std::ptr::null_mut(),
-            space: [0; 200],
-            reserve1: [0; 8],
-            key: key.clone(),
-            reserve2: [0; 16],
-        };
-
-        // Initialize `start` based on internal logic or availability
-        base_key.start = base_key.space.as_mut_ptr();
-
-        base_key
+    pub fn new(key: &[u8]) -> Self {
+        BaseKey {
+            reserve1: [0; PREFIX_RESERVE_LENGTH],
+            key: Bytes::copy_from_slice(key),
+            reserve2: [0; SUFFIX_RESERVE_LENGTH],
+        }
     }
 
-    fn encode(&mut self) -> &[u8] {
-        let meta_size = self.reserve1.len() + self.reserve2.len();
-        let zero_num = self.key.count_byte(NEED_TRANSFORM_CHARACTER as u8);
-        let encode_key_size = zero_num + ENCODED_KEY_DELIM_SIZE + self.key.size();
-        let needed = meta_size + encode_key_size;
-        let mut offset_ptr: *mut u8;
+    fn encode(&self) -> Result<BytesMut> {
+        let estimated_cap = PREFIX_RESERVE_LENGTH
+            + self.key.len() * 2
+            + ENCODED_KEY_DELIM_SIZE
+            + SUFFIX_RESERVE_LENGTH;
+        let mut dst = BytesMut::with_capacity(estimated_cap);
 
-        if needed <= self.space.len() {
-            offset_ptr = self.space.as_mut_ptr();
-        } else {
-            let new_space = vec![0u8; needed];
-            offset_ptr = Box::into_raw(new_space.into_boxed_slice()) as *mut u8;
-        }
-
-        self.start = offset_ptr;
-        // copy reserve1
-        unsafe { std::ptr::copy(self.reserve1.as_ptr(), self.start, self.reserve1.len()) }
-
-        unsafe {
-            offset_ptr = offset_ptr.add(self.reserve1.len());
-        }
-
-        // encode user key
-        offset_ptr = encode_user_key(&self.key, offset_ptr, zero_num);
-
-        // copy reserve2
-        unsafe { std::ptr::copy(self.reserve2.as_ptr(), offset_ptr, self.reserve2.len()) }
-
-        // return encode slice
-        unsafe { std::slice::from_raw_parts(self.start, needed) }
+        dst.put_slice(&self.reserve1);
+        encode_user_key(&self.key, &mut dst)?;
+        dst.put_slice(&self.reserve2);
+        Ok(dst)
     }
 }
 
 pub struct ParsedBaseKey {
-    key_str: Vec<u8>,
+    key_str: BytesMut,
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 impl ParsedBaseKey {
-    pub fn new(encoded_key: &[u8]) -> Self {
-        let mut key_str = Vec::new();
-        Self::decode(encoded_key, &mut key_str);
-        ParsedBaseKey { key_str }
+    pub fn new(encoded_key: &[u8]) -> Result<Self> {
+        let mut key_str = BytesMut::new();
+        Self::decode(encoded_key, &mut key_str)?;
+        Ok(ParsedBaseKey { key_str })
     }
 
-    fn decode(encoded_key: &[u8], key_str: &mut Vec<u8>) {
-        if encoded_key.len() > (PREFIX_RESERVE_LENGTH + SUFFIX_RESERVE_LENGTH) {
-            let start_idx = PREFIX_RESERVE_LENGTH;
-            let end_idx = encoded_key.len() - SUFFIX_RESERVE_LENGTH;
-            let data_slice = &encoded_key[start_idx..end_idx];
-            decode_user_key(data_slice.as_ptr(), data_slice.len(), key_str);
+    fn decode(encoded_key: &[u8], key_str: &mut BytesMut) -> Result<()> {
+        if encoded_key.len() <= PREFIX_RESERVE_LENGTH + SUFFIX_RESERVE_LENGTH {
+            return Err(StorageError::InvalidFormat(
+                "Encoded key too short to contain prefix, suffix, and data".to_string(),
+            ));
         }
+        let start_idx = PREFIX_RESERVE_LENGTH;
+        let end_idx = encoded_key.len() - SUFFIX_RESERVE_LENGTH;
+        let data_slice = &encoded_key[start_idx..end_idx];
+        decode_user_key(data_slice, key_str)
     }
 
     pub fn key(&self) -> &[u8] {
-        &self.key_str
+        self.key_str.as_ref()
     }
 }
 
@@ -115,27 +93,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_base_key_encode_and_decode() {
-        let test_key = Slice::new_with_str("test_key");
+    fn mv_test_base_key_encode_and_decode() {
+        let test_key = b"test_key";
 
-        let mut base_key = BaseKey::new(&test_key);
-        let encoded_data = base_key.encode();
+        let base_key = BaseKey::new(test_key);
+        let encoded_result = base_key.encode();
+        assert!(
+            encoded_result.is_ok(),
+            "Encoding failed: {:?}",
+            encoded_result.err()
+        );
+        let encoded_data = encoded_result.unwrap();
 
-        // there is no zero, so no need to transform.
-        // reserve1 + key.size + delim.size + reserve2
         assert_eq!(
             encoded_data.len(),
-            PREFIX_RESERVE_LENGTH
-                + test_key.size()
-                + ENCODED_KEY_DELIM_SIZE
-                + SUFFIX_RESERVE_LENGTH
+            PREFIX_RESERVE_LENGTH + test_key.len() + ENCODED_KEY_DELIM_SIZE + SUFFIX_RESERVE_LENGTH,
         );
 
-        let additional_data: Vec<u8> = encoded_data.iter().copied().collect();
-        let encoded_str = std::str::from_utf8(&additional_data).unwrap();
+        let decode_key_result = ParsedBaseKey::new(&encoded_data);
+        assert!(
+            decode_key_result.is_ok(),
+            "Decoding failed: {:?}",
+            decode_key_result.err()
+        );
+        let decode_key = decode_key_result.unwrap();
 
-        let decode_key = ParsedBaseKey::new(encoded_str.as_bytes());
-
-        assert_eq!(decode_key.key(), test_key.as_bytes());
+        assert_eq!(decode_key.key(), test_key);
     }
 }
