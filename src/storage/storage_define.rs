@@ -81,7 +81,6 @@ pub fn decode_user_key(encoded_key_part: &[u8], user_key: &mut BytesMut) -> Resu
                     user_key.put_u8(0x00);
                     zero_ahead = false;
                 } else {
-                    // 普通的 0x01
                     user_key.put_u8(byte);
                 }
             }
@@ -93,7 +92,7 @@ pub fn decode_user_key(encoded_key_part: &[u8], user_key: &mut BytesMut) -> Resu
                     ));
                 }
                 user_key.put_u8(byte);
-                zero_ahead = false; // 确保重置标记
+                zero_ahead = false; 
             }
         }
     }

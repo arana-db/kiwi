@@ -75,7 +75,7 @@ impl InternalValue for StringValue {
         self.ctime = ctime;
     }
 
-    fn set_relative_timestamp(&mut self, ttl: u64) {
+    fn set_relative_etime(&mut self, ttl: u64) {
         self.etime = Utc::now().timestamp_micros() as u64 + ttl;
     }
 }

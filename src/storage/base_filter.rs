@@ -155,7 +155,7 @@ mod tests {
 
         let string_val: &'static [u8] = b"filter_val";
         let mut string_val = StringValue::new(string_val);
-        string_val.set_relative_timestamp(ttl);
+        string_val.set_relative_etime(ttl);
 
         let decision = filter.filter(
             0,
