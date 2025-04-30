@@ -26,9 +26,9 @@ pub const TIMESTAMP_LENGTH: usize = 8;
 
 // TODO: maybe we can change \u{0000} to \0,
 // it will be more readable.
-pub const NEED_TRANSFORM_CHARACTER: char = '\u{0000}';
-const ENCODED_TRANSFORM_CHARACTER: &str = "\u{0000}\u{0001}";
-const ENCODED_KEY_DELIM: &str = "\u{0000}\u{0000}";
+pub const NEED_TRANSFORM_CHARACTER: char = '\x00';
+const ENCODED_TRANSFORM_CHARACTER: &str = "\x00\x01";
+const ENCODED_KEY_DELIM: &str = "\x00\x00";
 pub const ENCODED_KEY_DELIM_SIZE: usize = 2;
 
 pub const STRING_VALUE_SUFFIXLENGTH: usize = 2 * TIMESTAMP_LENGTH + SUFFIX_RESERVE_LENGTH;
@@ -92,7 +92,7 @@ pub fn decode_user_key(encoded_key_part: &[u8], user_key: &mut BytesMut) -> Resu
                     ));
                 }
                 user_key.put_u8(byte);
-                zero_ahead = false; 
+                zero_ahead = false;
             }
         }
     }
