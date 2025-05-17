@@ -17,6 +17,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 pub async fn process_connection(mut socket: TcpStream) -> std::io::Result<()> {
+    // TODO: add handle command logic
+
     let mut buffer = [0; 1024];
 
     loop {
