@@ -1,0 +1,151 @@
+use bytes::Bytes;
+use std::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RespVersion {
+    RESP1,
+    RESP2,
+}
+
+impl Default for RespVersion {
+    fn default() -> Self {
+        RespVersion::RESP2
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RespType {
+    SimpleString,
+    Error,
+    Integer,
+    BulkString,
+    Array,
+    Inline,
+}
+
+impl RespType {
+    pub fn from_prefix(byte: u8) -> Option<Self> {
+        match byte {
+            b'+' => Some(RespType::SimpleString),
+            b'-' => Some(RespType::Error),
+            b':' => Some(RespType::Integer),
+            b'$' => Some(RespType::BulkString),
+            b'*' => Some(RespType::Array),
+            _ => None,
+        }
+    }
+
+    pub fn prefix_byte(&self) -> u8 {
+        match self {
+            RespType::SimpleString => b'+',
+            RespType::Error => b'-',
+            RespType::Integer => b':',
+            RespType::BulkString => b'$',
+            RespType::Array => b'*',
+            RespType::Inline => b' ',
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub enum RespData {
+    SimpleString(Bytes),
+    Error(Bytes),
+    Integer(i64),
+    BulkString(Option<Bytes>),
+    Array(Option<Vec<RespData>>),
+    Inline(Vec<Bytes>),
+}
+
+impl RespData {
+    pub fn get_type(&self) -> RespType {
+        match self {
+            RespData::SimpleString(_) => RespType::SimpleString,
+            RespData::Error(_) => RespType::Error,
+            RespData::Integer(_) => RespType::Integer,
+            RespData::BulkString(_) => RespType::BulkString,
+            RespData::Array(_) => RespType::Array,
+            RespData::Inline(_) => RespType::Inline,
+        }
+    }
+
+    pub fn as_string(&self) -> Option<String> {
+        match self {
+            RespData::SimpleString(bytes) => String::from_utf8(bytes.to_vec()).ok(),
+            RespData::Error(bytes) => String::from_utf8(bytes.to_vec()).ok(),
+            RespData::Integer(num) => Some(num.to_string()),
+            RespData::BulkString(Some(bytes)) => String::from_utf8(bytes.to_vec()).ok(),
+            RespData::BulkString(None) => None,
+            RespData::Inline(parts) if !parts.is_empty() => {
+                String::from_utf8(parts[0].to_vec()).ok()
+            }
+            _ => None,
+        }
+    }
+
+    pub fn as_bytes(&self) -> Option<Bytes> {
+        match self {
+            RespData::SimpleString(bytes) => Some(bytes.clone()),
+            RespData::Error(bytes) => Some(bytes.clone()),
+            RespData::Integer(num) => Some(Bytes::from(num.to_string())),
+            RespData::BulkString(Some(bytes)) => Some(bytes.clone()),
+            RespData::BulkString(None) => None,
+            RespData::Inline(parts) if !parts.is_empty() => Some(parts[0].clone()),
+            _ => None,
+        }
+    }
+
+    pub fn as_integer(&self) -> Option<i64> {
+        match self {
+            RespData::Integer(num) => Some(*num),
+            RespData::SimpleString(bytes) => {
+                std::str::from_utf8(bytes).ok().and_then(|s| s.parse().ok())
+            }
+            RespData::BulkString(Some(bytes)) => {
+                std::str::from_utf8(bytes).ok().and_then(|s| s.parse().ok())
+            }
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Debug for RespData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RespData::SimpleString(bytes) => {
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    write!(f, "SimpleString(\"{}\")", s)
+                } else {
+                    write!(f, "SimpleString({:?})", bytes)
+                }
+            }
+            RespData::Error(bytes) => {
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    write!(f, "Error(\"{}\")", s)
+                } else {
+                    write!(f, "Error({:?})", bytes)
+                }
+            }
+            RespData::Integer(num) => write!(f, "Integer({})", num),
+            RespData::BulkString(Some(bytes)) => {
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    write!(f, "BulkString(\"{}\")", s)
+                } else {
+                    write!(f, "BulkString({:?})", bytes)
+                }
+            }
+            RespData::BulkString(None) => write!(f, "BulkString(nil)"),
+            RespData::Array(Some(array)) => write!(f, "Array({:?})", array),
+            RespData::Array(None) => write!(f, "Array(nil)"),
+            RespData::Inline(parts) => {
+                write!(f, "Inline(")?;
+                let parts_str: Vec<_> = parts
+                    .iter()
+                    .filter_map(|b| std::str::from_utf8(b).ok())
+                    .collect();
+                write!(f, "{:?}", parts_str)?;
+                write!(f, ")")
+            }
+        }
+    }
+}
