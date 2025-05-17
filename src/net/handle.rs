@@ -12,27 +12,26 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use kiwi_rs::net;
-use log::{error, info};
-use tokio::net::TcpListener;
+use log::error;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
-#[tokio::main]
-async fn main() -> std::io::Result<()> {
-    // init logger
-    env_logger::init();
+pub async fn process_connection(mut socket: TcpStream) -> std::io::Result<()> {
+    let mut buffer = [0; 1024];
 
-    let addr = "127.0.0.1:9221";
-    let listener = TcpListener::bind(addr).await?;
-
-    info!("tcp listener listen on {addr}");
     loop {
-        let (socket, addr) = listener.accept().await?;
-        info!("new connection: {addr}");
-
-        tokio::spawn(async move {
-            if let Err(e) = net::handle::process_connection(socket).await {
-                error!("headle connection error: {e}");
+        let n = match socket.read(&mut buffer).await {
+            Ok(0) => return Ok(()),
+            Ok(n) => n,
+            Err(e) => {
+                error!("socket read error: {e}");
+                return Err(e);
             }
-        });
+        };
+
+        if let Err(e) = socket.write_all(&buffer[..n]).await {
+            error!("socket write error: {e}");
+            return Err(e);
+        }
     }
 }

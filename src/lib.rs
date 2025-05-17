@@ -13,4 +13,5 @@
 //  limitations under the License.
 
 pub mod kstd;
+pub mod net;
 pub mod storage;
