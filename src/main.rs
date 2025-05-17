@@ -31,7 +31,7 @@ async fn main() -> std::io::Result<()> {
 
         tokio::spawn(async move {
             if let Err(e) = net::handle::process_connection(socket).await {
-                error!("headle connection error: {e}");
+                error!("handle connection error: {e}");
             }
         });
     }
