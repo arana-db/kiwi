@@ -19,6 +19,7 @@ use tokio::net::TcpListener;
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     // init logger
+    // set env RUST_LOG=level to control
     env_logger::init();
 
     let addr = "127.0.0.1:9221";
@@ -33,6 +34,7 @@ async fn main() -> std::io::Result<()> {
             if let Err(e) = net::handle::process_connection(socket).await {
                 error!("handle connection error: {e}");
             }
+            info!("connection {addr} disconnect");
         });
     }
 }
