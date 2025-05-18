@@ -77,7 +77,7 @@ pub trait InternalValue {
     fn encode(&self) -> BytesMut;
     fn set_etime(&mut self, etime: u64);
     fn set_ctime(&mut self, ctime: u64);
-    fn set_relative_timestamp(&mut self, ttl: u64);
+    fn set_relative_etime(&mut self, ttl: u64);
 }
 
 /// TODO: remove allow dead code
