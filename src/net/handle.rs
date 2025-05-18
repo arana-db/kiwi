@@ -16,6 +16,19 @@ use log::error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+/// Processes an incoming TCP connection.
+///
+/// This function reads data from the provided `TcpStream`, processes it, and writes the response back to the stream.
+/// It operates in a loop until the connection is closed or an error occurs.
+///
+/// # Arguments
+///
+/// * `socket` - A `TcpStream` representing the connection to process.
+///
+/// # Returns
+///
+/// A `std::io::Result` indicating success or failure.
+///
 pub async fn process_connection(mut socket: TcpStream) -> std::io::Result<()> {
     // TODO: add handle command logic
 
