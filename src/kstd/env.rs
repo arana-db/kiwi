@@ -51,10 +51,10 @@ pub fn delete_dir<P: AsRef<Path>>(dirname: P) -> io::Result<()> {
         let entry_path = entry.path();
 
         // Skip '.' and '..'
-        if let Some(name) = entry.file_name().to_str() {
-            if name == "." || name == ".." {
-                continue;
-            }
+        if let Some(name) = entry.file_name().to_str()
+            && (name == "." || name == "..")
+        {
+            continue;
         }
 
         // Check if the path is a directory or a file.
