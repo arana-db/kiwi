@@ -182,7 +182,7 @@ impl RespEncoder {
         let _ = write!(self.buffer, "${}", len);
         self.append_crlf()
     }
-    
+
     fn set_array_len(&mut self, len: i64) -> &mut Self {
         let _ = write!(self.buffer, "*{}", len);
         self.append_crlf()
