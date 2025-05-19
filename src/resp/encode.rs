@@ -363,13 +363,13 @@ impl RespEncode for RespEncoder {
     fn encode_resp_data(&mut self, data: &RespData) -> &mut Self {
         match data {
             RespData::SimpleString(bytes) => {
-                let _ = self.buffer.extend_from_slice(b"+");
-                let _ = self.buffer.extend_from_slice(bytes);
+                self.buffer.extend_from_slice(b"+");
+                self.buffer.extend_from_slice(bytes);
                 self.append_crlf()
             }
             RespData::Error(bytes) => {
-                let _ = self.buffer.extend_from_slice(b"-");
-                let _ = self.buffer.extend_from_slice(bytes);
+                self.buffer.extend_from_slice(b"-");
+                self.buffer.extend_from_slice(bytes);
                 self.append_crlf()
             }
             RespData::Integer(num) => self.append_integer(*num),
@@ -386,9 +386,9 @@ impl RespEncode for RespEncoder {
             RespData::Inline(parts) => {
                 for (i, part) in parts.iter().enumerate() {
                     if i > 0 {
-                        let _ = self.buffer.extend_from_slice(b" ");
+                        self.buffer.extend_from_slice(b" ");
                     }
-                    let _ = self.buffer.extend_from_slice(part);
+                    self.buffer.extend_from_slice(part);
                 }
                 self.append_crlf()
             }

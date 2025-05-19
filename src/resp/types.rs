@@ -1,16 +1,11 @@
 use bytes::Bytes;
 use std::fmt;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum RespVersion {
     RESP1,
+    #[default]
     RESP2,
-}
-
-impl Default for RespVersion {
-    fn default() -> Self {
-        RespVersion::RESP2
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

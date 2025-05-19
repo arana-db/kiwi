@@ -6,7 +6,7 @@ use nom::{
     character::streaming::{char, digit1, line_ending, not_line_ending, space1},
     combinator::{map, map_res, opt, recognize},
     multi::separated_list0,
-    sequence::{terminated, tuple},
+    sequence::terminated,
 };
 use std::collections::VecDeque;
 use std::str;
@@ -108,7 +108,7 @@ impl RespParse {
     fn parse_integer(input: &[u8]) -> IResult<&[u8], RespData> {
         let (input, _) = char(':')(input)?;
         let mut map_parser = map_res(
-            terminated(recognize(tuple((opt(char('-')), digit1))), line_ending),
+            terminated(recognize((opt(char('-')), digit1)), line_ending),
             |s: &[u8]| {
                 str::from_utf8(s)
                     .map_err(|_| ())
@@ -122,7 +122,7 @@ impl RespParse {
     fn parse_bulk_string(input: &[u8]) -> IResult<&[u8], RespData> {
         let (input, _) = char('$')(input)?;
         let mut map_parser = map_res(
-            terminated(recognize(tuple((opt(char('-')), digit1))), line_ending),
+            terminated(recognize((opt(char('-')), digit1)), line_ending),
             |s: &[u8]| {
                 str::from_utf8(s)
                     .map_err(|_| ())
@@ -146,7 +146,7 @@ impl RespParse {
     fn parse_array(input: &[u8]) -> IResult<&[u8], RespData> {
         let (input, _) = char('*')(input)?;
         let mut mut_parser = map_res(
-            terminated(recognize(tuple((opt(char('-')), digit1))), line_ending),
+            terminated(recognize((opt(char('-')), digit1)), line_ending),
             |s: &[u8]| {
                 str::from_utf8(s)
                     .map_err(|_| ())
