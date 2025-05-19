@@ -30,14 +30,14 @@ impl RespType {
         }
     }
 
-    pub fn prefix_byte(&self) -> u8 {
+    pub fn prefix_byte(&self) -> Option<u8> {
         match self {
-            RespType::SimpleString => b'+',
-            RespType::Error => b'-',
-            RespType::Integer => b':',
-            RespType::BulkString => b'$',
-            RespType::Array => b'*',
-            RespType::Inline => b' ',
+            RespType::SimpleString => Some(b'+'),
+            RespType::Error => Some(b'-'),
+            RespType::Integer => Some(b':'),
+            RespType::BulkString => Some(b'$'),
+            RespType::Array => Some(b'*'),
+            RespType::Inline => None,
         }
     }
 }

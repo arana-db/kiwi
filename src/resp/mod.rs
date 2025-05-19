@@ -59,6 +59,7 @@ pub mod command;
 pub mod encode;
 pub mod error;
 pub mod parse;
+#[cfg(test)]
 mod tests;
 pub mod types;
 

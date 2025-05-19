@@ -224,6 +224,18 @@ impl Parse for RespParse {
         self.buffer.extend_from_slice(&data);
 
         self.process_buffer()
+        // loop {
+        //     match self.process_buffer() {
+        //         RespParseResult::Complete(data) => {
+        //             if self.buffer.is_empty() {
+        //                 return RespParseResult::Complete(data);
+        //             }
+        //         }
+        //         other => {
+        //             return other;
+        //         }
+        //     }
+        // }
     }
 
     fn next_command(&mut self) -> Option<RespResult<RespCommand>> {

@@ -178,8 +178,13 @@ impl RespEncoder {
         self
     }
 
-    fn set_bulk_string_len(&mut self, len: i64, prefix: &str) -> &mut Self {
-        let _ = write!(self.buffer, "{}{}", prefix, len);
+    fn set_bulk_string_len(&mut self, len: i64) -> &mut Self {
+        let _ = write!(self.buffer, "${}", len);
+        self.append_crlf()
+    }
+    
+    fn set_array_len(&mut self, len: i64) -> &mut Self {
+        let _ = write!(self.buffer, "*{}", len);
         self.append_crlf()
     }
 }
@@ -308,7 +313,7 @@ impl RespEncode for RespEncoder {
     }
 
     fn append_array_len(&mut self, len: i64) -> &mut Self {
-        self.set_bulk_string_len(len, "*")
+        self.set_array_len(len)
     }
 
     fn append_integer(&mut self, value: i64) -> &mut Self {
@@ -327,7 +332,7 @@ impl RespEncode for RespEncoder {
     }
 
     fn append_bulk_string(&mut self, value: &[u8]) -> &mut Self {
-        self.set_bulk_string_len(value.len() as i64, "$");
+        self.set_bulk_string_len(value.len() as i64);
         self.buffer.extend_from_slice(value);
         self.append_crlf()
     }
@@ -374,7 +379,7 @@ impl RespEncode for RespEncoder {
             }
             RespData::Integer(num) => self.append_integer(*num),
             RespData::BulkString(Some(bytes)) => self.append_bulk_string(bytes),
-            RespData::BulkString(None) => self.set_bulk_string_len(-1, "$"),
+            RespData::BulkString(None) => self.set_bulk_string_len(-1),
             RespData::Array(Some(array)) => {
                 self.append_array_len(array.len() as i64);
                 for item in array {
@@ -382,7 +387,7 @@ impl RespEncode for RespEncoder {
                 }
                 self
             }
-            RespData::Array(None) => self.set_bulk_string_len(-1, "*"),
+            RespData::Array(None) => self.set_array_len(-1),
             RespData::Inline(parts) => {
                 for (i, part) in parts.iter().enumerate() {
                     if i > 0 {
