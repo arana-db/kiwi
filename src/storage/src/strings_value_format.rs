@@ -1,24 +1,11 @@
-// Copyright 2024 The Kiwi-rs Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-//  of patent rights can be found in the PATENTS file in the same directory.
+use crate::error::StorageError;
 
-use crate::storage::{
-    base_value_format::{DataType, InternalValue, ParsedInternalValue},
-    error::{Result, StorageError},
-    storage_define::{
-        STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
-    },
+use super::base_value_format::DataType;
+use super::base_value_format::InternalValue;
+use super::base_value_format::ParsedInternalValue;
+use super::error::Result;
+use super::storage_define::{
+    STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
 };
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};

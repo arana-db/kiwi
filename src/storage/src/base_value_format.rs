@@ -16,7 +16,7 @@
 use bytes::BytesMut;
 use rocksdb::CompactionDecision;
 
-use crate::storage::error::{
+use crate::error::{
     Result,
     StorageError::{self, InvalidFormat},
 };

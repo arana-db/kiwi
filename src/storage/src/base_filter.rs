@@ -22,7 +22,7 @@ use rocksdb::{
 };
 use std::sync::Arc;
 
-use crate::storage::{
+use crate::{
     base_key_format::ParsedBaseKey,
     base_value_format::{DataType, ParsedInternalValue},
     strings_value_format::ParsedStringsValue,
@@ -146,7 +146,7 @@ impl BaseDataFilter {
 mod tests {
 
     use super::*;
-    use crate::storage::{base_value_format::InternalValue, strings_value_format::StringValue};
+    use crate::base_value_format::InternalValue;
 
     #[test]
     fn test_strings_base_filter() {
@@ -154,21 +154,21 @@ mod tests {
         let ttl = 1_000_000;
 
         let string_val: &'static [u8] = b"filter_val";
-        let mut string_val = StringValue::new(string_val);
-        string_val.set_relative_etime(ttl);
+        let mut string_val = crate::strings_value_format::StringValue::new(string_val);
+        InternalValue::set_relative_etime(&mut string_val, ttl);
 
         let decision = filter.filter(
             0,
-            string_val.encode().as_ref(),
-            &crate::storage::base_value_format::InternalValue::encode(&string_val),
+            b"filter_key",
+            &crate::base_value_format::InternalValue::encode(&string_val),
         );
         assert!(matches!(decision, CompactionDecision::Keep));
 
         std::thread::sleep(std::time::Duration::from_secs(2));
         let decision = filter.filter(
             0,
-            string_val.encode().as_ref(),
-            &crate::storage::base_value_format::InternalValue::encode(&string_val),
+            b"filter_key",
+            &crate::base_value_format::InternalValue::encode(&string_val),
         );
         assert!(matches!(decision, CompactionDecision::Remove));
     }
