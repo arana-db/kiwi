@@ -12,11 +12,11 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use crate::error::StorageError;
 use crate::base_value_format::DataType;
 use crate::base_value_format::InternalValue;
 use crate::base_value_format::ParsedInternalValue;
 use crate::error::Result;
+use crate::error::StorageError;
 use crate::storage_define::{
     STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
 };
