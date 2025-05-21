@@ -144,7 +144,6 @@ impl BaseDataFilter {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use crate::base_value_format::InternalValue;
 
@@ -159,7 +158,7 @@ mod tests {
 
         let decision = filter.filter(
             0,
-            b"filter_key",
+            &string_val.encode(),
             &crate::base_value_format::InternalValue::encode(&string_val),
         );
         assert!(matches!(decision, CompactionDecision::Keep));
@@ -167,7 +166,7 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_secs(2));
         let decision = filter.filter(
             0,
-            b"filter_key",
+            &string_val.encode(),
             &crate::base_value_format::InternalValue::encode(&string_val),
         );
         assert!(matches!(decision, CompactionDecision::Remove));
