@@ -78,7 +78,7 @@ impl Slice {
                 .iter()
                 .fold(String::with_capacity(slice.len() * 2), |mut acc, byte| {
                     use std::fmt::Write;
-                    write!(&mut acc, "{:02X}", byte).unwrap();
+                    write!(&mut acc, "{byte:02X}").unwrap();
                     acc
                 })
         } else {

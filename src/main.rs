@@ -12,6 +12,29 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-fn main() {
-    println!("TODO");
+use kiwi_rs::net;
+use log::{error, info};
+use tokio::net::TcpListener;
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    // init logger
+    // set env RUST_LOG=level to control
+    env_logger::init();
+
+    let addr = "127.0.0.1:9221";
+    let listener = TcpListener::bind(addr).await?;
+
+    info!("tcp listener listen on {addr}");
+    loop {
+        let (socket, addr) = listener.accept().await?;
+        info!("new connection: {addr}");
+
+        tokio::spawn(async move {
+            if let Err(e) = net::handle::process_connection(socket).await {
+                error!("handle connection error: {e}");
+            }
+            info!("connection {addr} disconnect");
+        });
+    }
 }
