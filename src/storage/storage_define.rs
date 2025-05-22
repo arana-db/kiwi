@@ -12,10 +12,10 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use crate::kstd::slice::Slice;
+use bytes::{BufMut, BytesMut};
 
 pub const PREFIX_RESERVE_LENGTH: usize = 8;
-// const VERSION_LENGTH: usize = 8;
+// pub const VERSION_LENGTH: usize = 8;
 // const SCORE_LENGTH: usize = 8;
 pub const SUFFIX_RESERVE_LENGTH: usize = 16;
 // const LIST_VALUE_INDEX_LENGTH: usize = 16;
@@ -26,113 +26,84 @@ pub const TIMESTAMP_LENGTH: usize = 8;
 
 // TODO: maybe we can change \u{0000} to \0,
 // it will be more readable.
-pub const NEED_TRANSFORM_CHARACTER: char = '\u{0000}';
-const ENCODED_TRANSFORM_CHARACTER: &str = "\u{0000}\u{0001}";
-const ENCODED_KEY_DELIM: &str = "\u{0000}\u{0000}";
+pub const NEED_TRANSFORM_CHARACTER: char = '\x00';
+const ENCODED_TRANSFORM_CHARACTER: &str = "\x00\x01";
+const ENCODED_KEY_DELIM: &str = "\x00\x00";
 pub const ENCODED_KEY_DELIM_SIZE: usize = 2;
 
 pub const STRING_VALUE_SUFFIXLENGTH: usize = 2 * TIMESTAMP_LENGTH + SUFFIX_RESERVE_LENGTH;
+use crate::storage::error::Result;
 
-/// Encode user key
-///
-/// Parameters:
-/// - user_key: Original user key data
-/// - dst: Destination buffer
-/// - nzero: Number of zero bytes contained in the key
-///
-/// Returns: Pointer to the new encoded location
-pub fn encode_user_key(user_key: &Slice, mut dst: *mut u8, nzero: usize) -> *mut u8 {
-    // no \u0000 exists in user_key, memcopy user_key directly.
-    if nzero == 0 {
-        unsafe {
-            std::ptr::copy_nonoverlapping(user_key.data(), dst, user_key.size());
-            dst = dst.add(user_key.size());
-            std::ptr::copy_nonoverlapping(
-                ENCODED_KEY_DELIM.as_bytes().as_ptr(),
-                dst,
-                ENCODED_KEY_DELIM_SIZE,
-            );
-            dst = dst.add(ENCODED_KEY_DELIM_SIZE);
-        }
-        return dst;
-    }
+use super::error::StorageError;
 
-    // \u0000 exists in user_key, iterate and replace.
-    let mut pos = 0;
-    let user_data = unsafe { std::slice::from_raw_parts(user_key.data(), user_key.size()) };
-    for i in 0..user_key.size() {
-        if user_data[i] == NEED_TRANSFORM_CHARACTER as u8 {
-            let sub_len = i - pos;
-            if sub_len != 0 {
-                unsafe {
-                    std::ptr::copy_nonoverlapping(user_data.as_ptr().add(pos), dst, sub_len);
-                    dst = dst.add(sub_len);
-                }
+pub fn encode_user_key(user_key: &[u8], dst: &mut BytesMut) -> Result<()> {
+    let mut start_pos = 0;
+    for (i, &byte) in user_key.iter().enumerate() {
+        if byte == NEED_TRANSFORM_CHARACTER as u8 {
+            if i > start_pos {
+                dst.put_slice(&user_key[start_pos..i]);
             }
-            unsafe {
-                std::ptr::copy_nonoverlapping(
-                    ENCODED_TRANSFORM_CHARACTER.as_bytes().as_ptr(),
-                    dst,
-                    ENCODED_TRANSFORM_CHARACTER.len(),
-                );
-                dst = dst.add(ENCODED_TRANSFORM_CHARACTER.len());
-            }
-            pos = i + 1;
+            dst.put_slice(ENCODED_TRANSFORM_CHARACTER.as_bytes());
+            start_pos = i + 1;
         }
     }
 
-    // Copy the remaining part
-    if pos != user_key.size() {
-        unsafe {
-            std::ptr::copy_nonoverlapping(user_data.as_ptr().add(pos), dst, user_key.size() - pos);
-            dst = dst.add(user_key.size() - pos);
-        }
+    if start_pos < user_key.len() {
+        dst.put_slice(&user_key[start_pos..]);
     }
 
-    // add delimiter
-    unsafe {
-        std::ptr::copy_nonoverlapping(
-            ENCODED_KEY_DELIM.as_bytes().as_ptr(),
-            dst,
-            ENCODED_KEY_DELIM_SIZE,
-        );
-        dst = dst.add(ENCODED_KEY_DELIM_SIZE);
-    }
+    dst.put_slice(ENCODED_KEY_DELIM.as_bytes());
 
-    dst
+    Ok(())
 }
 
-pub fn decode_user_key(ptr: *const u8, len: usize, user_key: &mut Vec<u8>) -> *const u8 {
-    user_key.resize(len - ENCODED_KEY_DELIM_SIZE, 0);
+pub fn decode_user_key(encoded_key_part: &[u8], user_key: &mut BytesMut) -> Result<()> {
     let mut zero_ahead = false;
     let mut delim_found = false;
-    let mut output_idx = 0;
-    let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
-    let mut ret_ptr = ptr;
-    for (idx, &byte) in slice.iter().enumerate() {
+
+    if encoded_key_part.len() < ENCODED_KEY_DELIM_SIZE {
+        return Err(StorageError::InvalidFormat(
+            "Encoded key part too short".to_string(),
+        ));
+    }
+
+    for &byte in encoded_key_part.iter() {
         match byte {
             0x00 => {
-                delim_found = zero_ahead;
+                if zero_ahead {
+                    delim_found = true;
+                    break;
+                }
                 zero_ahead = true;
             }
             0x01 => {
-                user_key[output_idx] = if zero_ahead { 0x00 } else { byte };
-                zero_ahead = false;
-                output_idx += 1;
+                if zero_ahead {
+                    user_key.put_u8(0x00);
+                    zero_ahead = false;
+                } else {
+                    user_key.put_u8(byte);
+                }
             }
             _ => {
-                user_key[output_idx] = byte;
+                if zero_ahead {
+                    return Err(StorageError::InvalidFormat(
+                        "Invalid encoding sequence: single zero followed by non-one/non-zero byte"
+                            .to_string(),
+                    ));
+                }
+                user_key.put_u8(byte);
                 zero_ahead = false;
-                output_idx += 1;
             }
         }
-        if delim_found {
-            user_key.truncate(output_idx);
-            ret_ptr = unsafe { ptr.add(idx + 1) };
-            break;
-        }
     }
-    ret_ptr
+
+    if !delim_found {
+        return Err(StorageError::InvalidFormat(
+            "Encoded key delimiter not found or key ends unexpectedly".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -141,65 +112,125 @@ mod tests {
 
     #[test]
     fn test_encode_user_key_no_zero() {
-        let user_key = Slice::new_with_str("testkey");
-        let mut encoded: Vec<u8> = vec![0; user_key.size() + ENCODED_KEY_DELIM_SIZE];
-        // Create a raw pointer for the encoded buffer
-        let dst = encoded.as_mut_ptr();
-        let new_ptr = encode_user_key(&user_key, dst, 0);
+        let user_key = b"testkey";
+        let mut encoded = BytesMut::new();
+        assert!(encode_user_key(user_key, &mut encoded).is_ok());
 
-        // Expect the encoded key to be the same as user_key with the delimiter appended at the end
-        let expected_encoded = "testkey\u{0000}\u{0000}".as_bytes();
-        assert_eq!(encoded, expected_encoded);
-        // Check that the new_ptr correctly points at the end of the encoded data
-        let offset = new_ptr as usize - dst as usize;
-        assert_eq!(offset, expected_encoded.len());
+        let expected_encoded = b"testkey\x00\x00";
+        assert_eq!(encoded.as_ref(), expected_encoded);
     }
 
     #[test]
     fn test_encode_user_key_with_zero() {
-        let user_key = Slice::new_with_str("test\u{0000}key");
-        let mut encoded: Vec<u8> = vec![0; user_key.size() + 1 + ENCODED_KEY_DELIM_SIZE];
-        let dst = encoded.as_mut_ptr();
-        let new_ptr = encode_user_key(&user_key, dst, 1);
+        let user_key = b"test\x00key";
+        let mut encoded = BytesMut::new();
+        assert!(encode_user_key(user_key, &mut encoded).is_ok());
 
-        // Expect the encoded key to replace \0 with ENCODED_TRANSFORM_CHARACTER
-        let expected_encoded = "test\u{0000}\u{0001}key\u{0000}\u{0000}".as_bytes();
-        assert_eq!(encoded, expected_encoded);
-        let offset = new_ptr as usize - dst as usize;
-        assert_eq!(offset, expected_encoded.len());
+        let expected_encoded = b"test\x00\x01key\x00\x00";
+        assert_eq!(encoded.as_ref(), expected_encoded);
     }
 
     #[test]
-    fn test_decode_user_key() {
-        let encoded = "test\u{0000}\u{0001}key\u{0000}\u{0000}".as_bytes();
-        let mut user_key = Vec::new();
-        let ptr_len = encoded.len();
-        let ret_ptr = decode_user_key(encoded.as_ptr(), ptr_len, &mut user_key);
-        let expected_user_key = "test\u{0000}key".as_bytes();
-        assert_eq!(user_key, expected_user_key);
-        let offset = unsafe { ret_ptr.offset_from(encoded.as_ptr()) };
-        assert_eq!(offset, ptr_len as isize);
+    fn test_decode_user_key_bytesmut() {
+        let encoded = b"test\x00\x01key\x00\x00";
+        let mut user_key = BytesMut::new();
+        let result = decode_user_key(encoded, &mut user_key);
+
+        assert!(result.is_ok());
+        let expected_user_key = b"test\x00key";
+        assert_eq!(user_key.as_ref(), expected_user_key);
     }
 
     #[test]
-    fn test_encode_and_decode_user_key() {
-        let original_user_key = Slice::new_with_str("example\u{0000}key\u{0000}value");
-        let nzero = original_user_key.count_byte(NEED_TRANSFORM_CHARACTER as u8);
-        // Allocate a buffer large enough to hold the encoded key
-        let mut encoded: Vec<u8> = vec![
-            0;
-            original_user_key.size()
-                + nzero * (ENCODED_TRANSFORM_CHARACTER.len() - 1)
-                + ENCODED_KEY_DELIM_SIZE
-        ];
-        let dst = encoded.as_mut_ptr();
-        // Encode the user key
-        encode_user_key(&original_user_key, dst, nzero);
-        // Prepare a buffer for the decoded key
-        let mut decoded_user_key = Vec::new();
-        // Decode the user key
-        decode_user_key(encoded.as_ptr(), encoded.len(), &mut decoded_user_key);
-        // Assert that the decoded key is the same as the original
-        assert_eq!(decoded_user_key, original_user_key.as_bytes());
+    fn test_decode_user_key_no_zero_bytesmut() {
+        let encoded = b"testkey\x00\x00";
+        let mut user_key = BytesMut::new();
+        let result = decode_user_key(encoded, &mut user_key);
+
+        assert!(result.is_ok());
+        let expected_user_key = b"testkey";
+        assert_eq!(user_key.as_ref(), expected_user_key);
+    }
+
+    #[test]
+    fn test_decode_user_key_empty_bytesmut() {
+        let encoded = b"\x00\x00";
+        let mut user_key = BytesMut::new();
+        let result = decode_user_key(encoded, &mut user_key);
+
+        assert!(result.is_ok());
+        let expected_user_key = b"";
+        assert_eq!(user_key.as_ref(), expected_user_key);
+    }
+
+    #[test]
+    fn test_decode_user_key_only_zero_bytesmut() {
+        let encoded = b"\x00\x01\x00\x00";
+        let mut user_key = BytesMut::new();
+        let result = decode_user_key(encoded, &mut user_key);
+
+        assert!(result.is_ok());
+        let expected_user_key = b"\x00";
+        assert_eq!(user_key.as_ref(), expected_user_key);
+    }
+
+    #[test]
+    fn test_decode_user_key_invalid_format_short_bytesmut() {
+        let encoded = b"\x00"; // Too short
+        let mut user_key = BytesMut::new();
+        let result = decode_user_key(encoded, &mut user_key);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err().unwrap(),
+            StorageError::InvalidFormat(_)
+        ));
+    }
+
+    #[test]
+    fn test_decode_user_key_invalid_format_no_delim_bytesmut() {
+        let encoded = b"testkey"; // No delimiter
+        let mut user_key = BytesMut::new();
+        let result = decode_user_key(encoded, &mut user_key);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err().unwrap(),
+            StorageError::InvalidFormat(_)
+        ));
+    }
+
+    #[test]
+    fn test_decode_user_key_invalid_format_single_zero_end_bytesmut() {
+        let encoded = b"testkey\x00"; // Ends with single zero
+        let mut user_key = BytesMut::new();
+        let result = decode_user_key(encoded, &mut user_key);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err().unwrap(),
+            StorageError::InvalidFormat(_)
+        ));
+    }
+
+    #[test]
+    fn test_decode_user_key_invalid_sequence_bytesmut() {
+        let encoded = b"test\x00\x02key\x00\x00"; // Invalid sequence \x00\x02
+        let mut user_key = BytesMut::new();
+        let result = decode_user_key(encoded, &mut user_key);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.err().unwrap(),
+            StorageError::InvalidFormat(_)
+        ));
+    }
+
+    #[test]
+    fn test_encode_and_decode_user_key_bytesmut() {
+        let original_user_key = b"example\x00key\x00value";
+        let mut encoded = BytesMut::new();
+        encode_user_key(original_user_key, &mut encoded).expect("Encoding failed");
+
+        let mut decoded_user_key = BytesMut::new();
+        decode_user_key(&encoded, &mut decoded_user_key).expect("Decoding failed");
+
+        assert_eq!(decoded_user_key.as_ref(), original_user_key);
     }
 }

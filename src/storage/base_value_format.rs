@@ -47,7 +47,7 @@ impl TryFrom<u8> for DataType {
             4 => Ok(DataType::ZSet),
             5 => Ok(DataType::None),
             6 => Ok(DataType::All),
-            _ => Err(InvalidFormat(format!("Invalid data type byte: {}", value))),
+            _ => Err(InvalidFormat(format!("Invalid data type byte: {value}"))),
         }
     }
 }
@@ -77,7 +77,7 @@ pub trait InternalValue {
     fn encode(&self) -> BytesMut;
     fn set_etime(&mut self, etime: u64);
     fn set_ctime(&mut self, ctime: u64);
-    fn set_relative_timestamp(&mut self, ttl: u64);
+    fn set_relative_etime(&mut self, ttl: u64);
 }
 
 /// TODO: remove allow dead code

@@ -41,14 +41,14 @@ jobs:
       - name: Setup toolchain
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: nightly
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
 
       - run: cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings
 
-  miri:
+  cargo-miri:
     strategy:
       matrix:
         include:
@@ -69,4 +69,10 @@ jobs:
           toolchain: nightly
           components: miri
 
-      - run: cargo +nightly miri test --manifest-path ./Cargo.toml --all-features --workspace
+      - name: Update Rust nightly
+        run: rustup update nightly
+
+      - name: Install Miri
+        run: rustup component add miri --toolchain nightly
+
+      - run: cargo miri test --manifest-path ./Cargo.toml --all-features --workspace
