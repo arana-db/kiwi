@@ -205,7 +205,7 @@ impl RespEncode for RespEncoder {
                 let _ = write!(self.buffer, "-ERR syntax error command '{content}'{CRLF}",);
             }
             CmdRes::UnknownCmd => {
-                let _ = write!(self.buffer, "-ERR unknown command '{}'{}", content, CRLF);
+                let _ = write!(self.buffer, "-ERR unknown command '{content}'{CRLF}");
             }
             CmdRes::UnknownSubCmd => {
                 let _ = write!(self.buffer, "-ERR unknown sub command '{content}'{CRLF}",);
