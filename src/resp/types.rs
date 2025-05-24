@@ -109,28 +109,28 @@ impl fmt::Debug for RespData {
         match self {
             RespData::SimpleString(bytes) => {
                 if let Ok(s) = std::str::from_utf8(bytes) {
-                    write!(f, "SimpleString(\"{}\")", s)
+                    write!(f, "SimpleString(\"{s}\")")
                 } else {
-                    write!(f, "SimpleString({:?})", bytes)
+                    write!(f, "SimpleString({bytes:?})")
                 }
             }
             RespData::Error(bytes) => {
                 if let Ok(s) = std::str::from_utf8(bytes) {
-                    write!(f, "Error(\"{}\")", s)
+                    write!(f, "Error(\"{s}\")")
                 } else {
-                    write!(f, "Error({:?})", bytes)
+                    write!(f, "Error({bytes:?})")
                 }
             }
-            RespData::Integer(num) => write!(f, "Integer({})", num),
+            RespData::Integer(num) => write!(f, "Integer({num})"),
             RespData::BulkString(Some(bytes)) => {
                 if let Ok(s) = std::str::from_utf8(bytes) {
-                    write!(f, "BulkString(\"{}\")", s)
+                    write!(f, "BulkString(\"{s}\")")
                 } else {
-                    write!(f, "BulkString({:?})", bytes)
+                    write!(f, "BulkString({bytes:?})")
                 }
             }
             RespData::BulkString(None) => write!(f, "BulkString(nil)"),
-            RespData::Array(Some(array)) => write!(f, "Array({:?})", array),
+            RespData::Array(Some(array)) => write!(f, "Array({array:?})"),
             RespData::Array(None) => write!(f, "Array(nil)"),
             RespData::Inline(parts) => {
                 write!(f, "Inline(")?;
@@ -138,7 +138,7 @@ impl fmt::Debug for RespData {
                     .iter()
                     .filter_map(|b| std::str::from_utf8(b).ok())
                     .collect();
-                write!(f, "{:?}", parts_str)?;
+                write!(f, "{parts_str:?}")?;
                 write!(f, ")")
             }
         }

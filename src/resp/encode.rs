@@ -108,8 +108,7 @@ impl TryFrom<i8> for CmdRes {
             28 => Ok(CmdRes::MultiKey),
             29 => Ok(CmdRes::NoAuth),
             _ => Err(RespError::InvalidData(format!(
-                "Invalid CmdRes value: {}",
-                value
+                "Invalid CmdRes value: {value}"
             ))),
         }
     }
@@ -179,12 +178,12 @@ impl RespEncoder {
     }
 
     fn set_bulk_string_len(&mut self, len: i64) -> &mut Self {
-        let _ = write!(self.buffer, "${}", len);
+        let _ = write!(self.buffer, "${len}");
         self.append_crlf()
     }
 
     fn set_array_len(&mut self, len: i64) -> &mut Self {
-        let _ = write!(self.buffer, "*{}", len);
+        let _ = write!(self.buffer, "*{len}");
         self.append_crlf()
     }
 }
@@ -205,8 +204,7 @@ impl RespEncode for RespEncoder {
             CmdRes::SyntaxErr => {
                 let _ = write!(
                     self.buffer,
-                    "-ERR syntax error command '{}'{}",
-                    content, CRLF
+                    "-ERR syntax error command '{content}'{CRLF}",
                 );
             }
             CmdRes::UnknownCmd => {
@@ -215,8 +213,7 @@ impl RespEncode for RespEncoder {
             CmdRes::UnknownSubCmd => {
                 let _ = write!(
                     self.buffer,
-                    "-ERR unknown sub command '{}'{}",
-                    content, CRLF
+                    "-ERR unknown sub command '{content}'{CRLF}",
                 );
             }
             CmdRes::InvalidInt => {
@@ -255,53 +252,49 @@ impl RespEncode for RespEncoder {
             CmdRes::WrongNum => {
                 let _ = write!(
                     self.buffer,
-                    "-ERR wrong number of arguments for '{}' command{}",
-                    content, CRLF
+                    "-ERR wrong number of arguments for '{content}' command{CRLF}",
                 );
             }
             CmdRes::InvalidIndex => {
                 let _ = write!(
                     self.buffer,
-                    "-ERR invalid DB index for '{}'{}",
-                    content, CRLF
+                    "-ERR invalid DB index for '{content}'{CRLF}",
                 );
             }
             CmdRes::InvalidDbType => {
-                let _ = write!(self.buffer, "-ERR invalid DB for '{}'{}", content, CRLF);
+                let _ = write!(self.buffer, "-ERR invalid DB for '{content}'{CRLF}");
             }
             CmdRes::InconsistentHashTag => {
                 self.set_line_string("-ERR parameters hashtag is inconsistent");
             }
             CmdRes::InvalidDB => {
-                let _ = write!(self.buffer, "-ERR invalid DB for '{}'{}", content, CRLF);
+                let _ = write!(self.buffer, "-ERR invalid DB for '{content}'{CRLF}");
             }
             CmdRes::ErrOther => {
-                let _ = write!(self.buffer, "-ERR {}{}", content, CRLF);
+                let _ = write!(self.buffer, "-ERR {content}{CRLF}");
             }
             CmdRes::ErrMoved => {
-                let _ = write!(self.buffer, "-MOVED {}{}", content, CRLF);
+                let _ = write!(self.buffer, "-MOVED {content}{CRLF}");
             }
             CmdRes::ErrClusterDown => {
-                let _ = write!(self.buffer, "-CLUSTERDOWN {}{}", content, CRLF);
+                let _ = write!(self.buffer, "-CLUSTERDOWN {content}{CRLF}");
             }
             CmdRes::IncrByOverFlow => {
                 let _ = write!(
                     self.buffer,
-                    "-ERR increment would produce NaN or Infinity {}{}",
-                    content, CRLF
+                    "-ERR increment would produce NaN or Infinity {content}{CRLF}",
                 );
             }
             CmdRes::InvalidCursor => {
                 self.set_line_string("-ERR invalid cursor");
             }
             CmdRes::WrongLeader => {
-                let _ = write!(self.buffer, "-ERR wrong leader {}{}", content, CRLF);
+                let _ = write!(self.buffer, "-ERR wrong leader {content}{CRLF}");
             }
             CmdRes::MultiKey => {
                 let _ = write!(
                     self.buffer,
-                    "-WRONGTYPE Operation against a key holding the wrong kind of value {}{}",
-                    content, CRLF
+                    "-WRONGTYPE Operation against a key holding the wrong kind of value {content}{CRLF}",
                 );
             }
             CmdRes::NoAuth => {
@@ -317,7 +310,7 @@ impl RespEncode for RespEncoder {
     }
 
     fn append_integer(&mut self, value: i64) -> &mut Self {
-        let _ = write!(self.buffer, ":{}", value);
+        let _ = write!(self.buffer, ":{value}");
         self.append_crlf()
     }
 
@@ -327,7 +320,7 @@ impl RespEncode for RespEncoder {
     }
 
     fn append_simple_string(&mut self, value: &str) -> &mut Self {
-        let _ = write!(self.buffer, "+{}", value);
+        let _ = write!(self.buffer, "+{value}");
         self.append_crlf()
     }
 

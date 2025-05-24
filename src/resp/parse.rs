@@ -212,7 +212,7 @@ impl RespParse {
             }
             Err(nom::Err::Incomplete(_)) => RespParseResult::Incomplete,
             Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-                let error_msg = format!("Parse error: {:?}", e);
+                let error_msg = format!("Parse error: {e:?}");
                 RespParseResult::Error(RespError::ParseError(error_msg))
             }
         }

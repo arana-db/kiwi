@@ -58,8 +58,7 @@ impl CompactionFilter for BaseMetaFilter {
         let parsed_key_result = ParsedBaseKey::new(key);
         if let Err(e) = parsed_key_result {
             debug!(
-                "BaseMetaFilter: Failed to parse key {:?}: {}, remove.",
-                key, e
+                "BaseMetaFilter: Failed to parse key {key:?}: {e}, remove.",
             );
             return CompactionDecision::Remove;
         }
