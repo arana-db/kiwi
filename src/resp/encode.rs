@@ -202,19 +202,13 @@ impl RespEncode for RespEncoder {
                 self.set_line_string("+PONG");
             }
             CmdRes::SyntaxErr => {
-                let _ = write!(
-                    self.buffer,
-                    "-ERR syntax error command '{content}'{CRLF}",
-                );
+                let _ = write!(self.buffer, "-ERR syntax error command '{content}'{CRLF}",);
             }
             CmdRes::UnknownCmd => {
                 let _ = write!(self.buffer, "-ERR unknown command '{}'{}", content, CRLF);
             }
             CmdRes::UnknownSubCmd => {
-                let _ = write!(
-                    self.buffer,
-                    "-ERR unknown sub command '{content}'{CRLF}",
-                );
+                let _ = write!(self.buffer, "-ERR unknown sub command '{content}'{CRLF}",);
             }
             CmdRes::InvalidInt => {
                 self.set_line_string("-ERR value is not an integer or out of range");
@@ -256,10 +250,7 @@ impl RespEncode for RespEncoder {
                 );
             }
             CmdRes::InvalidIndex => {
-                let _ = write!(
-                    self.buffer,
-                    "-ERR invalid DB index for '{content}'{CRLF}",
-                );
+                let _ = write!(self.buffer, "-ERR invalid DB index for '{content}'{CRLF}",);
             }
             CmdRes::InvalidDbType => {
                 let _ = write!(self.buffer, "-ERR invalid DB for '{content}'{CRLF}");
