@@ -47,7 +47,7 @@ impl TryFrom<u8> for DataType {
             4 => Ok(DataType::ZSet),
             5 => Ok(DataType::None),
             6 => Ok(DataType::All),
-            _ => Err(InvalidFormat(format!("Invalid data type byte: {}", value))),
+            _ => Err(InvalidFormat(format!("Invalid data type byte: {value}"))),
         }
     }
 }

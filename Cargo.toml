@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/storage", "src/kstd", "src/common/macro"]
+members = ["src/storage", "src/kstd", "src/common/macro", "src/net"]
 resolver = "2"
 
 [workspace.package]
@@ -19,14 +19,15 @@ rust.unknown_lints = "deny"
 rust.unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
 
 [workspace.dependencies]
-rocksdb = "0.23.0"
-log = "0.4"
 bytes = "1"
 chrono = "0.4.40"
 snafu = "0.7"
 proc-macro2 = "1.0.66"
 quote = "1.0"
 syn = { version = "2.0", features = ["extra-traits", "full"] }
+env_logger = "0.11"
+log = "0.4"
+rocksdb = "0.23.0"
 thiserror = "1.0"
 serde = "1.0"
 serde_json = "1.0"
@@ -36,8 +37,10 @@ murmur3 = "0.1"
 anyhow = "1.0"
 byteorder = "1.4"
 parking_lot = "0.12"
+tokio = { version = "1", features = ["full"] }
 
 ## workspaces members
 storage = { path = "src/storage" }
 kstd = { path = "src/kstd" }
 common-macro = { path = "src/common/macro" }
+net = { path = "src/net" }
