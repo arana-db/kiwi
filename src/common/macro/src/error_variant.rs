@@ -15,7 +15,7 @@
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote_spanned;
 use syn::spanned::Spanned;
-use syn::{Ident, Variant, parenthesized};
+use syn::{parenthesized, Ident, Variant};
 
 #[derive(Clone, Debug)]
 pub struct ErrorVariant {
