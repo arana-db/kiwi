@@ -17,8 +17,8 @@ use bytes::BytesMut;
 use chrono::Utc;
 use log::debug;
 use rocksdb::{
-    ColumnFamily, CompactionDecision, DB, ReadOptions, compaction_filter::CompactionFilter,
-    compaction_filter_factory::CompactionFilterFactory,
+    compaction_filter::CompactionFilter, compaction_filter_factory::CompactionFilterFactory,
+    ColumnFamily, CompactionDecision, ReadOptions, DB,
 };
 use std::sync::Arc;
 
@@ -57,10 +57,7 @@ impl CompactionFilter for BaseMetaFilter {
 
         let parsed_key_result = ParsedBaseKey::new(key);
         if let Err(e) = parsed_key_result {
-            debug!(
-                "BaseMetaFilter: Failed to parse key {:?}: {}, remove.",
-                key, e
-            );
+            debug!("BaseMetaFilter: Failed to parse key {key:?}: {e}, remove.",);
             return CompactionDecision::Remove;
         }
         let parsed_key = parsed_key_result.unwrap();

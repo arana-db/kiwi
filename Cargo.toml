@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "An enhanced Redis server implemented in Rust"
 readme = "README.md"
 repository = "https://github.com/arana-db/kiwi-rs"
-edition = "2024"
+edition = "2021"
 
 [workspace.lints]
 clippy.dbg_macro = "warn"
