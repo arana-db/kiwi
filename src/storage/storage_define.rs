@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 use bytes::{BufMut, BytesMut};
+use snafu::ensure;
 
 pub const PREFIX_RESERVE_LENGTH: usize = 8;
 // pub const VERSION_LENGTH: usize = 8;
@@ -32,9 +33,7 @@ const ENCODED_KEY_DELIM: &str = "\x00\x00";
 pub const ENCODED_KEY_DELIM_SIZE: usize = 2;
 
 pub const STRING_VALUE_SUFFIXLENGTH: usize = 2 * TIMESTAMP_LENGTH + SUFFIX_RESERVE_LENGTH;
-use crate::storage::error::Result;
-
-use super::error::StorageError;
+use crate::storage::error::{InvalidFormatSnafu, Result};
 
 pub fn encode_user_key(user_key: &[u8], dst: &mut BytesMut) -> Result<()> {
     let mut start_pos = 0;
@@ -61,11 +60,12 @@ pub fn decode_user_key(encoded_key_part: &[u8], user_key: &mut BytesMut) -> Resu
     let mut zero_ahead = false;
     let mut delim_found = false;
 
-    if encoded_key_part.len() < ENCODED_KEY_DELIM_SIZE {
-        return Err(StorageError::InvalidFormat(
-            "Encoded key part too short".to_string(),
-        ));
-    }
+    ensure!(
+        encoded_key_part.len() >= ENCODED_KEY_DELIM_SIZE,
+        InvalidFormatSnafu {
+            message: "Encoded key part too short".to_string()
+        }
+    );
 
     for &byte in encoded_key_part.iter() {
         match byte {
@@ -85,23 +85,24 @@ pub fn decode_user_key(encoded_key_part: &[u8], user_key: &mut BytesMut) -> Resu
                 }
             }
             _ => {
-                if zero_ahead {
-                    return Err(StorageError::InvalidFormat(
-                        "Invalid encoding sequence: single zero followed by non-one/non-zero byte"
-                            .to_string(),
-                    ));
-                }
+                ensure!(
+                    !zero_ahead,
+                    InvalidFormatSnafu {
+                        message: "Invalid encoding sequence: single zero followed by non-one/non-zero byte".to_string()
+                    }
+                );
                 user_key.put_u8(byte);
                 zero_ahead = false;
             }
         }
     }
 
-    if !delim_found {
-        return Err(StorageError::InvalidFormat(
-            "Encoded key delimiter not found or key ends unexpectedly".to_string(),
-        ));
-    }
+    ensure!(
+        delim_found,
+        InvalidFormatSnafu {
+            message: "Encoded key delimiter not found or key ends unexpectedly".to_string()
+        }
+    );
 
     Ok(())
 }
@@ -109,6 +110,7 @@ pub fn decode_user_key(encoded_key_part: &[u8], user_key: &mut BytesMut) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::error::Error;
 
     #[test]
     fn test_encode_user_key_no_zero() {
@@ -180,10 +182,7 @@ mod tests {
         let mut user_key = BytesMut::new();
         let result = decode_user_key(encoded, &mut user_key);
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            StorageError::InvalidFormat(_)
-        ));
+        assert!(matches!(result.err().unwrap(), Error::InvalidFormat { .. }));
     }
 
     #[test]
@@ -192,10 +191,7 @@ mod tests {
         let mut user_key = BytesMut::new();
         let result = decode_user_key(encoded, &mut user_key);
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            StorageError::InvalidFormat(_)
-        ));
+        assert!(matches!(result.err().unwrap(), Error::InvalidFormat { .. }));
     }
 
     #[test]
@@ -204,10 +200,7 @@ mod tests {
         let mut user_key = BytesMut::new();
         let result = decode_user_key(encoded, &mut user_key);
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            StorageError::InvalidFormat(_)
-        ));
+        assert!(matches!(result.err().unwrap(), Error::InvalidFormat { .. }));
     }
 
     #[test]
@@ -216,10 +209,7 @@ mod tests {
         let mut user_key = BytesMut::new();
         let result = decode_user_key(encoded, &mut user_key);
         assert!(result.is_err());
-        assert!(matches!(
-            result.err().unwrap(),
-            StorageError::InvalidFormat(_)
-        ));
+        assert!(matches!(result.err().unwrap(), Error::InvalidFormat { .. }));
     }
 
     #[test]

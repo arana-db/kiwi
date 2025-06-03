@@ -16,10 +16,7 @@
 use bytes::BytesMut;
 use rocksdb::CompactionDecision;
 
-use crate::storage::error::{
-    Result,
-    StorageError::{self, InvalidFormat},
-};
+use crate::storage::error::{Error, InvalidFormatSnafu, Result};
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
@@ -36,9 +33,9 @@ pub enum DataType {
 
 // TODO: use unified Result
 impl TryFrom<u8> for DataType {
-    type Error = StorageError;
+    type Error = Error;
 
-    fn try_from(value: u8) -> std::result::Result<DataType, StorageError> {
+    fn try_from(value: u8) -> Result<Self> {
         match value {
             0 => Ok(DataType::String),
             1 => Ok(DataType::Hash),
@@ -47,7 +44,10 @@ impl TryFrom<u8> for DataType {
             4 => Ok(DataType::ZSet),
             5 => Ok(DataType::None),
             6 => Ok(DataType::All),
-            _ => Err(InvalidFormat(format!("Invalid data type byte: {value}"))),
+            _ => InvalidFormatSnafu {
+                message: format!("Invalid data type byte: {value}"),
+            }
+            .fail(),
         }
     }
 }

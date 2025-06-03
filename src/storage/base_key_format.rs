@@ -13,13 +13,14 @@
 //  limitations under the License.
 
 use crate::storage::{
-    error::{Result, StorageError},
+    error::{InvalidFormatSnafu, Result},
     storage_define::{
         ENCODED_KEY_DELIM_SIZE, PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, decode_user_key,
         encode_user_key,
     },
 };
 use bytes::{BufMut, Bytes, BytesMut};
+use snafu::ensure;
 
 //
 // used for string data key or hash/zset/set/list's meta key. format:
@@ -72,11 +73,13 @@ impl ParsedBaseKey {
     }
 
     fn decode(encoded_key: &[u8], key_str: &mut BytesMut) -> Result<()> {
-        if encoded_key.len() <= PREFIX_RESERVE_LENGTH + SUFFIX_RESERVE_LENGTH {
-            return Err(StorageError::InvalidFormat(
-                "Encoded key too short to contain prefix, suffix, and data".to_string(),
-            ));
-        }
+        ensure!(
+            !encoded_key.is_empty(),
+            InvalidFormatSnafu {
+                message: "Encoded key too short to contain prefix, suffix, and data".to_string(),
+            }
+        );
+
         let start_idx = PREFIX_RESERVE_LENGTH;
         let end_idx = encoded_key.len() - SUFFIX_RESERVE_LENGTH;
         let data_slice = &encoded_key[start_idx..end_idx];

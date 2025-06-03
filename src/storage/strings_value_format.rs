@@ -15,7 +15,7 @@
 
 use crate::storage::{
     base_value_format::{DataType, InternalValue, ParsedInternalValue},
-    error::{Result, StorageError},
+    error::{InvalidFormatSnafu, Result},
     storage_define::{
         STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
     },
@@ -23,6 +23,7 @@ use crate::storage::{
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use chrono::Utc;
+use snafu::ensure;
 use std::ops::Range;
 
 /*
@@ -92,13 +93,16 @@ pub struct ParsedStringsValue {
 impl<'a> ParsedInternalValue<'a> for ParsedStringsValue {
     fn new(input_data: &'a [u8]) -> Result<Self> {
         debug_assert!(input_data.len() >= STRING_VALUE_SUFFIXLENGTH);
-        if input_data.len() < STRING_VALUE_SUFFIXLENGTH {
-            return Err(StorageError::InvalidFormat(format!(
-                "invalid string value length: {} < {}",
-                input_data.len(),
-                STRING_VALUE_SUFFIXLENGTH,
-            )));
-        }
+        ensure!(
+            input_data.len() >= STRING_VALUE_SUFFIXLENGTH,
+            InvalidFormatSnafu {
+                message: format!(
+                    "invalid string value length: {} < {}",
+                    input_data.len(),
+                    STRING_VALUE_SUFFIXLENGTH
+                ),
+            }
+        );
 
         let data = Bytes::copy_from_slice(input_data);
         let data_type = DataType::try_from(data[0])?;
@@ -115,13 +119,17 @@ impl<'a> ParsedInternalValue<'a> for ParsedStringsValue {
 
         let mut time_reader = &data[reserve_end..];
         debug_assert!(time_reader.len() >= 2 * TIMESTAMP_LENGTH);
-        if time_reader.len() < 2 * TIMESTAMP_LENGTH {
-            return Err(StorageError::InvalidFormat(format!(
-                "invalid string value length: {} < {}",
-                time_reader.len(),
-                2 * TIMESTAMP_LENGTH,
-            )));
-        }
+        ensure!(
+            time_reader.len() >= 2 * TIMESTAMP_LENGTH,
+            InvalidFormatSnafu {
+                message: format!(
+                    "invalid string value length: {} < {}",
+                    time_reader.len(),
+                    2 * TIMESTAMP_LENGTH
+                ),
+            }
+        );
+
         let ctime = time_reader.get_u64_le();
         let etime = time_reader.get_u64_le();
 
