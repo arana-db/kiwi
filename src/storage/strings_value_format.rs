@@ -30,7 +30,7 @@ use std::ops::Range;
  * | type | value | reserve | cdate | timestamp |
  * |  1B  |       |   16B   |   8B  |     8B    |
  */
-
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct StringValue {
     user_value: Bytes,
@@ -81,6 +81,7 @@ impl InternalValue for StringValue {
     }
 }
 
+#[allow(dead_code)]
 pub struct ParsedStringsValue {
     data: Bytes,
     user_value_range: Range<usize>,

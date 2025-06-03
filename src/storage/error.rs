@@ -19,6 +19,7 @@ use std::io;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+#[allow(dead_code)]
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]
 pub enum Error {
