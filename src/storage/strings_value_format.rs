@@ -33,7 +33,7 @@ use snafu::ensure;
  */
 #[derive(Debug, Clone)]
 pub struct StringValue {
-    base: InternalValue,
+    inner: InternalValue,
 }
 
 delegate_internal_value!(StringValue);
@@ -44,20 +44,22 @@ impl StringValue {
         T: Into<Bytes>,
     {
         Self {
-            base: InternalValue::new(DataType::String, user_value),
+            inner: InternalValue::new(DataType::String, user_value),
         }
     }
 
     pub fn encode(&self) -> BytesMut {
-        let needed =
-            TYPE_LENGTH + self.base.user_value.len() + SUFFIX_RESERVE_LENGTH + 2 * TIMESTAMP_LENGTH;
+        let needed = TYPE_LENGTH
+            + self.inner.user_value.len()
+            + SUFFIX_RESERVE_LENGTH
+            + 2 * TIMESTAMP_LENGTH;
         let mut buf = BytesMut::with_capacity(needed);
 
         buf.put_u8(DataType::String as u8);
-        buf.put_slice(&self.base.user_value);
+        buf.put_slice(&self.inner.user_value);
         buf.put_bytes(0, SUFFIX_RESERVE_LENGTH);
-        buf.put_u64_le(self.base.ctime);
-        buf.put_u64_le(self.base.etime);
+        buf.put_u64_le(self.inner.ctime);
+        buf.put_u64_le(self.inner.etime);
 
         buf
     }
@@ -65,7 +67,7 @@ impl StringValue {
 
 #[allow(dead_code)]
 pub struct ParsedStringsValue {
-    base: ParsedInternalValue,
+    inner: ParsedInternalValue,
 }
 
 delegate_parsed_value!(ParsedStringsValue);
@@ -115,7 +117,7 @@ impl ParsedStringsValue {
         let etime = time_reader.get_u64_le();
 
         Ok(Self {
-            base: ParsedInternalValue::new(
+            inner: ParsedInternalValue::new(
                 value,
                 data_type,
                 user_value_range,
@@ -128,35 +130,35 @@ impl ParsedStringsValue {
     }
 
     pub fn strip_suffix(&mut self) {
-        self.base.value.advance(TYPE_LENGTH);
+        self.inner.value.advance(TYPE_LENGTH);
 
-        let len = self.base.value.len();
+        let len = self.inner.value.len();
         if len >= STRING_VALUE_SUFFIXLENGTH {
-            self.base.value.truncate(len - STRING_VALUE_SUFFIXLENGTH);
+            self.inner.value.truncate(len - STRING_VALUE_SUFFIXLENGTH);
         }
     }
 
     pub fn set_ctime_to_value(&mut self) {
         let suffix_start =
-            self.base.value.len() - STRING_VALUE_SUFFIXLENGTH + SUFFIX_RESERVE_LENGTH;
+            self.inner.value.len() - STRING_VALUE_SUFFIXLENGTH + SUFFIX_RESERVE_LENGTH;
 
-        let ctime_bytes = self.base.ctime.to_le_bytes();
-        let dst = &mut self.base.value[suffix_start..suffix_start + TIMESTAMP_LENGTH];
+        let ctime_bytes = self.inner.ctime.to_le_bytes();
+        let dst = &mut self.inner.value[suffix_start..suffix_start + TIMESTAMP_LENGTH];
         dst.copy_from_slice(&ctime_bytes);
     }
 
     pub fn set_etime_to_value(&mut self) {
-        let suffix_start = self.base.value.len() - STRING_VALUE_SUFFIXLENGTH
+        let suffix_start = self.inner.value.len() - STRING_VALUE_SUFFIXLENGTH
             + SUFFIX_RESERVE_LENGTH
             + TIMESTAMP_LENGTH;
 
-        let bytes = self.base.etime.to_le_bytes();
-        let dst = &mut self.base.value[suffix_start..suffix_start + TIMESTAMP_LENGTH];
+        let bytes = self.inner.etime.to_le_bytes();
+        let dst = &mut self.inner.value[suffix_start..suffix_start + TIMESTAMP_LENGTH];
         dst.copy_from_slice(&bytes);
     }
 
     pub fn filter_decision(&self, cur_time: u64) -> CompactionDecision {
-        if self.base.etime != 0 && self.base.etime < cur_time {
+        if self.inner.etime != 0 && self.inner.etime < cur_time {
             CompactionDecision::Remove
         } else {
             CompactionDecision::Keep

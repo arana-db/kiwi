@@ -130,22 +130,22 @@ macro_rules! delegate_internal_value {
         impl $struct_name {
             #[allow(dead_code)]
             pub fn set_etime(&mut self, etime: u64) {
-                self.base.set_etime(etime);
+                self.inner.set_etime(etime);
             }
 
             #[allow(dead_code)]
             pub fn set_ctime(&mut self, ctime: u64) {
-                self.base.set_ctime(ctime);
+                self.inner.set_ctime(ctime);
             }
 
             #[allow(dead_code)]
             pub fn set_version(&mut self, version: u64) {
-                self.base.set_version(version);
+                self.inner.set_version(version);
             }
 
             #[allow(dead_code)]
             pub fn set_relative_etime(&mut self, ttl: u64) -> Result<()> {
-                self.base.set_relative_etime(ttl)
+                self.inner.set_relative_etime(ttl)
             }
         }
     };
@@ -227,27 +227,27 @@ macro_rules! delegate_parsed_value {
         impl $struct_name {
             #[allow(dead_code)]
             pub fn etime(&self) -> u64 {
-                self.base.etime()
+                self.inner.etime()
             }
 
             #[allow(dead_code)]
             pub fn is_stale(&self) -> bool {
-                self.base.is_stale()
+                self.inner.is_stale()
             }
 
             #[allow(dead_code)]
             pub fn is_permanent_survival(&self) -> bool {
-                self.base.is_permanent_survival()
+                self.inner.is_permanent_survival()
             }
 
             #[allow(dead_code)]
             pub fn user_value(&self) -> BytesMut {
-                self.base.user_value()
+                self.inner.user_value()
             }
 
             #[allow(dead_code)]
             pub fn version(&self) -> u64 {
-                self.base.version()
+                self.inner.version()
             }
         }
     };
