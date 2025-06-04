@@ -16,7 +16,7 @@ use bytes::{BufMut, BytesMut};
 use snafu::ensure;
 
 pub const PREFIX_RESERVE_LENGTH: usize = 8;
-// pub const VERSION_LENGTH: usize = 8;
+pub const VERSION_LENGTH: usize = 8;
 // const SCORE_LENGTH: usize = 8;
 pub const SUFFIX_RESERVE_LENGTH: usize = 16;
 // const LIST_VALUE_INDEX_LENGTH: usize = 16;
@@ -33,6 +33,15 @@ const ENCODED_KEY_DELIM: &str = "\x00\x00";
 pub const ENCODED_KEY_DELIM_SIZE: usize = 2;
 
 pub const STRING_VALUE_SUFFIXLENGTH: usize = 2 * TIMESTAMP_LENGTH + SUFFIX_RESERVE_LENGTH;
+pub const BASE_META_VALUE_COUNT_LENGTH: usize = 4;
+
+/// type(1B) + len(4B) + version(8B) + reserve(16B) + cdate(8B) + timestamp(8B)
+pub const BASE_META_VALUE_LENGTH: usize = TYPE_LENGTH
+    + BASE_META_VALUE_COUNT_LENGTH
+    + VERSION_LENGTH
+    + SUFFIX_RESERVE_LENGTH
+    + 2 * TIMESTAMP_LENGTH;
+
 use crate::storage::error::{InvalidFormatSnafu, Result};
 
 pub fn encode_user_key(user_key: &[u8], dst: &mut BytesMut) -> Result<()> {

@@ -16,6 +16,7 @@
 // mod base_data_key_format;
 mod base_filter;
 mod base_key_format;
+mod base_meta_value_format;
 mod base_value_format;
 mod coding;
 mod error;
