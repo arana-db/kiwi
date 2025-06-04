@@ -13,6 +13,10 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
+use crate::storage::{
+    base_key_format::ParsedBaseKey, base_value_format::DataType,
+    strings_value_format::ParsedStringsValue,
+};
 use bytes::BytesMut;
 use chrono::Utc;
 use log::debug;
@@ -21,12 +25,6 @@ use rocksdb::{
     compaction_filter_factory::CompactionFilterFactory,
 };
 use std::sync::Arc;
-
-use crate::storage::{
-    base_key_format::ParsedBaseKey,
-    base_value_format::{DataType, ParsedInternalValue},
-    strings_value_format::ParsedStringsValue,
-};
 
 #[derive(Debug, Default)]
 pub struct BaseMetaFilter;
@@ -141,9 +139,8 @@ impl BaseDataFilter {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
-    use crate::storage::{base_value_format::InternalValue, strings_value_format::StringValue};
+    use crate::storage::strings_value_format::StringValue;
 
     #[test]
     fn test_strings_base_filter() {
@@ -152,21 +149,13 @@ mod tests {
 
         let string_val: &'static [u8] = b"filter_val";
         let mut string_val = StringValue::new(string_val);
-        string_val.set_relative_etime(ttl);
+        assert!(matches!(string_val.set_relative_etime(ttl), Ok(())));
 
-        let decision = filter.filter(
-            0,
-            string_val.encode().as_ref(),
-            &crate::storage::base_value_format::InternalValue::encode(&string_val),
-        );
+        let decision = filter.filter(0, string_val.encode().as_ref(), &string_val.encode());
         assert!(matches!(decision, CompactionDecision::Keep));
 
         std::thread::sleep(std::time::Duration::from_secs(2));
-        let decision = filter.filter(
-            0,
-            string_val.encode().as_ref(),
-            &crate::storage::base_value_format::InternalValue::encode(&string_val),
-        );
+        let decision = filter.filter(0, string_val.encode().as_ref(), &string_val.encode());
         assert!(matches!(decision, CompactionDecision::Remove));
     }
 }

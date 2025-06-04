@@ -13,10 +13,11 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
-use bytes::BytesMut;
-use rocksdb::CompactionDecision;
-
 use crate::storage::error::{Error, InvalidFormatSnafu, Result};
+use bytes::{BufMut, Bytes, BytesMut};
+use chrono::Utc;
+use snafu::OptionExt;
+use std::ops::Range;
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
@@ -73,26 +74,183 @@ pub fn data_type_to_tag(data_type: DataType) -> char {
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
-pub trait InternalValue {
-    fn encode(&self) -> BytesMut;
-    fn set_etime(&mut self, etime: u64);
-    fn set_ctime(&mut self, ctime: u64);
-    fn set_relative_etime(&mut self, ttl: u64);
+#[derive(Debug, Clone)]
+pub struct InternalValue {
+    pub data_type: DataType,
+    pub user_value: Bytes,
+    pub version: u64,
+    pub etime: u64,
+    pub ctime: u64,
+    pub reserve: [u8; 16],
+}
+
+impl InternalValue {
+    pub fn new<T>(data_type: DataType, user_value: T) -> Self
+    where
+        T: Into<Bytes>,
+    {
+        Self {
+            data_type,
+            user_value: user_value.into(),
+            version: 0,
+            etime: 0,
+            ctime: Utc::now().timestamp_micros() as u64,
+            reserve: [0; 16],
+        }
+    }
+
+    pub fn set_etime(&mut self, etime: u64) {
+        self.etime = etime
+    }
+
+    pub fn set_ctime(&mut self, ctime: u64) {
+        self.ctime = ctime
+    }
+
+    pub fn set_version(&mut self, version: u64) {
+        self.version = version
+    }
+
+    pub fn set_relative_etime(&mut self, ttl: u64) -> Result<()> {
+        let current_micros = Utc::now().timestamp_micros() as u64;
+        self.etime = current_micros
+            .checked_add(ttl)
+            .context(InvalidFormatSnafu {
+                message: "Timestamp overflow when calculating relative etime".to_string(),
+            })?;
+        Ok(())
+    }
+}
+
+/// This macro is used to forward the base function to the structure
+/// so that it can call the function directly（string_value.set_etime()） without calling it like "string_value.base.user_value()"
+#[macro_export]
+macro_rules! delegate_internal_value {
+    ($struct_name:ident) => {
+        impl $struct_name {
+            #[allow(dead_code)]
+            pub fn set_etime(&mut self, etime: u64) {
+                self.base.set_etime(etime);
+            }
+
+            #[allow(dead_code)]
+            pub fn set_ctime(&mut self, ctime: u64) {
+                self.base.set_ctime(ctime);
+            }
+
+            #[allow(dead_code)]
+            pub fn set_version(&mut self, version: u64) {
+                self.base.set_version(version);
+            }
+
+            #[allow(dead_code)]
+            pub fn set_relative_etime(&mut self, ttl: u64) -> Result<()> {
+                self.base.set_relative_etime(ttl)
+            }
+        }
+    };
 }
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
-pub trait ParsedInternalValue<'a>: Sized {
-    fn new(data: &'a [u8]) -> Result<Self>;
-    fn filter_decision(&self, current_time: u64) -> CompactionDecision;
-    fn data_type(&self) -> DataType;
-    fn user_value(&self) -> &[u8];
-    fn version(&self) -> Option<u64> {
-        None
+pub struct ParsedInternalValue {
+    pub value: BytesMut,
+    pub data_type: DataType,
+    /// When used to represent MetaValue, the 'user_value' field is decoded to 'count' or 'len'.
+    pub user_value_range: Range<usize>,
+    pub reserve_range: Range<usize>,
+    pub version: u64,
+    pub ctime: u64,
+    pub etime: u64,
+}
+
+#[allow(dead_code)]
+impl ParsedInternalValue {
+    pub fn new(
+        value: BytesMut,
+        data_type: DataType,
+        user_value_range: Range<usize>,
+        reserve_range: Range<usize>,
+        version: u64,
+        ctime: u64,
+        etime: u64,
+    ) -> Self {
+        Self {
+            value,
+            data_type,
+            user_value_range,
+            reserve_range,
+            version,
+            ctime,
+            etime,
+        }
     }
-    fn ctime(&self) -> u64;
-    fn etime(&self) -> u64;
-    fn reserve(&self) -> &[u8];
+
+    /// When used to represent MetaValue, this function will not be called
+    pub fn user_value(&self) -> BytesMut {
+        let slice = &self.value[self.user_value_range.clone()];
+        let mut bytes_mut = BytesMut::with_capacity(slice.len());
+        bytes_mut.put_slice(slice);
+        bytes_mut
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    pub fn etime(&self) -> u64 {
+        self.etime
+    }
+
+    pub fn is_permanent_survival(&self) -> bool {
+        self.etime == 0
+    }
+
+    pub fn is_stale(&self) -> bool {
+        if self.etime == 0 {
+            return false;
+        }
+        let current_micros = Utc::now().timestamp_micros() as u64;
+        current_micros < self.etime
+    }
+
+    pub fn is_valid(&self) -> bool {
+        !self.is_stale()
+    }
+}
+
+/// This macro is used to forward the base function to the structure
+/// so that it can call the function directly（parsed_value.user_value()） without calling it like "string.base.user_value()"
+#[macro_export]
+macro_rules! delegate_parsed_value {
+    ($struct_name:ident) => {
+        impl $struct_name {
+            #[allow(dead_code)]
+            pub fn etime(&self) -> u64 {
+                self.base.etime()
+            }
+
+            #[allow(dead_code)]
+            pub fn is_stale(&self) -> bool {
+                self.base.is_stale()
+            }
+
+            #[allow(dead_code)]
+            pub fn is_permanent_survival(&self) -> bool {
+                self.base.is_permanent_survival()
+            }
+
+            #[allow(dead_code)]
+            pub fn user_value(&self) -> BytesMut {
+                self.base.user_value()
+            }
+
+            #[allow(dead_code)]
+            pub fn version(&self) -> u64 {
+                self.base.version()
+            }
+        }
+    };
 }
 
 #[cfg(test)]

@@ -13,102 +13,83 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
-use crate::storage::{
-    base_value_format::{DataType, InternalValue, ParsedInternalValue},
-    error::{InvalidFormatSnafu, Result},
-    storage_define::{
-        STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
+use crate::{
+    delegate_internal_value, delegate_parsed_value,
+    storage::{
+        base_value_format::{DataType, InternalValue, ParsedInternalValue},
+        error::{InvalidFormatSnafu, Result},
+        storage_define::{
+            STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
+        },
     },
 };
-
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use chrono::Utc;
+use rocksdb::CompactionDecision;
 use snafu::ensure;
-use std::ops::Range;
 
 /*
  * | type | value | reserve | cdate | timestamp |
  * |  1B  |       |   16B   |   8B  |     8B    |
  */
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct StringValue {
-    user_value: Bytes,
-    etime: u64,
-    ctime: u64,
+    base: InternalValue,
 }
 
+delegate_internal_value!(StringValue);
+#[allow(dead_code)]
 impl StringValue {
-    /// TODO: remove allow dead code
-    #[allow(dead_code)]
     pub fn new<T>(user_value: T) -> Self
     where
         T: Into<Bytes>,
     {
         Self {
-            user_value: user_value.into(),
-            etime: 0,
-            ctime: Utc::now().timestamp_micros() as u64,
+            base: InternalValue::new(DataType::String, user_value),
         }
     }
-}
 
-impl InternalValue for StringValue {
-    fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let needed =
-            TYPE_LENGTH + self.user_value.len() + SUFFIX_RESERVE_LENGTH + 2 * TIMESTAMP_LENGTH;
-
+            TYPE_LENGTH + self.base.user_value.len() + SUFFIX_RESERVE_LENGTH + 2 * TIMESTAMP_LENGTH;
         let mut buf = BytesMut::with_capacity(needed);
+
         buf.put_u8(DataType::String as u8);
-        buf.put_slice(&self.user_value);
+        buf.put_slice(&self.base.user_value);
         buf.put_bytes(0, SUFFIX_RESERVE_LENGTH);
-        buf.put_u64_le(self.ctime);
-        buf.put_u64_le(self.etime);
+        buf.put_u64_le(self.base.ctime);
+        buf.put_u64_le(self.base.etime);
 
         buf
-    }
-
-    fn set_etime(&mut self, etime: u64) {
-        self.etime = etime;
-    }
-
-    fn set_ctime(&mut self, ctime: u64) {
-        self.ctime = ctime;
-    }
-
-    fn set_relative_etime(&mut self, ttl: u64) {
-        self.etime = Utc::now().timestamp_micros() as u64 + ttl;
     }
 }
 
 #[allow(dead_code)]
 pub struct ParsedStringsValue {
-    data: Bytes,
-    user_value_range: Range<usize>,
-    reserve_range: Range<usize>,
-    data_type: DataType,
-    ctime: u64,
-    etime: u64,
+    base: ParsedInternalValue,
 }
 
-impl<'a> ParsedInternalValue<'a> for ParsedStringsValue {
-    fn new(input_data: &'a [u8]) -> Result<Self> {
-        debug_assert!(input_data.len() >= STRING_VALUE_SUFFIXLENGTH);
+delegate_parsed_value!(ParsedStringsValue);
+#[allow(dead_code)]
+impl ParsedStringsValue {
+    pub fn new<T>(internal_value: T) -> Result<Self>
+    where
+        T: Into<BytesMut>,
+    {
+        let value: BytesMut = internal_value.into();
+        debug_assert!(value.len() >= STRING_VALUE_SUFFIXLENGTH);
         ensure!(
-            input_data.len() >= STRING_VALUE_SUFFIXLENGTH,
+            value.len() >= STRING_VALUE_SUFFIXLENGTH,
             InvalidFormatSnafu {
                 message: format!(
-                    "invalid string value length: {} < {}",
-                    input_data.len(),
-                    STRING_VALUE_SUFFIXLENGTH
-                ),
+                    "invalid string value length: {} < {STRING_VALUE_SUFFIXLENGTH}",
+                    value.len()
+                )
             }
         );
 
-        let data = Bytes::copy_from_slice(input_data);
-        let data_type = DataType::try_from(data[0])?;
+        let data_type = DataType::try_from(value[0])?;
 
-        let user_value_len = data.len() - TYPE_LENGTH - STRING_VALUE_SUFFIXLENGTH;
+        let user_value_len = value.len() - TYPE_LENGTH - STRING_VALUE_SUFFIXLENGTH;
         let user_value_start = TYPE_LENGTH;
         let user_value_end = user_value_start + user_value_len;
         let user_value_range = user_value_start..user_value_end;
@@ -118,7 +99,7 @@ impl<'a> ParsedInternalValue<'a> for ParsedStringsValue {
         let reserve_end = reserve_start + SUFFIX_RESERVE_LENGTH;
         let reserve_range = reserve_start..reserve_end;
 
-        let mut time_reader = &data[reserve_end..];
+        let mut time_reader = &value[reserve_end..];
         debug_assert!(time_reader.len() >= 2 * TIMESTAMP_LENGTH);
         ensure!(
             time_reader.len() >= 2 * TIMESTAMP_LENGTH,
@@ -126,48 +107,59 @@ impl<'a> ParsedInternalValue<'a> for ParsedStringsValue {
                 message: format!(
                     "invalid string value length: {} < {}",
                     time_reader.len(),
-                    2 * TIMESTAMP_LENGTH
-                ),
+                    2 * TIMESTAMP_LENGTH,
+                )
             }
         );
-
         let ctime = time_reader.get_u64_le();
         let etime = time_reader.get_u64_le();
 
-        Ok(ParsedStringsValue {
-            data,
-            data_type,
-            user_value_range,
-            reserve_range,
-            ctime,
-            etime,
+        Ok(Self {
+            base: ParsedInternalValue::new(
+                value,
+                data_type,
+                user_value_range,
+                reserve_range,
+                0,
+                ctime,
+                etime,
+            ),
         })
     }
 
-    fn data_type(&self) -> DataType {
-        self.data_type
-    }
+    pub fn strip_suffix(&mut self) {
+        self.base.value.advance(TYPE_LENGTH);
 
-    fn user_value(&self) -> &[u8] {
-        &self.data[self.user_value_range.clone()]
-    }
-
-    fn ctime(&self) -> u64 {
-        self.ctime
-    }
-
-    fn etime(&self) -> u64 {
-        self.etime
-    }
-
-    fn reserve(&self) -> &[u8] {
-        &self.data[self.reserve_range.clone()]
-    }
-
-    fn filter_decision(&self, current_time: u64) -> rocksdb::CompactionDecision {
-        if self.etime != 0 && self.etime < current_time {
-            return rocksdb::CompactionDecision::Remove;
+        let len = self.base.value.len();
+        if len >= STRING_VALUE_SUFFIXLENGTH {
+            self.base.value.truncate(len - STRING_VALUE_SUFFIXLENGTH);
         }
-        rocksdb::CompactionDecision::Keep
+    }
+
+    pub fn set_ctime_to_value(&mut self) {
+        let suffix_start =
+            self.base.value.len() - STRING_VALUE_SUFFIXLENGTH + SUFFIX_RESERVE_LENGTH;
+
+        let ctime_bytes = self.base.ctime.to_le_bytes();
+        let dst = &mut self.base.value[suffix_start..suffix_start + TIMESTAMP_LENGTH];
+        dst.copy_from_slice(&ctime_bytes);
+    }
+
+    pub fn set_etime_to_value(&mut self) {
+        let suffix_start = self.base.value.len() - STRING_VALUE_SUFFIXLENGTH
+            + SUFFIX_RESERVE_LENGTH
+            + TIMESTAMP_LENGTH;
+
+        let bytes = self.base.etime.to_le_bytes();
+        let dst = &mut self.base.value[suffix_start..suffix_start + TIMESTAMP_LENGTH];
+        dst.copy_from_slice(&bytes);
+    }
+
+    pub fn filter_decision(&self, cur_time: u64) -> CompactionDecision {
+        if self.base.etime != 0 && self.base.etime < cur_time {
+            CompactionDecision::Remove
+        } else {
+            CompactionDecision::Keep
+        }
     }
 }
