@@ -1,0 +1,21 @@
+[package]
+name = "kstd"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true 
+
+[dependencies]
+rocksdb.workspace = true 
+log.workspace = true
+thiserror.workspace = true
+parking_lot.workspace = true
+byteorder.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+once_cell.workspace = true
+num_cpus.workspace = true
+murmur3.workspace = true
+bytes.workspace = true
+chrono.workspace = true
