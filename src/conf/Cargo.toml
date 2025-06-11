@@ -6,6 +6,7 @@ edition.workspace = true
 workspace = true
 
 [dependencies]
+snafu.workspace = true
 
 
 
