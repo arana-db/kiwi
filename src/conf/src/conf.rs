@@ -112,7 +112,7 @@ mod tests {
     fn test_parse_config() {
         let config:RedisConfig = RedisConfig::parse(SAMPLE_CONFIG).expect("parse config err");
 
-        // 测试基本类型解析
+        // test for port and host value
         assert_eq!(config.port, 6379);
         assert_eq!(config.host,"127.0.0.1".to_string());
 
