@@ -29,9 +29,9 @@ impl RedisConfig {
     // read config file and parse file content
 
 pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, ParseConfigError> {
-    let path_buf = path.as_ref().to_path_buf(); // 转换为拥有所有权的 PathBuf
-    let content = fs::read_to_string(&path_buf) // 使用 &path_buf 借用
-        .map_err(|e| ParseConfigError::ReadFileErr { path: path_buf, source: e })?; // 错误中使用 path_buf 的所有权
+    let path_buf = path.as_ref().to_path_buf();
+    let content = fs::read_to_string(&path_buf)
+        .map_err(|e| ParseConfigError::ReadFileErr { path: path_buf, source: e })?;
     Self::parse(&content)
 }
 
@@ -82,7 +82,6 @@ pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, ParseConfigError> {
                         return Err(ParseConfigError::ParseConfItemErr {key: key.to_string()});
                     }
                 }
-                // 默认处理：整数或字符串
                 _ => {
                     continue
                 }
