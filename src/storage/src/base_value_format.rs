@@ -198,6 +198,10 @@ impl ParsedInternalValue {
         self.version
     }
 
+    pub fn ctime(&self) -> u64 {
+        self.ctime
+    }
+
     pub fn etime(&self) -> u64 {
         self.etime
     }
@@ -228,6 +232,11 @@ macro_rules! delegate_parsed_value {
             #[allow(dead_code)]
             pub fn etime(&self) -> u64 {
                 self.inner.etime()
+            }
+
+            #[allow(dead_code)]
+            pub fn ctime(&self) -> u64 {
+                self.inner.ctime()
             }
 
             #[allow(dead_code)]

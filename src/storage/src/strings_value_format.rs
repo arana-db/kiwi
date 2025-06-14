@@ -74,7 +74,6 @@ impl ParsedStringsValue {
         T: Into<BytesMut>,
     {
         let value: BytesMut = internal_value.into();
-        debug_assert!(value.len() >= STRING_VALUE_SUFFIXLENGTH);
         ensure!(
             value.len() >= STRING_VALUE_SUFFIXLENGTH,
             InvalidFormatSnafu {
@@ -134,7 +133,17 @@ impl ParsedStringsValue {
         }
     }
 
-    pub fn set_ctime_to_value(&mut self) {
+    pub fn set_ctime(&mut self, ctime: u64) {
+        self.inner.ctime = ctime;
+        self.set_ctime_to_value();
+    }
+
+    pub fn set_etime(&mut self, etime: u64) {
+        self.inner.etime = etime;
+        self.set_etime_to_value();
+    }
+
+    fn set_ctime_to_value(&mut self) {
         let suffix_start =
             self.inner.value.len() - STRING_VALUE_SUFFIXLENGTH + SUFFIX_RESERVE_LENGTH;
 
@@ -143,7 +152,7 @@ impl ParsedStringsValue {
         dst.copy_from_slice(&ctime_bytes);
     }
 
-    pub fn set_etime_to_value(&mut self) {
+    fn set_etime_to_value(&mut self) {
         let suffix_start = self.inner.value.len() - STRING_VALUE_SUFFIXLENGTH
             + SUFFIX_RESERVE_LENGTH
             + TIMESTAMP_LENGTH;
@@ -159,5 +168,139 @@ impl ParsedStringsValue {
         } else {
             CompactionDecision::Keep
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_string_value {
+    use super::*;
+
+    const TEST_CTIME: u64 = 1620000000;
+    const TEST_ETIME: u64 = 1630000000;
+    const TEST_VALUE: &[u8] = b"kiwi-rs";
+
+    fn create_test_string_value() -> StringValue {
+        let mut string_value = StringValue::new(TEST_VALUE);
+        string_value.set_ctime(TEST_CTIME);
+        string_value.set_etime(TEST_ETIME);
+        string_value
+    }
+
+    #[test]
+    fn test_string_value_new() {
+        let string_value = create_test_string_value();
+        assert_eq!(string_value.inner.data_type, DataType::String);
+        assert_eq!(string_value.inner.ctime, TEST_CTIME);
+        assert_eq!(string_value.inner.etime, TEST_ETIME);
+        let buf = string_value.inner.user_value;
+        assert_eq!(buf, TEST_VALUE);
+    }
+
+    #[test]
+    fn test_string_value_encode() {
+        let string_value = create_test_string_value();
+        let encoded = string_value.encode();
+        let mut expected = BytesMut::new();
+        expected.put_u8(DataType::String as u8);
+        expected.put_slice(TEST_VALUE);
+        expected.put_bytes(0, SUFFIX_RESERVE_LENGTH); // reserve
+        expected.put_u64_le(TEST_CTIME);
+        expected.put_u64_le(TEST_ETIME);
+        assert_eq!(encoded, expected);
+    }
+
+    #[test]
+    fn test_string_value_roundtrip_with_parsed() {
+        let string_value = create_test_string_value();
+        let encoded = string_value.encode();
+        let parsed = ParsedStringsValue::new(encoded).unwrap();
+        assert_eq!(parsed.inner.data_type, DataType::String);
+        assert_eq!(parsed.user_value(), TEST_VALUE);
+        assert_eq!(parsed.inner.ctime, TEST_CTIME);
+        assert_eq!(parsed.inner.etime, TEST_ETIME);
+    }
+}
+
+#[allow(dead_code)]
+mod tests_parsed_string_value {
+    use super::*;
+
+    const TEST_CTIME: u64 = 1620000000;
+    const TEST_ETIME: u64 = 1630000000;
+    const TEST_VALUE: &[u8] = b"kiwi-rs";
+
+    fn build_test_buffer() -> BytesMut {
+        let mut buf = BytesMut::new();
+        buf.put_u8(DataType::String as u8);
+        buf.put_slice(TEST_VALUE);
+        buf.put_bytes(0, SUFFIX_RESERVE_LENGTH); // reserve
+        buf.put_u64_le(TEST_CTIME);
+        buf.put_u64_le(TEST_ETIME);
+        buf
+    }
+
+    #[test]
+    fn test_parsed_string_value_parse() {
+        let buf = build_test_buffer();
+        let parsed = ParsedStringsValue::new(buf);
+        assert!(parsed.is_ok());
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.inner.data_type, DataType::String);
+        assert_eq!(parsed.user_value(), TEST_VALUE);
+        assert_eq!(parsed.inner.ctime, TEST_CTIME);
+        assert_eq!(parsed.inner.etime, TEST_ETIME);
+    }
+
+    #[test]
+    fn test_parsed_string_value_parse_invalid_length() {
+        let mut buf = BytesMut::new();
+        buf.put_u8(DataType::String as u8);
+        buf.put_slice(TEST_VALUE);
+        let parsed = ParsedStringsValue::new(buf);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn test_parsed_string_value_set_ctime_to_value() {
+        let buf = build_test_buffer();
+        let mut parsed = ParsedStringsValue::new(buf).unwrap();
+
+        let new_ctime = 1640000000;
+        parsed.set_ctime(new_ctime);
+        assert_eq!(new_ctime, parsed.ctime());
+
+        let suffix_start = parsed.inner.value.len() - 2 * TIMESTAMP_LENGTH;
+        let stored_ctime =
+            (&parsed.inner.value[suffix_start..suffix_start + TIMESTAMP_LENGTH]).get_u64_le();
+        assert_eq!(stored_ctime, new_ctime);
+    }
+
+    #[test]
+    fn test_parsed_string_value_set_etime_to_value() {
+        let buf = build_test_buffer();
+        let mut parsed = ParsedStringsValue::new(buf).unwrap();
+
+        let new_etime = 1650000000;
+        parsed.set_etime(new_etime);
+        assert_eq!(new_etime, parsed.etime());
+
+        let suffix_start = parsed.inner.value.len() - TIMESTAMP_LENGTH;
+        let stored_ctime =
+            (&parsed.inner.value[suffix_start..suffix_start + TIMESTAMP_LENGTH]).get_u64_le();
+        assert_eq!(stored_ctime, new_etime);
+    }
+
+    #[test]
+    fn test_parsed_string_value_strip_suffix() {
+        let buf = build_test_buffer();
+        let mut parsed = ParsedStringsValue::new(buf.clone()).unwrap();
+
+        parsed.strip_suffix();
+        let expected_len = buf.len() - TYPE_LENGTH - SUFFIX_RESERVE_LENGTH - 2 * TIMESTAMP_LENGTH;
+        assert_eq!(parsed.inner.value.len(), expected_len);
+
+        let mut expected = BytesMut::new();
+        expected.put_slice(&buf[TYPE_LENGTH..buf.len() - STRING_VALUE_SUFFIXLENGTH]);
+        assert_eq!(parsed.inner.value, expected);
     }
 }
