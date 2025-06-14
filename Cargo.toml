@@ -21,7 +21,6 @@ rust.unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
 [workspace.dependencies]
 bytes = "1"
 chrono = "0.4.40"
-snafu = "0.7"
 proc-macro2 = "1.0.66"
 quote = "1.0"
 syn = { version = "2.0", features = ["extra-traits", "full"] }
@@ -38,6 +37,7 @@ anyhow = "1.0"
 byteorder = "1.4"
 parking_lot = "0.12"
 tokio = { version = "1", features = ["full"] }
+snafu = "0.8"
 
 ## workspaces members
 storage = { path = "src/storage" }

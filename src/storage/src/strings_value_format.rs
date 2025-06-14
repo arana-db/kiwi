@@ -15,21 +15,22 @@
 use crate::base_value_format::DataType;
 use crate::base_value_format::InternalValue;
 use crate::base_value_format::ParsedInternalValue;
+use crate::error::InvalidFormatSnafu;
 use crate::error::Result;
-use crate::error::StorageError;
 use crate::storage_define::{
     STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
 };
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use chrono::Utc;
+use snafu::ensure;
 use std::ops::Range;
 
 /*
  * | type | value | reserve | cdate | timestamp |
  * |  1B  |       |   16B   |   8B  |     8B    |
  */
-
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct StringValue {
     user_value: Bytes,
@@ -80,6 +81,7 @@ impl InternalValue for StringValue {
     }
 }
 
+#[allow(dead_code)]
 pub struct ParsedStringsValue {
     data: Bytes,
     user_value_range: Range<usize>,
@@ -92,13 +94,16 @@ pub struct ParsedStringsValue {
 impl<'a> ParsedInternalValue<'a> for ParsedStringsValue {
     fn new(input_data: &'a [u8]) -> Result<Self> {
         debug_assert!(input_data.len() >= STRING_VALUE_SUFFIXLENGTH);
-        if input_data.len() < STRING_VALUE_SUFFIXLENGTH {
-            return Err(StorageError::InvalidFormat(format!(
-                "invalid string value length: {} < {}",
-                input_data.len(),
-                STRING_VALUE_SUFFIXLENGTH,
-            )));
-        }
+        ensure!(
+            input_data.len() >= STRING_VALUE_SUFFIXLENGTH,
+            InvalidFormatSnafu {
+                message: format!(
+                    "invalid string value length: {} < {}",
+                    input_data.len(),
+                    STRING_VALUE_SUFFIXLENGTH
+                ),
+            }
+        );
 
         let data = Bytes::copy_from_slice(input_data);
         let data_type = DataType::try_from(data[0])?;
@@ -115,13 +120,17 @@ impl<'a> ParsedInternalValue<'a> for ParsedStringsValue {
 
         let mut time_reader = &data[reserve_end..];
         debug_assert!(time_reader.len() >= 2 * TIMESTAMP_LENGTH);
-        if time_reader.len() < 2 * TIMESTAMP_LENGTH {
-            return Err(StorageError::InvalidFormat(format!(
-                "invalid string value length: {} < {}",
-                time_reader.len(),
-                2 * TIMESTAMP_LENGTH,
-            )));
-        }
+        ensure!(
+            time_reader.len() >= 2 * TIMESTAMP_LENGTH,
+            InvalidFormatSnafu {
+                message: format!(
+                    "invalid string value length: {} < {}",
+                    time_reader.len(),
+                    2 * TIMESTAMP_LENGTH
+                ),
+            }
+        );
+
         let ctime = time_reader.get_u64_le();
         let etime = time_reader.get_u64_le();
 
