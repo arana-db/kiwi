@@ -13,7 +13,7 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
-use crate::storage::{
+use crate::{
     base_key_format::ParsedBaseKey, base_value_format::DataType,
     strings_value_format::ParsedStringsValue,
 };
@@ -21,8 +21,8 @@ use bytes::BytesMut;
 use chrono::Utc;
 use log::debug;
 use rocksdb::{
-    ColumnFamily, CompactionDecision, DB, ReadOptions, compaction_filter::CompactionFilter,
-    compaction_filter_factory::CompactionFilterFactory,
+    compaction_filter::CompactionFilter, compaction_filter_factory::CompactionFilterFactory,
+    ColumnFamily, CompactionDecision, ReadOptions, DB,
 };
 use std::sync::Arc;
 
@@ -140,7 +140,7 @@ impl BaseDataFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::strings_value_format::StringValue;
+    use crate::strings_value_format::StringValue;
 
     #[test]
     fn test_strings_base_filter() {

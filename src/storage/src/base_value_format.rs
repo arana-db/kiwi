@@ -13,7 +13,7 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
-use crate::storage::error::{Error, InvalidFormatSnafu, Result};
+use crate::error::{Error, InvalidFormatSnafu, Result};
 use bytes::{BufMut, Bytes, BytesMut};
 use chrono::Utc;
 use snafu::OptionExt;
@@ -211,7 +211,7 @@ impl ParsedInternalValue {
             return false;
         }
         let current_micros = Utc::now().timestamp_micros() as u64;
-        current_micros < self.etime
+        self.etime < current_micros
     }
 
     pub fn is_valid(&self) -> bool {
