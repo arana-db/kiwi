@@ -9,3 +9,4 @@ workspace = true
 [dependencies]
 log.workspace = true
 tokio.workspace = true
+async-trait = "0.1"

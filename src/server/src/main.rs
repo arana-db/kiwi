@@ -11,10 +11,8 @@
 //  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
-
-use kiwi_rs::net;
-use log::{error, info};
-use tokio::net::TcpListener;
+use log::{info};
+use net::ServerFactory;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -22,19 +20,15 @@ async fn main() -> std::io::Result<()> {
     // set env RUST_LOG=level to control
     env_logger::init();
 
-    let addr = "127.0.0.1:9221";
-    let listener = TcpListener::bind(addr).await?;
+    let addr = String::from("127.0.0.1:9221");
+    let protocol = "tcp";
 
     info!("tcp listener listen on {addr}");
-    loop {
-        let (socket, addr) = listener.accept().await?;
-        info!("new connection: {addr}");
-
-        tokio::spawn(async move {
-            if let Err(e) = net::handle::process_connection(socket).await {
-                error!("handle connection error: {e}");
-            }
-            info!("connection {addr} disconnect");
-        });
+    if let Some(server) = ServerFactory::create_server(protocol, Option::from(addr)) {
+        server.start().await.expect("TODO: panic message");
+    } else {
+        return Err(std::io::Error::other("server unavailable"));
     }
+
+    Ok(())
 }
