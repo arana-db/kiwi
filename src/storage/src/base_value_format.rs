@@ -16,7 +16,7 @@
 use bytes::BytesMut;
 use rocksdb::CompactionDecision;
 
-use crate::storage::error::{Error, InvalidFormatSnafu, Result};
+use crate::error::{Error, InvalidFormatSnafu, Result};
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
