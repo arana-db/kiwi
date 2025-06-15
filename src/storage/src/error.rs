@@ -14,60 +14,98 @@
 
 //! Error types for the storage engine
 
+use snafu::{Location, Snafu};
 use std::io;
-use thiserror::Error;
 
-/// TODO: remove allow dead code
+pub type Result<T> = std::result::Result<T, Error>;
+
 #[allow(dead_code)]
-#[derive(Error, Debug)]
-pub enum StorageError {
-    #[error("IO error: {0}")]
-    Io(#[from] io::Error),
+#[derive(Debug, Snafu)]
+#[snafu(visibility(pub))]
+pub enum Error {
+    #[snafu(display("IO error"))]
+    Io {
+        #[snafu(source)]
+        error: io::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("RocksDB error: {0}")]
-    Rocks(#[from] rocksdb::Error),
+    #[snafu(display("RocksDB error"))]
+    Rocks {
+        #[snafu(source)]
+        error: rocksdb::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Encoding error: {0}")]
-    Encoding(String),
+    #[snafu(display("Encoding error: {}", message))]
+    Encoding {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Key not found: {0}")]
-    KeyNotFound(String),
+    #[snafu(display("Key not found: {}", key))]
+    KeyNotFound {
+        key: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Invalid format: {0}")]
-    InvalidFormat(String),
+    #[snafu(display("Invalid format: {}", message))]
+    InvalidFormat {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Lock error: {0}")]
-    Lock(String),
+    #[snafu(display("Lock error: {}", message))]
+    Lock {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Transaction error: {0}")]
-    Transaction(String),
+    #[snafu(display("Transaction error: {}", message))]
+    Transaction {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Batch operation error: {0}")]
-    Batch(String),
+    #[snafu(display("Batch operation error: {}", message))]
+    Batch {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Compaction error: {0}")]
-    Compaction(String),
+    #[snafu(display("Compaction error: {}", message))]
+    Compaction {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Configuration error: {0}")]
-    Config(String),
+    #[snafu(display("Configuration error: {}", message))]
+    Config {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("System error: {0}")]
-    System(String),
+    #[snafu(display("System error: {}", message))]
+    System {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 
-    #[error("Unknown error: {0}")]
-    Unknown(String),
-}
-
-pub type Result<T> = std::result::Result<T, StorageError>;
-
-impl From<String> for StorageError {
-    fn from(err: String) -> StorageError {
-        StorageError::Unknown(err)
-    }
-}
-
-impl From<&str> for StorageError {
-    fn from(err: &str) -> StorageError {
-        StorageError::Unknown(err.to_string())
-    }
+    #[snafu(display("Unknown error: {}", message))]
+    Unknown {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
