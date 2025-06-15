@@ -1,9 +1,24 @@
+//  Copyright (c) 2017-present, arana-db Community.  All rights reserved.
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+
+use crate::handle::process_connection;
+use crate::{Client, ServerTrait, StreamTrait};
 use async_trait::async_trait;
+use log::info;
 use std::error::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use crate::{Client, ServerTrait, StreamTrait};
-use crate::handle::process_connection;
 
 pub struct TcpStreamWrapper {
     stream: TcpStream,
@@ -41,7 +56,7 @@ impl ServerTrait for TcpServer {
     async fn start(&self) -> Result<(), Box<dyn Error>> {
         let listener = TcpListener::bind(&self.addr).await?;
 
-        println!("Listening on TCP: {}", self.addr);
+        info!("Listening on TCP: {}", self.addr);
 
         loop {
             let (socket, _) = listener.accept().await?;

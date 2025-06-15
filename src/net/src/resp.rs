@@ -1,3 +1,17 @@
+//  Copyright (c) 2017-present, arana-db Community.  All rights reserved.
+//
+//  Licensed under the Apache License, Version 2.0 (the "License");
+//  you may not use this file except in compliance with the License.
+//  You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+//  Unless required by applicable law or agreed to in writing, software
+//  distributed under the License is distributed on an "AS IS" BASIS,
+//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//  See the License for the specific language governing permissions and
+//  limitations under the License.
+
 use std::fmt;
 
 #[derive(Debug)]
@@ -55,73 +69,73 @@ impl Protocol for RespProtocol {
         resp
     }
     fn parse(&mut self, v: &[u8]) -> Result<bool, ParseError> {
-        self.buffer.extend_from_slice(v);  // 累积新数据
+        // extend from slice, avoid copying data
+        self.buffer.extend_from_slice(v);
         let mut pos = 0;
         let buf = &self.buffer;
 
-        // 1. 检查是否是数组类型（*开头）
+        // phase 1: check if the buffer is start with '*'
         if buf.get(pos) != Some(&b'*') {
             return Err(ParseError::InvalidFormat);
         }
         pos += 1;
 
-        // 2. 解析数组元素数量（*<count>\r\n）
+        // phase 2: parse the array element count (*<count>\r\n)
         let count_end = match buf[pos..].iter().position(|&b| b == b'\r') {
             Some(i) => pos + i,
-            None => return Ok(false),  // 数据不完整
+            None => return Ok(false), // data not complete, continue to read
         };
         if count_end + 1 >= buf.len() || buf[count_end + 1] != b'\n' {
-            return Err(ParseError::InvalidFormat);  // 格式错误
+            return Err(ParseError::InvalidFormat); // invalid format, return error
         }
         let count_str = &buf[pos..count_end];
 
-        let count = std::str::from_utf8(count_str).unwrap().parse::<usize>()
+        let count = std::str::from_utf8(count_str)
+            .unwrap()
+            .parse::<usize>()
             .map_err(|_| ParseError::InvalidFormat)
             .expect("TODO: panic message");
-        // 显式指定usize类型解决类型推断问题
-        pos = count_end + 2;  // 移动到\r\n之后
+        pos = count_end + 2; // move cursor to the next element
 
-        // 3. 解析每个批量字符串元素（$<len>\r\n<data>\r\n）
+        // phase 3: parse each bulk string element ($<len>\r\n<data>\r\n)
         let mut parsed_args = Vec::with_capacity(count);
         for _ in 0..count {
-            // 检查是否是批量字符串（$开头）
+            // check if the current element is a bulk string ($<len>\r\n<data>\r\n)
             if buf.get(pos) != Some(&b'$') {
                 return Ok(false);
             }
             pos += 1;
 
-            // 解析字符串长度（$<len>\r\n）
+            // parse the length of the string ($<len>\r\n)
             let len_end = match buf[pos..].iter().position(|&b| b == b'\r') {
                 Some(i) => pos + i,
-                None => return Ok(false),  // 数据不完整,
+                None => return Ok(false), // data not complete, continue to read
             };
             if len_end + 1 >= buf.len() || buf[len_end + 1] != b'\n' {
                 return Ok(false);
             }
             let len_str = &buf[pos..len_end];
-            // 显式指定usize类型解决类型推断问题
             let len = std::str::from_utf8(len_str)
-                .unwrap().parse::<usize>()
+                .unwrap()
+                .parse::<usize>()
                 .expect("TODO: panic message");
-            pos = len_end + 2;  // 移动到\r\n之后
+            pos = len_end + 2; // move cursor to the next element
 
-            // 检查数据部分是否完整（<data>\r\n）
             if pos + len + 2 > buf.len() {
-                return Ok(false);  // 数据不足
+                return Ok(false); // data not complete, continue to read
             }
             if buf[pos + len] != b'\r' || buf[pos + len + 1] != b'\n' {
-                return Err(ParseError::InvalidFormat);  // 格式错误
+                return Err(ParseError::InvalidFormat); // invalid format, return error
             }
 
-            // 提取有效数据
+            // push the data to the parsed_args
             parsed_args.push(buf[pos..pos + len].to_vec());
-            pos += len + 2;  // 移动到当前元素末尾
+            pos += len + 2; // move cursor to the next element
         }
 
-        // 4. 更新状态
+        // phase 4: move the parsed data to the args, and clear the buffer
         self.args = parsed_args;
-        self.buffer = self.buffer.drain(pos..).collect();  // 保留未解析数据
+        self.buffer = self.buffer.drain(pos..).collect();
         Ok(true)
     }
 }
-

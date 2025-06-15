@@ -12,10 +12,10 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use log::{info};
-use tokio::select;
-use crate::{Client};
 use crate::resp::{Protocol, RespProtocol};
+use crate::Client;
+use log::{error, info};
+use tokio::select;
 
 /// Processes an incoming TCP connection.
 ///
@@ -31,7 +31,6 @@ use crate::resp::{Protocol, RespProtocol};
 /// A `std::io::Result` indicating success or failure.
 ///
 pub async fn process_connection(socket: &mut Client) -> std::io::Result<()> {
-    // TODO: add handle command logic
     let mut buf = vec![0; 1024];
 
     let mut prot = RespProtocol::new();
@@ -51,18 +50,18 @@ pub async fn process_connection(socket: &mut Client) -> std::io::Result<()> {
                                 let response = handle_command(&args).await;
                                 match socket.write(&mut response.serialize()).await {
                                     Ok(_) => (),
-                                    Err(e) => println!("Write error: {}", e),
+                                    Err(e) => error!("Write error: {}", e),
                                 }
                             }
                             Ok(false) => (),  // 数据不完整，继续循环读取
                             Err(e) => {  // 协议错误
-                                println!("Protocol error: {:?}", e);
+                                error!("Protocol error: {:?}", e);
                                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()));
                             }
                         }
                     }
                     Err(e) => {
-                        println!("Protocol error: {:?}", e);
+                        error!("Protocol error: {:?}", e);
                         return Err(e);
                     }
                 }
