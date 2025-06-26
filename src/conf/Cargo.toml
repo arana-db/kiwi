@@ -7,6 +7,7 @@ workspace = true
 
 [dependencies]
 snafu.workspace = true
-
-
-
+log = "0.4.26"
+once_cell = "1.21.0"
+lazy_static = "1.5.0"
+num-traits = "0.2"
