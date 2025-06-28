@@ -213,7 +213,6 @@ where
         } else {
             self.value = v;
         }
-
         Ok(())
     }
 }
@@ -557,7 +556,7 @@ impl Config {
         self.parser.load(path)?;
         for (key, values) in self.parser.get_map() {
             if let Some(v) = self.config_map.get_mut(key) {
-                println!("----key---- {}", key);
+                println!("----key---- {} {:?} {}", key, v, values[0]);
                 v.set(&values[0], true)?;
             }
         }
@@ -588,6 +587,7 @@ impl Config {
             Err("Non-existent configuration item".to_string())
         }
     }
+
 
     fn add_bool(&mut self, key: &str, check_func: Option<CheckFunc>, rewritable: bool, value: &mut bool) {
         let key = key.to_string();
@@ -652,3 +652,15 @@ impl Config {
                 _ => Err("Invalid boolean value. Must be yes/no or true/false".to_string()),
             }
         }
+impl Config {
+    pub fn get<T: FromStr>(&self, key: &str) -> Option<T>
+    where
+        T::Err: std::fmt::Debug,
+    {
+        if let Some(value) = self.config_map.get(key).map(|v| v.value()) {
+            value.parse::<T>().ok()
+        } else {
+            None
+        }
+    }
+}

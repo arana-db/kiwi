@@ -14,6 +14,7 @@ mod tests {
     fn test_config_parser_load() {
         let mut config = Config::new();
         assert_eq!(config.load_from_file("test.conf").is_ok(), true);
+        assert_eq!(config.get::<u16>("port").unwrap(),9222)
         // println!("port {:?}",parser.get_data::<u16>("port"));
         // assert_eq!(parser.get_data::<u16>("port"), Some(9221));
         // assert_eq!(parser.get_data::<bool>("daemonize"), Some( true));
