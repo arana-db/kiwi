@@ -240,6 +240,7 @@ impl BaseValue for MemorySize {
     fn value(&self) -> String { format!("{}", self.value) }
 
     fn set(&mut self, value: &str, init_stage: bool) -> Status {
+        println!("-----value---- {}", value);
         if !init_stage && !self.rewritable {
             return Err("Dynamic modification not supported".to_string());
         }
@@ -263,6 +264,7 @@ pub struct Config {
     config_map: HashMap<String, Box<dyn BaseValue>>,
     // 所有 public 字段都在这里定义
     pub timeout: u32,
+    pub memory_size: usize,
     pub tcp_keepalive: u32,
     pub password: String,
     pub master_auth: String,
@@ -357,6 +359,7 @@ impl Config {
             rocksdb_level0_stop_writes_trigger: 36,
             rocksdb_ttl_second: 604800,
             rocksdb_periodic_second: 259200,
+            memory_size:0,
         };
 
         // 注册配置项
@@ -383,6 +386,11 @@ impl Config {
         {
             let port = &mut config.port.clone();
             config.add_number_with_limit("port", false, port, 1_u16, 65535_u16);
+        }
+
+        {
+            let memory_size = &mut config.memory_size.clone();
+            config.add_memory_size("memory-size", true, memory_size);
         }
 
         {
@@ -431,6 +439,11 @@ impl Config {
         {
             let val = &mut config.databases.clone();
             config.add_number_with_limit("databases", false, val, 1_usize, 16_usize);
+        }
+        {
+            let val  = config.memory_size;
+            config.add_memory_size("memory", true, &mut val.clone())
+
         }
 
         {
@@ -556,7 +569,6 @@ impl Config {
         self.parser.load(path)?;
         for (key, values) in self.parser.get_map() {
             if let Some(v) = self.config_map.get_mut(key) {
-                println!("----key---- {} {:?} {}", key, v, values[0]);
                 v.set(&values[0], true)?;
             }
         }
