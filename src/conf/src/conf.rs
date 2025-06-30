@@ -240,7 +240,6 @@ impl BaseValue for MemorySize {
     fn value(&self) -> String { format!("{}", self.value) }
 
     fn set(&mut self, value: &str, init_stage: bool) -> Status {
-        println!("-----value---- {}", value);
         if !init_stage && !self.rewritable {
             return Err("Dynamic modification not supported".to_string());
         }
