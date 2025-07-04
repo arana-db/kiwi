@@ -86,7 +86,7 @@ pub fn decode_fixed<T: FixedInt>(buf: *mut u8) -> T {
 
 #[cfg(test)]
 mod tests {
-    use crate::storage::coding::{decode_fixed, encode_fixed};
+    use crate::coding::{decode_fixed, encode_fixed};
     use std::u32;
     use std::u64;
 

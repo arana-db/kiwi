@@ -13,7 +13,7 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
-use crate::storage::error::{Error, InvalidFormatSnafu, Result};
+use crate::error::{Error, InvalidFormatSnafu, Result};
 use bytes::{BufMut, Bytes, BytesMut};
 use chrono::Utc;
 use snafu::OptionExt;
@@ -198,6 +198,10 @@ impl ParsedInternalValue {
         self.version
     }
 
+    pub fn ctime(&self) -> u64 {
+        self.ctime
+    }
+
     pub fn etime(&self) -> u64 {
         self.etime
     }
@@ -211,7 +215,7 @@ impl ParsedInternalValue {
             return false;
         }
         let current_micros = Utc::now().timestamp_micros() as u64;
-        current_micros < self.etime
+        self.etime < current_micros
     }
 
     pub fn is_valid(&self) -> bool {
@@ -228,6 +232,11 @@ macro_rules! delegate_parsed_value {
             #[allow(dead_code)]
             pub fn etime(&self) -> u64 {
                 self.inner.etime()
+            }
+
+            #[allow(dead_code)]
+            pub fn ctime(&self) -> u64 {
+                self.inner.ctime()
             }
 
             #[allow(dead_code)]

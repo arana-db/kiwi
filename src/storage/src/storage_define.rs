@@ -12,9 +12,6 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use bytes::{BufMut, BytesMut};
-use snafu::ensure;
-
 pub const PREFIX_RESERVE_LENGTH: usize = 8;
 pub const VERSION_LENGTH: usize = 8;
 // const SCORE_LENGTH: usize = 8;
@@ -34,15 +31,16 @@ pub const ENCODED_KEY_DELIM_SIZE: usize = 2;
 
 pub const STRING_VALUE_SUFFIXLENGTH: usize = 2 * TIMESTAMP_LENGTH + SUFFIX_RESERVE_LENGTH;
 pub const BASE_META_VALUE_COUNT_LENGTH: usize = 4;
-
-/// type(1B) + len(4B) + version(8B) + reserve(16B) + cdate(8B) + timestamp(8B)
+/// type(1B) + len(4B) + version(8B) + reserve(16B) + cdata(8B) + timestamp(8B)
 pub const BASE_META_VALUE_LENGTH: usize = TYPE_LENGTH
     + BASE_META_VALUE_COUNT_LENGTH
     + VERSION_LENGTH
     + SUFFIX_RESERVE_LENGTH
     + 2 * TIMESTAMP_LENGTH;
 
-use crate::storage::error::{InvalidFormatSnafu, Result};
+use crate::error::{InvalidFormatSnafu, Result};
+use bytes::{BufMut, BytesMut};
+use snafu::ensure;
 
 pub fn encode_user_key(user_key: &[u8], dst: &mut BytesMut) -> Result<()> {
     let mut start_pos = 0;
@@ -119,7 +117,7 @@ pub fn decode_user_key(encoded_key_part: &[u8], user_key: &mut BytesMut) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::error::Error;
+    use crate::error::Error;
 
     #[test]
     fn test_encode_user_key_no_zero() {

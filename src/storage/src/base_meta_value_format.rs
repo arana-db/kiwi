@@ -13,14 +13,12 @@
 //  limitations under the License.
 
 use crate::{
+    base_value_format::{DataType, InternalValue, ParsedInternalValue},
     delegate_internal_value, delegate_parsed_value,
-    storage::{
-        base_value_format::{DataType, InternalValue, ParsedInternalValue},
-        error::{InvalidFormatSnafu, Result},
-        storage_define::{
-            BASE_META_VALUE_COUNT_LENGTH, BASE_META_VALUE_LENGTH, SUFFIX_RESERVE_LENGTH,
-            TIMESTAMP_LENGTH, TYPE_LENGTH, VERSION_LENGTH,
-        },
+    error::{InvalidFormatSnafu, Result},
+    storage_define::{
+        BASE_META_VALUE_COUNT_LENGTH, BASE_META_VALUE_LENGTH, SUFFIX_RESERVE_LENGTH,
+        TIMESTAMP_LENGTH, TYPE_LENGTH, VERSION_LENGTH,
     },
 };
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -120,12 +118,15 @@ impl ParsedBaseMetaValue {
         let mut val_reader = Cursor::new(&value[..]);
         let data_type: DataType = val_reader.get_u8().try_into()?;
         let pos = val_reader.position() as usize;
+
         let count_range = pos..pos + BASE_META_VALUE_COUNT_LENGTH;
         let count = val_reader.get_u32_le();
         let version = val_reader.get_u64_le();
+
         let pos = val_reader.position() as usize;
         let reserve_range = pos..pos + SUFFIX_RESERVE_LENGTH;
         val_reader.advance(SUFFIX_RESERVE_LENGTH);
+
         let ctime = val_reader.get_u64_le();
         let etime = val_reader.get_u64_le();
 
@@ -263,7 +264,7 @@ mod base_meta_value_tests {
 
         let mut expected = BytesMut::new();
         expected.put_u8(DataType::None as u8);
-        expected.put_u32_le(TEST_COUNT); // count -> user_value 
+        expected.put_u32_le(TEST_COUNT); // count -> user_value
         expected.put_u64_le(TEST_VERSION);
         expected.extend_from_slice(&vec![0u8; SUFFIX_RESERVE_LENGTH]); // reserve
         expected.put_u64_le(TEST_CTIME);
@@ -317,7 +318,7 @@ mod base_meta_value_tests {
 #[cfg(test)]
 mod parsed_base_meta_value_tests {
     use super::*;
-    use crate::storage::base_value_format::DataType;
+    use crate::base_value_format::DataType;
     use bytes::BytesMut;
 
     const TEST_VERSION: u64 = 123456789;
@@ -447,15 +448,11 @@ mod parsed_base_meta_value_tests {
 
     #[test]
     fn test_parsed_base_meta_value_check_set_count() {
-        assert!(
-            ParsedBaseMetaValue::new(build_test_buffer())
-                .unwrap()
-                .check_set_count(100)
-        );
-        assert!(
-            !ParsedBaseMetaValue::new(build_test_buffer())
-                .unwrap()
-                .check_set_count(u32::MAX as usize + 1)
-        );
+        assert!(ParsedBaseMetaValue::new(build_test_buffer())
+            .unwrap()
+            .check_set_count(100));
+        assert!(!ParsedBaseMetaValue::new(build_test_buffer())
+            .unwrap()
+            .check_set_count(u32::MAX as usize + 1));
     }
 }
