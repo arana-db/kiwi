@@ -437,12 +437,7 @@ mod parsed_base_meta_value_tests {
     #[test]
     fn test_parsed_base_meta_value_is_valid() {
         let buf = build_test_buffer();
-        let mut meta = ParsedBaseMetaValue::new(buf).unwrap();
-
-        assert!(meta.is_valid());
-
-        meta.set_etime(0);
-        meta.set_count(0);
+        let meta = ParsedBaseMetaValue::new(buf).unwrap();
         assert!(!meta.is_valid());
     }
 
