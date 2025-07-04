@@ -1,19 +1,18 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
-use std::str::FromStr;
 use std::ops::MulAssign;
 use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::parse::ConfigParser;
 use std::result::Result;
 
-// 类型别名
+
 pub type Status = Result<(), String>;
 pub type CheckFunc = Arc<dyn Fn(&str) -> Status + Send + Sync>;
 
-// 基础配置项 trait
 pub trait BaseValue: fmt::Debug {
     fn key(&self) -> &str;
     fn value(&self) -> String;
@@ -28,7 +27,12 @@ pub struct StringValue {
 }
 
 impl StringValue {
-    pub fn new(key: String, check_func: Option<CheckFunc>, rewritable: bool, value: &mut String) -> Self {
+    pub fn new(
+        key: String,
+        check_func: Option<CheckFunc>,
+        rewritable: bool,
+        value: &mut String,
+    ) -> Self {
         StringValue {
             key,
             value: value.clone(),
@@ -50,9 +54,13 @@ impl Debug for StringValue {
 }
 
 impl BaseValue for StringValue {
-    fn key(&self) -> &str { &self.key }
+    fn key(&self) -> &str {
+        &self.key
+    }
 
-    fn value(&self) -> String { self.value.clone() }
+    fn value(&self) -> String {
+        self.value.clone()
+    }
 
     fn set(&mut self, value: &str, init_stage: bool) -> Status {
         if !init_stage && !self.rewritable {
@@ -86,7 +94,9 @@ impl StringValueArray {
 }
 
 impl BaseValue for StringValueArray {
-    fn key(&self) -> &str { &self.key }
+    fn key(&self) -> &str {
+        &self.key
+    }
 
     fn value(&self) -> String {
         self.values.join(&self.delimiter.to_string())
@@ -120,7 +130,12 @@ pub struct BoolValue {
 }
 
 impl BoolValue {
-    pub fn new(key: String, check_func: Option<CheckFunc>, rewritable: bool, value: &mut bool) -> Self {
+    pub fn new(
+        key: String,
+        check_func: Option<CheckFunc>,
+        rewritable: bool,
+        value: &mut bool,
+    ) -> Self {
         BoolValue {
             key,
             value: *value,
@@ -142,9 +157,13 @@ impl Debug for BoolValue {
 }
 
 impl BaseValue for BoolValue {
-    fn key(&self) -> &str { &self.key }
+    fn key(&self) -> &str {
+        &self.key
+    }
 
-    fn value(&self) -> String { if self.value { "yes" } else { "no" }.to_string() }
+    fn value(&self) -> String {
+        if self.value { "yes" } else { "no" }.to_string()
+    }
 
     fn set(&mut self, value: &str, init_stage: bool) -> Status {
         if !init_stage && !self.rewritable {
@@ -195,9 +214,13 @@ impl<T: Copy + PartialOrd + FromStr + MulAssign + Display + Debug> BaseValue for
 where
     T::Err: Display,
 {
-    fn key(&self) -> &str { &self.key }
+    fn key(&self) -> &str {
+        &self.key
+    }
 
-    fn value(&self) -> String { format!("{}", self.value) }
+    fn value(&self) -> String {
+        format!("{}", self.value)
+    }
 
     fn set(&mut self, value: &str, init_stage: bool) -> Status {
         if !init_stage && !self.rewritable {
@@ -235,16 +258,22 @@ impl MemorySize {
 }
 
 impl BaseValue for MemorySize {
-    fn key(&self) -> &str { &self.key }
+    fn key(&self) -> &str {
+        &self.key
+    }
 
-    fn value(&self) -> String { format!("{}", self.value) }
+    fn value(&self) -> String {
+        format!("{}", self.value)
+    }
 
     fn set(&mut self, value: &str, init_stage: bool) -> Status {
         if !init_stage && !self.rewritable {
             return Err("Dynamic modification not supported".to_string());
         }
 
-        let mut num = value[..value.len() - 1].parse::<usize>().map_err(|_| "Invalid memory size".to_string())?;
+        let mut num = value[..value.len() - 1]
+            .parse::<usize>()
+            .map_err(|_| "Invalid memory size".to_string())?;
 
         match value.chars().last().unwrap_or(' ') {
             'k' | 'K' => num *= 1 << 10,
@@ -358,13 +387,18 @@ impl Config {
             rocksdb_level0_stop_writes_trigger: 36,
             rocksdb_ttl_second: 604800,
             rocksdb_periodic_second: 259200,
-            memory_size:0,
+            memory_size: 0,
         };
 
         // 注册配置项
         {
             let flag = &mut config.redis_compatible_mode.clone();
-            config.add_bool("redis-compatible-mode", Some(Arc::new(is_valid_bool)), true, flag);
+            config.add_bool(
+                "redis-compatible-mode",
+                Some(Arc::new(is_valid_bool)),
+                true,
+                flag,
+            );
         }
 
         {
@@ -417,8 +451,7 @@ impl Config {
             config.add_string_with_func(
                 "loglevel",
                 Arc::new(|v| {
-                    if ["info", "verbose", "notice", "warning"]
-                        .contains(&v.to_lowercase().as_str())
+                    if ["info", "verbose", "notice", "warning"].contains(&v.to_lowercase().as_str())
                     {
                         Ok(())
                     } else {
@@ -440,9 +473,8 @@ impl Config {
             config.add_number_with_limit("databases", false, val, 1_usize, 16_usize);
         }
         {
-            let val  = config.memory_size;
+            let val = config.memory_size;
             config.add_memory_size("memory", true, &mut val.clone())
-
         }
 
         {
@@ -548,7 +580,12 @@ impl Config {
 
         {
             let val = &mut config.rocksdb_enable_pipelined_write.clone();
-            config.add_bool("rocksdb-enable-pipelined-write", Some(Arc::new(is_valid_bool)), false, val);
+            config.add_bool(
+                "rocksdb-enable-pipelined-write",
+                Some(Arc::new(is_valid_bool)),
+                false,
+                val,
+            );
         }
 
         {
@@ -599,29 +636,62 @@ impl Config {
         }
     }
 
-
-    fn add_bool(&mut self, key: &str, check_func: Option<CheckFunc>, rewritable: bool, value: &mut bool) {
+    fn add_bool(
+        &mut self,
+        key: &str,
+        check_func: Option<CheckFunc>,
+        rewritable: bool,
+        value: &mut bool,
+    ) {
         let key = key.to_string();
-        self.config_map.insert(key.clone(), Box::new(BoolValue::new(key, check_func, rewritable, value)));
+        self.config_map.insert(
+            key.clone(),
+            Box::new(BoolValue::new(key, check_func, rewritable, value)),
+        );
     }
 
     fn add_string(&mut self, key: &str, rewritable: bool, value: &mut String) {
         let key = key.to_string();
-        self.config_map.insert(key.clone(), Box::new(StringValue::new(key, None, rewritable, value)));
+        self.config_map.insert(
+            key.clone(),
+            Box::new(StringValue::new(key, None, rewritable, value)),
+        );
     }
 
-    fn add_string_with_func(&mut self, key: &str, check_func: CheckFunc, rewritable: bool, value: &mut String) {
+    fn add_string_with_func(
+        &mut self,
+        key: &str,
+        check_func: CheckFunc,
+        rewritable: bool,
+        value: &mut String,
+    ) {
         let key = key.to_string();
-        self.config_map.insert(key.clone(), Box::new(StringValue::new(key, Some(check_func), rewritable, value)));
+        self.config_map.insert(
+            key.clone(),
+            Box::new(StringValue::new(key, Some(check_func), rewritable, value)),
+        );
     }
 
-    fn add_string_array(&mut self, key: &str, rewritable: bool, values: &mut Vec<String>, delimiter: char) {
+    fn add_string_array(
+        &mut self,
+        key: &str,
+        rewritable: bool,
+        values: &mut Vec<String>,
+        delimiter: char,
+    ) {
         let key = key.to_string();
-        self.config_map.insert(key.clone(), Box::new(StringValueArray::new(key, rewritable, values, delimiter)));
+        self.config_map.insert(
+            key.clone(),
+            Box::new(StringValueArray::new(key, rewritable, values, delimiter)),
+        );
     }
 
-    fn add_number<T: Copy + PartialOrd + FromStr + Display + Debug + MulAssign + 'static>(&mut self, key: &str, rewritable: bool, value: &mut T)
-    where
+    fn add_number<T: Copy + PartialOrd + FromStr + Display + Debug + MulAssign + 'static>(
+        &mut self,
+        key: &str,
+        rewritable: bool,
+        value: &mut T,
+    ) where
         T::Err: Display + Debug,
     {
         let key = key.to_string();
@@ -634,7 +704,9 @@ impl Config {
         );
     }
 
-    fn add_number_with_limit<T: Copy + PartialOrd + FromStr + Display + MulAssign + Debug + 'static>(
+    fn add_number_with_limit<
+        T: Copy + PartialOrd + FromStr + Display + MulAssign + Debug + 'static,
+    >(
         &mut self,
         key: &str,
         rewritable: bool,
@@ -653,16 +725,19 @@ impl Config {
 
     fn add_memory_size(&mut self, key: &str, rewritable: bool, value: &mut usize) {
         let key = key.to_string();
-        self.config_map.insert(key.clone(), Box::new(MemorySize::new(key, rewritable, value)));
+        self.config_map.insert(
+            key.clone(),
+            Box::new(MemorySize::new(key, rewritable, value)),
+        );
     }
 }
 
-        pub fn is_valid_bool(value: &str) -> Result<(), String> {
-            match value.to_lowercase().as_str() {
-                "yes" | "no" | "true" | "false" => Ok(()),
-                _ => Err("Invalid boolean value. Must be yes/no or true/false".to_string()),
-            }
-        }
+pub fn is_valid_bool(value: &str) -> Result<(), String> {
+    match value.to_lowercase().as_str() {
+        "yes" | "no" | "true" | "false" => Ok(()),
+        _ => Err("Invalid boolean value. Must be yes/no or true/false".to_string()),
+    }
+}
 impl Config {
     pub fn get<T: FromStr>(&self, key: &str) -> Option<T>
     where

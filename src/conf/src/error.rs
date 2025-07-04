@@ -10,8 +10,12 @@ pub enum ParseConfigError {
     },
 
     #[snafu(display("parse config key {} fail", key))]
-    ParseConfItemErr { key: String },
-    GetConfItemFail{type_error: TypeError}
+    ParseConfItemErr {
+        key: String,
+    },
+    GetConfItemFail {
+        type_error: TypeError,
+    },
 }
 
 // 自定义错误类型

@@ -43,7 +43,8 @@ impl ConfigParser {
         T: FromStr,
         T::Err: std::fmt::Display,
     {
-        self.data.get(key)
+        self.data
+            .get(key)
             .and_then(|v| v.first())
             .and_then(|v| v.parse().ok())
             .unwrap_or(default)
