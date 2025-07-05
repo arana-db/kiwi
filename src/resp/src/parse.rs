@@ -238,9 +238,10 @@ impl Drop for RespParse {
     }
 }
 
+#[cfg(test)]
 mod tests {
-    use crate::{Parse, RespData, RespParse, RespParseResult, RespVersion};
-    use bytes::Bytes;
+    use super::{Parse, RespData, RespParse, RespParseResult, RespVersion};
+    use super::Bytes;
 
     #[test]
     fn test_parse_simple_string_ok() {
