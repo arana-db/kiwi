@@ -1,12 +1,12 @@
 use bytes::{Buf, Bytes, BytesMut};
 use nom::Parser;
 use nom::{
-    IResult,
     bytes::streaming::{take, take_while1},
     character::streaming::{char, digit1, line_ending, not_line_ending, space1},
     combinator::{map, map_res, opt, recognize},
     multi::separated_list0,
     sequence::terminated,
+    IResult,
 };
 use std::collections::VecDeque;
 use std::str;
