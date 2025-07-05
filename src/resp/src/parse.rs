@@ -238,7 +238,6 @@ impl Drop for RespParse {
     }
 }
 
-
 mod tests {
     use crate::{Parse, RespData, RespParse, RespParseResult, RespVersion};
     use bytes::Bytes;
