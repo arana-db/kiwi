@@ -240,8 +240,8 @@ impl Drop for RespParse {
 
 #[cfg(test)]
 mod tests {
-    use super::{Parse, RespData, RespParse, RespParseResult, RespVersion};
     use super::Bytes;
+    use super::{Parse, RespData, RespParse, RespParseResult, RespVersion};
 
     #[test]
     fn test_parse_simple_string_ok() {
