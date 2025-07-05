@@ -1,0 +1,15 @@
+[package]
+name = "resp"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+proc-macro = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes.workspace = true
+thiserror.workspace = true
+nom.workspace = true
