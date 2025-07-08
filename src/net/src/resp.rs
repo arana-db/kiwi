@@ -93,8 +93,7 @@ impl Protocol for RespProtocol {
         let count = std::str::from_utf8(count_str)
             .unwrap()
             .parse::<usize>()
-            .map_err(|_| ParseError::InvalidFormat)
-            .expect("TODO: panic message");
+            .map_err(|_| ParseError::InvalidFormat)?;
         pos = count_end + 2; // move cursor to the next element
 
         // phase 3: parse each bulk string element ($<len>\r\n<data>\r\n)
