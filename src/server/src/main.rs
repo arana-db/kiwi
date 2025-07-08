@@ -25,7 +25,7 @@ async fn main() -> std::io::Result<()> {
 
     info!("tcp listener listen on {addr}");
     if let Some(server) = ServerFactory::create_server(protocol, Option::from(addr)) {
-        server.start().await.expect("TODO: panic message");
+        server.start().await.expect("Failed to start the server. Please check the server configuration and ensure the address is available.");
     } else {
         return Err(std::io::Error::other("server unavailable"));
     }
