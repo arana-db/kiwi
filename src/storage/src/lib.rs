@@ -19,6 +19,7 @@ mod base_key_format;
 mod base_value_format;
 mod coding;
 mod error;
+mod list_meta_value_format;
 mod lru_cache;
 mod options;
 mod slot_indexer;
