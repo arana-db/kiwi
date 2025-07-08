@@ -32,6 +32,7 @@ use crate::{
 pub struct BaseMetaFilter;
 
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 pub struct BaseMetaFilterFactory;
 
 /// TODO: remove allow dead code

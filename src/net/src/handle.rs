@@ -50,18 +50,18 @@ pub async fn process_connection(socket: &mut Client) -> std::io::Result<()> {
                                 let response = handle_command(&args).await;
                                 match socket.write(&mut response.serialize()).await {
                                     Ok(_) => (),
-                                    Err(e) => error!("Write error: {}", e),
+                                    Err(e) => error!("Write error: {e}"),
                                 }
                             }
-                            Ok(false) => (),  // 数据不完整，继续循环读取
-                            Err(e) => {  // 协议错误
-                                error!("Protocol error: {:?}", e);
+                            Ok(false) => (),  // Data is incomplete, continue to read in a loop
+                            Err(e) => {  // Protocol error
+                                error!("Protocol error: {e:?}");
                                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()));
                             }
                         }
                     }
                     Err(e) => {
-                        error!("Protocol error: {:?}", e);
+                        error!("Protocol error: {e:?}");
                         return Err(e);
                     }
                 }
@@ -71,7 +71,7 @@ pub async fn process_connection(socket: &mut Client) -> std::io::Result<()> {
 }
 
 async fn handle_command(args: &Vec<Vec<u8>>) -> RespProtocol {
-    info!("handle_command: {:?}", args);
+    info!("handle_command: {args:?}");
     let mut resp = RespProtocol::new();
     resp.push_bulk_string("PONG".to_string());
     resp
