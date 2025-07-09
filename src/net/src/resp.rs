@@ -12,25 +12,12 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use std::fmt;
-
-#[derive(Debug)]
-pub enum ParseError {
-    InvalidFormat,
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ParseError::InvalidFormat => write!(f, "Invalid RESP format"),
-        }
-    }
-}
+use crate::error::Error;
 
 pub trait Protocol: Send + Sync {
     fn push_bulk_string(&mut self, p0: String);
     fn serialize(&self) -> Vec<u8>;
-    fn parse(&mut self, v: &[u8]) -> Result<bool, ParseError>;
+    fn parse(&mut self, v: &[u8]) -> Result<bool, Error>;
 }
 
 pub struct RespProtocol {
@@ -68,7 +55,7 @@ impl Protocol for RespProtocol {
         resp.push(b'\n');
         resp
     }
-    fn parse(&mut self, v: &[u8]) -> Result<bool, ParseError> {
+    fn parse(&mut self, v: &[u8]) -> Result<bool, Error> {
         // extend from slice, avoid copying data
         self.buffer.extend_from_slice(v);
         let mut pos = 0;
@@ -76,7 +63,9 @@ impl Protocol for RespProtocol {
 
         // phase 1: check if the buffer is start with '*'
         if buf.get(pos) != Some(&b'*') {
-            return Err(ParseError::InvalidFormat);
+            return Err(Error::InvalidFormat {
+                message: format!("Invalid format: {}", std::str::from_utf8(buf).unwrap()),
+            });
         }
         pos += 1;
 
@@ -86,14 +75,18 @@ impl Protocol for RespProtocol {
             None => return Ok(false), // data not complete, continue to read
         };
         if count_end + 1 >= buf.len() || buf[count_end + 1] != b'\n' {
-            return Err(ParseError::InvalidFormat); // invalid format, return error
+            return Err(Error::InvalidFormat {
+                message: format!("Invalid format: {}", std::str::from_utf8(buf).unwrap()),
+            }); // invalid format, return error
         }
         let count_str = &buf[pos..count_end];
 
         let count = std::str::from_utf8(count_str)
             .unwrap()
             .parse::<usize>()
-            .map_err(|_| ParseError::InvalidFormat)?;
+            .map_err(|_| Error::InvalidFormat {
+                message: format!("Invalid format: {}", std::str::from_utf8(buf).unwrap()),
+            })?;
         pos = count_end + 2; // move cursor to the next element
 
         // phase 3: parse each bulk string element ($<len>\r\n<data>\r\n)
@@ -124,7 +117,9 @@ impl Protocol for RespProtocol {
                 return Ok(false); // data not complete, continue to read
             }
             if buf[pos + len] != b'\r' || buf[pos + len + 1] != b'\n' {
-                return Err(ParseError::InvalidFormat); // invalid format, return error
+                return Err(Error::InvalidFormat {
+                    message: format!("Invalid format: {}", std::str::from_utf8(buf).unwrap()),
+                }); // invalid format, return error
             }
 
             // push the data to the parsed_args

@@ -12,14 +12,15 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use crate::tcp::TcpServer;
-use async_trait::async_trait;
-use std::error::Error;
-
+mod error;
 pub mod handle;
 mod resp;
 mod tcp;
 mod unix;
+
+use crate::tcp::TcpServer;
+use async_trait::async_trait;
+use std::error::Error;
 
 #[async_trait]
 pub trait ServerTrait: Send + Sync + 'static {
