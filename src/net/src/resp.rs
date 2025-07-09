@@ -134,7 +134,7 @@ impl Protocol for RespProtocol {
 
         // phase 4: move the parsed data to the args, and clear the buffer
         self.args = parsed_args;
-        self.buffer = self.buffer.drain(pos..).collect();
+        self.buffer = self.buffer.split_off(pos);
         Ok(true)
     }
 }
