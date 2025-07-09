@@ -48,7 +48,7 @@ pub async fn process_connection(socket: &mut Client) -> std::io::Result<()> {
                             Ok(true) => {
                                 let args = prot.take_args();
                                 let response = handle_command(&args).await;
-                                match socket.write(&mut response.serialize()).await {
+                                match socket.write(&response.serialize()).await {
                                     Ok(_) => (),
                                     Err(e) => error!("Write error: {e}"),
                                 }

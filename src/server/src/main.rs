@@ -23,7 +23,7 @@ async fn main() -> std::io::Result<()> {
     let addr = String::from("127.0.0.1:9221");
     let protocol = "tcp";
 
-    info!("tcp listener listen on {addr}", addr = addr);
+    info!("tcp listener listen on {addr}");
     if let Some(server) = ServerFactory::create_server(protocol, Option::from(addr)) {
         server.start().await.expect("Failed to start the server. Please check the server configuration and ensure the address is available.");
     } else {

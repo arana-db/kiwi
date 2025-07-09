@@ -31,7 +31,6 @@ pub struct BaseMetaFilter;
 
 #[allow(dead_code)]
 #[derive(Debug, Default)]
-#[allow(dead_code)]
 pub struct BaseMetaFilterFactory;
 
 /// TODO: remove allow dead code

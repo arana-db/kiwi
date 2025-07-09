@@ -29,7 +29,7 @@ pub trait ServerTrait: Send + Sync + 'static {
 #[async_trait]
 pub trait StreamTrait: Send + Sync {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error>;
-    async fn write(&mut self, data: &mut [u8]) -> Result<usize, std::io::Error>;
+    async fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error>;
 }
 
 pub struct Client {
@@ -45,7 +45,7 @@ impl Client {
         self.stream.read(buf).await
     }
 
-    pub async fn write(&mut self, data: &mut [u8]) -> Result<usize, std::io::Error> {
+    pub async fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
         self.stream.write(data).await
     }
 }

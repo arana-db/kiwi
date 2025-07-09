@@ -35,7 +35,7 @@ impl StreamTrait for UnixStreamWrapper {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
         self.stream.read(buf).await
     }
-    async fn write(&mut self, data: &mut [u8]) -> Result<usize, std::io::Error> {
+    async fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
         self.stream.write(data).await
     }
 }
