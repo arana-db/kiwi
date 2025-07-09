@@ -11,6 +11,7 @@ struct Owner {
 #[derive(Debug, Deserialize)]
 struct Database {
     server: String,
+    #[validate(range(min = 1024, max = 65535))]
     port: u16,
     file: String,
     name: String,

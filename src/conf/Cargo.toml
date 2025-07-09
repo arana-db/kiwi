@@ -11,3 +11,4 @@ log.workspace = true
 tokio.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_ini = "0.2.0"
+validator = { version = "0.16", features = ["derive"] }
