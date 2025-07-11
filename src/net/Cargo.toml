@@ -8,4 +8,4 @@ workspace = true
 
 [dependencies]
 log.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "macros", "rt", "rt-multi-thread"] }
