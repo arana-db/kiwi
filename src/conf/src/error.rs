@@ -31,6 +31,6 @@ pub enum MemoryParseError {
     #[snafu(display("wrong format: '{}'. correct example: 256MB, 1.5GB, 512K", raw))]
     InvalidFormat { raw: String },
 
-    #[snafu(display("out of range: '{}'. max : 18.44EB (2^64 bytes)", raw))]
+    #[snafu(display("out of range: '{}'. max : ~16EB (2^64 bytes)", raw))]
     OutOfRange { raw: String },
 }
