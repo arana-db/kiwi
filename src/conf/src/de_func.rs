@@ -29,7 +29,7 @@ pub fn parse_memory(input: &str) -> Result<u64, MemoryParseError> {
     let cleaned_input = input.trim().replace(',', "").to_uppercase();
 
     let num_end = cleaned_input
-        .rfind(|c: char| c.is_ascii_digit() || c == '.')
+        .rfind(|c: char| c.is_ascii_digit())
         .map(|pos| pos + 1)
         .unwrap_or(0);
 
