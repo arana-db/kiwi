@@ -3,7 +3,6 @@ use serde::Deserialize;
 use serde_ini;
 use snafu::ResultExt;
 use validator::Validate;
-
 use crate::error::Error;
 
 //config struct define
@@ -41,9 +40,12 @@ impl Default for Config {
 impl Config {
     //load config from file
     pub fn load(path: &str) -> Result<Self, Error> {
-        let content =
-            std::fs::read_to_string(path).context(crate::error::ConfigFileSnafu { path: path })?;
-        let config = serde_ini::from_str(&content).context(crate::error::InvalidConfigSnafu {})?;
+        let content = std::fs::read_to_string(path).context(crate::error::ConfigFileSnafu { path: path })?;
+
+        let config: Config = serde_ini::from_str(&content).context(crate::error::InvalidConfigSnafu {})?;
+
+        config.validate().map_err(|e| Error::ValidConfigFail { source: e })?;
+
         Ok(config)
     }
 }

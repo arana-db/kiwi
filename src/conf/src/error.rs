@@ -13,6 +13,9 @@ pub enum Error {
     #[snafu(display("Invalid configuration: {}", source))]
     InvalidConfig { source: serdeErr },
 
+    #[snafu(display("validate fail: {}",source))]
+    ValidConfigFail{ source: validator::ValidationErrors},
+
     #[snafu(display("Invalid memory: {}", source))]
     MemoryParse { source: MemoryParseError },
 }
