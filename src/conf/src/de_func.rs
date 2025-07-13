@@ -59,6 +59,10 @@ pub fn parse_memory(input: &str) -> Result<u64, MemoryParseError> {
         }
     };
 
-    let bytes = num_value * multiplier;
-    Ok(bytes)
+    match num_value.checked_mul(multiplier) {
+        Some(bytes) => Ok(bytes),
+        None => Err(MemoryParseError::OutOfRange {
+            raw: input.to_string(),
+        }),
+    }
 }
