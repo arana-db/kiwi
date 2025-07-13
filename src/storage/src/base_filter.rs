@@ -13,6 +13,10 @@
 // limitations under the License.
 //  of patent rights can be found in the PATENTS file in the same directory.
 
+use crate::{
+    base_key_format::ParsedBaseKey, base_value_format::DataType,
+    strings_value_format::ParsedStringsValue,
+};
 use bytes::BytesMut;
 use chrono::Utc;
 use log::debug;
@@ -22,15 +26,10 @@ use rocksdb::{
 };
 use std::sync::Arc;
 
-use crate::{
-    base_key_format::ParsedBaseKey,
-    base_value_format::{DataType, ParsedInternalValue},
-    strings_value_format::ParsedStringsValue,
-};
-
 #[derive(Debug, Default)]
 pub struct BaseMetaFilter;
 
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct BaseMetaFilterFactory;
 
@@ -142,7 +141,7 @@ impl BaseDataFilter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::base_value_format::InternalValue;
+    use crate::strings_value_format::StringValue;
 
     #[test]
     fn test_strings_base_filter() {
@@ -150,22 +149,14 @@ mod tests {
         let ttl = 1_000_000;
 
         let string_val: &'static [u8] = b"filter_val";
-        let mut string_val = crate::strings_value_format::StringValue::new(string_val);
-        InternalValue::set_relative_etime(&mut string_val, ttl);
+        let mut string_val = StringValue::new(string_val);
+        assert!(matches!(string_val.set_relative_etime(ttl), Ok(())));
 
-        let decision = filter.filter(
-            0,
-            &string_val.encode(),
-            &crate::base_value_format::InternalValue::encode(&string_val),
-        );
+        let decision = filter.filter(0, string_val.encode().as_ref(), &string_val.encode());
         assert!(matches!(decision, CompactionDecision::Keep));
 
         std::thread::sleep(std::time::Duration::from_secs(2));
-        let decision = filter.filter(
-            0,
-            &string_val.encode(),
-            &crate::base_value_format::InternalValue::encode(&string_val),
-        );
+        let decision = filter.filter(0, string_val.encode().as_ref(), &string_val.encode());
         assert!(matches!(decision, CompactionDecision::Remove));
     }
 }
