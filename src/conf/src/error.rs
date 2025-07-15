@@ -13,8 +13,8 @@ pub enum Error {
     #[snafu(display("Invalid configuration: {}", source))]
     InvalidConfig { source: serdeErr },
 
-    #[snafu(display("validate fail: {}",source))]
-    ValidConfigFail{ source: validator::ValidationErrors},
+    #[snafu(display("validate fail: {}", source))]
+    ValidConfigFail { source: validator::ValidationErrors },
 
     #[snafu(display("Invalid memory: {}", source))]
     MemoryParse { source: MemoryParseError },
@@ -25,7 +25,10 @@ pub enum MemoryParseError {
     #[snafu(display("invalid data: {}", source))]
     InvalidNumber { source: ParseIntError },
 
-    #[snafu(display("invalid memory uint: '{}'. support: B, K, M, G, T (ignore letter case)", unit))]
+    #[snafu(display(
+        "invalid memory uint: '{}'. support: B, K, M, G, T (ignore letter case)",
+        unit
+    ))]
     UnknownUnit { unit: String },
 
     #[snafu(display("wrong format: '{}'. correct example: 256MB, 1.5GB, 512K", raw))]
