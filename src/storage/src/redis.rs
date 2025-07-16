@@ -45,7 +45,6 @@ impl ColumnFamilyIndex {
     }
 }
 
-/// 简化的键统计结构
 #[derive(Debug, Clone)]
 pub struct KeyStatistics {
     pub modify_count: u64,
@@ -65,7 +64,7 @@ impl Default for KeyStatistics {
 pub struct Redis {
     pub index: i32,
     pub need_close: std::sync::atomic::AtomicBool,
-    pub handles: Vec<ColumnFamily>,
+    pub handles: Vec<String>, // Store column family names instead of handles
     pub write_options: WriteOptions,
     pub read_options: ReadOptions,
     pub compact_options: CompactOptions,
@@ -131,8 +130,8 @@ impl Redis {
         const CF_CONFIGS: &[(&str, bool, Option<usize>)] = &[
             ("default", true, None),                   // meta & string: bloom filter
             ("hash_data_cf", true, None),              // hash: bloom filter
-            ("list_data_cf", true, None),              // list: bloom filter
             ("set_data_cf", false, None),              // set: no bloom filter
+            ("list_data_cf", true, None),              // list: bloom filter
             ("zset_data_cf", false, Some(16 * 1024)),  // zset data: 16KB block size
             ("zset_score_cf", false, Some(16 * 1024)), // zset score: 16KB block size
         ];
@@ -144,6 +143,8 @@ impl Redis {
             })
             .collect();
 
+        assert_eq!(column_families.len(), 6);
+
         self.db = Some(
             DB::open_cf_descriptors(&self.storage.options, db_path, column_families)
                 .context(RocksSnafu)?,
@@ -152,12 +153,9 @@ impl Redis {
         if let Some(db) = &self.db {
             let mut handles = Vec::new();
             for (name, _, _) in CF_CONFIGS {
-                if let Some(cf) = db.cf_handle(name) {
-                    // Use unsafe to obtain ownership of ColumnFamily
-                    // This is safe because the lifetime of ColumnFamily is consistent with that of DB
-                    unsafe {
-                        handles.push(std::mem::transmute_copy(&cf));
-                    }
+                if db.cf_handle(name).is_some() {
+                    // Store the column family name
+                    handles.push(name.to_string());
                 }
             }
             self.handles = handles;
@@ -216,10 +214,12 @@ impl Redis {
             db.compact_range(begin, end);
 
             // Compact other column-families
-            for (i, handle) in self.handles.iter().enumerate() {
+            for (i, cf_name) in self.handles.iter().enumerate() {
                 if i > 0 {
                     // Skip already compacted default CF
-                    db.compact_range_cf(handle, begin, end);
+                    if let Some(cf) = db.cf_handle(cf_name) {
+                        db.compact_range_cf(cf, begin, end);
+                    }
                 }
             }
         }
@@ -283,8 +283,13 @@ impl Redis {
     // }
 
     /// Get column-family handle
-    fn get_cf_handle(&self, cf_index: ColumnFamilyIndex) -> Option<&ColumnFamily> {
-        self.handles.get(cf_index as usize)
+    pub fn get_cf_handle(&self, cf_index: ColumnFamilyIndex) -> Option<&ColumnFamily> {
+        if let Some(db) = &self.db {
+            if let Some(cf_name) = self.handles.get(cf_index as usize) {
+                return db.cf_handle(cf_name);
+            }
+        }
+        None
     }
 
     /// Acquire buffer from object pool

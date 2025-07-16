@@ -61,6 +61,7 @@ impl Default for StorageOptions {
     fn default() -> Self {
         let mut options = Options::default();
         options.create_if_missing(true);
+        options.create_missing_column_families(true);
         options.set_max_open_files(10000);
         options.set_write_buffer_size(64 << 20); // 64MB
         options.set_max_write_buffer_number(3);

@@ -6,6 +6,10 @@ edition.workspace = true
 [lints]
 workspace = true 
 
+[[test]]
+name = "redis_basic_test"
+path = "tests/redis_basic_test.rs"
+
 [dependencies]
 rocksdb.workspace = true 
 log.workspace = true
