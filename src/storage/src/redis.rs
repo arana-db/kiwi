@@ -15,6 +15,8 @@
 use crate::error::{Result, RocksSnafu, UnknownSnafu};
 use crate::object_pool::{BufferPool, WriteBatchPool};
 use crate::options::StorageOptions;
+use crate::storage::BgTaskHandler;
+use kstd::lock_mgr::LockMgr;
 use rocksdb::{
     BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, CompactOptions, ReadOptions,
     WriteOptions, DB,
@@ -64,12 +66,18 @@ impl Default for KeyStatistics {
 pub struct Redis {
     pub index: i32,
     pub need_close: std::sync::atomic::AtomicBool,
-    pub handles: Vec<String>, // Store column family names instead of handles
+    pub lock_mgr: Arc<LockMgr>,
+
+    // For RocksDB
+    pub handles: Vec<String>,
     pub write_options: WriteOptions,
     pub read_options: ReadOptions,
     pub compact_options: CompactOptions,
-    pub storage: Arc<StorageOptions>,
     pub db: Option<DB>,
+
+    // For background task
+    pub storage: Arc<StorageOptions>,
+    pub bg_task_handler: Arc<BgTaskHandler>,
 
     // For statistics
     pub statistics_store: crate::lru_cache::LRUCache<String, KeyStatistics>,
@@ -89,7 +97,12 @@ pub struct Redis {
 }
 
 impl Redis {
-    pub fn new(storage: Arc<StorageOptions>, index: i32) -> Self {
+    pub fn new(
+        storage: Arc<StorageOptions>,
+        index: i32,
+        bg_task_handler: Arc<BgTaskHandler>,
+        lock_mgr: Arc<LockMgr>,
+    ) -> Self {
         let mut compact_options = CompactOptions::default();
         compact_options.set_change_level(true);
         compact_options.set_exclusive_manual_compaction(false);
@@ -101,7 +114,8 @@ impl Redis {
 
             storage,
             db: None,
-
+            bg_task_handler,
+            lock_mgr,
             handles: Vec::new(),
             write_options: WriteOptions::default(),
             read_options: ReadOptions::default(),
@@ -142,8 +156,6 @@ impl Redis {
                 Self::create_cf_options(&self.storage, name, *use_bloom, *block_size)
             })
             .collect();
-
-        assert_eq!(column_families.len(), 6);
 
         self.db = Some(
             DB::open_cf_descriptors(&self.storage.options, db_path, column_families)
@@ -239,48 +251,6 @@ impl Redis {
         }
         .fail()
     }
-
-    // /// 零拷贝字符串操作 - 返回字节切片
-    // pub fn get_bytes(&self, key: &str) -> Result<Option<&[u8]>> {
-    //     let cf = self.get_cf_handle(ColumnFamilyIndex::MetaCF)?;
-
-    //     let value = self
-    //         .db
-    //         .as_ref()
-    //         .ok_or(Error::InvalidFormat {
-    //             message: "Database not open".to_string(),
-    //         })?
-    //         .get_cf_opt(cf, key.as_bytes(), &self.read_options)?;
-
-    //     match value {
-    //         Some(data) => {
-    //             let (value_bytes, ttl, _dtype) = ValueUtils::parse_value_bytes(&data)?;
-
-    //             // 检查是否过期
-    //             if ValueUtils::is_expired(ttl) {
-    //                 return Ok(None);
-    //             }
-
-    //             Ok(Some(value_bytes))
-    //         }
-    //         None => Ok(None),
-    //     }
-    // }
-
-    // /// 零拷贝字符串设置
-    // pub fn set_bytes(&self, key: &str, value: &[u8], ttl: Option<u64>) -> Result<()> {
-    //     let cf = self.get_cf_handle(ColumnFamilyIndex::MetaCF)?;
-    //     let encoded_value = ValueUtils::format_value_bytes(value, ttl, DataType::String)?;
-
-    //     self.db
-    //         .as_ref()
-    //         .ok_or(Error::InvalidFormat {
-    //             message: "Database not open".to_string(),
-    //         })?
-    //         .put_cf_opt(cf, key.as_bytes(), &encoded_value, &self.write_options)?;
-
-    //     Ok(())
-    // }
 
     /// Get column-family handle
     pub fn get_cf_handle(&self, cf_index: ColumnFamilyIndex) -> Option<&ColumnFamily> {

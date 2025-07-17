@@ -25,12 +25,15 @@ mod object_pool;
 pub mod options;
 mod redis;
 mod slot_indexer;
+pub mod storage;
 mod storage_define;
 mod storage_murmur3;
 mod strings_value_format;
-mod value_utils;
-// pub mod storage;
+
+// commands
+mod redis_strings;
 
 pub use error::Result;
 pub use options::StorageOptions;
 pub use redis::{ColumnFamilyIndex, KeyStatistics, Redis};
+pub use storage::{BgTask, BgTaskHandler};

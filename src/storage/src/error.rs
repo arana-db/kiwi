@@ -17,6 +17,8 @@
 use snafu::{Location, Snafu};
 use std::io;
 
+use crate::storage::BgTask;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[allow(dead_code)]
@@ -35,6 +37,14 @@ pub enum Error {
     Rocks {
         #[snafu(source)]
         error: rocksdb::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Mpsc error"))]
+    Mpsc {
+        #[snafu(source)]
+        error: tokio::sync::mpsc::error::SendError<BgTask>,
         #[snafu(implicit)]
         location: Location,
     },

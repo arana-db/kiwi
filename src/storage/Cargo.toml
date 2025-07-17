@@ -27,5 +27,6 @@ chrono.workspace = true
 kstd.workspace = true
 snafu.workspace = true
 common-macro.workspace = true
+tokio.workspace = true
 
 

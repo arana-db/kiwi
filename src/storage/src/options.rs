@@ -48,7 +48,7 @@ pub struct StorageOptions {
     /// Number of database instances
     pub db_instance_num: usize,
     /// Database ID
-    pub db_id: i32,
+    pub db_id: usize,
     /// Raft timeout in seconds
     pub raft_timeout_s: u32,
     /// Maximum gap between log indices
@@ -128,7 +128,7 @@ impl StorageOptions {
     }
 
     /// Set database ID
-    pub fn set_db_id(&mut self, id: i32) {
+    pub fn set_db_id(&mut self, id: usize) {
         self.db_id = id;
     }
 

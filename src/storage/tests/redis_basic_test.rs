@@ -1,12 +1,25 @@
 #[cfg(test)]
 mod redis_basic_test {
+    use kstd::lock_mgr::LockMgr;
     use std::sync::Arc;
-    use storage::{ColumnFamilyIndex, Redis, StorageOptions};
+    use storage::{BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions};
+
+    fn unique_test_db_path() -> std::path::PathBuf {
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        std::env::current_dir()
+            .unwrap()
+            .join(format!("kiwi-test-db-{}", millis))
+    }
 
     #[test]
     fn test_redis_creation() {
         let storage_options = Arc::new(StorageOptions::default());
-        let redis = Redis::new(storage_options, 1);
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
 
         assert_eq!(redis.get_index(), 1);
         assert_eq!(redis.is_starting, true);
@@ -16,14 +29,16 @@ mod redis_basic_test {
 
     #[test]
     fn test_redis_open() {
-        let test_db_path = std::env::current_dir().unwrap().join("kiwi-test-db");
+        let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
             std::fs::remove_dir_all(&test_db_path).unwrap();
         }
 
         let storage_options = Arc::new(StorageOptions::default());
-        let mut redis = Redis::new(storage_options, 1);
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
 
         let result = redis.open(test_db_path.to_str().unwrap());
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
@@ -95,14 +110,16 @@ mod redis_basic_test {
 
     #[test]
     fn test_redis_properties() {
-        let test_db_path = std::env::current_dir().unwrap().join("kiwi-test-db");
+        let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
             std::fs::remove_dir_all(&test_db_path).unwrap();
         }
 
         let storage_options = Arc::new(StorageOptions::default());
-        let mut redis = Redis::new(storage_options, 1);
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
 
         let result = redis.open(test_db_path.to_str().unwrap());
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());

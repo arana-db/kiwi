@@ -12,11 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::error::{Error, Result};
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-/// 通用对象池 - 减少内存分配开销
 pub struct ObjectPool<T> {
     objects: Arc<Mutex<Vec<T>>>,
     create_fn: Box<dyn Fn() -> T + Send + Sync>,
@@ -24,7 +22,6 @@ pub struct ObjectPool<T> {
 }
 
 impl<T> ObjectPool<T> {
-    /// 创建新的对象池
     pub fn new<F>(create_fn: F, max_pool_size: usize) -> Self
     where
         F: Fn() -> T + Send + Sync + 'static,
@@ -36,28 +33,23 @@ impl<T> ObjectPool<T> {
         }
     }
 
-    /// 获取对象
     pub fn acquire(&self) -> T {
         let mut objects = self.objects.lock();
         objects.pop().unwrap_or_else(|| (self.create_fn)())
     }
 
-    /// 释放对象回池
     pub fn release(&self, obj: T) {
         let mut objects = self.objects.lock();
         if objects.len() < self.max_pool_size {
             objects.push(obj);
         }
-        // 如果池已满，直接丢弃对象
     }
 
-    /// 获取池大小
     pub fn pool_size(&self) -> usize {
         self.objects.lock().len()
     }
 }
 
-/// 字节缓冲区池
 pub struct BufferPool {
     small_buffers: ObjectPool<Vec<u8>>,
     medium_buffers: ObjectPool<Vec<u8>>,
@@ -73,7 +65,6 @@ impl BufferPool {
         }
     }
 
-    /// 获取适合大小的缓冲区
     pub fn acquire_buffer(&self, size: usize) -> Vec<u8> {
         match size {
             0..=1024 => self.small_buffers.acquire(),
@@ -82,7 +73,6 @@ impl BufferPool {
         }
     }
 
-    /// 释放缓冲区
     pub fn release_buffer(&self, mut buffer: Vec<u8>) {
         buffer.clear();
         let capacity = buffer.capacity();
@@ -94,7 +84,6 @@ impl BufferPool {
     }
 }
 
-/// WriteBatch对象池
 pub struct WriteBatchPool {
     pool: ObjectPool<rocksdb::WriteBatch>,
 }
@@ -124,19 +113,15 @@ mod tests {
     fn test_buffer_pool() {
         let pool = BufferPool::new();
 
-        // 获取小缓冲区
         let small_buffer = pool.acquire_buffer(512);
         assert_eq!(small_buffer.capacity(), 1024);
 
-        // 获取中等缓冲区
         let medium_buffer = pool.acquire_buffer(4096);
         assert_eq!(medium_buffer.capacity(), 8192);
 
-        // 获取大缓冲区
         let large_buffer = pool.acquire_buffer(32768);
         assert_eq!(large_buffer.capacity(), 65536);
 
-        // 释放缓冲区
         pool.release_buffer(small_buffer);
         pool.release_buffer(medium_buffer);
         pool.release_buffer(large_buffer);

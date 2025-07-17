@@ -29,7 +29,7 @@ use snafu::ensure;
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
-struct BaseKey {
+pub struct BaseKey {
     reserve1: [u8; 8],
     key: Bytes,
     reserve2: [u8; 16],
@@ -46,7 +46,7 @@ impl BaseKey {
         }
     }
 
-    fn encode(&self) -> Result<BytesMut> {
+    pub fn encode(&self) -> Result<BytesMut> {
         let estimated_cap = PREFIX_RESERVE_LENGTH
             + self.key.len() * 2
             + ENCODED_KEY_DELIM_SIZE
