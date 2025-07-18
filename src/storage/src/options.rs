@@ -16,19 +16,6 @@
 
 use rocksdb::Options;
 
-/// Column family types
-/// TODO: remove allow dead code
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ColumnFamilyType {
-    /// For metadata storage
-    Meta,
-    /// For actual data storage
-    Data,
-    /// For both metadata and data
-    MetaAndData,
-}
-
 /// TODO: remove allow dead code
 #[allow(dead_code)]
 /// Storage engine options
