@@ -20,60 +20,10 @@
 #![cfg(unix)]
 #![cfg_attr(not(unix), allow(unused_imports, dead_code))]
 
-use log::error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-#[cfg(unix)]
-use tokio::net::{UnixListener, UnixStream};
-
-/// Start a Unix-domain socket server at the supplied `path`.
-///
-/// This is a very small echo implementation, mirroring the behaviour of
-/// the TCP handler in `handle.rs`. Production code will most likely share
-/// common request-processing logic between the TCP and Unix handlers.
-#[allow(dead_code)]
-#[cfg(unix)]
-pub async fn serve(path: &str) -> std::io::Result<()> {
-    // Remove any existing socket at the path to avoid bind errors.
-    let _ = std::fs::remove_file(path);
-
-    let listener = UnixListener::bind(path)?;
-
-    loop {
-        let (socket, _addr) = listener.accept().await?;
-        tokio::spawn(async move {
-            if let Err(e) = process_connection(socket).await {
-                error!("unix socket error: {e}");
-            }
-        });
-    }
-}
-
-#[cfg(unix)]
-async fn process_connection(mut socket: UnixStream) -> std::io::Result<()> {
-    let mut buffer = [0u8; 1024];
-
-    loop {
-        let n = match socket.read(&mut buffer).await {
-            Ok(0) => return Ok(()),
-            Ok(n) => n,
-            Err(e) => {
-                error!("socket read error: {e}");
-                return Err(e);
-            }
-        };
-
-        if let Err(e) = socket.write_all(&buffer[..n]).await {
-            error!("socket write error: {e}");
-            return Err(e);
-        }
-    }
-} 
-
-
-use crate::handle::process_connection;
 use crate::{Client, ServerTrait, StreamTrait};
+use crate::handle;
 use async_trait::async_trait;
-use log::info;
+use log::{error, info};
 use std::error::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
@@ -123,7 +73,11 @@ impl ServerTrait for UnixServer {
 
             let mut client = Client::new(Box::new(s));
 
-            tokio::spawn(async move { process_connection(&mut client).await.unwrap() });
+            tokio::spawn(async move { 
+                if let Err(e) = handle::process_connection(&mut client).await {
+                    error!("handle connection error: {e}");
+                }
+            });
         }
     }
 }

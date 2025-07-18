@@ -16,6 +16,7 @@ mod error;
 pub mod handle;
 mod resp;
 mod tcp;
+#[cfg(unix)]
 mod unix;
 
 use crate::tcp::TcpServer;
@@ -57,10 +58,11 @@ impl ServerFactory {
     pub fn create_server(protocol: &str, addr: Option<String>) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
             "tcp" => Some(Box::new(TcpServer::new(addr))),
+            #[cfg(unix)]
             "unix" => Some(Box::new(unix::UnixServer::new(addr))),
+            #[cfg(not(unix))]
+            "unix" => None,
             _ => None,
         }
     }
 }
-#[cfg(unix)]
-pub mod unix;
