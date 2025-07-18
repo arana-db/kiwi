@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/storage", "src/kstd", "src/common/macro", "src/net", "src/resp"]
+members = ["src/storage", "src/kstd", "src/common/macro", "src/net", "src/resp", "src/server"]
 resolver = "2"
 
 [workspace.package]
