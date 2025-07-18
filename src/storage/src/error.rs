@@ -14,15 +14,16 @@
 
 //! Error types for the storage engine
 
+use crate::storage::BgTask;
+use common_macro::stack_trace_debug;
 use snafu::{Location, Snafu};
 use std::io;
-
-use crate::storage::BgTask;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[allow(dead_code)]
-#[derive(Debug, Snafu)]
+#[derive(Snafu)]
+#[stack_trace_debug]
 #[snafu(visibility(pub))]
 pub enum Error {
     #[snafu(display("IO error"))]

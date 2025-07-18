@@ -57,7 +57,7 @@ impl BgTaskHandler {
 
 #[allow(dead_code)]
 pub struct Storage {
-    pub insts: Vec<Arc<Redis>>,
+    pub insts: Vec<Arc<Mutex<Redis>>>,
     pub slot_indexer: Arc<SlotIndexer>,
     pub lock_mgr: Arc<LockMgr>,
 
@@ -107,7 +107,7 @@ impl Storage {
                 Some(s) => s,
                 None => {
                     return crate::error::UnknownSnafu {
-                        message: format!("Invalid path: {:?}", sub_path),
+                        message: format!("Invalid path: {sub_path:?}"),
                     }
                     .fail();
                 }
@@ -120,13 +120,13 @@ impl Storage {
                 self.lock_mgr.clone(),
             );
             if let Err(e) = inst.open(sub_path_str) {
-                log::error!("open RocksDB{} failed: {:?}", i, e);
+                log::error!("open RocksDB{i} failed: {e:?}");
                 new_insts.clear();
                 self.is_opened.store(false, Ordering::SeqCst);
                 return Err(e);
             }
-            log::info!("open RocksDB{} success!", i);
-            new_insts.push(Arc::new(inst));
+            log::info!("open RocksDB{i} success!");
+            new_insts.push(Arc::new(Mutex::new(inst)));
         }
 
         self.slot_indexer = Arc::new(SlotIndexer::new(self.db_instance_num));
@@ -164,15 +164,10 @@ impl Storage {
     }
 
     async fn handle_compact_range(dtype: DataType, start: &str, end: &str) {
-        log::info!(
-            "Compacting range: {} - {} for type: {:?}",
-            start,
-            end,
-            dtype
-        );
+        log::info!("Compacting range: {start} - {end} for type: {dtype:?}");
     }
 
     async fn handle_clean_all(dtype: DataType) {
-        log::info!("Cleaning all for type: {:?}", dtype);
+        log::info!("Cleaning all for type: {dtype:?}");
     }
 }

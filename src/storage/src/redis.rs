@@ -18,11 +18,11 @@ use crate::options::StorageOptions;
 use crate::storage::BgTaskHandler;
 use kstd::lock_mgr::LockMgr;
 use rocksdb::{
-    BlockBasedOptions, ColumnFamily, ColumnFamilyDescriptor, CompactOptions, ReadOptions,
-    WriteOptions, DB,
+    BlockBasedOptions, ColumnFamilyDescriptor, CompactOptions, ReadOptions, WriteOptions, DB,
 };
 use snafu::ResultExt;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnFamilyIndex {
@@ -47,20 +47,14 @@ impl ColumnFamilyIndex {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct KeyStatistics {
     pub modify_count: u64,
     pub avg_duration: u64,
 }
 
-impl Default for KeyStatistics {
-    fn default() -> Self {
-        Self {
-            modify_count: 0,
-            avg_duration: 0,
-        }
-    }
-}
+unsafe impl Send for Redis {}
+unsafe impl Sync for Redis {}
 
 #[repr(C, align(64))]
 pub struct Redis {
@@ -80,7 +74,7 @@ pub struct Redis {
     pub bg_task_handler: Arc<BgTaskHandler>,
 
     // For statistics
-    pub statistics_store: crate::lru_cache::LRUCache<String, KeyStatistics>,
+    pub statistics_store: Mutex<crate::lru_cache::LRUCache<String, KeyStatistics>>,
     pub small_compaction_threshold: u64,
     pub small_compaction_duration_threshold: u64,
 
@@ -89,8 +83,8 @@ pub struct Redis {
     pub batch_pool: Arc<WriteBatchPool>,
 
     // For Scan
-    pub scan_cursors_store: crate::lru_cache::LRUCache<String, u64>,
-    pub spop_counts_store: crate::lru_cache::LRUCache<String, u64>,
+    pub scan_cursors_store: Mutex<crate::lru_cache::LRUCache<String, u64>>,
+    pub spop_counts_store: Mutex<crate::lru_cache::LRUCache<String, u64>>,
 
     // For raft
     pub is_starting: bool,
@@ -107,7 +101,7 @@ impl Redis {
         compact_options.set_change_level(true);
         compact_options.set_exclusive_manual_compaction(false);
 
-        let redis = Self {
+        Self {
             index,
             need_close: std::sync::atomic::AtomicBool::new(false),
             is_starting: true,
@@ -124,21 +118,21 @@ impl Redis {
             buffer_pool: Arc::new(BufferPool::new()),
             batch_pool: Arc::new(WriteBatchPool::new(50)),
 
-            statistics_store: crate::lru_cache::LRUCache::with_capacity(10000),
-            scan_cursors_store: crate::lru_cache::LRUCache::with_capacity(5000),
-            spop_counts_store: crate::lru_cache::LRUCache::with_capacity(1000),
+            statistics_store: Mutex::new(crate::lru_cache::LRUCache::with_capacity(10000)),
+            scan_cursors_store: Mutex::new(crate::lru_cache::LRUCache::with_capacity(5000)),
+            spop_counts_store: Mutex::new(crate::lru_cache::LRUCache::with_capacity(1000)),
 
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
-        };
-
-        redis
+        }
     }
 
     // TODO: add raft support
     pub fn open(&mut self, db_path: &str) -> Result<()> {
         self.small_compaction_threshold = self.storage.small_compaction_threshold as u64;
         self.statistics_store
+            .lock()
+            .unwrap()
             .set_capacity(self.storage.statistics_max_size);
 
         const CF_CONFIGS: &[(&str, bool, Option<usize>)] = &[
@@ -166,7 +160,7 @@ impl Redis {
             let mut handles = Vec::new();
             for (name, _, _) in CF_CONFIGS {
                 if db.cf_handle(name).is_some() {
-                    // Store the column family name
+                    // Store the column family name for later lookup
                     handles.push(name.to_string());
                 }
             }
@@ -230,7 +224,7 @@ impl Redis {
                 if i > 0 {
                     // Skip already compacted default CF
                     if let Some(cf) = db.cf_handle(cf_name) {
-                        db.compact_range_cf(cf, begin, end);
+                        db.compact_range_cf(&cf, begin, end);
                     }
                 }
             }
@@ -247,15 +241,19 @@ impl Redis {
         }
 
         UnknownSnafu {
-            message: format!("Property {} not found", property),
+            message: format!("Property {property} not found"),
         }
         .fail()
     }
 
     /// Get column-family handle
-    pub fn get_cf_handle(&self, cf_index: ColumnFamilyIndex) -> Option<&ColumnFamily> {
+    pub fn get_cf_handle(
+        &self,
+        cf_index: ColumnFamilyIndex,
+    ) -> Option<Arc<rocksdb::BoundColumnFamily>> {
         if let Some(db) = &self.db {
             if let Some(cf_name) = self.handles.get(cf_index as usize) {
+                // get column family by name
                 return db.cf_handle(cf_name);
             }
         }

@@ -76,3 +76,10 @@ pub fn delete_dir<P: AsRef<Path>>(dirname: P) -> io::Result<()> {
 
     Ok(())
 }
+
+pub fn unique_test_db_path() -> std::path::PathBuf {
+    tempfile::tempdir()
+        .expect("Failed to create temp dir")
+        .path()
+        .join("kiwi-test-db")
+}

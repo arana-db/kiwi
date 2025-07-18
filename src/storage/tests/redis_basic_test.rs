@@ -2,17 +2,7 @@
 mod redis_basic_test {
     use kstd::lock_mgr::LockMgr;
     use std::sync::Arc;
-    use storage::{BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions};
-
-    fn unique_test_db_path() -> std::path::PathBuf {
-        let millis = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        std::env::current_dir()
-            .unwrap()
-            .join(format!("kiwi-test-db-{}", millis))
-    }
+    use storage::{unique_test_db_path, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions};
 
     #[test]
     fn test_redis_creation() {

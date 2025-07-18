@@ -28,7 +28,9 @@ use kstd::lock_mgr::ScopeRecordLock;
 use snafu::ResultExt;
 
 use crate::{
-    base_key_format::BaseKey, error::RocksSnafu, strings_value_format::StringValue,
+    base_key_format::BaseKey,
+    error::{KeyNotFoundSnafu, RocksSnafu},
+    strings_value_format::{ParsedStringsValue, StringValue},
     ColumnFamilyIndex, Redis, Result,
 };
 
@@ -92,48 +94,26 @@ impl Redis {
     //     Ok(())
     // }
 
-    /// Get the value of a key
-    // pub fn get(&self, key: &[u8], value: &mut String) -> Result<()> {
-    //     let db = self
-    //         .db
-    //         .as_ref()
-    //         .ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
+    // Get the value of a key
+    pub fn get(&self, key: &[u8]) -> Result<String> {
+        let db = self.db.as_ref().unwrap();
+        let string_key = BaseKey::new(key);
 
-    //     // Try to get the value
-    //     let read_options = ReadOptions::default();
-    //     match db.get_opt(key, &read_options)? {
-    //         Some(existing) => {
-    //             // Parse the existing value
-    //             let parsed_value = ParsedInternalValue::new(
-    //                 DataType::String,
-    //                 String::from_utf8_lossy(&existing).to_string(),
-    //             );
-    //             if parsed_value.data_type() != DataType::String {
-    //                 return Err(StorageError::InvalidFormat(
-    //                     "Wrong type of value".to_string(),
-    //                 ));
-    //             }
-
-    //             // Check if expired
-    //             let now = SystemTime::now()
-    //                 .duration_since(UNIX_EPOCH)
-    //                 .unwrap()
-    //                 .as_secs();
-    //             if parsed_value.is_expired(now) {
-    //                 return Err(StorageError::KeyNotFound(
-    //                     String::from_utf8_lossy(key).to_string(),
-    //                 ));
-    //             }
-
-    //             // Return the value
-    //             *value = String::from_utf8_lossy(parsed_value.user_value()).to_string();
-    //             Ok(())
-    //         }
-    //         None => Err(StorageError::KeyNotFound(
-    //             String::from_utf8_lossy(key).to_string(),
-    //         )),
-    //     }
-    // }
+        match db
+            .get_opt(string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+        {
+            Some(val) => {
+                let string_value = ParsedStringsValue::new(&val[..])?;
+                let user_value = string_value.user_value();
+                Ok(String::from_utf8_lossy(&user_value).to_string())
+            }
+            None => KeyNotFoundSnafu {
+                key: String::from_utf8_lossy(key).to_string(),
+            }
+            .fail(),
+        }
+    }
 
     // /// Get the value and TTL of a key
     // pub fn get_with_ttl(&self, key: &[u8], value: &mut String, ttl: &mut i64) -> Result<()> {

@@ -45,6 +45,7 @@ impl<T> ObjectPool<T> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn pool_size(&self) -> usize {
         self.objects.lock().len()
     }
@@ -84,6 +85,12 @@ impl BufferPool {
     }
 }
 
+impl Default for BufferPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct WriteBatchPool {
     pool: ObjectPool<rocksdb::WriteBatch>,
 }
@@ -91,7 +98,7 @@ pub struct WriteBatchPool {
 impl WriteBatchPool {
     pub fn new(max_pool_size: usize) -> Self {
         Self {
-            pool: ObjectPool::new(|| rocksdb::WriteBatch::default(), max_pool_size),
+            pool: ObjectPool::new(rocksdb::WriteBatch::default, max_pool_size),
         }
     }
 

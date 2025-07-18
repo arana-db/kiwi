@@ -29,6 +29,7 @@ pub mod storage;
 mod storage_define;
 mod storage_murmur3;
 mod strings_value_format;
+mod util;
 
 // commands
 mod redis_strings;
@@ -37,3 +38,4 @@ pub use error::Result;
 pub use options::StorageOptions;
 pub use redis::{ColumnFamilyIndex, KeyStatistics, Redis};
 pub use storage::{BgTask, BgTaskHandler};
+pub use util::unique_test_db_path;
