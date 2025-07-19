@@ -18,18 +18,23 @@ use async_trait::async_trait;
 use log::info;
 use std::error::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 
+#[cfg(unix)]
 pub struct UnixStreamWrapper {
     stream: UnixStream,
 }
 
+#[cfg(unix)]
 impl UnixStreamWrapper {
     pub fn new(stream: UnixStream) -> Self {
         Self { stream }
     }
 }
 
+#[cfg(unix)]
 #[async_trait]
 impl StreamTrait for UnixStreamWrapper {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
@@ -51,6 +56,7 @@ impl UnixServer {
     }
 }
 
+#[cfg(unix)]
 #[async_trait]
 impl ServerTrait for UnixServer {
     async fn start(&self) -> Result<(), Box<dyn Error>> {
@@ -67,5 +73,13 @@ impl ServerTrait for UnixServer {
 
             tokio::spawn(async move { process_connection(&mut client).await.unwrap() });
         }
+    }
+}
+
+#[cfg(not(unix))]
+#[async_trait]
+impl ServerTrait for UnixServer {
+    async fn start(&self) -> Result<(), Box<dyn Error>> {
+        Err("Unix sockets are not supported on this platform".into())
     }
 }
