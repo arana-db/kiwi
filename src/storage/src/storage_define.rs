@@ -14,7 +14,6 @@
 
 pub const PREFIX_RESERVE_LENGTH: usize = 8;
 pub const VERSION_LENGTH: usize = 8;
-pub const VERSION_LENGTH: usize = 8;
 // const SCORE_LENGTH: usize = 8;
 pub const SUFFIX_RESERVE_LENGTH: usize = 16;
 // const LIST_VALUE_INDEX_LENGTH: usize = 16;
