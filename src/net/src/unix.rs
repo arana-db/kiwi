@@ -33,7 +33,7 @@ mod unix_impl {
     use super::*;
     use crate::handle::process_connection;
     use crate::{Client, StreamTrait};
-    use log::info;
+    use log::{error, info};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{UnixListener, UnixStream};
 
@@ -60,15 +60,30 @@ mod unix_impl {
     #[async_trait]
     impl ServerTrait for UnixServer {
         async fn start(&self) -> Result<(), Box<dyn Error>> {
-            let _ = std::fs::remove_file(&self.path);
+            if let Err(e) = std::fs::remove_file(&self.path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    return Err(e.into());
+                }
+            }
+
             let listener = UnixListener::bind(&self.path)?;
             info!("Listening on Unix Socket: {}", self.path);
 
             loop {
-                let (socket, _) = listener.accept().await?;
-                let s = UnixStreamWrapper::new(socket);
-                let mut client = Client::new(Box::new(s));
-                tokio::spawn(async move { process_connection(&mut client).await.unwrap() });
+                match listener.accept().await {
+                    Ok((socket, _)) => {
+                        let s = UnixStreamWrapper::new(socket);
+                        let mut client = Client::new(Box::new(s));
+                        tokio::spawn(async move {
+                            if let Err(e) = process_connection(&mut client).await {
+                                error!("Connection processing failed: {e:?}");
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("Failed to accept connection: {e:?}");
+                    }
+                }
             }
         }
     }
