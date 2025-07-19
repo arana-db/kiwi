@@ -41,7 +41,7 @@ type ParsedZSetsMetaValue = ParsedBaseMetaValue;
 
 /*
  * | type | len | version | reserve | cdate | timestamp |
- * |  1B  | 4B  |    8B   |   16B   |   8B  |     8B    |
+ * |  1B  | 8B  |    8B   |   16B   |   8B  |     8B    |
  */
 #[allow(dead_code)]
 pub struct BaseMetaValue {
@@ -92,7 +92,7 @@ impl BaseMetaValue {
 #[allow(dead_code)]
 pub struct ParsedBaseMetaValue {
     inner: ParsedInternalValue,
-    count: u32,
+    count: u64,
 }
 
 delegate_parsed_value! {ParsedBaseMetaValue}
@@ -120,7 +120,7 @@ impl ParsedBaseMetaValue {
         let pos = val_reader.position() as usize;
 
         let count_range = pos..pos + BASE_META_VALUE_COUNT_LENGTH;
-        let count = val_reader.get_u32_le();
+        let count = val_reader.get_u64_le();
         let version = val_reader.get_u64_le();
 
         let pos = val_reader.position() as usize;
@@ -184,14 +184,14 @@ impl ParsedBaseMetaValue {
     }
 
     pub fn check_set_count(&self, count: usize) -> bool {
-        count <= u32::MAX as usize
+        count <= u64::MAX as usize
     }
 
-    pub fn count(&self) -> u32 {
+    pub fn count(&self) -> u64 {
         self.count
     }
 
-    pub fn set_count(&mut self, count: u32) {
+    pub fn set_count(&mut self, count: u64) {
         self.count = count;
     }
 
@@ -205,11 +205,11 @@ impl ParsedBaseMetaValue {
         self.set_ctime_to_value();
     }
 
-    pub fn check_modify_count(&mut self, delta: u32) -> bool {
+    pub fn check_modify_count(&mut self, delta: u64) -> bool {
         self.count.checked_add(delta).is_some()
     }
 
-    pub fn modify_count(&mut self, delta: u32) {
+    pub fn modify_count(&mut self, delta: u64) {
         self.count = self.count.saturating_add(delta);
         let count_bytes = self.count.to_le_bytes();
         let dst = &mut self.inner.value[TYPE_LENGTH..TYPE_LENGTH + BASE_META_VALUE_COUNT_LENGTH];
@@ -233,7 +233,7 @@ mod base_meta_value_tests {
     use super::*;
     use bytes::Buf;
 
-    const TEST_COUNT: u32 = 10;
+    const TEST_COUNT: u64 = 10;
     const TEST_VERSION: u64 = 123456789;
     const TEST_CTIME: u64 = 1620000000;
     const TEST_ETIME: u64 = 1630000000;
@@ -253,7 +253,7 @@ mod base_meta_value_tests {
         assert_eq!(meta.inner.data_type, DataType::None);
 
         let mut buf = &meta.inner.user_value[..]; // &mut &[u8]
-        let user_value = buf.get_u32_le();
+        let user_value = buf.get_u64_le();
         assert_eq!(user_value, TEST_COUNT);
     }
 
@@ -264,7 +264,7 @@ mod base_meta_value_tests {
 
         let mut expected = BytesMut::new();
         expected.put_u8(DataType::None as u8);
-        expected.put_u32_le(TEST_COUNT); // count -> user_value
+        expected.put_u64_le(TEST_COUNT); // count -> user_value
         expected.put_u64_le(TEST_VERSION);
         expected.extend_from_slice(&vec![0u8; SUFFIX_RESERVE_LENGTH]); // reserve
         expected.put_u64_le(TEST_CTIME);
@@ -306,7 +306,7 @@ mod base_meta_value_tests {
 
         let user_value = (&parsed.inner.value
             [TYPE_LENGTH..TYPE_LENGTH + BASE_META_VALUE_COUNT_LENGTH])
-            .get_u32_le();
+            .get_u64_le();
         assert_eq!(user_value, TEST_COUNT);
 
         assert_eq!(parsed.inner.version, TEST_VERSION);
@@ -324,12 +324,12 @@ mod parsed_base_meta_value_tests {
     const TEST_VERSION: u64 = 123456789;
     const TEST_CTIME: u64 = 1620000000;
     const TEST_ETIME: u64 = 1630000000;
-    const TEST_COUNT: u32 = 42;
+    const TEST_COUNT: u64 = 42;
 
     fn build_test_buffer() -> BytesMut {
         let mut buf = BytesMut::new();
         buf.put_u8(DataType::Hash as u8);
-        buf.put_u32_le(TEST_COUNT);
+        buf.put_u64_le(TEST_COUNT);
         buf.put_u64_le(TEST_VERSION);
         buf.put(&vec![0u8; SUFFIX_RESERVE_LENGTH][..]); // Reserve
         buf.put_u64_le(TEST_CTIME);
@@ -355,7 +355,7 @@ mod parsed_base_meta_value_tests {
     fn test_parsed_base_meta_value_parse_invalid_length() {
         let mut buf = BytesMut::new();
         buf.put_u8(DataType::Hash as u8);
-        buf.put_u32_le(TEST_COUNT);
+        buf.put_u64_le(TEST_COUNT);
 
         let meta = ParsedBaseMetaValue::new(buf);
         assert!(meta.is_err());
@@ -420,7 +420,7 @@ mod parsed_base_meta_value_tests {
 
         let stored_count = (&meta.inner.value
             [TYPE_LENGTH..TYPE_LENGTH + BASE_META_VALUE_COUNT_LENGTH])
-            .get_u32_le();
+            .get_u64_le();
         assert_eq!(stored_count, TEST_COUNT + delta);
     }
 
@@ -429,7 +429,7 @@ mod parsed_base_meta_value_tests {
         let buf = build_test_buffer();
         let mut meta = ParsedBaseMetaValue::new(buf).unwrap();
 
-        meta.count = u32::MAX - 1;
+        meta.count = u64::MAX - 1;
         assert!(meta.check_modify_count(1)); // 4294967294 + 1 = 4294967295 (u32::MAX)
         assert!(!meta.check_modify_count(2)); // 4294967294 + 2 = overflow
     }
@@ -446,8 +446,22 @@ mod parsed_base_meta_value_tests {
         assert!(ParsedBaseMetaValue::new(build_test_buffer())
             .unwrap()
             .check_set_count(100));
-        assert!(!ParsedBaseMetaValue::new(build_test_buffer())
+
+        let safe_max = if usize::BITS >= 64 {
+            u64::MAX as usize
+        } else {
+            usize::MAX
+        };
+        assert!(ParsedBaseMetaValue::new(build_test_buffer())
             .unwrap()
-            .check_set_count(u32::MAX as usize + 1));
+            .check_set_count(safe_max));
+
+        let expected_result = usize::BITS < 64;
+        assert_eq!(
+            ParsedBaseMetaValue::new(build_test_buffer())
+                .unwrap()
+                .check_set_count(usize::MAX),
+            !expected_result
+        );
     }
 }

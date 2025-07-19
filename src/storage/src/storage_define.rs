@@ -30,7 +30,7 @@ const ENCODED_KEY_DELIM: &str = "\x00\x00";
 pub const ENCODED_KEY_DELIM_SIZE: usize = 2;
 
 pub const STRING_VALUE_SUFFIXLENGTH: usize = 2 * TIMESTAMP_LENGTH + SUFFIX_RESERVE_LENGTH;
-pub const BASE_META_VALUE_COUNT_LENGTH: usize = 4;
+pub const BASE_META_VALUE_COUNT_LENGTH: usize = 8;
 /// type(1B) + len(4B) + version(8B) + reserve(16B) + cdata(8B) + timestamp(8B)
 pub const BASE_META_VALUE_LENGTH: usize = TYPE_LENGTH
     + BASE_META_VALUE_COUNT_LENGTH
