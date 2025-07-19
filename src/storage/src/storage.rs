@@ -57,7 +57,7 @@ impl BgTaskHandler {
 
 #[allow(dead_code)]
 pub struct Storage {
-    pub insts: Vec<Arc<Mutex<Redis>>>,
+    pub insts: Vec<Arc<Redis>>,
     pub slot_indexer: Arc<SlotIndexer>,
     pub lock_mgr: Arc<LockMgr>,
 
@@ -126,7 +126,7 @@ impl Storage {
                 return Err(e);
             }
             log::info!("open RocksDB{i} success!");
-            new_insts.push(Arc::new(Mutex::new(inst)));
+            new_insts.push(Arc::new(inst));
         }
 
         self.slot_indexer = Arc::new(SlotIndexer::new(self.db_instance_num));

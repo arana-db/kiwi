@@ -27,6 +27,7 @@ mod redis;
 mod slot_indexer;
 pub mod storage;
 mod storage_define;
+mod storage_impl;
 mod storage_murmur3;
 mod strings_value_format;
 mod util;

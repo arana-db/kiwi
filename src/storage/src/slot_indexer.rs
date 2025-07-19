@@ -12,6 +12,8 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+use crc16::{State, ARC};
+
 /// Manage slots to rocksdb indexes
 /// TODO: remove allow dead code
 #[allow(dead_code)]
@@ -50,6 +52,10 @@ impl SlotIndexer {
         // When we implement this method, remove the underscore.
         // Don't forget add unit test.
     }
+}
+
+pub fn key_to_slot_id(key: &[u8]) -> usize {
+    State::<ARC>::calculate(key) as usize
 }
 
 #[cfg(test)]
