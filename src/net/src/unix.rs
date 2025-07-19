@@ -12,11 +12,16 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+#[cfg(unix)]
 use crate::handle::process_connection;
-use crate::{Client, ServerTrait, StreamTrait};
+use crate::ServerTrait;
+#[cfg(unix)]
+use crate::{Client, StreamTrait};
 use async_trait::async_trait;
+#[cfg(unix)]
 use log::info;
 use std::error::Error;
+#[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[cfg(unix)]
@@ -46,13 +51,23 @@ impl StreamTrait for UnixStreamWrapper {
 }
 
 pub struct UnixServer {
+    #[cfg(unix)]
     path: String,
+    #[cfg(not(unix))]
+    _path: String, 
 }
 
 impl UnixServer {
     pub fn new(path: Option<String>) -> Self {
         let path = path.unwrap_or_else(|| "/tmp/sagedb.sock".to_string());
-        Self { path }
+        #[cfg(unix)]
+        {
+            Self { path }
+        }
+        #[cfg(not(unix))]
+        {
+            Self { _path: path }
+        }
     }
 }
 
