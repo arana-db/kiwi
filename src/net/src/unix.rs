@@ -54,7 +54,7 @@ pub struct UnixServer {
     #[cfg(unix)]
     path: String,
     #[cfg(not(unix))]
-    _path: String, 
+    _path: String,
 }
 
 impl UnixServer {
