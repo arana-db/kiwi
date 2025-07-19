@@ -12,9 +12,10 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-use log::error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use crate::resp::{Protocol, RespProtocol};
+use crate::Client;
+use log::{error, info};
+use tokio::select;
 
 /// Processes an incoming TCP connection.
 ///
@@ -29,24 +30,49 @@ use tokio::net::TcpStream;
 ///
 /// A `std::io::Result` indicating success or failure.
 ///
-pub async fn process_connection(mut socket: TcpStream) -> std::io::Result<()> {
-    // TODO: add handle command logic
+pub async fn process_connection(socket: &mut Client) -> std::io::Result<()> {
+    let mut buf = vec![0; 1024];
 
-    let mut buffer = [0; 1024];
+    let mut prot = RespProtocol::new();
 
     loop {
-        let n = match socket.read(&mut buffer).await {
-            Ok(0) => return Ok(()),
-            Ok(n) => n,
-            Err(e) => {
-                error!("socket read error: {e}");
-                return Err(e);
-            }
-        };
+        select! {
+            result = socket.read(&mut buf) => {
+                match result {
+                    Ok(n) => {
+                        if n == 0 {
+                            return Ok(());
+                        }
 
-        if let Err(e) = socket.write_all(&buffer[..n]).await {
-            error!("socket write error: {e}");
-            return Err(e);
+                        match prot.parse(&buf[..n]) {
+                            Ok(true) => {
+                                let args = prot.take_args();
+                                let response = handle_command(&args).await;
+                                match socket.write(&response.serialize()).await {
+                                    Ok(_) => (),
+                                    Err(e) => error!("Write error: {e}"),
+                                }
+                            }
+                            Ok(false) => (),  // Data is incomplete, continue to read in a loop
+                            Err(e) => {  // Protocol error
+                                error!("Protocol error: {e:?}");
+                                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Protocol error: {e:?}");
+                        return Err(e);
+                    }
+                }
+            }
         }
     }
+}
+
+async fn handle_command(args: &Vec<Vec<u8>>) -> RespProtocol {
+    info!("handle_command: {args:?}");
+    let mut resp = RespProtocol::new();
+    resp.push_bulk_string("PONG".to_string());
+    resp
 }

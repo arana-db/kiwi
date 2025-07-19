@@ -29,6 +29,7 @@ use std::sync::Arc;
 #[derive(Debug, Default)]
 pub struct BaseMetaFilter;
 
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 #[allow(dead_code)]
 pub struct BaseMetaFilterFactory;
