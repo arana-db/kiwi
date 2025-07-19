@@ -41,11 +41,11 @@ impl DB {
     }
 
     pub fn create_checkpoint(&self, path: &str, sync: bool) {
-        // 创建数据库检查点的逻辑
+        // TODO: creating database checkpoints
     }
 
     pub fn load_db_from_checkpoint(&self, path: &str, sync: bool) {
-        // 从检查点加载数据库的逻辑
+        // TODO: loading a database from a checkpoint
     }
 
     pub fn get_db_index(&self) -> i32 {

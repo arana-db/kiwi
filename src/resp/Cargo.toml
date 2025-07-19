@@ -1,0 +1,12 @@
+[package]
+name = "resp"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+bytes.workspace = true
+thiserror.workspace = true
+nom.workspace = true
