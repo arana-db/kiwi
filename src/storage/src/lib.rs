@@ -22,7 +22,6 @@ mod coding;
 pub mod error;
 mod list_meta_value_format;
 mod lru_cache;
-mod object_pool;
 pub mod options;
 mod redis;
 mod slot_indexer;

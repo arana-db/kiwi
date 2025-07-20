@@ -13,7 +13,6 @@
 //  limitations under the License.
 
 use crate::error::{Result, RocksSnafu, UnknownSnafu};
-use crate::object_pool::{BufferPool, WriteBatchPool};
 use crate::options::StorageOptions;
 use crate::storage::BgTaskHandler;
 use kstd::lock_mgr::LockMgr;
@@ -78,10 +77,6 @@ pub struct Redis {
     pub small_compaction_threshold: u64,
     pub small_compaction_duration_threshold: u64,
 
-    // For performance optimization
-    pub buffer_pool: Arc<BufferPool>,
-    pub batch_pool: Arc<WriteBatchPool>,
-
     // For Scan
     pub scan_cursors_store: Mutex<crate::lru_cache::LRUCache<String, u64>>,
     pub spop_counts_store: Mutex<crate::lru_cache::LRUCache<String, u64>>,
@@ -114,9 +109,6 @@ impl Redis {
             write_options: WriteOptions::default(),
             read_options: ReadOptions::default(),
             compact_options,
-
-            buffer_pool: Arc::new(BufferPool::new()),
-            batch_pool: Arc::new(WriteBatchPool::new(50)),
 
             statistics_store: Mutex::new(crate::lru_cache::LRUCache::with_capacity(10000)),
             scan_cursors_store: Mutex::new(crate::lru_cache::LRUCache::with_capacity(5000)),
@@ -258,26 +250,6 @@ impl Redis {
             }
         }
         None
-    }
-
-    /// Acquire buffer from object pool
-    pub fn acquire_buffer(&self, size: usize) -> Vec<u8> {
-        self.buffer_pool.acquire_buffer(size)
-    }
-
-    /// Release buffer to object pool
-    pub fn release_buffer(&self, buffer: Vec<u8>) {
-        self.buffer_pool.release_buffer(buffer);
-    }
-
-    /// Acquire WriteBatch from object pool
-    pub fn acquire_batch(&self) -> rocksdb::WriteBatch {
-        self.batch_pool.acquire()
-    }
-
-    /// Release WriteBatch to object pool
-    pub fn release_batch(&self, batch: rocksdb::WriteBatch) {
-        self.batch_pool.release(batch);
     }
 }
 

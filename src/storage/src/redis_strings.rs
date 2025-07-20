@@ -166,7 +166,7 @@ impl Redis {
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
 
         let cf = self.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
-        let mut batch = self.acquire_batch();
+        let mut batch = rocksdb::WriteBatch::default();
         batch.put_cf(&cf, string_key.encode()?, string_value.encode());
 
         let db = self.db.as_ref().unwrap();
