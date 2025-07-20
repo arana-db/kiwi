@@ -19,6 +19,8 @@
 
 use crc16::{State, ARC};
 
+pub const SLOT_INDEXER_INSTANCE_NUM: usize = 3;
+
 /// Manage slots to rocksdb indexes
 /// TODO: remove allow dead code
 #[allow(dead_code)]
@@ -30,7 +32,9 @@ pub struct SlotIndexer {
 /// NOTE: default instance number is 3.
 impl Default for SlotIndexer {
     fn default() -> Self {
-        Self { instance_num: 3 }
+        Self {
+            instance_num: SLOT_INDEXER_INSTANCE_NUM,
+        }
     }
 }
 
@@ -52,7 +56,7 @@ impl SlotIndexer {
     }
 
     /// Placeholder for re-sharding slots functionality.
-    pub fn reshard_slots(&self, _slots: Vec<u32>) {
+    pub fn reshard_slots(&self, _slots: Vec<usize>) {
         // TODO: Implement the logic for re-sharding slots.
         // When we implement this method, remove the underscore.
         // Don't forget add unit test.
