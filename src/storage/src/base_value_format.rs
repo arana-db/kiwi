@@ -129,7 +129,7 @@ impl InternalValue {
 }
 
 /// This macro is used to forward the base function to the structure
-/// so that it can call the function directly（string_value.set_etime()�?without calling it like "string_value.base.user_value()"
+/// so that it can call the function directly（string_value.set_etime()） without calling it like "string_value.base.user_value()"
 #[macro_export]
 macro_rules! delegate_internal_value {
     ($struct_name:ident) => {
@@ -230,7 +230,7 @@ impl ParsedInternalValue {
 }
 
 /// This macro is used to forward the base function to the structure
-/// so that it can call the function directly（parsed_value.user_value()�?without calling it like "string.base.user_value()"
+/// so that it can call the function directly（parsed_value.user_value()） without calling it like "string.base.user_value()"
 #[macro_export]
 macro_rules! delegate_parsed_value {
     ($struct_name:ident) => {

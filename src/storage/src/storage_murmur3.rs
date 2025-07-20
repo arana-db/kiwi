@@ -118,6 +118,6 @@ mod tests {
 
     #[test]
     fn test_unicode() {
-        assert_eq!(murmur3_32("â‚?, 0), 0x5b43fca5);
+        assert_eq!(murmur3_32("â‚¬", 0), 0x5b43fca5);
     }
 }

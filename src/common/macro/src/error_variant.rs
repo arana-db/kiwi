@@ -59,7 +59,7 @@ impl ErrorVariant {
         for attr in variant.attrs {
             if attr.path().is_ident("snafu") {
                 attr.parse_nested_meta(|meta| {
-                    // snafu(display = "{}")ï¼?Currently only handles display situations
+                    // snafu(display = "{}"),Currently only handles display situations
                     if meta.path.is_ident("display") {
                         let content;
                         parenthesized!(content in meta.input);
