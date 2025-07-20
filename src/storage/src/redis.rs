@@ -250,7 +250,7 @@ impl Redis {
     pub fn get_cf_handle(
         &self,
         cf_index: ColumnFamilyIndex,
-    ) -> Option<Arc<rocksdb::BoundColumnFamily>> {
+    ) -> Option<Arc<rocksdb::BoundColumnFamily<'_>>> {
         if let Some(db) = &self.db {
             if let Some(cf_name) = self.handles.get(cf_index as usize) {
                 // get column family by name
