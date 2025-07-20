@@ -21,7 +21,7 @@ where
     let s: String = Deserialize::deserialize(deserializer)?;
     match parse_memory(s.as_str()) {
         Ok(num) => Ok(num),
-        Err(e) => Err(de::Error::custom(format!("{}", e))),
+        Err(e) => Err(de::Error::custom(e)),
     }
 }
 
