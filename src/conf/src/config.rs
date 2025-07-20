@@ -41,7 +41,7 @@ impl Config {
     //load config from file
     pub fn load(path: &str) -> Result<Self, Error> {
         let content =
-            std::fs::read_to_string(path).context(crate::error::ConfigFileSnafu { path: path })?;
+            std::fs::read_to_string(path).context(crate::error::ConfigFileSnafu { path })?;
 
         let config: Config =
             serde_ini::from_str(&content).context(crate::error::InvalidConfigSnafu {})?;
