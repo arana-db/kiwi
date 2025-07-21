@@ -3,7 +3,6 @@ members = ["src/storage", "src/kstd", "src/common/macro", "src/net", "src/resp",
 resolver = "2"
 
 [workspace.package]
-name = "kiwi-rs"
 version = "0.1.0"
 description = "An enhanced Redis server implemented in Rust"
 readme = "README.md"
