@@ -30,6 +30,7 @@ mod lru_cache;
 pub mod options;
 mod redis;
 mod slot_indexer;
+mod statistics;
 pub mod storage;
 mod storage_define;
 mod storage_impl;
@@ -42,6 +43,7 @@ mod redis_strings;
 
 pub use error::Result;
 pub use options::StorageOptions;
-pub use redis::{ColumnFamilyIndex, KeyStatistics, Redis};
+pub use redis::{ColumnFamilyIndex, Redis};
+pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use util::unique_test_db_path;

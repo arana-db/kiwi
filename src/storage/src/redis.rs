@@ -17,14 +17,18 @@
  * limitations under the License.
  */
 
+use crate::base_value_format::{DataType, DATA_TYPE_TAG};
 use crate::error::{Result, RocksSnafu, UnknownSnafu};
 use crate::options::StorageOptions;
+use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
 use kstd::lock_mgr::LockMgr;
+use moka::sync::Cache;
 use rocksdb::{
     BlockBasedOptions, ColumnFamilyDescriptor, CompactOptions, ReadOptions, WriteOptions, DB,
 };
 use snafu::ResultExt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -51,12 +55,7 @@ impl ColumnFamilyIndex {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct KeyStatistics {
-    pub modify_count: u64,
-    pub avg_duration: u64,
-}
-
+// 移除重复的KeyStatistics定义，使用statistics模块中的定义
 unsafe impl Send for Redis {}
 unsafe impl Sync for Redis {}
 
@@ -78,13 +77,13 @@ pub struct Redis {
     pub bg_task_handler: Arc<BgTaskHandler>,
 
     // For statistics
-    pub statistics_store: Mutex<crate::lru_cache::LRUCache<String, KeyStatistics>>,
-    pub small_compaction_threshold: u64,
-    pub small_compaction_duration_threshold: u64,
+    pub statistics_store: Arc<Cache<String, KeyStatistics>>,
+    pub small_compaction_threshold: AtomicU64,
+    pub small_compaction_duration_threshold: AtomicU64,
 
     // For Scan
-    pub scan_cursors_store: Mutex<crate::lru_cache::LRUCache<String, u64>>,
-    pub spop_counts_store: Mutex<crate::lru_cache::LRUCache<String, u64>>,
+    pub scan_cursors_store: Mutex<Cache<String, u64>>,
+    pub spop_counts_store: Mutex<Cache<String, u64>>,
 
     // For raft
     pub is_starting: bool,
@@ -101,6 +100,9 @@ impl Redis {
         compact_options.set_change_level(true);
         compact_options.set_exclusive_manual_compaction(false);
 
+        let statistics_store: Cache<String, KeyStatistics> =
+            Cache::new(storage.statistics_max_size as u64);
+
         Self {
             index,
             need_close: std::sync::atomic::AtomicBool::new(false),
@@ -115,22 +117,21 @@ impl Redis {
             read_options: ReadOptions::default(),
             compact_options,
 
-            statistics_store: Mutex::new(crate::lru_cache::LRUCache::with_capacity(10000)),
-            scan_cursors_store: Mutex::new(crate::lru_cache::LRUCache::with_capacity(5000)),
-            spop_counts_store: Mutex::new(crate::lru_cache::LRUCache::with_capacity(1000)),
+            statistics_store: Arc::new(statistics_store),
+            scan_cursors_store: Mutex::new(Cache::new(5000)),
+            spop_counts_store: Mutex::new(Cache::new(1000)),
 
-            small_compaction_threshold: 5000,
-            small_compaction_duration_threshold: 10000,
+            small_compaction_threshold: std::sync::atomic::AtomicU64::new(5000),
+            small_compaction_duration_threshold: std::sync::atomic::AtomicU64::new(10000),
         }
     }
 
     // TODO: add raft support
     pub fn open(&mut self, db_path: &str) -> Result<()> {
-        self.small_compaction_threshold = self.storage.small_compaction_threshold as u64;
-        self.statistics_store
-            .lock()
-            .unwrap()
-            .set_capacity(self.storage.statistics_max_size);
+        self.small_compaction_threshold.store(
+            self.storage.small_compaction_threshold as u64,
+            std::sync::atomic::Ordering::SeqCst,
+        );
 
         const CF_CONFIGS: &[(&str, bool, Option<usize>)] = &[
             ("default", true, None),                   // meta & string: bloom filter
@@ -255,6 +256,104 @@ impl Redis {
             }
         }
         None
+    }
+
+    pub fn update_specific_key_duration(
+        &self,
+        dtype: DataType,
+        key: &str,
+        duration: u64,
+    ) -> Result<()> {
+        let threshold = self
+            .small_compaction_duration_threshold
+            .load(Ordering::SeqCst);
+
+        if duration != 0 && threshold != 0 {
+            let mut lookup_key = String::new();
+            lookup_key.push(DATA_TYPE_TAG[dtype as usize]);
+            lookup_key.push_str(key);
+
+            let mut data = self
+                .statistics_store
+                .get(&lookup_key)
+                .unwrap_or_else(|| KeyStatistics::new(10));
+            data.add_duration(duration);
+
+            let modify_count = data.modify_count();
+            let avg_duration = data.avg_duration();
+
+            self.statistics_store.insert(lookup_key.clone(), data);
+            self.add_compact_key_task_if_needed(dtype, key, modify_count, avg_duration)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn update_specific_key_statistics(
+        &self,
+        dtype: DataType,
+        key: &str,
+        count: u64,
+    ) -> Result<()> {
+        let threshold = self.small_compaction_threshold.load(Ordering::SeqCst);
+
+        if count != 0 && threshold != 0 {
+            let mut lookup_key = String::new();
+            lookup_key.push(DATA_TYPE_TAG[dtype as usize]);
+            lookup_key.push_str(key);
+
+            let mut data = self
+                .statistics_store
+                .get(&lookup_key)
+                .unwrap_or_else(|| KeyStatistics::new(10));
+            data.add_modify_count(count);
+
+            let modify_count = data.modify_count();
+            let avg_duration = data.avg_duration();
+
+            self.statistics_store.insert(lookup_key.clone(), data);
+            self.add_compact_key_task_if_needed(dtype, key, modify_count, avg_duration)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn add_compact_key_task_if_needed(
+        &self,
+        dtype: DataType,
+        key: &str,
+        total: u64,
+        duration: u64,
+    ) -> Result<()> {
+        let threshold = self.small_compaction_threshold.load(Ordering::SeqCst);
+        let duration_threshold = self
+            .small_compaction_duration_threshold
+            .load(Ordering::SeqCst);
+
+        if total < threshold || duration < duration_threshold {
+            return Ok(());
+        }
+
+        let mut lookup_key = String::new();
+        lookup_key.push(DATA_TYPE_TAG[dtype as usize]);
+        lookup_key.push_str(key);
+
+        self.statistics_store.invalidate(&lookup_key);
+
+        // send background compact task
+        let key = key.to_string();
+        let bg_task_handler = self.bg_task_handler.clone();
+        tokio::spawn(async move {
+            let _ = bg_task_handler
+                .send(crate::storage::BgTask::CompactRange {
+                    dtype,
+                    start: key.clone(),
+                    end: key,
+                })
+                .await;
+        });
+
+        Ok(())
     }
 }
 

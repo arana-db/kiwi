@@ -76,13 +76,6 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("Lock error: {}", message))]
-    Lock {
-        message: String,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
     #[snafu(display("Transaction error: {}", message))]
     Transaction {
         message: String,
