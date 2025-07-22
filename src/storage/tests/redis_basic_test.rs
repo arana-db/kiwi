@@ -17,6 +17,7 @@ mod redis_basic_test {
         assert_eq!(redis.handles.len(), 0);
     }
 
+    #[cfg(not(miri))]
     #[test]
     fn test_redis_open() {
         let test_db_path = unique_test_db_path();
@@ -98,6 +99,7 @@ mod redis_basic_test {
         assert_eq!(ColumnFamilyIndex::ZsetsScoreCF.name(), "zset_score_cf");
     }
 
+    #[cfg(not(miri))]
     #[test]
     fn test_redis_properties() {
         let test_db_path = unique_test_db_path();

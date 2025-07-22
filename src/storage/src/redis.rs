@@ -55,9 +55,6 @@ impl ColumnFamilyIndex {
     }
 }
 
-unsafe impl Send for Redis {}
-unsafe impl Sync for Redis {}
-
 #[repr(C, align(64))]
 pub struct Redis {
     pub index: i32,
