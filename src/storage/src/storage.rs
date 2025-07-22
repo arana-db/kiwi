@@ -19,14 +19,14 @@
 
 use crate::base_value_format::DataType;
 use crate::error::{MpscSnafu, Result};
-use crate::lru_cache::LRUCache;
 use crate::slot_indexer::SlotIndexer;
 use crate::{Redis, StorageOptions};
 use kstd::lock_mgr::LockMgr;
+use moka::sync::Cache;
 use snafu::ResultExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
@@ -63,14 +63,14 @@ impl BgTaskHandler {
 #[allow(dead_code)]
 pub struct Storage {
     pub insts: Vec<Arc<Redis>>,
-    pub slot_indexer: Arc<SlotIndexer>,
+    pub slot_indexer: SlotIndexer,
     pub lock_mgr: Arc<LockMgr>,
 
     // For bg task
-    pub bg_task_handler: Arc<BgTaskHandler>,
+    pub bg_task_handler: Option<Arc<BgTaskHandler>>,
     pub bg_task: Option<tokio::task::JoinHandle<()>>,
 
-    pub cursors_store: Mutex<LRUCache<String, String>>,
+    pub cursors_store: Arc<Cache<String, String>>,
 
     // For scan keys in data base
     pub db_instance_num: usize,
@@ -83,29 +83,32 @@ pub struct Storage {
 #[allow(dead_code)]
 impl Storage {
     pub fn new(db_instance_num: usize, db_id: usize) -> Self {
-        let (bg_task_handler, receiver) = BgTaskHandler::new();
-        let bg_task_handler = Arc::new(bg_task_handler);
-        let bg_task = Some(tokio::spawn(Self::bg_task_worker(receiver)));
-
         Self {
             insts: Vec::with_capacity(db_instance_num),
-            slot_indexer: Arc::new(SlotIndexer::new(db_instance_num)),
+            slot_indexer: SlotIndexer::new(db_instance_num),
             is_opened: AtomicBool::new(false),
             lock_mgr: Arc::new(LockMgr::new(1000)),
-            cursors_store: Mutex::new(LRUCache::with_capacity(1000)),
+            cursors_store: Arc::new(Cache::new(1000)),
             db_instance_num,
             db_id,
-            bg_task_handler,
-            bg_task,
+            bg_task_handler: None,
+            bg_task: None,
             scan_keynum_exit: AtomicBool::new(false),
         }
     }
 
-    pub fn open(&mut self, options: Arc<StorageOptions>, db_path: impl AsRef<Path>) -> Result<()> {
-        let db_path = db_path.as_ref();
-        self.insts.clear();
-        let mut new_insts = Vec::with_capacity(self.db_instance_num);
+    pub fn open(
+        &mut self,
+        options: Arc<StorageOptions>,
+        db_path: impl AsRef<Path>,
+    ) -> Result<mpsc::Receiver<BgTask>> {
+        let (handler, receiver) = BgTaskHandler::new();
+        let handler_arc = Arc::new(handler);
+        self.bg_task_handler = Some(Arc::clone(&handler_arc));
 
+        let db_path = db_path.as_ref();
+        let handler_for_redis = Arc::clone(&handler_arc);
+        self.insts.clear();
         for i in 0..self.db_instance_num {
             let sub_path = db_path.join(i.to_string());
             let sub_path_str = match sub_path.to_str() {
@@ -117,45 +120,55 @@ impl Storage {
                     .fail();
                 }
             };
-
             let mut inst = Redis::new(
                 options.clone(),
                 i as i32,
-                self.bg_task_handler.clone(),
-                self.lock_mgr.clone(),
+                Arc::clone(&handler_for_redis),
+                Arc::clone(&self.lock_mgr),
             );
             if let Err(e) = inst.open(sub_path_str) {
                 log::error!("open RocksDB{i} failed: {e:?}");
-                new_insts.clear();
+                self.insts.clear();
                 self.is_opened.store(false, Ordering::SeqCst);
                 return Err(e);
             }
             log::info!("open RocksDB{i} success!");
-            new_insts.push(Arc::new(inst));
+            self.insts.push(Arc::new(inst));
         }
-
-        self.slot_indexer = Arc::new(SlotIndexer::new(self.db_instance_num));
+        self.slot_indexer = SlotIndexer::new(self.db_instance_num);
         self.db_id = options.db_id;
-        self.insts = new_insts;
         self.is_opened.store(true, Ordering::SeqCst);
-        Ok(())
+
+        Ok(receiver)
     }
 
     pub async fn shutdown(&mut self) {
-        let _ = self.bg_task_handler.send(BgTask::Shutdown).await;
+        if let Some(bg_task_handler) = self.bg_task_handler.as_ref() {
+            let _ = bg_task_handler.send(BgTask::Shutdown).await;
+        }
         if let Some(handle) = self.bg_task.take() {
             let _ = handle.await;
         }
     }
 
-    async fn bg_task_worker(mut receiver: mpsc::Receiver<BgTask>) {
+    /// usage:
+    /// let mut storage = Storage::new(...);
+    /// let receiver = storage.open(...)?;
+    /// let storage = Arc::new(storage);
+    /// tokio::spawn(Storage::bg_task_worker(storage.clone(), receiver));
+    async fn bg_task_worker(storage: Arc<Storage>, mut receiver: mpsc::Receiver<BgTask>) {
         while let Some(event) = receiver.recv().await {
             match event {
                 BgTask::CleanAll { dtype } => {
-                    Self::handle_clean_all(dtype).await;
+                    log::info!("Cleaning all for type: {dtype:?}");
                 }
                 BgTask::CompactRange { dtype, start, end } => {
-                    Self::handle_compact_range(dtype, &start, &end).await;
+                    log::info!("Compacting range: {start} - {end} for type: {dtype:?}");
+                    if let Some(redis) = storage.insts.first() {
+                        if let Some(db) = &redis.db {
+                            db.compact_range(Some(start), Some(end));
+                        }
+                    }
                 }
                 BgTask::Shutdown => {
                     log::info!("BgTaskWorker received Shutdown, exiting...");
@@ -166,13 +179,5 @@ impl Storage {
                 }
             }
         }
-    }
-
-    async fn handle_compact_range(dtype: DataType, start: &str, end: &str) {
-        log::info!("Compacting range: {start} - {end} for type: {dtype:?}");
-    }
-
-    async fn handle_clean_all(dtype: DataType) {
-        log::info!("Cleaning all for type: {dtype:?}");
     }
 }
