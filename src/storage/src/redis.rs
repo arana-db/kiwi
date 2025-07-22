@@ -55,7 +55,6 @@ impl ColumnFamilyIndex {
     }
 }
 
-// 移除重复的KeyStatistics定义，使用statistics模块中的定义
 unsafe impl Send for Redis {}
 unsafe impl Sync for Redis {}
 
