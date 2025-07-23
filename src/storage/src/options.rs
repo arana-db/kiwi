@@ -142,3 +142,9 @@ impl StorageOptions {
         self
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionType {
+    DB,
+    ColumnFamily,
+}

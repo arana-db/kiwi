@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod redis_basic_test {
     use kstd::lock_mgr::LockMgr;
-    use std::sync::Arc;
+    use std::sync::{atomic::Ordering, Arc};
     use storage::{unique_test_db_path, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions};
 
     #[test]
@@ -12,7 +12,7 @@ mod redis_basic_test {
         let redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
 
         assert_eq!(redis.get_index(), 1);
-        assert_eq!(redis.is_starting, true);
+        assert_eq!(redis.is_starting.load(Ordering::SeqCst), true);
         assert_eq!(redis.db.is_none(), true);
         assert_eq!(redis.handles.len(), 0);
     }
@@ -34,7 +34,7 @@ mod redis_basic_test {
         let result = redis.open(test_db_path.to_str().unwrap());
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
-        assert_eq!(redis.is_starting, false);
+        assert_eq!(redis.is_starting.load(Ordering::SeqCst), false);
         assert!(redis.db.is_some());
         assert_eq!(redis.handles.len(), 6);
 

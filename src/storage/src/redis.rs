@@ -19,7 +19,7 @@
 
 use crate::base_value_format::{DataType, DATA_TYPE_TAG};
 use crate::error::{Result, RocksSnafu, UnknownSnafu};
-use crate::options::StorageOptions;
+use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
 use kstd::lock_mgr::LockMgr;
@@ -27,8 +27,9 @@ use moka::sync::Cache;
 use rocksdb::{
     BlockBasedOptions, ColumnFamilyDescriptor, CompactOptions, ReadOptions, WriteOptions, DB,
 };
-use snafu::ResultExt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use snafu::{OptionExt, ResultExt};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -82,7 +83,7 @@ pub struct Redis {
     pub spop_counts_store: Mutex<Cache<String, u64>>,
 
     // For raft
-    pub is_starting: bool,
+    pub is_starting: AtomicBool,
 }
 
 impl Redis {
@@ -102,7 +103,7 @@ impl Redis {
         Self {
             index,
             need_close: std::sync::atomic::AtomicBool::new(false),
-            is_starting: true,
+            is_starting: AtomicBool::new(true),
 
             storage,
             db: None,
@@ -161,7 +162,7 @@ impl Redis {
             self.handles = handles;
         }
 
-        self.is_starting = false;
+        self.is_starting.store(false, Ordering::SeqCst);
 
         Ok(())
     }
@@ -348,6 +349,44 @@ impl Redis {
                 })
                 .await;
         });
+
+        Ok(())
+    }
+
+    pub fn set_option(
+        &self,
+        option_type: OptionType,
+        options: &HashMap<String, String>,
+    ) -> Result<()> {
+        let db = self.db.as_ref().context(UnknownSnafu {
+            message: "DB not init".to_string(),
+        })?;
+
+        let opts_vec: Vec<_> = options
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        match option_type {
+            OptionType::DB => {
+                db.set_options(&opts_vec).context(RocksSnafu)?;
+            }
+            OptionType::ColumnFamily => {
+                if self.handles.is_empty() {
+                    let cf = db.cf_handle("default").context(UnknownSnafu {
+                        message: "Column family not init".to_string(),
+                    })?;
+                    db.set_options_cf(&cf, &opts_vec).context(RocksSnafu)?;
+                } else {
+                    for cf_name in &self.handles {
+                        let cf = db.cf_handle(cf_name).context(UnknownSnafu {
+                            message: format!("Column family {cf_name} not found"),
+                        })?;
+                        db.set_options_cf(&cf, &opts_vec).context(RocksSnafu)?;
+                    }
+                }
+            }
+        }
 
         Ok(())
     }

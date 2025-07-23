@@ -19,11 +19,13 @@
 
 use crate::base_value_format::DataType;
 use crate::error::{MpscSnafu, Result};
+use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
 use crate::{Redis, StorageOptions};
 use kstd::lock_mgr::LockMgr;
 use moka::sync::Cache;
 use snafu::ResultExt;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -179,5 +181,12 @@ impl Storage {
                 }
             }
         }
+    }
+
+    fn set_option(&self, option_type: OptionType, options: &HashMap<String, String>) -> Result<()> {
+        for inst in &self.insts {
+            inst.set_option(option_type, options)?;
+        }
+        Ok(())
     }
 }
