@@ -117,4 +117,11 @@ pub enum Error {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Option is none: {}", message))]
+    OptionNone {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

@@ -29,11 +29,11 @@
 // use crate::types::KeyValue;
 
 use kstd::lock_mgr::ScopeRecordLock;
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 
 use crate::{
     base_key_format::BaseKey,
-    error::{KeyNotFoundSnafu, RocksSnafu},
+    error::{KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
     strings_value_format::{ParsedStringsValue, StringValue},
     ColumnFamilyIndex, Redis, Result,
 };
@@ -100,7 +100,9 @@ impl Redis {
 
     // Get the value of a key
     pub fn get(&self, key: &[u8]) -> Result<String> {
-        let db = self.db.as_ref().unwrap();
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
         let string_key = BaseKey::new(key);
 
         match db
@@ -169,11 +171,17 @@ impl Redis {
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
 
-        let cf = self.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
         let mut batch = rocksdb::WriteBatch::default();
         batch.put_cf(&cf, string_key.encode()?, string_value.encode());
 
-        let db = self.db.as_ref().unwrap();
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
         db.write_opt(batch, &self.write_options)
             .context(RocksSnafu)?;
 

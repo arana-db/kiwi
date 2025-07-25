@@ -18,7 +18,7 @@
  */
 
 use crate::base_value_format::{DataType, DATA_TYPE_TAG};
-use crate::error::{Result, RocksSnafu, UnknownSnafu};
+use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
@@ -235,8 +235,8 @@ impl Redis {
             }
         }
 
-        UnknownSnafu {
-            message: format!("Property {property} not found"),
+        OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
         }
         .fail()
     }
@@ -248,7 +248,6 @@ impl Redis {
     ) -> Option<Arc<rocksdb::BoundColumnFamily<'_>>> {
         if let Some(db) = &self.db {
             if let Some(cf_name) = self.handles.get(cf_index as usize) {
-                // get column family by name
                 return db.cf_handle(cf_name);
             }
         }
@@ -358,8 +357,8 @@ impl Redis {
         option_type: OptionType,
         options: &HashMap<String, String>,
     ) -> Result<()> {
-        let db = self.db.as_ref().context(UnknownSnafu {
-            message: "DB not init".to_string(),
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
         })?;
 
         let opts_vec: Vec<_> = options
@@ -373,13 +372,13 @@ impl Redis {
             }
             OptionType::ColumnFamily => {
                 if self.handles.is_empty() {
-                    let cf = db.cf_handle("default").context(UnknownSnafu {
+                    let cf = db.cf_handle("default").context(OptionNoneSnafu {
                         message: "Column family not init".to_string(),
                     })?;
                     db.set_options_cf(&cf, &opts_vec).context(RocksSnafu)?;
                 } else {
                     for cf_name in &self.handles {
-                        let cf = db.cf_handle(cf_name).context(UnknownSnafu {
+                        let cf = db.cf_handle(cf_name).context(OptionNoneSnafu {
                             message: format!("Column family {cf_name} not found"),
                         })?;
                         db.set_options_cf(&cf, &opts_vec).context(RocksSnafu)?;
