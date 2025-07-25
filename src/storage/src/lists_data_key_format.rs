@@ -28,7 +28,7 @@ const RESERVE2_LEN: usize = 16;
 const U64_LEN: usize = 8;
 
 /*
- * 用于 List 数据 key 的格式
+ * Format for List data key
  * | reserve1 | key | version | index | reserve2 |
  * |    8B    |     |    8B   |   8B  |   16B    |
  */
@@ -151,7 +151,7 @@ impl ParsedListsDataKey {
                 location: snafu::location!(),
             })?;
 
-        // 解码 user key
+        // decode user key
         let mut key_str_buf = BytesMut::with_capacity(pos);
         decode_user_key(&encoded_key_slice[..pos], &mut key_str_buf)?;
         let key_str = key_str_buf.to_vec();
@@ -169,8 +169,8 @@ impl ParsedListsDataKey {
         }
 
         let version =
-            decode_fixed(key[version_offset..version_offset + U64_LEN].as_ptr() as *mut u8);
-        let index = decode_fixed(key[index_offset..index_offset + U64_LEN].as_ptr() as *mut u8);
+            decode_fixed(key[version_offset..version_offset + U64_LEN].as_ptr());
+        let index = decode_fixed(key[index_offset..index_offset + U64_LEN].as_ptr());
 
         // sanity check: we should end exactly before RESERVE2
         if index_offset + U64_LEN != encoded_key_end {

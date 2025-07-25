@@ -77,9 +77,10 @@ pub fn encode_fixed<T: FixedInt>(buf: *mut u8, value: T) {
 /// TODO: remove allow dead code
 #[allow(dead_code)]
 #[inline]
-pub fn decode_fixed<T: FixedInt>(buf: *mut u8) -> T {
+pub fn decode_fixed<T: FixedInt>(buf: *const u8) -> T {
     let size = T::byte_size();
-    let buffer: &mut [u8] = unsafe { std::slice::from_raw_parts_mut(buf, size) };
+    // SAFETY: Caller guarantees `buf` points to at least `size` bytes that are valid for reads.
+    let buffer: &[u8] = unsafe { std::slice::from_raw_parts(buf, size) };
     assert!(buffer.len() >= size, "buffer too small for fixed int");
     T::from_le_bytes(&buffer[..size])
 }

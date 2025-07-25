@@ -17,11 +17,8 @@
 //! simply skip this file, ensuring cross-platform compilation without the
 //! need for extra Cargo features.
 
-#![cfg(unix)]
-#![cfg_attr(not(unix), allow(unused_imports, dead_code))]
-
-use crate::{Client, ServerTrait, StreamTrait};
 use crate::handle;
+use crate::{Client, ServerTrait, StreamTrait};
 use async_trait::async_trait;
 use log::{error, info};
 use std::error::Error;
@@ -73,7 +70,7 @@ impl ServerTrait for UnixServer {
 
             let mut client = Client::new(Box::new(s));
 
-            tokio::spawn(async move { 
+            tokio::spawn(async move {
                 if let Err(e) = handle::process_connection(&mut client).await {
                     error!("handle connection error: {e}");
                 }
