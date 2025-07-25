@@ -20,6 +20,8 @@
 use crate::resp::{Protocol, RespProtocol};
 use crate::Client;
 use log::{error, info};
+use std::sync::Arc;
+use storage::storage::Storage;
 use tokio::select;
 
 /// Processes an incoming TCP connection.
@@ -35,7 +37,7 @@ use tokio::select;
 ///
 /// A `std::io::Result` indicating success or failure.
 ///
-pub async fn process_connection(socket: &mut Client) -> std::io::Result<()> {
+pub async fn process_connection(socket: &mut Client, storage: Arc<Storage>) -> std::io::Result<()> {
     let mut buf = vec![0; 1024];
 
     let mut prot = RespProtocol::new();
@@ -52,7 +54,7 @@ pub async fn process_connection(socket: &mut Client) -> std::io::Result<()> {
                         match prot.parse(&buf[..n]) {
                             Ok(true) => {
                                 let args = prot.take_args();
-                                let response = handle_command(&args).await;
+                                let response = handle_command(&args, storage.clone()).await;
                                 match socket.write(&response.serialize()).await {
                                     Ok(_) => (),
                                     Err(e) => error!("Write error: {e}"),
@@ -75,9 +77,37 @@ pub async fn process_connection(socket: &mut Client) -> std::io::Result<()> {
     }
 }
 
-async fn handle_command(args: &Vec<Vec<u8>>) -> RespProtocol {
-    info!("handle_command: {args:?}");
+async fn handle_command(args: &Vec<Vec<u8>>, storage: Arc<Storage>) -> RespProtocol {
     let mut resp = RespProtocol::new();
-    resp.push_bulk_string("PONG".to_string());
+    if args.is_empty() {
+        resp.push_bulk_string("Empty command".to_string());
+        return resp;
+    }
+    info!("handle_command: {args:?}");
+
+    match args[0].as_slice() {
+        b"set" if args.len() == 3 => {
+            let key = &args[1];
+            let value = &args[2];
+            match storage.set(key, value) {
+                Ok(_) => resp.push_bulk_string("OK".to_string()),
+                Err(e) => resp.push_bulk_string(format!("ERR: {e}")),
+            }
+        }
+        b"get" if args.len() == 2 => {
+            let key = &args[1];
+            match storage.get(key) {
+                Ok(val) => resp.push_bulk_string(val),
+                Err(e) => resp.push_bulk_string(format!("ERR: {e}")),
+            }
+        }
+        b"ping" => {
+            resp.push_bulk_string("PONG".to_string());
+        }
+        _ => {
+            resp.push_bulk_string("Unknown or invalid command".to_string());
+        }
+    }
+
     resp
 }
