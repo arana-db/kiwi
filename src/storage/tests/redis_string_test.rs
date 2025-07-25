@@ -4,6 +4,7 @@ mod redis_string_test {
     use std::{sync::Arc, thread, time::Duration};
     use storage::{unique_test_db_path, BgTaskHandler, Redis, StorageOptions};
 
+    #[cfg(not(miri))]
     #[test]
     fn test_redis_set() {
         let test_db_path = unique_test_db_path();
@@ -50,6 +51,7 @@ mod redis_string_test {
         }
     }
 
+    #[cfg(not(miri))]
     #[test]
     fn test_redis_set_multiple() {
         let test_db_path = unique_test_db_path();
@@ -90,6 +92,7 @@ mod redis_string_test {
         }
     }
 
+    #[cfg(not(miri))]
     #[test]
     fn test_redis_concurrent_set_get() {
         let test_db_path = unique_test_db_path();
@@ -160,6 +163,7 @@ mod redis_string_test {
         }
     }
 
+    #[cfg(not(miri))]
     #[test]
     fn test_redis_concurrent_set_get_same_key() {
         let test_db_path = unique_test_db_path();
@@ -222,6 +226,7 @@ mod redis_string_test {
         }
     }
 
+    #[cfg(not(miri))]
     #[test]
     fn test_redis_concurrent_set_get_mixed() {
         let test_db_path = unique_test_db_path();
@@ -328,6 +333,7 @@ mod redis_string_test {
         }
     }
 
+    #[cfg(not(miri))]
     #[test]
     fn test_redis_concurrent_stress() {
         let test_db_path = unique_test_db_path();

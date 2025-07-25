@@ -4,6 +4,7 @@ mod redis_basic_test {
     use std::sync::{atomic::Ordering, Arc};
     use storage::{unique_test_db_path, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions};
 
+    #[cfg(not(miri))]
     #[test]
     fn test_redis_creation() {
         let storage_options = Arc::new(StorageOptions::default());
@@ -82,6 +83,7 @@ mod redis_basic_test {
         }
     }
 
+    #[cfg(not(miri))]
     #[test]
     fn test_column_family_index() {
         assert_eq!(ColumnFamilyIndex::MetaCF as usize, 0);
