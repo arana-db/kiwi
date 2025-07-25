@@ -41,6 +41,7 @@ mod util;
 // commands
 mod redis_strings;
 
+pub use base_value_format::*;
 pub use error::Result;
 pub use options::StorageOptions;
 pub use redis::{ColumnFamilyIndex, Redis};

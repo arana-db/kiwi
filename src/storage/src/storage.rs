@@ -43,7 +43,6 @@ pub enum BgTask {
     },
     // For shutdown bg task
     Shutdown,
-    None,
 }
 
 pub struct BgTaskHandler {
@@ -67,6 +66,7 @@ pub struct Storage {
     pub insts: Vec<Arc<Redis>>,
     pub slot_indexer: SlotIndexer,
     pub lock_mgr: Arc<LockMgr>,
+    pub is_opened: AtomicBool,
 
     // For bg task
     pub bg_task_handler: Option<Arc<BgTaskHandler>>,
@@ -78,8 +78,6 @@ pub struct Storage {
     pub db_instance_num: usize,
     pub db_id: usize,
     pub scan_keynum_exit: AtomicBool,
-
-    pub is_opened: AtomicBool,
 }
 
 #[allow(dead_code)]
@@ -158,7 +156,7 @@ impl Storage {
     /// let receiver = storage.open(...)?;
     /// let storage = Arc::new(storage);
     /// tokio::spawn(Storage::bg_task_worker(storage.clone(), receiver));
-    async fn bg_task_worker(storage: Arc<Storage>, mut receiver: mpsc::Receiver<BgTask>) {
+    pub async fn bg_task_worker(storage: Arc<Storage>, mut receiver: mpsc::Receiver<BgTask>) {
         while let Some(event) = receiver.recv().await {
             match event {
                 BgTask::CleanAll { dtype } => {
@@ -176,9 +174,6 @@ impl Storage {
                     log::info!("BgTaskWorker received Shutdown, exiting...");
                     break;
                 }
-                BgTask::None => {
-                    // do nothing
-                }
             }
         }
     }
@@ -188,5 +183,29 @@ impl Storage {
             inst.set_option(option_type, options)?;
         }
         Ok(())
+    }
+
+    pub fn create_check_point() {
+        unimplemented!("This function is not implemented yet");
+    }
+
+    pub fn create_check_point_internal() {
+        unimplemented!("This function is not implemented yet");
+    }
+
+    pub fn load_check_point() {
+        unimplemented!("This function is not implemented yet");
+    }
+
+    pub fn load_check_point_internal() {
+        unimplemented!("This function is not implemented yet");
+    }
+
+    pub fn load_cursor_start_key() {
+        unimplemented!("This function is not implemented yet");
+    }
+
+    pub fn store_cursor_start_key() {
+        unimplemented!("This function is not implemented yet");
     }
 }
