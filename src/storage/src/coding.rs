@@ -97,7 +97,7 @@ mod tests {
         let original = 0x12345678u32;
 
         encode_fixed(buf.as_mut_ptr(), original);
-        let decoded = decode_fixed(buf.as_mut_ptr());
+        let decoded = decode_fixed(buf.as_ptr());
 
         assert_eq!(
             original, decoded,
@@ -111,7 +111,7 @@ mod tests {
         let original = 0x1234567890ABCDEFu64;
 
         encode_fixed(buf.as_mut_ptr(), original);
-        let decoded = decode_fixed(buf.as_mut_ptr());
+        let decoded = decode_fixed(buf.as_ptr());
 
         assert_eq!(
             original, decoded,
@@ -125,14 +125,14 @@ mod tests {
 
         encode_fixed(buf.as_mut_ptr(), 0);
         assert_eq!(
-            decode_fixed::<u32>(buf.as_mut_ptr()),
+            decode_fixed::<u32>(buf.as_ptr()),
             0,
             "Minimum u32 value should encode/decode correctly"
         );
 
         encode_fixed(buf.as_mut_ptr(), u32::MAX);
         assert_eq!(
-            decode_fixed::<u32>(buf.as_mut_ptr()),
+            decode_fixed::<u32>(buf.as_ptr()),
             u32::MAX,
             "Maximum u32 value should encode/decode correctly"
         );
@@ -141,7 +141,7 @@ mod tests {
         for &power in &powers {
             encode_fixed(buf.as_mut_ptr(), power);
             assert_eq!(
-                decode_fixed::<u32>(buf.as_mut_ptr()),
+                decode_fixed::<u32>(buf.as_ptr()),
                 power,
                 "Power of 2 value {} should encode/decode correctly",
                 power
@@ -150,14 +150,14 @@ mod tests {
 
         encode_fixed::<u32>(buf.as_mut_ptr(), 0xAAAAAAAA);
         assert_eq!(
-            decode_fixed::<u32>(buf.as_mut_ptr()),
+            decode_fixed::<u32>(buf.as_ptr()),
             0xAAAAAAAA,
             "Alternating bits should encode/decode correctly"
         );
 
         encode_fixed(buf.as_mut_ptr(), 0x55555555);
         assert_eq!(
-            decode_fixed::<u32>(buf.as_mut_ptr()),
+            decode_fixed::<u32>(buf.as_ptr()),
             0x55555555,
             "Alternating bits should encode/decode correctly"
         );
@@ -169,14 +169,14 @@ mod tests {
 
         encode_fixed(buf.as_mut_ptr(), 0);
         assert_eq!(
-            decode_fixed::<u64>(buf.as_mut_ptr()),
+            decode_fixed::<u64>(buf.as_ptr()),
             0,
             "Minimum u64 value should encode/decode correctly"
         );
 
         encode_fixed(buf.as_mut_ptr(), u64::MAX);
         assert_eq!(
-            decode_fixed::<u64>(buf.as_mut_ptr()),
+            decode_fixed::<u64>(buf.as_ptr()),
             u64::MAX,
             "Maximum u64 value should encode/decode correctly"
         );
@@ -195,7 +195,7 @@ mod tests {
         for &power in &powers {
             encode_fixed(buf.as_mut_ptr(), power);
             assert_eq!(
-                decode_fixed::<u64>(buf.as_mut_ptr()),
+                decode_fixed::<u64>(buf.as_ptr()),
                 power,
                 "Power of 2 value {} should encode/decode correctly",
                 power
@@ -204,14 +204,14 @@ mod tests {
 
         encode_fixed::<u64>(buf.as_mut_ptr(), 0xAAAAAAAAAAAAAAAA);
         assert_eq!(
-            decode_fixed::<u64>(buf.as_mut_ptr()),
+            decode_fixed::<u64>(buf.as_ptr()),
             0xAAAAAAAAAAAAAAAA,
             "Alternating bits should encode/decode correctly"
         );
 
         encode_fixed::<u64>(buf.as_mut_ptr(), 0x5555555555555555);
         assert_eq!(
-            decode_fixed::<u64>(buf.as_mut_ptr()),
+            decode_fixed::<u64>(buf.as_ptr()),
             0x5555555555555555,
             "Alternating bits should encode/decode correctly"
         );
@@ -226,7 +226,7 @@ mod tests {
         for &pattern in &patterns {
             encode_fixed(buf.as_mut_ptr(), pattern);
             assert_eq!(
-                decode_fixed::<u64>(buf.as_mut_ptr()),
+                decode_fixed::<u64>(buf.as_ptr()),
                 pattern,
                 "Byte pattern {:X} should encode/decode correctly",
                 pattern
@@ -253,7 +253,7 @@ mod tests {
             assert_eq!(buf[3], 0x04);
         }
 
-        assert_eq!(decode_fixed::<u32>(buf.as_mut_ptr()), value);
+        assert_eq!(decode_fixed::<u32>(buf.as_ptr()), value);
     }
 
     #[test]
@@ -283,7 +283,7 @@ mod tests {
             assert_eq!(buf[7], 0x08);
         }
 
-        assert_eq!(decode_fixed::<u64>(buf.as_mut_ptr()), value);
+        assert_eq!(decode_fixed::<u64>(buf.as_ptr()), value);
     }
 
     #[test]
@@ -297,7 +297,7 @@ mod tests {
 
         for &value in &values {
             encode_fixed(buf.as_mut_ptr(), value);
-            let decoded = decode_fixed::<u32>(buf.as_mut_ptr());
+            let decoded = decode_fixed::<u32>(buf.as_ptr());
             assert_eq!(value, decoded, "Round trip of 0x{:X} failed", value);
         }
     }
@@ -321,7 +321,7 @@ mod tests {
 
         for &value in &values {
             encode_fixed::<u64>(buf.as_mut_ptr(), value);
-            let decoded = decode_fixed(buf.as_mut_ptr());
+            let decoded = decode_fixed(buf.as_ptr());
             assert_eq!(value, decoded, "Round trip of 0x{:X} failed", value);
         }
     }

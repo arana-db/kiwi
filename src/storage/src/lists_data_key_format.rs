@@ -1,16 +1,21 @@
-//  Copyright (c) 2017-present, arana-db Community.  All rights reserved.
-//
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+/*
+ * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+ * 
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #![cfg_attr(not(test), allow(dead_code))]
 
@@ -33,8 +38,6 @@ const U64_LEN: usize = 8;
  * |    8B    |     |    8B   |   8B  |   16B    |
  */
 pub struct ListsDataKey {
-    start: Option<Vec<u8>>,
-    space: [u8; 200],
     reserve1: [u8; 8],
     key: Vec<u8>,
     version: u64,
@@ -45,8 +48,6 @@ pub struct ListsDataKey {
 impl ListsDataKey {
     pub fn new(key: &[u8], version: u64, index: u64) -> Self {
         Self {
-            start: None,
-            space: [0; 200],
             reserve1: [0; 8],
             key: key.to_vec(),
             version,
@@ -55,56 +56,48 @@ impl ListsDataKey {
         }
     }
 
-    #[inline]
-    pub fn encode(&mut self) -> Result<&[u8]> {
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        // Calculate how many bytes we will need.
         let meta_size = self.reserve1.len() + mem::size_of::<u64>() + self.reserve2.len();
         let mut encoded_size = self.key.len() + mem::size_of::<u64>() + ENCODED_KEY_DELIM_SIZE;
+
+        // Each NEED_TRANSFORM_CHARACTER (0) is escaped as two bytes, so we need to
+        // account for the extra space.
         let nzero = self
             .key
             .iter()
             .filter(|&&c| c == NEED_TRANSFORM_CHARACTER as u8)
             .count();
         encoded_size += nzero;
-        let needed = meta_size + encoded_size;
 
-        let dst = if needed <= self.space.len() {
-            &mut self.space[..needed]
-        } else {
-            self.start = Some(vec![0; needed]);
-            self.start.as_mut().unwrap()
-        };
+        let needed = meta_size + encoded_size;
+        let mut dst = vec![0u8; needed];
 
         let mut offset = 0;
 
-        // reserve1: 8 byte
+        // 1. reserve1 (8 bytes)
         dst[offset..offset + self.reserve1.len()].copy_from_slice(&self.reserve1);
         offset += self.reserve1.len();
 
-        // encode user key
+        // 2. encoded user key
         let mut temp_buf = BytesMut::with_capacity(self.key.len() + nzero + ENCODED_KEY_DELIM_SIZE);
         encode_user_key(&self.key, &mut temp_buf)?;
         let encoded_key = temp_buf.as_ref();
         dst[offset..offset + encoded_key.len()].copy_from_slice(encoded_key);
         offset += encoded_key.len();
 
-        // version 8 byte
-        let version_slice = &mut dst[offset..offset + mem::size_of::<u64>()];
-        encode_fixed(version_slice.as_mut_ptr(), self.version);
+        // 3. version (8 bytes)
+        encode_fixed(dst[offset..].as_mut_ptr(), self.version);
         offset += mem::size_of::<u64>();
 
-        // index 8 byte
-        let index_slice = &mut dst[offset..offset + mem::size_of::<u64>()];
-        encode_fixed(index_slice.as_mut_ptr(), self.index);
+        // 4. index (8 bytes)
+        encode_fixed(dst[offset..].as_mut_ptr(), self.index);
         offset += mem::size_of::<u64>();
 
-        // reserve2: 16 byte
+        // 5. reserve2 (16 bytes)
         dst[offset..offset + self.reserve2.len()].copy_from_slice(&self.reserve2);
 
-        Ok(if needed <= self.space.len() {
-            &self.space[..needed]
-        } else {
-            self.start.as_ref().unwrap()
-        })
+        Ok(dst)
     }
 }
 
@@ -125,7 +118,6 @@ impl ParsedListsDataKey {
         Self::decode(key)
     }
 
-    #[inline]
     pub fn decode(key: &[u8]) -> Result<Self> {
         // basic length check using constants for clarity
         let min_len = RESERVE1_LEN + RESERVE2_LEN;
@@ -213,10 +205,10 @@ mod tests {
         let version = 123;
         let index = 456;
 
-        let mut data_key = ListsDataKey::new(key, version, index);
+        let data_key = ListsDataKey::new(key, version, index);
         let encoded = data_key.encode()?;
 
-        let parsed = ParsedListsDataKey::from_slice(encoded)?;
+        let parsed = ParsedListsDataKey::from_slice(&encoded)?;
 
         assert_eq!(parsed.key(), key);
         assert_eq!(parsed.version(), version);
@@ -230,9 +222,9 @@ mod tests {
         let version = 999;
         let index = 888;
 
-        let mut data_key = ListsDataKey::new(key, version, index);
+        let data_key = ListsDataKey::new(key, version, index);
         let encoded = data_key.encode()?;
-        let parsed = ParsedListsDataKey::from_slice(encoded)?;
+        let parsed = ParsedListsDataKey::from_slice(&encoded)?;
 
         assert_eq!(parsed.key(), key);
         assert_eq!(parsed.version(), version);
@@ -246,9 +238,9 @@ mod tests {
         let version = 0;
         let index = 0;
 
-        let mut data_key = ListsDataKey::new(key, version, index);
+        let data_key = ListsDataKey::new(key, version, index);
         let encoded = data_key.encode()?;
-        let parsed = ParsedListsDataKey::from_slice(encoded)?;
+        let parsed = ParsedListsDataKey::from_slice(&encoded)?;
 
         assert_eq!(parsed.key(), key);
         assert_eq!(parsed.version(), version);
