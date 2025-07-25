@@ -22,8 +22,7 @@ use crc16::{State, ARC};
 pub const SLOT_INDEXER_INSTANCE_NUM: usize = 3;
 
 /// Manage slots to rocksdb indexes
-/// TODO: remove allow dead code
-#[allow(dead_code)]
+#[derive(Debug)]
 pub struct SlotIndexer {
     // Number of instances
     instance_num: usize,
@@ -38,8 +37,6 @@ impl Default for SlotIndexer {
     }
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 impl SlotIndexer {
     /// Create a new SlotIndexer with a defined instance number.
     pub fn new(instance_num: usize) -> Self {
@@ -60,9 +57,11 @@ impl SlotIndexer {
         // TODO: Implement the logic for re-sharding slots.
         // When we implement this method, remove the underscore.
         // Don't forget add unit test.
+        unimplemented!("Resharding logic not implemented yet.");
     }
 }
 
+/// Map key to slot ID using CRC16-ARC (compatible with Redis Cluster hash slot)
 pub fn key_to_slot_id(key: &[u8]) -> usize {
     State::<ARC>::calculate(key) as usize
 }
