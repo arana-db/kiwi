@@ -7,7 +7,7 @@ Kiwi is an enhanced Redis server implemented in Rust, aiming to provide high-per
 ## Features
 
 - Uses RocksDB as the backend persistent storage.
-- Highly compatible with the Redis protocol, supporting most Redis commands.
+- Highly compatible with the Redis protocol.
 - Supports performance benchmarking using Redis.
 - Planned modular support, allowing developers to customize extensions.
 - Provides high-performance request handling capabilities.
@@ -27,6 +27,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## Development Plan
 
+- Support most Redis commands
 - Add support for cluster mode
 - Extend command support and optimize command execution efficiency
 - Enhance modular extension features and provide examples
