@@ -1,8 +1,8 @@
-# Kiwi-rs
+# Kiwi
 
 ## 简介
 
-Kiwi-rs 是用 Rust 实现的增强版 Redis 服务器，目标是提供高性能和持久化的键值存储。当前项目还处于早期阶段，功能正在不断扩展和完善。
+Kiwi 是用 Rust 实现的增强版 Redis 服务器，目标是提供高性能和持久化的键值存储。当前项目还处于早期阶段，功能正在不断扩展和完善。
 
 ## 功能特色
 
@@ -34,6 +34,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## 贡献
 
-欢迎对 Kiwi-RS 项目的贡献！如果你有任何建议或发现了问题，请提交 Issue 或创建 Pull Request。
+欢迎对 Kiwi 项目的贡献！如果你有任何建议或发现了问题，请提交 Issue 或创建 Pull Request。
 
 ## 联系我们
