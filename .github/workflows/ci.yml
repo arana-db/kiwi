@@ -11,6 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: check license header
+        uses: apache/skywalking-eyes/header@main
+
   format:
     strategy:
       matrix:
