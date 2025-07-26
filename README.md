@@ -2,7 +2,7 @@
 
 ## Introduction
 
-Kiwi is an enhanced Redis server implemented in Rust, aiming to provide high-performance and persistent key-value storage. The current project is still in the early stages, with features continually being expanded and improved.
+Kiwi is a Redis-compatible key-value database built in Rust, leveraging RocksDB for storage and the Raft consensus algorithm to achieve strong consistency, high performance, and scalability.
 
 ## Features
 
