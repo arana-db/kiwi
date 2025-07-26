@@ -6,7 +6,7 @@ on:
       - main
 jobs:
   license-check:
-    name: license check
+    name: license header check
     runs-on: unbuntu-latest
     steps:
       - uses: actions/checkout@v4
