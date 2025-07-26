@@ -135,8 +135,6 @@ impl Storage {
             log::info!("open RocksDB{i} success!");
             self.insts.push(Arc::new(inst));
         }
-        self.slot_indexer = SlotIndexer::new(self.db_instance_num);
-        self.db_id = options.db_id;
         self.is_opened.store(true, Ordering::SeqCst);
 
         Ok(receiver)
