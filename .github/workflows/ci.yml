@@ -7,7 +7,7 @@ on:
 jobs:
   license-check:
     name: license header check
-    runs-on: unbuntu-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
