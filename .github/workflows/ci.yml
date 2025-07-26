@@ -5,6 +5,12 @@ on:
     branches:
       - main
 jobs:
+  license-check:
+    name: license check
+    runs-on: unbuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
   format:
     strategy:
       matrix:
