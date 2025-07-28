@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- * 
+ *
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -16,7 +16,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 
 //! Utility functions and data structures for the storage engine
 
@@ -81,4 +80,11 @@ pub fn delete_dir<P: AsRef<Path>>(dirname: P) -> io::Result<()> {
     fs::remove_dir(path)?;
 
     Ok(())
+}
+
+pub fn unique_test_db_path() -> std::path::PathBuf {
+    tempfile::tempdir()
+        .expect("Failed to create temp dir")
+        .path()
+        .join("kiwi-test-db")
 }

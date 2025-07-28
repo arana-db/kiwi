@@ -19,13 +19,16 @@
 
 //! Error types for the storage engine
 
+use crate::storage::BgTask;
+use common_macro::stack_trace_debug;
 use snafu::{Location, Snafu};
 use std::io;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[allow(dead_code)]
-#[derive(Debug, Snafu)]
+#[derive(Snafu)]
+#[stack_trace_debug]
 #[snafu(visibility(pub))]
 pub enum Error {
     #[snafu(display("IO error"))]
@@ -40,6 +43,14 @@ pub enum Error {
     Rocks {
         #[snafu(source)]
         error: rocksdb::Error,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Mpsc error"))]
+    Mpsc {
+        #[snafu(source)]
+        error: tokio::sync::mpsc::error::SendError<BgTask>,
         #[snafu(implicit)]
         location: Location,
     },
@@ -60,13 +71,6 @@ pub enum Error {
 
     #[snafu(display("Invalid format: {}", message))]
     InvalidFormat {
-        message: String,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
-    #[snafu(display("Lock error: {}", message))]
-    Lock {
         message: String,
         #[snafu(implicit)]
         location: Location,
@@ -109,6 +113,13 @@ pub enum Error {
 
     #[snafu(display("Unknown error: {}", message))]
     Unknown {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Option is none: {}", message))]
+    OptionNone {
         message: String,
         #[snafu(implicit)]
         location: Location,

@@ -21,19 +21,6 @@
 
 use rocksdb::Options;
 
-/// Column family types
-/// TODO: remove allow dead code
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ColumnFamilyType {
-    /// For metadata storage
-    Meta,
-    /// For actual data storage
-    Data,
-    /// For both metadata and data
-    MetaAndData,
-}
-
 /// TODO: remove allow dead code
 #[allow(dead_code)]
 /// Storage engine options
@@ -53,7 +40,7 @@ pub struct StorageOptions {
     /// Number of database instances
     pub db_instance_num: usize,
     /// Database ID
-    pub db_id: i32,
+    pub db_id: usize,
     /// Raft timeout in seconds
     pub raft_timeout_s: u32,
     /// Maximum gap between log indices
@@ -66,6 +53,7 @@ impl Default for StorageOptions {
     fn default() -> Self {
         let mut options = Options::default();
         options.create_if_missing(true);
+        options.create_missing_column_families(true);
         options.set_max_open_files(10000);
         options.set_write_buffer_size(64 << 20); // 64MB
         options.set_max_write_buffer_number(3);
@@ -132,7 +120,7 @@ impl StorageOptions {
     }
 
     /// Set database ID
-    pub fn set_db_id(&mut self, id: i32) {
+    pub fn set_db_id(&mut self, id: usize) {
         self.db_id = id;
     }
 
@@ -153,4 +141,10 @@ impl StorageOptions {
         self.mem_manager_size = size;
         self
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionType {
+    DB,
+    ColumnFamily,
 }
