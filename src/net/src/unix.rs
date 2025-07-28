@@ -30,9 +30,9 @@ pub struct UnixServer {
 
 impl UnixServer {
     pub fn new(path: Option<String>) -> Self {
-        let path = path.unwrap_or_else(|| "/tmp/sagedb.sock".to_string());
+        let path = path.unwrap_or_else(|| "/tmp/kiwidb.sock".to_string());
         let storage_options = Arc::new(StorageOptions::default());
-        let db_path = PathBuf::from("./kiwi-db");
+        let db_path = PathBuf::from("./db");
         let mut storage = Storage::new(1, 0);
         storage.open(storage_options, db_path).unwrap();
         Self {
@@ -46,7 +46,7 @@ impl UnixServer {
 mod unix_impl {
     use super::*;
     use crate::handle::process_connection;
-    use crate::{Client, StreamTrait};
+    use crate::{Connection, StreamTrait};
     use log::{error, info};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{UnixListener, UnixStream};
@@ -73,7 +73,7 @@ mod unix_impl {
 
     #[async_trait]
     impl ServerTrait for UnixServer {
-        async fn start(&self) -> Result<(), Box<dyn Error>> {
+        async fn run(&self) -> Result<(), Box<dyn Error>> {
             if let Err(e) = std::fs::remove_file(&self.path) {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     return Err(e.into());
@@ -87,7 +87,7 @@ mod unix_impl {
                 match listener.accept().await {
                     Ok((socket, _)) => {
                         let s = UnixStreamWrapper::new(socket);
-                        let mut client = Client::new(Box::new(s));
+                        let mut client = Connection::new(Box::new(s));
                         let storage = self.storage.clone();
                         tokio::spawn(async move {
                             if let Err(e) = process_connection(&mut client, storage).await {

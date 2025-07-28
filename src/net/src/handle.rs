@@ -18,7 +18,7 @@
  */
 
 use crate::resp::{Protocol, RespProtocol};
-use crate::Client;
+use crate::Connection;
 use log::{error, info};
 use std::sync::Arc;
 use storage::storage::Storage;
@@ -37,25 +37,28 @@ use tokio::select;
 ///
 /// A `std::io::Result` indicating success or failure.
 ///
-pub async fn process_connection(socket: &mut Client, storage: Arc<Storage>) -> std::io::Result<()> {
+pub async fn process_connection(
+    connection: &mut Connection,
+    storage: Arc<Storage>,
+) -> std::io::Result<()> {
     let mut buf = vec![0; 1024];
 
-    let mut prot = RespProtocol::new();
+    let mut resp = RespProtocol::new();
 
     loop {
         select! {
-            result = socket.read(&mut buf) => {
+            result = connection.read(&mut buf) => {
                 match result {
                     Ok(n) => {
                         if n == 0 {
                             return Ok(());
                         }
 
-                        match prot.parse(&buf[..n]) {
+                        match resp.parse(&buf[..n]) {
                             Ok(true) => {
-                                let args = prot.take_args();
+                                let args = resp.take_args();
                                 let response = handle_command(&args, storage.clone()).await;
-                                match socket.write(&response.serialize()).await {
+                                match connection.write(&response.serialize()).await {
                                     Ok(_) => (),
                                     Err(e) => error!("Write error: {e}"),
                                 }

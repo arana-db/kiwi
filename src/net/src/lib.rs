@@ -29,7 +29,7 @@ use std::error::Error;
 
 #[async_trait]
 pub trait ServerTrait: Send + Sync + 'static {
-    async fn start(&self) -> Result<(), Box<dyn Error>>;
+    async fn run(&self) -> Result<(), Box<dyn Error>>;
 }
 
 #[async_trait]
@@ -38,11 +38,11 @@ pub trait StreamTrait: Send + Sync {
     async fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error>;
 }
 
-pub struct Client {
+pub struct Connection {
     stream: Box<dyn StreamTrait>,
 }
 
-impl Client {
+impl Connection {
     pub fn new(stream: Box<dyn StreamTrait>) -> Self {
         Self { stream }
     }

@@ -18,7 +18,7 @@
  */
 
 use crate::handle::process_connection;
-use crate::{Client, ServerTrait, StreamTrait};
+use crate::{Connection, ServerTrait, StreamTrait};
 use async_trait::async_trait;
 use log::info;
 use std::error::Error;
@@ -55,16 +55,16 @@ pub struct TcpServer {
 }
 
 impl TcpServer {
+    /// addr is 127.0.0.1:9221
     pub fn new(addr: Option<String>) -> Self {
-        let addr = addr.unwrap_or_else(|| "127.0.0.1:8080".to_string());
         let storage_options = Arc::new(StorageOptions::default());
-        let db_path = PathBuf::from("./kiwi-db");
+        let db_path = PathBuf::from("./db");
         let mut storage = Storage::new(1, 0);
         // Note: Storage::open returns a receiver, and should be called after construction, not in new.
         // The caller should call storage.open(storage_options, db_path) and spawn the bg_task_worker as needed.
         storage.open(storage_options, db_path).unwrap();
         Self {
-            addr,
+            addr: addr.unwrap_or("127.0.0.1:9221".to_string()),
             storage: Arc::new(storage),
         }
     }
@@ -72,7 +72,7 @@ impl TcpServer {
 
 #[async_trait]
 impl ServerTrait for TcpServer {
-    async fn start(&self) -> Result<(), Box<dyn Error>> {
+    async fn run(&self) -> Result<(), Box<dyn Error>> {
         let listener = TcpListener::bind(&self.addr).await?;
 
         info!("Listening on TCP: {}", self.addr);
@@ -82,12 +82,12 @@ impl ServerTrait for TcpServer {
 
             let s = TcpStreamWrapper::new(socket);
 
-            let mut client = Client::new(Box::new(s));
+            let mut connection = Connection::new(Box::new(s));
 
             let storage = self.storage.clone();
 
             tokio::spawn(async move {
-                process_connection(&mut client, storage).await.unwrap();
+                process_connection(&mut connection, storage).await.unwrap();
             });
         }
     }
