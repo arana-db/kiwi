@@ -26,7 +26,7 @@ pub trait Protocol: Send + Sync {
 }
 
 pub struct RespProtocol {
-    args: Vec<Vec<u8>>,
+    params: Vec<Vec<u8>>,
     buffer: Vec<u8>,
     response: Vec<u8>,
 }
@@ -34,14 +34,14 @@ pub struct RespProtocol {
 impl RespProtocol {
     pub fn new() -> RespProtocol {
         RespProtocol {
-            args: Vec::new(),
+            params: Vec::new(),
             buffer: Vec::new(),
             response: Vec::new(),
         }
     }
 
-    pub fn take_args(&mut self) -> Vec<Vec<u8>> {
-        std::mem::take(&mut self.args)
+    pub fn take_params(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.params)
     }
 }
 
@@ -133,7 +133,7 @@ impl Protocol for RespProtocol {
         }
 
         // phase 4: move the parsed data to the args, and clear the buffer
-        self.args = parsed_args;
+        self.params = parsed_args;
         self.buffer = self.buffer.split_off(pos);
         Ok(true)
     }

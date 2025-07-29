@@ -55,7 +55,6 @@ pub struct TcpServer {
 }
 
 impl TcpServer {
-    /// addr is 127.0.0.1:9221
     pub fn new(addr: Option<String>) -> Self {
         let storage_options = Arc::new(StorageOptions::default());
         let db_path = PathBuf::from("./db");

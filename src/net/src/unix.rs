@@ -87,10 +87,10 @@ mod unix_impl {
                 match listener.accept().await {
                     Ok((socket, _)) => {
                         let s = UnixStreamWrapper::new(socket);
-                        let mut client = Connection::new(Box::new(s));
+                        let mut connection = Connection::new(Box::new(s));
                         let storage = self.storage.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = process_connection(&mut client, storage).await {
+                            if let Err(e) = process_connection(&mut connection, storage).await {
                                 error!("Connection processing failed: {e:?}");
                             }
                         });

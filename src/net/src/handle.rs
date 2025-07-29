@@ -56,8 +56,12 @@ pub async fn process_connection(
 
                         match resp.parse(&buf[..n]) {
                             Ok(true) => {
-                                let args = resp.take_args();
-                                let response = handle_command(&args, storage.clone()).await;
+                                let params = resp.take_params();
+
+                                connection.set_cmd_name(&params[0]);
+                                connection.set_argv(&params);
+
+                                let response = handle_command(connection, storage.clone()).await;
                                 match connection.write(&response.serialize()).await {
                                     Ok(_) => (),
                                     Err(e) => error!("Write error: {e}"),
@@ -80,25 +84,22 @@ pub async fn process_connection(
     }
 }
 
-async fn handle_command(args: &Vec<Vec<u8>>, storage: Arc<Storage>) -> RespProtocol {
+async fn handle_command(connection: &mut Connection, storage: Arc<Storage>) -> RespProtocol {
     let mut resp = RespProtocol::new();
-    if args.is_empty() {
-        resp.push_bulk_string("Empty command".to_string());
-        return resp;
-    }
-    info!("handle_command: {args:?}");
+    let argv = connection.argv();
+    info!("handle_command: {argv:?}");
 
-    match args[0].as_slice() {
-        b"set" if args.len() == 3 => {
-            let key = &args[1];
-            let value = &args[2];
+    match connection.cmd_name() {
+        b"set" => {
+            let key = &argv[1];
+            let value = &argv[2];
             match storage.set(key, value) {
                 Ok(_) => resp.push_bulk_string("OK".to_string()),
                 Err(e) => resp.push_bulk_string(format!("ERR: {e}")),
             }
         }
-        b"get" if args.len() == 2 => {
-            let key = &args[1];
+        b"get" if argv.len() == 2 => {
+            let key = &argv[1];
             match storage.get(key) {
                 Ok(val) => resp.push_bulk_string(val),
                 Err(e) => resp.push_bulk_string(format!("ERR: {e}")),
