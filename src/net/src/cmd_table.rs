@@ -24,22 +24,48 @@ use std::collections::HashMap;
 
 pub type CommandTable = HashMap<String, Box<dyn BaseCmd>>;
 
+#[macro_export]
+macro_rules! register_commands {
+    ($cmd_table:expr, $($cmd_struct:ty),+ $(,)?) => {
+        $(
+            {
+                let cmd = <$cmd_struct>::new();
+                let cmd_name = cmd.meta().name.clone();
+                let boxed_cmd = Box::new(cmd);
+                $cmd_table.insert(cmd_name, boxed_cmd);
+            }
+        )+
+    };
+}
+
+#[macro_export]
+macro_rules! register_group_cmd {
+    ($cmd_table:expr, $($constructor:path),+ $(,)?) => {
+        $(
+            {
+                let group_cmd = $constructor();
+                let cmd_name = group_cmd.name().to_lowercase();
+                $cmd_table.insert(cmd_name, Box::new(group_cmd));
+            }
+        )+
+    };
+}
+
 pub fn create_command_table() -> CommandTable {
     let mut cmd_table: CommandTable = HashMap::new();
 
-    // TODO: use macro.
+    register_commands!(
+        cmd_table,
+        cmd_kv::SetCmd,
+        cmd_kv::GetCmd,
+        // TODO: add more commands...
+    );
 
-    // set command
-    let set_cmd = Box::new(cmd_kv::SetCmd::new());
-    cmd_table.insert("set".to_string(), set_cmd);
-
-    // get command
-    let get_cmd = Box::new(cmd_kv::GetCmd::new());
-    cmd_table.insert("get".to_string(), get_cmd);
-
-    // client group command
-    let client_group_cmd = cmd_group_client::new_client_group_cmd();
-    cmd_table.insert("client".to_string(), Box::new(client_group_cmd));
+    register_group_cmd!(
+        cmd_table,
+        cmd_group_client::new_client_group_cmd,
+        // TODO: add more group commands...
+    );
 
     cmd_table
 }
