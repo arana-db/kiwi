@@ -91,16 +91,16 @@ pub trait BaseCmd: Send + Sync {
     /// return mut cmd meta
     fn meta_mut(&mut self) -> &mut CmdMeta;
 
-    fn do_initial(&mut self, connection: &mut Client) -> bool;
+    fn do_initial(&mut self, client: &mut Client) -> bool;
 
-    fn do_cmd(&mut self, connection: &mut Client, storage: Arc<Storage>);
+    fn do_cmd(&mut self, client: &mut Client, storage: Arc<Storage>);
 
     fn clone_box(&self) -> Box<dyn BaseCmd>;
 
-    fn execute(&mut self, connection: &mut Client, storage: Arc<Storage>) {
-        debug!("excute command: {:?}", connection.cmd_name());
-        if self.do_initial(connection) {
-            self.do_cmd(connection, storage);
+    fn execute(&mut self, client: &mut Client, storage: Arc<Storage>) {
+        debug!("excute command: {:?}", client.cmd_name());
+        if self.do_initial(client) {
+            self.do_cmd(client, storage);
         }
     }
 
@@ -208,11 +208,11 @@ impl BaseCmdGroup {
 impl BaseCmd for BaseCmdGroup {
     impl_base_cmd_meta!();
 
-    fn do_initial(&mut self, _connection: &mut Client) -> bool {
+    fn do_initial(&mut self, _client: &mut Client) -> bool {
         true
     }
 
-    fn do_cmd(&mut self, _connection: &mut Client, _storage: Arc<Storage>) {}
+    fn do_cmd(&mut self, _client: &mut Client, _storage: Arc<Storage>) {}
 
     fn clone_box(&self) -> Box<dyn BaseCmd> {
         let mut cloned_group = BaseCmdGroup::new(

@@ -73,7 +73,6 @@ impl BaseCmd for CmdClientGetname {
     }
 }
 
-// --- CLIENT SETNAME ---
 #[derive(Clone, Default)]
 pub struct CmdClientSetname {
     meta: CmdMeta,
