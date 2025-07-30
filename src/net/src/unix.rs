@@ -117,7 +117,7 @@ mod unix_impl {
 
     #[async_trait]
     impl ServerTrait for UnixServer {
-        async fn start(&self) -> Result<(), Box<dyn Error>> {
+        async fn run(&self) -> Result<(), Box<dyn Error>> {
             Err("Unix sockets are not supported on this platform".into())
         }
     }
