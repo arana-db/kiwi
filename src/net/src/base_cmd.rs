@@ -153,13 +153,11 @@ pub struct BaseCmdGroup {
 impl Clone for BaseCmdGroup {
     fn clone(&self) -> Self {
         let mut new_group = BaseCmdGroup {
-            meta: self.meta.clone(), // CmdMeta 可以自动派生 Clone
+            meta: self.meta.clone(),
             sub_cmds: HashMap::new(),
         };
 
         for (name, cmd) in &self.sub_cmds {
-            // 错误的地方：不能用 cmd.clone()
-            // 正确的做法：调用我们定义的 clone_box() 方法
             new_group.sub_cmds.insert(name.clone(), cmd.clone_box());
         }
 

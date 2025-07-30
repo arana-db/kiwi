@@ -33,14 +33,12 @@ pub fn new_client_cmd() -> BaseCmdGroup {
         AclCategory::ADMIN,
     );
 
-    // 添加所有子命令
     client_cmd.add_sub_cmd(Box::new(CmdClientGetname::new()));
     client_cmd.add_sub_cmd(Box::new(CmdClientSetname::new()));
 
     client_cmd
 }
 
-// --- CLIENT GETNAME ---
 #[derive(Clone, Default)]
 pub struct CmdClientGetname {
     meta: CmdMeta,
