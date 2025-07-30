@@ -70,7 +70,7 @@ impl BaseCmd for SetCmd {
         let resp = client.reply_mut();
         match result {
             Ok(_) => resp.push_bulk_string("OK".to_string()),
-            Err(e) => resp.push_bulk_string(format!("ERR: {e}")),
+            Err(e) => resp.push_bulk_string(format!("ERR {e}")),
         }
     }
 }

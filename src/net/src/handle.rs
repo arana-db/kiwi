@@ -80,13 +80,6 @@ async fn handle_command(client: &mut Client, storage: Arc<Storage>, cmd_table: A
     let cmd_name = String::from_utf8_lossy(client.cmd_name()).to_lowercase();
 
     if let Some(cmd) = cmd_table.get(&cmd_name) {
-        if cmd.has_sub_command() {
-            let sub_cmd_name = String::from_utf8_lossy(&client.argv()[1]);
-            let sub_cmd = cmd.get_sub_cmd(&sub_cmd_name).unwrap();
-            let mut sub_cmd_clone = sub_cmd.clone_box();
-            return sub_cmd_clone.execute(client, storage);
-        }
-
         // Clone a command object for this specific request
         let mut cmd_clone = cmd.clone_box();
 

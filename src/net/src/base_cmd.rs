@@ -18,6 +18,7 @@
  */
 
 use crate::client::Client;
+use crate::resp::Protocol;
 use bitflags::bitflags;
 use log::debug;
 use std::collections::HashMap;
@@ -212,7 +213,21 @@ impl BaseCmd for BaseCmdGroup {
         true
     }
 
-    fn do_cmd(&mut self, _client: &mut Client, _storage: Arc<Storage>) {}
+    fn do_cmd(&mut self, client: &mut Client, storage: Arc<Storage>) {
+        if client.argv().len() < 2 {
+            client
+                .reply_mut()
+                .push_bulk_string("ERR wrong number of arguments for command".to_string());
+            return;
+        }
+        let sub_cmd_name = String::from_utf8_lossy(&client.argv()[1]).to_lowercase();
+        if let Some(sub_cmd) = self.sub_cmds.get_mut(&sub_cmd_name) {
+            sub_cmd.execute(client, storage);
+        } else {
+            let err_msg = format!("ERR unknown command '{} {}'", self.name(), sub_cmd_name);
+            client.reply_mut().push_bulk_string(err_msg);
+        }
+    }
 
     fn clone_box(&self) -> Box<dyn BaseCmd> {
         let mut cloned_group = BaseCmdGroup::new(

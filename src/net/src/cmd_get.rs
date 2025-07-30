@@ -59,9 +59,14 @@ impl BaseCmd for GetCmd {
         let resp = client.reply_mut();
         match result {
             Ok(value) => resp.push_bulk_string(value),
-
-            // TODO: add response if key not found.
-            Err(e) => resp.push_bulk_string(format!("ERR {e}")),
+            Err(e) => match e {
+                storage::error::Error::KeyNotFound { .. } => {
+                    resp.push_null_bulk_string();
+                }
+                _ => {
+                    resp.push_bulk_string(format!("ERR {e}"));
+                }
+            },
         }
     }
 }

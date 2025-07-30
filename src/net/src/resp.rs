@@ -21,6 +21,7 @@ use crate::error::Error;
 
 pub trait Protocol: Send + Sync {
     fn push_bulk_string(&mut self, p0: String);
+    fn push_null_bulk_string(&mut self);
     fn serialize(&self) -> Vec<u8>;
     fn parse(&mut self, v: &[u8]) -> Result<bool, Error>;
 }
@@ -48,6 +49,9 @@ impl RespProtocol {
 impl Protocol for RespProtocol {
     fn push_bulk_string(&mut self, p0: String) {
         self.response.extend_from_slice(p0.as_bytes());
+    }
+    fn push_null_bulk_string(&mut self) {
+        self.response.extend_from_slice(b"$-1\r\n");
     }
     fn serialize(&self) -> Vec<u8> {
         let mut resp = Vec::<u8>::new();
