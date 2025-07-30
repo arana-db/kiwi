@@ -28,7 +28,7 @@ pub fn new_client_group_cmd() -> BaseCmdGroup {
     let mut client_cmd = BaseCmdGroup::new(
         "client".to_string(),
         -2,
-        CmdFlags::ADMIN | CmdFlags::READONLY,
+        CmdFlags::ADMIN,
         AclCategory::ADMIN,
     );
 
@@ -99,7 +99,14 @@ impl Cmd for CmdClientSetname {
     }
 
     fn do_cmd(&mut self, client: &mut Client, _storage: Arc<Storage>) {
-        let new_name = client.argv()[2].clone();
+        let argv = client.argv();
+        if argv.len() < 3 {
+            client
+                .reply_mut()
+                .push_bulk_string("ERR wrong number of arguments".to_string());
+            return;
+        }
+        let new_name = argv[2].clone();
         client.set_name(&new_name);
         client.reply_mut().push_bulk_string("OK".to_string());
     }
