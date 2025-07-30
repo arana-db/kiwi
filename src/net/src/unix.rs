@@ -49,8 +49,8 @@ impl UnixServer {
 #[cfg(unix)]
 mod unix_impl {
     use super::*;
+    use crate::client::{Client, StreamTrait};
     use crate::handle::process_connection;
-    use crate::{Client, StreamTrait};
     use log::{error, info};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{UnixListener, UnixStream};

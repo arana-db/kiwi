@@ -17,9 +17,9 @@
  * limitations under the License.
  */
 
+use crate::client::Client;
 use crate::cmd_table::CommandTable;
 use crate::resp::{Protocol, RespProtocol};
-use crate::Client;
 use log::error;
 use std::sync::Arc;
 use storage::storage::Storage;

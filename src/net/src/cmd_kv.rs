@@ -17,11 +17,9 @@
  * limitations under the License.
  */
 
-#![allow(unused)] // For beginning only.
-
 use crate::base_cmd::{BaseCmd, CmdFlags, CmdMeta};
-use crate::resp::{Protocol, RespProtocol};
-use crate::Client;
+use crate::client::Client;
+use crate::resp::Protocol;
 use std::sync::Arc;
 use storage::storage::Storage;
 
@@ -61,11 +59,12 @@ impl BaseCmd for SetCmd {
     /// SET key value
     fn do_initial(&mut self, client: &mut Client) -> bool {
         // TODO: support xx, nx, ex, px
+        let argv = client.argv();
 
-        let key = client.argv[1].clone();
+        self.value = argv[2].clone();
+
+        let key = argv[1].clone();
         client.set_key(&key);
-
-        self.value = client.argv[2].clone();
 
         true
     }
@@ -115,30 +114,21 @@ impl BaseCmd for GetCmd {
         Box::new(self.clone())
     }
 
-    /// GET key
     fn do_initial(&mut self, client: &mut Client) -> bool {
-        let key = client.argv[1].clone();
+        let key = client.argv()[1].clone();
         client.set_key(&key);
         true
     }
 
     fn do_cmd(&mut self, client: &mut Client, storage: Arc<Storage>) {
         let key = client.key();
-        // We now assume `storage.get()` returns a `Result<Option<...>, Error>`
         let result = storage.get(key);
 
         let resp = client.reply_mut();
         match result {
-            // Ok(Some(value)) => The key was found, and here is the value.
-            Ok(value) => {
-                // Assuming the value is bytes (Vec), use push_bulk_bytes.
-                // If the value is a String, use push_bulk_string(value).
-                resp.push_bulk_string(value)
-            }
+            Ok(value) => resp.push_bulk_string(value),
 
             // TODO: add response if key not found.
-
-            // Err(e) => A real storage error occurred.
             Err(e) => resp.push_bulk_string(format!("ERR {e}")),
         }
     }

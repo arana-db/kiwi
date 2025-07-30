@@ -17,9 +17,10 @@
  * limitations under the License.
  */
 
+use crate::client::{Client, StreamTrait};
 use crate::cmd_table::{create_command_table, CommandTable};
 use crate::handle::process_connection;
-use crate::{Client, ServerTrait, StreamTrait};
+use crate::ServerTrait;
 use async_trait::async_trait;
 use log::info;
 use std::error::Error;

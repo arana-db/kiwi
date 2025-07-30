@@ -20,8 +20,8 @@
 #![allow(unused)] // For beginning only.
 
 use crate::base_cmd::{AclCategory, BaseCmd, BaseCmdGroup, CmdFlags, CmdMeta};
+use crate::client::Client;
 use crate::resp::{Protocol, RespProtocol};
-use crate::Client;
 use std::sync::Arc;
 use storage::storage::Storage;
 

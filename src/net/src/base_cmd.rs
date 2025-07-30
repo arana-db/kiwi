@@ -17,9 +17,7 @@
  * limitations under the License.
  */
 
-#![allow(unused)] // For beginning only.
-
-use crate::Client;
+use crate::client::Client;
 use bitflags::bitflags;
 use log::debug;
 use std::collections::HashMap;
