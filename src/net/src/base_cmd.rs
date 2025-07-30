@@ -112,7 +112,7 @@ pub trait BaseCmd: Send + Sync {
     fn check_arg(&self, num: usize) -> bool {
         let arity = self.meta().arity;
         if arity > 0 {
-            num == -arity as usize
+            num == arity as usize
         } else {
             num >= -arity as usize
         }
