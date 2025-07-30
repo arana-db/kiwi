@@ -99,7 +99,7 @@ pub trait BaseCmd: Send + Sync {
     fn clone_box(&self) -> Box<dyn BaseCmd>;
 
     fn execute(&mut self, client: &mut Client, storage: Arc<Storage>) {
-        debug!("excute command: {:?}", client.cmd_name());
+        debug!("execute command: {:?}", client.cmd_name());
         if self.do_initial(client) {
             self.do_cmd(client, storage);
         }
