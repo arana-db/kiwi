@@ -25,7 +25,7 @@ use crate::Client;
 use std::sync::Arc;
 use storage::storage::Storage;
 
-pub fn new_client_cmd() -> BaseCmdGroup {
+pub fn new_client_group_cmd() -> BaseCmdGroup {
     let mut client_cmd = BaseCmdGroup::new(
         "client".to_string(),
         -2,

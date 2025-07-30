@@ -21,7 +21,6 @@ mod base_cmd;
 pub mod cmd_group_client;
 pub mod cmd_kv;
 mod cmd_table;
-mod constant;
 mod error;
 pub mod handle;
 mod resp;

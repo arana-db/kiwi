@@ -38,7 +38,7 @@ pub fn create_command_table() -> CommandTable {
     cmd_table.insert("get".to_string(), get_cmd);
 
     // client group command
-    let client_group_cmd = cmd_group_client::new_client_cmd();
+    let client_group_cmd = cmd_group_client::new_client_group_cmd();
     cmd_table.insert("client".to_string(), Box::new(client_group_cmd));
 
     cmd_table
