@@ -94,6 +94,6 @@ impl Client {
     }
 
     pub fn take_reply(&mut self) -> RespProtocol {
-        std::mem::replace(&mut self.reply, RespProtocol::new())
+        std::mem::take(&mut self.reply)
     }
 }

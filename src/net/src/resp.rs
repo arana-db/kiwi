@@ -32,6 +32,12 @@ pub struct RespProtocol {
     response: Vec<u8>,
 }
 
+impl Default for RespProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RespProtocol {
     pub fn new() -> RespProtocol {
         RespProtocol {

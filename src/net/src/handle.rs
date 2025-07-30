@@ -86,7 +86,7 @@ async fn handle_command(client: &mut Client, storage: Arc<Storage>, cmd_table: A
         cmd_clone.execute(client, storage);
     } else {
         // Command not found, set an error reply
-        let err_msg = format!("ERR unknown command `{}`", cmd_name);
+        let err_msg = format!("ERR unknown command `{cmd_name}`");
         client.reply_mut().push_bulk_string(err_msg);
     }
 }
