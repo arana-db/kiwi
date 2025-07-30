@@ -17,10 +17,10 @@
  * limitations under the License.
  */
 
-use crate::base_cmd::{BaseCmd, CmdFlags, CmdMeta};
 use crate::client::Client;
+use crate::cmd::{Cmd, CmdFlags, CmdMeta};
 use crate::resp::Protocol;
-use crate::{impl_base_cmd_clone_box, impl_base_cmd_meta};
+use crate::{impl_cmd_clone_box, impl_cmd_meta};
 use std::sync::Arc;
 use storage::storage::Storage;
 
@@ -44,9 +44,9 @@ impl SetCmd {
     }
 }
 
-impl BaseCmd for SetCmd {
-    impl_base_cmd_meta!();
-    impl_base_cmd_clone_box!();
+impl Cmd for SetCmd {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
 
     /// SET key value
     fn do_initial(&mut self, client: &mut Client) -> bool {

@@ -17,12 +17,10 @@
  * limitations under the License.
  */
 
-#![allow(unused)] // For beginning only.
-
-use crate::base_cmd::{AclCategory, BaseCmd, BaseCmdGroup, CmdFlags, CmdMeta};
 use crate::client::Client;
-use crate::resp::{Protocol, RespProtocol};
-use crate::{impl_base_cmd_clone_box, impl_base_cmd_meta};
+use crate::cmd::{AclCategory, BaseCmdGroup, Cmd, CmdFlags, CmdMeta};
+use crate::resp::Protocol;
+use crate::{impl_cmd_clone_box, impl_cmd_meta};
 use std::sync::Arc;
 use storage::storage::Storage;
 
@@ -59,9 +57,9 @@ impl CmdClientGetname {
     }
 }
 
-impl BaseCmd for CmdClientGetname {
-    impl_base_cmd_meta!();
-    impl_base_cmd_clone_box!();
+impl Cmd for CmdClientGetname {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
 
     fn do_initial(&mut self, _client: &mut Client) -> bool {
         true
@@ -92,9 +90,9 @@ impl CmdClientSetname {
     }
 }
 
-impl BaseCmd for CmdClientSetname {
-    impl_base_cmd_meta!();
-    impl_base_cmd_clone_box!();
+impl Cmd for CmdClientSetname {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
 
     fn do_initial(&mut self, _client: &mut Client) -> bool {
         true

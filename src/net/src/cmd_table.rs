@@ -17,13 +17,13 @@
  * limitations under the License.
  */
 
-use crate::base_cmd::BaseCmd;
+use crate::cmd::Cmd;
 use crate::cmd_get;
 use crate::cmd_group_client;
 use crate::cmd_set;
 use std::collections::HashMap;
 
-pub type CommandTable = HashMap<String, Box<dyn BaseCmd>>;
+pub type CommandTable = HashMap<String, Box<dyn Cmd>>;
 
 #[macro_export]
 macro_rules! register_commands {

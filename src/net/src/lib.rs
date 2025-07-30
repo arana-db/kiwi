@@ -25,8 +25,8 @@ pub mod cmd_set;
 
 pub mod cmd_group_client;
 
-mod base_cmd;
 mod client;
+mod cmd;
 mod cmd_table;
 mod error;
 mod resp;

@@ -85,7 +85,7 @@ pub struct CmdMeta {
     pub cmd_id: u32,
 }
 
-pub trait BaseCmd: Send + Sync {
+pub trait Cmd: Send + Sync {
     /// return cmd meta
     fn meta(&self) -> &CmdMeta;
 
@@ -96,7 +96,7 @@ pub trait BaseCmd: Send + Sync {
 
     fn do_cmd(&mut self, client: &mut Client, storage: Arc<Storage>);
 
-    fn clone_box(&self) -> Box<dyn BaseCmd>;
+    fn clone_box(&self) -> Box<dyn Cmd>;
 
     fn execute(&mut self, client: &mut Client, storage: Arc<Storage>) {
         debug!("execute command: {:?}", client.cmd_name());
@@ -138,13 +138,13 @@ pub trait BaseCmd: Send + Sync {
         false
     }
 
-    fn get_sub_cmd(&self, _cmd_name: &str) -> Option<&dyn BaseCmd> {
+    fn get_sub_cmd(&self, _cmd_name: &str) -> Option<&dyn Cmd> {
         None
     }
 }
 
 #[macro_export]
-macro_rules! impl_base_cmd_meta {
+macro_rules! impl_cmd_meta {
     () => {
         fn meta(&self) -> &CmdMeta {
             &self.meta
@@ -157,9 +157,9 @@ macro_rules! impl_base_cmd_meta {
 }
 
 #[macro_export]
-macro_rules! impl_base_cmd_clone_box {
+macro_rules! impl_cmd_clone_box {
     () => {
-        fn clone_box(&self) -> Box<dyn BaseCmd> {
+        fn clone_box(&self) -> Box<dyn Cmd> {
             Box::new(self.clone())
         }
     };
@@ -168,7 +168,7 @@ macro_rules! impl_base_cmd_clone_box {
 #[derive(Default)]
 pub struct BaseCmdGroup {
     meta: CmdMeta,
-    sub_cmds: HashMap<String, Box<dyn BaseCmd>>,
+    sub_cmds: HashMap<String, Box<dyn Cmd>>,
 }
 
 impl Clone for BaseCmdGroup {
@@ -200,14 +200,14 @@ impl BaseCmdGroup {
         }
     }
 
-    pub fn add_sub_cmd(&mut self, cmd: Box<dyn BaseCmd>) {
+    pub fn add_sub_cmd(&mut self, cmd: Box<dyn Cmd>) {
         let name = cmd.name().to_lowercase();
         self.sub_cmds.insert(name, cmd);
     }
 }
 
-impl BaseCmd for BaseCmdGroup {
-    impl_base_cmd_meta!();
+impl Cmd for BaseCmdGroup {
+    impl_cmd_meta!();
 
     fn do_initial(&mut self, _client: &mut Client) -> bool {
         true
@@ -229,7 +229,7 @@ impl BaseCmd for BaseCmdGroup {
         }
     }
 
-    fn clone_box(&self) -> Box<dyn BaseCmd> {
+    fn clone_box(&self) -> Box<dyn Cmd> {
         let mut cloned_group = BaseCmdGroup::new(
             self.meta.name.clone(),
             self.meta.arity,
@@ -246,7 +246,7 @@ impl BaseCmd for BaseCmdGroup {
         true
     }
 
-    fn get_sub_cmd(&self, cmd_name: &str) -> Option<&(dyn BaseCmd + 'static)> {
+    fn get_sub_cmd(&self, cmd_name: &str) -> Option<&(dyn Cmd + 'static)> {
         self.sub_cmds.get(cmd_name).map(|cmd| cmd.as_ref())
     }
 }
