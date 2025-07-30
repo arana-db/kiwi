@@ -17,10 +17,13 @@
  * limitations under the License.
  */
 
-pub mod cmd_group_client;
-pub mod cmd_kv;
 pub mod handle;
 pub mod tcp;
+
+pub mod cmd_get;
+pub mod cmd_set;
+
+pub mod cmd_group_client;
 
 mod base_cmd;
 mod client;

@@ -18,8 +18,9 @@
  */
 
 use crate::base_cmd::BaseCmd;
+use crate::cmd_get;
 use crate::cmd_group_client;
-use crate::cmd_kv;
+use crate::cmd_set;
 use std::collections::HashMap;
 
 pub type CommandTable = HashMap<String, Box<dyn BaseCmd>>;
@@ -56,8 +57,8 @@ pub fn create_command_table() -> CommandTable {
 
     register_commands!(
         cmd_table,
-        cmd_kv::SetCmd,
-        cmd_kv::GetCmd,
+        cmd_set::SetCmd,
+        cmd_get::GetCmd,
         // TODO: add more commands...
     );
 

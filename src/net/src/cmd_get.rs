@@ -24,66 +24,6 @@ use std::sync::Arc;
 use storage::storage::Storage;
 
 #[derive(Clone, Default)]
-pub struct SetCmd {
-    meta: CmdMeta,
-    value: Vec<u8>,
-}
-
-impl SetCmd {
-    pub fn new() -> Self {
-        Self {
-            meta: CmdMeta {
-                name: "set".to_string(),
-                arity: 3, // SET key value
-                flags: CmdFlags::WRITE,
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    }
-}
-
-impl BaseCmd for SetCmd {
-    fn meta(&self) -> &CmdMeta {
-        &self.meta
-    }
-
-    fn meta_mut(&mut self) -> &mut CmdMeta {
-        &mut self.meta
-    }
-
-    fn clone_box(&self) -> Box<dyn BaseCmd> {
-        Box::new(self.clone())
-    }
-
-    /// SET key value
-    fn do_initial(&mut self, client: &mut Client) -> bool {
-        // TODO: support xx, nx, ex, px
-        let argv = client.argv();
-
-        self.value = argv[2].clone();
-
-        let key = argv[1].clone();
-        client.set_key(&key);
-
-        true
-    }
-
-    fn do_cmd(&mut self, client: &mut Client, storage: Arc<Storage>) {
-        let key = client.key();
-        let value = &self.value;
-
-        let result = storage.set(key, value);
-
-        let resp = client.reply_mut();
-        match result {
-            Ok(_) => resp.push_bulk_string("OK".to_string()),
-            Err(e) => resp.push_bulk_string(format!("ERR: {e}")),
-        }
-    }
-}
-
-#[derive(Clone, Default)]
 pub struct GetCmd {
     meta: CmdMeta,
 }
