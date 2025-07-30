@@ -142,6 +142,28 @@ pub trait BaseCmd: Send + Sync {
     }
 }
 
+#[macro_export]
+macro_rules! impl_base_cmd_meta {
+    () => {
+        fn meta(&self) -> &CmdMeta {
+            &self.meta
+        }
+
+        fn meta_mut(&mut self) -> &mut CmdMeta {
+            &mut self.meta
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! impl_base_cmd_clone_box {
+    () => {
+        fn clone_box(&self) -> Box<dyn BaseCmd> {
+            Box::new(self.clone())
+        }
+    };
+}
+
 #[derive(Default)]
 pub struct BaseCmdGroup {
     meta: CmdMeta,
@@ -184,13 +206,7 @@ impl BaseCmdGroup {
 }
 
 impl BaseCmd for BaseCmdGroup {
-    fn meta(&self) -> &CmdMeta {
-        &self.meta
-    }
-
-    fn meta_mut(&mut self) -> &mut CmdMeta {
-        &mut self.meta
-    }
+    impl_base_cmd_meta!();
 
     fn do_initial(&mut self, _connection: &mut Client) -> bool {
         true

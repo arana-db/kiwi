@@ -20,6 +20,7 @@
 use crate::base_cmd::{BaseCmd, CmdFlags, CmdMeta};
 use crate::client::Client;
 use crate::resp::Protocol;
+use crate::{impl_base_cmd_clone_box, impl_base_cmd_meta};
 use std::sync::Arc;
 use storage::storage::Storage;
 
@@ -42,17 +43,8 @@ impl GetCmd {
 }
 
 impl BaseCmd for GetCmd {
-    fn meta(&self) -> &CmdMeta {
-        &self.meta
-    }
-
-    fn meta_mut(&mut self) -> &mut CmdMeta {
-        &mut self.meta
-    }
-
-    fn clone_box(&self) -> Box<dyn BaseCmd> {
-        Box::new(self.clone())
-    }
+    impl_base_cmd_meta!();
+    impl_base_cmd_clone_box!();
 
     fn do_initial(&mut self, client: &mut Client) -> bool {
         let key = client.argv()[1].clone();
