@@ -17,6 +17,7 @@
  * limitations under the License.
  */
 
+use crate::cmd_table::{create_command_table, CommandTable};
 use crate::ServerTrait;
 use async_trait::async_trait;
 use std::{error::Error, path::PathBuf, sync::Arc};
@@ -26,6 +27,7 @@ use storage::{storage::Storage, StorageOptions};
 pub struct UnixServer {
     path: String,
     storage: Arc<Storage>,
+    cmd_table: Arc<CommandTable>,
 }
 
 impl UnixServer {
@@ -35,9 +37,11 @@ impl UnixServer {
         let db_path = PathBuf::from("./db");
         let mut storage = Storage::new(1, 0);
         storage.open(storage_options, db_path).unwrap();
+
         Self {
             path,
             storage: Arc::new(storage),
+            cmd_table: Arc::new(create_command_table()),
         }
     }
 }
@@ -46,7 +50,7 @@ impl UnixServer {
 mod unix_impl {
     use super::*;
     use crate::handle::process_connection;
-    use crate::{Connection, StreamTrait};
+    use crate::{Client, StreamTrait};
     use log::{error, info};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{UnixListener, UnixStream};
@@ -87,10 +91,13 @@ mod unix_impl {
                 match listener.accept().await {
                     Ok((socket, _)) => {
                         let s = UnixStreamWrapper::new(socket);
-                        let mut connection = Connection::new(Box::new(s));
+                        let mut connection = Client::new(Box::new(s));
                         let storage = self.storage.clone();
+                        let commands = self.cmd_table.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = process_connection(&mut connection, storage).await {
+                            if let Err(e) =
+                                process_connection(&mut connection, storage, commands).await
+                            {
                                 error!("Connection processing failed: {e:?}");
                             }
                         });

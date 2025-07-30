@@ -26,7 +26,7 @@ use storage::storage::Storage;
 use tokio::select;
 
 pub async fn process_connection(
-    client: &mut Client,
+    connection: &mut Client,
     storage: Arc<Storage>,
     commands: Arc<CommandTable>,
 ) -> std::io::Result<()> {
@@ -35,7 +35,7 @@ pub async fn process_connection(
 
     loop {
         select! {
-            result = client.read(&mut buf) => {
+            result = connection.read(&mut buf) => {
                 match result {
                     Ok(n) => {
                         if n == 0 { return Ok(()); }
@@ -45,14 +45,14 @@ pub async fn process_connection(
                                 let params = resp_parser.take_params();
                                 if params.is_empty() { continue; }
 
-                                client.set_cmd_name(&params[0]);
-                                client.set_argv(&params);
+                                connection.set_cmd_name(&params[0]);
+                                connection.set_argv(&params);
 
-                                handle_command(client, storage.clone(), commands.clone()).await;
+                                handle_command(connection, storage.clone(), commands.clone()).await;
 
                                 // Extract the reply from the connection and send it
-                                let response = client.take_reply();
-                                match client.write(&response.serialize()).await {
+                                let response = connection.take_reply();
+                                match connection.write(&response.serialize()).await {
                                     Ok(_) => (),
                                     Err(e) => error!("Write error: {e}"),
                                 }
@@ -79,16 +79,13 @@ async fn handle_command(client: &mut Client, storage: Arc<Storage>, cmd_table: A
     // Convert the command name from &[u8] to a lowercase String for lookup
     let cmd_name = String::from_utf8_lossy(client.cmd_name()).to_lowercase();
 
-    if let Some(cmd) = cmd_table.get(&cmd_name) {
-        if cmd.has_sub_command() {
-            let sub_cmd_name = String::from_utf8_lossy(&client.argv()[1]);
-            let sub_cmd = cmd.get_sub_cmd(&sub_cmd_name).unwrap();
-            let mut sub_cmd_clone = sub_cmd.clone_box();
-            return sub_cmd_clone.execute(client, storage);
+    if let Some(command) = cmd_table.get(&cmd_name) {
+        if command.has_sub_command() {
+            sub_cmd = command.get_sub_cmd(client.argv()[1]);
         }
 
         // Clone a command object for this specific request
-        let mut cmd_clone = cmd.clone_box();
+        let mut cmd_clone = command.clone_box();
 
         cmd_clone.execute(client, storage);
     } else {

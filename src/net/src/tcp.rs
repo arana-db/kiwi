@@ -17,8 +17,9 @@
  * limitations under the License.
  */
 
+use crate::cmd_table::{create_command_table, CommandTable};
 use crate::handle::process_connection;
-use crate::{Connection, ServerTrait, StreamTrait};
+use crate::{Client, ServerTrait, StreamTrait};
 use async_trait::async_trait;
 use log::info;
 use std::error::Error;
@@ -52,6 +53,7 @@ impl StreamTrait for TcpStreamWrapper {
 pub struct TcpServer {
     addr: String,
     storage: Arc<Storage>,
+    cmd_table: Arc<CommandTable>,
 }
 
 impl TcpServer {
@@ -59,12 +61,15 @@ impl TcpServer {
         let storage_options = Arc::new(StorageOptions::default());
         let db_path = PathBuf::from("./db");
         let mut storage = Storage::new(1, 0);
+
         // Note: Storage::open returns a receiver, and should be called after construction, not in new.
         // The caller should call storage.open(storage_options, db_path) and spawn the bg_task_worker as needed.
         storage.open(storage_options, db_path).unwrap();
+
         Self {
             addr: addr.unwrap_or("127.0.0.1:9221".to_string()),
             storage: Arc::new(storage),
+            cmd_table: Arc::new(create_command_table()),
         }
     }
 }
@@ -81,12 +86,15 @@ impl ServerTrait for TcpServer {
 
             let s = TcpStreamWrapper::new(socket);
 
-            let mut connection = Connection::new(Box::new(s));
+            let mut connection = Client::new(Box::new(s));
 
             let storage = self.storage.clone();
+            let commands = self.cmd_table.clone();
 
             tokio::spawn(async move {
-                process_connection(&mut connection, storage).await.unwrap();
+                process_connection(&mut connection, storage, commands)
+                    .await
+                    .unwrap();
             });
         }
     }

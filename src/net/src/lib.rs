@@ -18,12 +18,14 @@
  */
 
 mod base_cmd;
-mod cmd_kv;
+pub mod cmd_group_client;
+pub mod cmd_kv;
+mod cmd_table;
 mod constant;
 mod error;
 pub mod handle;
 mod resp;
-mod tcp;
+pub mod tcp;
 mod unix;
 
 use crate::resp::RespProtocol;
@@ -42,20 +44,23 @@ pub trait StreamTrait: Send + Sync {
     async fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error>;
 }
 
-pub struct Connection {
+pub struct Client {
     stream: Box<dyn StreamTrait>,
     // TODO: use &[Vec<u8>], need lifetime.
     argv: Vec<Vec<u8>>,
+    // Client name.
+    name: Vec<u8>,
     cmd_name: Vec<u8>,
     key: Vec<u8>,
     reply: RespProtocol,
 }
 
-impl Connection {
+impl Client {
     pub fn new(stream: Box<dyn StreamTrait>) -> Self {
         Self {
             stream,
             argv: Vec::default(),
+            name: Vec::default(),
             cmd_name: Vec::default(),
             key: Vec::default(),
             reply: RespProtocol::new(),
@@ -76,6 +81,14 @@ impl Connection {
 
     pub fn argv(&self) -> &[Vec<u8>] {
         &self.argv
+    }
+
+    pub fn set_name(&mut self, name: &[u8]) {
+        self.name = name.to_vec()
+    }
+
+    pub fn name(&self) -> &[u8] {
+        &self.name
     }
 
     pub fn set_cmd_name(&mut self, name: &[u8]) {

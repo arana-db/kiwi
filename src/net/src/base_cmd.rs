@@ -17,7 +17,9 @@
  * limitations under the License.
  */
 
-use crate::Connection;
+#![allow(unused)] // For beginning only.
+
+use crate::Client;
 use bitflags::bitflags;
 use log::debug;
 use std::collections::HashMap;
@@ -77,11 +79,11 @@ bitflags! {
 
 #[derive(Debug, Clone, Default)]
 pub struct CmdMeta {
-    name: String,
-    arity: i16,
-    flags: CmdFlags,
-    acl_category: AclCategory,
-    cmd_id: u32,
+    pub name: String,
+    pub arity: i16,
+    pub flags: CmdFlags,
+    pub acl_category: AclCategory,
+    pub cmd_id: u32,
 }
 
 pub trait BaseCmd: Send + Sync {
@@ -91,13 +93,13 @@ pub trait BaseCmd: Send + Sync {
     /// return mut cmd meta
     fn meta_mut(&mut self) -> &mut CmdMeta;
 
-    fn do_initial(&mut self, connection: &mut Connection) -> bool;
+    fn do_initial(&mut self, connection: &mut Client) -> bool;
 
-    fn do_cmd(&mut self, connection: &mut Connection, storage: Arc<Storage>);
+    fn do_cmd(&mut self, connection: &mut Client, storage: Arc<Storage>);
 
     fn clone_box(&self) -> Box<dyn BaseCmd>;
 
-    fn execute(&mut self, connection: &mut Connection, storage: Arc<Storage>) {
+    fn execute(&mut self, connection: &mut Client, storage: Arc<Storage>) {
         debug!("excute command: {:?}", connection.cmd_name());
         if self.do_initial(connection) {
             self.do_cmd(connection, storage);
@@ -142,31 +144,46 @@ pub trait BaseCmd: Send + Sync {
     }
 }
 
-/// `BaseCmdGroup` 是一个拥有子命令的命令（例如 `CONFIG`、`CLIENT`）。
-/// 它本身也实现了 `BaseCmd` trait。
+#[derive(Default)]
 pub struct BaseCmdGroup {
     meta: CmdMeta,
-    // BTreeMap 对应 C++ 的 std::map (有序)
-    // Box<dyn BaseCmd> 是一个 Trait Object，等价于 C++ 的 unique_ptr<BaseCmd>
     sub_cmds: HashMap<String, Box<dyn BaseCmd>>,
 }
 
+impl Clone for BaseCmdGroup {
+    fn clone(&self) -> Self {
+        let mut new_group = BaseCmdGroup {
+            meta: self.meta.clone(), // CmdMeta 可以自动派生 Clone
+            sub_cmds: HashMap::new(),
+        };
+
+        for (name, cmd) in &self.sub_cmds {
+            // 错误的地方：不能用 cmd.clone()
+            // 正确的做法：调用我们定义的 clone_box() 方法
+            new_group.sub_cmds.insert(name.clone(), cmd.clone_box());
+        }
+
+        new_group
+    }
+}
+
 impl BaseCmdGroup {
-    pub fn new(name: String, flags: CmdFlags) -> Self {
+    pub fn new(name: String, arity: i16, flags: CmdFlags, acl_category: AclCategory) -> Self {
         Self {
             meta: CmdMeta {
                 name,
-                arity: -2, // 默认组命令至少需要一个子命令
+                arity,
                 flags,
-                acl_category: AclCategory::empty(),
-                cmd_id: 0,
+                acl_category,
+                ..Default::default()
             },
             sub_cmds: HashMap::new(),
         }
     }
 
     pub fn add_sub_cmd(&mut self, cmd: Box<dyn BaseCmd>) {
-        self.sub_cmds.insert(cmd.name().to_lowercase(), cmd);
+        let name = cmd.name().to_lowercase();
+        self.sub_cmds.insert(name, cmd);
     }
 }
 
@@ -179,25 +196,30 @@ impl BaseCmd for BaseCmdGroup {
         &mut self.meta
     }
 
-    fn clone_box(&self) -> Box<dyn BaseCmd> {
-        Box::new(self.clone())
+    fn do_initial(&mut self, _connection: &mut Client) -> bool {
+        true
     }
 
-    /// 组命令本身不执行，所以这是一个空实现。
-    fn do_cmd(&mut self, _connection: &mut Connection, storage: Arc<Storage>) {}
+    fn do_cmd(&mut self, _connection: &mut Client, _storage: Arc<Storage>) {}
 
-    fn do_initial(&mut self, _connection: &mut Connection) -> bool {
-        // 实际逻辑会在这里解析子命令并委托给它
-        true
+    fn clone_box(&self) -> Box<dyn BaseCmd> {
+        let mut cloned_group = BaseCmdGroup::new(
+            self.meta.name.clone(),
+            self.meta.arity,
+            self.meta.flags,
+            self.meta.acl_category,
+        );
+        for (name, cmd) in &self.sub_cmds {
+            cloned_group.sub_cmds.insert(name.clone(), cmd.clone_box());
+        }
+        Box::new(cloned_group)
     }
 
     fn has_sub_command(&self) -> bool {
         true
     }
 
-    fn get_sub_cmd(&self, cmd_name: &str) -> Option<&dyn BaseCmd> {
-        self.sub_cmds
-            .get(&cmd_name.to_lowercase())
-            .map(|cmd| &**cmd)
+    fn get_sub_cmd(&self, cmd_name: &str) -> Option<&(dyn BaseCmd + 'static)> {
+        self.sub_cmds.get(cmd_name).map(|cmd| cmd.as_ref())
     }
 }
