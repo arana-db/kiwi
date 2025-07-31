@@ -17,7 +17,7 @@
  * limitations under the License.
  */
 
-use crate::cmd_table::{create_command_table, CommandTable};
+use crate::cmd_table::{create_command_table, CmdTable};
 use crate::ServerTrait;
 use async_trait::async_trait;
 use std::{error::Error, path::PathBuf, sync::Arc};
@@ -27,7 +27,7 @@ use storage::{storage::Storage, StorageOptions};
 pub struct UnixServer {
     path: String,
     storage: Arc<Storage>,
-    cmd_table: Arc<CommandTable>,
+    cmd_table: Arc<CmdTable>,
 }
 
 impl UnixServer {

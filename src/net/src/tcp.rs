@@ -18,7 +18,7 @@
  */
 
 use crate::client::{Client, StreamTrait};
-use crate::cmd_table::{create_command_table, CommandTable};
+use crate::cmd_table::{create_command_table, CmdTable};
 use crate::handle::process_connection;
 use crate::ServerTrait;
 use async_trait::async_trait;
@@ -54,7 +54,7 @@ impl StreamTrait for TcpStreamWrapper {
 pub struct TcpServer {
     addr: String,
     storage: Arc<Storage>,
-    cmd_table: Arc<CommandTable>,
+    cmd_table: Arc<CmdTable>,
 }
 
 impl TcpServer {

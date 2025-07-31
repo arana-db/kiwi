@@ -18,7 +18,7 @@
  */
 
 use crate::client::Client;
-use crate::cmd_table::CommandTable;
+use crate::cmd_table::CmdTable;
 use crate::resp::{Protocol, RespProtocol};
 use log::error;
 use std::sync::Arc;
@@ -28,7 +28,7 @@ use tokio::select;
 pub async fn process_connection(
     client: &mut Client,
     storage: Arc<Storage>,
-    commands: Arc<CommandTable>,
+    commands: Arc<CmdTable>,
 ) -> std::io::Result<()> {
     let mut buf = vec![0; 1024];
     let mut resp_parser = RespProtocol::new();
@@ -75,7 +75,7 @@ pub async fn process_connection(
     }
 }
 
-async fn handle_command(client: &mut Client, storage: Arc<Storage>, cmd_table: Arc<CommandTable>) {
+async fn handle_command(client: &mut Client, storage: Arc<Storage>, cmd_table: Arc<CmdTable>) {
     // Convert the command name from &[u8] to a lowercase String for lookup
     let cmd_name = String::from_utf8_lossy(client.cmd_name()).to_lowercase();
 
