@@ -1,30 +1,44 @@
-//  Copyright (c) 2017-present, arana-db Community.  All rights reserved.
-//
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+/*
+ * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 use crate::ServerTrait;
 use async_trait::async_trait;
-use std::error::Error;
+use std::{error::Error, path::PathBuf, sync::Arc};
+use storage::{storage::Storage, StorageOptions};
 
 #[allow(dead_code)]
 pub struct UnixServer {
     path: String,
+    storage: Arc<Storage>,
 }
 
 impl UnixServer {
     pub fn new(path: Option<String>) -> Self {
         let path = path.unwrap_or_else(|| "/tmp/sagedb.sock".to_string());
-        Self { path }
+        let storage_options = Arc::new(StorageOptions::default());
+        let db_path = PathBuf::from("./kiwi-db");
+        let mut storage = Storage::new(1, 0);
+        storage.open(storage_options, db_path).unwrap();
+        Self {
+            path,
+            storage: Arc::new(storage),
+        }
     }
 }
 
@@ -74,8 +88,9 @@ mod unix_impl {
                     Ok((socket, _)) => {
                         let s = UnixStreamWrapper::new(socket);
                         let mut client = Client::new(Box::new(s));
+                        let storage = self.storage.clone();
                         tokio::spawn(async move {
-                            if let Err(e) = process_connection(&mut client).await {
+                            if let Err(e) = process_connection(&mut client, storage).await {
                                 error!("Connection processing failed: {e:?}");
                             }
                         });

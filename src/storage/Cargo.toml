@@ -6,6 +6,14 @@ edition.workspace = true
 [lints]
 workspace = true 
 
+[[test]]
+name = "redis_basic_test"
+path = "tests/redis_basic_test.rs"
+
+[[test]]
+name = "storage_basic_test"
+path = "tests/storage_basic_test.rs"
+
 [dependencies]
 rocksdb.workspace = true 
 log.workspace = true
@@ -23,5 +31,10 @@ chrono.workspace = true
 kstd.workspace = true
 snafu.workspace = true
 common-macro.workspace = true
+tokio.workspace = true
+tempfile.workspace = true
+crc16.workspace = true
+moka = { version = "0.12", features = ["sync"] }
+
 
 

@@ -11,3 +11,4 @@ log.workspace = true
 tokio.workspace = true
 async-trait = "0.1"
 snafu = "0.8"
+storage = { path = "../storage" }

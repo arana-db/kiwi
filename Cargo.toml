@@ -1,22 +1,31 @@
 [workspace]
-members = ["src/storage", "src/kstd", "src/common/macro", "src/net", "src/resp", "src/server", "src/conf"]
 resolver = "2"
+members = [
+	"src/storage",
+	"src/kstd",
+	"src/common/macro",
+	"src/net",
+	"src/resp",
+	"src/server",
+	"src/conf"
+]
 
 [workspace.package]
-name = "kiwi-rs"
 version = "0.1.0"
 description = "An enhanced Redis server implemented in Rust"
 readme = "README.md"
 repository = "https://github.com/arana-db/kiwi-rs"
 edition = "2021"
 
-[workspace.lints]
-clippy.dbg_macro = "warn"
-clippy.implicit_clone = "warn"
-clippy.result_large_err = "allow"
-clippy.large_enum_variant = "allow"
-rust.unknown_lints = "deny"
-rust.unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
+[workspace.lints.clippy]
+dbg_macro = "warn"
+implicit_clone = "warn"
+result_large_err = "allow"
+large_enum_variant = "allow"
+
+[workspace.lints.rust]
+unknown_lints = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
 
 [workspace.dependencies]
 bytes = "1"
@@ -26,7 +35,7 @@ quote = "1.0"
 syn = { version = "2.0", features = ["extra-traits", "full"] }
 env_logger = "0.11"
 log = "0.4"
-rocksdb = "0.23.0"
+rocksdb = { version = "0.23.0", features = ["multi-threaded-cf"] }
 thiserror = "1.0"
 serde = "1.0"
 serde_json = "1.0"
@@ -39,6 +48,8 @@ byteorder = "1.4"
 parking_lot = "0.12"
 tokio = { version = "1", features = ["full"] }
 snafu = "0.8"
+tempfile = "3.8"
+crc16 = "0.4"
 
 ## workspaces members
 storage = { path = "src/storage" }
