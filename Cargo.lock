@@ -705,8 +705,10 @@ name = "net"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bitflags",
  "log",
  "snafu",
+ "storage",
  "tokio",
 ]
 

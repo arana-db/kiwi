@@ -21,33 +21,43 @@ use crate::error::Error;
 
 pub trait Protocol: Send + Sync {
     fn push_bulk_string(&mut self, p0: String);
+    fn push_null_bulk_string(&mut self);
     fn serialize(&self) -> Vec<u8>;
     fn parse(&mut self, v: &[u8]) -> Result<bool, Error>;
 }
 
 pub struct RespProtocol {
-    args: Vec<Vec<u8>>,
+    params: Vec<Vec<u8>>,
     buffer: Vec<u8>,
     response: Vec<u8>,
+}
+
+impl Default for RespProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RespProtocol {
     pub fn new() -> RespProtocol {
         RespProtocol {
-            args: Vec::new(),
+            params: Vec::new(),
             buffer: Vec::new(),
             response: Vec::new(),
         }
     }
 
-    pub fn take_args(&mut self) -> Vec<Vec<u8>> {
-        std::mem::take(&mut self.args)
+    pub fn take_params(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.params)
     }
 }
 
 impl Protocol for RespProtocol {
     fn push_bulk_string(&mut self, p0: String) {
         self.response.extend_from_slice(p0.as_bytes());
+    }
+    fn push_null_bulk_string(&mut self) {
+        self.response.extend_from_slice(b"$-1\r\n");
     }
     fn serialize(&self) -> Vec<u8> {
         let mut resp = Vec::<u8>::new();
@@ -133,7 +143,7 @@ impl Protocol for RespProtocol {
         }
 
         // phase 4: move the parsed data to the args, and clear the buffer
-        self.args = parsed_args;
+        self.params = parsed_args;
         self.buffer = self.buffer.split_off(pos);
         Ok(true)
     }

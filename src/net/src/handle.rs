@@ -17,58 +17,56 @@
  * limitations under the License.
  */
 
+use crate::client::Client;
+use crate::cmd_table::CmdTable;
 use crate::resp::{Protocol, RespProtocol};
-use crate::Client;
-use log::{error, info};
+use log::error;
 use std::sync::Arc;
 use storage::storage::Storage;
 use tokio::select;
 
-/// Processes an incoming TCP connection.
-///
-/// This function reads data from the provided `TcpStream`, processes it, and writes the response back to the stream.
-/// It operates in a loop until the connection is closed or an error occurs.
-///
-/// # Arguments
-///
-/// * `socket` - A `TcpStream` representing the connection to process.
-///
-/// # Returns
-///
-/// A `std::io::Result` indicating success or failure.
-///
-pub async fn process_connection(socket: &mut Client, storage: Arc<Storage>) -> std::io::Result<()> {
+pub async fn process_connection(
+    client: &mut Client,
+    storage: Arc<Storage>,
+    commands: Arc<CmdTable>,
+) -> std::io::Result<()> {
     let mut buf = vec![0; 1024];
-
-    let mut prot = RespProtocol::new();
+    let mut resp_parser = RespProtocol::new();
 
     loop {
         select! {
-            result = socket.read(&mut buf) => {
+            result = client.read(&mut buf) => {
                 match result {
                     Ok(n) => {
-                        if n == 0 {
-                            return Ok(());
-                        }
+                        if n == 0 { return Ok(()); }
 
-                        match prot.parse(&buf[..n]) {
+                        match resp_parser.parse(&buf[..n]) {
                             Ok(true) => {
-                                let args = prot.take_args();
-                                let response = handle_command(&args, storage.clone()).await;
-                                match socket.write(&response.serialize()).await {
+                                let params = resp_parser.take_params();
+                                if params.is_empty() { continue; }
+
+                                client.set_cmd_name(&params[0]);
+                                client.set_argv(&params);
+
+                                handle_command(client, storage.clone(), commands.clone()).await;
+
+                                // Extract the reply from the connection and send it
+                                let response = client.take_reply();
+                                match client.write(&response.serialize()).await {
                                     Ok(_) => (),
                                     Err(e) => error!("Write error: {e}"),
                                 }
                             }
-                            Ok(false) => (),  // Data is incomplete, continue to read in a loop
-                            Err(e) => {  // Protocol error
+                            // Other match branches remain unchanged
+                            Ok(false) => (),
+                            Err(e) => {
                                 error!("Protocol error: {e:?}");
                                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()));
                             }
                         }
                     }
                     Err(e) => {
-                        error!("Protocol error: {e:?}");
+                        error!("Read error: {e:?}");
                         return Err(e);
                     }
                 }
@@ -77,37 +75,18 @@ pub async fn process_connection(socket: &mut Client, storage: Arc<Storage>) -> s
     }
 }
 
-async fn handle_command(args: &Vec<Vec<u8>>, storage: Arc<Storage>) -> RespProtocol {
-    let mut resp = RespProtocol::new();
-    if args.is_empty() {
-        resp.push_bulk_string("Empty command".to_string());
-        return resp;
-    }
-    info!("handle_command: {args:?}");
+async fn handle_command(client: &mut Client, storage: Arc<Storage>, cmd_table: Arc<CmdTable>) {
+    // Convert the command name from &[u8] to a lowercase String for lookup
+    let cmd_name = String::from_utf8_lossy(client.cmd_name()).to_lowercase();
 
-    match args[0].as_slice() {
-        b"set" if args.len() == 3 => {
-            let key = &args[1];
-            let value = &args[2];
-            match storage.set(key, value) {
-                Ok(_) => resp.push_bulk_string("OK".to_string()),
-                Err(e) => resp.push_bulk_string(format!("ERR: {e}")),
-            }
-        }
-        b"get" if args.len() == 2 => {
-            let key = &args[1];
-            match storage.get(key) {
-                Ok(val) => resp.push_bulk_string(val),
-                Err(e) => resp.push_bulk_string(format!("ERR: {e}")),
-            }
-        }
-        b"ping" => {
-            resp.push_bulk_string("PONG".to_string());
-        }
-        _ => {
-            resp.push_bulk_string("Unknown or invalid command".to_string());
-        }
-    }
+    if let Some(cmd) = cmd_table.get(&cmd_name) {
+        // Clone a command object for this specific request
+        let mut cmd_clone = cmd.clone_box();
 
-    resp
+        cmd_clone.execute(client, storage);
+    } else {
+        // Command not found, set an error reply
+        let err_msg = format!("ERR unknown command `{cmd_name}`");
+        client.reply_mut().push_bulk_string(err_msg);
+    }
 }

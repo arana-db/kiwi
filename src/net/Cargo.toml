@@ -9,6 +9,7 @@ workspace = true
 [dependencies]
 log.workspace = true
 tokio.workspace = true
+storage.workspace = true
 async-trait = "0.1"
 snafu = "0.8"
-storage = { path = "../storage" }
+bitflags = "2.9.1"

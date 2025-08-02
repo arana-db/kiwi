@@ -17,10 +17,19 @@
  * limitations under the License.
  */
 
-mod error;
 pub mod handle;
+pub mod tcp;
+
+pub mod cmd_get;
+pub mod cmd_set;
+
+pub mod cmd_group_client;
+
+mod client;
+mod cmd;
+mod cmd_table;
+mod error;
 mod resp;
-mod tcp;
 mod unix;
 
 use crate::tcp::TcpServer;
@@ -29,31 +38,7 @@ use std::error::Error;
 
 #[async_trait]
 pub trait ServerTrait: Send + Sync + 'static {
-    async fn start(&self) -> Result<(), Box<dyn Error>>;
-}
-
-#[async_trait]
-pub trait StreamTrait: Send + Sync {
-    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error>;
-    async fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error>;
-}
-
-pub struct Client {
-    stream: Box<dyn StreamTrait>,
-}
-
-impl Client {
-    pub fn new(stream: Box<dyn StreamTrait>) -> Self {
-        Self { stream }
-    }
-
-    pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
-        self.stream.read(buf).await
-    }
-
-    pub async fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
-        self.stream.write(data).await
-    }
+    async fn run(&self) -> Result<(), Box<dyn Error>>;
 }
 
 pub struct ServerFactory;
