@@ -17,8 +17,6 @@
  * limitations under the License.
  */
 
-use std::mem::size_of;
-
 /// TODO: remove allow dead code
 #[allow(dead_code)]
 pub trait FixedInt: Copy {
