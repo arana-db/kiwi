@@ -13,7 +13,7 @@ Kiwi 是用 Rust 实现的基于 RocksDB 和 Raft 协议的 大容量、高性�
 
 ## 系统要求
 
-- 操作系统：Linux、macOS 或 FreeBSD
+- 操作系统：Linux、macOS、FreeBSD 或 windows
 - Rust 编译工具链
 
 ## 安装指南

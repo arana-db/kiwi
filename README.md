@@ -14,7 +14,7 @@ Kiwi is a Redis-compatible key-value database built in Rust, leveraging RocksDB 
 
 ## System Requirements
 
-- Operating System: Linux, macOS, or FreeBSD
+- Operating System: Linux, macOS, FreeBSD, windows
 - Rust toolchain
 
 ## Installation Guide
