@@ -44,6 +44,7 @@ header:
     - 'NOTICE'
     - 'Cargo.lock'
     - 'Cargo.toml'
+    - 'config.ini'
     - '.github/**'
     - '.gitignore'
 
