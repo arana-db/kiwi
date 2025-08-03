@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- * 
+ *
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,24 +17,22 @@
  * limitations under the License.
  */
 
-
 // mod base_data_value_format;
 // mod base_data_key_format;
 mod base_filter;
 mod base_key_format;
 mod base_value_format;
+mod batch_processor;
+mod cache;
 mod coding;
+mod concurrent_utils;
 mod error;
-mod lru_cache;
 mod options;
+mod performance;
 mod redis;
 mod slot_indexer;
 mod storage_define;
 mod storage_murmur3;
 mod strings_value_format;
 mod value_utils;
-mod concurrent_utils;
-mod cache;
-mod batch_processor;
-mod performance;
 // pub mod storage;
