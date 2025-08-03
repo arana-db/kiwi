@@ -1,13 +1,13 @@
 [workspace]
 resolver = "2"
 members = [
-	"storage",
-	"kstd",
-	"common/macro",
-	"net",
-	"resp",
-	"server",
-	"conf"
+	"src/storage",
+	"src/kstd",
+	"src/common/macro",
+	"src/net",
+	"src/resp",
+	"src/server",
+	"src/conf"
 ]
 
 [workspace.package]
@@ -52,7 +52,7 @@ tempfile = "3.8"
 crc16 = "0.4"
 
 ## workspaces members
-storage = { path = "storage" }
-kstd = { path = "kstd" }
-common-macro = { path = "common/macro" }
-net = { path = "net" }
+storage = { path = "src/storage" }
+kstd = { path = "src/kstd" }
+common-macro = { path = "src/common/macro" }
+net = { path = "src/net" }
