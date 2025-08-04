@@ -77,8 +77,6 @@ impl Default for RespData {
     }
 }
 
-
-
 impl RespData {
     pub fn get_type(&self) -> RespType {
         match self {
