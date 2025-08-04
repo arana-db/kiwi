@@ -30,7 +30,7 @@ use tokio::select;
 pub async fn process_connection(
     client: &mut Client,
     storage: Arc<Storage>,
-    commands: Arc<CmdTable>,
+    cmd_table: Arc<CmdTable>,
 ) -> std::io::Result<()> {
     let mut buf = vec![0; 1024];
     let mut resp_parser = resp::RespParse::new(resp::RespVersion::RESP2);
@@ -52,9 +52,7 @@ pub async fn process_connection(
                                     }
                                     let argv = params.iter().map(|p| if let RespData::BulkString(Some(d)) = p { d.to_vec() } else { vec![] }).collect::<Vec<Vec<u8>>>();
                                     client.set_argv(&argv);
-
-                                    handle_command(client, storage.clone(), commands.clone()).await;
-
+                                    handle_command(client, storage.clone(), cmd_table.clone()).await;
                                     // Extract the reply from the connection and send it
                                     let response = client.take_reply();
                                     let mut encoder = RespEncoder::new(RespVersion::RESP2);
