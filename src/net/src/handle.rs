@@ -18,7 +18,7 @@
  */
 
 use crate::client::Client;
-use crate::cmd_table::CmdTable;
+use crate::cmd::table::CmdTable;
 use crate::resp::{Protocol, RespProtocol};
 use log::error;
 use std::sync::Arc;

@@ -17,6 +17,11 @@
  * limitations under the License.
  */
 
+pub mod get;
+pub mod group_client;
+pub mod set;
+pub mod table;
+
 use crate::client::Client;
 use crate::resp::Protocol;
 use bitflags::bitflags;

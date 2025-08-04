@@ -18,7 +18,7 @@
  */
 
 use crate::client::{Client, StreamTrait};
-use crate::cmd_table::{create_command_table, CmdTable};
+use crate::cmd::table::{create_command_table, CmdTable};
 use crate::handle::process_connection;
 use crate::ServerTrait;
 use async_trait::async_trait;

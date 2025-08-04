@@ -54,14 +54,14 @@ pub fn create_command_table() -> CmdTable {
 
     register_cmd!(
         cmd_table,
-        crate::cmd_set::SetCmd,
-        crate::cmd_get::GetCmd,
+        crate::cmd::set::SetCmd,
+        crate::cmd::get::GetCmd,
         // TODO: add more commands...
     );
 
     register_group_cmd!(
         cmd_table,
-        crate::cmd_group_client::new_client_group_cmd,
+        crate::cmd::group_client::new_client_group_cmd,
         // TODO: add more group commands...
     );
 

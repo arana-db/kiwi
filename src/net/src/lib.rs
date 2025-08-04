@@ -20,17 +20,11 @@
 pub mod handle;
 pub mod tcp;
 
-pub mod cmd_get;
-pub mod cmd_set;
-
-pub mod cmd_group_client;
-
-mod client;
-mod cmd;
-mod cmd_table;
-mod error;
-mod resp;
-mod unix;
+pub mod client;
+pub mod cmd;
+pub mod error;
+pub mod resp;
+pub mod unix;
 
 use crate::tcp::TcpServer;
 use async_trait::async_trait;
