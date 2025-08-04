@@ -17,10 +17,15 @@
  * limitations under the License.
  */
 
-use crate::client::Client;
-use crate::resp::Protocol;
+pub mod get;
+pub mod group_client;
+pub mod set;
+pub mod table;
+
 use bitflags::bitflags;
+use client::Client;
 use log::debug;
+use resp::RespData;
 use std::collections::HashMap;
 use std::sync::Arc;
 use storage::storage::Storage;
@@ -228,9 +233,11 @@ impl Cmd for BaseCmdGroup {
 
     fn do_cmd(&mut self, client: &mut Client, storage: Arc<Storage>) {
         if client.argv().len() < 2 {
-            client
-                .reply_mut()
-                .push_bulk_string("ERR wrong number of arguments for command".to_string());
+            *client.reply_mut() = RespData::Error(
+                "ERR wrong number of arguments for command"
+                    .to_string()
+                    .into(),
+            );
             return;
         }
         let sub_cmd_name = String::from_utf8_lossy(&client.argv()[1]).to_lowercase();
@@ -238,7 +245,7 @@ impl Cmd for BaseCmdGroup {
             sub_cmd.execute(client, storage);
         } else {
             let err_msg = format!("ERR unknown command '{} {}'", self.name(), sub_cmd_name);
-            client.reply_mut().push_bulk_string(err_msg);
+            *client.reply_mut() = RespData::Error(err_msg.into());
         }
     }
 

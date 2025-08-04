@@ -13,3 +13,7 @@ storage.workspace = true
 async-trait = "0.1"
 snafu = "0.8"
 bitflags = "2.9.1"
+cmd = { path = "../cmd" }
+resp = { path = "../resp" }
+client = { path = "../client" }
+bytes.workspace = true
