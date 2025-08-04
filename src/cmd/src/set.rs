@@ -17,10 +17,10 @@
  * limitations under the License.
  */
 
-use crate::client::Client;
-use crate::cmd::{Cmd, CmdFlags, CmdMeta};
-use crate::resp::Protocol;
 use crate::{impl_cmd_clone_box, impl_cmd_meta};
+use crate::{Cmd, CmdFlags, CmdMeta};
+use client::Client;
+use resp::RespData;
 use std::sync::Arc;
 use storage::storage::Storage;
 
@@ -67,10 +67,13 @@ impl Cmd for SetCmd {
 
         let result = storage.set(key, value);
 
-        let resp = client.reply_mut();
         match result {
-            Ok(_) => resp.push_bulk_string("OK".to_string()),
-            Err(e) => resp.push_bulk_string(format!("ERR {e}")),
+            Ok(_) => {
+                *client.reply_mut() = RespData::SimpleString("OK".to_string().into());
+            }
+            Err(e) => {
+                *client.reply_mut() = RespData::Error(format!("ERR {e}").into());
+            }
         }
     }
 }

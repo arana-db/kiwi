@@ -20,10 +20,8 @@
 pub mod handle;
 pub mod tcp;
 
-pub mod client;
-pub mod cmd;
+// TODO: delete this module
 pub mod error;
-pub mod resp;
 pub mod unix;
 
 use crate::tcp::TcpServer;

@@ -17,10 +17,12 @@
  * limitations under the License.
  */
 
-use crate::client::Client;
-use crate::cmd::table::CmdTable;
-use crate::resp::{Protocol, RespProtocol};
+use bytes::Bytes;
+use client::Client;
+use cmd::table::CmdTable;
 use log::error;
+use resp::encode::RespEncoder;
+use resp::{Parse, RespData, RespEncode, RespParseResult, RespVersion};
 use std::sync::Arc;
 use storage::storage::Storage;
 use tokio::select;
@@ -31,7 +33,7 @@ pub async fn process_connection(
     commands: Arc<CmdTable>,
 ) -> std::io::Result<()> {
     let mut buf = vec![0; 1024];
-    let mut resp_parser = RespProtocol::new();
+    let mut resp_parser = resp::RespParse::new(resp::RespVersion::RESP2);
 
     loop {
         select! {
@@ -40,28 +42,35 @@ pub async fn process_connection(
                     Ok(n) => {
                         if n == 0 { return Ok(()); }
 
-                        match resp_parser.parse(&buf[..n]) {
-                            Ok(true) => {
-                                let params = resp_parser.take_params();
-                                if params.is_empty() { continue; }
+                        match resp_parser.parse(Bytes::copy_from_slice(&buf[..n])) {
+                            RespParseResult::Complete(data) => {
+                                if let RespData::Array(Some(params)) = data {
+                                    if params.is_empty() { continue; }
 
-                                client.set_cmd_name(&params[0]);
-                                client.set_argv(&params);
+                                    if let RespData::BulkString(Some(cmd_name)) = &params[0] {
+                                        client.set_cmd_name(cmd_name.as_ref());
+                                    }
+                                    let argv = params.iter().map(|p| if let RespData::BulkString(Some(d)) = p { d.to_vec() } else { vec![] }).collect::<Vec<Vec<u8>>>();
+                                    client.set_argv(&argv);
 
-                                handle_command(client, storage.clone(), commands.clone()).await;
+                                    handle_command(client, storage.clone(), commands.clone()).await;
 
-                                // Extract the reply from the connection and send it
-                                let response = client.take_reply();
-                                match client.write(&response.serialize()).await {
-                                    Ok(_) => (),
-                                    Err(e) => error!("Write error: {e}"),
+                                    // Extract the reply from the connection and send it
+                                    let response = client.take_reply();
+                                    let mut encoder = RespEncoder::new(RespVersion::RESP2);
+                                    encoder.encode_resp_data(&response);
+                                    match client.write(encoder.get_response().as_ref()).await {
+                                        Ok(_) => (),
+                                        Err(e) => error!("Write error: {e}"),
+                                    }
                                 }
                             }
-                            // Other match branches remain unchanged
-                            Ok(false) => (),
-                            Err(e) => {
+                            RespParseResult::Error(e) => {
                                 error!("Protocol error: {e:?}");
                                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()));
+                            }
+                            RespParseResult::Incomplete => {
+                                // Not enough data, wait for more
                             }
                         }
                     }
@@ -87,6 +96,6 @@ async fn handle_command(client: &mut Client, storage: Arc<Storage>, cmd_table: A
     } else {
         // Command not found, set an error reply
         let err_msg = format!("ERR unknown command `{cmd_name}`");
-        client.reply_mut().push_bulk_string(err_msg);
+        *client.reply_mut() = RespData::Error(err_msg.into());
     }
 }

@@ -17,7 +17,7 @@
  * limitations under the License.
  */
 
-use crate::cmd::Cmd;
+use crate::Cmd;
 use std::collections::HashMap;
 
 pub type CmdTable = HashMap<String, Box<dyn Cmd>>;
@@ -54,14 +54,14 @@ pub fn create_command_table() -> CmdTable {
 
     register_cmd!(
         cmd_table,
-        crate::cmd::set::SetCmd,
-        crate::cmd::get::GetCmd,
+        crate::set::SetCmd,
+        crate::get::GetCmd,
         // TODO: add more commands...
     );
 
     register_group_cmd!(
         cmd_table,
-        crate::cmd::group_client::new_client_group_cmd,
+        crate::group_client::new_client_group_cmd,
         // TODO: add more group commands...
     );
 

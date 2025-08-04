@@ -17,10 +17,10 @@
  * limitations under the License.
  */
 
-use crate::client::Client;
-use crate::cmd::{AclCategory, BaseCmdGroup, Cmd, CmdFlags, CmdMeta};
-use crate::resp::Protocol;
 use crate::{impl_cmd_clone_box, impl_cmd_meta};
+use crate::{AclCategory, BaseCmdGroup, Cmd, CmdFlags, CmdMeta};
+use client::Client;
+use resp::RespData;
 use std::sync::Arc;
 use storage::storage::Storage;
 
@@ -67,7 +67,7 @@ impl Cmd for CmdClientGetname {
 
     fn do_cmd(&mut self, client: &mut Client, _storage: Arc<Storage>) {
         let name = String::from_utf8_lossy(client.name()).to_string();
-        client.reply_mut().push_bulk_string(name);
+        *client.reply_mut() = RespData::BulkString(Some(name.into()));
     }
 }
 
@@ -101,13 +101,12 @@ impl Cmd for CmdClientSetname {
     fn do_cmd(&mut self, client: &mut Client, _storage: Arc<Storage>) {
         let argv = client.argv();
         if argv.len() < 3 {
-            client
-                .reply_mut()
-                .push_bulk_string("ERR wrong number of arguments".to_string());
+            *client.reply_mut() =
+                RespData::Error("ERR wrong number of arguments".to_string().into());
             return;
         }
         let new_name = argv[2].clone();
         client.set_name(&new_name);
-        client.reply_mut().push_bulk_string("OK".to_string());
+        *client.reply_mut() = RespData::SimpleString("OK".to_string().into());
     }
 }

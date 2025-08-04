@@ -17,9 +17,9 @@
  * limitations under the License.
  */
 
-use crate::cmd::table::{create_command_table, CmdTable};
 use crate::ServerTrait;
 use async_trait::async_trait;
+use cmd::table::{create_command_table, CmdTable};
 use std::{error::Error, path::PathBuf, sync::Arc};
 use storage::{storage::Storage, StorageOptions};
 
@@ -49,8 +49,8 @@ impl UnixServer {
 #[cfg(unix)]
 mod unix_impl {
     use super::*;
-    use crate::client::{Client, StreamTrait};
     use crate::handle::process_connection;
+    use client::{Client, StreamTrait};
     use log::{error, info};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{UnixListener, UnixStream};

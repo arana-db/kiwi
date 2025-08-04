@@ -7,7 +7,9 @@ members = [
 	"src/net",
 	"src/resp",
 	"src/server",
-	"src/conf"
+	"src/conf",
+	"src/cmd",
+	"src/client"
 ]
 
 [workspace.package]

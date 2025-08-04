@@ -71,6 +71,14 @@ pub enum RespData {
     Inline(Vec<Bytes>),
 }
 
+impl Default for RespData {
+    fn default() -> Self {
+        RespData::BulkString(None)
+    }
+}
+
+
+
 impl RespData {
     pub fn get_type(&self) -> RespType {
         match self {
