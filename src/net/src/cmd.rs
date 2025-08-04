@@ -209,6 +209,19 @@ impl BaseCmdGroup {
 impl Cmd for BaseCmdGroup {
     impl_cmd_meta!();
 
+    fn clone_box(&self) -> Box<dyn Cmd> {
+        let mut cloned_group = BaseCmdGroup::new(
+            self.meta.name.clone(),
+            self.meta.arity,
+            self.meta.flags,
+            self.meta.acl_category,
+        );
+        for (name, cmd) in &self.sub_cmds {
+            cloned_group.sub_cmds.insert(name.clone(), cmd.clone_box());
+        }
+        Box::new(cloned_group)
+    }
+
     fn do_initial(&mut self, _client: &mut Client) -> bool {
         true
     }
@@ -227,19 +240,6 @@ impl Cmd for BaseCmdGroup {
             let err_msg = format!("ERR unknown command '{} {}'", self.name(), sub_cmd_name);
             client.reply_mut().push_bulk_string(err_msg);
         }
-    }
-
-    fn clone_box(&self) -> Box<dyn Cmd> {
-        let mut cloned_group = BaseCmdGroup::new(
-            self.meta.name.clone(),
-            self.meta.arity,
-            self.meta.flags,
-            self.meta.acl_category,
-        );
-        for (name, cmd) in &self.sub_cmds {
-            cloned_group.sub_cmds.insert(name.clone(), cmd.clone_box());
-        }
-        Box::new(cloned_group)
     }
 
     fn has_sub_command(&self) -> bool {

@@ -90,10 +90,10 @@ impl ServerTrait for TcpServer {
             let mut client = Client::new(Box::new(s));
 
             let storage = self.storage.clone();
-            let commands = self.cmd_table.clone();
+            let cmd_table = self.cmd_table.clone();
 
             tokio::spawn(async move {
-                process_connection(&mut client, storage, commands)
+                process_connection(&mut client, storage, cmd_table)
                     .await
                     .unwrap();
             });
