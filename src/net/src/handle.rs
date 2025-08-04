@@ -28,7 +28,7 @@ use tokio::select;
 pub async fn process_connection(
     client: &mut Client,
     storage: Arc<Storage>,
-    commands: Arc<CmdTable>,
+    cmd_table: Arc<CmdTable>,
 ) -> std::io::Result<()> {
     let mut buf = vec![0; 1024];
     let mut resp_parser = RespProtocol::new();
@@ -48,7 +48,7 @@ pub async fn process_connection(
                                 client.set_cmd_name(&params[0]);
                                 client.set_argv(&params);
 
-                                handle_command(client, storage.clone(), commands.clone()).await;
+                                handle_command(client, storage.clone(), cmd_table.clone()).await;
 
                                 // Extract the reply from the connection and send it
                                 let response = client.take_reply();
