@@ -22,7 +22,7 @@ use crate::error::Error;
 pub trait Protocol: Send + Sync {
     fn push_bulk_string(&mut self, p0: String);
     fn push_null_bulk_string(&mut self);
-    fn serialize(&self) -> Vec<u8>;
+    fn serialize(&self, cmd :&str) -> Vec<u8>;
     fn parse(&mut self, v: &[u8]) -> Result<bool, Error>;
 }
 
@@ -59,17 +59,31 @@ impl Protocol for RespProtocol {
     fn push_null_bulk_string(&mut self) {
         self.response.extend_from_slice(b"$-1\r\n");
     }
-    fn serialize(&self) -> Vec<u8> {
-        let mut resp = Vec::<u8>::new();
-        resp.push(b'$');
-        resp.extend_from_slice(self.response.len().to_string().as_bytes());
-        resp.push(b'\r');
-        resp.push(b'\n');
-        resp.extend_from_slice(&self.response);
-        resp.push(b'\r');
-        resp.push(b'\n');
-        resp
+    fn serialize(&self, cmd_name :&str) -> Vec<u8> {
+        match cmd_name {
+            "set" => {
+                let mut resp = Vec::<u8>::new();
+                resp.push(b'+');
+                resp.extend_from_slice(&self.response);
+                resp.push(b'\r');
+                resp.push(b'\n');
+                resp
+            },
+            _ => {
+                let mut resp = Vec::<u8>::new();
+                resp.push(b'$');
+                resp.extend_from_slice(self.response.len().to_string().as_bytes());
+                resp.push(b'\r');
+                resp.push(b'\n');
+                resp.extend_from_slice(&self.response);
+                resp.push(b'\r');
+                resp.push(b'\n');
+                resp
+            }
+        }
+
     }
+
     fn parse(&mut self, v: &[u8]) -> Result<bool, Error> {
         // extend from slice, avoid copying data
         self.buffer.extend_from_slice(v);

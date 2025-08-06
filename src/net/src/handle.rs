@@ -47,12 +47,12 @@ pub async fn process_connection(
 
                                 client.set_cmd_name(&params[0]);
                                 client.set_argv(&params);
-
+                                let cmd_name = String::from_utf8(params[0].clone()).unwrap();
                                 handle_command(client, storage.clone(), commands.clone()).await;
 
                                 // Extract the reply from the connection and send it
                                 let response = client.take_reply();
-                                match client.write(&response.serialize()).await {
+                                match client.write(&response.serialize(cmd_name.as_str())).await {
                                     Ok(_) => (),
                                     Err(e) => error!("Write error: {e}"),
                                 }
