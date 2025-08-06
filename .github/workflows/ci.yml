@@ -33,7 +33,7 @@ jobs:
           components: rustfmt
 
       - name: Run fmt
-        run: cargo fmt --manifest-path ./Cargo.toml --all -- --check --unstable-features
+        run: make fmt
 
   cargo-clippy:
     strategy:
@@ -55,7 +55,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - run: cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings
+      - run: make lint
 
   cargo-miri:
     strategy:
@@ -84,4 +84,4 @@ jobs:
       - name: Install Miri
         run: rustup component add miri --toolchain nightly
 
-      - run: cargo miri test --manifest-path ./Cargo.toml --all-features --workspace
+      - run: make miri
