@@ -59,6 +59,7 @@ help:
 	@echo "  clean         - Clean the project"
 	@echo "  fmt           - Format the code"
 	@echo "  lint          - Lint the code"
+	@echo "  miri          - Run tests under Miri"
 	@echo "  help          - Show this help message"
 
 .PHONY: build run test clean fmt lint help
