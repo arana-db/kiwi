@@ -94,16 +94,13 @@ pub trait Cmd: Send + Sync {
     /// return cmd meta
     fn meta(&self) -> &CmdMeta;
 
-    /// return mut cmd meta
-    fn meta_mut(&mut self) -> &mut CmdMeta;
+    fn do_initial(&self, client: &mut Client) -> bool;
 
-    fn do_initial(&mut self, client: &mut Client) -> bool;
-
-    fn do_cmd(&mut self, client: &mut Client, storage: Arc<Storage>);
+    fn do_cmd(&self, client: &mut Client, storage: Arc<Storage>);
 
     fn clone_box(&self) -> Box<dyn Cmd>;
 
-    fn execute(&mut self, client: &mut Client, storage: Arc<Storage>) {
+    fn execute(&self, client: &mut Client, storage: Arc<Storage>) {
         debug!("execute command: {:?}", client.cmd_name());
         if self.do_initial(client) {
             self.do_cmd(client, storage);
@@ -127,14 +124,6 @@ pub trait Cmd: Send + Sync {
         self.meta().flags.contains(flag)
     }
 
-    fn set_flag(&mut self, flag: CmdFlags) {
-        self.meta_mut().flags.insert(flag);
-    }
-
-    fn reset_flag(&mut self, flag: CmdFlags) {
-        self.meta_mut().flags.remove(flag);
-    }
-
     fn acl_category(&self) -> AclCategory {
         self.meta().acl_category
     }
@@ -153,10 +142,6 @@ macro_rules! impl_cmd_meta {
     () => {
         fn meta(&self) -> &CmdMeta {
             &self.meta
-        }
-
-        fn meta_mut(&mut self) -> &mut CmdMeta {
-            &mut self.meta
         }
     };
 }
@@ -227,11 +212,11 @@ impl Cmd for BaseCmdGroup {
         Box::new(cloned_group)
     }
 
-    fn do_initial(&mut self, _client: &mut Client) -> bool {
+    fn do_initial(&self, _client: &mut Client) -> bool {
         true
     }
 
-    fn do_cmd(&mut self, client: &mut Client, storage: Arc<Storage>) {
+    fn do_cmd(&self, client: &mut Client, storage: Arc<Storage>) {
         if client.argv().len() < 2 {
             *client.reply_mut() = RespData::Error(
                 "ERR wrong number of arguments for command"
@@ -241,7 +226,7 @@ impl Cmd for BaseCmdGroup {
             return;
         }
         let sub_cmd_name = String::from_utf8_lossy(&client.argv()[1]).to_lowercase();
-        if let Some(sub_cmd) = self.sub_cmds.get_mut(&sub_cmd_name) {
+        if let Some(sub_cmd) = self.sub_cmds.get(&sub_cmd_name) {
             sub_cmd.execute(client, storage);
         } else {
             let err_msg = format!("ERR unknown command '{} {}'", self.name(), sub_cmd_name);
