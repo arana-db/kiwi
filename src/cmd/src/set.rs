@@ -27,7 +27,6 @@ use storage::storage::Storage;
 #[derive(Clone, Default)]
 pub struct SetCmd {
     meta: CmdMeta,
-    value: Vec<u8>,
 }
 
 impl SetCmd {
@@ -39,7 +38,6 @@ impl SetCmd {
                 flags: CmdFlags::WRITE,
                 ..Default::default()
             },
-            ..Default::default()
         }
     }
 }
@@ -49,11 +47,9 @@ impl Cmd for SetCmd {
     impl_cmd_clone_box!();
 
     /// SET key value
-    fn do_initial(&mut self, client: &mut Client) -> bool {
+    fn do_initial(&self, client: &mut Client) -> bool {
         // TODO: support xx, nx, ex, px
         let argv = client.argv();
-
-        self.value = argv[2].clone();
 
         let key = argv[1].clone();
         client.set_key(&key);
@@ -61,9 +57,9 @@ impl Cmd for SetCmd {
         true
     }
 
-    fn do_cmd(&mut self, client: &mut Client, storage: Arc<Storage>) {
+    fn do_cmd(&self, client: &mut Client, storage: Arc<Storage>) {
         let key = client.key();
-        let value = &self.value;
+        let value = &client.argv()[2];
 
         let result = storage.set(key, value);
 
