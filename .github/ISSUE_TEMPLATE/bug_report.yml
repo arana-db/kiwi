@@ -21,8 +21,8 @@ body:
       label: Reproduction Steps
       description: "How do you trigger this bug? Please walk us through it step by step."
       placeholder: |
-        1. 
-        2. 
+        1.
+        2.
         3.
         ...
     validations:

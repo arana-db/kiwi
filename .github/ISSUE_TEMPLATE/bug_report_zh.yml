@@ -21,8 +21,8 @@ body:
       label: 重现步骤
       description: "您如何触发此错误？请一步一步地引导我们。"
       placeholder: |
-        1. 
-        2. 
+        1.
+        2.
         3.
         ...
     validations:
