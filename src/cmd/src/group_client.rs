@@ -61,11 +61,11 @@ impl Cmd for CmdClientGetname {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
 
-    fn do_initial(&mut self, _client: &mut Client) -> bool {
+    fn do_initial(&self, _client: &mut Client) -> bool {
         true
     }
 
-    fn do_cmd(&mut self, client: &mut Client, _storage: Arc<Storage>) {
+    fn do_cmd(&self, client: &mut Client, _storage: Arc<Storage>) {
         let name = String::from_utf8_lossy(client.name()).to_string();
         *client.reply_mut() = RespData::BulkString(Some(name.into()));
     }
@@ -94,11 +94,11 @@ impl Cmd for CmdClientSetname {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
 
-    fn do_initial(&mut self, _client: &mut Client) -> bool {
+    fn do_initial(&self, _client: &mut Client) -> bool {
         true
     }
 
-    fn do_cmd(&mut self, client: &mut Client, _storage: Arc<Storage>) {
+    fn do_cmd(&self, client: &mut Client, _storage: Arc<Storage>) {
         let argv = client.argv();
         if argv.len() < 3 {
             *client.reply_mut() =

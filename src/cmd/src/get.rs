@@ -46,13 +46,13 @@ impl Cmd for GetCmd {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
 
-    fn do_initial(&mut self, client: &mut Client) -> bool {
+    fn do_initial(&self, client: &mut Client) -> bool {
         let key = client.argv()[1].clone();
         client.set_key(&key);
         true
     }
 
-    fn do_cmd(&mut self, client: &mut Client, storage: Arc<Storage>) {
+    fn do_cmd(&self, client: &mut Client, storage: Arc<Storage>) {
         let key = client.key();
         let result = storage.get(key);
 

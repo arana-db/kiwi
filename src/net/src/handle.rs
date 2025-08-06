@@ -88,7 +88,7 @@ async fn handle_command(client: &mut Client, storage: Arc<Storage>, cmd_table: A
 
     if let Some(cmd) = cmd_table.get(&cmd_name) {
         // Clone a command object for this specific request
-        let mut cmd_clone = cmd.clone_box();
+        let cmd_clone = cmd.clone_box();
 
         cmd_clone.execute(client, storage);
     } else {
