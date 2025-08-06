@@ -30,6 +30,10 @@ lint:
 	@echo "Linting code..."
 	@cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings
 
+miri:
+	@echo "Running miri..."
+	@cargo miri test --manifest-path ./Cargo.toml --all-features --workspace
+
 help:
 	@echo "Available commands:"
 	@echo "  build         - Build the project"
