@@ -1,0 +1,25 @@
+name: 提案
+description: 提出一个新功能或增强功能
+labels: ["proposal"]
+body:
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 提案
+      description: "清晰简洁地描述您想要发生的事情。"
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 动机
+      description: "这个提案的动机是什么？它解决了什么问题？"
+    validations:
+      required: true
+  - type: textarea
+    id: detailed-design
+    attributes:
+      label: 详细设计
+      description: "本节应提供该功能的详细设计。它应包括任何新的 API、对现有 API 的更改以及任何新的数据结构或算法。"
+    validations:
+      required: true

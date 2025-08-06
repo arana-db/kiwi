@@ -1,0 +1,29 @@
+name: 功能请求
+description: 建议一个想法
+title: "[FEATURE] "
+labels: ["✏️ Feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢您花时间填写此功能请求！
+  - type: textarea
+    id: feature-description
+    attributes:
+      label: 功能描述
+      description: "清晰简洁地描述您想要的功能。"
+      placeholder: "例如，我希望能够..."
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: 动机
+      description: "这个功能请求的动机是什么？它解决了什么问题？"
+    validations:
+      required: true
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: 额外信息
+      description: "关于此功能请求的任何其他上下文或屏幕截图。"
