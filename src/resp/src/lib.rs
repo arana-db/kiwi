@@ -1,32 +1,46 @@
-/*
- * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+//! RESP Protocol Library
+//!
+//! A comprehensive implementation of Redis Serialization Protocol (RESP) 
+//! supporting versions 1, 2, and 3. This library provides efficient parsing 
+//! and encoding capabilities while maintaining compatibility across different 
+//! protocol versions.
 
-pub mod command;
-pub mod encode;
 pub mod error;
-pub mod parse;
 pub mod types;
+pub mod parser;
+pub mod encoder;
 
-pub use command::{Command, CommandType, RespCommand};
-pub use encode::{CmdRes, RespEncode};
-pub use error::{RespError, RespResult};
-pub use parse::{Parse, RespParse, RespParseResult};
-pub use types::{RespData, RespType, RespVersion};
+pub mod resp1;
+pub mod resp2;
+pub mod resp3;
 
-pub const CRLF: &str = "\r\n";
+#[cfg(test)]
+mod integration_tests;
+
+pub use encoder::{EncodeResult, RespEncoder};
+pub use error::{RespError, Result};
+pub use parser::{ParseResult, RespParser};
+pub use types::{RespValue, RespVersion};
+
+// Version-specific re-exports
+pub use resp1::{Resp1Encoder, Resp1Parser};
+pub use resp2::{Resp2Encoder, Resp2Parser};
+pub use resp3::{Resp3Encoder, Resp3Parser};
+
+/// Create a parser for the specified RESP version
+pub fn create_parser(version: RespVersion) -> Box<dyn RespParser> {
+    match version {
+        RespVersion::Resp1 => Box::new(Resp1Parser::new()),
+        RespVersion::Resp2 => Box::new(Resp2Parser::new()),
+        RespVersion::Resp3 => Box::new(Resp3Parser::new()),
+    }
+}
+
+/// Create an encoder for the specified RESP version
+pub fn create_encoder(version: RespVersion) -> Box<dyn RespEncoder> {
+    match version {
+        RespVersion::Resp1 => Box::new(Resp1Encoder::new()),
+        RespVersion::Resp2 => Box::new(Resp2Encoder::new()),
+        RespVersion::Resp3 => Box::new(Resp3Encoder::new()),
+    }
+}

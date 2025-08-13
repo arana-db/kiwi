@@ -1,170 +1,168 @@
-/*
- * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 use bytes::Bytes;
-use std::fmt;
+use std::collections::HashMap;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum RespVersion {
-    RESP1,
-    #[default]
-    RESP2,
-}
-
+/// RESP protocol versions supported by this library
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RespType {
-    SimpleString,
-    Error,
-    Integer,
-    BulkString,
-    Array,
-    Inline,
+pub enum RespVersion {
+    Resp1,
+    Resp2,
+    Resp3,
 }
 
-impl RespType {
-    pub fn from_prefix(byte: u8) -> Option<Self> {
-        match byte {
-            b'+' => Some(RespType::SimpleString),
-            b'-' => Some(RespType::Error),
-            b':' => Some(RespType::Integer),
-            b'$' => Some(RespType::BulkString),
-            b'*' => Some(RespType::Array),
-            _ => None,
-        }
-    }
-
-    pub fn prefix_byte(&self) -> Option<u8> {
-        match self {
-            RespType::SimpleString => Some(b'+'),
-            RespType::Error => Some(b'-'),
-            RespType::Integer => Some(b':'),
-            RespType::BulkString => Some(b'$'),
-            RespType::Array => Some(b'*'),
-            RespType::Inline => None,
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
-pub enum RespData {
-    SimpleString(Bytes),
-    Error(Bytes),
+/// Unified representation of all RESP data types across different versions
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum RespValue {
+    // Common types across all versions
+    SimpleString(String),
+    Error(String),
     Integer(i64),
-    BulkString(Option<Bytes>),
-    Array(Option<Vec<RespData>>),
-    Inline(Vec<Bytes>),
+    BulkString(Option<Bytes>), // None represents null
+    Array(Option<Vec<RespValue>>), // None represents null array
+
+    // RESP3 specific types
+    #[default]
+    Null,
+    Boolean(bool),
+    Double(f64),
+    BigNumber(String),
+    BulkError(Bytes),
+    VerbatimString { format: String, data: String },
+    Map(HashMap<RespValue, RespValue>),
+    Set(Vec<RespValue>),
+    Push(Vec<RespValue>),
+
+    // RESP1 inline command (fallback parsing)
+    Inline(Vec<String>),
 }
 
-impl Default for RespData {
-    fn default() -> Self {
-        RespData::BulkString(None)
-    }
-}
+impl RespValue {
+    /// Check if this value type is supported in the given RESP version
+    pub fn is_supported_in_version(&self, version: RespVersion) -> bool {
+        match (self, version) {
+            // All versions support these basic types
+            (RespValue::SimpleString(_), _) => true,
+            (RespValue::Error(_), _) => true,
+            (RespValue::Integer(_), _) => true,
+            (RespValue::BulkString(_), _) => true,
+            (RespValue::Array(_), _) => true,
 
-impl RespData {
-    pub fn get_type(&self) -> RespType {
-        match self {
-            RespData::SimpleString(_) => RespType::SimpleString,
-            RespData::Error(_) => RespType::Error,
-            RespData::Integer(_) => RespType::Integer,
-            RespData::BulkString(_) => RespType::BulkString,
-            RespData::Array(_) => RespType::Array,
-            RespData::Inline(_) => RespType::Inline,
+            // RESP1 supports inline commands
+            (RespValue::Inline(_), RespVersion::Resp1) => true,
+            (RespValue::Inline(_), RespVersion::Resp2) => true, // RESP2 also supports inline for compatibility
+
+            // RESP3 specific types
+            (RespValue::Null, RespVersion::Resp3) => true,
+            (RespValue::Boolean(_), RespVersion::Resp3) => true,
+            (RespValue::Double(_), RespVersion::Resp3) => true,
+            (RespValue::BigNumber(_), RespVersion::Resp3) => true,
+            (RespValue::BulkError(_), RespVersion::Resp3) => true,
+            (RespValue::VerbatimString { .. }, RespVersion::Resp3) => true,
+            (RespValue::Map(_), RespVersion::Resp3) => true,
+            (RespValue::Set(_), RespVersion::Resp3) => true,
+            (RespValue::Push(_), RespVersion::Resp3) => true,
+
+            _ => false,
         }
     }
 
-    pub fn as_string(&self) -> Option<String> {
-        match self {
-            RespData::SimpleString(bytes) => String::from_utf8(bytes.to_vec()).ok(),
-            RespData::Error(bytes) => String::from_utf8(bytes.to_vec()).ok(),
-            RespData::Integer(num) => Some(num.to_string()),
-            RespData::BulkString(Some(bytes)) => String::from_utf8(bytes.to_vec()).ok(),
-            RespData::BulkString(None) => None,
-            RespData::Inline(parts) if !parts.is_empty() => {
-                String::from_utf8(parts[0].to_vec()).ok()
-            }
+    /// Convert a byte slice to a string, handling encoding errors
+    pub fn bytes_to_string(bytes: &[u8]) -> Result<String, crate::error::RespError> {
+        std::str::from_utf8(bytes)
+            .map(|s| s.to_string())
+            .map_err(|source| crate::error::RespError::Utf8Error { source })
+    }
+
+    /// Get the type prefix for RESP2/RESP3 encoding
+    pub fn type_prefix(&self, version: RespVersion) -> Option<u8> {
+        match (self, version) {
+            (RespValue::SimpleString(_), _) => Some(b'+'),
+            (RespValue::Error(_), _) => Some(b'-'),
+            (RespValue::Integer(_), _) => Some(b':'),
+            (RespValue::BulkString(_), _) => Some(b'$'),
+            (RespValue::Array(_), _) => Some(b'*'),
+
+            // RESP3 specific prefixes
+            (RespValue::Null, RespVersion::Resp3) => Some(b'_'),
+            (RespValue::Boolean(_), RespVersion::Resp3) => Some(b'#'),
+            (RespValue::Double(_), RespVersion::Resp3) => Some(b','),
+            (RespValue::BigNumber(_), RespVersion::Resp3) => Some(b'('),
+            (RespValue::BulkError(_), RespVersion::Resp3) => Some(b'!'),
+            (RespValue::VerbatimString { .. }, RespVersion::Resp3) => Some(b'='),
+            (RespValue::Map(_), RespVersion::Resp3) => Some(b'%'),
+            (RespValue::Set(_), RespVersion::Resp3) => Some(b'~'),
+            (RespValue::Push(_), RespVersion::Resp3) => Some(b'>'),
+
             _ => None,
         }
     }
-
-    pub fn as_bytes(&self) -> Option<Bytes> {
-        match self {
-            RespData::SimpleString(bytes) => Some(bytes.clone()),
-            RespData::Error(bytes) => Some(bytes.clone()),
-            RespData::Integer(num) => Some(Bytes::from(num.to_string())),
-            RespData::BulkString(Some(bytes)) => Some(bytes.clone()),
-            RespData::BulkString(None) => None,
-            RespData::Inline(parts) if !parts.is_empty() => Some(parts[0].clone()),
-            _ => None,
-        }
-    }
-
-    pub fn as_integer(&self) -> Option<i64> {
-        match self {
-            RespData::Integer(num) => Some(*num),
-            RespData::SimpleString(bytes) => {
-                std::str::from_utf8(bytes).ok().and_then(|s| s.parse().ok())
-            }
-            RespData::BulkString(Some(bytes)) => {
-                std::str::from_utf8(bytes).ok().and_then(|s| s.parse().ok())
-            }
-            _ => None,
-        }
-    }
 }
 
-impl fmt::Debug for RespData {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Eq for RespValue {}
+
+impl std::hash::Hash for RespValue {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
-            RespData::SimpleString(bytes) => {
-                if let Ok(s) = std::str::from_utf8(bytes) {
-                    write!(f, "SimpleString(\"{s}\")")
-                } else {
-                    write!(f, "SimpleString({bytes:?})")
-                }
+            RespValue::SimpleString(s) => {
+                0u8.hash(state);
+                s.hash(state);
             }
-            RespData::Error(bytes) => {
-                if let Ok(s) = std::str::from_utf8(bytes) {
-                    write!(f, "Error(\"{s}\")")
-                } else {
-                    write!(f, "Error({bytes:?})")
-                }
+            RespValue::Error(s) => {
+                1u8.hash(state);
+                s.hash(state);
             }
-            RespData::Integer(num) => write!(f, "Integer({num})"),
-            RespData::BulkString(Some(bytes)) => {
-                if let Ok(s) = std::str::from_utf8(bytes) {
-                    write!(f, "BulkString(\"{s}\")")
-                } else {
-                    write!(f, "BulkString({bytes:?})")
-                }
+            RespValue::Integer(i) => {
+                2u8.hash(state);
+                i.hash(state);
             }
-            RespData::BulkString(None) => write!(f, "BulkString(nil)"),
-            RespData::Array(Some(array)) => write!(f, "Array({array:?})"),
-            RespData::Array(None) => write!(f, "Array(nil)"),
-            RespData::Inline(parts) => {
-                write!(f, "Inline(")?;
-                let parts_str: Vec<_> = parts
-                    .iter()
-                    .filter_map(|b| std::str::from_utf8(b).ok())
-                    .collect();
-                write!(f, "{parts_str:?}")?;
-                write!(f, ")")
+            RespValue::BulkString(opt) => {
+                3u8.hash(state);
+                opt.hash(state);
+            }
+            RespValue::Array(opt) => {
+                4u8.hash(state);
+                opt.hash(state);
+            }
+            RespValue::Null => {
+                5u8.hash(state);
+            }
+            RespValue::Boolean(b) => {
+                6u8.hash(state);
+                b.hash(state);
+            }
+            RespValue::Double(f) => {
+                7u8.hash(state);
+                f.to_bits().hash(state);
+            }
+            RespValue::BigNumber(s) => {
+                8u8.hash(state);
+                s.hash(state);
+            }
+            RespValue::BulkError(b) => {
+                9u8.hash(state);
+                b.hash(state);
+            }
+            RespValue::VerbatimString { format, data } => {
+                10u8.hash(state);
+                format.hash(state);
+                data.hash(state);
+            }
+            RespValue::Map(m) => {
+                11u8.hash(state);
+                // Note: HashMap iteration order is not deterministic, but for hashing
+                // we need a consistent order. This is a simplification.
+                m.len().hash(state);
+            }
+            RespValue::Set(v) => {
+                12u8.hash(state);
+                v.hash(state);
+            }
+            RespValue::Push(v) => {
+                13u8.hash(state);
+                v.hash(state);
+            }
+            RespValue::Inline(v) => {
+                14u8.hash(state);
+                v.hash(state);
             }
         }
     }

@@ -1,61 +1,35 @@
-/*
- * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 use thiserror::Error;
 
-#[derive(Error, Debug, PartialEq, Eq)]
+/// Result type used throughout the RESP library
+pub type Result<T> = std::result::Result<T, RespError>;
+
+/// Errors that can occur during RESP protocol operations
+#[derive(Error, Debug, Clone, PartialEq)]
 pub enum RespError {
-    #[error("Invalid RESP data: {0}")]
-    InvalidData(String),
+    #[error("Invalid protocol format: {message}")]
+    InvalidFormat { message: String },
 
-    #[error("Parse error: {0}")]
-    ParseError(String),
+    #[error("Incomplete data: need {needed} more bytes")]
+    IncompleteData { needed: usize },
 
-    #[error("Incomplete data")]
-    Incomplete,
+    #[error("Invalid integer format: {value}")]
+    InvalidInteger { value: String },
 
-    #[error("Invalid integer: {0}")]
-    InvalidInteger(String),
+    #[error("Invalid bulk string length: {length}")]
+    InvalidBulkStringLength { length: i64 },
 
-    #[error("Invalid bulk string length: {0}")]
-    InvalidBulkStringLength(String),
+    #[error("Invalid array length: {length}")]
+    InvalidArrayLength { length: i64 },
 
-    #[error("Invalid array length: {0}")]
-    InvalidArrayLength(String),
+    #[error("Unsupported data type for RESP version")]
+    UnsupportedDataType,
 
-    #[error("Unsupported RESP type")]
-    UnsupportedType,
+    #[error("Protocol version not supported: {version}")]
+    UnsupportedVersion { version: String },
 
-    #[error("Unknown command: {0}")]
-    UnknownCommand(String),
+    #[error("UTF-8 encoding error: {source}")]
+    Utf8Error { source: std::str::Utf8Error },
 
-    #[error("Unknown subcommand: {0}")]
-    UnknownSubCommand(String),
-
-    #[error("Syntax error: {0}")]
-    SyntaxError(String),
-
-    #[error("Wrong number of arguments: {0}")]
-    WrongNumberOfArguments(String),
-
-    #[error("Unknown error: {0}")]
-    UnknownError(String),
+    #[error("IO error: {message}")]
+    IoError { message: String },
 }
-
-pub type RespResult<T> = Result<T, RespError>;
