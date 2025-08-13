@@ -22,8 +22,8 @@ use crate::error::{MpscSnafu, Result};
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
 use crate::{Redis, StorageOptions};
+use foyer::{Cache, CacheBuilder};
 use kstd::lock_mgr::LockMgr;
-use moka::sync::Cache;
 use snafu::ResultExt;
 use std::collections::HashMap;
 use std::path::Path;
@@ -88,7 +88,7 @@ impl Storage {
             slot_indexer: SlotIndexer::new(db_instance_num),
             is_opened: AtomicBool::new(false),
             lock_mgr: Arc::new(LockMgr::new(1000)),
-            cursors_store: Arc::new(Cache::new(1000)),
+            cursors_store: Arc::new(CacheBuilder::new(1000).build()),
             db_instance_num,
             db_id,
             bg_task_handler: None,

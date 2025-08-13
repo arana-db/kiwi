@@ -52,6 +52,7 @@ tokio = { version = "1", features = ["full"] }
 snafu = "0.8"
 tempfile = "3.8"
 crc16 = "0.4"
+foyer = { version = "0.18", features = ["nightly"] }
 
 ## workspaces members
 storage = { path = "src/storage" }
