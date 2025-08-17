@@ -61,7 +61,7 @@ pub trait Engine: Send + Sync {
         writeopts: &WriteOptions,
     ) -> Result<()>;
 
-    // 迭代器
+    // Iterator
     fn iterator(&self, mode: IteratorMode) -> DBIteratorWithThreadMode<'_, DB>;
 
     fn iterator_opt(
@@ -94,6 +94,6 @@ pub trait Engine: Send + Sync {
         end: Option<&[u8]>,
     );
 
-    // 快照
+    // Snapshot
     fn snapshot(&self) -> Snapshot<'_>;
 }
