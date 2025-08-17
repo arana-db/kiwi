@@ -111,6 +111,9 @@ impl CmdExecutor {
 
     async fn do_execute_once(work: CmdExecutionWork) {
         let exec = work.exec;
+
+        // TODO: we may consider pass the cancellation_token to cmd.execute to
+        // allow having a graceful shutdown in a big command processing logic.
         exec.cmd.execute(exec.client.as_ref(), exec.storage);
 
         // notify the work has finished to the caller
