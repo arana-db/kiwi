@@ -17,4 +17,12 @@
  * limitations under the License.
  */
 
+/// CmdExecutor accepts the command & command args parsed from server, and
+/// execute them in a standalone tokio runtime.
 pub struct CmdExecutor {}
+
+impl CmdExecutor {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
