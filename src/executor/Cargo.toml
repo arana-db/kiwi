@@ -11,6 +11,9 @@ net.workspace = true
 tokio.workspace = true
 env_logger.workspace = true
 log.workspace = true
+num_cpus.workspace = true
+resp.workspace = true
+async_channel.workspace = true
 
 [lints]
 workspace = true
