@@ -92,16 +92,22 @@ impl CmdExecutor {
             done: done_tx,
         };
 
+        if self.cancellation_token.is_cancelled() {
+            error!("CmdExecutor is closed");
+            work.exec
+                .client
+                .set_reply(RespData::Error("ERR executor unavailable".into()));
+            return;
+        }
+
         // send the work to the worker pool
         match self.work_tx.send(work).await {
             Ok(_) => {}
-            Err(async_channel::SendError(work)) => {
-                error!("Failed to send work to worker; executor likely closed");
-                work.exec
-                    .client
-                    .set_reply(RespData::Error("ERR executor unavailable".into()));
-                // Unblock the waiter
-                let _ = work.done.send(());
+            Err(async_channel::SendError(_)) => {
+                // this should not happen, because the only case when all the workers
+                // has been closed is when the executor is closed. and we've already
+                // checked the cancellation_token.
+                panic!("Failed to send work to worker; executor likely closed");
             }
         }
 
