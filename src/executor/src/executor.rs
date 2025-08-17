@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 
 use client::Client;
 use cmd::Cmd;
+use resp::RespData;
 use storage::storage::Storage;
 
 pub struct CmdExecution {
@@ -93,14 +94,19 @@ impl CmdExecutor {
 
         // send the work to the worker pool
         match self.work_tx.send(work).await {
-            Ok(_) => (),
-            Err(e) => {
-                error!("Failed to send work to worker: {e:?}");
+            Ok(_) => {
+                // wait for the work to finish
+                let _ = done_rx.await;
+            }
+            Err(async_channel::SendError(work)) => {
+                error!("Failed to send work to worker; executor likely closed");
+                work.exec
+                    .client
+                    .set_reply(RespData::Error("ERR executor unavailable".into()));
+                // Unblock the waiter
+                let _ = work.done.send(());
             }
         }
-
-        // wait for the work to finish
-        let _ = done_rx.await;
     }
 
     pub async fn close(&mut self) {

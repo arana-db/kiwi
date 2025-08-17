@@ -97,7 +97,7 @@ async fn handle_command(
         let exec = CmdExecution {
             cmd: cmd.clone(),
             client: client.clone(),
-            storage: storage,
+            storage,
         };
         executor.execute(exec).await;
     } else {
