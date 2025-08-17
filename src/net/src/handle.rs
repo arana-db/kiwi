@@ -20,7 +20,7 @@
 use bytes::Bytes;
 use client::Client;
 use cmd::table::CmdTable;
-use executor::CmdExecutor;
+use executor::{CmdExecution, CmdExecutor};
 use log::error;
 use resp::encode::RespEncoder;
 use resp::{Parse, RespData, RespEncode, RespParseResult, RespVersion};
@@ -54,7 +54,7 @@ pub async fn process_connection(
                                     }
                                     let argv = params.iter().map(|p| if let RespData::BulkString(Some(d)) = p { d.to_vec() } else { vec![] }).collect::<Vec<Vec<u8>>>();
                                     client.set_argv(&argv);
-                                    handle_command(&client, storage.clone(), cmd_table.clone(), executor.clone()).await;
+                                    handle_command(client.clone(), storage.clone(), cmd_table.clone(), executor.clone()).await;
                                     // Extract the reply from the connection and send it
                                     let response = client.take_reply();
                                     let mut encoder = RespEncoder::new(RespVersion::RESP2);
@@ -85,7 +85,7 @@ pub async fn process_connection(
 }
 
 async fn handle_command(
-    client: &Client,
+    client: Arc<Client>,
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
@@ -94,10 +94,12 @@ async fn handle_command(
     let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
 
     if let Some(cmd) = cmd_table.get(&cmd_name) {
-        // Clone a command object for this specific request
-        let cmd_clone = cmd.clone_box();
-
-        cmd_clone.execute(client, storage);
+        let exec = CmdExecution {
+            cmd: cmd.clone(),
+            client: client.clone(),
+            storage: storage,
+        };
+        executor.execute(exec).await;
     } else {
         // Command not found, set an error reply
         let err_msg = format!("ERR unknown command `{cmd_name}`");

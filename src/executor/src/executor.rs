@@ -19,8 +19,8 @@
 
 use std::sync::Arc;
 
-use log::{info, warn};
-use tokio::task::JoinHandle;
+use log::{error, info, warn};
+use tokio::{sync::oneshot, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use client::Client;
@@ -28,16 +28,25 @@ use cmd::Cmd;
 use storage::storage::Storage;
 
 pub struct CmdExecution {
-    cmd: Arc<dyn Cmd>,
-    client: Arc<Client>,
-    storage: Arc<Storage>,
+    pub cmd: Arc<dyn Cmd>,
+    pub client: Arc<Client>,
+    // TODO(flaneur2020): storage might be better to be owned by CmdExecutor, if we
+    // plans to put execution in a seperate tokio runtime.
+    pub storage: Arc<Storage>,
+}
+
+/// [`CmdExecutionWork`] is the work item sent to the worker pool. It notifies the
+/// caller when the work is finished.
+struct CmdExecutionWork {
+    exec: CmdExecution,
+    done: oneshot::Sender<()>,
 }
 
 /// [`CmdExecutor`] accepts the command & command args parsed from server, and
 /// execute them in a task pool.
 pub struct CmdExecutor {
     /// Sender for submitting tasks to the worker pool
-    work_tx: async_channel::Sender<CmdExecution>,
+    work_tx: async_channel::Sender<CmdExecutionWork>,
     /// Worker task handles
     workers: Vec<JoinHandle<()>>,
     /// Cancellation token for the executor
@@ -48,16 +57,16 @@ impl CmdExecutor {
     /// Creates a new `CmdExecutor` with a specified number of worker tasks
     pub fn new(worker_count: usize, channel_size: usize) -> Self {
         let cancellation_token = CancellationToken::new();
-        let (work_tx, work_rx) = async_channel::bounded::<CmdExecution>(channel_size);
+        let (work_tx, work_rx) = async_channel::bounded::<CmdExecutionWork>(channel_size);
 
         let mut workers = Vec::new();
 
         // Spawn workers
         for worker_id in 0..worker_count {
-            let task_rx_clone = work_rx.clone();
+            let work_rx_clone = work_rx.clone();
             let worker = tokio::spawn(Self::run_worker(
                 worker_id,
-                task_rx_clone,
+                work_rx_clone,
                 cancellation_token.clone(),
             ));
             workers.push(worker);
@@ -71,12 +80,22 @@ impl CmdExecutor {
     }
 
     pub async fn execute(&self, work: CmdExecution) {
+        let (done_tx, done_rx) = oneshot::channel();
+        let work = CmdExecutionWork {
+            exec: work,
+            done: done_tx,
+        };
+
+        // send the work to the worker pool
         match self.work_tx.send(work).await {
             Ok(_) => (),
             Err(e) => {
-                warn!("Failed to send work to worker: {e:?}");
+                error!("Failed to send work to worker: {e:?}");
             }
         }
+
+        // wait for the work to finish
+        let _ = done_rx.await;
     }
 
     pub async fn close(&mut self) {
@@ -90,16 +109,17 @@ impl CmdExecutor {
         info!("CmdExecutor closed");
     }
 
-    async fn do_execute_once(work: CmdExecution) {
-        let cmd = work.cmd;
-        let client = work.client;
-        let storage = work.storage;
-        cmd.execute(client.as_ref(), storage);
+    async fn do_execute_once(work: CmdExecutionWork) {
+        let exec = work.exec;
+        exec.cmd.execute(exec.client.as_ref(), exec.storage);
+
+        // notify the work has finished to the caller
+        let _ = work.done.send(());
     }
 
     async fn run_worker(
         worker_id: usize,
-        work_rx: async_channel::Receiver<CmdExecution>,
+        work_rx: async_channel::Receiver<CmdExecutionWork>,
         cancellation_token: CancellationToken,
     ) {
         info!("Worker {worker_id} started");
