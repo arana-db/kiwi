@@ -63,11 +63,11 @@ impl CmdExecutor {
         }
     }
 
-    pub async fn close(&self) {
+    pub async fn close(&mut self) {
         self.cancellation_token.cancel();
 
         // Wait for all workers to complete
-        for worker in &self.workers {
+        for worker in &mut self.workers {
             let _ = worker.await;
         }
 
