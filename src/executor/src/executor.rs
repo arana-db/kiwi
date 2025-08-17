@@ -148,3 +148,58 @@ impl CmdExecutor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cmd::get::GetCmd;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn test_cmd_executor_basic_functionality() {
+        // Create a real GetCmd
+        let get_cmd = Arc::new(GetCmd::new());
+
+        // Create a simple client
+        let client = Arc::new(Client::new(Box::new(TestStream::new())));
+
+        // Create storage
+        let storage = Arc::new(Storage::new(1, 0));
+
+        // Create executor with 1 worker
+        let mut executor = CmdExecutor::new(1, 5);
+
+        // Create command execution
+        let cmd_execution = CmdExecution {
+            cmd: get_cmd,
+            client,
+            storage,
+        };
+
+        // Execute the command
+        executor.execute(cmd_execution).await;
+
+        // Test graceful shutdown
+        executor.close().await;
+    }
+
+    // Simple test stream implementation
+    struct TestStream;
+
+    impl TestStream {
+        fn new() -> Self {
+            Self
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl client::StreamTrait for TestStream {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+
+        async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+    }
+}

@@ -55,6 +55,7 @@ tempfile = "3.8"
 crc16 = "0.4"
 async-channel = "2.5.0"
 tokio-util = "0.7.16"
+async-trait = "0.1"
 
 ## workspaces members
 storage = { path = "src/storage" }
