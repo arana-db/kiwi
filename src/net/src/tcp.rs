@@ -87,13 +87,13 @@ impl ServerTrait for TcpServer {
 
             let s = TcpStreamWrapper::new(socket);
 
-            let mut client = Client::new(Box::new(s));
+            let client = Client::new(Box::new(s));
 
             let storage = self.storage.clone();
             let cmd_table = self.cmd_table.clone();
 
             tokio::spawn(async move {
-                process_connection(&mut client, storage, cmd_table)
+                process_connection(client, storage, cmd_table)
                     .await
                     .unwrap();
             });

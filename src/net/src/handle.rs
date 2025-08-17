@@ -28,7 +28,7 @@ use storage::storage::Storage;
 use tokio::select;
 
 pub async fn process_connection(
-    client: &mut Client,
+    client: Client,
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
 ) -> std::io::Result<()> {
@@ -52,7 +52,7 @@ pub async fn process_connection(
                                     }
                                     let argv = params.iter().map(|p| if let RespData::BulkString(Some(d)) = p { d.to_vec() } else { vec![] }).collect::<Vec<Vec<u8>>>();
                                     client.set_argv(&argv);
-                                    handle_command(client, storage.clone(), cmd_table.clone()).await;
+                                    handle_command(&client, storage.clone(), cmd_table.clone()).await;
                                     // Extract the reply from the connection and send it
                                     let response = client.take_reply();
                                     let mut encoder = RespEncoder::new(RespVersion::RESP2);
@@ -82,9 +82,9 @@ pub async fn process_connection(
     }
 }
 
-async fn handle_command(client: &mut Client, storage: Arc<Storage>, cmd_table: Arc<CmdTable>) {
+async fn handle_command(client: &Client, storage: Arc<Storage>, cmd_table: Arc<CmdTable>) {
     // Convert the command name from &[u8] to a lowercase String for lookup
-    let cmd_name = String::from_utf8_lossy(client.cmd_name()).to_lowercase();
+    let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
 
     if let Some(cmd) = cmd_table.get(&cmd_name) {
         // Clone a command object for this specific request
@@ -94,6 +94,6 @@ async fn handle_command(client: &mut Client, storage: Arc<Storage>, cmd_table: A
     } else {
         // Command not found, set an error reply
         let err_msg = format!("ERR unknown command `{cmd_name}`");
-        *client.reply_mut() = RespData::Error(err_msg.into());
+        client.set_reply(RespData::Error(err_msg.into()));
     }
 }

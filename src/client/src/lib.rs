@@ -17,8 +17,11 @@
  * limitations under the License.
  */
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use resp::RespData;
+use tokio::sync::Mutex;
 
 #[async_trait]
 pub trait StreamTrait: Send + Sync {
@@ -27,12 +30,19 @@ pub trait StreamTrait: Send + Sync {
 }
 
 pub struct Client {
+    // using tokio::sync::Mutex may has risks to pass this Client object across
+    // tokio runtimes. we may require to figure out how to make a refactor to
+    // avoid passing Client across runtimes.
+    inner: Mutex<ClientInner>,
+}
+
+pub struct ClientInner {
     stream: Box<dyn StreamTrait>,
     // TODO: use &[Vec<u8>], need lifetime.
     argv: Vec<Vec<u8>>,
     // Client name.
-    name: Vec<u8>,
-    cmd_name: Vec<u8>,
+    name: Arc<Vec<u8>>,
+    cmd_name: Arc<Vec<u8>>,
     key: Vec<u8>,
     reply: RespData,
 }
@@ -40,60 +50,76 @@ pub struct Client {
 impl Client {
     pub fn new(stream: Box<dyn StreamTrait>) -> Self {
         Self {
-            stream,
-            argv: Vec::default(),
-            name: Vec::default(),
-            cmd_name: Vec::default(),
-            key: Vec::default(),
-            reply: RespData::default(),
+            inner: Mutex::new(ClientInner {
+                stream,
+                argv: Vec::default(),
+                name: Arc::new(Vec::default()),
+                cmd_name: Arc::new(Vec::default()),
+                key: Vec::default(),
+                reply: RespData::default(),
+            }),
         }
     }
 
-    pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
-        self.stream.read(buf).await
+    pub async fn read(&self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
+        let mut inner = self.inner.lock().await;
+        inner.stream.read(buf).await
     }
 
-    pub async fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
-        self.stream.write(data).await
+    pub async fn write(&self, data: &[u8]) -> Result<usize, std::io::Error> {
+        // Use tokio::sync::Mutex which is Send-safe for async operations
+        let mut inner = self.inner.lock().await;
+        inner.stream.write(data).await
     }
 
-    pub fn set_argv(&mut self, argv: &[Vec<u8>]) {
-        self.argv = argv.to_vec()
+    pub fn set_argv(&self, argv: &[Vec<u8>]) {
+        // Use blocking lock for sync operations
+        let mut inner = self.inner.blocking_lock();
+        inner.argv = argv.to_vec();
     }
 
-    pub fn argv(&self) -> &[Vec<u8>] {
-        &self.argv
+    pub fn argv(&self) -> Vec<Vec<u8>> {
+        let inner = self.inner.blocking_lock();
+        inner.argv.clone()
     }
 
-    pub fn set_name(&mut self, name: &[u8]) {
-        self.name = name.to_vec()
+    pub fn set_name(&self, name: &[u8]) {
+        let mut inner = self.inner.blocking_lock();
+        inner.name = Arc::new(name.to_vec());
     }
 
-    pub fn name(&self) -> &[u8] {
-        &self.name
+    pub fn name(&self) -> Arc<Vec<u8>> {
+        let inner = self.inner.blocking_lock();
+        inner.name.clone()
     }
 
-    pub fn set_cmd_name(&mut self, name: &[u8]) {
-        self.cmd_name = name.to_vec()
+    pub fn set_cmd_name(&self, name: &[u8]) {
+        let mut inner = self.inner.blocking_lock();
+        inner.cmd_name = Arc::new(name.to_vec());
     }
 
-    pub fn cmd_name(&self) -> &[u8] {
-        &self.cmd_name
+    pub fn cmd_name(&self) -> Arc<Vec<u8>> {
+        let inner = self.inner.blocking_lock();
+        inner.cmd_name.clone()
     }
 
-    pub fn set_key(&mut self, key: &[u8]) {
-        self.key = key.to_vec()
+    pub fn set_key(&self, key: &[u8]) {
+        let mut inner = self.inner.blocking_lock();
+        inner.key = key.to_vec();
     }
 
-    pub fn key(&self) -> &[u8] {
-        &self.key
+    pub fn key(&self) -> Vec<u8> {
+        let inner = self.inner.blocking_lock();
+        inner.key.clone()
     }
 
-    pub fn reply_mut(&mut self) -> &mut RespData {
-        &mut self.reply
+    pub fn set_reply(&self, reply: RespData) {
+        let mut inner = self.inner.blocking_lock();
+        inner.reply = reply;
     }
 
-    pub fn take_reply(&mut self) -> RespData {
-        std::mem::take(&mut self.reply)
+    pub fn take_reply(&self) -> RespData {
+        let mut inner = self.inner.blocking_lock();
+        std::mem::take(&mut inner.reply)
     }
 }

@@ -61,13 +61,13 @@ impl Cmd for CmdClientGetname {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
 
-    fn do_initial(&self, _client: &mut Client) -> bool {
+    fn do_initial(&self, _client: &Client) -> bool {
         true
     }
 
-    fn do_cmd(&self, client: &mut Client, _storage: Arc<Storage>) {
-        let name = String::from_utf8_lossy(client.name()).to_string();
-        *client.reply_mut() = RespData::BulkString(Some(name.into()));
+    fn do_cmd(&self, client: &Client, _storage: Arc<Storage>) {
+        let name = String::from_utf8_lossy(&client.name()).to_string();
+        client.set_reply(RespData::BulkString(Some(name.into())));
     }
 }
 
@@ -94,19 +94,20 @@ impl Cmd for CmdClientSetname {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
 
-    fn do_initial(&self, _client: &mut Client) -> bool {
+    fn do_initial(&self, _client: &Client) -> bool {
         true
     }
 
-    fn do_cmd(&self, client: &mut Client, _storage: Arc<Storage>) {
+    fn do_cmd(&self, client: &Client, _storage: Arc<Storage>) {
         let argv = client.argv();
         if argv.len() < 3 {
-            *client.reply_mut() =
-                RespData::Error("ERR wrong number of arguments".to_string().into());
+            client.set_reply(RespData::Error(
+                "ERR wrong number of arguments".to_string().into(),
+            ));
             return;
         }
         let new_name = argv[2].clone();
         client.set_name(&new_name);
-        *client.reply_mut() = RespData::SimpleString("OK".to_string().into());
+        client.set_reply(RespData::SimpleString("OK".to_string().into()));
     }
 }

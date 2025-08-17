@@ -275,7 +275,9 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "parking_lot",
  "resp",
+ "tokio",
 ]
 
 [[package]]
