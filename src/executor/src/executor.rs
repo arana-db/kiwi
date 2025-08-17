@@ -29,6 +29,11 @@ use storage::storage::Storage;
 
 pub struct CmdExecution {
     pub cmd: Arc<dyn Cmd>,
+    // TODO(flaneur2020): it might be good to have a CmdContext to place the command
+    // args, key, etc. to limit the scope of the command execution. Client is an
+    // object that able to be accessed in different threads, we can consider to
+    // reduce the responsibility of the client object if we considers to split
+    // command execution in a standalone tokio runtime.
     pub client: Arc<Client>,
     // TODO(flaneur2020): storage might be better to be owned by CmdExecutor, if we
     // plans to put execution in a seperate tokio runtime.
