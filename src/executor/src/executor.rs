@@ -93,7 +93,7 @@ impl CmdExecutor {
         };
 
         if self.cancellation_token.is_cancelled() {
-            error!("CmdExecutor is closed");
+            error!("execute failed, CmdExecutor is closed");
             work.exec
                 .client
                 .set_reply(RespData::Error("ERR executor unavailable".into()));
