@@ -1,3 +1,5 @@
+use crate::CmdExecutor;
+
 pub struct CmdExecutorBuilder {
     worker_count: usize,
 }

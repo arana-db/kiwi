@@ -13,7 +13,7 @@ env_logger.workspace = true
 log.workspace = true
 num_cpus.workspace = true
 resp.workspace = true
-async_channel.workspace = true
+async-channel.workspace = true
 
 [lints]
 workspace = true
