@@ -17,6 +17,7 @@
  * limitations under the License.
  */
 
+use log::info;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -45,9 +46,13 @@ impl CmdExecutor {
         let mut workers = Vec::new();
 
         // Spawn workers
-        for _ in 0..worker_count {
+        for worker_id in 0..worker_count {
             let task_rx_clone = task_rx.clone();
-            let worker = tokio::spawn(Self::run_worker(task_rx_clone, cancellation_token.clone()));
+            let worker = tokio::spawn(Self::run_worker(
+                worker_id,
+                task_rx_clone,
+                cancellation_token.clone(),
+            ));
             workers.push(worker);
         }
 
@@ -59,9 +64,11 @@ impl CmdExecutor {
     }
 
     async fn run_worker(
+        worker_id: usize,
         task_rx: async_channel::Receiver<TaskMessage>,
         cancellation_token: CancellationToken,
     ) {
+        info!("Worker {worker_id} started");
         loop {
             tokio::select! {
                 task = task_rx.recv() => {
@@ -72,12 +79,14 @@ impl CmdExecutor {
                         }
                         Err(_) => {
                             // Channel closed, worker should exit
+                            info!("Worker {worker_id} channel closed, shutting down...");
                             break;
                         }
                     }
                 }
                 _ = cancellation_token.cancelled() => {
                     // Cancellation requested, worker should exit
+                    info!("Worker {worker_id} received cancellation signal, shutting down...");
                     break;
                 }
             }
