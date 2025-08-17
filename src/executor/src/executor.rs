@@ -77,9 +77,8 @@ impl CmdExecutor {
                             // Execute the task
                             let _result = task_fn();
                         }
-                        Err(_) => {
-                            // Channel closed, worker should exit
-                            info!("Worker {worker_id} channel closed, shutting down...");
+                        Err(err) => {
+                            warn!("Worker {worker_id} channel unexpectly closed, shutting down: {err:?}");
                             break;
                         }
                     }
