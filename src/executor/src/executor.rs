@@ -18,6 +18,7 @@
  */
 
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use resp::{RespData, RespError};
 
@@ -31,39 +32,49 @@ pub struct CmdExecutor {
     task_tx: async_channel::Sender<TaskMessage>,
     /// Worker task handles
     workers: Vec<JoinHandle<()>>,
+    /// Cancellation token for the executor
+    cancellation_token: CancellationToken,
 }
 
 impl CmdExecutor {
     /// Creates a new `CmdExecutor` with a specified number of worker tasks
     pub fn new(worker_count: usize) -> Self {
+        let cancellation_token = CancellationToken::new();
         let (task_tx, task_rx) = async_channel::bounded::<TaskMessage>(1000);
 
         let mut workers = Vec::new();
 
-        // Spawn worker tasks
+        // Spawn workers
         for _ in 0..worker_count {
             let task_rx_clone = task_rx.clone();
-            let worker = tokio::spawn(async move {
-                loop {
-                    let task = task_rx_clone.recv().await;
-
-                    match task {
-                        Ok(task_fn) => {
-                            // Execute the task
-                            let _result = task_fn();
-                            // Note: In a real implementation, you'd want to handle the result
-                            // and send it back through a channel or store it somewhere
-                        }
-                        Err(_) => {
-                            // Channel closed, worker should exit
-                            break;
-                        }
-                    }
-                }
-            });
+            let worker = tokio::spawn(Self::run_worker(task_rx_clone, cancellation_token.clone()));
             workers.push(worker);
         }
 
-        Self { task_tx, workers }
+        Self {
+            task_tx,
+            workers,
+            cancellation_token,
+        }
+    }
+
+    async fn run_worker(
+        task_rx: async_channel::Receiver<TaskMessage>,
+        cancellation_token: CancellationToken,
+    ) {
+        loop {
+            let task = task_rx.recv().await;
+
+            match task {
+                Ok(task_fn) => {
+                    // Execute the task
+                    let _result = task_fn();
+                }
+                Err(_) => {
+                    // Channel closed, worker should exit
+                    break;
+                }
+            }
+        }
     }
 }
