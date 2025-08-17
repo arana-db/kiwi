@@ -7,13 +7,13 @@ repository.workspace = true
 edition.workspace = true
 
 [dependencies]
-net.workspace = true
-tokio.workspace = true
-env_logger.workspace = true
-log.workspace = true
-num_cpus.workspace = true
-resp.workspace = true
-async-channel.workspace = true
+net = { workspace = true }
+tokio = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+num_cpus = { workspace = true }
+resp = { workspace = true }
+async-channel = { workspace = true }
 
 [lints]
 workspace = true
