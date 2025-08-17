@@ -85,10 +85,10 @@ impl CmdExecutor {
         }
     }
 
-    pub async fn execute(&self, work: CmdExecution) {
+    pub async fn execute(&self, exec: CmdExecution) {
         let (done_tx, done_rx) = oneshot::channel();
         let work = CmdExecutionWork {
-            exec: work,
+            exec,
             done: done_tx,
         };
 
