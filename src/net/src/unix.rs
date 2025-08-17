@@ -91,7 +91,7 @@ mod unix_impl {
                 match listener.accept().await {
                     Ok((socket, _)) => {
                         let s = UnixStreamWrapper::new(socket);
-                        let client = Client::new(Box::new(s));
+                        let client = Arc::new(Client::new(Box::new(s)));
                         let storage = self.storage.clone();
                         let cmd_table = self.cmd_table.clone();
                         tokio::spawn(async move {

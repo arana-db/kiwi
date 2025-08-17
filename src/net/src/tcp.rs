@@ -87,7 +87,7 @@ impl ServerTrait for TcpServer {
 
             let s = TcpStreamWrapper::new(socket);
 
-            let client = Client::new(Box::new(s));
+            let client = Arc::new(Client::new(Box::new(s)));
 
             let storage = self.storage.clone();
             let cmd_table = self.cmd_table.clone();

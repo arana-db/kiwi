@@ -28,7 +28,7 @@ use storage::storage::Storage;
 use tokio::select;
 
 pub async fn process_connection(
-    client: Client,
+    client: Arc<Client>,
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
 ) -> std::io::Result<()> {
