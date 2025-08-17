@@ -63,15 +63,21 @@ impl CmdExecutor {
         cancellation_token: CancellationToken,
     ) {
         loop {
-            let task = task_rx.recv().await;
-
-            match task {
-                Ok(task_fn) => {
-                    // Execute the task
-                    let _result = task_fn();
+            tokio::select! {
+                task = task_rx.recv() => {
+                    match task {
+                        Ok(task_fn) => {
+                            // Execute the task
+                            let _result = task_fn();
+                        }
+                        Err(_) => {
+                            // Channel closed, worker should exit
+                            break;
+                        }
+                    }
                 }
-                Err(_) => {
-                    // Channel closed, worker should exit
+                _ = cancellation_token.cancelled() => {
+                    // Cancellation requested, worker should exit
                     break;
                 }
             }
