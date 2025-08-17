@@ -33,11 +33,11 @@ pub struct Client {
     // using tokio::sync::Mutex may has risks to pass this Client object across
     // tokio runtimes. we may require to figure out how to make a refactor to
     // avoid passing Client across runtimes.
-    inner: Mutex<ClientInner>,
+    stream: Mutex<Box<dyn StreamTrait>>,
+    ctx: parking_lot::Mutex<ClientContext>,
 }
 
-pub struct ClientInner {
-    stream: Box<dyn StreamTrait>,
+struct ClientContext {
     // TODO: use &[Vec<u8>], need lifetime.
     argv: Vec<Vec<u8>>,
     // Client name.
@@ -50,8 +50,8 @@ pub struct ClientInner {
 impl Client {
     pub fn new(stream: Box<dyn StreamTrait>) -> Self {
         Self {
-            inner: Mutex::new(ClientInner {
-                stream,
+            stream: Mutex::new(stream),
+            ctx: parking_lot::Mutex::new(ClientContext {
                 argv: Vec::default(),
                 name: Arc::new(Vec::default()),
                 cmd_name: Arc::new(Vec::default()),
@@ -62,64 +62,62 @@ impl Client {
     }
 
     pub async fn read(&self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
-        let mut inner = self.inner.lock().await;
-        inner.stream.read(buf).await
+        let mut stream = self.stream.lock().await;
+        stream.read(buf).await
     }
 
     pub async fn write(&self, data: &[u8]) -> Result<usize, std::io::Error> {
-        // Use tokio::sync::Mutex which is Send-safe for async operations
-        let mut inner = self.inner.lock().await;
-        inner.stream.write(data).await
+        let mut stream = self.stream.lock().await;
+        stream.write(data).await
     }
 
     pub fn set_argv(&self, argv: &[Vec<u8>]) {
-        // Use blocking lock for sync operations
-        let mut inner = self.inner.blocking_lock();
-        inner.argv = argv.to_vec();
+        let mut ctx = self.ctx.lock();
+        ctx.argv = argv.to_vec();
     }
 
     pub fn argv(&self) -> Vec<Vec<u8>> {
-        let inner = self.inner.blocking_lock();
-        inner.argv.clone()
+        let ctx = self.ctx.lock();
+        ctx.argv.clone()
     }
 
     pub fn set_name(&self, name: &[u8]) {
-        let mut inner = self.inner.blocking_lock();
-        inner.name = Arc::new(name.to_vec());
+        let mut ctx = self.ctx.lock();
+        ctx.name = Arc::new(name.to_vec());
     }
 
     pub fn name(&self) -> Arc<Vec<u8>> {
-        let inner = self.inner.blocking_lock();
-        inner.name.clone()
+        let ctx = self.ctx.lock();
+        ctx.name.clone()
     }
 
     pub fn set_cmd_name(&self, name: &[u8]) {
-        let mut inner = self.inner.blocking_lock();
-        inner.cmd_name = Arc::new(name.to_vec());
+        let mut ctx = self.ctx.lock();
+        ctx.cmd_name = Arc::new(name.to_vec());
     }
 
     pub fn cmd_name(&self) -> Arc<Vec<u8>> {
-        let inner = self.inner.blocking_lock();
-        inner.cmd_name.clone()
+        let ctx = self.ctx.lock();
+        ctx.cmd_name.clone()
     }
 
     pub fn set_key(&self, key: &[u8]) {
-        let mut inner = self.inner.blocking_lock();
-        inner.key = key.to_vec();
+        let mut ctx = self.ctx.lock();
+        ctx.key = key.to_vec();
     }
 
     pub fn key(&self) -> Vec<u8> {
-        let inner = self.inner.blocking_lock();
-        inner.key.clone()
+        let ctx = self.ctx.lock();
+        ctx.key.clone()
     }
 
     pub fn set_reply(&self, reply: RespData) {
-        let mut inner = self.inner.blocking_lock();
-        inner.reply = reply;
+        let mut ctx = self.ctx.lock();
+        ctx.reply = reply;
     }
 
     pub fn take_reply(&self) -> RespData {
-        let mut inner = self.inner.blocking_lock();
-        std::mem::take(&mut inner.reply)
+        let mut ctx = self.ctx.lock();
+        std::mem::take(&mut ctx.reply)
     }
 }

@@ -162,6 +162,8 @@ mod tests {
 
         // Create a simple client
         let client = Arc::new(Client::new(Box::new(TestStream::new())));
+        client.set_cmd_name(b"get");
+        client.set_argv(&[b"get".to_vec(), b"test_key".to_vec()]);
 
         // Create storage
         let storage = Arc::new(Storage::new(1, 0));
