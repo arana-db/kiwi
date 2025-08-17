@@ -28,6 +28,7 @@
 
 // use crate::types::KeyValue;
 
+use engine::Engine;
 use kstd::lock_mgr::ScopeRecordLock;
 use snafu::{OptionExt, ResultExt};
 
@@ -106,8 +107,7 @@ impl Redis {
         let string_key = BaseKey::new(key);
 
         match db
-            .db()
-            .get_opt(string_key.encode()?, &self.read_options)
+            .get_opt(&string_key.encode()?, &self.read_options)
             .context(RocksSnafu)?
         {
             Some(val) => {
@@ -183,8 +183,7 @@ impl Redis {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
-        db.db()
-            .write_opt(batch, &self.write_options)
+        db.write_opt(batch, &self.write_options)
             .context(RocksSnafu)?;
 
         Ok(())

@@ -22,6 +22,7 @@ use crate::error::{MpscSnafu, Result};
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
 use crate::{Redis, StorageOptions};
+use engine::Engine;
 use kstd::lock_mgr::LockMgr;
 use moka::sync::Cache;
 use snafu::ResultExt;
@@ -164,8 +165,7 @@ impl Storage {
                     log::info!("Compacting range: {start} - {end} for type: {dtype:?}");
                     if let Some(redis) = storage.insts.first() {
                         if let Some(db) = &redis.db {
-                            db.db()
-                                .compact_range(Some(start.as_bytes()), Some(end.as_bytes()));
+                            db.compact_range(Some(start.as_bytes()), Some(end.as_bytes()));
                         }
                     }
                 }

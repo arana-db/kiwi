@@ -1,8 +1,6 @@
 pub mod engine;
-pub mod error;
 pub mod rocksdb_engine;
 pub use engine::Engine;
-pub use error::{Error, Result};
 pub use rocksdb_engine::RocksdbEngine;
 
 // Re-export RocksDB types that are used in the trait

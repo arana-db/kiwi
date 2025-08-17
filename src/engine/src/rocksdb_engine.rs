@@ -1,5 +1,4 @@
-use crate::engine::Engine;
-use crate::error::{Error, Result};
+use crate::engine::{Engine, Result};
 use rocksdb::{
     BoundColumnFamily, ColumnFamilyRef, DBIteratorWithThreadMode, IteratorMode, ReadOptions,
     Snapshot, WriteBatch, WriteOptions, DB,
@@ -25,35 +24,47 @@ impl RocksdbEngine {
 impl Engine for RocksdbEngine {
     // Basic KV operations
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.db.get(key).map_err(Error::from)
+        self.db.get(key)
     }
 
     fn get_opt(&self, key: &[u8], readopts: &ReadOptions) -> Result<Option<Vec<u8>>> {
-        self.db.get_opt(key, readopts).map_err(Error::from)
+        self.db.get_opt(key, readopts)
     }
 
     fn put(&self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.db.put(key, value).map_err(Error::from)
+        self.db.put(key, value)
     }
 
     fn put_opt(&self, key: &[u8], value: &[u8], writeopts: &WriteOptions) -> Result<()> {
-        self.db.put_opt(key, value, writeopts).map_err(Error::from)
+        self.db.put_opt(key, value, writeopts)
     }
 
     fn delete(&self, key: &[u8]) -> Result<()> {
-        self.db.delete(key).map_err(Error::from)
+        self.db.delete(key)
     }
 
     fn delete_opt(&self, key: &[u8], writeopts: &WriteOptions) -> Result<()> {
-        self.db.delete_opt(key, writeopts).map_err(Error::from)
+        self.db.delete_opt(key, writeopts)
     }
 
     fn write(&self, batch: WriteBatch) -> Result<()> {
-        self.db.write(batch).map_err(Error::from)
+        self.db.write(batch)
     }
 
     fn write_opt(&self, batch: WriteBatch, writeopts: &WriteOptions) -> Result<()> {
-        self.db.write_opt(batch, writeopts).map_err(Error::from)
+        self.db.write_opt(batch, writeopts)
+    }
+
+    fn set_options(&self, options: &[(&str, &str)]) -> Result<()> {
+        self.db.set_options(options)
+    }
+
+    fn set_options_cf(&self, cf: &ColumnFamilyRef<'_>, options: &[(&str, &str)]) -> Result<()> {
+        self.db.set_options_cf(cf, options)
+    }
+
+    fn property_int_value(&self, property: &str) -> Result<Option<u64>> {
+        self.db.property_int_value(property)
     }
 
     // Column family operations
@@ -62,7 +73,7 @@ impl Engine for RocksdbEngine {
     }
 
     fn get_cf<'a>(&'a self, cf: &ColumnFamilyRef<'a>, key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.db.get_cf(cf, key).map_err(Error::from)
+        self.db.get_cf(cf, key)
     }
 
     fn get_cf_opt<'a>(
@@ -71,11 +82,11 @@ impl Engine for RocksdbEngine {
         key: &[u8],
         readopts: &ReadOptions,
     ) -> Result<Option<Vec<u8>>> {
-        self.db.get_cf_opt(cf, key, readopts).map_err(Error::from)
+        self.db.get_cf_opt(cf, key, readopts)
     }
 
     fn put_cf<'a>(&'a self, cf: &ColumnFamilyRef<'a>, key: &[u8], value: &[u8]) -> Result<()> {
-        self.db.put_cf(cf, key, value).map_err(Error::from)
+        self.db.put_cf(cf, key, value)
     }
 
     fn put_cf_opt<'a>(
@@ -85,13 +96,11 @@ impl Engine for RocksdbEngine {
         value: &[u8],
         writeopts: &WriteOptions,
     ) -> Result<()> {
-        self.db
-            .put_cf_opt(cf, key, value, writeopts)
-            .map_err(Error::from)
+        self.db.put_cf_opt(cf, key, value, writeopts)
     }
 
     fn delete_cf<'a>(&'a self, cf: &ColumnFamilyRef<'a>, key: &[u8]) -> Result<()> {
-        self.db.delete_cf(cf, key).map_err(Error::from)
+        self.db.delete_cf(cf, key)
     }
 
     fn delete_cf_opt<'a>(
@@ -100,9 +109,7 @@ impl Engine for RocksdbEngine {
         key: &[u8],
         writeopts: &WriteOptions,
     ) -> Result<()> {
-        self.db
-            .delete_cf_opt(cf, key, writeopts)
-            .map_err(Error::from)
+        self.db.delete_cf_opt(cf, key, writeopts)
     }
 
     // Iterator operations
@@ -137,7 +144,7 @@ impl Engine for RocksdbEngine {
 
     // Maintenance operations
     fn flush(&self) -> Result<()> {
-        self.db.flush().map_err(Error::from)
+        self.db.flush()
     }
 
     fn compact_range(&self, start: Option<&[u8]>, end: Option<&[u8]>) {
@@ -164,6 +171,12 @@ impl Clone for RocksdbEngine {
         Self {
             db: Arc::clone(&self.db),
         }
+    }
+}
+
+impl Drop for RocksdbEngine {
+    fn drop(&mut self) {
+        self.db.cancel_all_background_work(true);
     }
 }
 
@@ -228,7 +241,7 @@ mod tests {
         engine.put(b"c", b"3").unwrap();
 
         // Test forward iteration
-        let mut iter = engine.iterator(IteratorMode::Start);
+        let iter = engine.iterator(IteratorMode::Start);
         let mut count = 0;
         for item in iter {
             let (key, value) = item.unwrap();

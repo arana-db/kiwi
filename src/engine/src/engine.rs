@@ -1,9 +1,10 @@
-use crate::error::Result;
 use rocksdb::{
-    BoundColumnFamily, ColumnFamilyRef, DBIteratorWithThreadMode, IteratorMode, ReadOptions,
+    BoundColumnFamily, ColumnFamilyRef, DBIteratorWithThreadMode, Error, IteratorMode, ReadOptions,
     Snapshot, WriteBatch, WriteOptions, DB,
 };
 use std::sync::Arc;
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 pub trait Engine: Send + Sync {
     // Basic key-value operations - signatures are fully aligned with RocksDB methods
@@ -22,6 +23,12 @@ pub trait Engine: Send + Sync {
     fn write(&self, batch: WriteBatch) -> Result<()>;
 
     fn write_opt(&self, batch: WriteBatch, writeopts: &WriteOptions) -> Result<()>;
+
+    fn set_options(&self, options: &[(&str, &str)]) -> Result<()>;
+
+    fn set_options_cf(&self, cf: &ColumnFamilyRef<'_>, options: &[(&str, &str)]) -> Result<()>;
+
+    fn property_int_value(&self, property: &str) -> Result<Option<u64>>;
 
     // Column family operations
     fn cf_handle(&self, name: &str) -> Option<Arc<BoundColumnFamily<'_>>>;
