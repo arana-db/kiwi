@@ -55,6 +55,7 @@ tempfile = "3.8"
 crc16 = "0.4"
 
 ## workspaces members
+engine = { path = "src/engine" }
 storage = { path = "src/storage" }
 kstd = { path = "src/kstd" }
 common-macro = { path = "src/common/macro" }

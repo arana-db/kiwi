@@ -1,9 +1,7 @@
-pub mod traits;
-pub mod rocksdb_engine;
 pub mod error;
-pub mod types;
-
-pub use traits::Engine;
-pub use rocksdb_engine::RocksDBEngine;
+pub mod traits;
 pub use error::{Error, Result};
-pub use types::*;
+pub use traits::Engine;
+
+// Re-export RocksDB types that are used in the trait
+pub use rocksdb::{DBIteratorWithThreadMode, Snapshot, DB};
