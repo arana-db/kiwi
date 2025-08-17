@@ -17,7 +17,7 @@
  * limitations under the License.
  */
 
-use log::info;
+use log::{info, warn};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
@@ -61,6 +61,17 @@ impl CmdExecutor {
             workers,
             cancellation_token,
         }
+    }
+
+    pub async fn close(&self) {
+        self.cancellation_token.cancel();
+
+        // Wait for all workers to complete
+        for worker in &self.workers {
+            let _ = worker.await;
+        }
+
+        info!("CmdExecutor closed");
     }
 
     async fn run_worker(
