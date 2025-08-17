@@ -438,10 +438,13 @@ name = "executor"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "client",
+ "cmd",
  "env_logger",
  "log",
  "num_cpus",
  "resp",
+ "storage",
  "tokio",
  "tokio-util",
 ]

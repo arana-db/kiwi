@@ -2,12 +2,14 @@ use crate::CmdExecutor;
 
 pub struct CmdExecutorBuilder {
     worker_count: usize,
+    channel_size: usize,
 }
 
 impl CmdExecutorBuilder {
     pub fn new() -> Self {
         Self {
             worker_count: num_cpus::get(),
+            channel_size: 1000,
         }
     }
 
@@ -16,7 +18,12 @@ impl CmdExecutorBuilder {
         self
     }
 
+    pub fn channel_size(mut self, channel_size: usize) -> Self {
+        self.channel_size = channel_size;
+        self
+    }
+
     pub fn build(self) -> CmdExecutor {
-        CmdExecutor::new(self.worker_count)
+        CmdExecutor::new(self.worker_count, self.channel_size)
     }
 }

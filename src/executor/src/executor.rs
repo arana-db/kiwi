@@ -17,20 +17,27 @@
  * limitations under the License.
  */
 
+use std::sync::Arc;
+
 use log::{info, warn};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use resp::{RespData, RespError};
+use client::Client;
+use cmd::Cmd;
+use storage::storage::Storage;
 
-/// Task message sent to worker tasks
-type TaskMessage = Box<dyn FnOnce() -> Result<RespData, RespError> + Send + 'static>;
+pub struct CmdExecution {
+    cmd: Arc<dyn Cmd>,
+    client: Arc<Client>,
+    storage: Arc<Storage>,
+}
 
 /// [`CmdExecutor`] accepts the command & command args parsed from server, and
 /// execute them in a task pool.
 pub struct CmdExecutor {
     /// Sender for submitting tasks to the worker pool
-    task_tx: async_channel::Sender<TaskMessage>,
+    work_tx: async_channel::Sender<CmdExecution>,
     /// Worker task handles
     workers: Vec<JoinHandle<()>>,
     /// Cancellation token for the executor
@@ -39,15 +46,15 @@ pub struct CmdExecutor {
 
 impl CmdExecutor {
     /// Creates a new `CmdExecutor` with a specified number of worker tasks
-    pub fn new(worker_count: usize) -> Self {
+    pub fn new(worker_count: usize, channel_size: usize) -> Self {
         let cancellation_token = CancellationToken::new();
-        let (task_tx, task_rx) = async_channel::bounded::<TaskMessage>(1000);
+        let (work_tx, work_rx) = async_channel::bounded::<CmdExecution>(channel_size);
 
         let mut workers = Vec::new();
 
         // Spawn workers
         for worker_id in 0..worker_count {
-            let task_rx_clone = task_rx.clone();
+            let task_rx_clone = work_rx.clone();
             let worker = tokio::spawn(Self::run_worker(
                 worker_id,
                 task_rx_clone,
@@ -57,9 +64,18 @@ impl CmdExecutor {
         }
 
         Self {
-            task_tx,
+            work_tx,
             workers,
             cancellation_token,
+        }
+    }
+
+    pub async fn execute(&self, work: CmdExecution) {
+        match self.work_tx.send(work).await {
+            Ok(_) => (),
+            Err(e) => {
+                warn!("Failed to send work to worker: {e:?}");
+            }
         }
     }
 
@@ -74,19 +90,25 @@ impl CmdExecutor {
         info!("CmdExecutor closed");
     }
 
+    async fn do_execute_once(work: CmdExecution) {
+        let cmd = work.cmd;
+        let client = work.client;
+        let storage = work.storage;
+        cmd.execute(client.as_ref(), storage);
+    }
+
     async fn run_worker(
         worker_id: usize,
-        task_rx: async_channel::Receiver<TaskMessage>,
+        work_rx: async_channel::Receiver<CmdExecution>,
         cancellation_token: CancellationToken,
     ) {
         info!("Worker {worker_id} started");
         loop {
             tokio::select! {
-                task = task_rx.recv() => {
-                    match task {
-                        Ok(task_fn) => {
-                            // Execute the task
-                            let _result = task_fn();
+                work = work_rx.recv() => {
+                    match work {
+                        Ok(work) => {
+                            Self::do_execute_once(work).await;
                         }
                         Err(err) => {
                             warn!("Worker {worker_id} channel unexpectly closed, shutting down: {err:?}");
