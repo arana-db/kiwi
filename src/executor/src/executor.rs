@@ -30,7 +30,7 @@ pub struct CmdExecutor {
     /// Sender for submitting tasks to the worker pool
     task_tx: async_channel::Sender<TaskMessage>,
     /// Worker task handles
-    _workers: Vec<JoinHandle<()>>,
+    workers: Vec<JoinHandle<()>>,
 }
 
 impl CmdExecutor {
@@ -64,9 +64,6 @@ impl CmdExecutor {
             workers.push(worker);
         }
 
-        Self {
-            task_tx,
-            _workers: workers,
-        }
+        Self { task_tx, workers }
     }
 }

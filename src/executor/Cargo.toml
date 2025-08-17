@@ -14,6 +14,7 @@ log = { workspace = true }
 num_cpus = { workspace = true }
 resp = { workspace = true }
 async-channel = { workspace = true }
+cancellation-token = { workspace = true }
 
 [lints]
 workspace = true
