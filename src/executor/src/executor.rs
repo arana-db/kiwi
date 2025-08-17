@@ -94,10 +94,7 @@ impl CmdExecutor {
 
         // send the work to the worker pool
         match self.work_tx.send(work).await {
-            Ok(_) => {
-                // wait for the work to finish
-                let _ = done_rx.await;
-            }
+            Ok(_) => {}
             Err(async_channel::SendError(work)) => {
                 error!("Failed to send work to worker; executor likely closed");
                 work.exec
@@ -107,6 +104,9 @@ impl CmdExecutor {
                 let _ = work.done.send(());
             }
         }
+
+        // TODO: add a timeout for waiting
+        let _ = done_rx.await;
     }
 
     pub async fn close(&mut self) {
