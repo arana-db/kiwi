@@ -22,6 +22,7 @@ use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
+use engine::{Engine, RocksdbEngine};
 use kstd::lock_mgr::LockMgr;
 use moka::sync::Cache;
 use rocksdb::{
@@ -67,7 +68,7 @@ pub struct Redis {
     pub write_options: WriteOptions,
     pub read_options: ReadOptions,
     pub compact_options: CompactOptions,
-    pub db: Option<DB>,
+    pub db: Option<Box<RocksdbEngine>>,
 
     // For background task
     pub storage: Arc<StorageOptions>,
@@ -146,10 +147,10 @@ impl Redis {
             })
             .collect();
 
-        self.db = Some(
+        self.db = Some(Box::new(RocksdbEngine::new(
             DB::open_cf_descriptors(&self.storage.options, db_path, column_families)
                 .context(RocksSnafu)?,
-        );
+        )));
 
         if let Some(db) = &self.db {
             let mut handles = Vec::new();
@@ -230,7 +231,7 @@ impl Redis {
 
     pub fn get_property(&self, property: &str) -> Result<u64> {
         if let Some(db) = &self.db {
-            if let Some(value) = db.property_int_value(property).context(RocksSnafu)? {
+            if let Some(value) = db.db().property_int_value(property).context(RocksSnafu)? {
                 return Ok(value);
             }
         }
@@ -368,20 +369,20 @@ impl Redis {
 
         match option_type {
             OptionType::DB => {
-                db.set_options(&opts_vec).context(RocksSnafu)?;
+                db.db().set_options(&opts_vec).context(RocksSnafu)?;
             }
             OptionType::ColumnFamily => {
                 if self.handles.is_empty() {
                     let cf = db.cf_handle("default").context(OptionNoneSnafu {
                         message: "Column family not init".to_string(),
                     })?;
-                    db.set_options_cf(&cf, &opts_vec).context(RocksSnafu)?;
+                    db.db().set_options_cf(&cf, &opts_vec).context(RocksSnafu)?;
                 } else {
                     for cf_name in &self.handles {
                         let cf = db.cf_handle(cf_name).context(OptionNoneSnafu {
                             message: format!("Column family {cf_name} not found"),
                         })?;
-                        db.set_options_cf(&cf, &opts_vec).context(RocksSnafu)?;
+                        db.db().set_options_cf(&cf, &opts_vec).context(RocksSnafu)?;
                     }
                 }
             }
@@ -396,7 +397,7 @@ impl Drop for Redis {
         if self.need_close.load(std::sync::atomic::Ordering::SeqCst) {
             if let Some(db) = &self.db {
                 // Cancel background work
-                db.cancel_all_background_work(true);
+                db.db().cancel_all_background_work(true);
             }
 
             // Clear handles

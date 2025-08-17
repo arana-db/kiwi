@@ -1,8 +1,8 @@
 use crate::engine::Engine;
 use crate::error::{Error, Result};
 use rocksdb::{
-    AsColumnFamilyRef, BoundColumnFamily, ColumnFamilyRef, DBIteratorWithThreadMode, IteratorMode,
-    ReadOptions, Snapshot, WriteBatch, WriteOptions, DB,
+    BoundColumnFamily, ColumnFamilyRef, DBIteratorWithThreadMode, IteratorMode, ReadOptions,
+    Snapshot, WriteBatch, WriteOptions, DB,
 };
 use std::sync::Arc;
 
@@ -17,13 +17,12 @@ impl RocksdbEngine {
         Self { db: Arc::new(db) }
     }
 
-    /// Get a reference to the underlying RocksDB instance
     pub fn db(&self) -> &DB {
         &self.db
     }
 }
 
-impl<'a> Engine<'a> for RocksdbEngine {
+impl Engine for RocksdbEngine {
     // Basic KV operations
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.db.get(key).map_err(Error::from)
@@ -62,11 +61,11 @@ impl<'a> Engine<'a> for RocksdbEngine {
         self.db.cf_handle(name)
     }
 
-    fn get_cf(&'a self, cf: &ColumnFamilyRef<'a>, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    fn get_cf<'a>(&'a self, cf: &ColumnFamilyRef<'a>, key: &[u8]) -> Result<Option<Vec<u8>>> {
         self.db.get_cf(cf, key).map_err(Error::from)
     }
 
-    fn get_cf_opt(
+    fn get_cf_opt<'a>(
         &'a self,
         cf: &ColumnFamilyRef<'a>,
         key: &[u8],
@@ -75,11 +74,11 @@ impl<'a> Engine<'a> for RocksdbEngine {
         self.db.get_cf_opt(cf, key, readopts).map_err(Error::from)
     }
 
-    fn put_cf(&'a self, cf: &ColumnFamilyRef<'a>, key: &[u8], value: &[u8]) -> Result<()> {
+    fn put_cf<'a>(&'a self, cf: &ColumnFamilyRef<'a>, key: &[u8], value: &[u8]) -> Result<()> {
         self.db.put_cf(cf, key, value).map_err(Error::from)
     }
 
-    fn put_cf_opt(
+    fn put_cf_opt<'a>(
         &'a self,
         cf: &ColumnFamilyRef<'a>,
         key: &[u8],
@@ -91,11 +90,11 @@ impl<'a> Engine<'a> for RocksdbEngine {
             .map_err(Error::from)
     }
 
-    fn delete_cf(&'a self, cf: &ColumnFamilyRef<'a>, key: &[u8]) -> Result<()> {
+    fn delete_cf<'a>(&'a self, cf: &ColumnFamilyRef<'a>, key: &[u8]) -> Result<()> {
         self.db.delete_cf(cf, key).map_err(Error::from)
     }
 
-    fn delete_cf_opt(
+    fn delete_cf_opt<'a>(
         &'a self,
         cf: &ColumnFamilyRef<'a>,
         key: &[u8],
@@ -119,15 +118,15 @@ impl<'a> Engine<'a> for RocksdbEngine {
         self.db.iterator_opt(mode, readopts)
     }
 
-    fn iterator_cf(
+    fn iterator_cf<'a>(
         &'a self,
         cf: &ColumnFamilyRef<'a>,
         mode: IteratorMode,
-    ) -> DBIteratorWithThreadMode<'_, DB> {
+    ) -> DBIteratorWithThreadMode<'a, DB> {
         self.db.iterator_cf(cf, mode)
     }
 
-    fn iterator_cf_opt(
+    fn iterator_cf_opt<'a>(
         &'a self,
         cf: &ColumnFamilyRef<'a>,
         readopts: ReadOptions,
@@ -145,7 +144,7 @@ impl<'a> Engine<'a> for RocksdbEngine {
         self.db.compact_range(start, end);
     }
 
-    fn compact_range_cf(
+    fn compact_range_cf<'a>(
         &'a self,
         cf: &ColumnFamilyRef<'a>,
         start: Option<&[u8]>,

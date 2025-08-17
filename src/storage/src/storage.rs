@@ -164,7 +164,8 @@ impl Storage {
                     log::info!("Compacting range: {start} - {end} for type: {dtype:?}");
                     if let Some(redis) = storage.insts.first() {
                         if let Some(db) = &redis.db {
-                            db.compact_range(Some(start), Some(end));
+                            db.db()
+                                .compact_range(Some(start.as_bytes()), Some(end.as_bytes()));
                         }
                     }
                 }

@@ -106,6 +106,7 @@ impl Redis {
         let string_key = BaseKey::new(key);
 
         match db
+            .db()
             .get_opt(string_key.encode()?, &self.read_options)
             .context(RocksSnafu)?
         {
@@ -182,7 +183,8 @@ impl Redis {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
-        db.write_opt(batch, &self.write_options)
+        db.db()
+            .write_opt(batch, &self.write_options)
             .context(RocksSnafu)?;
 
         Ok(())
