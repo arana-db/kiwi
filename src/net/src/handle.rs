@@ -20,6 +20,7 @@
 use bytes::Bytes;
 use client::Client;
 use cmd::table::CmdTable;
+use executor::CmdExecutor;
 use log::error;
 use resp::encode::RespEncoder;
 use resp::{Parse, RespData, RespEncode, RespParseResult, RespVersion};
@@ -31,6 +32,7 @@ pub async fn process_connection(
     client: Arc<Client>,
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
+    executor: Arc<CmdExecutor>,
 ) -> std::io::Result<()> {
     let mut buf = vec![0; 1024];
     let mut resp_parser = resp::RespParse::new(resp::RespVersion::RESP2);
@@ -52,7 +54,7 @@ pub async fn process_connection(
                                     }
                                     let argv = params.iter().map(|p| if let RespData::BulkString(Some(d)) = p { d.to_vec() } else { vec![] }).collect::<Vec<Vec<u8>>>();
                                     client.set_argv(&argv);
-                                    handle_command(&client, storage.clone(), cmd_table.clone()).await;
+                                    handle_command(&client, storage.clone(), cmd_table.clone(), executor.clone()).await;
                                     // Extract the reply from the connection and send it
                                     let response = client.take_reply();
                                     let mut encoder = RespEncoder::new(RespVersion::RESP2);
@@ -82,7 +84,12 @@ pub async fn process_connection(
     }
 }
 
-async fn handle_command(client: &Client, storage: Arc<Storage>, cmd_table: Arc<CmdTable>) {
+async fn handle_command(
+    client: &Client,
+    storage: Arc<Storage>,
+    cmd_table: Arc<CmdTable>,
+    executor: Arc<CmdExecutor>,
+) {
     // Convert the command name from &[u8] to a lowercase String for lookup
     let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
 
