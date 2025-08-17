@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+	"src/engine",
 	"src/storage",
 	"src/kstd",
 	"src/common/macro",
