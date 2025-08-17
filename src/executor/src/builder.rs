@@ -27,3 +27,9 @@ impl CmdExecutorBuilder {
         CmdExecutor::new(self.worker_count, self.channel_size)
     }
 }
+
+impl Default for CmdExecutorBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
