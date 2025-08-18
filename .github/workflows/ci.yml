@@ -9,7 +9,7 @@ jobs:
     name: license header check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: check license header
         uses: apache/skywalking-eyes/header@main
@@ -24,7 +24,7 @@ jobs:
     name: cargo fmt
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup toolchain
         uses: dtolnay/rust-toolchain@master
@@ -45,7 +45,7 @@ jobs:
     name: cargo clippy
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup toolchain
         uses: dtolnay/rust-toolchain@master
@@ -70,7 +70,7 @@ jobs:
       # for using system time function.
       MIRIFLAGS: "-Zmiri-disable-isolation"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup toolchain
         uses: dtolnay/rust-toolchain@master
