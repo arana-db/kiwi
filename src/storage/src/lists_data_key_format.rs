@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- * 
+ *
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -178,8 +178,7 @@ impl ParsedListsDataKey {
             });
         }
 
-        let version =
-            decode_fixed(&key[version_offset..version_offset + U64_LEN]);
+        let version = decode_fixed(&key[version_offset..version_offset + U64_LEN]);
         let index = decode_fixed(&key[index_offset..index_offset + U64_LEN]);
 
         // sanity check: we should end exactly before RESERVE2
@@ -191,20 +190,22 @@ impl ParsedListsDataKey {
         }
 
         // Read reserve1 from the beginning of the key
-        let reserve1 = key[..RESERVE1_LEN].try_into().map_err(|_| {
-            crate::error::Error::InvalidFormat {
-                message: "Failed to read reserve1 field".to_string(),
-                location: snafu::location!(),
-            }
-        })?;
+        let reserve1 =
+            key[..RESERVE1_LEN]
+                .try_into()
+                .map_err(|_| crate::error::Error::InvalidFormat {
+                    message: "Failed to read reserve1 field".to_string(),
+                    location: snafu::location!(),
+                })?;
 
         // Read reserve2 from the end of the key
-        let reserve2 = key[encoded_key_end..].try_into().map_err(|_| {
-            crate::error::Error::InvalidFormat {
-                message: "Failed to read reserve2 field".to_string(),
-                location: snafu::location!(),
-            }
-        })?;
+        let reserve2 =
+            key[encoded_key_end..]
+                .try_into()
+                .map_err(|_| crate::error::Error::InvalidFormat {
+                    message: "Failed to read reserve2 field".to_string(),
+                    location: snafu::location!(),
+                })?;
 
         Ok(Self {
             key_str,
@@ -303,7 +304,9 @@ mod tests {
         let version = 123;
         let index = 456;
         let reserve1 = [1, 2, 3, 4, 5, 6, 7, 8];
-        let reserve2 = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
+        let reserve2 = [
+            9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        ];
 
         let data_key = ListsDataKey::with_reserves(key, version, index, reserve1, reserve2);
         let encoded = data_key.encode()?;
