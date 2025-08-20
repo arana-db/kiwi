@@ -27,7 +27,7 @@ mod coding;
 pub mod error;
 mod list_meta_value_format;
 mod lists_data_key_format;
-mod lru_cache;
+// mod lru_cache;
 pub mod options;
 mod redis;
 mod slot_indexer;

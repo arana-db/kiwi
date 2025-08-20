@@ -47,12 +47,22 @@ pub struct ListsDataKey {
 
 impl ListsDataKey {
     pub fn new(key: &[u8], version: u64, index: u64) -> Self {
+        Self::with_reserves(key, version, index, [0; 8], [0; 16])
+    }
+
+    pub fn with_reserves(
+        key: &[u8],
+        version: u64,
+        index: u64,
+        reserve1: [u8; 8],
+        reserve2: [u8; 16],
+    ) -> Self {
         Self {
-            reserve1: [0; 8],
+            reserve1,
             key: key.to_vec(),
             version,
             index,
-            reserve2: [0; 16],
+            reserve2,
         }
     }
 
@@ -87,17 +97,25 @@ impl ListsDataKey {
         offset += encoded_key.len();
 
         // 3. version (8 bytes)
-        encode_fixed(dst[offset..].as_mut_ptr(), self.version);
-        offset += mem::size_of::<u64>();
+        encode_fixed(&mut dst[offset..offset + U64_LEN], self.version);
+        offset += U64_LEN;
 
         // 4. index (8 bytes)
-        encode_fixed(dst[offset..].as_mut_ptr(), self.index);
-        offset += mem::size_of::<u64>();
+        encode_fixed(&mut dst[offset..offset + U64_LEN], self.index);
+        offset += U64_LEN;
 
         // 5. reserve2 (16 bytes)
         dst[offset..offset + self.reserve2.len()].copy_from_slice(&self.reserve2);
 
         Ok(dst)
+    }
+
+    pub fn reserve1(&self) -> &[u8; 8] {
+        &self.reserve1
+    }
+
+    pub fn reserve2(&self) -> &[u8; 16] {
+        &self.reserve2
     }
 }
 
@@ -161,8 +179,8 @@ impl ParsedListsDataKey {
         }
 
         let version =
-            decode_fixed(key[version_offset..version_offset + U64_LEN].as_ptr());
-        let index = decode_fixed(key[index_offset..index_offset + U64_LEN].as_ptr());
+            decode_fixed(&key[version_offset..version_offset + U64_LEN]);
+        let index = decode_fixed(&key[index_offset..index_offset + U64_LEN]);
 
         // sanity check: we should end exactly before RESERVE2
         if index_offset + U64_LEN != encoded_key_end {
@@ -172,12 +190,28 @@ impl ParsedListsDataKey {
             });
         }
 
+        // Read reserve1 from the beginning of the key
+        let reserve1 = key[..RESERVE1_LEN].try_into().map_err(|_| {
+            crate::error::Error::InvalidFormat {
+                message: "Failed to read reserve1 field".to_string(),
+                location: snafu::location!(),
+            }
+        })?;
+
+        // Read reserve2 from the end of the key
+        let reserve2 = key[encoded_key_end..].try_into().map_err(|_| {
+            crate::error::Error::InvalidFormat {
+                message: "Failed to read reserve2 field".to_string(),
+                location: snafu::location!(),
+            }
+        })?;
+
         Ok(Self {
             key_str,
-            reserve1: [0; RESERVE1_LEN],
+            reserve1,
             version,
             index,
-            reserve2: [0; RESERVE2_LEN],
+            reserve2,
         })
     }
 
@@ -191,6 +225,14 @@ impl ParsedListsDataKey {
 
     pub fn index(&self) -> u64 {
         self.index
+    }
+
+    pub fn reserve1(&self) -> &[u8; 8] {
+        &self.reserve1
+    }
+
+    pub fn reserve2(&self) -> &[u8; 16] {
+        &self.reserve2
     }
 }
 
@@ -253,5 +295,47 @@ mod tests {
         let invalid_data = b"invalid\x00\x02data";
         let result = ParsedListsDataKey::from_slice(invalid_data);
         assert!(matches!(result, Err(Error::InvalidFormat { .. })));
+    }
+
+    #[test]
+    fn test_reserve_fields_round_trip() -> Result<()> {
+        let key = b"test_key";
+        let version = 123;
+        let index = 456;
+        let reserve1 = [1, 2, 3, 4, 5, 6, 7, 8];
+        let reserve2 = [9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24];
+
+        let data_key = ListsDataKey::with_reserves(key, version, index, reserve1, reserve2);
+        let encoded = data_key.encode()?;
+
+        let parsed = ParsedListsDataKey::from_slice(&encoded)?;
+
+        assert_eq!(parsed.key(), key);
+        assert_eq!(parsed.version(), version);
+        assert_eq!(parsed.index(), index);
+        assert_eq!(parsed.reserve1(), &reserve1);
+        assert_eq!(parsed.reserve2(), &reserve2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_reserve_fields_with_zeros() -> Result<()> {
+        let key = b"test_key";
+        let version = 789;
+        let index = 101;
+        let reserve1 = [0; 8];
+        let reserve2 = [0; 16];
+
+        let data_key = ListsDataKey::with_reserves(key, version, index, reserve1, reserve2);
+        let encoded = data_key.encode()?;
+
+        let parsed = ParsedListsDataKey::from_slice(&encoded)?;
+
+        assert_eq!(parsed.key(), key);
+        assert_eq!(parsed.version(), version);
+        assert_eq!(parsed.index(), index);
+        assert_eq!(parsed.reserve1(), &reserve1);
+        assert_eq!(parsed.reserve2(), &reserve2);
+        Ok(())
     }
 }
