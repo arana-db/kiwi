@@ -1,48 +1,63 @@
-//  Copyright (c) 2017-present, arana-db Community.  All rights reserved.
-//
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+/*
+ * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 use crate::error::Error;
 
 pub trait Protocol: Send + Sync {
     fn push_bulk_string(&mut self, p0: String);
+    fn push_null_bulk_string(&mut self);
     fn serialize(&self) -> Vec<u8>;
     fn parse(&mut self, v: &[u8]) -> Result<bool, Error>;
 }
 
 pub struct RespProtocol {
-    args: Vec<Vec<u8>>,
+    params: Vec<Vec<u8>>,
     buffer: Vec<u8>,
     response: Vec<u8>,
+}
+
+impl Default for RespProtocol {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RespProtocol {
     pub fn new() -> RespProtocol {
         RespProtocol {
-            args: Vec::new(),
+            params: Vec::new(),
             buffer: Vec::new(),
             response: Vec::new(),
         }
     }
 
-    pub fn take_args(&mut self) -> Vec<Vec<u8>> {
-        std::mem::take(&mut self.args)
+    pub fn take_params(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.params)
     }
 }
 
 impl Protocol for RespProtocol {
     fn push_bulk_string(&mut self, p0: String) {
         self.response.extend_from_slice(p0.as_bytes());
+    }
+    fn push_null_bulk_string(&mut self) {
+        self.response.extend_from_slice(b"$-1\r\n");
     }
     fn serialize(&self) -> Vec<u8> {
         let mut resp = Vec::<u8>::new();
@@ -128,7 +143,7 @@ impl Protocol for RespProtocol {
         }
 
         // phase 4: move the parsed data to the args, and clear the buffer
-        self.args = parsed_args;
+        self.params = parsed_args;
         self.buffer = self.buffer.split_off(pos);
         Ok(true)
     }

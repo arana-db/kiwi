@@ -1,0 +1,11 @@
+name: Question
+description: Ask a question about kiwi-rs
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: What is your question?
+      description: "Please provide as much context as possible."
+    validations:
+      required: true

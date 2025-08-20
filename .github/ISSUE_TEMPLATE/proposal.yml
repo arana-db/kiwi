@@ -1,0 +1,25 @@
+name: Proposal
+description: Propose a new feature or enhancement
+labels: ["proposal"]
+body:
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: "A clear and concise description of what you want to happen."
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: "What is the motivation for this proposal? What problem does it solve?"
+    validations:
+      required: true
+  - type: textarea
+    id: detailed-design
+    attributes:
+      label: Detailed design
+      description: "This section should provide a detailed design of the feature. It should include any new APIs, changes to existing APIs, and any new data structures or algorithms."
+    validations:
+      required: true

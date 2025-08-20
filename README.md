@@ -1,20 +1,20 @@
-# Kiwi-rs
+# Kiwi
 
 ## Introduction
 
-Kiwi-rs is an enhanced Redis server implemented in Rust, aiming to provide high-performance and persistent key-value storage. The current project is still in the early stages, with features continually being expanded and improved.
+Kiwi is a Redis-compatible key-value database built in Rust, leveraging RocksDB for storage and the Raft consensus algorithm to achieve strong consistency, high performance, and scalability.
 
 ## Features
 
 - Uses RocksDB as the backend persistent storage.
-- Highly compatible with the Redis protocol, supporting most Redis commands.
+- Highly compatible with the Redis protocol.
 - Supports performance benchmarking using Redis.
 - Planned modular support, allowing developers to customize extensions.
 - Provides high-performance request handling capabilities.
 
 ## System Requirements
 
-- Operating System: Linux, macOS, or FreeBSD
+- Operating System: Linux, macOS, FreeBSD, windows
 - Rust toolchain
 
 ## Installation Guide
@@ -27,6 +27,7 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## Development Plan
 
+- Support most Redis commands
 - Add support for cluster mode
 - Extend command support and optimize command execution efficiency
 - Enhance modular extension features and provide examples
@@ -34,6 +35,6 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 ## Contribution
 
-Contributions to the Kiwi-RS project are welcome! If you have any suggestions or have found any issues, please submit an Issue or create a Pull Request.
+Contributions to the Kiwi project are welcome! If you have any suggestions or have found any issues, please submit an Issue or create a Pull Request.
 
 ## Contact Us

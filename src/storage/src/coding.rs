@@ -1,16 +1,21 @@
-//  Copyright (c) 2017-present, arana-db Community.  All rights reserved.
-//
-//  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-//  Unless required by applicable law or agreed to in writing, software
-//  distributed under the License is distributed on an "AS IS" BASIS,
-//  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-//  See the License for the specific language governing permissions and
-//  limitations under the License.
+/*
+ * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
@@ -66,23 +71,20 @@ impl_fixed_int_64!(i64, u64);
 /// TODO: remove allow dead code
 #[allow(dead_code)]
 #[inline]
-pub fn encode_fixed<T: FixedInt>(buf: *mut u8, value: T) {
+pub fn encode_fixed<T: FixedInt>(buf: &mut [u8], value: T) {
     let size = T::byte_size();
-    let buffer: &mut [u8] = unsafe { std::slice::from_raw_parts_mut(buf, size) };
-    assert!(buffer.len() >= size, "buffer too small for fixed int");
-    buffer.copy_from_slice(&value.to_le_bytes());
+    assert!(buf.len() >= size, "buffer too small for fixed int");
+    buf[..size].copy_from_slice(&value.to_le_bytes());
 }
 
 /// decode a fixed-width int from a byte buffer
 /// TODO: remove allow dead code
 #[allow(dead_code)]
 #[inline]
-pub fn decode_fixed<T: FixedInt>(buf: *const u8) -> T {
+pub fn decode_fixed<T: FixedInt>(buf: &[u8]) -> T {
     let size = T::byte_size();
-    // SAFETY: Caller guarantees `buf` points to at least `size` bytes that are valid for reads.
-    let buffer: &[u8] = unsafe { std::slice::from_raw_parts(buf, size) };
-    assert!(buffer.len() >= size, "buffer too small for fixed int");
-    T::from_le_bytes(&buffer[..size])
+    assert!(buf.len() >= size, "buffer too small for fixed int");
+    T::from_le_bytes(&buf[..size])
 }
 
 #[cfg(test)]
@@ -96,8 +98,8 @@ mod tests {
         let mut buf = [0u8; 4];
         let original = 0x12345678u32;
 
-        encode_fixed(buf.as_mut_ptr(), original);
-        let decoded = decode_fixed(buf.as_ptr());
+        encode_fixed(&mut buf, original);
+        let decoded = decode_fixed(&buf);
 
         assert_eq!(
             original, decoded,
@@ -110,8 +112,8 @@ mod tests {
         let mut buf = [0u8; 8];
         let original = 0x1234567890ABCDEFu64;
 
-        encode_fixed(buf.as_mut_ptr(), original);
-        let decoded = decode_fixed(buf.as_ptr());
+        encode_fixed(&mut buf, original);
+        let decoded = decode_fixed(&buf);
 
         assert_eq!(
             original, decoded,
@@ -123,41 +125,41 @@ mod tests {
     fn test_edge_cases_fixed32() {
         let mut buf = [0u8; 4];
 
-        encode_fixed(buf.as_mut_ptr(), 0);
+        encode_fixed(&mut buf, 0);
         assert_eq!(
-            decode_fixed::<u32>(buf.as_ptr()),
+            decode_fixed::<u32>(&buf),
             0,
             "Minimum u32 value should encode/decode correctly"
         );
 
-        encode_fixed(buf.as_mut_ptr(), u32::MAX);
+        encode_fixed(&mut buf, u32::MAX);
         assert_eq!(
-            decode_fixed::<u32>(buf.as_ptr()),
+            decode_fixed::<u32>(&buf),
             u32::MAX,
             "Maximum u32 value should encode/decode correctly"
         );
 
         let powers = [1u32, 2, 4, 16, 256, 65536, 16777216];
         for &power in &powers {
-            encode_fixed(buf.as_mut_ptr(), power);
+            encode_fixed(&mut buf, power);
             assert_eq!(
-                decode_fixed::<u32>(buf.as_ptr()),
+                decode_fixed::<u32>(&buf),
                 power,
                 "Power of 2 value {} should encode/decode correctly",
                 power
             );
         }
 
-        encode_fixed::<u32>(buf.as_mut_ptr(), 0xAAAAAAAA);
+        encode_fixed::<u32>(&mut buf, 0xAAAAAAAA);
         assert_eq!(
-            decode_fixed::<u32>(buf.as_ptr()),
+            decode_fixed::<u32>(&buf),
             0xAAAAAAAA,
             "Alternating bits should encode/decode correctly"
         );
 
-        encode_fixed(buf.as_mut_ptr(), 0x55555555);
+        encode_fixed(&mut buf, 0x55555555);
         assert_eq!(
-            decode_fixed::<u32>(buf.as_ptr()),
+            decode_fixed::<u32>(&buf),
             0x55555555,
             "Alternating bits should encode/decode correctly"
         );
@@ -167,16 +169,16 @@ mod tests {
     fn test_edge_cases_fixed64() {
         let mut buf = [0u8; 8];
 
-        encode_fixed(buf.as_mut_ptr(), 0);
+        encode_fixed(&mut buf, 0);
         assert_eq!(
-            decode_fixed::<u64>(buf.as_ptr()),
+            decode_fixed::<u64>(&buf),
             0,
             "Minimum u64 value should encode/decode correctly"
         );
 
-        encode_fixed(buf.as_mut_ptr(), u64::MAX);
+        encode_fixed(&mut buf, u64::MAX);
         assert_eq!(
-            decode_fixed::<u64>(buf.as_ptr()),
+            decode_fixed::<u64>(&buf),
             u64::MAX,
             "Maximum u64 value should encode/decode correctly"
         );
@@ -193,25 +195,25 @@ mod tests {
             1u64 << 63,
         ];
         for &power in &powers {
-            encode_fixed(buf.as_mut_ptr(), power);
+            encode_fixed(&mut buf, power);
             assert_eq!(
-                decode_fixed::<u64>(buf.as_ptr()),
+                decode_fixed::<u64>(&buf),
                 power,
                 "Power of 2 value {} should encode/decode correctly",
                 power
             );
         }
 
-        encode_fixed::<u64>(buf.as_mut_ptr(), 0xAAAAAAAAAAAAAAAA);
+        encode_fixed::<u64>(&mut buf, 0xAAAAAAAAAAAAAAAA);
         assert_eq!(
-            decode_fixed::<u64>(buf.as_ptr()),
+            decode_fixed::<u64>(&buf),
             0xAAAAAAAAAAAAAAAA,
             "Alternating bits should encode/decode correctly"
         );
 
-        encode_fixed::<u64>(buf.as_mut_ptr(), 0x5555555555555555);
+        encode_fixed::<u64>(&mut buf, 0x5555555555555555);
         assert_eq!(
-            decode_fixed::<u64>(buf.as_ptr()),
+            decode_fixed::<u64>(&buf),
             0x5555555555555555,
             "Alternating bits should encode/decode correctly"
         );
@@ -224,9 +226,9 @@ mod tests {
         ];
 
         for &pattern in &patterns {
-            encode_fixed(buf.as_mut_ptr(), pattern);
+            encode_fixed(&mut buf, pattern);
             assert_eq!(
-                decode_fixed::<u64>(buf.as_ptr()),
+                decode_fixed::<u64>(&buf),
                 pattern,
                 "Byte pattern {:X} should encode/decode correctly",
                 pattern
@@ -239,7 +241,7 @@ mod tests {
         let value = 0x01020304u32;
         let mut buf = [0u8; 4];
 
-        encode_fixed(buf.as_mut_ptr(), value);
+        encode_fixed(&mut buf, value);
 
         if cfg!(target_endian = "little") {
             assert_eq!(buf[0], 0x04);
@@ -253,7 +255,7 @@ mod tests {
             assert_eq!(buf[3], 0x04);
         }
 
-        assert_eq!(decode_fixed::<u32>(buf.as_ptr()), value);
+        assert_eq!(decode_fixed::<u32>(&buf), value);
     }
 
     #[test]
@@ -261,7 +263,7 @@ mod tests {
         let value = 0x0102030405060708u64;
         let mut buf = [0u8; 8];
 
-        encode_fixed(buf.as_mut_ptr(), value);
+        encode_fixed(&mut buf, value);
 
         if cfg!(target_endian = "little") {
             assert_eq!(buf[0], 0x08);
@@ -283,7 +285,7 @@ mod tests {
             assert_eq!(buf[7], 0x08);
         }
 
-        assert_eq!(decode_fixed::<u64>(buf.as_ptr()), value);
+        assert_eq!(decode_fixed::<u64>(&buf), value);
     }
 
     #[test]
@@ -296,8 +298,8 @@ mod tests {
         ];
 
         for &value in &values {
-            encode_fixed(buf.as_mut_ptr(), value);
-            let decoded = decode_fixed::<u32>(buf.as_ptr());
+            encode_fixed(&mut buf, value);
+            let decoded = decode_fixed::<u32>(&buf);
             assert_eq!(value, decoded, "Round trip of 0x{:X} failed", value);
         }
     }
@@ -320,8 +322,8 @@ mod tests {
         ];
 
         for &value in &values {
-            encode_fixed::<u64>(buf.as_mut_ptr(), value);
-            let decoded = decode_fixed(buf.as_ptr());
+            encode_fixed::<u64>(&mut buf, value);
+            let decoded = decode_fixed(&buf);
             assert_eq!(value, decoded, "Round trip of 0x{:X} failed", value);
         }
     }

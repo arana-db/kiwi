@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- * 
+ *
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -17,64 +17,108 @@
  * limitations under the License.
  */
 
-use crate::handle;
-use crate::{Client, ServerTrait, StreamTrait};
+use crate::ServerTrait;
 use async_trait::async_trait;
-use log::{error, info};
-use std::error::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{UnixListener, UnixStream};
+use cmd::table::{create_command_table, CmdTable};
+use std::{error::Error, path::PathBuf, sync::Arc};
+use storage::{storage::Storage, StorageOptions};
 
-pub struct UnixStreamWrapper {
-    stream: UnixStream,
-}
-
-impl UnixStreamWrapper {
-    pub fn new(stream: UnixStream) -> Self {
-        Self { stream }
-    }
-}
-
-#[async_trait]
-impl StreamTrait for UnixStreamWrapper {
-    async fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
-        self.stream.read(buf).await
-    }
-    async fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
-        self.stream.write(data).await
-    }
-}
-
+#[allow(dead_code)]
 pub struct UnixServer {
     path: String,
+    storage: Arc<Storage>,
+    cmd_table: Arc<CmdTable>,
 }
 
 impl UnixServer {
     pub fn new(path: Option<String>) -> Self {
-        let path = path.unwrap_or_else(|| "/tmp/sagedb.sock".to_string());
-        Self { path }
+        let path = path.unwrap_or_else(|| "/tmp/kiwidb.sock".to_string());
+        let storage_options = Arc::new(StorageOptions::default());
+        let db_path = PathBuf::from("./db");
+        let mut storage = Storage::new(1, 0);
+        storage.open(storage_options, db_path).unwrap();
+
+        Self {
+            path,
+            storage: Arc::new(storage),
+            cmd_table: Arc::new(create_command_table()),
+        }
     }
 }
 
-#[async_trait]
-impl ServerTrait for UnixServer {
-    async fn start(&self) -> Result<(), Box<dyn Error>> {
-        let _ = std::fs::remove_file(&self.path);
-        let listener = UnixListener::bind(&self.path)?;
-        info!("Listening on Unix Socket: {}", self.path);
+#[cfg(unix)]
+mod unix_impl {
+    use super::*;
+    use crate::handle::process_connection;
+    use client::{Client, StreamTrait};
+    use log::{error, info};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{UnixListener, UnixStream};
 
-        loop {
-            let (socket, _) = listener.accept().await?;
+    pub struct UnixStreamWrapper {
+        stream: UnixStream,
+    }
 
-            let s = UnixStreamWrapper::new(socket);
+    impl UnixStreamWrapper {
+        pub fn new(stream: UnixStream) -> Self {
+            Self { stream }
+        }
+    }
 
-            let mut client = Client::new(Box::new(s));
+    #[async_trait]
+    impl StreamTrait for UnixStreamWrapper {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            self.stream.read(buf).await
+        }
+        async fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
+            self.stream.write(data).await
+        }
+    }
 
-            tokio::spawn(async move {
-                if let Err(e) = handle::process_connection(&mut client).await {
-                    error!("handle connection error: {e}");
+    #[async_trait]
+    impl ServerTrait for UnixServer {
+        async fn run(&self) -> Result<(), Box<dyn Error>> {
+            if let Err(e) = std::fs::remove_file(&self.path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    return Err(e.into());
                 }
-            });
+            }
+
+            let listener = UnixListener::bind(&self.path)?;
+            info!("Listening on Unix Socket: {}", self.path);
+
+            loop {
+                match listener.accept().await {
+                    Ok((socket, _)) => {
+                        let s = UnixStreamWrapper::new(socket);
+                        let mut client = Client::new(Box::new(s));
+                        let storage = self.storage.clone();
+                        let cmd_table = self.cmd_table.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) =
+                                process_connection(&mut client, storage, cmd_table).await
+                            {
+                                error!("Connection processing failed: {e:?}");
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("Failed to accept connection: {e:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+mod unix_impl {
+    use super::*;
+
+    #[async_trait]
+    impl ServerTrait for UnixServer {
+        async fn run(&self) -> Result<(), Box<dyn Error>> {
+            Err("Unix sockets are not supported on this platform".into())
         }
     }
 }

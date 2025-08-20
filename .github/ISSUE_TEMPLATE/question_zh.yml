@@ -1,0 +1,11 @@
+name: 提问
+description: 问一个关于 kiwi-rs 的问题
+labels: ["question"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: 您的问题是什么？
+      description: "请提供尽可能多的上下文。"
+    validations:
+      required: true
