@@ -41,7 +41,7 @@ clean:
 
 fmt:
 	@echo "Formatting code..."
-	@cargo fmt --manifest-path ./Cargo.toml --all -- --check --unstable-features
+	@cargo fmt --manifest-path ./Cargo.toml --all -- --check
 
 lint:
 	@echo "Linting code..."
