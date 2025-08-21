@@ -46,26 +46,26 @@ impl Cmd for GetCmd {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
 
-    fn do_initial(&self, client: &mut Client) -> bool {
+    fn do_initial(&self, client: &Client) -> bool {
         let key = client.argv()[1].clone();
         client.set_key(&key);
         true
     }
 
-    fn do_cmd(&self, client: &mut Client, storage: Arc<Storage>) {
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        let result = storage.get(key);
+        let result = storage.get(&key);
 
         match result {
             Ok(value) => {
-                *client.reply_mut() = RespData::BulkString(Some(value.into()));
+                client.set_reply(RespData::BulkString(Some(value.into())));
             }
             Err(e) => match e {
                 storage::error::Error::KeyNotFound { .. } => {
-                    *client.reply_mut() = RespData::BulkString(None);
+                    client.set_reply(RespData::BulkString(None));
                 }
                 _ => {
-                    *client.reply_mut() = RespData::Error(format!("ERR {e}").into());
+                    client.set_reply(RespData::Error(format!("ERR {e}").into()));
                 }
             },
         }

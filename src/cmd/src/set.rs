@@ -47,7 +47,7 @@ impl Cmd for SetCmd {
     impl_cmd_clone_box!();
 
     /// SET key value
-    fn do_initial(&self, client: &mut Client) -> bool {
+    fn do_initial(&self, client: &Client) -> bool {
         // TODO: support xx, nx, ex, px
         let argv = client.argv();
 
@@ -57,18 +57,18 @@ impl Cmd for SetCmd {
         true
     }
 
-    fn do_cmd(&self, client: &mut Client, storage: Arc<Storage>) {
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
         let value = &client.argv()[2];
 
-        let result = storage.set(key, value);
+        let result = storage.set(&key, value);
 
         match result {
             Ok(_) => {
-                *client.reply_mut() = RespData::SimpleString("OK".to_string().into());
+                client.set_reply(RespData::SimpleString("OK".to_string().into()));
             }
             Err(e) => {
-                *client.reply_mut() = RespData::Error(format!("ERR {e}").into());
+                client.set_reply(RespData::Error(format!("ERR {e}").into()));
             }
         }
     }

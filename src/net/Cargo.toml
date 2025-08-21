@@ -17,3 +17,4 @@ cmd = { path = "../cmd" }
 resp = { path = "../resp" }
 client = { path = "../client" }
 bytes.workspace = true
+executor = { path = "../executor" }
