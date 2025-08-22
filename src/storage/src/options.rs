@@ -19,7 +19,7 @@
 
 //! Storage engine options and configurations
 
-use rocksdb::Options;
+use rocksdb::{BlockBasedOptions, Options};
 
 /// TODO: remove allow dead code
 #[allow(dead_code)]
@@ -27,6 +27,8 @@ use rocksdb::Options;
 pub struct StorageOptions {
     /// RocksDB options
     pub options: Options,
+    /// BlockBasedTable options
+    pub table_options: BlockBasedOptions,
     /// Block cache size in bytes
     pub block_cache_size: usize,
     /// Whether to share block cache across column families
@@ -62,6 +64,7 @@ impl Default for StorageOptions {
 
         Self {
             options,
+            table_options: BlockBasedOptions::default(),
             block_cache_size: 8 << 30, // 8GB
             share_block_cache: true,
             statistics_max_size: 0,

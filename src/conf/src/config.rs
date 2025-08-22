@@ -40,6 +40,54 @@ pub struct Config {
 
     #[serde(deserialize_with = "deserialize_bool_from_yes_no")]
     pub redis_compatible_mode: bool,
+
+    #[serde(rename = "rocksdb-max-subcompactions")]
+    pub rocksdb_max_subcompactions: u32,
+
+    #[serde(rename = "rocksdb-max-background-jobs")]
+    pub rocksdb_max_background_jobs: i32,
+
+    #[serde(rename = "rocksdb-max-write-buffer-number")]
+    pub rocksdb_max_write_buffer_number: i32,
+
+    #[serde(rename = "rocksdb-min-write-buffer-number-to-merge")]
+    pub rocksdb_min_write_buffer_number_to_merge: i32,
+
+    #[serde(rename = "rocksdb-write-buffer-size")]
+    pub rocksdb_write_buffer_size: usize,
+
+    #[serde(rename = "rocksdb-level0-file-num-compaction-trigger")]
+    pub rocksdb_level0_file_num_compaction_trigger: i32,
+
+    #[serde(rename = "rocksdb-number-levels")]
+    pub rocksdb_num_levels: i32,
+
+    #[serde(
+        rename = "rocksdb-enable-pipelined-write",
+        deserialize_with = "deserialize_bool_from_yes_no"
+    )]
+    pub rocksdb_enable_pipelined_write: bool,
+
+    #[serde(rename = "rocksdb-level0-slowdown-writes-trigger")]
+    pub rocksdb_level0_slowdown_writes_trigger: i32,
+
+    #[serde(rename = "rocksdb-level0-stop-writes-trigger")]
+    pub rocksdb_level0_stop_writes_trigger: i32,
+
+    #[serde(rename = "rocksdb-ttl-second")]
+    pub rocksdb_ttl_second: u64,
+
+    #[serde(rename = "rocksdb-periodic-second")]
+    pub rocksdb_periodic_second: u64,
+
+    #[serde(rename = "db-instance-num")]
+    pub db_instance_num: usize,
+
+    #[serde(rename = "small-compaction-threshold")]
+    pub small_compaction_threshold: usize,
+
+    #[serde(rename = "small-compaction-duration-threshold")]
+    pub small_compaction_duration_threshold: usize,
 }
 
 //set default value for config
@@ -51,6 +99,23 @@ impl Default for Config {
             memory: 1024 * 1024 * 1024,
             log_dir: "/data/kiwi_rs/logs".to_string(),
             redis_compatible_mode: false,
+
+            rocksdb_max_subcompactions: 0,
+            rocksdb_max_background_jobs: 4,
+            rocksdb_max_write_buffer_number: 2,
+            rocksdb_min_write_buffer_number_to_merge: 2,
+            rocksdb_write_buffer_size: 64 << 20, // 64MB
+            rocksdb_level0_file_num_compaction_trigger: 4,
+            rocksdb_num_levels: 7,
+            rocksdb_enable_pipelined_write: false,
+            rocksdb_level0_slowdown_writes_trigger: 20,
+            rocksdb_level0_stop_writes_trigger: 36,
+            rocksdb_ttl_second: 0xfffffffffffffffe, // 30 days
+            rocksdb_periodic_second: 0xfffffffffffffffe, // 30 days
+
+            db_instance_num: 3,
+            small_compaction_threshold: 5000,
+            small_compaction_duration_threshold: 10000,
         }
     }
 }
@@ -69,5 +134,34 @@ impl Config {
             .map_err(|e| Error::ValidConfigFail { source: e })?;
 
         Ok(config)
+    }
+
+    pub fn get_rocksdb_options(&self) -> rocksdb::Options {
+        let mut options = rocksdb::Options::default();
+
+        options.create_if_missing(true);
+        options.create_missing_column_families(true);
+        options.set_max_subcompactions(self.rocksdb_max_subcompactions);
+        options.set_max_background_jobs(self.rocksdb_max_background_jobs);
+        options.set_max_write_buffer_number(self.rocksdb_max_write_buffer_number);
+        options.set_min_write_buffer_number_to_merge(self.rocksdb_min_write_buffer_number_to_merge);
+        options.set_write_buffer_size(self.rocksdb_write_buffer_size);
+        options.set_level_zero_file_num_compaction_trigger(
+            self.rocksdb_level0_file_num_compaction_trigger,
+        );
+        options.set_num_levels(self.rocksdb_num_levels);
+        options.set_enable_pipelined_write(self.rocksdb_enable_pipelined_write);
+        options.set_level_zero_slowdown_writes_trigger(self.rocksdb_level0_slowdown_writes_trigger);
+        options.set_level_zero_stop_writes_trigger(self.rocksdb_level0_stop_writes_trigger);
+
+        if self.rocksdb_periodic_second > 0 {
+            options.set_periodic_compaction_seconds(self.rocksdb_periodic_second);
+        }
+
+        options
+    }
+
+    pub fn get_rocksdb_block_based_table_options(&self) -> rocksdb::BlockBasedOptions {
+        rocksdb::BlockBasedOptions::default()
     }
 }
