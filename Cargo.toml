@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+	"src/engine",
 	"src/storage",
 	"src/kstd",
 	"src/common/macro",
@@ -54,6 +55,7 @@ tempfile = "3.8"
 crc16 = "0.4"
 
 ## workspaces members
+engine = { path = "src/engine" }
 storage = { path = "src/storage" }
 kstd = { path = "src/kstd" }
 common-macro = { path = "src/common/macro" }

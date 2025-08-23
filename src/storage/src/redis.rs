@@ -22,6 +22,7 @@ use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
+use engine::{Engine, RocksdbEngine};
 use kstd::lock_mgr::LockMgr;
 use moka::sync::Cache;
 use rocksdb::{
@@ -67,7 +68,7 @@ pub struct Redis {
     pub write_options: WriteOptions,
     pub read_options: ReadOptions,
     pub compact_options: CompactOptions,
-    pub db: Option<DB>,
+    pub db: Option<Box<dyn Engine>>,
 
     // For background task
     pub storage: Arc<StorageOptions>,
@@ -146,10 +147,10 @@ impl Redis {
             })
             .collect();
 
-        self.db = Some(
+        self.db = Some(Box::new(RocksdbEngine::new(
             DB::open_cf_descriptors(&self.storage.options, db_path, column_families)
                 .context(RocksSnafu)?,
-        );
+        )));
 
         if let Some(db) = &self.db {
             let mut handles = Vec::new();
@@ -394,11 +395,6 @@ impl Redis {
 impl Drop for Redis {
     fn drop(&mut self) {
         if self.need_close.load(std::sync::atomic::Ordering::SeqCst) {
-            if let Some(db) = &self.db {
-                // Cancel background work
-                db.cancel_all_background_work(true);
-            }
-
             // Clear handles
             self.handles.clear();
 
