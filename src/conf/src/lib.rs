@@ -52,6 +52,9 @@ mod tests {
         assert_eq!(36, config.rocksdb_level0_stop_writes_trigger);
         assert_eq!(604800, config.rocksdb_ttl_second);
         assert_eq!(259200, config.rocksdb_periodic_second);
+        assert_eq!(true, config.rocksdb_level_compaction_dynamic_level_bytes);
+        assert_eq!(10000, config.rocksdb_max_open_files);
+        assert_eq!(64 << 20, config.rocksdb_target_file_size_base);
 
         assert_eq!(5000, config.small_compaction_threshold);
         assert_eq!(10000, config.small_compaction_duration_threshold);
@@ -88,6 +91,9 @@ mod tests {
             rocksdb_level0_stop_writes_trigger: 36,
             rocksdb_ttl_second: 0xfffffffffffffffe,
             rocksdb_periodic_second: 0xfffffffffffffffe,
+            rocksdb_level_compaction_dynamic_level_bytes: true,
+            rocksdb_max_open_files: 10000,
+            rocksdb_target_file_size_base: 64 << 20,
             db_instance_num: 3,
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,

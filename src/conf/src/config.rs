@@ -88,6 +88,18 @@ pub struct Config {
 
     #[serde(rename = "small-compaction-duration-threshold")]
     pub small_compaction_duration_threshold: usize,
+
+    #[serde(
+        rename = "rocksdb-level-compaction-dynamic-level-bytes",
+        deserialize_with = "deserialize_bool_from_yes_no"
+    )]
+    pub rocksdb_level_compaction_dynamic_level_bytes: bool,
+
+    #[serde(rename = "rocksdb-max-open-files")]
+    pub rocksdb_max_open_files: i32,
+
+    #[serde(rename = "rocksdb-target-file-size-base")]
+    pub rocksdb_target_file_size_base: u64,
 }
 
 //set default value for config
@@ -112,6 +124,9 @@ impl Default for Config {
             rocksdb_level0_stop_writes_trigger: 36,
             rocksdb_ttl_second: 0xfffffffffffffffe, // 30 days
             rocksdb_periodic_second: 0xfffffffffffffffe, // 30 days
+            rocksdb_level_compaction_dynamic_level_bytes: true,
+            rocksdb_max_open_files: 10000,
+            rocksdb_target_file_size_base: 64 << 20, // 64MB
 
             db_instance_num: 3,
             small_compaction_threshold: 5000,
@@ -136,6 +151,7 @@ impl Config {
         Ok(config)
     }
 
+    // TODO: Due to API issues, the rocksdb_ttl_second parameter is temporarily missing
     pub fn get_rocksdb_options(&self) -> rocksdb::Options {
         let mut options = rocksdb::Options::default();
 
@@ -153,6 +169,11 @@ impl Config {
         options.set_enable_pipelined_write(self.rocksdb_enable_pipelined_write);
         options.set_level_zero_slowdown_writes_trigger(self.rocksdb_level0_slowdown_writes_trigger);
         options.set_level_zero_stop_writes_trigger(self.rocksdb_level0_stop_writes_trigger);
+        options.set_level_compaction_dynamic_level_bytes(
+            self.rocksdb_level_compaction_dynamic_level_bytes,
+        );
+        options.set_max_open_files(self.rocksdb_max_open_files);
+        options.set_target_file_size_base(self.rocksdb_target_file_size_base);
 
         if self.rocksdb_periodic_second > 0 {
             options.set_periodic_compaction_seconds(self.rocksdb_periodic_second);

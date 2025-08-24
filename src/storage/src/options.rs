@@ -19,10 +19,9 @@
 
 //! Storage engine options and configurations
 
+use crate::error::{OptionNotDynamicallyModifiableSnafu, Result};
 use rocksdb::{BlockBasedOptions, Options};
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 /// Storage engine options
 pub struct StorageOptions {
     /// RocksDB options
@@ -143,6 +142,77 @@ impl StorageOptions {
     pub fn set_mem_manager_size(&mut self, size: usize) -> &mut Self {
         self.mem_manager_size = size;
         self
+    }
+
+    pub fn validate_dynamic_option(option_type: OptionType, key: &str) -> Result<()> {
+        match option_type {
+            OptionType::DB if Self::is_dynamic_db_option(key) => Ok(()),
+            OptionType::ColumnFamily if Self::is_dynamic_cf_option(key) => Ok(()),
+            _ => OptionNotDynamicallyModifiableSnafu {
+                message: format!("option '{key}' is not dynamically modifiable"),
+            }
+            .fail(),
+        }
+    }
+
+    fn is_dynamic_db_option(key: &str) -> bool {
+        matches!(
+            key,
+            "max_background_jobs"
+                | "max_background_compactions"
+                | "max_open_files"
+                | "bytes_per_sync"
+                | "delayed_write_rate"
+                | "max_total_wal_size"
+                | "wal_bytes_per_sync"
+                | "stats_dump_period_sec"
+        )
+    }
+
+    fn is_dynamic_cf_option(key: &str) -> bool {
+        matches!(
+            key,
+            "max_write_buffer_number"
+                | "write_buffer_size"
+                | "target_file_size_base"
+                | "target_file_size_multiplier"
+                | "arena_block_size"
+                | "level0_file_num_compaction_trigger"
+                | "level0_slowdown_writes_trigger"
+                | "level0_stop_writes_trigger"
+                | "max_compaction_bytes"
+                | "soft_pending_compaction_bytes_limit"
+                | "hard_pending_compaction_bytes_limit"
+        )
+    }
+
+    pub fn get_supported_dynamic_options() -> (Vec<String>, Vec<String>) {
+        let db_options = vec![
+            "max_background_jobs".to_string(),
+            "max_background_compactions".to_string(),
+            "max_open_files".to_string(),
+            "bytes_per_sync".to_string(),
+            "delayed_write_rate".to_string(),
+            "max_total_wal_size".to_string(),
+            "wal_bytes_per_sync".to_string(),
+            "stats_dump_period_sec".to_string(),
+        ];
+
+        let cf_options = vec![
+            "max_write_buffer_number".to_string(),
+            "write_buffer_size".to_string(),
+            "target_file_size_base".to_string(),
+            "target_file_size_multiplier".to_string(),
+            "arena_block_size".to_string(),
+            "level0_file_num_compaction_trigger".to_string(),
+            "level0_slowdown_writes_trigger".to_string(),
+            "level0_stop_writes_trigger".to_string(),
+            "max_compaction_bytes".to_string(),
+            "soft_pending_compaction_bytes_limit".to_string(),
+            "hard_pending_compaction_bytes_limit".to_string(),
+        ];
+
+        (db_options, cf_options)
     }
 }
 
