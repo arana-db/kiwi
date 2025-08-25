@@ -59,6 +59,7 @@ pub struct TcpServer {
 
 impl TcpServer {
     pub fn new(addr: Option<String>) -> Self {
+        // TODO: Get storage options from config
         let storage_options = Arc::new(StorageOptions::default());
         let db_path = PathBuf::from("./db");
         let mut storage = Storage::new(1, 0);

@@ -401,6 +401,7 @@ dependencies = [
 name = "conf"
 version = "0.1.0"
 dependencies = [
+ "rocksdb",
  "serde",
  "serde_ini",
  "snafu",

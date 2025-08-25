@@ -124,4 +124,11 @@ pub enum Error {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Option is not dynamically modifiable: {}", message))]
+    OptionNotDynamicallyModifiable {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

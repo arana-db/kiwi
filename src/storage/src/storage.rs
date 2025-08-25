@@ -176,7 +176,16 @@ impl Storage {
         }
     }
 
-    fn set_option(&self, option_type: OptionType, options: &HashMap<String, String>) -> Result<()> {
+    // Used to modify rocksdb dynamic options
+    pub fn set_option(
+        &self,
+        option_type: OptionType,
+        options: &HashMap<String, String>,
+    ) -> Result<()> {
+        for key in options.keys() {
+            StorageOptions::validate_dynamic_option(option_type, key.as_str())?;
+        }
+
         for inst in &self.insts {
             inst.set_option(option_type, options)?;
         }
