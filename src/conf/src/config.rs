@@ -122,8 +122,8 @@ impl Default for Config {
             rocksdb_enable_pipelined_write: false,
             rocksdb_level0_slowdown_writes_trigger: 20,
             rocksdb_level0_stop_writes_trigger: 36,
-            rocksdb_ttl_second: 0xfffffffffffffffe, // 30 days
-            rocksdb_periodic_second: 0xfffffffffffffffe, // 30 days
+            rocksdb_ttl_second: 30 * 24 * 60 * 60, // 30 days
+            rocksdb_periodic_second: 30 * 24 * 60 * 60, // 30 days
             rocksdb_level_compaction_dynamic_level_bytes: true,
             rocksdb_max_open_files: 10000,
             rocksdb_target_file_size_base: 64 << 20, // 64MB
