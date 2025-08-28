@@ -25,7 +25,7 @@ MAKEFLAGS += --no-print-directory
 
 build:
 	@echo "Building project..."
-	@cargo build
+	@cargo build --verbose
 
 run:
 	@echo "Running project..."
@@ -33,7 +33,7 @@ run:
 
 test:
 	@echo "Running tests..."
-	@cargo test
+	@cargo test --verbose
 
 clean:
 	@echo "Cleaning project..."
