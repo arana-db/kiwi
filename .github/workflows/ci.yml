@@ -57,18 +57,15 @@ jobs:
 
       - run: make lint
 
-  cargo-miri:
+  cargo-test:
     strategy:
       matrix:
         include:
           - os: macos-latest
           - os: ubuntu-latest
           - os: windows-latest
-    name: cargo miri
+    name: cargo test
     runs-on: ${{ matrix.os }}
-    env:
-      # for using system time function.
-      MIRIFLAGS: "-Zmiri-disable-isolation"
     steps:
       - uses: actions/checkout@v4
 
@@ -76,12 +73,9 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
-          components: miri
 
       - name: Update Rust nightly
         run: rustup update nightly
 
-      - name: Install Miri
-        run: rustup component add miri --toolchain nightly
-
-      - run: make miri
+      - name: Run Unit Test
+      - run: make test

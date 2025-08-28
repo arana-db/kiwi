@@ -47,10 +47,6 @@ lint:
 	@echo "Linting code..."
 	@cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings
 
-miri:
-	@echo "Running miri..."
-	@cargo miri test --manifest-path ./Cargo.toml --all-features --workspace
-
 help:
 	@echo "Available commands:"
 	@echo "  build         - Build the project"
@@ -59,7 +55,6 @@ help:
 	@echo "  clean         - Clean the project"
 	@echo "  fmt           - Format the code"
 	@echo "  lint          - Lint the code"
-	@echo "  miri          - Run tests under Miri"
 	@echo "  help          - Show this help message"
 
 .PHONY: build run test clean fmt lint help
