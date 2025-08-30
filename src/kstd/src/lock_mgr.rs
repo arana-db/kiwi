@@ -93,16 +93,11 @@ impl LockMgr {
     pub fn lock(&self, key: &str) -> Status {
         let shard = self.map.shard_for(key);
 
-        let mut keys = match shard.mutex.lock() {
-            Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut keys: std::sync::MutexGuard<'_, HashSet<String>> =
+            shard.mutex.lock().expect("mutex is poisoned");
 
         while keys.contains(key) || !self.map.has_quota() {
-            keys = match shard.condvar.wait(keys) {
-                Ok(g) => g,
-                Err(poisoned) => poisoned.into_inner(),
-            };
+            keys = shard.condvar.wait(keys).expect("condvar is poisoned");
         }
 
         keys.insert(key.to_string());
@@ -116,10 +111,8 @@ impl LockMgr {
     pub fn unlock(&self, key: &str) {
         let shard = self.map.shard_for(key);
 
-        let mut keys = match shard.mutex.lock() {
-            Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut keys: std::sync::MutexGuard<'_, HashSet<String>> =
+            shard.mutex.lock().expect("mutex is poisoned");
 
         let removed = keys.remove(key);
         if removed && self.map.max_locks > 0 {
@@ -128,16 +121,14 @@ impl LockMgr {
         }
         drop(keys);
 
-        shard.condvar.notify_one();
+        shard.condvar.notify_all();
     }
 
     pub fn try_lock(&self, key: &str) -> Status {
         let shard = self.map.shard_for(key);
 
-        let mut keys = match shard.mutex.lock() {
-            Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut keys: std::sync::MutexGuard<'_, HashSet<String>> =
+            shard.mutex.lock().expect("mutex is poisoned");
 
         if keys.contains(key) {
             return Status::busy("Lock already held");
