@@ -18,7 +18,7 @@
  */
 
 use async_trait::async_trait;
-use resp::RespData;
+use resp::RespValue;
 
 #[async_trait]
 pub trait StreamTrait: Send + Sync {
@@ -34,7 +34,7 @@ pub struct Client {
     name: Vec<u8>,
     cmd_name: Vec<u8>,
     key: Vec<u8>,
-    reply: RespData,
+    reply: RespValue,
 }
 
 impl Client {
@@ -45,7 +45,7 @@ impl Client {
             name: Vec::default(),
             cmd_name: Vec::default(),
             key: Vec::default(),
-            reply: RespData::default(),
+            reply: RespValue::default(),
         }
     }
 
@@ -89,11 +89,11 @@ impl Client {
         &self.key
     }
 
-    pub fn reply_mut(&mut self) -> &mut RespData {
+    pub fn reply_mut(&mut self) -> &mut RespValue {
         &mut self.reply
     }
 
-    pub fn take_reply(&mut self) -> RespData {
+    pub fn take_reply(&mut self) -> RespValue {
         std::mem::take(&mut self.reply)
     }
 }
