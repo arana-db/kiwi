@@ -19,14 +19,42 @@
 
 //! Storage engine options and configurations
 
-use rocksdb::Options;
+use crate::error::{OptionNotDynamicallyModifiableSnafu, Result};
+use rocksdb::{BlockBasedOptions, Options};
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
+/// Dynamic database options that can be modified at runtime
+const DYNAMIC_DB_OPTIONS: &[&str] = &[
+    "max_background_jobs",
+    "max_background_compactions",
+    "max_open_files",
+    "bytes_per_sync",
+    "delayed_write_rate",
+    "max_total_wal_size",
+    "wal_bytes_per_sync",
+    "stats_dump_period_sec",
+];
+
+/// Dynamic column family options that can be modified at runtime
+const DYNAMIC_CF_OPTIONS: &[&str] = &[
+    "max_write_buffer_number",
+    "write_buffer_size",
+    "target_file_size_base",
+    "target_file_size_multiplier",
+    "arena_block_size",
+    "level0_file_num_compaction_trigger",
+    "level0_slowdown_writes_trigger",
+    "level0_stop_writes_trigger",
+    "max_compaction_bytes",
+    "soft_pending_compaction_bytes_limit",
+    "hard_pending_compaction_bytes_limit",
+];
+
 /// Storage engine options
 pub struct StorageOptions {
     /// RocksDB options
     pub options: Options,
+    /// BlockBasedTable options
+    pub table_options: BlockBasedOptions,
     /// Block cache size in bytes
     pub block_cache_size: usize,
     /// Whether to share block cache across column families
@@ -62,6 +90,7 @@ impl Default for StorageOptions {
 
         Self {
             options,
+            table_options: BlockBasedOptions::default(),
             block_cache_size: 8 << 30, // 8GB
             share_block_cache: true,
             statistics_max_size: 0,
@@ -140,6 +169,33 @@ impl StorageOptions {
     pub fn set_mem_manager_size(&mut self, size: usize) -> &mut Self {
         self.mem_manager_size = size;
         self
+    }
+
+    pub fn validate_dynamic_option(option_type: OptionType, key: &str) -> Result<()> {
+        match option_type {
+            OptionType::DB if Self::is_dynamic_db_option(key) => Ok(()),
+            OptionType::ColumnFamily if Self::is_dynamic_cf_option(key) => Ok(()),
+            _ => OptionNotDynamicallyModifiableSnafu {
+                message: format!("option '{key}' is not dynamically modifiable"),
+            }
+            .fail(),
+        }
+    }
+
+    fn is_dynamic_db_option(key: &str) -> bool {
+        DYNAMIC_DB_OPTIONS.contains(&key)
+    }
+
+    fn is_dynamic_cf_option(key: &str) -> bool {
+        DYNAMIC_CF_OPTIONS.contains(&key)
+    }
+
+    pub fn get_supported_dynamic_options() -> (Vec<String>, Vec<String>) {
+        let db_options = DYNAMIC_DB_OPTIONS.iter().map(|s| s.to_string()).collect();
+
+        let cf_options = DYNAMIC_CF_OPTIONS.iter().map(|s| s.to_string()).collect();
+
+        (db_options, cf_options)
     }
 }
 
