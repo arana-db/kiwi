@@ -215,12 +215,13 @@ impl Storage {
             match event {
                 BgTask::CleanAll { dtype } => {
                     log::info!("BgTaskWorker received CleanAll {dtype:?}");
-                    storage.set_ignore_tasks(false);
                     storage.set_current_task_type(TaskType::CleanAll);
-                    if let Err(e) = storage.do_compact_range(dtype, "", "") {
+                    let ret = storage.do_compact_range(dtype, "", "");
+                    storage.set_ignore_tasks(false);
+                    storage.clear_current_task_type();
+                    if let Err(e) = ret {
                         log::error!("BgTaskWorker CleanAll failed: {e:?}");
                     }
-                    storage.clear_current_task_type();
                 }
                 BgTask::CompactRange { dtype, start, end } => {
                     if storage.is_ignoring_tasks() {
