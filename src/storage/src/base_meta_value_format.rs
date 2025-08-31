@@ -1,21 +1,25 @@
-/*
- * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use std::io::Cursor;
+
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use chrono::Utc;
+use snafu::ensure;
 
 use crate::{
     base_value_format::{DataType, InternalValue, ParsedInternalValue},
@@ -26,10 +30,6 @@ use crate::{
         TIMESTAMP_LENGTH, TYPE_LENGTH, VERSION_LENGTH,
     },
 };
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use chrono::Utc;
-use snafu::ensure;
-use std::io::Cursor;
 
 #[allow(dead_code)]
 type HashesMetaValue = BaseMetaValue;
@@ -44,10 +44,8 @@ type ZSetsMetaValue = BaseMetaValue;
 #[allow(dead_code)]
 type ParsedZSetsMetaValue = ParsedBaseMetaValue;
 
-/*
- * | type | len | version | reserve | cdate | timestamp |
- * |  1B  | 8B  |    8B   |   16B   |   8B  |     8B    |
- */
+// | type | len | version | reserve | cdate | timestamp |
+// |  1B  | 8B  |    8B   |   16B   |   8B  |     8B    |
 #[allow(dead_code)]
 pub struct BaseMetaValue {
     pub inner: InternalValue,
@@ -57,9 +55,7 @@ delegate_internal_value!(BaseMetaValue);
 #[allow(dead_code)]
 impl BaseMetaValue {
     pub fn new<T>(user_value: T) -> Self
-    where
-        T: Into<Bytes>,
-    {
+    where T: Into<Bytes> {
         Self {
             inner: InternalValue::new(DataType::None, user_value),
         }
@@ -104,21 +100,16 @@ delegate_parsed_value! {ParsedBaseMetaValue}
 #[allow(dead_code)]
 impl ParsedBaseMetaValue {
     pub fn new<T>(internal_value: T) -> Result<Self>
-    where
-        T: Into<BytesMut>,
-    {
+    where T: Into<BytesMut> {
         let value: BytesMut = internal_value.into();
         let value_len = value.len();
-        ensure!(
-            value_len >= BASE_META_VALUE_LENGTH,
-            InvalidFormatSnafu {
-                message: format!(
-                    "invalid meta value length: {} < {}",
-                    value.len(),
-                    BASE_META_VALUE_LENGTH,
-                )
-            }
-        );
+        ensure!(value_len >= BASE_META_VALUE_LENGTH, InvalidFormatSnafu {
+            message: format!(
+                "invalid meta value length: {} < {}",
+                value.len(),
+                BASE_META_VALUE_LENGTH,
+            )
+        });
 
         let mut val_reader = Cursor::new(&value[..]);
         let data_type: DataType = val_reader.get_u8().try_into()?;
@@ -235,8 +226,9 @@ impl ParsedBaseMetaValue {
 
 #[cfg(test)]
 mod base_meta_value_tests {
-    use super::*;
     use bytes::Buf;
+
+    use super::*;
 
     const TEST_COUNT: u64 = 10;
     const TEST_VERSION: u64 = 123456789;
@@ -271,7 +263,7 @@ mod base_meta_value_tests {
         expected.put_u8(DataType::None as u8);
         expected.put_u64_le(TEST_COUNT); // count -> user_value
         expected.put_u64_le(TEST_VERSION);
-        expected.extend_from_slice(&vec![0u8; SUFFIX_RESERVE_LENGTH]); // reserve
+        expected.extend_from_slice(&[0u8; SUFFIX_RESERVE_LENGTH]); // reserve
         expected.put_u64_le(TEST_CTIME);
         expected.put_u64_le(TEST_ETIME);
 
@@ -322,9 +314,10 @@ mod base_meta_value_tests {
 
 #[cfg(test)]
 mod parsed_base_meta_value_tests {
+    use bytes::BytesMut;
+
     use super::*;
     use crate::base_value_format::DataType;
-    use bytes::BytesMut;
 
     const TEST_VERSION: u64 = 123456789;
     const TEST_CTIME: u64 = 1620000000;
@@ -448,18 +441,22 @@ mod parsed_base_meta_value_tests {
 
     #[test]
     fn test_parsed_base_meta_value_check_set_count() {
-        assert!(ParsedBaseMetaValue::new(build_test_buffer())
-            .unwrap()
-            .check_set_count(100));
+        assert!(
+            ParsedBaseMetaValue::new(build_test_buffer())
+                .unwrap()
+                .check_set_count(100)
+        );
 
         let safe_max = if usize::BITS >= 64 {
             u64::MAX as usize
         } else {
             usize::MAX
         };
-        assert!(ParsedBaseMetaValue::new(build_test_buffer())
-            .unwrap()
-            .check_set_count(safe_max));
+        assert!(
+            ParsedBaseMetaValue::new(build_test_buffer())
+                .unwrap()
+                .check_set_count(safe_max)
+        );
 
         let expected_result = usize::BITS < 64;
         assert_eq!(

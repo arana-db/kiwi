@@ -60,4 +60,16 @@ kstd = { path = "src/kstd" }
 common-macro = { path = "src/common/macro" }
 net = { path = "src/net" }
 
+[profile.dev]
+split-debuginfo = "unpacked"
+overflow-checks = true
+# Report to https://github.com/rust-lang/rust/issues/100142 if incremental works well
+incremental = true
 
+[profile.release]
+debug = 1
+lto = "thin"
+overflow-checks = false
+opt-level = "s"         # defaults to be 3
+incremental = false
+codegen-units = 1
