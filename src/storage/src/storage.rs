@@ -300,11 +300,13 @@ impl Storage {
     }
 
     fn do_compact_range(&self, _dtype: DataType, _start: &str, _end: &str) -> Result<()> {
-        unimplemented!("This function is not implemented yet");
+        log::info!("do_compact_range {_dtype:?} {_start} {_end}");
+        Ok(())
     }
 
     fn do_compact_specific_key(&self, _dtype: DataType, _key: &str) -> Result<()> {
-        unimplemented!("This function is not implemented yet");
+        log::info!("do_compact_specific_key {_dtype:?} {_key}");
+        Ok(())
     }
 
     // Used to modify rocksdb dynamic options
