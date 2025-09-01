@@ -1,21 +1,23 @@
-/*
- * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use rocksdb::CompactionDecision;
+use snafu::ensure;
 
 use crate::base_value_format::{DataType, InternalValue, ParsedInternalValue};
 use crate::delegate_internal_value;
@@ -24,14 +26,9 @@ use crate::error::{InvalidFormatSnafu, Result};
 use crate::storage_define::{
     STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
 };
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use rocksdb::CompactionDecision;
-use snafu::ensure;
 
-/*
- * | type | value | reserve | cdate | timestamp |
- * |  1B  |       |   16B   |   8B  |     8B    |
- */
+// | type | value | reserve | cdate | timestamp |
+// |  1B  |       |   16B   |   8B  |     8B    |
 #[derive(Debug, Clone)]
 pub struct StringValue {
     inner: InternalValue,
@@ -41,9 +38,7 @@ delegate_internal_value!(StringValue);
 #[allow(dead_code)]
 impl StringValue {
     pub fn new<T>(user_value: T) -> Self
-    where
-        T: Into<Bytes>,
-    {
+    where T: Into<Bytes> {
         Self {
             inner: InternalValue::new(DataType::String, user_value),
         }
@@ -75,9 +70,7 @@ delegate_parsed_value!(ParsedStringsValue);
 #[allow(dead_code)]
 impl ParsedStringsValue {
     pub fn new<T>(internal_value: T) -> Result<Self>
-    where
-        T: Into<BytesMut>,
-    {
+    where T: Into<BytesMut> {
         let value: BytesMut = internal_value.into();
         ensure!(
             value.len() >= STRING_VALUE_SUFFIXLENGTH,
