@@ -1,27 +1,26 @@
-/*
- * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #[cfg(test)]
 mod redis_string_test {
-    use kstd::lock_mgr::LockMgr;
     use std::{sync::Arc, thread, time::Duration};
-    use storage::{unique_test_db_path, BgTaskHandler, Redis, StorageOptions};
+
+    use kstd::lock_mgr::LockMgr;
+    use storage::{BgTaskHandler, Redis, StorageOptions, unique_test_db_path};
 
     #[cfg(not(miri))]
     #[test]
@@ -308,8 +307,7 @@ mod redis_string_test {
                     let key = format!("mixed_key_{}", i).into_bytes();
 
                     let get_result = redis_clone.get(&key);
-                    if get_result.is_ok() {
-                        let value = get_result.unwrap();
+                    if let Ok(value) = get_result {
                         assert!(
                             !value.is_empty(),
                             "get returned empty value for key {:?}",
@@ -333,8 +331,7 @@ mod redis_string_test {
         for i in 0..operations_per_thread {
             let key = format!("mixed_key_{}", i).into_bytes();
             let get_result = redis_arc.get(&key);
-            if get_result.is_ok() {
-                let value = get_result.unwrap();
+            if let Ok(value) = get_result {
                 assert!(
                     !value.is_empty(),
                     "final get returned empty value for key {:?}",

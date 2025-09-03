@@ -1,27 +1,26 @@
-/*
- * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #[cfg(test)]
 mod redis_basic_test {
+    use std::sync::{Arc, atomic::Ordering};
+
     use kstd::lock_mgr::LockMgr;
-    use std::sync::{atomic::Ordering, Arc};
-    use storage::{unique_test_db_path, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions};
+    use storage::{BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, unique_test_db_path};
 
     #[cfg(not(miri))]
     #[test]
@@ -32,8 +31,8 @@ mod redis_basic_test {
         let redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
 
         assert_eq!(redis.get_index(), 1);
-        assert_eq!(redis.is_starting.load(Ordering::SeqCst), true);
-        assert_eq!(redis.db.is_none(), true);
+        assert!(redis.is_starting.load(Ordering::SeqCst));
+        assert!(redis.db.is_none());
         assert_eq!(redis.handles.len(), 0);
     }
 
@@ -54,7 +53,7 @@ mod redis_basic_test {
         let result = redis.open(test_db_path.to_str().unwrap());
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
-        assert_eq!(redis.is_starting.load(Ordering::SeqCst), false);
+        assert!(!redis.is_starting.load(Ordering::SeqCst));
         assert!(redis.db.is_some());
         assert_eq!(redis.handles.len(), 6);
 

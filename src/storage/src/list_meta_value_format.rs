@@ -1,21 +1,25 @@
-/*
- * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use std::io::Cursor;
+
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use chrono::Utc;
+use snafu::ensure;
 
 use crate::{
     base_value_format::{DataType, InternalValue, ParsedInternalValue},
@@ -26,20 +30,14 @@ use crate::{
         VERSION_LENGTH,
     },
 };
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-use chrono::Utc;
-use snafu::ensure;
-use std::io::Cursor;
 
 // Constants from C++ version
 const INITIAL_LEFT_INDEX: u64 = 9223372036854775807;
 const INITIAL_RIGHT_INDEX: u64 = 9223372036854775808;
 const LIST_VALUE_INDEX_LENGTH: usize = 8;
 
-/*
- * | type  | list_size | version | left index | right index | reserve |  cdate | timestamp |
- * |  1B   |     8B    |    8B   |     8B     |      8B     |   16B   |    8B  |     8B    |
- */
+// | type  | list_size | version | left index | right index | reserve |  cdate | timestamp |
+// |  1B   |     8B    |    8B   |     8B     |      8B     |   16B   |    8B  |     8B    |
 #[allow(dead_code)]
 pub struct ListsMetaValue {
     pub inner: InternalValue,
@@ -51,9 +49,7 @@ delegate_internal_value!(ListsMetaValue);
 #[allow(dead_code)]
 impl ListsMetaValue {
     pub fn new<T>(list_size: T) -> Self
-    where
-        T: Into<Bytes>,
-    {
+    where T: Into<Bytes> {
         Self {
             inner: InternalValue::new(DataType::List, list_size),
             left_index: INITIAL_LEFT_INDEX,
@@ -126,9 +122,7 @@ impl ParsedListsMetaValue {
         TYPE_LENGTH + BASE_META_VALUE_COUNT_LENGTH + Self::LISTS_META_VALUE_SUFFIX_LENGTH;
 
     pub fn new<T>(internal_value: T) -> Result<Self>
-    where
-        T: Into<BytesMut>,
-    {
+    where T: Into<BytesMut> {
         let value: BytesMut = internal_value.into();
         let value_len = value.len();
         ensure!(
@@ -360,7 +354,7 @@ mod tests {
         expected.put_u64_le(TEST_VERSION);
         expected.put_u64_le(TEST_LEFT_INDEX);
         expected.put_u64_le(TEST_RIGHT_INDEX);
-        expected.extend_from_slice(&vec![0u8; SUFFIX_RESERVE_LENGTH]); // reserve
+        expected.extend_from_slice(&[0u8; SUFFIX_RESERVE_LENGTH]); // reserve
         expected.put_u64_le(TEST_CTIME);
         expected.put_u64_le(TEST_ETIME);
 

@@ -1,32 +1,30 @@
-/*
- * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use bytes::{BufMut, Bytes, BytesMut};
+use snafu::ensure;
 
 use crate::{
     error::{InvalidFormatSnafu, Result},
     storage_define::{
-        decode_user_key, encode_user_key, ENCODED_KEY_DELIM_SIZE, PREFIX_RESERVE_LENGTH,
-        SUFFIX_RESERVE_LENGTH,
+        ENCODED_KEY_DELIM_SIZE, PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, decode_user_key,
+        encode_user_key,
     },
 };
-use bytes::{BufMut, Bytes, BytesMut};
-use snafu::ensure;
-//
 // used for string data key or hash/zset/set/list's meta key. format:
 // | reserve1 | key | reserve2 |
 // |    8B    |     |   16B    |
@@ -77,12 +75,9 @@ impl ParsedBaseKey {
     }
 
     fn decode(encoded_key: &[u8], key_str: &mut BytesMut) -> Result<()> {
-        ensure!(
-            !encoded_key.is_empty(),
-            InvalidFormatSnafu {
-                message: "Encoded key too short to contain prefix, suffix, and data".to_string(),
-            }
-        );
+        ensure!(!encoded_key.is_empty(), InvalidFormatSnafu {
+            message: "Encoded key too short to contain prefix, suffix, and data".to_string(),
+        });
 
         let start_idx = PREFIX_RESERVE_LENGTH;
         let end_idx = encoded_key.len() - SUFFIX_RESERVE_LENGTH;

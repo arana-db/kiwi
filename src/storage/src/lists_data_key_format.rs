@@ -1,42 +1,40 @@
-/*
- * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #![cfg_attr(not(test), allow(dead_code))]
+
+use std::mem;
+
+use bytes::BytesMut;
 
 use crate::coding::{decode_fixed, encode_fixed};
 use crate::error::Result;
 use crate::storage_define::{
-    decode_user_key, encode_user_key, ENCODED_KEY_DELIM_SIZE, NEED_TRANSFORM_CHARACTER,
+    ENCODED_KEY_DELIM_SIZE, NEED_TRANSFORM_CHARACTER, decode_user_key, encode_user_key,
 };
-use bytes::BytesMut;
-use std::mem;
 
 // Constants for fixed-length fields
 const RESERVE1_LEN: usize = 8;
 const RESERVE2_LEN: usize = 16;
 const U64_LEN: usize = 8;
 
-/*
- * Format for List data key
- * | reserve1 | key | version | index | reserve2 |
- * |    8B    |     |    8B   |   8B  |   16B    |
- */
+// Format for List data key
+// | reserve1 | key | version | index | reserve2 |
+// |    8B    |     |    8B   |   8B  |   16B    |
 pub struct ListsDataKey {
     reserve1: [u8; 8],
     key: Vec<u8>,
@@ -109,14 +107,6 @@ impl ListsDataKey {
 
         Ok(dst)
     }
-
-    pub fn reserve1(&self) -> &[u8; 8] {
-        &self.reserve1
-    }
-
-    pub fn reserve2(&self) -> &[u8; 16] {
-        &self.reserve2
-    }
 }
 
 pub struct ParsedListsDataKey {
@@ -128,10 +118,6 @@ pub struct ParsedListsDataKey {
 }
 
 impl ParsedListsDataKey {
-    pub fn from_string(key: &str) -> Result<Self> {
-        Self::decode(key.as_bytes())
-    }
-
     pub fn from_slice(key: &[u8]) -> Result<Self> {
         Self::decode(key)
     }
