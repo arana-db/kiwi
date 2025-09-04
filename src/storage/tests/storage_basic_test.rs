@@ -23,7 +23,6 @@ use storage::{BgTask, BgTaskHandler, DataType};
 // This test ensures:
 // - All tasks are sent successfully (no panic)
 // - The worker can process tasks and exit cleanly (no deadlock)
-#[cfg(not(miri))]
 #[tokio::test]
 async fn test_bg_task_worker_concurrent() {
     let mut storage = Storage::new(1, 0);

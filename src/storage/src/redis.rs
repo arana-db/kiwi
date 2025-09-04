@@ -343,11 +343,7 @@ impl Redis {
         let bg_task_handler = self.bg_task_handler.clone();
         tokio::spawn(async move {
             let _ = bg_task_handler
-                .send(crate::storage::BgTask::CompactRange {
-                    dtype,
-                    start: key.clone(),
-                    end: key,
-                })
+                .send(crate::storage::BgTask::CompactSpecificKey { dtype, key })
                 .await;
         });
 
