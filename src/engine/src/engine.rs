@@ -79,7 +79,7 @@ pub trait Engine: Send + Sync {
         writeopts: &WriteOptions,
     ) -> Result<()>;
 
-    // 迭代器
+    // iterator operations
     fn iterator(&self, mode: IteratorMode) -> DBIteratorWithThreadMode<'_, DB>;
 
     fn iterator_opt(
