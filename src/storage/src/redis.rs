@@ -1,37 +1,37 @@
-/*
- * Copyright (c) 2024-present, arana-db Community.  All rights reserved.
- *
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
-use crate::base_value_format::{DataType, DATA_TYPE_TAG};
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+use foyer::{Cache, CacheBuilder};
+use kstd::lock_mgr::LockMgr;
+use rocksdb::{
+    BlockBasedOptions, ColumnFamilyDescriptor, CompactOptions, DB, ReadOptions, WriteOptions,
+};
+use snafu::{OptionExt, ResultExt};
+
+use crate::base_value_format::{DATA_TYPE_TAG, DataType};
 use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
-use kstd::lock_mgr::LockMgr;
-use moka::sync::Cache;
-use rocksdb::{
-    BlockBasedOptions, ColumnFamilyDescriptor, CompactOptions, ReadOptions, WriteOptions, DB,
-};
-use snafu::{OptionExt, ResultExt};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnFamilyIndex {
@@ -98,7 +98,7 @@ impl Redis {
         compact_options.set_exclusive_manual_compaction(false);
 
         let statistics_store: Cache<String, KeyStatistics> =
-            Cache::new(storage.statistics_max_size as u64);
+            CacheBuilder::new(storage.statistics_max_size).build();
 
         Self {
             index,
@@ -115,8 +115,8 @@ impl Redis {
             compact_options,
 
             statistics_store: Arc::new(statistics_store),
-            scan_cursors_store: Mutex::new(Cache::new(5000)),
-            spop_counts_store: Mutex::new(Cache::new(1000)),
+            scan_cursors_store: Mutex::new(CacheBuilder::new(5000).build()),
+            spop_counts_store: Mutex::new(CacheBuilder::new(1000).build()),
 
             small_compaction_threshold: std::sync::atomic::AtomicU64::new(5000),
             small_compaction_duration_threshold: std::sync::atomic::AtomicU64::new(10000),
@@ -272,6 +272,7 @@ impl Redis {
             let mut data = self
                 .statistics_store
                 .get(&lookup_key)
+                .map(|entry| entry.value().clone())
                 .unwrap_or_else(|| KeyStatistics::new(10));
             data.add_duration(duration);
 
@@ -301,6 +302,7 @@ impl Redis {
             let mut data = self
                 .statistics_store
                 .get(&lookup_key)
+                .map(|entry| entry.value().clone())
                 .unwrap_or_else(|| KeyStatistics::new(10));
             data.add_modify_count(count);
 
@@ -334,18 +336,14 @@ impl Redis {
         lookup_key.push(DATA_TYPE_TAG[dtype as usize]);
         lookup_key.push_str(key);
 
-        self.statistics_store.invalidate(&lookup_key);
+        self.statistics_store.remove(&lookup_key);
 
         // send background compact task
         let key = key.to_string();
         let bg_task_handler = self.bg_task_handler.clone();
         tokio::spawn(async move {
             let _ = bg_task_handler
-                .send(crate::storage::BgTask::CompactRange {
-                    dtype,
-                    start: key.clone(),
-                    end: key,
-                })
+                .send(crate::storage::BgTask::CompactSpecificKey { dtype, key })
                 .await;
         });
 
