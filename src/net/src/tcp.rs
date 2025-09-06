@@ -22,6 +22,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use client::{Client, StreamTrait};
 use cmd::table::{CmdTable, create_command_table};
+use executor::{CmdExecutor, CmdExecutorBuilder};
 use log::info;
 use storage::options::StorageOptions;
 use storage::storage::Storage;
@@ -55,6 +56,7 @@ pub struct TcpServer {
     addr: String,
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
+    executor: Arc<CmdExecutor>,
 }
 
 impl TcpServer {
@@ -63,6 +65,7 @@ impl TcpServer {
         let storage_options = Arc::new(StorageOptions::default());
         let db_path = PathBuf::from("./db");
         let mut storage = Storage::new(1, 0);
+        let executor = Arc::new(CmdExecutorBuilder::new().build());
 
         // Note: Storage::open returns a receiver, and should be called after construction, not in new.
         // The caller should call storage.open(storage_options, db_path) and spawn the bg_task_worker as needed.
@@ -72,6 +75,7 @@ impl TcpServer {
             addr: addr.unwrap_or("127.0.0.1:9221".to_string()),
             storage: Arc::new(storage),
             cmd_table: Arc::new(create_command_table()),
+            executor,
         }
     }
 }
@@ -88,13 +92,14 @@ impl ServerTrait for TcpServer {
 
             let s = TcpStreamWrapper::new(socket);
 
-            let mut client = Client::new(Box::new(s));
+            let client = Arc::new(Client::new(Box::new(s)));
 
             let storage = self.storage.clone();
             let cmd_table = self.cmd_table.clone();
+            let executor = self.executor.clone();
 
             tokio::spawn(async move {
-                process_connection(&mut client, storage, cmd_table)
+                process_connection(client, storage, cmd_table, executor)
                     .await
                     .unwrap();
             });

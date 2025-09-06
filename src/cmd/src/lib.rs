@@ -93,13 +93,13 @@ pub trait Cmd: Send + Sync {
     /// return cmd meta
     fn meta(&self) -> &CmdMeta;
 
-    fn do_initial(&self, client: &mut Client) -> bool;
+    fn do_initial(&self, client: &Client) -> bool;
 
-    fn do_cmd(&self, client: &mut Client, storage: Arc<Storage>);
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>);
 
     fn clone_box(&self) -> Box<dyn Cmd>;
 
-    fn execute(&self, client: &mut Client, storage: Arc<Storage>) {
+    fn execute(&self, client: &Client, storage: Arc<Storage>) {
         debug!("execute command: {:?}", client.cmd_name());
         if self.do_initial(client) {
             self.do_cmd(client, storage);
@@ -211,17 +211,17 @@ impl Cmd for BaseCmdGroup {
         Box::new(cloned_group)
     }
 
-    fn do_initial(&self, _client: &mut Client) -> bool {
+    fn do_initial(&self, _client: &Client) -> bool {
         true
     }
 
-    fn do_cmd(&self, client: &mut Client, storage: Arc<Storage>) {
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         if client.argv().len() < 2 {
-            *client.reply_mut() = RespData::Error(
+            client.set_reply(RespData::Error(
                 "ERR wrong number of arguments for command"
                     .to_string()
                     .into(),
-            );
+            ));
             return;
         }
         let sub_cmd_name = String::from_utf8_lossy(&client.argv()[1]).to_lowercase();
@@ -229,7 +229,7 @@ impl Cmd for BaseCmdGroup {
             sub_cmd.execute(client, storage);
         } else {
             let err_msg = format!("ERR unknown command '{} {}'", self.name(), sub_cmd_name);
-            *client.reply_mut() = RespData::Error(err_msg.into());
+            client.set_reply(RespData::Error(err_msg.into()));
         }
     }
 
