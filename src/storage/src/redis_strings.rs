@@ -26,7 +26,6 @@
 
 // use crate::types::KeyValue;
 
-use engine::Engine;
 use kstd::lock_mgr::ScopeRecordLock;
 use snafu::{OptionExt, ResultExt};
 

@@ -33,16 +33,6 @@ use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
 use engine::{Engine, RocksdbEngine};
-use kstd::lock_mgr::LockMgr;
-use moka::sync::Cache;
-use rocksdb::{
-    BlockBasedOptions, ColumnFamilyDescriptor, CompactOptions, ReadOptions, WriteOptions, DB,
-};
-use snafu::{OptionExt, ResultExt};
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
-use std::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnFamilyIndex {
