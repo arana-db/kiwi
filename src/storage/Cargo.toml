@@ -34,7 +34,7 @@ common-macro.workspace = true
 tokio.workspace = true
 tempfile.workspace = true
 crc16.workspace = true
+moka = { version = "0.12", features = ["sync"] }
+engine.workspace = true
 foyer.workspace = true
-
-
 
