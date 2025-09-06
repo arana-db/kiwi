@@ -61,7 +61,7 @@ impl Cmd for SetCmd {
         let key = client.key();
         let value = &client.argv()[2];
 
-        let result = storage.set(&key, value);
+        let result = storage.set(key, value);
 
         match result {
             Ok(_) => {

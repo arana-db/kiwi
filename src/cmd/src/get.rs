@@ -54,7 +54,7 @@ impl Cmd for GetCmd {
 
     fn do_cmd(&self, client: &mut Client, storage: Arc<Storage>) {
         let key = client.key();
-        let result = storage.get(&key);
+        let result = storage.get(key);
 
         match result {
             Ok(value) => {
