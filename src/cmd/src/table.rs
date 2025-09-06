@@ -16,9 +16,9 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::Cmd;
-use std::sync::Arc;
 
 pub type CmdTable = HashMap<String, Arc<dyn Cmd>>;
 
