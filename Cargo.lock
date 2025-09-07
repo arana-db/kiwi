@@ -349,7 +349,9 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "parking_lot",
  "resp",
+ "tokio",
 ]
 
 [[package]]
@@ -556,6 +558,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "executor"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "async-trait",
+ "client",
+ "cmd",
+ "env_logger",
+ "log",
+ "num_cpus",
+ "resp",
+ "storage",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -596,9 +615,9 @@ dependencies = [
 
 [[package]]
 name = "foyer"
-version = "0.18.0"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b4d8e96374206ff1b4265f2e2e6e1f80bc3048957b2a1e7fdeef929d68f318f"
+checksum = "642093b1a72c4a0ef89862484d669a353e732974781bb9c49a979526d1e30edc"
 dependencies = [
  "equivalent",
  "foyer-common",
@@ -608,16 +627,16 @@ dependencies = [
  "mixtrics",
  "pin-project",
  "serde",
- "thiserror 2.0.14",
+ "thiserror 2.0.16",
  "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "foyer-common"
-version = "0.18.0"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "911b8e3f23d5fe55b0b240f75af1d2fa5cb7261d3f9b38ef1c57bbc9f0449317"
+checksum = "9db9c0e4648b13e9216d785b308d43751ca975301aeb83e607ec630b6f956944"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -626,7 +645,7 @@ dependencies = [
  "mixtrics",
  "parking_lot",
  "pin-project",
- "thiserror 2.0.14",
+ "thiserror 2.0.16",
  "tokio",
  "twox-hash",
 ]
@@ -642,9 +661,9 @@ dependencies = [
 
 [[package]]
 name = "foyer-memory"
-version = "0.18.0"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "506883d5a8500dea1b1662f7180f3534bdcbfa718d3253db7179552ef83612fa"
+checksum = "040dc38acbfca8f1def26bbbd9e9199090884aabb15de99f7bf4060be66ff608"
 dependencies = [
  "arc-swap",
  "bitflags",
@@ -659,16 +678,16 @@ dependencies = [
  "parking_lot",
  "pin-project",
  "serde",
- "thiserror 2.0.14",
+ "thiserror 2.0.16",
  "tokio",
  "tracing",
 ]
 
 [[package]]
 name = "foyer-storage"
-version = "0.18.0"
+version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ba8403a54a2f2032fb647e49c442e5feeb33f3989f7024f1b178341a016f06d"
+checksum = "54a77ed888da490e997da6d6d62fcbce3f202ccf28be098c4ea595ca046fc4a9"
 dependencies = [
  "allocator-api2",
  "anyhow",
@@ -690,7 +709,7 @@ dependencies = [
  "paste",
  "pin-project",
  "rand 0.9.2",
- "thiserror 2.0.14",
+ "thiserror 2.0.16",
  "tokio",
  "tracing",
  "twox-hash",
@@ -974,9 +993,9 @@ checksum = "cb56e1aa765b4b4f3aadfab769793b7087bb03a4ea4920644a6d238e2df5b9ed"
 
 [[package]]
 name = "indexmap"
-version = "2.10.0"
+version = "2.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe4cd85333e22411419a0bcae1297d25e58c9443848b11dc6a86fefe8c78a661"
+checksum = "f2481980430f9f78649238835720ddccc57e52df14ffce1c6f37391d61b563e9"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.5",
@@ -1333,6 +1352,7 @@ dependencies = [
  "bytes",
  "client",
  "cmd",
+ "executor",
  "log",
  "resp",
  "snafu",
@@ -2003,11 +2023,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.14"
+version = "2.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b0949c3a6c842cbde3f1686d6eea5a010516deb7085f79db747562d4102f41e"
+checksum = "3467d614147380f2e4e374161426ff399c91084acd2363eaf549172b3d5e60c0"
 dependencies = [
- "thiserror-impl 2.0.14",
+ "thiserror-impl 2.0.16",
 ]
 
 [[package]]
@@ -2023,9 +2043,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.14"
+version = "2.0.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc5b44b4ab9c2fdd0e0512e6bece8388e214c0749f5862b114cc5b7a25daf227"
+checksum = "6c5e1be1c48b9172ee610da68fd9cd2770e7a4056cb3fc98710ee6906f0c7960"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2208,9 +2228,9 @@ dependencies = [
 
 [[package]]
 name = "twox-hash"
-version = "2.1.1"
+version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b907da542cbced5261bd3256de1b3a1bf340a3d37f93425a07362a1d687de56"
+checksum = "9ea3136b675547379c4bd395ca6b938e5ad3c3d20fad76e7fe85f9e0d011419c"
 dependencies = [
  "rand 0.9.2",
 ]
@@ -2628,9 +2648,9 @@ checksum = "271414315aff87387382ec3d271b52d7ae78726f5d44ac98b4f4030c91880486"
 
 [[package]]
 name = "winnow"
-version = "0.7.12"
+version = "0.7.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3edebf492c8125044983378ecb5766203ad3b4c2f7a922bd7dd207f6d443e95"
+checksum = "21a0236b59786fed61e2a80582dd500fe61f18b5dca67a4a067d0bc9039339cf"
 
 [[package]]
 name = "wit-bindgen-rt"
