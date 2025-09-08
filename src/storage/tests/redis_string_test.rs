@@ -22,7 +22,6 @@ mod redis_string_test {
     use kstd::lock_mgr::LockMgr;
     use storage::{BgTaskHandler, Redis, StorageOptions, unique_test_db_path};
 
-    #[cfg(not(miri))]
     #[test]
     fn test_redis_set() {
         let test_db_path = unique_test_db_path();
@@ -69,7 +68,6 @@ mod redis_string_test {
         }
     }
 
-    #[cfg(not(miri))]
     #[test]
     fn test_redis_set_multiple() {
         let test_db_path = unique_test_db_path();
@@ -110,7 +108,6 @@ mod redis_string_test {
         }
     }
 
-    #[cfg(not(miri))]
     #[test]
     fn test_redis_concurrent_set_get() {
         let test_db_path = unique_test_db_path();
@@ -181,7 +178,6 @@ mod redis_string_test {
         }
     }
 
-    #[cfg(not(miri))]
     #[test]
     fn test_redis_concurrent_set_get_same_key() {
         let test_db_path = unique_test_db_path();
@@ -244,7 +240,6 @@ mod redis_string_test {
         }
     }
 
-    #[cfg(not(miri))]
     #[test]
     fn test_redis_concurrent_set_get_mixed() {
         let test_db_path = unique_test_db_path();
@@ -349,7 +344,6 @@ mod redis_string_test {
         }
     }
 
-    #[cfg(not(miri))]
     #[test]
     fn test_redis_concurrent_stress() {
         let test_db_path = unique_test_db_path();

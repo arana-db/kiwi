@@ -130,7 +130,6 @@ impl Redis {
         // Create lock for the key
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
 
-        let mut version = 0;
         let mut batch = WriteBatch::default();
 
         let cf = self
@@ -144,7 +143,7 @@ impl Redis {
         match meta_get {
             Some(val) => {
                 let mut set_meta_value = ParsedSetsMetaValue::new(&val[..])?;
-                version = set_meta_value.initial_meta_value();
+                let version = set_meta_value.initial_meta_value();
 
                 // check add member size
                 if !set_meta_value.check_set_count(filtered_members.len()) {
@@ -167,14 +166,14 @@ impl Redis {
                 }
 
                 *ret = filtered_members.len() as i32;
-
-                Ok(())
             }
-            None => KeyNotFoundSnafu {
-                key: String::from_utf8_lossy(key).to_string(),
+            None => {
+                return KeyNotFoundSnafu {
+                    key: String::from_utf8_lossy(key).to_string(),
+                }
+                .fail();
             }
-            .fail(),
-        };
+        }
 
         // Write batch to DB
         db.write_opt(batch, &self.write_options)
