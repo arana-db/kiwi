@@ -23,8 +23,9 @@
 
 use std::collections::HashSet;
 
+use bytes::BufMut;
 use kstd::lock_mgr::ScopeRecordLock;
-use rocksdb::WriteBatch;
+use rocksdb::{Direction, IteratorMode, ReadOptions, WriteBatch};
 use snafu::{OptionExt, ResultExt};
 
 use crate::{
@@ -33,6 +34,7 @@ use crate::{
     base_data_value_format::BaseDataValue,
     base_meta_value_format::ParsedSetsMetaValue,
     error::{InvalidArgumentSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
+    storage_define::{PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, encode_user_key},
 };
 
 impl Redis {
@@ -226,6 +228,156 @@ impl Redis {
             .fail(),
         }
     }
+
+    /// Get all the members in a set
+    pub fn smembers(&self, key: &[u8], members: &mut Vec<String>) -> Result<()> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let cf_meta = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+        let cf_data =
+            self.get_cf_handle(ColumnFamilyIndex::SetsDataCF)
+                .context(OptionNoneSnafu {
+                    message: "cf data is not initialized".to_string(),
+                })?;
+
+        // Read meta
+        let meta_val = db.get_cf(&cf_meta, key).context(RocksSnafu)?;
+        let Some(val) = meta_val else {
+            return KeyNotFoundSnafu {
+                key: String::from_utf8_lossy(key).to_string(),
+            }
+            .fail();
+        };
+
+        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
+        if set_meta.is_stale() {
+            return KeyNotFoundSnafu {
+                key: String::from_utf8_lossy(key).to_string(),
+            }
+            .fail();
+        }
+        let version = set_meta.version();
+
+        // Build prefix: reserve(8) + version(8) + encoded(key)
+        let mut prefix = bytes::BytesMut::with_capacity(PREFIX_RESERVE_LENGTH + 8 + key.len() * 2);
+        prefix.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
+        prefix.put_u64(version);
+        encode_user_key(&bytes::Bytes::copy_from_slice(key), &mut prefix)?;
+
+        // Iterate from prefix and collect members until prefix no longer matches
+        let iter = db.iterator_cf_opt(
+            &cf_data,
+            ReadOptions::default(),
+            IteratorMode::From(&prefix, Direction::Forward),
+        );
+        for item in iter {
+            let (raw_key, _) = item.context(RocksSnafu)?;
+            if !raw_key.starts_with(&prefix) {
+                break;
+            }
+            // member = raw_key[prefix..len - SUFFIX_RESERVE_LENGTH]
+            if raw_key.len() >= prefix.len() + SUFFIX_RESERVE_LENGTH {
+                let member_slice = &raw_key[prefix.len()..raw_key.len() - SUFFIX_RESERVE_LENGTH];
+                members.push(String::from_utf8_lossy(member_slice).to_string());
+            }
+        }
+
+        Ok(())
+    }
+
+    // /// Get all the members in a set with TTL
+    // pub fn smembers_with_ttl(
+    //     &self,
+    //     key: &[u8],
+    //     members: &mut Vec<String>,
+    //     ttl: &mut i64,
+    // ) -> Result<()> {
+    //     let db = self
+    //         .db
+    //         .as_ref()
+    //         .ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
+    //
+    //     // Create read options
+    //     let read_options = ReadOptions::default();
+    //
+    //     // Get the meta value
+    //     match db.get_opt(key, &read_options)? {
+    //         Some(meta_value) => {
+    //             let parsed_meta = ParsedInternalValue::new(&meta_value);
+    //
+    //             // Check if it's the right type
+    //             if parsed_meta.data_type() != DataType::Sets {
+    //                 return Err(StorageError::InvalidFormat(format!(
+    //                     "Wrong type for key: {}",
+    //                     String::from_utf8_lossy(key)
+    //                 )));
+    //             }
+    //
+    //             // Check if expired
+    //             if parsed_meta.is_expired(
+    //                 SystemTime::now()
+    //                     .duration_since(UNIX_EPOCH)
+    //                     .unwrap()
+    //                     .as_secs(),
+    //             ) {
+    //                 return Err(StorageError::KeyNotFound("Stale".to_string()));
+    //             }
+    //
+    //             // Calculate TTL
+    //             let etime = parsed_meta.etime();
+    //             if etime == 0 {
+    //                 *ttl = -1; // No expiration
+    //             } else {
+    //                 let now = SystemTime::now()
+    //                     .duration_since(UNIX_EPOCH)
+    //                     .unwrap()
+    //                     .as_secs();
+    //                 *ttl = if etime > now {
+    //                     (etime - now) as i64
+    //                 } else {
+    //                     -2
+    //                 };
+    //             }
+    //
+    //             // Get the version
+    //             let version = parsed_meta.version();
+    //
+    //             // Create prefix for iteration
+    //             let prefix = self.encode_sets_member_prefix(key, version);
+    //
+    //             // Iterate through all members
+    //             let iter = db.iterator_cf_opt(
+    //                 self.get_handle(crate::redis::ColumnFamilyIndex::SetsDataCF),
+    //                 read_options.clone(),
+    //                 IteratorMode::From(&prefix, Direction::Forward),
+    //             );
+    //
+    //             for (key_bytes, _) in iter {
+    //                 // Check if key starts with prefix
+    //                 if !key_bytes.starts_with(&prefix) {
+    //                     break;
+    //                 }
+    //
+    //                 // Extract member from key
+    //                 let member = self.decode_sets_member_from_key(&key_bytes);
+    //                 members.push(String::from_utf8_lossy(&member).to_string());
+    //             }
+    //         }
+    //         None => {
+    //             return Err(StorageError::KeyNotFound(
+    //                 String::from_utf8_lossy(key).to_string(),
+    //             ));
+    //         }
+    //     }
+    //
+    //     Ok(())
+    // }
 
     // /// Returns the members of the set resulting from the difference between the first set and all the successive sets
     // pub fn sdiff(&self, keys: &[&[u8]], members: &mut Vec<String>) -> Result<()> {
@@ -1038,159 +1190,6 @@ impl Redis {
     //         None => {
     //             // Key not found
     //             *ret = 0;
-    //         }
-    //     }
-    //
-    //     Ok(())
-    // }
-
-    // /// Get all the members in a set
-    // pub fn smembers(&self, key: &[u8], members: &mut Vec<String>) -> Result<()> {
-    //     let db = self
-    //         .db
-    //         .as_ref()
-    //         .ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
-    //
-    //     // Create read options
-    //     let read_options = ReadOptions::default();
-    //
-    //     // Get the meta value
-    //     match db.get_opt(key, &read_options)? {
-    //         Some(meta_value) => {
-    //             let parsed_meta = ParsedInternalValue::new(&meta_value);
-    //
-    //             // Check if it's the right type
-    //             if parsed_meta.data_type() != DataType::Sets {
-    //                 return Err(StorageError::InvalidFormat(format!(
-    //                     "Wrong type for key: {}",
-    //                     String::from_utf8_lossy(key)
-    //                 )));
-    //             }
-    //
-    //             // Check if expired
-    //             if parsed_meta.is_expired(
-    //                 SystemTime::now()
-    //                     .duration_since(UNIX_EPOCH)
-    //                     .unwrap()
-    //                     .as_secs(),
-    //             ) {
-    //                 return Ok(());
-    //             }
-    //
-    //             // Get the version
-    //             let version = parsed_meta.version();
-    //
-    //             // Create prefix for iteration
-    //             let prefix = self.encode_sets_member_prefix(key, version);
-    //
-    //             // Iterate through all members
-    //             let iter = db.iterator_cf_opt(
-    //                 self.get_handle(crate::redis::ColumnFamilyIndex::SetsDataCF),
-    //                 read_options.clone(),
-    //                 IteratorMode::From(&prefix, Direction::Forward),
-    //             );
-    //
-    //             for (key_bytes, _) in iter {
-    //                 // Check if key starts with prefix
-    //                 if !key_bytes.starts_with(&prefix) {
-    //                     break;
-    //                 }
-    //
-    //                 // Extract member from key
-    //                 let member = self.decode_sets_member_from_key(&key_bytes);
-    //                 members.push(String::from_utf8_lossy(&member).to_string());
-    //             }
-    //         }
-    //         None => {
-    //             // Key not found, return empty result
-    //         }
-    //     }
-    //
-    //     Ok(())
-    // }
-
-    // /// Get all the members in a set with TTL
-    // pub fn smembers_with_ttl(
-    //     &self,
-    //     key: &[u8],
-    //     members: &mut Vec<String>,
-    //     ttl: &mut i64,
-    // ) -> Result<()> {
-    //     let db = self
-    //         .db
-    //         .as_ref()
-    //         .ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
-    //
-    //     // Create read options
-    //     let read_options = ReadOptions::default();
-    //
-    //     // Get the meta value
-    //     match db.get_opt(key, &read_options)? {
-    //         Some(meta_value) => {
-    //             let parsed_meta = ParsedInternalValue::new(&meta_value);
-    //
-    //             // Check if it's the right type
-    //             if parsed_meta.data_type() != DataType::Sets {
-    //                 return Err(StorageError::InvalidFormat(format!(
-    //                     "Wrong type for key: {}",
-    //                     String::from_utf8_lossy(key)
-    //                 )));
-    //             }
-    //
-    //             // Check if expired
-    //             if parsed_meta.is_expired(
-    //                 SystemTime::now()
-    //                     .duration_since(UNIX_EPOCH)
-    //                     .unwrap()
-    //                     .as_secs(),
-    //             ) {
-    //                 return Err(StorageError::KeyNotFound("Stale".to_string()));
-    //             }
-    //
-    //             // Calculate TTL
-    //             let etime = parsed_meta.etime();
-    //             if etime == 0 {
-    //                 *ttl = -1; // No expiration
-    //             } else {
-    //                 let now = SystemTime::now()
-    //                     .duration_since(UNIX_EPOCH)
-    //                     .unwrap()
-    //                     .as_secs();
-    //                 *ttl = if etime > now {
-    //                     (etime - now) as i64
-    //                 } else {
-    //                     -2
-    //                 };
-    //             }
-    //
-    //             // Get the version
-    //             let version = parsed_meta.version();
-    //
-    //             // Create prefix for iteration
-    //             let prefix = self.encode_sets_member_prefix(key, version);
-    //
-    //             // Iterate through all members
-    //             let iter = db.iterator_cf_opt(
-    //                 self.get_handle(crate::redis::ColumnFamilyIndex::SetsDataCF),
-    //                 read_options.clone(),
-    //                 IteratorMode::From(&prefix, Direction::Forward),
-    //             );
-    //
-    //             for (key_bytes, _) in iter {
-    //                 // Check if key starts with prefix
-    //                 if !key_bytes.starts_with(&prefix) {
-    //                     break;
-    //                 }
-    //
-    //                 // Extract member from key
-    //                 let member = self.decode_sets_member_from_key(&key_bytes);
-    //                 members.push(String::from_utf8_lossy(&member).to_string());
-    //             }
-    //         }
-    //         None => {
-    //             return Err(StorageError::KeyNotFound(
-    //                 String::from_utf8_lossy(key).to_string(),
-    //             ));
     //         }
     //     }
     //

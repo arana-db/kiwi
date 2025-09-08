@@ -42,6 +42,64 @@ mod redis_set_test {
     }
 
     #[test]
+    fn test_smembers_basic() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Prepare set meta
+        let key = b"set_key_members";
+        let meta_bytes = build_empty_set_meta_bytes();
+        {
+            let db = redis.db.as_ref().unwrap();
+            let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+            db.put_cf(&cf, key, &meta_bytes).unwrap();
+        }
+
+        // Add members (with duplicates) via sadd
+        let members: Vec<&[u8]> = vec![b"m1".as_ref(), b"m2".as_ref(), b"m1".as_ref()];
+        let mut added = 0;
+        let sadd_res = redis.sadd(key, &members, &mut added);
+        assert!(sadd_res.is_ok(), "sadd failed: {:?}", sadd_res.err());
+        assert_eq!(added, 2);
+
+        // Fetch members
+        let mut out = Vec::<String>::new();
+        let smembers_res = redis.smembers(key, &mut out);
+        assert!(
+            smembers_res.is_ok(),
+            "smembers failed: {:?}",
+            smembers_res.err()
+        );
+
+        out.sort();
+        let mut expected = vec!["m1".to_string(), "m2".to_string()];
+        expected.sort();
+        assert_eq!(out, expected);
+
+        // Missing key should error
+        let mut out_missing = Vec::<String>::new();
+        let missing_res = redis.smembers(b"missing_key_members", &mut out_missing);
+        assert!(missing_res.is_err());
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+    #[test]
     fn test_sadd_basic_and_dedup() {
         let test_db_path = unique_test_db_path();
 
