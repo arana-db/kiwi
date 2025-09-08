@@ -265,6 +265,7 @@ macro_rules! delegate_parsed_value {
                 self.inner.version()
             }
 
+            #[allow(dead_code)]
             pub fn data_type(&self) -> DataType {
                 self.inner.data_type()
             }
