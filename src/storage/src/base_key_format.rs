@@ -25,6 +25,12 @@ use crate::{
         encode_user_key,
     },
 };
+
+#[allow(dead_code)]
+pub type BaseMetaKey = BaseKey;
+#[allow(dead_code)]
+pub type ParsedBaseMetaKey = ParsedBaseKey;
+
 // used for string data key or hash/zset/set/list's meta key. format:
 // | reserve1 | key | reserve2 |
 // |    8B    |     |   16B    |

@@ -223,6 +223,10 @@ impl ParsedInternalValue {
     pub fn is_valid(&self) -> bool {
         !self.is_stale()
     }
+
+    pub fn data_type(&self) -> DataType {
+        self.data_type
+    }
 }
 
 /// This macro is used to forward the base function to the structure
@@ -259,6 +263,10 @@ macro_rules! delegate_parsed_value {
             #[allow(dead_code)]
             pub fn version(&self) -> u64 {
                 self.inner.version()
+            }
+
+            pub fn data_type(&self) -> DataType {
+                self.inner.data_type()
             }
         }
     };
