@@ -19,6 +19,7 @@ use std::{error::Error, path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use cmd::table::{CmdTable, create_command_table};
+use executor::{CmdExecutor, CmdExecutorBuilder};
 use storage::{StorageOptions, storage::Storage};
 
 use crate::ServerTrait;
@@ -28,6 +29,7 @@ pub struct UnixServer {
     path: String,
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
+    executor: Arc<CmdExecutor>,
 }
 
 impl UnixServer {
@@ -37,11 +39,13 @@ impl UnixServer {
         let db_path = PathBuf::from("./db");
         let mut storage = Storage::new(1, 0);
         storage.open(storage_options, db_path).unwrap();
+        let executor = Arc::new(CmdExecutorBuilder::new().build());
 
         Self {
             path,
             storage: Arc::new(storage),
             cmd_table: Arc::new(create_command_table()),
+            executor,
         }
     }
 }
@@ -92,12 +96,13 @@ mod unix_impl {
                 match listener.accept().await {
                     Ok((socket, _)) => {
                         let s = UnixStreamWrapper::new(socket);
-                        let mut client = Client::new(Box::new(s));
+                        let client = Arc::new(Client::new(Box::new(s)));
                         let storage = self.storage.clone();
                         let cmd_table = self.cmd_table.clone();
+                        let executor = self.executor.clone();
                         tokio::spawn(async move {
                             if let Err(e) =
-                                process_connection(&mut client, storage, cmd_table).await
+                                process_connection(client, storage, cmd_table, executor).await
                             {
                                 error!("Connection processing failed: {e:?}");
                             }

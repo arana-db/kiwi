@@ -9,6 +9,7 @@ members = [
 	"src/server",
 	"src/conf",
 	"src/cmd",
+	"src/executor",
 	"src/client"
 ]
 
@@ -52,6 +53,9 @@ tokio = { version = "1", features = ["full"] }
 snafu = "0.8"
 tempfile = "3.8"
 crc16 = "0.4"
+async-channel = "2.5.0"
+tokio-util = "0.7.16"
+async-trait = "0.1"
 foyer = { version = "0.18", features = ["nightly"] }
 
 ## workspaces members
@@ -59,6 +63,12 @@ storage = { path = "src/storage" }
 kstd = { path = "src/kstd" }
 common-macro = { path = "src/common/macro" }
 net = { path = "src/net" }
+resp = { path = "src/resp" }
+server = { path = "src/server" }
+conf = { path = "src/conf" }
+cmd = { path = "src/cmd" }
+executor = { path = "src/executor" }
+client = { path = "src/client" }
 
 [profile.dev]
 split-debuginfo = "unpacked"
