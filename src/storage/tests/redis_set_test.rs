@@ -80,4 +80,54 @@ mod redis_set_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_scard_after_sadd_and_missing_key() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Prepare set meta and add two unique members
+        let key = b"set_key_2";
+        let meta_bytes = build_empty_set_meta_bytes();
+        {
+            let db = redis.db.as_ref().unwrap();
+            let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+            db.put_cf(&cf, key, &meta_bytes).unwrap();
+        }
+
+        let members: Vec<&[u8]> = vec![b"x".as_ref(), b"y".as_ref(), b"x".as_ref()];
+        let mut added = 0;
+        let sadd_res = redis.sadd(key, &members, &mut added);
+        assert!(sadd_res.is_ok(), "sadd failed: {:?}", sadd_res.err());
+        assert_eq!(added, 2);
+
+        // scard should report 2
+        let mut card = 0;
+        let scard_res = redis.scard(key, &mut card);
+        assert!(scard_res.is_ok(), "scard failed: {:?}", scard_res.err());
+        assert_eq!(card, 2);
+
+        // scard on missing key should error
+        let mut card_missing = 0;
+        let scard_missing = redis.scard(b"missing_key", &mut card_missing);
+        assert!(scard_missing.is_err());
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }

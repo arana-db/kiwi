@@ -137,6 +137,11 @@ impl Redis {
             .context(OptionNoneSnafu {
                 message: "cf is not initialized".to_string(),
             })?;
+        let cf_data =
+            self.get_cf_handle(ColumnFamilyIndex::SetsDataCF)
+                .context(OptionNoneSnafu {
+                    message: "cf data is not initialized".to_string(),
+                })?;
 
         // Try to get the existing set meta value
         let meta_get = db.get_cf(&cf, key).context(RocksSnafu)?;
@@ -153,7 +158,14 @@ impl Redis {
                     .fail();
                 }
 
-                set_meta_value.set_count(filtered_members.len() as u64);
+                let add_count = filtered_members.len() as u64;
+                if !set_meta_value.check_modify_count(add_count) {
+                    return InvalidArgumentSnafu {
+                        message: "set size overflow".to_string(),
+                    }
+                    .fail();
+                }
+                set_meta_value.modify_count(add_count);
 
                 batch.put_cf(&cf, key, set_meta_value.encoded());
 
@@ -162,7 +174,7 @@ impl Redis {
                     let iter_value = BaseDataValue::new("");
                     let key_encoded = set_member_key.encode()?;
                     let val_encoded = iter_value.encode();
-                    batch.put_cf(&cf, key_encoded.as_ref(), val_encoded.as_ref());
+                    batch.put_cf(&cf_data, key_encoded.as_ref(), val_encoded.as_ref());
                 }
 
                 *ret = filtered_members.len() as i32;
@@ -182,54 +194,38 @@ impl Redis {
         Ok(())
     }
 
-    // /// Get the number of members in a set
-    // pub fn scard(&self, key: &[u8], ret: &mut i32) -> Result<()> {
-    //     let db = self
-    //         .db
-    //         .as_ref()
-    //         .ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
-    //
-    //     *ret = 0;
-    //
-    //     // Try to get the meta value
-    //     let read_options = ReadOptions::default();
-    //     match db.get_opt(key, &read_options)? {
-    //         Some(meta_value) => {
-    //             // Parse the meta value
-    //             let parsed_meta = ParsedInternalValue::new(&meta_value);
-    //
-    //             // Check if it's the right type
-    //             if parsed_meta.data_type() != DataType::Sets {
-    //                 return Err(StorageError::InvalidFormat(format!(
-    //                     "Wrong type for key: {}",
-    //                     String::from_utf8_lossy(key)
-    //                 )));
-    //             }
-    //
-    //             // Check if expired
-    //             if parsed_meta.is_expired(
-    //                 SystemTime::now()
-    //                     .duration_since(UNIX_EPOCH)
-    //                     .unwrap()
-    //                     .as_secs(),
-    //             ) {
-    //                 return Err(StorageError::KeyNotFound("Stale".to_string()));
-    //             }
-    //
-    //             // Get the count
-    //             *ret = parsed_meta.size() as i32;
-    //
-    //             if *ret == 0 {
-    //                 return Err(StorageError::KeyNotFound("Deleted".to_string()));
-    //             }
-    //         }
-    //         None => {
-    //             // Key not found
-    //         }
-    //     }
-    //
-    //     Ok(())
-    // }
+    /// Get the number of members in a set
+    pub fn scard(&self, key: &[u8], ret: &mut i32) -> Result<()> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        *ret = 0;
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+
+        match db.get_cf(&cf, key).context(RocksSnafu)? {
+            Some(val) => {
+                let set_meta = ParsedSetsMetaValue::new(&val[..])?;
+                if set_meta.is_stale() {
+                    return KeyNotFoundSnafu {
+                        key: String::from_utf8_lossy(key).to_string(),
+                    }
+                    .fail();
+                }
+                *ret = set_meta.count() as i32;
+                Ok(())
+            }
+            None => KeyNotFoundSnafu {
+                key: String::from_utf8_lossy(key).to_string(),
+            }
+            .fail(),
+        }
+    }
 
     // /// Returns the members of the set resulting from the difference between the first set and all the successive sets
     // pub fn sdiff(&self, keys: &[&[u8]], members: &mut Vec<String>) -> Result<()> {
