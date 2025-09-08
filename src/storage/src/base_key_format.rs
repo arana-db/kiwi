@@ -15,6 +15,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(dead_code)]
+// TODO: remove allow dead_code
+
 use bytes::{BufMut, Bytes, BytesMut};
 use snafu::ensure;
 
@@ -25,21 +28,17 @@ use crate::{
         encode_user_key,
     },
 };
+
 // used for string data key or hash/zset/set/list's meta key. format:
 // | reserve1 | key | reserve2 |
 // |    8B    |     |   16B    |
 //
-
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 pub struct BaseKey {
     reserve1: [u8; 8],
     key: Bytes,
     reserve2: [u8; 16],
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 impl BaseKey {
     pub fn new(key: &[u8]) -> Self {
         BaseKey {

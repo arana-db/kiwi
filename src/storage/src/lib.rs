@@ -15,29 +15,36 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod base_data_key_format;
 mod base_data_value_format;
-// mod base_data_key_format;
+
 mod base_filter;
 mod base_key_format;
 mod base_meta_value_format;
 mod base_value_format;
-mod coding;
-pub mod error;
+
+mod strings_value_format;
+
 mod list_meta_value_format;
 mod lists_data_key_format;
-pub mod options;
-mod redis;
+
+mod coding;
 mod slot_indexer;
 mod statistics;
-pub mod storage;
+mod util;
+
+mod redis;
 mod storage_define;
 mod storage_impl;
 mod storage_murmur3;
-mod strings_value_format;
-mod util;
 
 // commands
+mod redis_sets;
 mod redis_strings;
+
+pub mod error;
+pub mod options;
+pub mod storage;
 
 pub use base_value_format::*;
 pub use error::Result;

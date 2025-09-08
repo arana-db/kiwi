@@ -38,7 +38,7 @@ type ParsedHashesMetaValue = ParsedBaseMetaValue;
 #[allow(dead_code)]
 type SetsMetaValue = BaseMetaValue;
 #[allow(dead_code)]
-type ParsedSetsMetaValue = ParsedBaseMetaValue;
+pub type ParsedSetsMetaValue = ParsedBaseMetaValue;
 #[allow(dead_code)]
 type ZSetsMetaValue = BaseMetaValue;
 #[allow(dead_code)]
@@ -92,7 +92,7 @@ impl BaseMetaValue {
 
 #[allow(dead_code)]
 pub struct ParsedBaseMetaValue {
-    inner: ParsedInternalValue,
+    pub(crate) inner: ParsedInternalValue,
     count: u64,
 }
 
@@ -221,6 +221,11 @@ impl ParsedBaseMetaValue {
 
         self.set_version_to_value();
         self.inner.version
+    }
+
+    /// Get encoded bytes of the meta value
+    pub fn encoded(&self) -> &[u8] {
+        &self.inner.value
     }
 }
 

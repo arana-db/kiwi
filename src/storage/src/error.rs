@@ -131,4 +131,11 @@ pub enum Error {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("Invalid argument: {}", message))]
+    InvalidArgument {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
