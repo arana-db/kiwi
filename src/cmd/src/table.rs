@@ -16,10 +16,11 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::Cmd;
 
-pub type CmdTable = HashMap<String, Box<dyn Cmd>>;
+pub type CmdTable = HashMap<String, Arc<dyn Cmd>>;
 
 #[macro_export]
 macro_rules! register_cmd {
@@ -28,8 +29,8 @@ macro_rules! register_cmd {
             {
                 let cmd = <$cmd_struct>::new();
                 let cmd_name = cmd.meta().name.clone();
-                let boxed_cmd = Box::new(cmd);
-                $cmd_table.insert(cmd_name, boxed_cmd);
+                let arc_cmd = Arc::new(cmd);
+                $cmd_table.insert(cmd_name, arc_cmd);
             }
         )+
     };
@@ -42,7 +43,7 @@ macro_rules! register_group_cmd {
             {
                 let group_cmd = $constructor();
                 let cmd_name = group_cmd.name().to_lowercase();
-                $cmd_table.insert(cmd_name, Box::new(group_cmd));
+                $cmd_table.insert(cmd_name, Arc::new(group_cmd));
             }
         )+
     };
