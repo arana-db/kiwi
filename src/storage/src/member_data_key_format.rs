@@ -129,6 +129,10 @@ impl ParsedMemberDataKey {
     pub fn version(&self) -> u64 {
         self.version
     }
+
+    pub fn data(&self) -> &[u8] {
+        self.data.as_ref()
+    }
 }
 
 #[cfg(test)]

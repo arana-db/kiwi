@@ -15,9 +15,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(dead_code)]
-// TODO(marsevilspirit): remove allow dead_code
-
 //! Redis sets operations implementation
 //! This module provides set operations for Redis storage
 
@@ -30,10 +27,11 @@ use snafu::{OptionExt, ResultExt};
 
 use crate::{
     ColumnFamilyIndex, Redis, Result,
-    base_data_key_format::MemberDataKey,
     base_data_value_format::BaseDataValue,
     base_meta_value_format::ParsedSetsMetaValue,
+    base_value_format::DataType,
     error::{InvalidArgumentSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
+    member_data_key_format::MemberDataKey,
     storage_define::{PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, encode_user_key},
 };
 
@@ -212,8 +210,16 @@ impl Redis {
 
         match db.get_cf(&cf, key).context(RocksSnafu)? {
             Some(val) => {
+                // Type check
+                if val.first().copied() != Some(DataType::Set as u8) {
+                    return InvalidArgumentSnafu {
+                        message: "wrong type for key".to_string(),
+                    }
+                    .fail();
+                }
                 let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-                if set_meta.is_stale() {
+                // Validity check (not expired and count > 0)
+                if !set_meta.is_valid() {
                     return KeyNotFoundSnafu {
                         key: String::from_utf8_lossy(key).to_string(),
                     }
@@ -255,8 +261,16 @@ impl Redis {
             .fail();
         };
 
+        // Type check
+        if val.first().copied() != Some(DataType::Set as u8) {
+            return InvalidArgumentSnafu {
+                message: "wrong type for key".to_string(),
+            }
+            .fail();
+        }
         let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-        if set_meta.is_stale() {
+        // Validity check (not expired and count > 0)
+        if !set_meta.is_valid() {
             return KeyNotFoundSnafu {
                 key: String::from_utf8_lossy(key).to_string(),
             }
