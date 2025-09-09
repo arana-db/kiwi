@@ -68,28 +68,18 @@ mod redis_set_test {
 
         // Add members (with duplicates) via sadd
         let members: Vec<&[u8]> = vec![b"m1".as_ref(), b"m2".as_ref(), b"m1".as_ref()];
-        let mut added = 0;
-        let sadd_res = redis.sadd(key, &members, &mut added);
-        assert!(sadd_res.is_ok(), "sadd failed: {:?}", sadd_res.err());
+        let added = redis.sadd(key, &members).expect("sadd failed");
         assert_eq!(added, 2);
 
         // Fetch members
-        let mut out = Vec::<String>::new();
-        let smembers_res = redis.smembers(key, &mut out);
-        assert!(
-            smembers_res.is_ok(),
-            "smembers failed: {:?}",
-            smembers_res.err()
-        );
-
+        let mut out = redis.smembers(key).expect("smembers failed");
         out.sort();
         let mut expected = vec!["m1".to_string(), "m2".to_string()];
         expected.sort();
         assert_eq!(out, expected);
 
         // Missing key should error
-        let mut out_missing = Vec::<String>::new();
-        let missing_res = redis.smembers(b"missing_key_members", &mut out_missing);
+        let missing_res = redis.smembers(b"missing_key_members");
         assert!(missing_res.is_err());
 
         redis.set_need_close(true);
@@ -126,10 +116,8 @@ mod redis_set_test {
 
         // Call sadd with duplicates; expect only unique inserts counted
         let members: Vec<&[u8]> = vec![b"a".as_ref(), b"b".as_ref(), b"a".as_ref()];
-        let mut ret = 0;
-        let sadd_res = redis.sadd(key, &members, &mut ret);
-        assert!(sadd_res.is_ok(), "sadd failed: {:?}", sadd_res.err());
-        assert_eq!(ret, 2);
+        let added = redis.sadd(key, &members).expect("sadd failed");
+        assert_eq!(added, 2);
 
         redis.set_need_close(true);
         drop(redis);
@@ -165,20 +153,15 @@ mod redis_set_test {
         }
 
         let members: Vec<&[u8]> = vec![b"x".as_ref(), b"y".as_ref(), b"x".as_ref()];
-        let mut added = 0;
-        let sadd_res = redis.sadd(key, &members, &mut added);
-        assert!(sadd_res.is_ok(), "sadd failed: {:?}", sadd_res.err());
+        let added = redis.sadd(key, &members).expect("sadd failed");
         assert_eq!(added, 2);
 
         // scard should report 2
-        let mut card = 0;
-        let scard_res = redis.scard(key, &mut card);
-        assert!(scard_res.is_ok(), "scard failed: {:?}", scard_res.err());
+        let card = redis.scard(key).expect("scard failed");
         assert_eq!(card, 2);
 
         // scard on missing key should error
-        let mut card_missing = 0;
-        let scard_missing = redis.scard(b"missing_key", &mut card_missing);
+        let scard_missing = redis.scard(b"missing_key");
         assert!(scard_missing.is_err());
 
         redis.set_need_close(true);

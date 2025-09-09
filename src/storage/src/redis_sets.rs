@@ -103,7 +103,7 @@ impl Redis {
     // }
 
     /// Add one or more members to a set
-    pub fn sadd(&self, key: &[u8], members: &[&[u8]], ret: &mut i32) -> Result<()> {
+    pub fn sadd(&self, key: &[u8], members: &[&[u8]]) -> Result<i32> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -122,8 +122,7 @@ impl Redis {
         }
 
         if filtered_members.is_empty() {
-            *ret = 0;
-            return Ok(());
+            return Ok(0);
         }
 
         let key_str = String::from_utf8_lossy(key).to_string();
@@ -177,30 +176,25 @@ impl Redis {
                     batch.put_cf(&cf_data, key_encoded.as_ref(), val_encoded.as_ref());
                 }
 
-                *ret = filtered_members.len() as i32;
+                let added = filtered_members.len() as i32;
+                // Write batch to DB
+                db.write_opt(batch, &self.write_options)
+                    .context(RocksSnafu)?;
+
+                Ok(added)
             }
-            None => {
-                return KeyNotFoundSnafu {
-                    key: String::from_utf8_lossy(key).to_string(),
-                }
-                .fail();
+            None => KeyNotFoundSnafu {
+                key: String::from_utf8_lossy(key).to_string(),
             }
+            .fail(),
         }
-
-        // Write batch to DB
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
-
-        Ok(())
     }
 
     /// Get the number of members in a set
-    pub fn scard(&self, key: &[u8], ret: &mut i32) -> Result<()> {
+    pub fn scard(&self, key: &[u8]) -> Result<i32> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
-
-        *ret = 0;
 
         let cf = self
             .get_cf_handle(ColumnFamilyIndex::MetaCF)
@@ -225,8 +219,7 @@ impl Redis {
                     }
                     .fail();
                 }
-                *ret = set_meta.count() as i32;
-                Ok(())
+                Ok(set_meta.count() as i32)
             }
             None => KeyNotFoundSnafu {
                 key: String::from_utf8_lossy(key).to_string(),
@@ -236,7 +229,7 @@ impl Redis {
     }
 
     /// Get all the members in a set
-    pub fn smembers(&self, key: &[u8], members: &mut Vec<String>) -> Result<()> {
+    pub fn smembers(&self, key: &[u8]) -> Result<Vec<String>> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -290,6 +283,7 @@ impl Redis {
             ReadOptions::default(),
             IteratorMode::From(&prefix, Direction::Forward),
         );
+        let mut members = Vec::new();
         for item in iter {
             let (raw_key, _) = item.context(RocksSnafu)?;
             if !raw_key.starts_with(&prefix) {
@@ -302,7 +296,7 @@ impl Redis {
             }
         }
 
-        Ok(())
+        Ok(members)
     }
 
     // /// Get all the members in a set with TTL
