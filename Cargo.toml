@@ -58,6 +58,7 @@ async-channel = "2.5.0"
 tokio-util = "0.7.16"
 async-trait = "0.1"
 foyer = { version = "0.18", features = ["nightly"] }
+clap = { version = "4.0", features = ["derive"] }
 
 ## workspaces members
 engine = { path = "src/engine" }
