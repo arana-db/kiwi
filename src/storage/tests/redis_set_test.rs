@@ -21,7 +21,9 @@ mod redis_set_test {
 
     use bytes::BufMut;
     use kstd::lock_mgr::LockMgr;
-    use storage::{BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, unique_test_db_path};
+    use storage::{
+        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, unique_test_db_path,
+    };
 
     // Build a valid Set meta bytes:
     // layout: type(1) + count(8) + version(8) + reserve(16) + ctime(8) + etime(8)
@@ -63,7 +65,8 @@ mod redis_set_test {
         {
             let db = redis.db.as_ref().unwrap();
             let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
-            db.put_cf(&cf, key, &meta_bytes).unwrap();
+            let encoded_key = BaseMetaKey::new(key).encode().unwrap();
+            db.put_cf(&cf, &encoded_key, &meta_bytes).unwrap();
         }
 
         // Add members (with duplicates) via sadd
@@ -111,7 +114,8 @@ mod redis_set_test {
         {
             let db = redis.db.as_ref().unwrap();
             let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
-            db.put_cf(&cf, key, &meta_bytes).unwrap();
+            let encoded_key = BaseMetaKey::new(key).encode().unwrap();
+            db.put_cf(&cf, &encoded_key, &meta_bytes).unwrap();
         }
 
         // Call sadd with duplicates; expect only unique inserts counted
@@ -149,7 +153,8 @@ mod redis_set_test {
         {
             let db = redis.db.as_ref().unwrap();
             let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
-            db.put_cf(&cf, key, &meta_bytes).unwrap();
+            let encoded_key = BaseMetaKey::new(key).encode().unwrap();
+            db.put_cf(&cf, &encoded_key, &meta_bytes).unwrap();
         }
 
         let members: Vec<&[u8]> = vec![b"x".as_ref(), b"y".as_ref(), b"x".as_ref()];

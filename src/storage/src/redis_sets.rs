@@ -28,6 +28,7 @@ use snafu::{OptionExt, ResultExt};
 use crate::{
     ColumnFamilyIndex, Redis, Result,
     base_data_value_format::BaseDataValue,
+    base_key_format::BaseMetaKey,
     base_meta_value_format::ParsedSetsMetaValue,
     base_value_format::DataType,
     error::{InvalidArgumentSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
@@ -142,8 +143,10 @@ impl Redis {
                     message: "cf data is not initialized".to_string(),
                 })?;
 
+        let base_meta_key = BaseMetaKey::new(key).encode()?;
+
         // Try to get the existing set meta value
-        let meta_get = db.get_cf(&cf, key).context(RocksSnafu)?;
+        let meta_get = db.get_cf(&cf, &base_meta_key).context(RocksSnafu)?;
         match meta_get {
             Some(val) => {
                 let mut set_meta_value = ParsedSetsMetaValue::new(&val[..])?;
@@ -166,7 +169,7 @@ impl Redis {
                 }
                 set_meta_value.modify_count(add_count);
 
-                batch.put_cf(&cf, key, set_meta_value.encoded());
+                batch.put_cf(&cf, base_meta_key, set_meta_value.encoded());
 
                 for member in &filtered_members {
                     let set_member_key = MemberDataKey::new(key, version, member);
@@ -196,13 +199,15 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
+        let base_meta_key = BaseMetaKey::new(key).encode()?;
+
         let cf = self
             .get_cf_handle(ColumnFamilyIndex::MetaCF)
             .context(OptionNoneSnafu {
                 message: "cf is not initialized".to_string(),
             })?;
 
-        match db.get_cf(&cf, key).context(RocksSnafu)? {
+        match db.get_cf(&cf, &base_meta_key).context(RocksSnafu)? {
             Some(val) => {
                 // Type check
                 if val.first().copied() != Some(DataType::Set as u8) {
@@ -234,6 +239,8 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
+        let base_meta_key = BaseMetaKey::new(key).encode()?;
+
         let cf_meta = self
             .get_cf_handle(ColumnFamilyIndex::MetaCF)
             .context(OptionNoneSnafu {
@@ -246,7 +253,7 @@ impl Redis {
                 })?;
 
         // Read meta
-        let meta_val = db.get_cf(&cf_meta, key).context(RocksSnafu)?;
+        let meta_val = db.get_cf(&cf_meta, &base_meta_key).context(RocksSnafu)?;
         let Some(val) = meta_val else {
             return KeyNotFoundSnafu {
                 key: String::from_utf8_lossy(key).to_string(),
@@ -261,6 +268,7 @@ impl Redis {
             }
             .fail();
         }
+
         let set_meta = ParsedSetsMetaValue::new(&val[..])?;
         // Validity check (not expired and count > 0)
         if !set_meta.is_valid() {

@@ -46,6 +46,7 @@ pub mod error;
 pub mod options;
 pub mod storage;
 
+pub use base_key_format::BaseMetaKey;
 pub use base_value_format::*;
 pub use error::Result;
 pub use options::StorageOptions;
