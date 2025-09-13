@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use engine::{Engine, RocksdbEngine};
 use foyer::{Cache, CacheBuilder};
 use kstd::lock_mgr::LockMgr;
 use rocksdb::{
@@ -67,7 +68,7 @@ pub struct Redis {
     pub write_options: WriteOptions,
     pub read_options: ReadOptions,
     pub compact_options: CompactOptions,
-    pub db: Option<DB>,
+    pub db: Option<Box<dyn Engine>>,
 
     // For background task
     pub storage: Arc<StorageOptions>,
@@ -146,10 +147,10 @@ impl Redis {
             })
             .collect();
 
-        self.db = Some(
+        self.db = Some(Box::new(RocksdbEngine::new(
             DB::open_cf_descriptors(&self.storage.options, db_path, column_families)
                 .context(RocksSnafu)?,
-        );
+        )));
 
         if let Some(db) = &self.db {
             let mut handles = Vec::new();
@@ -392,11 +393,6 @@ impl Redis {
 impl Drop for Redis {
     fn drop(&mut self) {
         if self.need_close.load(std::sync::atomic::Ordering::SeqCst) {
-            if let Some(db) = &self.db {
-                // Cancel background work
-                db.cancel_all_background_work(true);
-            }
-
             // Clear handles
             self.handles.clear();
 

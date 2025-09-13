@@ -104,7 +104,7 @@ impl Redis {
         let string_key = BaseKey::new(key);
 
         match db
-            .get_opt(string_key.encode()?, &self.read_options)
+            .get_opt(&string_key.encode()?, &self.read_options)
             .context(RocksSnafu)?
         {
             Some(val) => {
