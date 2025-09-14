@@ -15,6 +15,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(dead_code)]
+// TODO(marsevilspirit): remove allow dead_code
+
 use std::ops::Range;
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -23,7 +26,6 @@ use snafu::OptionExt;
 
 use crate::error::{Error, InvalidFormatSnafu, Result};
 
-/// TODO: remove allow dead code
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataType {
@@ -57,27 +59,17 @@ impl TryFrom<u8> for DataType {
     }
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 pub const DATA_TYPE_STRINGS: [&str; 7] = ["string", "hash", "set", "list", "zset", "none", "all"];
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 pub const DATA_TYPE_TAG: [char; 7] = ['k', 'h', 's', 'l', 'z', 'n', 'a'];
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 pub fn data_type_to_string(data_type: DataType) -> &'static str {
     DATA_TYPE_STRINGS[data_type as usize]
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 pub fn data_type_to_tag(data_type: DataType) -> char {
     DATA_TYPE_TAG[data_type as usize]
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct InternalValue {
     pub data_type: DataType,
@@ -153,8 +145,6 @@ macro_rules! delegate_internal_value {
     };
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 pub struct ParsedInternalValue {
     pub value: BytesMut,
     pub data_type: DataType,
@@ -166,7 +156,6 @@ pub struct ParsedInternalValue {
     pub etime: u64,
 }
 
-#[allow(dead_code)]
 impl ParsedInternalValue {
     pub fn new(
         value: BytesMut,
