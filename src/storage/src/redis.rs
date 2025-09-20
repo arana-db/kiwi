@@ -401,3 +401,24 @@ impl Drop for Redis {
         }
     }
 }
+
+#[macro_export]
+macro_rules! get_db_and_cfs {
+    ($self:expr $(, $cf:expr)*) => {{
+        let db = $self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let cfs = vec![
+            $(
+                $self
+                    .get_cf_handle($cf)
+                    .context(OptionNoneSnafu {
+                        message: format!("{:?} cf handle not found", $cf),
+                    })?
+            ),*
+        ];
+
+        (db, cfs)
+    }};
+}

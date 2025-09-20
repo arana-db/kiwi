@@ -32,9 +32,8 @@ use crate::{
 };
 
 #[allow(dead_code)]
-type HashesMetaValue = BaseMetaValue;
-#[allow(dead_code)]
-type ParsedHashesMetaValue = ParsedBaseMetaValue;
+pub type HashesMetaValue = BaseMetaValue;
+pub type ParsedHashesMetaValue = ParsedBaseMetaValue;
 #[allow(dead_code)]
 type SetsMetaValue = BaseMetaValue;
 #[allow(dead_code)]
