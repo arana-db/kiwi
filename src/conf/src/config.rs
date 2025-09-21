@@ -22,10 +22,15 @@ use validator::Validate;
 use crate::de_func::{deserialize_bool_from_yes_no, deserialize_memory};
 use crate::error::Error;
 
+const DEFAULT_BINDING: &str = "127.0.0.1";
+const DEFAULT_PORT: u16 = 9221;
+
 // config struct define
 #[derive(Debug, Deserialize, Validate)]
 #[serde(default)]
 pub struct Config {
+    pub binding: String,
+
     #[validate(range(min = 1024, max = 65535))]
     pub port: u16,
 
@@ -105,7 +110,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            port: 8080,
+            binding: DEFAULT_BINDING.to_string(),
+            port: DEFAULT_PORT,
             timeout: 50,
             memory: 1024 * 1024 * 1024,
             log_dir: "/data/kiwi_rs/logs".to_string(),

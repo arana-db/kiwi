@@ -73,6 +73,7 @@ mod tests {
     #[test]
     fn test_validate_port_range() {
         let mut invalid_config = Config {
+            binding: "127.0.0.1".to_string(),
             port: 999,
             timeout: 100,
             redis_compatible_mode: false,

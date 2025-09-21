@@ -11,6 +11,8 @@ net.workspace = true
 tokio.workspace = true
 env_logger.workspace = true
 log.workspace = true
+conf.workspace = true
+clap = { version = "4.0", features = ["derive"] }
 
 [lints]
 workspace = true

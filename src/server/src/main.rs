@@ -15,8 +15,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use clap::Parser;
+use conf::config::Config;
 use log::info;
 use net::ServerFactory;
+
+/// Kiwi - A Redis-compatible key-value database built in Rust
+#[derive(Parser)]
+#[command(name = "kiwi-server")]
+#[command(about = "A Redis-compatible key-value database built in Rust")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
+struct Args {
+    /// Configuration file path
+    #[arg(short, long)]
+    config: Option<String>,
+}
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -24,7 +37,19 @@ async fn main() -> std::io::Result<()> {
     // set env RUST_LOG=level to control
     env_logger::init();
 
-    let addr = String::from("127.0.0.1:9221");
+    let args = Args::parse();
+    let config = if let Some(config_path) = args.config {
+        Config::load(&config_path).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to load config file '{}': {}", config_path, e),
+            )
+        })?
+    } else {
+        Config::default()
+    };
+
+    let addr = format!("{}:{}", config.binding, config.port);
     let protocol = "tcp";
 
     info!("tcp listener listen on {addr}");
