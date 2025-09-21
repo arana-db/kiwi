@@ -69,7 +69,7 @@ impl BaseMetaValue {
         self.inner.version
     }
 
-    fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         // type(1) + user_value + version(8) + reserve(16) + ctime(8) + etime(8)
         let needed = TYPE_LENGTH
             + self.inner.user_value.len()

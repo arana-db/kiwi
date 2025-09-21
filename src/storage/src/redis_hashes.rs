@@ -18,13 +18,14 @@
 //! Redis hashes operations implementation
 //! This module provides hash operations for Redis storage
 
-use rocksdb::ReadOptions;
-use snafu::OptionExt;
-use snafu::ResultExt;
+use bytes::Bytes;
+use kstd::lock_mgr::ScopeRecordLock;
+use rocksdb::{ReadOptions, WriteBatch};
+use snafu::{OptionExt, ResultExt};
 
-use crate::base_data_value_format::ParsedBaseDataValue;
-use crate::base_meta_value_format::ParsedHashesMetaValue;
-use crate::error::{InvalidFormatSnafu, OptionNoneSnafu, RocksSnafu};
+use crate::base_data_value_format::{BaseDataValue, ParsedBaseDataValue};
+use crate::base_meta_value_format::{HashesMetaValue, ParsedHashesMetaValue};
+use crate::error::{OptionNoneSnafu, RedisErrSnafu, RocksSnafu};
 use crate::get_db_and_cfs;
 use crate::member_data_key_format::MemberDataKey;
 use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Redis, Result};
@@ -48,11 +49,13 @@ impl Redis {
             ColumnFamilyIndex::MetaCF,
             ColumnFamilyIndex::HashesDataCF
         );
+        debug_assert_eq!(cfs.len(), 2);
         let meta_cf = &cfs[0];
         let data_cf = &cfs[1];
 
+        let snapshot = db.snapshot();
         let mut read_options = ReadOptions::default();
-        read_options.set_snapshot(&db.snapshot());
+        read_options.set_snapshot(&snapshot);
 
         let base_meta_key = BaseMetaKey::new(_key).encode()?;
         if let Some(meta_val_bytes) = db
@@ -64,7 +67,7 @@ impl Redis {
                 return Ok(None);
             }
             if meta_val.inner.data_type != DataType::Hash {
-                return InvalidFormatSnafu {
+                return RedisErrSnafu {
                     message: format!(
                         "Wrong type of value, expected: {:?}, got: {:?}",
                         DataType::Hash,
@@ -100,7 +103,124 @@ impl Redis {
         unimplemented!("hlen is not implemented");
     }
 
-    pub fn hset(&self, _key: &[u8], _field: &[u8], _value: &[u8]) -> Result<i32> {
-        unimplemented!("hset is not implemented");
+    pub fn hset(&self, key: &[u8], field: &[u8], value: &[u8]) -> Result<i32> {
+        let (db, cfs) = get_db_and_cfs!(
+            self,
+            ColumnFamilyIndex::MetaCF,
+            ColumnFamilyIndex::HashesDataCF
+        );
+        debug_assert_eq!(cfs.len(), 2);
+        let meta_cf = &cfs[0];
+        let data_cf = &cfs[1];
+
+        let mut batch = WriteBatch::default();
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+        let base_meta_key = BaseMetaKey::new(key).encode()?;
+
+        let create_new_hash =
+            |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: &[u8]| -> Result<()> {
+                let mut hashes_meta =
+                    HashesMetaValue::new(Bytes::from(1u64.to_le_bytes().to_vec()));
+                hashes_meta.inner.data_type = DataType::Hash;
+                let version = hashes_meta.update_version();
+
+                batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
+
+                let data_key = MemberDataKey::new(key, version, field);
+                let data_value = BaseDataValue::new(value.to_vec());
+                batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
+
+                Ok(())
+            };
+
+        match db
+            .get_cf_opt(meta_cf, &base_meta_key, &self.read_options)
+            .context(RocksSnafu)?
+        {
+            Some(meta_val_bytes) => {
+                let mut parsed_meta = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
+
+                if parsed_meta.data_type() != DataType::Hash {
+                    if parsed_meta.is_stale() {
+                        create_new_hash(&mut batch, key, field, value)?;
+                        db.write_opt(batch, &self.write_options)
+                            .context(RocksSnafu)?;
+                        return Ok(1);
+                    } else {
+                        return Err(RedisErrSnafu {
+                            message: format!(
+                                "Wrong type of value, expected: {:?}, got: {:?}",
+                                DataType::Hash,
+                                parsed_meta.inner.data_type
+                            ),
+                        }
+                        .build());
+                    }
+                }
+
+                if parsed_meta.is_stale() || parsed_meta.count() == 0 {
+                    let version = parsed_meta.initial_meta_value();
+                    parsed_meta.set_count(1);
+                    batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
+
+                    let data_key = MemberDataKey::new(key, version, field);
+                    let data_value = BaseDataValue::new(value.to_vec());
+                    batch.put_cf(data_cf, data_key.encode()?, data_value.encode());
+
+                    db.write_opt(batch, &self.write_options)
+                        .context(RocksSnafu)?;
+                    Ok(1)
+                } else {
+                    let version = parsed_meta.version();
+                    let data_key = MemberDataKey::new(key, version, field);
+
+                    match db
+                        .get_cf_opt(data_cf, &data_key.encode()?, &self.read_options)
+                        .context(RocksSnafu)?
+                    {
+                        Some(existing_data_bytes) => {
+                            let mut existing_data =
+                                ParsedBaseDataValue::new(&existing_data_bytes[..])?;
+                            existing_data.strip_suffix();
+
+                            if existing_data.user_value() == value {
+                                Ok(0)
+                            } else {
+                                let data_value = BaseDataValue::new(value.to_vec());
+                                batch.put_cf(data_cf, data_key.encode()?, data_value.encode());
+
+                                db.write_opt(batch, &self.write_options)
+                                    .context(RocksSnafu)?;
+                                Ok(0)
+                            }
+                        }
+                        None => {
+                            if !parsed_meta.check_modify_count(1) {
+                                return Err(RedisErrSnafu {
+                                    message: "hash size overflow".to_string(),
+                                }
+                                .build());
+                            }
+                            parsed_meta.modify_count(1);
+                            batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
+
+                            let data_value = BaseDataValue::new(value.to_vec());
+                            batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
+
+                            db.write_opt(batch, &self.write_options)
+                                .context(RocksSnafu)?;
+                            Ok(1)
+                        }
+                    }
+                }
+            }
+            None => {
+                create_new_hash(&mut batch, key, field, value)?;
+                db.write_opt(batch, &self.write_options)
+                    .context(RocksSnafu)?;
+                Ok(1)
+            }
+        }
     }
 }
