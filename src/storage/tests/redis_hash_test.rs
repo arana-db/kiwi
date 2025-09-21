@@ -40,7 +40,7 @@ mod redis_hash_test {
 
         let key = b"test_hash";
         let field = b"field1";
-        let mut value = b"value1";
+        let value = b"value1";
 
         // Test hset - should create new hash and return 1
         let hset_result = redis.hset(key, field, value);
@@ -61,7 +61,6 @@ mod redis_hash_test {
         );
         let hset_count2 = hset_result2.unwrap();
         assert_eq!(hset_count2, 0);
-        value = b"value2";
 
         // Add a small delay to ensure data is persisted
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -75,6 +74,7 @@ mod redis_hash_test {
         );
         assert_eq!(hexists_result.unwrap(), true);
 
+        let expected_val = b"value2";
         // Test hget - should return the value
         let hget_result = redis.hget(key, field);
         assert!(
@@ -86,11 +86,11 @@ mod redis_hash_test {
         assert!(
             retrieved_value.is_some(),
             "hget returned None, expected value: {:?}",
-            String::from_utf8_lossy(value)
+            String::from_utf8_lossy(expected_val)
         );
         assert_eq!(
             retrieved_value.unwrap(),
-            String::from_utf8_lossy(value).to_string()
+            String::from_utf8_lossy(expected_val).to_string()
         );
 
         redis.set_need_close(true);

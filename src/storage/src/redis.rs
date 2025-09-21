@@ -402,6 +402,19 @@ impl Drop for Redis {
     }
 }
 
+/// Retrieves the database reference and the specified column family handles.
+///
+/// # Parameters
+/// - `$self`: The receiver, typically a reference to a `Redis` instance.
+/// - `$cf`: One or more column family identifiers to retrieve handles for.
+///
+/// # Returns
+/// Returns a tuple containing:
+/// - A reference to the database (`db`).
+/// - A vector of column family handles corresponding to the provided identifiers.
+///
+/// # Errors
+/// Returns an error if the database is not initialized or if any column family handle is not found.
 #[macro_export]
 macro_rules! get_db_and_cfs {
     ($self:expr $(, $cf:expr)*) => {{

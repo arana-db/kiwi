@@ -121,7 +121,7 @@ impl Redis {
         let create_new_hash =
             |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: &[u8]| -> Result<()> {
                 let mut hashes_meta =
-                    HashesMetaValue::new(Bytes::from(1u64.to_le_bytes().to_vec()));
+                    HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
                 hashes_meta.inner.data_type = DataType::Hash;
                 let version = hashes_meta.update_version();
 
@@ -148,14 +148,14 @@ impl Redis {
                             .context(RocksSnafu)?;
                         return Ok(1);
                     } else {
-                        return Err(RedisErrSnafu {
+                        return RedisErrSnafu {
                             message: format!(
                                 "Wrong type of value, expected: {:?}, got: {:?}",
                                 DataType::Hash,
                                 parsed_meta.inner.data_type
                             ),
                         }
-                        .build());
+                        .fail();
                     }
                 }
 
@@ -197,10 +197,10 @@ impl Redis {
                         }
                         None => {
                             if !parsed_meta.check_modify_count(1) {
-                                return Err(RedisErrSnafu {
+                                return RedisErrSnafu {
                                     message: "hash size overflow".to_string(),
                                 }
-                                .build());
+                                .fail();
                             }
                             parsed_meta.modify_count(1);
                             batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
