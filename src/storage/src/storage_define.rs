@@ -114,6 +114,17 @@ pub fn decode_user_key(encoded_key_part: &[u8], user_key: &mut BytesMut) -> Resu
     Ok(())
 }
 
+pub fn seek_userkey_delim(data: &[u8]) -> usize {
+    let mut zero_ahead = false;
+    for (i, &byte) in data.iter().enumerate() {
+        if byte == 0x00 && zero_ahead {
+            return i + 1;
+        }
+        zero_ahead = byte == 0x00;
+    }
+    data.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
