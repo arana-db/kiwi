@@ -342,11 +342,14 @@ impl Storage {
         unimplemented!("This function is not implemented yet");
     }
 
-    pub fn load_cursor_start_key() {
-        unimplemented!("This function is not implemented yet");
+    pub fn load_cursor_start_key(&self, cursor_id: &str) -> Option<String> {
+        self.cursors_store
+            .get(cursor_id)
+            .map(|entry| entry.value().clone())
     }
 
-    pub fn store_cursor_start_key() {
-        unimplemented!("This function is not implemented yet");
+    pub fn store_cursor_start_key(&self, cursor_id: &str, start_key: &str) {
+        self.cursors_store
+            .insert(cursor_id.to_string(), start_key.to_string());
     }
 }
