@@ -26,10 +26,10 @@ use snafu::ResultExt;
 use tokio::sync::mpsc;
 
 use crate::base_value_format::DataType;
-use crate::error::{MpscSnafu, Result};
+use crate::error::{Error, MpscSnafu, Result};
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
-use crate::{Redis, StorageOptions};
+use crate::{Redis, StorageOptions, base_data_value_format, data_type_to_tag};
 
 pub enum TaskType {
     None = 0,
@@ -342,14 +342,52 @@ impl Storage {
         unimplemented!("This function is not implemented yet");
     }
 
-    pub fn load_cursor_start_key(&self, cursor_id: &str) -> Option<String> {
-        self.cursors_store
-            .get(cursor_id)
-            .map(|entry| entry.value().clone())
+    pub fn load_cursor_start_key(
+        &self,
+        dtype: DataType,
+        cursor: i64,
+        cursor_type: &mut char,
+        start_key: &mut String,
+    ) -> Result<()> {
+        let index_key = format!("{}{}", data_type_to_tag(dtype), cursor);
+        match self.cursors_store.get(&index_key) {
+            Some(entry) => {
+                let index_value = entry.value().clone();
+                if index_value.len() < 3 {
+                    return Err(Error::InvalidFormat {
+                        message: "Invalid cursor data: too short".to_string(),
+                        location: snafu::location!(),
+                    });
+                }
+                *cursor_type = index_value.chars().next().unwrap();
+                *start_key = if index_value.len() > 1 {
+                    index_value[1..].to_string()
+                } else {
+                    String::new()
+                };
+                Ok(())
+            }
+            None => Err(Error::KeyNotFound {
+                key: index_key,
+                location: snafu::location!(),
+            }),
+        }
     }
 
-    pub fn store_cursor_start_key(&self, cursor_id: &str, start_key: &str) {
-        self.cursors_store
-            .insert(cursor_id.to_string(), start_key.to_string());
+    pub fn store_cursor_start_key(
+        &self,
+        dtype: DataType,
+        cursor: i64,
+        cursor_type: char,
+        next_key: String,
+    ) -> Result<()> {
+        let index_key = format!("{}{}", data_type_to_tag(dtype), cursor);
+
+        let mut index_value = String::new();
+        index_value.push(cursor_type);
+        index_value.push_str(&next_key);
+
+        self.cursors_store.insert(index_key, index_value);
+        Ok(())
     }
 }
