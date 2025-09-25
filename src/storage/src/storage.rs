@@ -29,7 +29,7 @@ use crate::base_value_format::DataType;
 use crate::error::{Error, MpscSnafu, Result};
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
-use crate::{Redis, StorageOptions, base_data_value_format, data_type_to_tag};
+use crate::{Redis, StorageOptions, data_type_to_tag};
 
 pub enum TaskType {
     None = 0,
