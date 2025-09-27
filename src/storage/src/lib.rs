@@ -39,6 +39,7 @@ mod storage_impl;
 mod storage_murmur3;
 
 // commands
+mod redis_hashes;
 mod redis_sets;
 mod redis_strings;
 
