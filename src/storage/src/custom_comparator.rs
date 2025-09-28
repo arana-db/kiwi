@@ -79,7 +79,7 @@ pub fn lists_data_key_compare(a: &[u8], b: &[u8]) -> Ordering {
     let b_version_start = PREFIX_RESERVE_LENGTH + b_userkey_end;
 
     if a_version_start + VERSION_LENGTH > a_size || b_version_start + VERSION_LENGTH > b_size {
-        return Ordering::Equal;
+        return a.cmp(b);
     }
 
     let version_a = decode_fixed::<u64>(&a[a_version_start..]);
@@ -94,7 +94,7 @@ pub fn lists_data_key_compare(a: &[u8], b: &[u8]) -> Ordering {
     let b_index_start = b_version_start + VERSION_LENGTH;
 
     if a_index_start + VERSION_LENGTH > a_size || b_index_start + VERSION_LENGTH > b_size {
-        return Ordering::Equal;
+        return a.cmp(b);
     }
 
     let index_a = decode_fixed::<u64>(&a[a_index_start..]);
@@ -146,7 +146,7 @@ pub fn zsets_score_key_compare(a: &[u8], b: &[u8]) -> Ordering {
     let b_version_start = PREFIX_RESERVE_LENGTH + b_userkey_end;
 
     if a_version_start + VERSION_LENGTH > a_size || b_version_start + VERSION_LENGTH > b_size {
-        return Ordering::Equal;
+        return a.cmp(b);
     }
 
     let version_a = decode_fixed::<u64>(&a[a_version_start..]);
@@ -162,7 +162,7 @@ pub fn zsets_score_key_compare(a: &[u8], b: &[u8]) -> Ordering {
     let b_score_start = b_version_start + VERSION_LENGTH;
 
     if a_score_start + VERSION_LENGTH > a_size || b_score_start + VERSION_LENGTH > b_size {
-        return Ordering::Equal;
+        return a.cmp(b);
     }
 
     let score_a = f64::from_bits(decode_fixed::<u64>(&a[a_score_start..]));
@@ -175,14 +175,13 @@ pub fn zsets_score_key_compare(a: &[u8], b: &[u8]) -> Ordering {
             }
         }
         None => {
-            // handle NaN
-            if score_a.is_nan() && score_b.is_nan() {
-                return Ordering::Equal;
-            } else if score_a.is_nan() {
-                return Ordering::Less;
-            } else if score_b.is_nan() {
+            // handle NaN consistently: define NaN > non-NaN, and double-NaN treated as equal score
+            if score_a.is_nan() && !score_b.is_nan() {
                 return Ordering::Greater;
+            } else if !score_a.is_nan() && score_b.is_nan() {
+                return Ordering::Less;
             }
+            // both NaN: fall through to compare member (do not return Equal here)
         }
     }
 
