@@ -352,19 +352,16 @@ impl Storage {
         let index_key = format!("{}{}", data_type_to_tag(dtype), cursor);
         match self.cursors_store.get(&index_key) {
             Some(entry) => {
-                let index_value = entry.value().clone();
+                let index_value = entry.value();
                 if index_value.len() < 3 {
                     return Err(Error::InvalidFormat {
                         message: "Invalid cursor data: too short".to_string(),
                         location: snafu::location!(),
                     });
                 }
-                *cursor_type = index_value.chars().next().unwrap();
-                *start_key = if index_value.len() > 1 {
-                    index_value[1..].to_string()
-                } else {
-                    String::new()
-                };
+                let b = index_value.as_bytes();
+                *cursor_type = b[0] as char;
+                *start_key = index_value[1..].to_string();
                 Ok(())
             }
             None => Err(Error::KeyNotFound {
