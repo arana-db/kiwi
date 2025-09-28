@@ -43,6 +43,7 @@ mod cursor_management_test {
         assert_eq!(cursor_type, 's');
         assert_eq!(start_key, "test_key_001");
 
+        drop(storage);
         if test_db_path.exists() {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
@@ -62,7 +63,7 @@ mod cursor_management_test {
             storage.load_cursor_start_key(DataType::Set, 99999, &mut cursor_type, &mut start_key);
 
         assert!(result.is_err());
-
+        drop(storage);
         if test_db_path.exists() {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
@@ -99,7 +100,7 @@ mod cursor_management_test {
             assert_eq!(cursor_type, expected_type);
             assert_eq!(start_key, key);
         }
-
+        drop(storage);
         if test_db_path.exists() {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
