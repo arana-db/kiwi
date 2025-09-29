@@ -342,13 +342,7 @@ impl Storage {
         unimplemented!("This function is not implemented yet");
     }
 
-    pub fn load_cursor_start_key(
-        &self,
-        dtype: DataType,
-        cursor: i64,
-        cursor_type: &mut char,
-        start_key: &mut String,
-    ) -> Result<()> {
+    pub fn load_cursor_start_key(&self, dtype: DataType, cursor: i64) -> Result<(char, String)> {
         let index_key = format!("{}{}", data_type_to_tag(dtype), cursor);
         match self.cursors_store.get(&index_key) {
             Some(entry) => {
@@ -360,9 +354,7 @@ impl Storage {
                     });
                 }
                 let b = index_value.as_bytes();
-                *cursor_type = b[0] as char;
-                *start_key = index_value[1..].to_string();
-                Ok(())
+                Ok((b[0] as char, index_value[1..].to_string()))
             }
             None => Err(Error::KeyNotFound {
                 key: index_key,
@@ -378,9 +370,28 @@ impl Storage {
         cursor_type: char,
         next_key: String,
     ) -> Result<()> {
+        if !cursor_type.is_ascii() {
+            return Err(Error::InvalidFormat {
+                message: "cursor_type must be ASCII character".to_string(),
+                location: snafu::location!(),
+            });
+        }
+
+        if dtype != DataType::All && cursor_type != data_type_to_tag(dtype) {
+            return Err(Error::InvalidFormat {
+                message: "cursor_type does not match data type".to_string(),
+                location: snafu::location!(),
+            });
+        }
+
         let index_key = format!("{}{}", data_type_to_tag(dtype), cursor);
 
-        let mut index_value = String::new();
+        if next_key.is_empty() {
+            self.cursors_store.remove(&index_key);
+            return Ok(());
+        }
+
+        let mut index_value = String::with_capacity(1 + next_key.len());
         index_value.push(cursor_type);
         index_value.push_str(&next_key);
 

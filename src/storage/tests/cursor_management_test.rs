@@ -34,14 +34,8 @@ mod cursor_management_test {
             storage.store_cursor_start_key(DataType::Set, 12345, 's', "test_key_001".to_string());
         assert!(result.is_ok());
 
-        let mut cursor_type = '\0';
-        let mut start_key = String::new();
-        let result =
-            storage.load_cursor_start_key(DataType::Set, 12345, &mut cursor_type, &mut start_key);
-
+        let result = storage.load_cursor_start_key(DataType::Set, 12345);
         assert!(result.is_ok());
-        assert_eq!(cursor_type, 's');
-        assert_eq!(start_key, "test_key_001");
 
         drop(storage);
         if test_db_path.exists() {
@@ -57,12 +51,9 @@ mod cursor_management_test {
 
         let _receiver = storage.open(options, &test_db_path).unwrap();
 
-        let mut cursor_type = '\0';
-        let mut start_key = String::new();
-        let result =
-            storage.load_cursor_start_key(DataType::Set, 99999, &mut cursor_type, &mut start_key);
-
+        let result = storage.load_cursor_start_key(DataType::Set, 99999);
         assert!(result.is_err());
+
         drop(storage);
         if test_db_path.exists() {
             std::fs::remove_dir_all(test_db_path).unwrap();
@@ -91,15 +82,39 @@ mod cursor_management_test {
                 .store_cursor_start_key(dtype, 1001, expected_type, key.to_string())
                 .unwrap();
 
-            let mut cursor_type = '\0';
-            let mut start_key = String::new();
-            storage
-                .load_cursor_start_key(dtype, 1001, &mut cursor_type, &mut start_key)
-                .unwrap();
+            let (cursor_type, start_key) = storage.load_cursor_start_key(dtype, 1001).unwrap();
 
             assert_eq!(cursor_type, expected_type);
             assert_eq!(start_key, key);
         }
+
+        drop(storage);
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_empty_next_key_remove() {
+        let test_db_path = unique_test_db_path();
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _receiver = storage.open(options, &test_db_path).unwrap();
+        storage
+            .store_cursor_start_key(DataType::Set, 12345, 's', "test_key".to_string())
+            .unwrap();
+
+        let result = storage.load_cursor_start_key(DataType::Set, 12345);
+        assert!(result.is_ok());
+
+        // Store with empty next_key should remove the entry
+        storage
+            .store_cursor_start_key(DataType::Set, 12345, 's', String::new())
+            .unwrap();
+
+        let result = storage.load_cursor_start_key(DataType::Set, 12345);
+        assert!(result.is_err());
+
         drop(storage);
         if test_db_path.exists() {
             std::fs::remove_dir_all(test_db_path).unwrap();
