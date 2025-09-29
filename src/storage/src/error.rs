@@ -138,4 +138,12 @@ pub enum Error {
         #[snafu(implicit)]
         location: Location,
     },
+
+    // all the redis error use this error type
+    #[snafu(display("{}", message))]
+    RedisErr {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }
