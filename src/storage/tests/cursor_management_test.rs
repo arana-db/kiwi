@@ -19,6 +19,7 @@
 mod cursor_management_test {
     use std::sync::Arc;
 
+    use storage::error::Error;
     use storage::{DataType, StorageOptions, storage::Storage, unique_test_db_path};
 
     #[test]
@@ -34,8 +35,11 @@ mod cursor_management_test {
             storage.store_cursor_start_key(DataType::Set, 12345, 's', "test_key_001".to_string());
         assert!(result.is_ok());
 
-        let result = storage.load_cursor_start_key(DataType::Set, 12345);
-        assert!(result.is_ok());
+        let (cursor_type, start_key) = storage
+            .load_cursor_start_key(DataType::Set, 12345)
+            .expect("cursor should exist");
+        assert_eq!(cursor_type, 's');
+        assert_eq!(start_key, "test_key_001");
 
         drop(storage);
         if test_db_path.exists() {
@@ -51,8 +55,10 @@ mod cursor_management_test {
 
         let _receiver = storage.open(options, &test_db_path).unwrap();
 
-        let result = storage.load_cursor_start_key(DataType::Set, 99999);
-        assert!(result.is_err());
+        let err = storage
+            .load_cursor_start_key(DataType::Set, 99999)
+            .unwrap_err();
+        assert!(matches!(err, Error::KeyNotFound { .. }));
 
         drop(storage);
         if test_db_path.exists() {
@@ -112,8 +118,10 @@ mod cursor_management_test {
             .store_cursor_start_key(DataType::Set, 12345, 's', String::new())
             .unwrap();
 
-        let result = storage.load_cursor_start_key(DataType::Set, 12345);
-        assert!(result.is_err());
+        let err = storage
+            .load_cursor_start_key(DataType::Set, 12345)
+            .unwrap_err();
+        assert!(matches!(err, Error::KeyNotFound { .. }));
 
         drop(storage);
         if test_db_path.exists() {
