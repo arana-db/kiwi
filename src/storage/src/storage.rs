@@ -26,10 +26,10 @@ use snafu::ResultExt;
 use tokio::sync::mpsc;
 
 use crate::base_value_format::DataType;
-use crate::error::{MpscSnafu, Result};
+use crate::error::{Error, MpscSnafu, Result};
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
-use crate::{Redis, StorageOptions};
+use crate::{Redis, StorageOptions, data_type_to_tag};
 
 pub enum TaskType {
     None = 0,
@@ -342,11 +342,60 @@ impl Storage {
         unimplemented!("This function is not implemented yet");
     }
 
-    pub fn load_cursor_start_key() {
-        unimplemented!("This function is not implemented yet");
+    pub fn load_cursor_start_key(&self, dtype: DataType, cursor: i64) -> Result<(char, String)> {
+        let index_key = format!("{}{}", data_type_to_tag(dtype), cursor);
+        match self.cursors_store.get(&index_key) {
+            Some(entry) => {
+                let index_value = entry.value();
+                if index_value.len() < 3 {
+                    return Err(Error::InvalidFormat {
+                        message: "Invalid cursor data: too short".to_string(),
+                        location: snafu::location!(),
+                    });
+                }
+                let b = index_value.as_bytes();
+                Ok((b[0] as char, index_value[1..].to_string()))
+            }
+            None => Err(Error::KeyNotFound {
+                key: index_key,
+                location: snafu::location!(),
+            }),
+        }
     }
 
-    pub fn store_cursor_start_key() {
-        unimplemented!("This function is not implemented yet");
+    pub fn store_cursor_start_key(
+        &self,
+        dtype: DataType,
+        cursor: i64,
+        cursor_type: char,
+        next_key: String,
+    ) -> Result<()> {
+        if !cursor_type.is_ascii() {
+            return Err(Error::InvalidFormat {
+                message: "cursor_type must be ASCII character".to_string(),
+                location: snafu::location!(),
+            });
+        }
+
+        if dtype != DataType::All && cursor_type != data_type_to_tag(dtype) {
+            return Err(Error::InvalidFormat {
+                message: "cursor_type does not match data type".to_string(),
+                location: snafu::location!(),
+            });
+        }
+
+        let index_key = format!("{}{}", data_type_to_tag(dtype), cursor);
+
+        if next_key.is_empty() {
+            self.cursors_store.remove(&index_key);
+            return Ok(());
+        }
+
+        let mut index_value = String::with_capacity(1 + next_key.len());
+        index_value.push(cursor_type);
+        index_value.push_str(&next_key);
+
+        self.cursors_store.insert(index_key, index_value);
+        Ok(())
     }
 }
