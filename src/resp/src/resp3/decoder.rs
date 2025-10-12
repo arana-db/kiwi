@@ -25,6 +25,13 @@ use crate::{
     types::{RespData, RespVersion},
 };
 
+// Maximum allowed lengths to prevent DoS attacks
+const MAX_BULK_LEN: usize = 512 * 1024 * 1024; // 512 MB
+const MAX_ARRAY_LEN: usize = 1024 * 1024; // 1M elements
+const MAX_MAP_PAIRS: usize = 1024 * 1024; // 1M pairs
+const MAX_SET_LEN: usize = 1024 * 1024; // 1M elements
+const MAX_PUSH_LEN: usize = 1024 * 1024; // 1M elements
+
 #[derive(Debug, Clone, Default)]
 enum ParsingState {
     #[default]
@@ -453,18 +460,22 @@ impl Resp3Decoder {
                         let _ = self.buf.split_to(nl + 1);
                         Some(Ok(RespData::BulkString(None)))
                     } else if len >= 0 {
-                        let need = nl + 1 + len as usize + 2;
+                        let len_usize = len as usize;
+                        if len_usize > MAX_BULK_LEN {
+                            return Some(Err(RespError::ParseError("bulk string length exceeds limit".into())));
+                        }
+                        let need = nl + 1 + len_usize + 2;
                         if self.buf.len() < need {
                             return None;
                         }
                         let chunk = self.buf.split_to(need);
-                        if &chunk[nl + 1 + len as usize..need] != b"\r\n" {
+                        if &chunk[nl + 1 + len_usize..need] != b"\r\n" {
                             return Some(Err(RespError::ParseError(
                                 "invalid bulk string ending".into(),
                             )));
                         }
                         let data =
-                            bytes::Bytes::copy_from_slice(&chunk[nl + 1..nl + 1 + len as usize]);
+                            bytes::Bytes::copy_from_slice(&chunk[nl + 1..nl + 1 + len_usize]);
                         Some(Ok(RespData::BulkString(Some(data))))
                     } else {
                         Some(Err(RespError::ParseError(
@@ -494,11 +505,15 @@ impl Resp3Decoder {
                         let _ = self.buf.split_to(nl + 1);
                         Some(Ok(RespData::Array(None)))
                     } else if len >= 0 {
+                        let len_usize = len as usize;
+                        if len_usize > MAX_ARRAY_LEN {
+                            return Some(Err(RespError::ParseError("array length exceeds limit".into())));
+                        }
                         // Consume header and start array parsing state
                         let _ = self.buf.split_to(nl + 1);
                         self.state = ParsingState::Array {
-                            expected_count: len as usize,
-                            items: Vec::with_capacity(len as usize),
+                            expected_count: len_usize,
+                            items: Vec::with_capacity(len_usize),
                         };
                         // Continue parsing elements
                         self.continue_collection_parsing()
@@ -525,6 +540,9 @@ impl Resp3Decoder {
                             return Some(Err(RespError::ParseError("invalid map len".into())));
                         }
                     };
+                    if pairs > MAX_MAP_PAIRS {
+                        return Some(Err(RespError::ParseError("map pairs exceed limit".into())));
+                    }
                     // Consume header and start map parsing state
                     let _ = self.buf.split_to(nl + 1);
                     self.state = ParsingState::Map {
@@ -553,6 +571,9 @@ impl Resp3Decoder {
                             return Some(Err(RespError::ParseError("invalid set len".into())));
                         }
                     };
+                    if count > MAX_SET_LEN {
+                        return Some(Err(RespError::ParseError("set length exceeds limit".into())));
+                    }
                     // Consume header and start set parsing state
                     let _ = self.buf.split_to(nl + 1);
                     self.state = ParsingState::Set {
@@ -581,6 +602,9 @@ impl Resp3Decoder {
                             return Some(Err(RespError::ParseError("invalid push len".into())));
                         }
                     };
+                    if count > MAX_PUSH_LEN {
+                        return Some(Err(RespError::ParseError("push length exceeds limit".into())));
+                    }
                     // Consume header and start push parsing state
                     let _ = self.buf.split_to(nl + 1);
                     self.state = ParsingState::Push {
@@ -620,7 +644,6 @@ impl Resp3Decoder {
 
 impl Decoder for Resp3Decoder {
     fn push(&mut self, data: Bytes) {
-        // keep empty to avoid unused import warning
         self.buf.extend_from_slice(&data);
 
         while let Some(result) = self.parse_single_value() {
