@@ -453,7 +453,7 @@ impl Resp3Decoder {
                         let data = &chunk[..chunk.len() - 2]; // Remove \r\n
                         let parts: Vec<Bytes> = data
                             .split(|&b| b == b' ')
-                            .map(|s| bytes::Bytes::copy_from_slice(s))
+                            .map(bytes::Bytes::copy_from_slice)
                             .collect();
                         Some(Ok(RespData::Inline(parts)))
                     } else {
@@ -472,21 +472,15 @@ impl Decoder for Resp3Decoder {
         // keep empty to avoid unused import warning
         self.buf.extend_from_slice(&data);
 
-        loop {
-            if let Some(result) = self.parse_single_value() {
-                match result {
-                    Ok(data) => {
-                        self.out.push_back(Ok(data));
-                        continue;
-                    }
-                    Err(e) => {
-                        self.out.push_back(Err(e));
-                        break;
-                    }
+        while let Some(result) = self.parse_single_value() {
+            match result {
+                Ok(data) => {
+                    self.out.push_back(Ok(data));
                 }
-            } else {
-                // Need more data
-                break;
+                Err(e) => {
+                    self.out.push_back(Err(e));
+                    break;
+                }
             }
         }
     }
