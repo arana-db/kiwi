@@ -33,6 +33,7 @@ use crate::custom_comparator::{
     lists_data_key_comparator_name, lists_data_key_compare, zsets_score_key_comparator_name,
     zsets_score_key_compare,
 };
+use crate::error::Error::RedisErr;
 use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
@@ -404,6 +405,22 @@ impl Redis {
         }
 
         Ok(())
+    }
+
+    pub fn check_type(&self, key: &[u8], key_type: DataType) -> Result<()> {
+        if key.is_empty() {
+            return Ok(());
+        }
+
+        if key.first().copied() == Some(key_type as u8) {
+            return Ok(());
+        }
+
+        Err(RedisErr {
+            message: "WRONGTYPE Operation against a key holding the wrong kind of value"
+                .to_string(),
+            location: Default::default(),
+        })
     }
 }
 

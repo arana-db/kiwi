@@ -425,4 +425,109 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_incr_decr() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // wrong key type
+        {
+            let key = b"test_hash";
+            let field = b"field1";
+            let value = b"value1";
+
+            let hset_result = redis.hset(key, field, value);
+            assert_eq!(hset_result.unwrap(), 1);
+
+            let incr_result = redis.incr_decr(key, 1);
+            assert_eq!(
+                incr_result.err().unwrap().to_string(),
+                "WRONGTYPE Operation against a key holding the wrong kind of value"
+            );
+        }
+
+        // wrong value type
+        {
+            let key = b"test_incr_key_wrong_value";
+            let value = b"not_a_number";
+            let set_result = redis.set(key, value);
+            assert!(set_result.is_ok());
+            let incr_result = redis.incr_decr(key, 1);
+            assert_eq!(
+                incr_result.err().unwrap().to_string(),
+                "value is not an integer or out of range"
+            );
+        }
+
+        // ttl check
+        {
+            // todo: implement ttl check after ttl is supported
+        }
+
+        // normal incr and decr
+        {
+            let key = b"test_incr_key";
+            // add 2
+            assert_eq!(redis.incr_decr(key, 2).unwrap(), 2);
+            assert_eq!(redis.get(key).unwrap(), "2".to_string());
+            // add i64::MAX
+            let incr_result = redis.incr_decr(key, i64::MAX);
+            assert_eq!(
+                incr_result.err().unwrap().to_string(),
+                "increment or decrement would overflow"
+            );
+            // sub 3
+            assert_eq!(redis.incr_decr(key, -3).unwrap(), -1);
+            assert_eq!(redis.get(key).unwrap(), "-1".to_string());
+            // sub i64::MIN
+            let incr_result = redis.incr_decr(key, i64::MIN);
+            assert_eq!(
+                incr_result.err().unwrap().to_string(),
+                "increment or decrement would overflow"
+            );
+        }
+
+        // sum 1 + 2 + ... + 10000
+        {
+            let key = b"test_incr_key_large";
+            let mut expected_value: i64 = 0;
+            for i in 1..=10000 {
+                expected_value += i;
+                let result = redis.incr_decr(key, i).unwrap();
+                assert_eq!(result, expected_value);
+            }
+            assert_eq!(redis.get(key).unwrap(), expected_value.to_string());
+        }
+
+        // sub -1 - 2 - ... - 10000
+        {
+            let key = b"test_decr_key_large";
+            let mut expected_value: i64 = 0;
+            for i in 1..=10000 {
+                expected_value -= i;
+                let result = redis.incr_decr(key, -i).unwrap();
+                assert_eq!(result, expected_value);
+            }
+            assert_eq!(redis.get(key).unwrap(), expected_value.to_string());
+        }
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }
