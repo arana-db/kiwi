@@ -27,6 +27,10 @@ use crate::{
 
 // Maximum allowed lengths to prevent DoS attacks
 const MAX_BULK_LEN: usize = 512 * 1024 * 1024; // 512 MB
+const MAX_BULK_ERROR_LEN: usize = MAX_BULK_LEN; // tune independently if needed
+const MAX_VERBATIM_LEN: usize = MAX_BULK_LEN; // tune independently if needed
+const MAX_BIGNUM_LEN: usize = 16 * 1024 * 1024; // 16 MB of digits
+const MAX_INLINE_LEN: usize = 4 * 1024; // 4 KiB for inline commands
 const MAX_ARRAY_LEN: usize = 1024 * 1024; // 1M elements
 const MAX_MAP_PAIRS: usize = 1024 * 1024; // 1M pairs
 const MAX_SET_LEN: usize = 1024 * 1024; // 1M elements
@@ -336,6 +340,11 @@ impl Resp3Decoder {
                             )));
                         }
                     };
+                    if len > MAX_BULK_ERROR_LEN {
+                        return Some(Err(RespError::ParseError(
+                            "bulk error length exceeds limit".into(),
+                        )));
+                    }
                     let need = nl + 1 + len + 2;
                     if self.buf.len() < need {
                         return None;
@@ -367,6 +376,11 @@ impl Resp3Decoder {
                             return Some(Err(RespError::ParseError("invalid verbatim len".into())));
                         }
                     };
+                    if len > MAX_VERBATIM_LEN {
+                        return Some(Err(RespError::ParseError(
+                            "verbatim string length exceeds limit".into(),
+                        )));
+                    }
                     let need = nl + 1 + len + 2;
                     if self.buf.len() < need {
                         return None;
@@ -392,6 +406,13 @@ impl Resp3Decoder {
                     let line_len = pos + 1;
                     if line_len < 3 || self.buf[line_len - 2] != b'\r' {
                         return None;
+                    }
+                    // body length excludes '(' and CRLF
+                    let body_len = line_len - 3;
+                    if body_len > MAX_BIGNUM_LEN {
+                        return Some(Err(RespError::ParseError(
+                            "big number length exceeds limit".into(),
+                        )));
                     }
                     let chunk = self.buf.split_to(line_len);
                     let body = &chunk[1..chunk.len() - 2];
@@ -646,6 +667,38 @@ impl Resp3Decoder {
                     let line_len = pos + 1;
                     let line = &self.buf[..line_len];
                     if line.len() >= 2 && line[line.len() - 2] == b'\r' {
+                        // Enforce max length for inline commands
+                        let data_len = line_len - 2; // Exclude \r\n
+                        if data_len > MAX_INLINE_LEN {
+                            return Some(Err(RespError::ParseError(
+                                "inline command length exceeds limit".into(),
+                            )));
+                        }
+
+                        // Reject if first byte is a known RESP prefix or non-printable
+                        let first_byte = self.buf[0];
+                        if matches!(
+                            first_byte,
+                            b'+' | b'-'
+                                | b':'
+                                | b'$'
+                                | b'*'
+                                | b'%'
+                                | b'~'
+                                | b'>'
+                                | b'_'
+                                | b'#'
+                                | b','
+                                | b'!'
+                                | b'='
+                                | b'('
+                        ) || !(32..=126).contains(&first_byte)
+                        {
+                            return Some(Err(RespError::ParseError(
+                                "invalid inline command prefix".into(),
+                            )));
+                        }
+
                         let chunk = self.buf.split_to(line_len);
                         let data = &chunk[..chunk.len() - 2]; // Remove \r\n
                         let parts: Vec<Bytes> = data

@@ -67,13 +67,11 @@ fn deeply_nested_arrays() {
     // Second chunk: complete the deepest level
     decoder.push("+deep\r\n".into());
     let result2 = decoder.next();
-    println!("After second chunk: {:?}", result2);
     assert!(result2.is_none(), "Should still need more data");
 
     // Third chunk: complete middle level
     decoder.push("+middle\r\n".into());
     let result3 = decoder.next();
-    println!("After third chunk: {:?}", result3);
 
     // The parsing should be complete after the third chunk
     match result3 {
@@ -117,8 +115,8 @@ fn nested_map_incremental() {
     let result1 = decoder.next();
     assert!(result1.is_none(), "Should need more data for nested map");
 
-    // Second chunk: complete inner map + outer map value
-    decoder.push("+inner_key\r\n+inner_value\r\n+outer_value\r\n".into());
+    // Second chunk: complete inner map
+    decoder.push("+inner_key\r\n+inner_value\r\n".into());
     let result2 = decoder.next();
 
     match result2 {
@@ -155,8 +153,8 @@ fn mixed_nested_collections() {
         "Should need more data for mixed nested collections"
     );
 
-    // Second chunk: complete the set + map value
-    decoder.push("+set_item\r\n+map_value\r\n".into());
+    // Second chunk: complete the set
+    decoder.push("+set_item\r\n".into());
     let result2 = decoder.next();
 
     match result2 {
@@ -193,7 +191,6 @@ fn multiple_nested_messages() {
     // First chunk: two nested messages
     decoder.push("*1\r\n*1\r\n+first\r\n*1\r\n".into());
     let result1 = decoder.next();
-    println!("After first chunk: {:?}", result1);
     assert!(result1.is_some(), "Should have first complete message");
 
     // Second chunk: complete second message

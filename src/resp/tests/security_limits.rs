@@ -108,6 +108,96 @@ fn push_length_limit() {
 }
 
 #[test]
+fn bulk_error_length_limit() {
+    let mut decoder = new_decoder(RespVersion::RESP3);
+
+    // Test bulk error exceeding 512MB limit
+    let oversized_len = 512 * 1024 * 1024 + 1; // 512MB + 1 byte
+    let oversized_message = format!("!{}\r\n", oversized_len);
+
+    decoder.push(oversized_message.into());
+    let result = decoder.next();
+
+    assert!(result.is_some(), "Should return an error");
+    assert!(
+        result.unwrap().is_err(),
+        "Should return parse error for oversized bulk error"
+    );
+}
+
+#[test]
+fn verbatim_string_length_limit() {
+    let mut decoder = new_decoder(RespVersion::RESP3);
+
+    // Test verbatim string exceeding 512MB limit
+    let oversized_len = 512 * 1024 * 1024 + 1; // 512MB + 1 byte
+    let oversized_message = format!("=txt:{}\r\n", oversized_len);
+
+    decoder.push(oversized_message.into());
+    let result = decoder.next();
+
+    assert!(result.is_some(), "Should return an error");
+    assert!(
+        result.unwrap().is_err(),
+        "Should return parse error for oversized verbatim string"
+    );
+}
+
+#[test]
+fn big_number_length_limit() {
+    let mut decoder = new_decoder(RespVersion::RESP3);
+
+    // Test big number exceeding 16MB limit
+    let oversized_len = 16 * 1024 * 1024 + 1; // 16MB + 1 byte
+    let oversized_digits = "1".repeat(oversized_len);
+    let oversized_message = format!("({}\r\n", oversized_digits);
+
+    decoder.push(oversized_message.into());
+    let result = decoder.next();
+
+    assert!(result.is_some(), "Should return an error");
+    assert!(
+        result.unwrap().is_err(),
+        "Should return parse error for oversized big number"
+    );
+}
+
+#[test]
+fn inline_command_length_limit() {
+    let mut decoder = new_decoder(RespVersion::RESP3);
+
+    // Test inline command exceeding 4KB limit
+    let oversized_len = 4 * 1024 + 1; // 4KB + 1 byte
+    let oversized_command = "a".repeat(oversized_len) + "\r\n";
+
+    decoder.push(oversized_command.into());
+    let result = decoder.next();
+
+    assert!(result.is_some(), "Should return an error");
+    assert!(
+        result.unwrap().is_err(),
+        "Should return parse error for oversized inline command"
+    );
+}
+
+#[test]
+fn inline_command_invalid_prefix() {
+    let mut decoder = new_decoder(RespVersion::RESP3);
+
+    // Test inline command with non-printable character
+    let invalid_command = "\x01invalid\r\n";
+
+    decoder.push(invalid_command.into());
+    let result = decoder.next();
+
+    assert!(result.is_some(), "Should return an error");
+    assert!(
+        result.unwrap().is_err(),
+        "Should return parse error for invalid inline command prefix"
+    );
+}
+
+#[test]
 fn within_limits_should_work() {
     let mut decoder = new_decoder(RespVersion::RESP3);
 
