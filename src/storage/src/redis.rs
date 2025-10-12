@@ -29,6 +29,10 @@ use rocksdb::{
 use snafu::{OptionExt, ResultExt};
 
 use crate::base_value_format::{DATA_TYPE_TAG, DataType};
+use crate::custom_comparator::{
+    lists_data_key_comparator_name, lists_data_key_compare, zsets_score_key_comparator_name,
+    zsets_score_key_compare,
+};
 use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
@@ -177,6 +181,19 @@ impl Redis {
     ) -> ColumnFamilyDescriptor {
         let mut cf_opts = storage_options.options.clone();
         let mut table_opts = BlockBasedOptions::default();
+
+        // Set comparator
+        if cf_name == ColumnFamilyIndex::ListsDataCF.name() {
+            cf_opts.set_comparator(
+                lists_data_key_comparator_name(),
+                Box::new(lists_data_key_compare),
+            );
+        } else if cf_name == ColumnFamilyIndex::ZsetsScoreCF.name() {
+            cf_opts.set_comparator(
+                zsets_score_key_comparator_name(),
+                Box::new(zsets_score_key_compare),
+            );
+        }
 
         // Set bloom filter
         if use_bloom_filter {
