@@ -25,17 +25,218 @@ use crate::{
     types::{RespData, RespVersion},
 };
 
+#[derive(Debug, Clone, Default)]
+enum ParsingState {
+    #[default]
+    Idle,
+    Array {
+        expected_count: usize,
+        items: Vec<RespData>,
+    },
+    Map {
+        expected_pairs: usize,
+        items: Vec<(RespData, RespData)>,
+    },
+    MapWaitingForValue {
+        expected_pairs: usize,
+        items: Vec<(RespData, RespData)>,
+        current_key: RespData,
+    },
+    Set {
+        expected_count: usize,
+        items: Vec<RespData>,
+    },
+    Push {
+        expected_count: usize,
+        items: Vec<RespData>,
+    },
+}
+
 #[derive(Default)]
 pub struct Resp3Decoder {
     out: VecDeque<RespResult<RespData>>,
     buf: bytes::BytesMut,
+    state: ParsingState,
 }
 
 impl Resp3Decoder {
-    /// Parse a single RESP value from the buffer
-    /// Returns None if more data is needed, Some(Ok(value)) if parsing succeeded,
-    /// or Some(Err(error)) if parsing failed
+    /// Continue parsing an ongoing collection
+    fn continue_collection_parsing(&mut self) -> Option<RespResult<RespData>> {
+        match std::mem::replace(&mut self.state, ParsingState::Idle) {
+            ParsingState::Idle => {
+                self.state = ParsingState::Idle;
+                None
+            }
+            ParsingState::Array {
+                expected_count,
+                mut items,
+                ..
+            } => {
+                while items.len() < expected_count {
+                    if let Some(result) = self.parse_single_value_atomic() {
+                        match result {
+                            Ok(item) => items.push(item),
+                            Err(e) => {
+                                self.state = ParsingState::Idle;
+                                return Some(Err(e));
+                            }
+                        }
+                    } else {
+                        // Need more data, restore state
+                        self.state = ParsingState::Array {
+                            expected_count,
+                            items,
+                        };
+                        return None;
+                    }
+                }
+                // All elements parsed successfully
+                Some(Ok(RespData::Array(Some(items))))
+            }
+            ParsingState::Map {
+                expected_pairs,
+                mut items,
+                ..
+            } => {
+                while items.len() < expected_pairs {
+                    // Parse key
+                    if let Some(result) = self.parse_single_value_atomic() {
+                        match result {
+                            Ok(key) => {
+                                // Parse value
+                                if let Some(result) = self.parse_single_value_atomic() {
+                                    match result {
+                                        Ok(value) => items.push((key, value)),
+                                        Err(e) => {
+                                            self.state = ParsingState::Idle;
+                                            return Some(Err(e));
+                                        }
+                                    }
+                                } else {
+                                    // Need more data for value, save key and wait
+                                    self.state = ParsingState::MapWaitingForValue {
+                                        expected_pairs,
+                                        items,
+                                        current_key: key,
+                                    };
+                                    return None;
+                                }
+                            }
+                            Err(e) => {
+                                self.state = ParsingState::Idle;
+                                return Some(Err(e));
+                            }
+                        }
+                    } else {
+                        // Need more data for key, restore state
+                        self.state = ParsingState::Map {
+                            expected_pairs,
+                            items,
+                        };
+                        return None;
+                    }
+                }
+                // All pairs parsed successfully
+                Some(Ok(RespData::Map(items)))
+            }
+            ParsingState::MapWaitingForValue {
+                expected_pairs,
+                mut items,
+                current_key,
+            } => {
+                // Parse value for the saved key
+                if let Some(result) = self.parse_single_value_atomic() {
+                    match result {
+                        Ok(value) => {
+                            items.push((current_key, value));
+                            // Continue with remaining pairs
+                            self.state = ParsingState::Map {
+                                expected_pairs,
+                                items,
+                            };
+                            self.continue_collection_parsing()
+                        }
+                        Err(e) => {
+                            self.state = ParsingState::Idle;
+                            Some(Err(e))
+                        }
+                    }
+                } else {
+                    // Need more data, restore state
+                    self.state = ParsingState::MapWaitingForValue {
+                        expected_pairs,
+                        items,
+                        current_key,
+                    };
+                    None
+                }
+            }
+            ParsingState::Set {
+                expected_count,
+                mut items,
+                ..
+            } => {
+                while items.len() < expected_count {
+                    if let Some(result) = self.parse_single_value_atomic() {
+                        match result {
+                            Ok(item) => items.push(item),
+                            Err(e) => {
+                                self.state = ParsingState::Idle;
+                                return Some(Err(e));
+                            }
+                        }
+                    } else {
+                        // Need more data, restore state
+                        self.state = ParsingState::Set {
+                            expected_count,
+                            items,
+                        };
+                        return None;
+                    }
+                }
+                // All elements parsed successfully
+                Some(Ok(RespData::Set(items)))
+            }
+            ParsingState::Push {
+                expected_count,
+                mut items,
+                ..
+            } => {
+                while items.len() < expected_count {
+                    if let Some(result) = self.parse_single_value_atomic() {
+                        match result {
+                            Ok(item) => items.push(item),
+                            Err(e) => {
+                                self.state = ParsingState::Idle;
+                                return Some(Err(e));
+                            }
+                        }
+                    } else {
+                        // Need more data, restore state
+                        self.state = ParsingState::Push {
+                            expected_count,
+                            items,
+                        };
+                        return None;
+                    }
+                }
+                // All elements parsed successfully
+                Some(Ok(RespData::Push(items)))
+            }
+        }
+    }
+
+    /// Parse a single RESP value (with state tracking for collections)
     fn parse_single_value(&mut self) -> Option<RespResult<RespData>> {
+        // First, try to continue parsing any ongoing collection
+        if let Some(result) = self.continue_collection_parsing() {
+            return Some(result);
+        }
+        self.parse_single_value_atomic()
+    }
+
+    /// Parse a single RESP value atomically (without state tracking)
+    fn parse_single_value_atomic(&mut self) -> Option<RespResult<RespData>> {
         if self.buf.is_empty() {
             return None;
         }
@@ -169,10 +370,10 @@ impl Resp3Decoder {
             b'(' => {
                 if let Some(pos) = memchr::memchr(b'\n', &self.buf) {
                     let line_len = pos + 1;
-                    let chunk = self.buf.split_to(line_len);
-                    if chunk.len() < 3 || chunk[chunk.len() - 2] != b'\r' {
+                    if line_len < 3 || self.buf[line_len - 2] != b'\r' {
                         return None;
                     }
+                    let chunk = self.buf.split_to(line_len);
                     let body = &chunk[1..chunk.len() - 2];
                     match std::str::from_utf8(body) {
                         Ok(s) => Some(Ok(RespData::BigNumber(s.to_string()))),
@@ -293,36 +494,14 @@ impl Resp3Decoder {
                         let _ = self.buf.split_to(nl + 1);
                         Some(Ok(RespData::Array(None)))
                     } else if len >= 0 {
-                        // Store header length to consume later
-                        let header_len = nl + 1;
-                        let mut items = Vec::with_capacity(len as usize);
-
-                        // Temporarily move data after header to parse elements
-                        let mut temp_buf = self.buf.split_off(header_len);
-                        std::mem::swap(&mut self.buf, &mut temp_buf);
-
-                        for _ in 0..len {
-                            if let Some(result) = self.parse_single_value() {
-                                match result {
-                                    Ok(item) => items.push(item),
-                                    Err(e) => {
-                                        // Restore buffer: prepend header back
-                                        let remaining = self.buf.split_off(0);
-                                        self.buf = temp_buf;
-                                        self.buf.extend_from_slice(&remaining);
-                                        return Some(Err(e));
-                                    }
-                                }
-                            } else {
-                                // Need more data, restore the buffer and return None
-                                let remaining = self.buf.split_off(0);
-                                self.buf = temp_buf;
-                                self.buf.extend_from_slice(&remaining);
-                                return None;
-                            }
-                        }
-                        // Success: header was already consumed during parsing
-                        Some(Ok(RespData::Array(Some(items))))
+                        // Consume header and start array parsing state
+                        let _ = self.buf.split_to(nl + 1);
+                        self.state = ParsingState::Array {
+                            expected_count: len as usize,
+                            items: Vec::with_capacity(len as usize),
+                        };
+                        // Continue parsing elements
+                        self.continue_collection_parsing()
                     } else {
                         Some(Err(RespError::ParseError("negative array len".into())))
                     }
@@ -346,59 +525,14 @@ impl Resp3Decoder {
                             return Some(Err(RespError::ParseError("invalid map len".into())));
                         }
                     };
-                    // Store header length to consume later
-                    let header_len = nl + 1;
-                    let mut items = Vec::with_capacity(pairs);
-
-                    // Temporarily move data after header to parse elements
-                    let mut temp_buf = self.buf.split_off(header_len);
-                    std::mem::swap(&mut self.buf, &mut temp_buf);
-
-                    for _ in 0..pairs {
-                        // parse key
-                        if let Some(result) = self.parse_single_value() {
-                            match result {
-                                Ok(k) => {
-                                    // parse value
-                                    if let Some(result) = self.parse_single_value() {
-                                        match result {
-                                            Ok(v) => {
-                                                items.push((k, v));
-                                            }
-                                            Err(e) => {
-                                                // Restore buffer: prepend header back
-                                                let remaining = self.buf.split_off(0);
-                                                self.buf = temp_buf;
-                                                self.buf.extend_from_slice(&remaining);
-                                                return Some(Err(e));
-                                            }
-                                        }
-                                    } else {
-                                        // Need more data, restore the buffer and return
-                                        let remaining = self.buf.split_off(0);
-                                        self.buf = temp_buf;
-                                        self.buf.extend_from_slice(&remaining);
-                                        return None;
-                                    }
-                                }
-                                Err(e) => {
-                                    // Restore buffer: prepend header back
-                                    let remaining = self.buf.split_off(0);
-                                    self.buf = temp_buf;
-                                    self.buf.extend_from_slice(&remaining);
-                                    return Some(Err(e));
-                                }
-                            }
-                        } else {
-                            // Need more data, restore the buffer and return
-                            let remaining = self.buf.split_off(0);
-                            self.buf = temp_buf;
-                            self.buf.extend_from_slice(&remaining);
-                            return None;
-                        }
-                    }
-                    // Success: header was already consumed during parsing
-                    Some(Ok(RespData::Map(items)))
+                    // Consume header and start map parsing state
+                    let _ = self.buf.split_to(nl + 1);
+                    self.state = ParsingState::Map {
+                        expected_pairs: pairs,
+                        items: Vec::with_capacity(pairs),
+                    };
+                    // Continue parsing pairs
+                    self.continue_collection_parsing()
                 } else {
                     None
                 }
@@ -419,38 +553,14 @@ impl Resp3Decoder {
                             return Some(Err(RespError::ParseError("invalid set len".into())));
                         }
                     };
-                    // Store header length to consume later
-                    let header_len = nl + 1;
-                    let mut items = Vec::with_capacity(count);
-
-                    // Temporarily move data after header to parse elements
-                    let mut temp_buf = self.buf.split_off(header_len);
-                    std::mem::swap(&mut self.buf, &mut temp_buf);
-
-                    for _ in 0..count {
-                        if let Some(result) = self.parse_single_value() {
-                            match result {
-                                Ok(val) => {
-                                    items.push(val);
-                                }
-                                Err(e) => {
-                                    // Restore buffer: prepend header back
-                                    let remaining = self.buf.split_off(0);
-                                    self.buf = temp_buf;
-                                    self.buf.extend_from_slice(&remaining);
-                                    return Some(Err(e));
-                                }
-                            }
-                        } else {
-                            // Need more data, restore the buffer and return
-                            let remaining = self.buf.split_off(0);
-                            self.buf = temp_buf;
-                            self.buf.extend_from_slice(&remaining);
-                            return None;
-                        }
-                    }
-                    // Success: header was already consumed during parsing
-                    Some(Ok(RespData::Set(items)))
+                    // Consume header and start set parsing state
+                    let _ = self.buf.split_to(nl + 1);
+                    self.state = ParsingState::Set {
+                        expected_count: count,
+                        items: Vec::with_capacity(count),
+                    };
+                    // Continue parsing elements
+                    self.continue_collection_parsing()
                 } else {
                     None
                 }
@@ -471,38 +581,14 @@ impl Resp3Decoder {
                             return Some(Err(RespError::ParseError("invalid push len".into())));
                         }
                     };
-                    // Store header length to consume later
-                    let header_len = nl + 1;
-                    let mut items = Vec::with_capacity(count);
-
-                    // Temporarily move data after header to parse elements
-                    let mut temp_buf = self.buf.split_off(header_len);
-                    std::mem::swap(&mut self.buf, &mut temp_buf);
-
-                    for _ in 0..count {
-                        if let Some(result) = self.parse_single_value() {
-                            match result {
-                                Ok(val) => {
-                                    items.push(val);
-                                }
-                                Err(e) => {
-                                    // Restore buffer: prepend header back
-                                    let remaining = self.buf.split_off(0);
-                                    self.buf = temp_buf;
-                                    self.buf.extend_from_slice(&remaining);
-                                    return Some(Err(e));
-                                }
-                            }
-                        } else {
-                            // Need more data, restore the buffer and return
-                            let remaining = self.buf.split_off(0);
-                            self.buf = temp_buf;
-                            self.buf.extend_from_slice(&remaining);
-                            return None;
-                        }
-                    }
-                    // Success: header was already consumed during parsing
-                    Some(Ok(RespData::Push(items)))
+                    // Consume header and start push parsing state
+                    let _ = self.buf.split_to(nl + 1);
+                    self.state = ParsingState::Push {
+                        expected_count: count,
+                        items: Vec::with_capacity(count),
+                    };
+                    // Continue parsing elements
+                    self.continue_collection_parsing()
                 } else {
                     None
                 }
@@ -557,6 +643,7 @@ impl Decoder for Resp3Decoder {
     fn reset(&mut self) {
         self.out.clear();
         self.buf.clear();
+        self.state = ParsingState::Idle;
     }
 
     fn version(&self) -> RespVersion {
