@@ -66,17 +66,19 @@ impl Encoder for Resp3Encoder {
                 out.extend_from_slice(b"\r\n");
             }
             RespData::BulkError(b) => {
-                use core::fmt::Write as _;
                 let len = b.len();
-                let _ = write!(out, "!{}\r\n", len);
+                out.extend_from_slice(b"!");
+                out.extend_from_slice(len.to_string().as_bytes());
+                out.extend_from_slice(b"\r\n");
                 out.extend_from_slice(b);
                 out.extend_from_slice(b"\r\n");
             }
             RespData::VerbatimString { format, data } => {
-                use core::fmt::Write as _;
                 // fmt: exactly 3 bytes
                 let payload_len = 3 + 1 + data.len();
-                let _ = write!(out, "={}\r\n", payload_len);
+                out.extend_from_slice(b"=");
+                out.extend_from_slice(payload_len.to_string().as_bytes());
+                out.extend_from_slice(b"\r\n");
                 out.extend_from_slice(format);
                 out.extend_from_slice(b":");
                 out.extend_from_slice(data);
@@ -88,23 +90,26 @@ impl Encoder for Resp3Encoder {
                 out.extend_from_slice(b"\r\n");
             }
             RespData::Map(entries) => {
-                use core::fmt::Write as _;
-                let _ = write!(out, "%{}\r\n", entries.len());
+                out.extend_from_slice(b"%");
+                out.extend_from_slice(entries.len().to_string().as_bytes());
+                out.extend_from_slice(b"\r\n");
                 for (k, v) in entries {
                     self.encode_into(k, out)?;
                     self.encode_into(v, out)?;
                 }
             }
             RespData::Set(items) => {
-                use core::fmt::Write as _;
-                let _ = write!(out, "~{}\r\n", items.len());
+                out.extend_from_slice(b"~");
+                out.extend_from_slice(items.len().to_string().as_bytes());
+                out.extend_from_slice(b"\r\n");
                 for it in items {
                     self.encode_into(it, out)?;
                 }
             }
             RespData::Push(items) => {
-                use core::fmt::Write as _;
-                let _ = write!(out, ">{}\r\n", items.len());
+                out.extend_from_slice(b">");
+                out.extend_from_slice(items.len().to_string().as_bytes());
+                out.extend_from_slice(b"\r\n");
                 for it in items {
                     self.encode_into(it, out)?;
                 }
@@ -115,9 +120,10 @@ impl Encoder for Resp3Encoder {
                     self.resp2_encoder = Some(RespEncoder::new(RespVersion::RESP2));
                 }
                 let encoder = self.resp2_encoder.as_mut().unwrap();
-                encoder
-                    .clear()
-                    .append_simple_string(std::str::from_utf8(s).unwrap_or(""));
+                let s = std::str::from_utf8(s).map_err(|_| {
+                    crate::error::RespError::ParseError("invalid UTF-8 in SimpleString".into())
+                })?;
+                encoder.clear().append_simple_string(s);
                 out.extend_from_slice(&encoder.get_response());
             }
             RespData::Error(s) => {
