@@ -22,11 +22,11 @@ use resp::{RespData, RespVersion, decode_many, new_decoder};
 fn parse_simple_string_ok() {
     let mut dec = new_decoder(RespVersion::RESP2);
     let out = decode_many(&mut *dec, Bytes::from("+OK\r\n"));
-    assert!(out.len() >= 1);
+    assert_eq!(out.len(), 1);
     let v = out[0].as_ref().unwrap();
     match v {
         RespData::SimpleString(s) => assert_eq!(s.as_ref(), b"OK"),
-        _ => panic!(),
+        other => panic!("Expected SimpleString, got {:?}", other),
     }
 }
 
@@ -37,7 +37,7 @@ fn parse_integer() {
     let v = out[0].as_ref().unwrap();
     match v {
         RespData::Integer(n) => assert_eq!(*n, 1000),
-        _ => panic!(),
+        other => panic!("Expected Integer, got {:?}", other),
     }
 }
 
@@ -50,6 +50,6 @@ fn parse_bulk_and_array() {
         RespData::Array(Some(items)) => {
             assert_eq!(items.len(), 2);
         }
-        _ => panic!(),
+        other => panic!("Expected Array, got {:?}", other),
     }
 }

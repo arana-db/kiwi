@@ -27,7 +27,7 @@ fn bulk_error_roundtrip() {
     let out = decode_many(&mut *dec, bytes);
     match out[0].as_ref().unwrap() {
         RespData::BulkError(s) => assert_eq!(s.as_ref(), b"ERR something"),
-        _ => panic!(),
+        other => panic!("Expected BulkError, got {:?}", other),
     }
 }
 
@@ -46,7 +46,7 @@ fn verbatim_string_roundtrip() {
             assert_eq!(format, b"txt");
             assert_eq!(data.as_ref(), b"hello");
         }
-        _ => panic!(),
+        other => panic!("Expected VerbatimString, got {:?}", other),
     }
 }
 
@@ -59,6 +59,6 @@ fn bignumber_roundtrip() {
     let out = decode_many(&mut *dec, bytes);
     match out[0].as_ref().unwrap() {
         RespData::BigNumber(s) => assert_eq!(s, "12345678901234567890"),
-        _ => panic!(),
+        other => panic!("Expected BigNumber, got {:?}", other),
     }
 }

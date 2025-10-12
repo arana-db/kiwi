@@ -31,7 +31,7 @@ fn set_roundtrip() {
     let out = decode_many(&mut *dec, bytes);
     match out[0].as_ref().unwrap() {
         RespData::Set(items) => assert_eq!(items.len(), 3),
-        _ => panic!(),
+        other => panic!("Expected Set, got {:?}", other),
     }
 }
 
@@ -47,7 +47,7 @@ fn map_roundtrip() {
     let out = decode_many(&mut *dec, bytes);
     match out[0].as_ref().unwrap() {
         RespData::Map(entries) => assert_eq!(entries.len(), 2),
-        _ => panic!(),
+        other => panic!("Expected Map, got {:?}", other),
     }
 }
 
@@ -60,6 +60,6 @@ fn push_roundtrip() {
     let out = decode_many(&mut *dec, bytes);
     match out[0].as_ref().unwrap() {
         RespData::Push(items) => assert_eq!(items.len(), 2),
-        _ => panic!(),
+        other => panic!("Expected Push, got {:?}", other),
     }
 }

@@ -22,8 +22,15 @@ use resp::{RespData, RespVersion, decode_many, new_decoder};
 fn inline_ping() {
     let mut dec = new_decoder(RespVersion::RESP1);
     let out = decode_many(&mut *dec, Bytes::from("PING\r\n"));
-    // Not required to convert to command, just verify no crash and produces a frame
-    assert!(out.len() >= 1);
+    assert_eq!(out.len(), 1, "Expected exactly one decoded frame");
+    // Verify it's an Inline command
+    match out[0].as_ref().unwrap() {
+        RespData::Inline(parts) => {
+            assert_eq!(parts.len(), 1);
+            assert_eq!(parts[0].as_ref(), b"PING");
+        }
+        other => panic!("Expected Inline command, got {:?}", other),
+    }
 }
 
 #[test]
@@ -33,6 +40,6 @@ fn simple_string_ok() {
     let v = out[0].as_ref().unwrap();
     match v {
         RespData::SimpleString(s) => assert_eq!(s.as_ref(), b"OK"),
-        _ => panic!(),
+        _ => panic!("Expected SimpleString, got {:?}", v),
     }
 }

@@ -370,6 +370,11 @@ impl RespEncode for RespEncoder {
                 }
                 self.append_crlf()
             }
+            // RESP3-only variants (Null, Boolean, Double, BulkError, VerbatimString,
+            // BigNumber, Map, Set, Push) are not encoded in the legacy RESP2 encoder
+            // and are silently skipped. These should be handled by version-specific
+            // encoders (Resp1Encoder, Resp2Encoder, Resp3Encoder) with appropriate
+            // downlevel conversion policies.
             _ => self,
         }
     }

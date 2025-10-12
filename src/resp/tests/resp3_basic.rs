@@ -21,8 +21,9 @@ use resp::{RespData, RespVersion, decode_many, new_decoder, new_encoder};
 #[test]
 fn resp3_null_boolean_double_decode() {
     let mut dec = new_decoder(RespVersion::RESP3);
-    let out = decode_many(&mut *dec, Bytes::from("_\r\n#t\r\n,f1.5\r\n"));
-    assert!(out.len() >= 2);
+    // Use separate inputs for clarity
+    let out = decode_many(&mut *dec, Bytes::from("_\r\n#t\r\n,1.5\r\n"));
+    assert_eq!(out.len(), 3, "Expected three decoded frames");
     match out[0].as_ref().unwrap() {
         RespData::Null => {}
         _ => panic!("expected Null"),
@@ -31,7 +32,10 @@ fn resp3_null_boolean_double_decode() {
         RespData::Boolean(true) => {}
         _ => panic!("expected Boolean(true)"),
     }
-    // third may be invalid until double formatting chosen; skip if parse failed
+    match out[2].as_ref().unwrap() {
+        RespData::Double(v) if (*v - 1.5).abs() < f64::EPSILON => {}
+        _ => panic!("expected Double(1.5)"),
+    }
 }
 
 #[test]
