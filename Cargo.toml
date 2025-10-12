@@ -59,6 +59,7 @@ storage = { path = "src/storage" }
 kstd = { path = "src/kstd" }
 common-macro = { path = "src/common/macro" }
 net = { path = "src/net" }
+conf = { path = "src/conf" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

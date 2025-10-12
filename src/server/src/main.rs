@@ -15,8 +15,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use log::info;
+use log::{info, error};
 use net::ServerFactory;
+use conf::config::Config;
+use std::env;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
@@ -24,10 +26,38 @@ async fn main() -> std::io::Result<()> {
     // set env RUST_LOG=level to control
     env_logger::init();
 
-    let addr = String::from("127.0.0.1:9221");
+    // Parse command line arguments
+    let args: Vec<String> = env::args().collect();
+    
+    if args.len() < 2 {
+        error!("Usage: {} <config_file>", args[0]);
+        error!("Example: {} /path/to/kiwi.conf", args[0]);
+        return Err(std::io::Error::other("Missing configuration file argument"));
+    }
+    
+    let config_path = &args[1];
+    
+    // Load configuration from Redis-style config file
+    let config = match Config::load(config_path) {
+        Ok(config) => {
+            info!("Configuration loaded successfully from {}", config_path);
+            config
+        }
+        Err(e) => {
+            error!("Failed to load configuration from {}: {}", config_path, e);
+            error!("Using default configuration");
+            Config::default()
+        }
+    };
+
+    let addr = config.get_listen_address();
     let protocol = "tcp";
 
-    info!("tcp listener listen on {addr}");
+    info!("Kiwi Redis-compatible server starting...");
+    info!("Listen address: {}", addr);
+    info!("Redis compatible mode: {}", config.redis_compatible_mode);
+    info!("Memory limit: {} bytes", config.memory);
+    
     if let Some(server) = ServerFactory::create_server(protocol, Option::from(addr)) {
         server.run().await.expect("Failed to start the server. Please check the server configuration and ensure the address is available.");
     } else {
