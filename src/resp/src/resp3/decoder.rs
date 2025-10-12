@@ -293,19 +293,35 @@ impl Resp3Decoder {
                         let _ = self.buf.split_to(nl + 1);
                         Some(Ok(RespData::Array(None)))
                     } else if len >= 0 {
-                        let _ = self.buf.split_to(nl + 1);
+                        // Store header length to consume later
+                        let header_len = nl + 1;
                         let mut items = Vec::with_capacity(len as usize);
+
+                        // Temporarily move data after header to parse elements
+                        let mut temp_buf = self.buf.split_off(header_len);
+                        std::mem::swap(&mut self.buf, &mut temp_buf);
+
                         for _ in 0..len {
                             if let Some(result) = self.parse_single_value() {
                                 match result {
                                     Ok(item) => items.push(item),
-                                    Err(e) => return Some(Err(e)),
+                                    Err(e) => {
+                                        // Restore buffer: prepend header back
+                                        let remaining = self.buf.split_off(0);
+                                        self.buf = temp_buf;
+                                        self.buf.extend_from_slice(&remaining);
+                                        return Some(Err(e));
+                                    }
                                 }
                             } else {
                                 // Need more data, restore the buffer and return None
+                                let remaining = self.buf.split_off(0);
+                                self.buf = temp_buf;
+                                self.buf.extend_from_slice(&remaining);
                                 return None;
                             }
                         }
+                        // Success: header was already consumed during parsing
                         Some(Ok(RespData::Array(Some(items))))
                     } else {
                         Some(Err(RespError::ParseError("negative array len".into())))
@@ -330,8 +346,14 @@ impl Resp3Decoder {
                             return Some(Err(RespError::ParseError("invalid map len".into())));
                         }
                     };
-                    let _ = self.buf.split_to(nl + 1);
+                    // Store header length to consume later
+                    let header_len = nl + 1;
                     let mut items = Vec::with_capacity(pairs);
+
+                    // Temporarily move data after header to parse elements
+                    let mut temp_buf = self.buf.split_off(header_len);
+                    std::mem::swap(&mut self.buf, &mut temp_buf);
+
                     for _ in 0..pairs {
                         // parse key
                         if let Some(result) = self.parse_single_value() {
@@ -344,23 +366,38 @@ impl Resp3Decoder {
                                                 items.push((k, v));
                                             }
                                             Err(e) => {
+                                                // Restore buffer: prepend header back
+                                                let remaining = self.buf.split_off(0);
+                                                self.buf = temp_buf;
+                                                self.buf.extend_from_slice(&remaining);
                                                 return Some(Err(e));
                                             }
                                         }
                                     } else {
                                         // Need more data, restore the buffer and return
+                                        let remaining = self.buf.split_off(0);
+                                        self.buf = temp_buf;
+                                        self.buf.extend_from_slice(&remaining);
                                         return None;
                                     }
                                 }
                                 Err(e) => {
+                                    // Restore buffer: prepend header back
+                                    let remaining = self.buf.split_off(0);
+                                    self.buf = temp_buf;
+                                    self.buf.extend_from_slice(&remaining);
                                     return Some(Err(e));
                                 }
                             }
                         } else {
                             // Need more data, restore the buffer and return
+                            let remaining = self.buf.split_off(0);
+                            self.buf = temp_buf;
+                            self.buf.extend_from_slice(&remaining);
                             return None;
                         }
                     }
+                    // Success: header was already consumed during parsing
                     Some(Ok(RespData::Map(items)))
                 } else {
                     None
@@ -382,8 +419,14 @@ impl Resp3Decoder {
                             return Some(Err(RespError::ParseError("invalid set len".into())));
                         }
                     };
-                    let _ = self.buf.split_to(nl + 1);
+                    // Store header length to consume later
+                    let header_len = nl + 1;
                     let mut items = Vec::with_capacity(count);
+
+                    // Temporarily move data after header to parse elements
+                    let mut temp_buf = self.buf.split_off(header_len);
+                    std::mem::swap(&mut self.buf, &mut temp_buf);
+
                     for _ in 0..count {
                         if let Some(result) = self.parse_single_value() {
                             match result {
@@ -391,14 +434,22 @@ impl Resp3Decoder {
                                     items.push(val);
                                 }
                                 Err(e) => {
+                                    // Restore buffer: prepend header back
+                                    let remaining = self.buf.split_off(0);
+                                    self.buf = temp_buf;
+                                    self.buf.extend_from_slice(&remaining);
                                     return Some(Err(e));
                                 }
                             }
                         } else {
                             // Need more data, restore the buffer and return
+                            let remaining = self.buf.split_off(0);
+                            self.buf = temp_buf;
+                            self.buf.extend_from_slice(&remaining);
                             return None;
                         }
                     }
+                    // Success: header was already consumed during parsing
                     Some(Ok(RespData::Set(items)))
                 } else {
                     None
@@ -420,8 +471,14 @@ impl Resp3Decoder {
                             return Some(Err(RespError::ParseError("invalid push len".into())));
                         }
                     };
-                    let _ = self.buf.split_to(nl + 1);
+                    // Store header length to consume later
+                    let header_len = nl + 1;
                     let mut items = Vec::with_capacity(count);
+
+                    // Temporarily move data after header to parse elements
+                    let mut temp_buf = self.buf.split_off(header_len);
+                    std::mem::swap(&mut self.buf, &mut temp_buf);
+
                     for _ in 0..count {
                         if let Some(result) = self.parse_single_value() {
                             match result {
@@ -429,14 +486,22 @@ impl Resp3Decoder {
                                     items.push(val);
                                 }
                                 Err(e) => {
+                                    // Restore buffer: prepend header back
+                                    let remaining = self.buf.split_off(0);
+                                    self.buf = temp_buf;
+                                    self.buf.extend_from_slice(&remaining);
                                     return Some(Err(e));
                                 }
                             }
                         } else {
                             // Need more data, restore the buffer and return
+                            let remaining = self.buf.split_off(0);
+                            self.buf = temp_buf;
+                            self.buf.extend_from_slice(&remaining);
                             return None;
                         }
                     }
+                    // Success: header was already consumed during parsing
                     Some(Ok(RespData::Push(items)))
                 } else {
                     None
