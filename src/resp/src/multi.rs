@@ -81,7 +81,7 @@ pub fn decode_many(decoder: &mut dyn Decoder, chunk: Bytes) -> Vec<RespResult<Re
 /// assert_eq!(bytes.as_ref(), b"+OK\r\n:42\r\n");
 /// ```
 pub fn encode_many(encoder: &mut dyn Encoder, values: &[RespData]) -> RespResult<Bytes> {
-    let mut buf = BytesMut::new();
+    let mut buf = BytesMut::with_capacity(values.len() * 32); // Rough estimate
     for v in values {
         encoder.encode_into(v, &mut buf)?;
     }
