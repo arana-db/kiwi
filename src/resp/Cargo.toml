@@ -10,3 +10,4 @@ workspace = true
 bytes.workspace = true
 thiserror.workspace = true
 nom.workspace = true
+memchr = "2"

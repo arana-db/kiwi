@@ -35,7 +35,7 @@ use crate::{
     types::{RespData, RespVersion},
 };
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum RespParseResult {
     Complete(RespData),
     Incomplete,

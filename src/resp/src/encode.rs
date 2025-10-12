@@ -370,6 +370,7 @@ impl RespEncode for RespEncoder {
                 }
                 self.append_crlf()
             }
+            _ => self,
         }
     }
 }

@@ -15,31 +15,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod command;
-pub mod compat;
-pub mod encode;
-pub mod error;
-pub mod parse;
-pub mod types;
+use bytes::{Bytes, BytesMut};
 
-// Versioned modules
-pub mod resp1;
-pub mod resp2;
-pub mod resp3;
+use crate::{
+    error::RespResult,
+    types::{RespData, RespVersion},
+};
 
-// Unified traits and helpers
-pub mod factory;
-pub mod multi;
-pub mod traits;
+pub trait Decoder {
+    fn push(&mut self, data: Bytes);
+    fn next(&mut self) -> Option<RespResult<RespData>>;
+    fn reset(&mut self);
+    fn version(&self) -> RespVersion;
+}
 
-pub use command::{Command, CommandType, RespCommand};
-pub use compat::{BooleanMode, DoubleMode, DownlevelPolicy, MapMode};
-pub use encode::{CmdRes, RespEncode};
-pub use error::{RespError, RespResult};
-pub use factory::{new_decoder, new_encoder, new_encoder_with_policy};
-pub use multi::{decode_many, encode_many};
-pub use parse::{Parse, RespParse, RespParseResult};
-pub use traits::{Decoder, Encoder};
-pub use types::{RespData, RespType, RespVersion};
-
-pub const CRLF: &str = "\r\n";
+pub trait Encoder {
+    fn encode_one(&mut self, data: &RespData) -> RespResult<Bytes>;
+    fn encode_into(&mut self, data: &RespData, out: &mut BytesMut) -> RespResult<()>;
+    fn version(&self) -> RespVersion;
+}

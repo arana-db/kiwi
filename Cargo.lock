@@ -1859,6 +1859,7 @@ name = "resp"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "memchr",
  "nom 8.0.0",
  "thiserror 1.0.69",
 ]

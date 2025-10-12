@@ -15,31 +15,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod command;
-pub mod compat;
-pub mod encode;
-pub mod error;
-pub mod parse;
-pub mod types;
+use bytes::{Bytes, BytesMut};
 
-// Versioned modules
-pub mod resp1;
-pub mod resp2;
-pub mod resp3;
+use crate::{
+    error::RespResult,
+    traits::{Decoder, Encoder},
+    types::RespData,
+};
 
-// Unified traits and helpers
-pub mod factory;
-pub mod multi;
-pub mod traits;
+pub fn decode_many(decoder: &mut dyn Decoder, chunk: Bytes) -> Vec<RespResult<RespData>> {
+    decoder.push(chunk);
+    let mut out = Vec::new();
+    while let Some(frame) = decoder.next() {
+        out.push(frame);
+    }
+    out
+}
 
-pub use command::{Command, CommandType, RespCommand};
-pub use compat::{BooleanMode, DoubleMode, DownlevelPolicy, MapMode};
-pub use encode::{CmdRes, RespEncode};
-pub use error::{RespError, RespResult};
-pub use factory::{new_decoder, new_encoder, new_encoder_with_policy};
-pub use multi::{decode_many, encode_many};
-pub use parse::{Parse, RespParse, RespParseResult};
-pub use traits::{Decoder, Encoder};
-pub use types::{RespData, RespType, RespVersion};
-
-pub const CRLF: &str = "\r\n";
+pub fn encode_many(encoder: &mut dyn Encoder, values: &[RespData]) -> RespResult<Bytes> {
+    let mut buf = BytesMut::new();
+    for v in values {
+        encoder.encode_into(v, &mut buf)?;
+    }
+    Ok(buf.freeze())
+}

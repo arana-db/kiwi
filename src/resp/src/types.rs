@@ -24,6 +24,7 @@ pub enum RespVersion {
     RESP1,
     #[default]
     RESP2,
+    RESP3,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +35,16 @@ pub enum RespType {
     BulkString,
     Array,
     Inline,
+    // RESP3 additions (used for inspection only)
+    Null,
+    Boolean,
+    Double,
+    BulkError,
+    VerbatimString,
+    BigNumber,
+    Map,
+    Set,
+    Push,
 }
 
 impl RespType {
@@ -44,6 +55,15 @@ impl RespType {
             b':' => Some(RespType::Integer),
             b'$' => Some(RespType::BulkString),
             b'*' => Some(RespType::Array),
+            b'_' => Some(RespType::Null),
+            b'#' => Some(RespType::Boolean),
+            b',' => Some(RespType::Double),
+            b'!' => Some(RespType::BulkError),
+            b'=' => Some(RespType::VerbatimString),
+            b'(' => Some(RespType::BigNumber),
+            b'%' => Some(RespType::Map),
+            b'~' => Some(RespType::Set),
+            b'>' => Some(RespType::Push),
             _ => None,
         }
     }
@@ -56,11 +76,20 @@ impl RespType {
             RespType::BulkString => Some(b'$'),
             RespType::Array => Some(b'*'),
             RespType::Inline => None,
+            RespType::Null => Some(b'_'),
+            RespType::Boolean => Some(b'#'),
+            RespType::Double => Some(b','),
+            RespType::BulkError => Some(b'!'),
+            RespType::VerbatimString => Some(b'='),
+            RespType::BigNumber => Some(b'('),
+            RespType::Map => Some(b'%'),
+            RespType::Set => Some(b'~'),
+            RespType::Push => Some(b'>'),
         }
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub enum RespData {
     SimpleString(Bytes),
     Error(Bytes),
@@ -68,6 +97,16 @@ pub enum RespData {
     BulkString(Option<Bytes>),
     Array(Option<Vec<RespData>>),
     Inline(Vec<Bytes>),
+    // RESP3 additions (subset; full coverage to be added gradually)
+    Null,
+    Boolean(bool),
+    Double(f64),
+    BulkError(Bytes),
+    VerbatimString { format: [u8; 3], data: Bytes },
+    BigNumber(String),
+    Map(Vec<(RespData, RespData)>),
+    Set(Vec<RespData>),
+    Push(Vec<RespData>),
 }
 
 impl Default for RespData {
@@ -85,6 +124,15 @@ impl RespData {
             RespData::BulkString(_) => RespType::BulkString,
             RespData::Array(_) => RespType::Array,
             RespData::Inline(_) => RespType::Inline,
+            RespData::Null => RespType::Null,
+            RespData::Boolean(_) => RespType::Boolean,
+            RespData::Double(_) => RespType::Double,
+            RespData::BulkError(_) => RespType::BulkError,
+            RespData::VerbatimString { .. } => RespType::VerbatimString,
+            RespData::BigNumber(_) => RespType::BigNumber,
+            RespData::Map(_) => RespType::Map,
+            RespData::Set(_) => RespType::Set,
+            RespData::Push(_) => RespType::Push,
         }
     }
 
@@ -165,6 +213,28 @@ impl fmt::Debug for RespData {
                 write!(f, "{parts_str:?}")?;
                 write!(f, ")")
             }
+            RespData::Null => write!(f, "Null"),
+            RespData::Boolean(b) => write!(f, "Boolean({b})"),
+            RespData::Double(d) => write!(f, "Double({d})"),
+            RespData::BulkError(bytes) => {
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    write!(f, "BulkError(\"{s}\")")
+                } else {
+                    write!(f, "BulkError({bytes:?})")
+                }
+            }
+            RespData::VerbatimString { format, data } => {
+                if let Ok(s) = std::str::from_utf8(data) {
+                    let fmt = std::str::from_utf8(format).unwrap_or("???");
+                    write!(f, "VerbatimString({fmt}:{s})")
+                } else {
+                    write!(f, "VerbatimString({:?}:{:?})", format, data)
+                }
+            }
+            RespData::BigNumber(s) => write!(f, "BigNumber({s})"),
+            RespData::Map(entries) => write!(f, "Map(len={})", entries.len()),
+            RespData::Set(items) => write!(f, "Set(len={})", items.len()),
+            RespData::Push(items) => write!(f, "Push(len={})", items.len()),
         }
     }
 }
