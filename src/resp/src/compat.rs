@@ -43,7 +43,7 @@ pub enum MapMode {
 }
 
 /// Configuration for converting RESP3 types to older RESP versions.
-/// 
+///
 /// This policy defines how RESP3-specific types (Boolean, Double, Map, etc.)
 /// should be represented when encoding to RESP1 or RESP2 protocols.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,7 +58,7 @@ pub struct DownlevelPolicy {
 
 impl Default for DownlevelPolicy {
     /// Creates a default downlevel policy with conservative conversion settings.
-    /// 
+    ///
     /// Default settings:
     /// - Boolean → Integer (true → :1, false → :0)
     /// - Double → BulkString (3.14 → $4\r\n3.14\r\n)

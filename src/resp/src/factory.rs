@@ -15,10 +15,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// Factory functions for creating RESP protocol encoders and decoders.
-/// 
-/// This module provides convenient factory functions to create version-specific
-/// encoder and decoder instances based on the desired RESP protocol version.
+//! Factory functions for creating RESP protocol encoders and decoders.
+//!
+//! This module provides convenient factory functions to create version-specific
+//! encoder and decoder instances based on the desired RESP protocol version.
 
 use crate::{
     compat::DownlevelPolicy,
@@ -27,17 +27,17 @@ use crate::{
 };
 
 /// Create a new decoder for the specified RESP version.
-/// 
+///
 /// # Arguments
 /// * `version` - The RESP protocol version to create a decoder for
-/// 
+///
 /// # Returns
 /// A boxed decoder instance that implements the `Decoder` trait
-/// 
+///
 /// # Examples
 /// ```
 /// use resp::{RespVersion, new_decoder};
-/// 
+///
 /// let mut decoder = new_decoder(RespVersion::RESP3);
 /// decoder.push("+OK\r\n".into());
 /// ```
@@ -50,17 +50,17 @@ pub fn new_decoder(version: RespVersion) -> Box<dyn Decoder> {
 }
 
 /// Create a new encoder for the specified RESP version.
-/// 
+///
 /// # Arguments
 /// * `version` - The RESP protocol version to create an encoder for
-/// 
+///
 /// # Returns
 /// A boxed encoder instance that implements the `Encoder` trait
-/// 
+///
 /// # Examples
 /// ```
 /// use resp::{RespData, RespVersion, new_encoder};
-/// 
+///
 /// let mut encoder = new_encoder(RespVersion::RESP3);
 /// let bytes = encoder.encode_one(&RespData::Boolean(true)).unwrap();
 /// assert_eq!(bytes.as_ref(), b"#t\r\n");
@@ -74,18 +74,18 @@ pub fn new_encoder(version: RespVersion) -> Box<dyn Encoder> {
 }
 
 /// Create a new encoder for the specified RESP version with custom downlevel policy.
-/// 
+///
 /// # Arguments
 /// * `version` - The RESP protocol version to create an encoder for
 /// * `policy` - The downlevel compatibility policy for RESP3 types
-/// 
+///
 /// # Returns
 /// A boxed encoder instance that implements the `Encoder` trait
-/// 
+///
 /// # Examples
 /// ```
 /// use resp::{BooleanMode, DownlevelPolicy, RespData, RespVersion, new_encoder_with_policy};
-/// 
+///
 /// let policy = DownlevelPolicy {
 ///     boolean_mode: BooleanMode::SimpleString,
 ///     ..Default::default()
