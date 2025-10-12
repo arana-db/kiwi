@@ -63,37 +63,38 @@ enum ParsingState {
 pub struct Resp3Decoder {
     out: VecDeque<RespResult<RespData>>,
     buf: bytes::BytesMut,
-    state: ParsingState,
+    state_stack: Vec<ParsingState>,
 }
 
 impl Resp3Decoder {
     /// Continue parsing an ongoing collection
     fn continue_collection_parsing(&mut self) -> Option<RespResult<RespData>> {
-        match std::mem::replace(&mut self.state, ParsingState::Idle) {
+        let current_state = self.state_stack.pop()?;
+        match current_state {
             ParsingState::Idle => {
-                self.state = ParsingState::Idle;
+                // Should not happen, but handle gracefully
                 None
             }
             ParsingState::Array {
                 expected_count,
                 mut items,
-                ..
             } => {
                 while items.len() < expected_count {
-                    if let Some(result) = self.parse_single_value_atomic() {
+                    if let Some(result) = self.parse_single_value_for_collection() {
                         match result {
                             Ok(item) => items.push(item),
                             Err(e) => {
-                                self.state = ParsingState::Idle;
+                                // Clear state stack on error
+                                self.state_stack.clear();
                                 return Some(Err(e));
                             }
                         }
                     } else {
-                        // Need more data, restore state
-                        self.state = ParsingState::Array {
+                        // Need more data, restore state to stack
+                        self.state_stack.push(ParsingState::Array {
                             expected_count,
                             items,
-                        };
+                        });
                         return None;
                     }
                 }
@@ -103,43 +104,44 @@ impl Resp3Decoder {
             ParsingState::Map {
                 expected_pairs,
                 mut items,
-                ..
             } => {
                 while items.len() < expected_pairs {
                     // Parse key
-                    if let Some(result) = self.parse_single_value_atomic() {
+                    if let Some(result) = self.parse_single_value_for_collection() {
                         match result {
                             Ok(key) => {
                                 // Parse value
-                                if let Some(result) = self.parse_single_value_atomic() {
+                                if let Some(result) = self.parse_single_value_for_collection() {
                                     match result {
                                         Ok(value) => items.push((key, value)),
                                         Err(e) => {
-                                            self.state = ParsingState::Idle;
+                                            // Clear state stack on error
+                                            self.state_stack.clear();
                                             return Some(Err(e));
                                         }
                                     }
                                 } else {
                                     // Need more data for value, save key and wait
-                                    self.state = ParsingState::MapWaitingForValue {
+                                    self.state_stack.push(ParsingState::MapWaitingForValue {
                                         expected_pairs,
                                         items,
                                         current_key: key,
-                                    };
+                                    });
                                     return None;
                                 }
                             }
                             Err(e) => {
-                                self.state = ParsingState::Idle;
+                                // Clear state stack on error
+                                self.state_stack.clear();
                                 return Some(Err(e));
                             }
                         }
                     } else {
-                        // Need more data for key, restore state
-                        self.state = ParsingState::Map {
+                        // Need more data for key, restore state to stack
+                        self.state_stack.push(ParsingState::Map {
                             expected_pairs,
                             items,
-                        };
+                        });
                         return None;
                     }
                 }
@@ -152,52 +154,53 @@ impl Resp3Decoder {
                 current_key,
             } => {
                 // Parse value for the saved key
-                if let Some(result) = self.parse_single_value_atomic() {
+                if let Some(result) = self.parse_single_value_for_collection() {
                     match result {
                         Ok(value) => {
                             items.push((current_key, value));
                             // Continue with remaining pairs
-                            self.state = ParsingState::Map {
+                            self.state_stack.push(ParsingState::Map {
                                 expected_pairs,
                                 items,
-                            };
+                            });
                             self.continue_collection_parsing()
                         }
                         Err(e) => {
-                            self.state = ParsingState::Idle;
+                            // Clear state stack on error
+                            self.state_stack.clear();
                             Some(Err(e))
                         }
                     }
                 } else {
-                    // Need more data, restore state
-                    self.state = ParsingState::MapWaitingForValue {
+                    // Need more data, restore state to stack
+                    self.state_stack.push(ParsingState::MapWaitingForValue {
                         expected_pairs,
                         items,
                         current_key,
-                    };
+                    });
                     None
                 }
             }
             ParsingState::Set {
                 expected_count,
                 mut items,
-                ..
             } => {
                 while items.len() < expected_count {
-                    if let Some(result) = self.parse_single_value_atomic() {
+                    if let Some(result) = self.parse_single_value_for_collection() {
                         match result {
                             Ok(item) => items.push(item),
                             Err(e) => {
-                                self.state = ParsingState::Idle;
+                                // Clear state stack on error
+                                self.state_stack.clear();
                                 return Some(Err(e));
                             }
                         }
                     } else {
-                        // Need more data, restore state
-                        self.state = ParsingState::Set {
+                        // Need more data, restore state to stack
+                        self.state_stack.push(ParsingState::Set {
                             expected_count,
                             items,
-                        };
+                        });
                         return None;
                     }
                 }
@@ -207,23 +210,23 @@ impl Resp3Decoder {
             ParsingState::Push {
                 expected_count,
                 mut items,
-                ..
             } => {
                 while items.len() < expected_count {
-                    if let Some(result) = self.parse_single_value_atomic() {
+                    if let Some(result) = self.parse_single_value_for_collection() {
                         match result {
                             Ok(item) => items.push(item),
                             Err(e) => {
-                                self.state = ParsingState::Idle;
+                                // Clear state stack on error
+                                self.state_stack.clear();
                                 return Some(Err(e));
                             }
                         }
                     } else {
-                        // Need more data, restore state
-                        self.state = ParsingState::Push {
+                        // Need more data, restore state to stack
+                        self.state_stack.push(ParsingState::Push {
                             expected_count,
                             items,
-                        };
+                        });
                         return None;
                     }
                 }
@@ -239,6 +242,16 @@ impl Resp3Decoder {
         if let Some(result) = self.continue_collection_parsing() {
             return Some(result);
         }
+        self.parse_single_value_atomic()
+    }
+
+    /// Parse a single RESP value that can be part of a collection
+    fn parse_single_value_for_collection(&mut self) -> Option<RespResult<RespData>> {
+        // If we have ongoing collection parsing, continue with that
+        if !self.state_stack.is_empty() {
+            return self.continue_collection_parsing();
+        }
+        // Otherwise parse atomically
         self.parse_single_value_atomic()
     }
 
@@ -462,7 +475,9 @@ impl Resp3Decoder {
                     } else if len >= 0 {
                         let len_usize = len as usize;
                         if len_usize > MAX_BULK_LEN {
-                            return Some(Err(RespError::ParseError("bulk string length exceeds limit".into())));
+                            return Some(Err(RespError::ParseError(
+                                "bulk string length exceeds limit".into(),
+                            )));
                         }
                         let need = nl + 1 + len_usize + 2;
                         if self.buf.len() < need {
@@ -507,15 +522,18 @@ impl Resp3Decoder {
                     } else if len >= 0 {
                         let len_usize = len as usize;
                         if len_usize > MAX_ARRAY_LEN {
-                            return Some(Err(RespError::ParseError("array length exceeds limit".into())));
+                            return Some(Err(RespError::ParseError(
+                                "array length exceeds limit".into(),
+                            )));
                         }
                         // Consume header and start array parsing state
                         let _ = self.buf.split_to(nl + 1);
-                        self.state = ParsingState::Array {
+                        self.state_stack.push(ParsingState::Array {
                             expected_count: len_usize,
                             items: Vec::with_capacity(len_usize),
-                        };
-                        // Continue parsing elements
+                        });
+                        // Continue parsing elements - this will parse the array elements
+                        // and return the complete array when done
                         self.continue_collection_parsing()
                     } else {
                         Some(Err(RespError::ParseError("negative array len".into())))
@@ -545,10 +563,10 @@ impl Resp3Decoder {
                     }
                     // Consume header and start map parsing state
                     let _ = self.buf.split_to(nl + 1);
-                    self.state = ParsingState::Map {
+                    self.state_stack.push(ParsingState::Map {
                         expected_pairs: pairs,
                         items: Vec::with_capacity(pairs),
-                    };
+                    });
                     // Continue parsing pairs
                     self.continue_collection_parsing()
                 } else {
@@ -572,14 +590,16 @@ impl Resp3Decoder {
                         }
                     };
                     if count > MAX_SET_LEN {
-                        return Some(Err(RespError::ParseError("set length exceeds limit".into())));
+                        return Some(Err(RespError::ParseError(
+                            "set length exceeds limit".into(),
+                        )));
                     }
                     // Consume header and start set parsing state
                     let _ = self.buf.split_to(nl + 1);
-                    self.state = ParsingState::Set {
+                    self.state_stack.push(ParsingState::Set {
                         expected_count: count,
                         items: Vec::with_capacity(count),
-                    };
+                    });
                     // Continue parsing elements
                     self.continue_collection_parsing()
                 } else {
@@ -603,14 +623,16 @@ impl Resp3Decoder {
                         }
                     };
                     if count > MAX_PUSH_LEN {
-                        return Some(Err(RespError::ParseError("push length exceeds limit".into())));
+                        return Some(Err(RespError::ParseError(
+                            "push length exceeds limit".into(),
+                        )));
                     }
                     // Consume header and start push parsing state
                     let _ = self.buf.split_to(nl + 1);
-                    self.state = ParsingState::Push {
+                    self.state_stack.push(ParsingState::Push {
                         expected_count: count,
                         items: Vec::with_capacity(count),
-                    };
+                    });
                     // Continue parsing elements
                     self.continue_collection_parsing()
                 } else {
@@ -666,7 +688,7 @@ impl Decoder for Resp3Decoder {
     fn reset(&mut self) {
         self.out.clear();
         self.buf.clear();
-        self.state = ParsingState::Idle;
+        self.state_stack.clear();
     }
 
     fn version(&self) -> RespVersion {
