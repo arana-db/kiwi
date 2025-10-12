@@ -69,7 +69,7 @@ pub fn new_encoder(version: RespVersion) -> Box<dyn Encoder> {
     match version {
         RespVersion::RESP1 => Box::new(crate::resp1::encoder::Resp1Encoder::default()),
         RespVersion::RESP2 => Box::new(crate::resp2::encoder::Resp2Encoder::default()),
-        RespVersion::RESP3 => Box::new(crate::resp3::encoder::Resp3Encoder),
+        RespVersion::RESP3 => Box::new(crate::resp3::encoder::Resp3Encoder::default()),
     }
 }
 
@@ -98,6 +98,6 @@ pub fn new_encoder_with_policy(version: RespVersion, policy: DownlevelPolicy) ->
     match version {
         RespVersion::RESP1 => Box::new(crate::resp1::encoder::Resp1Encoder::with_policy(policy)),
         RespVersion::RESP2 => Box::new(crate::resp2::encoder::Resp2Encoder::with_policy(policy)),
-        RespVersion::RESP3 => Box::new(crate::resp3::encoder::Resp3Encoder),
+        RespVersion::RESP3 => Box::new(crate::resp3::encoder::Resp3Encoder::default()),
     }
 }

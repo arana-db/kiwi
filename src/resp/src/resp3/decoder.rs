@@ -691,8 +691,248 @@ impl Decoder for Resp3Decoder {
                         break;
                     }
                 }
+                // Standard RESP types (+, -, :, $, *) - parse directly
+                b'+' => {
+                    // Simple string: +<string>\r\n
+                    if let Some(pos) = memchr::memchr(b'\n', &self.buf) {
+                        let line_len = pos + 1;
+                        let line = &self.buf[..line_len];
+                        if line.len() < 3 || line[line.len() - 2] != b'\r' {
+                            break;
+                        }
+                        let chunk = self.buf.split_to(line_len);
+                        let data = bytes::Bytes::copy_from_slice(&chunk[1..chunk.len() - 2]);
+                        self.out.push_back(Ok(RespData::SimpleString(data)));
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+                b'-' => {
+                    // Error: -<string>\r\n
+                    if let Some(pos) = memchr::memchr(b'\n', &self.buf) {
+                        let line_len = pos + 1;
+                        let line = &self.buf[..line_len];
+                        if line.len() < 3 || line[line.len() - 2] != b'\r' {
+                            break;
+                        }
+                        let chunk = self.buf.split_to(line_len);
+                        let data = bytes::Bytes::copy_from_slice(&chunk[1..chunk.len() - 2]);
+                        self.out.push_back(Ok(RespData::Error(data)));
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+                b':' => {
+                    // Integer: :<number>\r\n
+                    if let Some(pos) = memchr::memchr(b'\n', &self.buf) {
+                        let line_len = pos + 1;
+                        let line = &self.buf[..line_len];
+                        if line.len() < 3 || line[line.len() - 2] != b'\r' {
+                            break;
+                        }
+                        let chunk = self.buf.split_to(line_len);
+                        let num_str = &chunk[1..chunk.len() - 2];
+                        match std::str::from_utf8(num_str)
+                            .ok()
+                            .and_then(|s| s.parse::<i64>().ok())
+                        {
+                            Some(n) => {
+                                self.out.push_back(Ok(RespData::Integer(n)));
+                                continue;
+                            }
+                            None => {
+                                self.out.push_back(Err(RespError::ParseError(
+                                    "invalid integer".into(),
+                                )));
+                                break;
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                b'$' => {
+                    // Bulk string: $<len>\r\n<data>\r\n or $-1\r\n for null
+                    if let Some(nl) = memchr::memchr(b'\n', &self.buf) {
+                        if nl < 3 || self.buf[nl - 1] != b'\r' {
+                            break;
+                        }
+                        let len_bytes = &self.buf[1..nl - 1];
+                        let len = match std::str::from_utf8(len_bytes)
+                            .ok()
+                            .and_then(|s| s.parse::<i64>().ok())
+                        {
+                            Some(v) => v,
+                            None => {
+                                self.out.push_back(Err(RespError::ParseError(
+                                    "invalid bulk string len".into(),
+                                )));
+                                break;
+                            }
+                        };
+                        if len == -1 {
+                            // Null bulk string
+                            let _ = self.buf.split_to(nl + 1);
+                            self.out.push_back(Ok(RespData::BulkString(None)));
+                            continue;
+                        } else if len >= 0 {
+                            let need = nl + 1 + len as usize + 2;
+                            if self.buf.len() < need {
+                                break;
+                            }
+                            let chunk = self.buf.split_to(need);
+                            if &chunk[nl + 1 + len as usize..need] != b"\r\n" {
+                                self.out.push_back(Err(RespError::ParseError(
+                                    "invalid bulk string ending".into(),
+                                )));
+                                break;
+                            }
+                            let data = bytes::Bytes::copy_from_slice(
+                                &chunk[nl + 1..nl + 1 + len as usize],
+                            );
+                            self.out.push_back(Ok(RespData::BulkString(Some(data))));
+                            continue;
+                        } else {
+                            self.out.push_back(Err(RespError::ParseError(
+                                "negative bulk string len".into(),
+                            )));
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                b'*' => {
+                    // Array: *<len>\r\n<item>... or *-1\r\n for null
+                    if let Some(nl) = memchr::memchr(b'\n', &self.buf) {
+                        if nl < 3 || self.buf[nl - 1] != b'\r' {
+                            break;
+                        }
+                        let len_bytes = &self.buf[1..nl - 1];
+                        let len = match std::str::from_utf8(len_bytes)
+                            .ok()
+                            .and_then(|s| s.parse::<i64>().ok())
+                        {
+                            Some(v) => v,
+                            None => {
+                                self.out.push_back(Err(RespError::ParseError(
+                                    "invalid array len".into(),
+                                )));
+                                break;
+                            }
+                        };
+                        if len == -1 {
+                            // Null array
+                            let _ = self.buf.split_to(nl + 1);
+                            self.out.push_back(Ok(RespData::Array(None)));
+                            continue;
+                        } else if len >= 0 {
+                            let _ = self.buf.split_to(nl + 1);
+                            let mut items = Vec::with_capacity(len as usize);
+                            for _ in 0..len {
+                                // Recursively parse each array element
+                                if self.buf.is_empty() {
+                                    break;
+                                }
+                                // This is a simplified approach - in practice, we'd need to handle
+                                // nested structures more carefully
+                                match self.buf[0] {
+                                    b'+' => {
+                                        if let Some(pos) = memchr::memchr(b'\n', &self.buf) {
+                                            let line_len = pos + 1;
+                                            let line = &self.buf[..line_len];
+                                            if line.len() >= 3 && line[line.len() - 2] == b'\r' {
+                                                let chunk = self.buf.split_to(line_len);
+                                                let data = bytes::Bytes::copy_from_slice(
+                                                    &chunk[1..chunk.len() - 2],
+                                                );
+                                                items.push(RespData::SimpleString(data));
+                                            } else {
+                                                break;
+                                            }
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    b':' => {
+                                        if let Some(pos) = memchr::memchr(b'\n', &self.buf) {
+                                            let line_len = pos + 1;
+                                            let line = &self.buf[..line_len];
+                                            if line.len() >= 3 && line[line.len() - 2] == b'\r' {
+                                                let chunk = self.buf.split_to(line_len);
+                                                let num_str = &chunk[1..chunk.len() - 2];
+                                                if let Some(n) = std::str::from_utf8(num_str)
+                                                    .ok()
+                                                    .and_then(|s| s.parse::<i64>().ok())
+                                                {
+                                                    items.push(RespData::Integer(n));
+                                                } else {
+                                                    break;
+                                                }
+                                            } else {
+                                                break;
+                                            }
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    b'$' => {
+                                        if let Some(nl) = memchr::memchr(b'\n', &self.buf) {
+                                            if nl < 3 || self.buf[nl - 1] != b'\r' {
+                                                break;
+                                            }
+                                            let len_bytes = &self.buf[1..nl - 1];
+                                            let len = match std::str::from_utf8(len_bytes)
+                                                .ok()
+                                                .and_then(|s| s.parse::<i64>().ok())
+                                            {
+                                                Some(v) => v,
+                                                None => break,
+                                            };
+                                            if len == -1 {
+                                                // Null bulk string
+                                                let _ = self.buf.split_to(nl + 1);
+                                                items.push(RespData::BulkString(None));
+                                            } else if len >= 0 {
+                                                let need = nl + 1 + len as usize + 2;
+                                                if self.buf.len() < need {
+                                                    break;
+                                                }
+                                                let chunk = self.buf.split_to(need);
+                                                if &chunk[nl + 1 + len as usize..need] != b"\r\n" {
+                                                    break;
+                                                }
+                                                let data = bytes::Bytes::copy_from_slice(
+                                                    &chunk[nl + 1..nl + 1 + len as usize],
+                                                );
+                                                items.push(RespData::BulkString(Some(data)));
+                                            } else {
+                                                break;
+                                            }
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            self.out.push_back(Ok(RespData::Array(Some(items))));
+                            continue;
+                        } else {
+                            self.out
+                                .push_back(Err(RespError::ParseError("negative array len".into())));
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
                 _ => {
-                    break;
+                    // Unknown prefix - skip this byte and continue
+                    let _ = self.buf.split_to(1);
+                    continue;
                 }
             }
         }

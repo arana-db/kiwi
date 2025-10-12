@@ -225,7 +225,7 @@ impl fmt::Debug for RespData {
             }
             RespData::VerbatimString { format, data } => {
                 if let Ok(s) = std::str::from_utf8(data) {
-                    let fmt = std::str::from_utf8(format).unwrap_or("???");
+                    let fmt = std::str::from_utf8(&format[..]).unwrap_or("???");
                     write!(f, "VerbatimString({fmt}:{s})")
                 } else {
                     write!(f, "VerbatimString({:?}:{:?})", format, data)

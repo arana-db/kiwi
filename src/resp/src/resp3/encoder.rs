@@ -18,13 +18,16 @@
 use bytes::{Bytes, BytesMut};
 
 use crate::{
-    error::{RespError, RespResult},
+    encode::{RespEncode, RespEncoder},
+    error::RespResult,
     traits::Encoder,
     types::{RespData, RespVersion},
 };
 
 #[derive(Default)]
-pub struct Resp3Encoder;
+pub struct Resp3Encoder {
+    resp2_encoder: Option<RespEncoder>,
+}
 
 impl Encoder for Resp3Encoder {
     fn encode_one(&mut self, data: &RespData) -> RespResult<Bytes> {
@@ -106,7 +109,65 @@ impl Encoder for Resp3Encoder {
                     self.encode_into(it, out)?;
                 }
             }
-            _ => return Err(RespError::UnsupportedType),
+            // Standard RESP types - delegate to RESP2 encoder
+            RespData::SimpleString(s) => {
+                if self.resp2_encoder.is_none() {
+                    self.resp2_encoder = Some(RespEncoder::new(RespVersion::RESP2));
+                }
+                let encoder = self.resp2_encoder.as_mut().unwrap();
+                encoder
+                    .clear()
+                    .append_simple_string(std::str::from_utf8(s).unwrap_or(""));
+                out.extend_from_slice(&encoder.get_response());
+            }
+            RespData::Error(s) => {
+                out.extend_from_slice(b"-");
+                out.extend_from_slice(s);
+                out.extend_from_slice(b"\r\n");
+            }
+            RespData::Integer(n) => {
+                if self.resp2_encoder.is_none() {
+                    self.resp2_encoder = Some(RespEncoder::new(RespVersion::RESP2));
+                }
+                let encoder = self.resp2_encoder.as_mut().unwrap();
+                encoder.clear().append_integer(*n);
+                out.extend_from_slice(&encoder.get_response());
+            }
+            RespData::BulkString(Some(s)) => {
+                if self.resp2_encoder.is_none() {
+                    self.resp2_encoder = Some(RespEncoder::new(RespVersion::RESP2));
+                }
+                let encoder = self.resp2_encoder.as_mut().unwrap();
+                encoder.clear().append_bulk_string(s);
+                out.extend_from_slice(&encoder.get_response());
+            }
+            RespData::BulkString(None) => {
+                out.extend_from_slice(b"$-1\r\n");
+            }
+            RespData::Array(Some(items)) => {
+                if self.resp2_encoder.is_none() {
+                    self.resp2_encoder = Some(RespEncoder::new(RespVersion::RESP2));
+                }
+                let encoder = self.resp2_encoder.as_mut().unwrap();
+                encoder.clear().append_array_len(items.len() as i64);
+                out.extend_from_slice(&encoder.get_response());
+                for item in items {
+                    self.encode_into(item, out)?;
+                }
+                return Ok(());
+            }
+            RespData::Array(None) => {
+                out.extend_from_slice(b"*-1\r\n");
+            }
+            RespData::Inline(parts) => {
+                for (i, part) in parts.iter().enumerate() {
+                    if i > 0 {
+                        out.extend_from_slice(b" ");
+                    }
+                    out.extend_from_slice(part);
+                }
+                out.extend_from_slice(b"\r\n");
+            }
         }
         Ok(())
     }
