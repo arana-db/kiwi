@@ -95,7 +95,11 @@ impl Resp1Encoder {
             }
             RespData::Double(v) => {
                 if let DoubleMode::IntegerIfWhole = self.policy.double_mode {
-                    if v.fract() == 0.0 && v.is_finite() {
+                    if v.fract() == 0.0
+                        && v.is_finite()
+                        && *v >= i64::MIN as f64
+                        && *v <= i64::MAX as f64
+                    {
                         self.inner.append_integer(*v as i64);
                         return;
                     }
