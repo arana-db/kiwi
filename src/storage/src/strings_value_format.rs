@@ -35,7 +35,6 @@ pub struct StringValue {
 }
 
 delegate_internal_value!(StringValue);
-#[allow(dead_code)]
 impl StringValue {
     pub fn new<T>(user_value: T) -> Self
     where T: Into<Bytes> {
@@ -67,7 +66,6 @@ pub struct ParsedStringsValue {
 }
 
 delegate_parsed_value!(ParsedStringsValue);
-#[allow(dead_code)]
 impl ParsedStringsValue {
     pub fn new<T>(internal_value: T) -> Result<Self>
     where T: Into<BytesMut> {

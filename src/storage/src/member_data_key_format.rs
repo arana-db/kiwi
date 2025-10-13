@@ -15,7 +15,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(dead_code)]
 // TODO: remove allow dead_code
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -71,6 +70,7 @@ impl MemberDataKey {
     }
 }
 
+#[allow(dead_code)]
 pub struct ParsedMemberDataKey {
     key_str: BytesMut,
     reserve: [u8; 8],
@@ -78,6 +78,7 @@ pub struct ParsedMemberDataKey {
     data: Bytes,
 }
 
+#[allow(dead_code)]
 impl ParsedMemberDataKey {
     pub fn new(encoded_key: &[u8]) -> Result<Self> {
         let mut key_str = BytesMut::new();

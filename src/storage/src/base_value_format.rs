@@ -15,7 +15,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(dead_code)]
 // TODO(marsevilspirit): remove allow dead_code
 
 use std::ops::Range;
@@ -26,7 +25,6 @@ use snafu::OptionExt;
 
 use crate::error::{Error, InvalidFormatSnafu, Result};
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataType {
     String = 0,

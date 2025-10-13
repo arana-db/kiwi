@@ -118,113 +118,113 @@ impl Config {
             match key.as_str() {
                 "port" => {
                     config.port = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "memory" => {
                     config.memory = parse_memory(&value)
-                        .map_err(|e| Error::MemoryParse { source: e })?;
+                        .map_err(|_e| Error::MemoryParse { source: _e })?;
                 }
                 "small-compaction-threshold" => {
                     config.small_compaction_threshold = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "small-compaction-duration-threshold" => {
                     config.small_compaction_duration_threshold = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-max-subcompactions" => {
                     config.rocksdb_max_subcompactions = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-max-background-jobs" => {
                     config.rocksdb_max_background_jobs = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-max-write-buffer-number" => {
                     config.rocksdb_max_write_buffer_number = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-min-write-buffer-number-to-merge" => {
                     config.rocksdb_min_write_buffer_number_to_merge = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-write-buffer-size" => {
                     config.rocksdb_write_buffer_size = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-level0-file-num-compaction-trigger" => {
                     config.rocksdb_level0_file_num_compaction_trigger = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-number-levels" => {
                     config.rocksdb_num_levels = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-enable-pipelined-write" => {
                     config.rocksdb_enable_pipelined_write = parse_bool(&value)
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                             source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-level0-slowdown-writes-trigger" => {
                     config.rocksdb_level0_slowdown_writes_trigger = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-level0-stop-writes-trigger" => {
                     config.rocksdb_level0_stop_writes_trigger = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-ttl-second" => {
                     config.rocksdb_ttl_second = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-periodic-second" => {
                     config.rocksdb_periodic_second = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-level-compaction-dynamic-level-bytes" => {
                     config.rocksdb_level_compaction_dynamic_level_bytes = parse_bool(&value)
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                             source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-max-open-files" => {
                     config.rocksdb_max_open_files = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
                 "rocksdb-target-file-size-base" => {
                     config.rocksdb_target_file_size_base = value.parse()
-                        .map_err(|e| Error::InvalidConfig { 
+                        .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
                         })?;
                 }
