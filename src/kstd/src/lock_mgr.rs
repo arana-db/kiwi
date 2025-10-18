@@ -190,6 +190,97 @@ impl<'a> Drop for ScopeRecordLock<'a> {
     }
 }
 
+/// RAII multi-record lock guard
+pub struct MultiScopeRecordLock<'a> {
+    mgr: &'a LockMgr,
+    keys: Vec<&'a str>,
+    locked: bool,
+}
+
+impl<'a> MultiScopeRecordLock<'a> {
+    pub fn new(mgr: &'a LockMgr, keys: &[&'a str]) -> Self {
+        let mut sorted_keys: Vec<&'a str> = keys.iter().copied().collect();
+        sorted_keys.sort();
+        sorted_keys.dedup();
+
+        let locked = Self::try_acquire_locks(mgr, &sorted_keys);
+
+        Self {
+            mgr,
+            keys: sorted_keys,
+            locked,
+        }
+    }
+
+    pub fn try_new(mgr: &'a LockMgr, keys: &[&'a str]) -> Option<Self> {
+        let mut sorted_keys: Vec<&'a str> = keys.iter().copied().collect();
+        sorted_keys.sort();
+        sorted_keys.dedup();
+
+        if Self::try_acquire_locks(mgr, &sorted_keys) {
+            Some(Self {
+                mgr,
+                keys: sorted_keys,
+                locked: true,
+            })
+        } else {
+            None
+        }
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.locked
+    }
+
+    fn try_acquire_locks(mgr: &'a LockMgr, sorted_keys: &[&'a str]) -> bool {
+        let mut prev_key = "";
+        let mut locked_keys = Vec::new();
+
+        if !sorted_keys.is_empty() && sorted_keys[0].is_empty() {
+            if mgr.try_lock(prev_key).is_ok() {
+                locked_keys.push(prev_key);
+            } else {
+                return false;
+            }
+        }
+
+        for key in sorted_keys {
+            if prev_key != *key {
+                if mgr.try_lock(key).is_ok() {
+                    locked_keys.push(*key);
+                    prev_key = *key;
+                } else {
+                    for locked_key in locked_keys {
+                        mgr.unlock(locked_key);
+                    }
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+}
+
+impl<'a> Drop for MultiScopeRecordLock<'a> {
+    fn drop(&mut self) {
+        if self.locked {
+            let mut prev_key = "";
+
+            if !self.keys.is_empty() && self.keys[0].is_empty() {
+                self.mgr.unlock(prev_key);
+            }
+
+            for key in &self.keys {
+                if prev_key != *key {
+                    self.mgr.unlock(key);
+                    prev_key = *key;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{sync::Arc, thread, time::Duration};
@@ -536,5 +627,234 @@ mod tests {
 
         mgr.unlock("outer_key");
         mgr.unlock("inner_key");
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_basic() {
+        let mgr = LockMgr::new(4);
+        let keys = ["key1", "key2", "key3"];
+
+        {
+            let _multi_lock = MultiScopeRecordLock::new(&mgr, &keys);
+            assert!(_multi_lock.is_locked());
+
+            let try_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
+            assert!(try_lock.is_none());
+        }
+
+        let try_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
+        assert!(try_lock.is_some());
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_duplicate_keys() {
+        let mgr = LockMgr::new(4);
+        let keys = ["key1", "key1", "key2", "key2", "key3"];
+
+        {
+            let _multi_lock = MultiScopeRecordLock::new(&mgr, &keys);
+            assert!(_multi_lock.is_locked());
+
+            let other_keys = ["key4"];
+            let try_lock = MultiScopeRecordLock::try_new(&mgr, &other_keys);
+            assert!(try_lock.is_some());
+        }
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_unsorted_keys() {
+        let mgr = LockMgr::new(4);
+        let keys = ["key3", "key1", "key2"];
+
+        {
+            let _multi_lock = MultiScopeRecordLock::new(&mgr, &keys);
+            assert!(_multi_lock.is_locked());
+        }
+
+        let try_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
+        assert!(try_lock.is_some());
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_empty_keys() {
+        let mgr = LockMgr::new(4);
+        let keys: [&str; 0] = [];
+
+        {
+            let _multi_lock = MultiScopeRecordLock::new(&mgr, &keys);
+            assert!(_multi_lock.is_locked());
+        }
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_empty_string_key() {
+        let mgr = LockMgr::new(4);
+        let keys = ["", "key1", "key2"];
+
+        {
+            let _multi_lock = MultiScopeRecordLock::new(&mgr, &keys);
+            assert!(_multi_lock.is_locked());
+        }
+
+        let try_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
+        assert!(try_lock.is_some());
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_try_new_success() {
+        let mgr = LockMgr::new(4);
+        let keys = ["key1", "key2", "key3"];
+
+        let multi_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
+        assert!(multi_lock.is_some());
+        let multi_lock = multi_lock.unwrap();
+        assert!(multi_lock.is_locked());
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_try_new_failure() {
+        let mgr = LockMgr::new(4);
+        let keys = ["key1", "key2", "key3"];
+
+        {
+            let _lock = MultiScopeRecordLock::new(&mgr, &keys);
+            assert!(_lock.is_locked());
+
+            let try_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
+            assert!(try_lock.is_none());
+        }
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_panic_safety() {
+        let mgr = Arc::new(LockMgr::new(4));
+        let keys = ["key1", "key2", "key3"];
+
+        let mgr_clone = Arc::clone(&mgr);
+
+        let handle = thread::spawn(move || {
+            let _multi_lock = MultiScopeRecordLock::new(&mgr_clone, &keys);
+            assert!(_multi_lock.is_locked());
+            panic!("Simulated panic while holding multiple locks");
+        });
+
+        let result = handle.join();
+        assert!(result.is_err());
+
+        thread::sleep(Duration::from_millis(10));
+
+        let try_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
+        assert!(try_lock.is_some());
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_concurrent_access() {
+        let mgr = Arc::new(LockMgr::new(4));
+        let keys1 = ["key1", "key2"];
+        let keys2 = ["key3", "key4"];
+        let counter = Arc::new(AtomicI64::new(0));
+
+        let handles: Vec<_> = (0..10)
+            .map(|thread_id| {
+                let mgr_clone = Arc::clone(&mgr);
+                let counter_clone = Arc::clone(&counter);
+                let keys = if thread_id % 2 == 0 { keys1 } else { keys2 };
+
+                thread::spawn(move || {
+                    if let Some(_multi_lock) = MultiScopeRecordLock::try_new(&mgr_clone, &keys) {
+                        let current = counter_clone.load(Ordering::Acquire);
+                        thread::sleep(Duration::from_millis(1));
+                        counter_clone.store(current + 1, Ordering::Release);
+                    }
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        assert!(counter.load(Ordering::Acquire) > 0);
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_max_locks_limit() {
+        let mgr = LockMgr::with_max_locks(4, 2);
+        let keys = ["key1", "key2", "key3"];
+
+        let multi_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
+        assert!(multi_lock.is_none());
+
+        let keys2 = ["key1", "key2"];
+        let multi_lock = MultiScopeRecordLock::try_new(&mgr, &keys2);
+        assert!(multi_lock.is_some());
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_rollback_on_failure() {
+        let mgr = LockMgr::with_max_locks(4, 2);
+        let keys = ["key1", "key2", "key3"];
+
+        let status = mgr.try_lock("key1");
+        assert!(status.is_ok());
+
+        let multi_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
+        assert!(multi_lock.is_none());
+
+        let status2 = mgr.try_lock("key1");
+        assert!(!status2.is_ok());
+
+        mgr.unlock("key1");
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_nested_scopes() {
+        let mgr = LockMgr::new(4);
+
+        {
+            let _outer_lock = MultiScopeRecordLock::new(&mgr, &["outer1", "outer2"]);
+            assert!(_outer_lock.is_locked());
+
+            {
+                let _inner_lock = MultiScopeRecordLock::new(&mgr, &["inner1", "inner2"]);
+                assert!(_inner_lock.is_locked());
+                assert!(_outer_lock.is_locked());
+            }
+
+            let try_inner = MultiScopeRecordLock::try_new(&mgr, &["inner1", "inner2"]);
+            assert!(try_inner.is_some());
+        }
+
+        let try_outer = MultiScopeRecordLock::try_new(&mgr, &["outer1", "outer2"]);
+        assert!(try_outer.is_some());
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_large_key_set() {
+        let mgr = LockMgr::new(4);
+        let keys: Vec<String> = (0..100).map(|i| format!("key{}", i)).collect();
+        let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+
+        {
+            let _multi_lock = MultiScopeRecordLock::new(&mgr, &key_refs);
+            assert!(_multi_lock.is_locked());
+        }
+
+        let try_lock = MultiScopeRecordLock::try_new(&mgr, &key_refs);
+        assert!(try_lock.is_some());
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_unicode_keys() {
+        let mgr = LockMgr::new(4);
+        let keys = ["你好", "世界", "测试", "🔒", "🚀"];
+
+        {
+            let _multi_lock = MultiScopeRecordLock::new(&mgr, &keys);
+            assert!(_multi_lock.is_locked());
+        }
+
+        let try_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
+        assert!(try_lock.is_some());
     }
 }
