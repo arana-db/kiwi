@@ -101,6 +101,16 @@ pub trait Cmd: Send + Sync {
 
     fn execute(&self, client: &Client, storage: Arc<Storage>) {
         debug!("execute command: {:?}", client.cmd_name());
+        if !self.check_arg(client.argv().len()) {
+            client.set_reply(RespData::Error(
+                format!(
+                    "ERR wrong number of arguments for '{}' command",
+                    String::from_utf8_lossy(client.cmd_name().as_slice()),
+                )
+                .into(),
+            ));
+            return;
+        }
         if self.do_initial(client) {
             self.do_cmd(client, storage);
         }
