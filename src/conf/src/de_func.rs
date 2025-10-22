@@ -40,6 +40,18 @@ where D: Deserializer<'de> {
     }
 }
 
+/// Parse boolean from string (for config parsing, not serde)
+pub fn parse_bool_from_string(s: &str) -> Result<bool, String> {
+    match s.to_lowercase().as_str() {
+        "yes" | "true" | "1" | "on" => Ok(true),
+        "no" | "false" | "0" | "off" => Ok(false),
+        _ => Err(format!(
+            "Invalid boolean value '{}', expected one of: yes, no, true, false, 1, 0, on, off",
+            s
+        )),
+    }
+}
+
 pub fn parse_memory(input: &str) -> Result<u64, MemoryParseError> {
     let cleaned_input = input.trim().replace(',', "").to_uppercase();
 

@@ -29,3 +29,9 @@ report.json
 /web/.env
 
 **/db/
+
+# Documentation comparison files (internal use only)
+STORAGE_COMPARISON.md
+
+# Claude Code configuration
+.claude/
