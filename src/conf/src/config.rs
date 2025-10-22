@@ -21,7 +21,7 @@ use crate::de_func::{parse_memory, parse_redis_config};
 use crate::error::Error;
 
 const DEFAULT_BINDING: &str = "127.0.0.1";
-const DEFAULT_PORT: u16 = 1430; // Original port from config.ini
+const DEFAULT_PORT: u16 = 7379; // Redis-compatible port (7xxx variant of 6379)
 
 // Simple boolean parsing function
 fn parse_bool(value: &str) -> Result<bool, String> {

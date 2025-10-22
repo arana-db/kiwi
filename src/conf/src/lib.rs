@@ -36,7 +36,7 @@ mod tests {
 
         let config = config.unwrap();
 
-        assert_eq!(1430, config.port);
+        assert_eq!(7379, config.port);
         assert_eq!(10 * 1024 * 1024, config.memory);
 
         assert_eq!(2, config.rocksdb_max_subcompactions);
