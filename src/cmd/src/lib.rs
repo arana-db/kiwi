@@ -15,8 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod decr;
+mod decrby;
 pub mod get;
 pub mod group_client;
+pub mod incr;
+mod incrby;
 pub mod set;
 pub mod table;
 

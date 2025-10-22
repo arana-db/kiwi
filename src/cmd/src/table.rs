@@ -56,6 +56,10 @@ pub fn create_command_table() -> CmdTable {
         cmd_table,
         crate::set::SetCmd,
         crate::get::GetCmd,
+        crate::incr::IncrCmd,
+        crate::incrby::IncrbyCmd,
+        crate::decr::DecrCmd,
+        crate::decrby::DecrbyCmd,
         // TODO: add more commands...
     );
 
