@@ -14,8 +14,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use serde::{Deserialize, Deserializer, de};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Deserializer, de};
 
 use crate::error::MemoryParseError;
 pub fn deserialize_bool_from_yes_no<'de, D>(deserializer: D) -> Result<bool, D::Error>
@@ -85,23 +86,27 @@ pub fn parse_memory(input: &str) -> Result<u64, MemoryParseError> {
 /// Supports comments starting with # and empty lines
 pub fn parse_redis_config(content: &str) -> Result<HashMap<String, String>, String> {
     let mut config = HashMap::new();
-    
+
     for (line_num, line) in content.lines().enumerate() {
         let line = line.trim();
-        
+
         // Skip empty lines and comments
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        
+
         // Parse key-value pairs
         if let Some((key, value)) = parse_config_line(line) {
             config.insert(key, value);
         } else {
-            return Err(format!("Invalid configuration line {}: {}", line_num + 1, line));
+            return Err(format!(
+                "Invalid configuration line {}: {}",
+                line_num + 1,
+                line
+            ));
         }
     }
-    
+
     Ok(config)
 }
 
@@ -114,7 +119,7 @@ fn parse_config_line(line: &str) -> Option<(String, String)> {
         let value = line[pos + 1..].trim().to_string();
         return Some((key, value));
     }
-    
+
     // Try "key value" format
     if let Some(pos) = line.find(' ') {
         let key = line[..pos].trim().to_string();
@@ -123,7 +128,7 @@ fn parse_config_line(line: &str) -> Option<(String, String)> {
             return Some((key, value));
         }
     }
-    
+
     None
 }
 
@@ -131,10 +136,10 @@ fn parse_config_line(line: &str) -> Option<(String, String)> {
 pub fn redis_config_to_ini(content: &str) -> Result<String, String> {
     let config = parse_redis_config(content)?;
     let mut ini_content = String::new();
-    
+
     for (key, value) in config {
         ini_content.push_str(&format!("{} = {}\n", key, value));
     }
-    
+
     Ok(ini_content)
 }

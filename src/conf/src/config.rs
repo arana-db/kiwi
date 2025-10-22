@@ -18,7 +18,7 @@
 use snafu::ResultExt;
 use validator::Validate;
 
-use crate::de_func::{parse_redis_config, parse_memory};
+use crate::de_func::{parse_memory, parse_redis_config};
 use crate::error::Error;
 
 const DEFAULT_BINDING: &str = "127.0.0.1";
@@ -57,7 +57,7 @@ pub struct Config {
     pub rocksdb_level_compaction_dynamic_level_bytes: bool,
     pub rocksdb_max_open_files: i32,
     pub rocksdb_target_file_size_base: u64,
-    
+
     // Additional fields from original config
     pub binding: String,
     pub timeout: u32,
@@ -107,127 +107,125 @@ impl Config {
             std::fs::read_to_string(path).context(crate::error::ConfigFileSnafu { path })?;
 
         // Parse Redis-style configuration
-        let config_map = parse_redis_config(&content)
-            .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
-            })?;
+        let config_map = parse_redis_config(&content).map_err(|_e| Error::InvalidConfig {
+            source: serde_ini::de::Error::InvalidState,
+        })?;
 
         // Create config from parsed values
         let mut config = Config::default();
-        
+
         // Parse each configuration value
         for (key, value) in config_map {
             match key.as_str() {
                 "port" => {
-                    config.port = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
-                        })?;
+                    config.port = value.parse().map_err(|_e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::InvalidState,
+                    })?;
                 }
                 "memory" => {
-                    config.memory = parse_memory(&value)
-                        .map_err(|_e| Error::MemoryParse { source: _e })?;
+                    config.memory =
+                        parse_memory(&value).map_err(|_e| Error::MemoryParse { source: _e })?;
                 }
                 "small-compaction-threshold" => {
-                    config.small_compaction_threshold = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.small_compaction_threshold =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "small-compaction-duration-threshold" => {
-                    config.small_compaction_duration_threshold = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.small_compaction_duration_threshold =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-max-subcompactions" => {
-                    config.rocksdb_max_subcompactions = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_max_subcompactions =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-max-background-jobs" => {
-                    config.rocksdb_max_background_jobs = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_max_background_jobs =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-max-write-buffer-number" => {
-                    config.rocksdb_max_write_buffer_number = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_max_write_buffer_number =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-min-write-buffer-number-to-merge" => {
-                    config.rocksdb_min_write_buffer_number_to_merge = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_min_write_buffer_number_to_merge =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-write-buffer-size" => {
-                    config.rocksdb_write_buffer_size = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_write_buffer_size =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-level0-file-num-compaction-trigger" => {
-                    config.rocksdb_level0_file_num_compaction_trigger = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_level0_file_num_compaction_trigger =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-number-levels" => {
-                    config.rocksdb_num_levels = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_num_levels =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-enable-pipelined-write" => {
-                    config.rocksdb_enable_pipelined_write = parse_bool(&value)
-                        .map_err(|_e| Error::InvalidConfig { 
-                            source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_enable_pipelined_write =
+                        parse_bool(&value).map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-level0-slowdown-writes-trigger" => {
-                    config.rocksdb_level0_slowdown_writes_trigger = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_level0_slowdown_writes_trigger =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-level0-stop-writes-trigger" => {
-                    config.rocksdb_level0_stop_writes_trigger = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_level0_stop_writes_trigger =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-ttl-second" => {
-                    config.rocksdb_ttl_second = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_ttl_second =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-periodic-second" => {
-                    config.rocksdb_periodic_second = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_periodic_second =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-level-compaction-dynamic-level-bytes" => {
                     config.rocksdb_level_compaction_dynamic_level_bytes = parse_bool(&value)
-                        .map_err(|_e| Error::InvalidConfig { 
-                            source: serde_ini::de::Error::InvalidState 
+                        .map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-max-open-files" => {
-                    config.rocksdb_max_open_files = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_max_open_files =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 "rocksdb-target-file-size-base" => {
-                    config.rocksdb_target_file_size_base = value.parse()
-                        .map_err(|_e| Error::InvalidConfig { 
-                source: serde_ini::de::Error::InvalidState 
+                    config.rocksdb_target_file_size_base =
+                        value.parse().map_err(|_e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::InvalidState,
                         })?;
                 }
                 _ => {
