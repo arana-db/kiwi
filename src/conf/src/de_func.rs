@@ -87,11 +87,12 @@ pub fn parse_memory(input: &str) -> Result<u64, MemoryParseError> {
 pub fn parse_redis_config(content: &str) -> Result<HashMap<String, String>, String> {
     let mut config = HashMap::new();
 
-    for (line_num, line) in content.lines().enumerate() {
-        let line = line.trim();
+    for (line_num, raw_line) in content.lines().enumerate() {
+        // Remove inline comments (everything after '#'), then trim
+        let line = raw_line.split_once('#').map_or(raw_line, |(before, _)| before).trim();
 
-        // Skip empty lines and comments
-        if line.is_empty() || line.starts_with('#') {
+        // Skip empty lines
+        if line.is_empty() {
             continue;
         }
 
