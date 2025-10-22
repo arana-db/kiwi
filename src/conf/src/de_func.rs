@@ -89,7 +89,10 @@ pub fn parse_redis_config(content: &str) -> Result<HashMap<String, String>, Stri
 
     for (line_num, raw_line) in content.lines().enumerate() {
         // Remove inline comments (everything after '#'), then trim
-        let line = raw_line.split_once('#').map_or(raw_line, |(before, _)| before).trim();
+        let line = raw_line
+            .split_once('#')
+            .map_or(raw_line, |(before, _)| before)
+            .trim();
 
         // Skip empty lines
         if line.is_empty() {
