@@ -120,6 +120,7 @@ impl ParsedStringsValue {
         })
     }
 
+    #[allow(dead_code)]
     pub fn strip_suffix(&mut self) {
         self.inner.value.advance(TYPE_LENGTH);
 
@@ -129,16 +130,19 @@ impl ParsedStringsValue {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_ctime(&mut self, ctime: u64) {
         self.inner.ctime = ctime;
         self.set_ctime_to_value();
     }
 
+    #[allow(dead_code)]
     pub fn set_etime(&mut self, etime: u64) {
         self.inner.etime = etime;
         self.set_etime_to_value();
     }
 
+    #[allow(dead_code)]
     fn set_ctime_to_value(&mut self) {
         let suffix_start =
             self.inner.value.len() - STRING_VALUE_SUFFIXLENGTH + SUFFIX_RESERVE_LENGTH;
@@ -148,6 +152,7 @@ impl ParsedStringsValue {
         dst.copy_from_slice(&ctime_bytes);
     }
 
+    #[allow(dead_code)]
     fn set_etime_to_value(&mut self) {
         let suffix_start = self.inner.value.len() - STRING_VALUE_SUFFIXLENGTH
             + SUFFIX_RESERVE_LENGTH

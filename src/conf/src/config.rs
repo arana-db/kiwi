@@ -14,6 +14,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 use snafu::ResultExt;
 use validator::Validate;
 
@@ -36,6 +37,7 @@ fn parse_bool(value: &str) -> Result<bool, String> {
 #[derive(Debug, Validate)]
 pub struct Config {
     // Original config items from config.ini
+    #[validate(range(min = 1024, max = 65535))]
     pub port: u16,
     pub memory: u64,
     pub small_compaction_threshold: usize,
@@ -106,7 +108,7 @@ impl Config {
 
         // Parse Redis-style configuration
         let config_map = parse_redis_config(&content)
-            .map_err(|e| Error::InvalidConfig { 
+            .map_err(|_e| Error::InvalidConfig { 
                 source: serde_ini::de::Error::InvalidState 
             })?;
 
@@ -237,7 +239,7 @@ impl Config {
 
         config
             .validate()
-            .map_err(|e| Error::ValidConfigFail { source: e })?;
+            .map_err(|_e| Error::ValidConfigFail { source: _e })?;
 
         Ok(config)
     }

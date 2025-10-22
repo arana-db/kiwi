@@ -58,7 +58,7 @@ pub fn parse_memory(input: &str) -> Result<u64, MemoryParseError> {
 
     let num_value: u64 = num_str
         .parse()
-        .map_err(|e| MemoryParseError::InvalidNumber { source: e })?;
+        .map_err(|_e| MemoryParseError::InvalidNumber { source: _e })?;
 
     let multiplier: u64 = match unit_str {
         "" | "B" => 1,
