@@ -16,9 +16,8 @@
 // limitations under the License.
 use snafu::ResultExt;
 use validator::Validate;
-use std::collections::HashMap;
 
-use crate::de_func::{deserialize_bool_from_yes_no, deserialize_memory, parse_redis_config};
+use crate::de_func::{parse_bool_from_string, parse_memory, parse_redis_config};
 use crate::error::Error;
 
 const DEFAULT_BINDING: &str = "127.0.0.1";
@@ -27,6 +26,7 @@ const DEFAULT_PORT: u16 = 7379; // Redis-compatible port (7xxx variant of 6379)
 #[derive(Debug, Validate)]
 pub struct Config {
     // Original config items from config.ini
+    #[validate(range(min = 1024, max = 65535))]
     pub port: u16,
     pub memory: u64,
     pub small_compaction_threshold: usize,
@@ -96,10 +96,9 @@ impl Config {
             std::fs::read_to_string(path).context(crate::error::ConfigFileSnafu { path })?;
 
         // Parse Redis-style configuration
-        let config_map = parse_redis_config(&content)
-            .map_err(|e| Error::InvalidConfig {
-                source: serde_ini::de::Error::custom(e)
-            })?;
+        let config_map = parse_redis_config(&content).map_err(|e| Error::InvalidConfig {
+            source: serde_ini::de::Error::Custom(e),
+        })?;
 
         // Create config from parsed values
         let mut config = Config::default();
@@ -107,115 +106,165 @@ impl Config {
         for (key, value) in config_map {
             match key.as_str() {
                 "port" => {
-                    config.port = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid port: {}", e))
-                        })?;
+                    config.port = value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!("Invalid port: {}", e)),
+                    })?;
                 }
                 "memory" => {
-                    config.memory = deserialize_memory(&value)
-                        .map_err(|e| Error::MemoryParse { source: e })?;
+                    config.memory =
+                        parse_memory(&value).map_err(|e| Error::MemoryParse { source: e })?;
                 }
                 "small-compaction-threshold" => {
-                    config.small_compaction_threshold = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid small-compaction-threshold: {}", e))
+                    config.small_compaction_threshold =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid small-compaction-threshold: {}",
+                                e
+                            )),
                         })?;
                 }
                 "small-compaction-duration-threshold" => {
-                    config.small_compaction_duration_threshold = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid small-compaction-duration-threshold: {}", e))
+                    config.small_compaction_duration_threshold =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid small-compaction-duration-threshold: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-max-subcompactions" => {
-                    config.rocksdb_max_subcompactions = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-max-subcompactions: {}", e))
+                    config.rocksdb_max_subcompactions =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-max-subcompactions: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-max-background-jobs" => {
-                    config.rocksdb_max_background_jobs = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-max-background-jobs: {}", e))
+                    config.rocksdb_max_background_jobs =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-max-background-jobs: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-max-write-buffer-number" => {
-                    config.rocksdb_max_write_buffer_number = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-max-write-buffer-number: {}", e))
+                    config.rocksdb_max_write_buffer_number =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-max-write-buffer-number: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-min-write-buffer-number-to-merge" => {
-                    config.rocksdb_min_write_buffer_number_to_merge = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-min-write-buffer-number-to-merge: {}", e))
+                    config.rocksdb_min_write_buffer_number_to_merge =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-min-write-buffer-number-to-merge: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-write-buffer-size" => {
-                    config.rocksdb_write_buffer_size = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-write-buffer-size: {}", e))
+                    config.rocksdb_write_buffer_size =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-write-buffer-size: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-level0-file-num-compaction-trigger" => {
-                    config.rocksdb_level0_file_num_compaction_trigger = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-level0-file-num-compaction-trigger: {}", e))
+                    config.rocksdb_level0_file_num_compaction_trigger =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-level0-file-num-compaction-trigger: {}",
+                                e
+                            )),
                         })?;
                 }
-                "rocksdb-number-levels" => {
-                    config.rocksdb_num_levels = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-number-levels: {}", e))
+                "rocksdb-num-levels" => {
+                    config.rocksdb_num_levels =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-num-levels: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-enable-pipelined-write" => {
-                    config.rocksdb_enable_pipelined_write = deserialize_bool_from_yes_no(&value)
+                    config.rocksdb_enable_pipelined_write = parse_bool_from_string(&value)
                         .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-enable-pipelined-write: {}", e))
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-enable-pipelined-write: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-level0-slowdown-writes-trigger" => {
-                    config.rocksdb_level0_slowdown_writes_trigger = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-level0-slowdown-writes-trigger: {}", e))
+                    config.rocksdb_level0_slowdown_writes_trigger =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-level0-slowdown-writes-trigger: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-level0-stop-writes-trigger" => {
-                    config.rocksdb_level0_stop_writes_trigger = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-level0-stop-writes-trigger: {}", e))
+                    config.rocksdb_level0_stop_writes_trigger =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-level0-stop-writes-trigger: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-ttl-second" => {
-                    config.rocksdb_ttl_second = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-ttl-second: {}", e))
+                    config.rocksdb_ttl_second =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-ttl-second: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-periodic-second" => {
-                    config.rocksdb_periodic_second = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-periodic-second: {}", e))
+                    config.rocksdb_periodic_second =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-periodic-second: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-level-compaction-dynamic-level-bytes" => {
-                    config.rocksdb_level_compaction_dynamic_level_bytes = deserialize_bool_from_yes_no(&value)
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-level-compaction-dynamic-level-bytes: {}", e))
+                    config.rocksdb_level_compaction_dynamic_level_bytes =
+                        parse_bool_from_string(&value).map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-level-compaction-dynamic-level-bytes: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-max-open-files" => {
-                    config.rocksdb_max_open_files = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-max-open-files: {}", e))
+                    config.rocksdb_max_open_files =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-max-open-files: {}",
+                                e
+                            )),
                         })?;
                 }
                 "rocksdb-target-file-size-base" => {
-                    config.rocksdb_target_file_size_base = value.parse()
-                        .map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::custom(format!("Invalid rocksdb-target-file-size-base: {}", e))
+                    config.rocksdb_target_file_size_base =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-target-file-size-base: {}",
+                                e
+                            )),
                         })?;
                 }
                 _ => {
