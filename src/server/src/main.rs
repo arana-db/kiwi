@@ -39,10 +39,10 @@ async fn main() -> std::io::Result<()> {
 
     let args = Args::parse();
     let config = if let Some(config_path) = args.config {
-        Config::load(&config_path).map_err(|e| {
+        Config::load(&config_path).map_err(|_e| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Failed to load config file '{}': {}", config_path, e),
+                format!("Failed to load config file '{}': {}", config_path, _e),
             )
         })?
     } else {

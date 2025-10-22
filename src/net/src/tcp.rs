@@ -72,7 +72,7 @@ impl TcpServer {
         storage.open(storage_options, db_path).unwrap();
 
         Self {
-            addr: addr.unwrap_or("127.0.0.1:9221".to_string()),
+            addr: addr.unwrap_or("127.0.0.1:7379".to_string()),
             storage: Arc::new(storage),
             cmd_table: Arc::new(create_command_table()),
             executor,

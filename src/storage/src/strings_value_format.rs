@@ -35,7 +35,6 @@ pub struct StringValue {
 }
 
 delegate_internal_value!(StringValue);
-#[allow(dead_code)]
 impl StringValue {
     pub fn new<T>(user_value: T) -> Self
     where T: Into<Bytes> {
@@ -67,7 +66,6 @@ pub struct ParsedStringsValue {
 }
 
 delegate_parsed_value!(ParsedStringsValue);
-#[allow(dead_code)]
 impl ParsedStringsValue {
     pub fn new<T>(internal_value: T) -> Result<Self>
     where T: Into<BytesMut> {
@@ -122,6 +120,7 @@ impl ParsedStringsValue {
         })
     }
 
+    #[allow(dead_code)]
     pub fn strip_suffix(&mut self) {
         self.inner.value.advance(TYPE_LENGTH);
 
@@ -131,16 +130,19 @@ impl ParsedStringsValue {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_ctime(&mut self, ctime: u64) {
         self.inner.ctime = ctime;
         self.set_ctime_to_value();
     }
 
+    #[allow(dead_code)]
     pub fn set_etime(&mut self, etime: u64) {
         self.inner.etime = etime;
         self.set_etime_to_value();
     }
 
+    #[allow(dead_code)]
     fn set_ctime_to_value(&mut self) {
         let suffix_start =
             self.inner.value.len() - STRING_VALUE_SUFFIXLENGTH + SUFFIX_RESERVE_LENGTH;
@@ -150,6 +152,7 @@ impl ParsedStringsValue {
         dst.copy_from_slice(&ctime_bytes);
     }
 
+    #[allow(dead_code)]
     fn set_etime_to_value(&mut self) {
         let suffix_start = self.inner.value.len() - STRING_VALUE_SUFFIXLENGTH
             + SUFFIX_RESERVE_LENGTH
