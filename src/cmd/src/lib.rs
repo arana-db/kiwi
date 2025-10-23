@@ -21,6 +21,7 @@ pub mod get;
 pub mod group_client;
 pub mod incr;
 mod incrby;
+mod incrbyfloat;
 pub mod set;
 pub mod table;
 
