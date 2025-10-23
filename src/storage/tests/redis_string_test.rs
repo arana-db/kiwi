@@ -847,40 +847,56 @@ mod redis_string_test {
         let key = b"nonexistent_key";
         let result = redis.strlen(key);
         assert!(result.is_ok(), "strlen should succeed for non-existing key");
-        assert_eq!(result.unwrap(), 0, "strlen should return 0 for non-existing key");
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "strlen should return 0 for non-existing key"
+        );
 
         // Test 2: Set a value and get its length
         let key = b"test_key";
         let value = b"Hello, World!";
         redis.set(key, value).unwrap();
-        
+
         let result = redis.strlen(key);
         assert!(result.is_ok(), "strlen should succeed");
-        assert_eq!(result.unwrap(), 13, "strlen should return 13 for 'Hello, World!'");
+        assert_eq!(
+            result.unwrap(),
+            13,
+            "strlen should return 13 for 'Hello, World!'"
+        );
 
         // Test 3: Empty string
         let key = b"empty_key";
         let value = b"";
         redis.set(key, value).unwrap();
-        
+
         let result = redis.strlen(key);
         assert!(result.is_ok(), "strlen should succeed for empty string");
-        assert_eq!(result.unwrap(), 0, "strlen should return 0 for empty string");
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "strlen should return 0 for empty string"
+        );
 
         // Test 4: UTF-8 multi-byte characters (should count bytes, not characters)
         let key = b"utf8_key";
         let value = "你好世界".as_bytes(); // 12 bytes (3 bytes per character)
         redis.set(key, value).unwrap();
-        
+
         let result = redis.strlen(key);
         assert!(result.is_ok(), "strlen should succeed for UTF-8 string");
-        assert_eq!(result.unwrap(), 12, "strlen should return byte count, not character count");
+        assert_eq!(
+            result.unwrap(),
+            12,
+            "strlen should return byte count, not character count"
+        );
 
         // Test 5: Large string
         let key = b"large_key";
         let value = vec![b'x'; 10000];
         redis.set(key, &value).unwrap();
-        
+
         let result = redis.strlen(key);
         assert!(result.is_ok(), "strlen should succeed for large string");
         assert_eq!(result.unwrap(), 10000);
@@ -918,9 +934,11 @@ mod redis_string_test {
         // Try to get strlen of a hash key (should return RedisErr)
         let result = redis.strlen(key);
         assert!(result.is_err(), "strlen should fail for non-string type");
-        
+
         match result.unwrap_err() {
-            storage::error::Error::RedisErr { ref message, .. } if message.starts_with("WRONGTYPE") => {
+            storage::error::Error::RedisErr { ref message, .. }
+                if message.starts_with("WRONGTYPE") =>
+            {
                 // Expected error type
             }
             e => panic!("Expected WRONGTYPE RedisErr, got: {:?}", e),
@@ -954,12 +972,12 @@ mod redis_string_test {
         let key = b"ttl_key";
         let value = b"test_value";
         redis.set(key, value).unwrap();
-        
+
         // Check strlen
         let result = redis.strlen(key);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 10);
-        
+
         // Note: We skip the TTL test as expire() might not be available in this test context
         // In real Redis, expired keys would return 0 from strlen
 
@@ -1004,7 +1022,7 @@ mod redis_string_test {
                 for i in 0..100 {
                     let key = format!("concurrent_key_{}", i).into_bytes();
                     let expected_len = format!("value_{}", i).len() as i32;
-                    
+
                     let result = redis_clone.strlen(&key);
                     assert!(
                         result.is_ok(),

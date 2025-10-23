@@ -99,19 +99,19 @@ impl Redis {
     // }
 
     /// Returns the length of the string value stored at key in bytes.
-    /// 
+    ///
     /// This command is compatible with Redis STRLEN, which returns the length
     /// of the string value stored at key. If the key does not exist or has expired,
     /// the command returns 0.
-    /// 
+    ///
     /// # Arguments
     /// * `key` - The key to get the length of
-    /// 
+    ///
     /// # Returns
     /// * `Ok(0)` - if the key does not exist or is expired
     /// * `Ok(length)` - the byte length of the string value (not character count for UTF-8)
     /// * `Err(RedisErr)` - if the key holds a value that is not a string (WRONGTYPE error)
-    /// 
+    ///
     /// # Performance
     /// This operation is O(1) as it only reads metadata without accessing the full value.
     pub fn strlen(&self, key: &[u8]) -> Result<i32> {
@@ -130,16 +130,16 @@ impl Redis {
             return Ok(0);
         }
 
+        // Check type first to match Redis compatibility
+        // Redis returns WRONGTYPE regardless of expiration status for non-string keys
+        self.check_type(encode_value.as_slice(), DataType::String)?;
+
         let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-        // Check expiration first (performance optimization)
-        // Avoid unnecessary type checking if key is already expired
+        // Then check expiration
         if decode_value.is_stale() {
             return Ok(0);
         }
-
-        // Then check if key is a string type
-        self.check_type(encode_value.as_slice(), DataType::String)?;
 
         // Return the length of the string value
         let user_value = decode_value.user_value();
