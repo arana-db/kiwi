@@ -24,6 +24,7 @@ pub mod group_client;
 pub mod incr;
 mod incrby;
 pub mod set;
+mod setex;
 mod setrange;
 mod strlen;
 pub mod table;

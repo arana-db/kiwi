@@ -34,7 +34,7 @@ use crate::error::Error::*;
 use crate::{
     ColumnFamilyIndex, DataType, Redis, Result,
     base_key_format::BaseKey,
-    error::{KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
+    error::{InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
     strings_value_format::{ParsedStringsValue, StringValue},
 };
 
@@ -504,6 +504,66 @@ impl Redis {
     pub fn set(&self, key: &[u8], value: &[u8]) -> Result<()> {
         let string_key = BaseKey::new(key);
         let string_value = StringValue::new(value.to_owned());
+
+        // Get lock for the key
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(())
+    }
+
+    /// Set key to hold string value with TTL in seconds.
+    ///
+    /// This command is compatible with Redis SETEX, which sets a key to hold a string value
+    /// and sets an expiration time in seconds. This is an atomic operation.
+    ///
+    /// # Arguments
+    /// * `key` - The key to set
+    /// * `seconds` - TTL in seconds (must be positive)
+    /// * `value` - The value to set
+    ///
+    /// # Returns
+    /// * `Ok(())` - if the operation succeeded
+    /// * `Err(RedisErr)` - if TTL is invalid (not positive)
+    ///
+    /// # Examples
+    /// - SETEX mykey 10 "Hello" - Sets mykey to "Hello" with 10 seconds expiration
+    ///
+    /// # Performance
+    /// This operation is O(1) as it only performs a single database write.
+    pub fn setex(&self, key: &[u8], seconds: i64, value: &[u8]) -> Result<()> {
+        // Validate TTL - must be positive
+        if seconds <= 0 {
+            return Err(RedisErr {
+                message: "ERR invalid expire time in setex".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        let string_key = BaseKey::new(key);
+        let mut string_value = StringValue::new(value.to_owned());
+
+        // Set TTL in microseconds (seconds * 1_000_000)
+        let ttl_micros = (seconds as u64)
+            .checked_mul(1_000_000)
+            .context(InvalidFormatSnafu {
+                message: "TTL overflow when converting to microseconds".to_string(),
+            })?;
+        string_value.set_relative_etime(ttl_micros)?;
 
         // Get lock for the key
         let key_str = String::from_utf8_lossy(key).to_string();
