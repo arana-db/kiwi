@@ -2374,4 +2374,202 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_mget_basic() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Set some keys
+        redis.set(b"key1", b"value1").unwrap();
+        redis.set(b"key2", b"value2").unwrap();
+        redis.set(b"key3", b"value3").unwrap();
+
+        // MGET all three keys
+        let keys = vec![b"key1".to_vec(), b"key2".to_vec(), b"key3".to_vec()];
+        let result = redis.mget(&keys);
+        assert!(result.is_ok());
+
+        let values = result.unwrap();
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0], Some("value1".to_string()));
+        assert_eq!(values[1], Some("value2".to_string()));
+        assert_eq!(values[2], Some("value3".to_string()));
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_mget_with_non_existing_keys() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Set only key1 and key3
+        redis.set(b"key1", b"value1").unwrap();
+        redis.set(b"key3", b"value3").unwrap();
+
+        // MGET including non-existing key2
+        let keys = vec![b"key1".to_vec(), b"key2".to_vec(), b"key3".to_vec()];
+        let result = redis.mget(&keys);
+        assert!(result.is_ok());
+
+        let values = result.unwrap();
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0], Some("value1".to_string()));
+        assert_eq!(values[1], None, "Non-existing key should return None");
+        assert_eq!(values[2], Some("value3".to_string()));
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_mget_with_expired_keys() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Set key1 without expiration
+        redis.set(b"key1", b"value1").unwrap();
+        // Set key2 with 1 second expiration
+        redis.setex(b"key2", 1, b"value2").unwrap();
+        // Set key3 without expiration
+        redis.set(b"key3", b"value3").unwrap();
+
+        // Wait for key2 to expire
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // MGET all three keys
+        let keys = vec![b"key1".to_vec(), b"key2".to_vec(), b"key3".to_vec()];
+        let result = redis.mget(&keys);
+        assert!(result.is_ok());
+
+        let values = result.unwrap();
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0], Some("value1".to_string()));
+        assert_eq!(values[1], None, "Expired key should return None");
+        assert_eq!(values[2], Some("value3".to_string()));
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_mget_with_wrong_type() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Set key1 as string
+        redis.set(b"key1", b"value1").unwrap();
+        // Set key2 as hash
+        redis.hset(b"key2", b"field1", b"value2").unwrap();
+        // Set key3 as string
+        redis.set(b"key3", b"value3").unwrap();
+
+        // MGET all three keys - hash key should return None
+        let keys = vec![b"key1".to_vec(), b"key2".to_vec(), b"key3".to_vec()];
+        let result = redis.mget(&keys);
+        assert!(result.is_ok());
+
+        let values = result.unwrap();
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0], Some("value1".to_string()));
+        assert_eq!(values[1], None, "Wrong type key should return None");
+        assert_eq!(values[2], Some("value3".to_string()));
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_mget_empty_keys() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // MGET with empty keys list
+        let keys: Vec<Vec<u8>> = vec![];
+        let result = redis.mget(&keys);
+        assert!(result.is_ok());
+
+        let values = result.unwrap();
+        assert_eq!(values.len(), 0, "Empty keys should return empty array");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }

@@ -40,6 +40,20 @@ impl Storage {
         self.insts[instance_id].get(key)
     }
 
+    pub fn mget(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
+        // For MGET, we need to handle keys that may be on different instances
+        // However, for simplicity and consistency with single-instance design,
+        // we'll use the first key's instance to perform the operation
+        // In a true distributed setup, this would need to fan out to multiple instances
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let slot_id = key_to_slot_id(&keys[0]);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].mget(keys)
+    }
+
     pub fn incr_decr(&self, key: &[u8], incr: i64) -> Result<i64> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);

@@ -24,6 +24,7 @@ mod getset;
 pub mod group_client;
 pub mod incr;
 mod incrby;
+mod mget;
 mod psetex;
 pub mod set;
 mod setex;

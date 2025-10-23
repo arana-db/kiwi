@@ -468,6 +468,61 @@ impl Redis {
         }
     }
 
+    /// MGET key [key ...]
+    ///
+    /// Returns the values of all specified keys. For every key that does not hold
+    /// a string value or does not exist, the special value nil is returned.
+    ///
+    /// # Time Complexity
+    /// O(N) where N is the number of keys to retrieve
+    ///
+    /// # Returns
+    /// Array reply: list of values at the specified keys
+    ///
+    /// # Examples
+    /// ```text
+    /// MGET key1 key2 key3  // Returns array of values or nil for each key
+    /// ```
+    pub fn mget(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let mut results = Vec::with_capacity(keys.len());
+
+        for key in keys {
+            let string_key = BaseKey::new(key);
+
+            match db
+                .get_opt(&string_key.encode()?, &self.read_options)
+                .context(RocksSnafu)?
+            {
+                Some(val) => {
+                    // Check type - if not string type, return None (like Redis does)
+                    if let Err(_) = self.check_type(val.as_slice(), DataType::String) {
+                        results.push(None);
+                        continue;
+                    }
+
+                    let string_value = ParsedStringsValue::new(&val[..])?;
+
+                    // Check if key is expired
+                    if string_value.is_stale() {
+                        results.push(None);
+                    } else {
+                        let user_value = string_value.user_value();
+                        results.push(Some(String::from_utf8_lossy(&user_value).to_string()));
+                    }
+                }
+                None => {
+                    results.push(None);
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
     // /// Get the value and TTL of a key
     // pub fn get_with_ttl(&self, key: &[u8], value: &mut String, ttl: &mut i64) -> Result<()> {
     //     let db = self.db.as_ref().ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
