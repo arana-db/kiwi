@@ -449,6 +449,15 @@ impl Redis {
         {
             Some(val) => {
                 let string_value = ParsedStringsValue::new(&val[..])?;
+
+                // Check if key is expired
+                if string_value.is_stale() {
+                    return KeyNotFoundSnafu {
+                        key: String::from_utf8_lossy(key).to_string(),
+                    }
+                    .fail();
+                }
+
                 let user_value = string_value.user_value();
                 Ok(String::from_utf8_lossy(&user_value).to_string())
             }
