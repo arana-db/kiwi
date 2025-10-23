@@ -1,3 +1,5 @@
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
 // Licensed to the Apache Software Foundation (ASF) under one or more
 // Copyright (c) 2024-present, arana-db Community.  All rights reserved.
 //
