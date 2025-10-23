@@ -41,17 +41,41 @@ impl Storage {
     }
 
     pub fn mget(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
-        // For MGET, we need to handle keys that may be on different instances
-        // However, for simplicity and consistency with single-instance design,
-        // we'll use the first key's instance to perform the operation
-        // In a true distributed setup, this would need to fan out to multiple instances
         if keys.is_empty() {
             return Ok(Vec::new());
         }
 
-        let slot_id = key_to_slot_id(&keys[0]);
-        let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        self.insts[instance_id].mget(keys)
+        // If single instance, process directly for better performance
+        if self.insts.len() == 1 {
+            return self.insts[0].mget(keys);
+        }
+
+        // Multi-instance: group keys by instance and process
+        let mut instance_keys: std::collections::HashMap<usize, Vec<(usize, &Vec<u8>)>> =
+            std::collections::HashMap::new();
+
+        for (idx, key) in keys.iter().enumerate() {
+            let slot_id = key_to_slot_id(key);
+            let instance_id = self.slot_indexer.get_instance_id(slot_id);
+            instance_keys
+                .entry(instance_id)
+                .or_default()
+                .push((idx, key));
+        }
+
+        let mut results = vec![None; keys.len()];
+
+        for (instance_id, key_indices) in instance_keys {
+            let instance_keys: Vec<Vec<u8>> =
+                key_indices.iter().map(|(_, key)| (*key).clone()).collect();
+            let instance_results = self.insts[instance_id].mget(&instance_keys)?;
+
+            for ((original_idx, _), result) in key_indices.iter().zip(instance_results) {
+                results[*original_idx] = result;
+            }
+        }
+
+        Ok(results)
     }
 
     pub fn incr_decr(&self, key: &[u8], incr: i64) -> Result<i64> {

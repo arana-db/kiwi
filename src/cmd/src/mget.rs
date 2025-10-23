@@ -59,7 +59,9 @@ impl Cmd for MgetCmd {
     /// Array reply: list of values at the specified keys
     fn do_initial(&self, client: &Client) -> bool {
         let argv = client.argv();
-        // Use the first key for routing
+        // Use the first key for routing in distributed setup
+        // Note: In a true multi-instance distributed environment,
+        // the storage layer will handle cross-instance key retrieval
         if argv.len() > 1 {
             let key = argv[1].clone();
             client.set_key(&key);

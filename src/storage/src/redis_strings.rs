@@ -472,6 +472,8 @@ impl Redis {
     ///
     /// Returns the values of all specified keys. For every key that does not hold
     /// a string value or does not exist, the special value nil is returned.
+    /// Because a non-existing keys are treated as empty strings, running MGET
+    /// against a non-existing key will return nil.
     ///
     /// # Time Complexity
     /// O(N) where N is the number of keys to retrieve
@@ -479,9 +481,16 @@ impl Redis {
     /// # Returns
     /// Array reply: list of values at the specified keys
     ///
+    /// # Behavior
+    /// - Non-existing keys return nil
+    /// - Expired keys return nil
+    /// - Keys with wrong data type return nil (no error)
+    /// - Empty key list returns empty array
+    ///
     /// # Examples
     /// ```text
     /// MGET key1 key2 key3  // Returns array of values or nil for each key
+    /// MGET nonexistent     // Returns [nil]
     /// ```
     pub fn mget(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
@@ -490,6 +499,9 @@ impl Redis {
 
         let mut results = Vec::with_capacity(keys.len());
 
+        // Note: RocksDB multi_get would be more efficient for batch reads,
+        // but it's not currently exposed through the Engine trait.
+        // Future optimization: add multi_get to Engine trait.
         for key in keys {
             let string_key = BaseKey::new(key);
 
@@ -499,7 +511,7 @@ impl Redis {
             {
                 Some(val) => {
                     // Check type - if not string type, return None (like Redis does)
-                    if let Err(_) = self.check_type(val.as_slice(), DataType::String) {
+                    if self.check_type(val.as_slice(), DataType::String).is_err() {
                         results.push(None);
                         continue;
                     }
