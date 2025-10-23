@@ -15,31 +15,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod command;
-pub mod compat;
-pub mod encode;
-pub mod error;
-pub mod parse;
-pub mod types;
+use bytes::Bytes;
+use resp::{RespVersion, new_decoder, new_encoder};
 
-// Versioned modules
-pub mod resp1;
-pub mod resp2;
-pub mod resp3;
+#[test]
+fn selects_resp1_impl() {
+    let mut dec = new_decoder(RespVersion::RESP1);
+    let enc = new_encoder(RespVersion::RESP1);
+    assert_eq!(dec.version(), RespVersion::RESP1);
+    assert_eq!(enc.version(), RespVersion::RESP1);
 
-// Unified traits and helpers
-pub mod factory;
-pub mod multi;
-pub mod traits;
+    // minimal smoke: inline ping
+    dec.push(Bytes::from("PING\r\n"));
+    // even if command extraction differs, API shape should not panic
+    let _ = dec.next();
+}
 
-pub use command::{Command, CommandType, RespCommand};
-pub use compat::{BooleanMode, DoubleMode, DownlevelPolicy, MapMode};
-pub use encode::{CmdRes, RespEncode};
-pub use error::{RespError, RespResult};
-pub use factory::{new_decoder, new_encoder, new_encoder_with_policy};
-pub use multi::{decode_many, encode_many};
-pub use parse::{Parse, RespParse, RespParseResult};
-pub use traits::{Decoder, Encoder};
-pub use types::{RespData, RespType, RespVersion};
+#[test]
+fn selects_resp2_impl() {
+    let mut dec = new_decoder(RespVersion::RESP2);
+    let enc = new_encoder(RespVersion::RESP2);
+    assert_eq!(dec.version(), RespVersion::RESP2);
+    assert_eq!(enc.version(), RespVersion::RESP2);
 
-pub const CRLF: &str = "\r\n";
+    // minimal smoke: +OK\r\n
+    dec.push(Bytes::from("+OK\r\n"));
+    let _ = dec.next();
+}

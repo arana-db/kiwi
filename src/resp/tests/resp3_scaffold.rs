@@ -15,31 +15,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod command;
-pub mod compat;
-pub mod encode;
-pub mod error;
-pub mod parse;
-pub mod types;
+use bytes::Bytes;
+use resp::{RespData, RespVersion, new_decoder};
 
-// Versioned modules
-pub mod resp1;
-pub mod resp2;
-pub mod resp3;
+#[test]
+fn resp3_boolean_and_null() {
+    let mut dec = new_decoder(RespVersion::RESP3);
+    dec.push(Bytes::from("#t\r\n"));
+    dec.push(Bytes::from("_\r\n"));
 
-// Unified traits and helpers
-pub mod factory;
-pub mod multi;
-pub mod traits;
+    // Verify Boolean(true) parsing
+    let result1 = dec.next().unwrap().unwrap();
+    match result1 {
+        RespData::Boolean(true) => {}
+        _ => panic!("expected Boolean(true), got {:?}", result1),
+    }
 
-pub use command::{Command, CommandType, RespCommand};
-pub use compat::{BooleanMode, DoubleMode, DownlevelPolicy, MapMode};
-pub use encode::{CmdRes, RespEncode};
-pub use error::{RespError, RespResult};
-pub use factory::{new_decoder, new_encoder, new_encoder_with_policy};
-pub use multi::{decode_many, encode_many};
-pub use parse::{Parse, RespParse, RespParseResult};
-pub use traits::{Decoder, Encoder};
-pub use types::{RespData, RespType, RespVersion};
-
-pub const CRLF: &str = "\r\n";
+    // Verify Null parsing
+    let result2 = dec.next().unwrap().unwrap();
+    match result2 {
+        RespData::Null => {}
+        _ => panic!("expected Null, got {:?}", result2),
+    }
+}
