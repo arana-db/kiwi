@@ -15,9 +15,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::collections::HashMap;
+
 use crate::error::Result;
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage::Storage;
+
+type KeyValueBytes = (Vec<u8>, Vec<u8>);
+type InstanceKeyValueMap = HashMap<usize, Vec<KeyValueBytes>>;
 
 // use crate::base_data_value_format::DataType;
 // use crate::storage::{Storage, Status, KeyValue, ValueStatus, FieldValue, ScoreMember, BitOpType, BeforeOrAfter, BGTask, Operation, AGGREGATE};
@@ -87,8 +92,7 @@ impl Storage {
             return self.insts[0].mset(kvs);
         }
 
-        let mut instance_map: std::collections::HashMap<usize, Vec<(Vec<u8>, Vec<u8>)>> =
-            std::collections::HashMap::new();
+        let mut instance_map: InstanceKeyValueMap = HashMap::new();
 
         for (key, value) in kvs {
             let slot_id = key_to_slot_id(key);

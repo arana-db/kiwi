@@ -63,13 +63,11 @@ impl Cmd for MsetCmd {
         let argv = client.argv();
 
         if (argv.len() - 1) % 2 != 0 {
-            client.set_reply(
-                RespData::Error(
-                    "ERR wrong number of arguments for 'mset' command"
-                        .to_string()
-                        .into(),
-                ),
-            );
+            client.set_reply(RespData::Error(
+                "ERR wrong number of arguments for 'mset' command"
+                    .to_string()
+                    .into(),
+            ));
             return false;
         }
 

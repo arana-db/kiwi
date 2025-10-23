@@ -1011,16 +1011,15 @@ impl Redis {
     //
     // }
 
-    /// MSET key value [key value ...]
-    ///
-    /// Sets the given keys to their respective values. MSET replaces existing values
-    /// with new values, just like regular SET. MSET is atomic, so all given keys are
-    /// set at once. It is not possible for clients to see that some of the keys were
-    /// updated while others are unchanged.
-    ///
-    /// # Time Complexity
-    /// O(N) where N is the number of keys to set
-    ///
+    // MSET key value [key value ...]
+    //
+    // Sets the given keys to their respective values. MSET replaces existing values
+    // with new values, just like regular SET. MSET is atomic, so all given keys are
+    // set at once. It is not possible for clients to see that some of the keys were
+    // updated while others are unchanged.
+    //
+    // # Time Complexity
+    // O(N) where N is the number of keys to set
     // /// Set multiple keys to multiple values, only if none of the keys exist
     // pub fn msetnx(&self, kvs: &[KeyValue], ret: &mut i32) -> Result<()> {
     //     let db = self.db.as_ref().ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
