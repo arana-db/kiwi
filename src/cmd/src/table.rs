@@ -61,6 +61,7 @@ pub fn create_command_table() -> CmdTable {
         crate::incrby::IncrbyCmd,
         crate::decr::DecrCmd,
         crate::decrby::DecrbyCmd,
+        crate::strlen::StrlenCmd,
         // TODO: add more commands...
     );
 

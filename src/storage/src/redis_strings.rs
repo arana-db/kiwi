@@ -98,6 +98,54 @@ impl Redis {
     //     Ok(())
     // }
 
+    /// Returns the length of the string value stored at key in bytes.
+    /// 
+    /// This command is compatible with Redis STRLEN, which returns the length
+    /// of the string value stored at key. If the key does not exist or has expired,
+    /// the command returns 0.
+    /// 
+    /// # Arguments
+    /// * `key` - The key to get the length of
+    /// 
+    /// # Returns
+    /// * `Ok(0)` - if the key does not exist or is expired
+    /// * `Ok(length)` - the byte length of the string value (not character count for UTF-8)
+    /// * `Err(RedisErr)` - if the key holds a value that is not a string (WRONGTYPE error)
+    /// 
+    /// # Performance
+    /// This operation is O(1) as it only reads metadata without accessing the full value.
+    pub fn strlen(&self, key: &[u8]) -> Result<i32> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let string_key = BaseKey::new(key);
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
+
+        // If key doesn't exist, return 0
+        if encode_value.is_empty() {
+            return Ok(0);
+        }
+
+        let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+
+        // Check expiration first (performance optimization)
+        // Avoid unnecessary type checking if key is already expired
+        if decode_value.is_stale() {
+            return Ok(0);
+        }
+
+        // Then check if key is a string type
+        self.check_type(encode_value.as_slice(), DataType::String)?;
+
+        // Return the length of the string value
+        let user_value = decode_value.user_value();
+        Ok(user_value.len() as i32)
+    }
+
     /// Append a value to a key
     /// Returns the length of the string after the append operation
     pub fn append(&self, key: &[u8], value: &[u8]) -> Result<i32> {

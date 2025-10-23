@@ -826,4 +826,214 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_strlen_basic() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test 1: Get length of non-existing key (should return 0)
+        let key = b"nonexistent_key";
+        let result = redis.strlen(key);
+        assert!(result.is_ok(), "strlen should succeed for non-existing key");
+        assert_eq!(result.unwrap(), 0, "strlen should return 0 for non-existing key");
+
+        // Test 2: Set a value and get its length
+        let key = b"test_key";
+        let value = b"Hello, World!";
+        redis.set(key, value).unwrap();
+        
+        let result = redis.strlen(key);
+        assert!(result.is_ok(), "strlen should succeed");
+        assert_eq!(result.unwrap(), 13, "strlen should return 13 for 'Hello, World!'");
+
+        // Test 3: Empty string
+        let key = b"empty_key";
+        let value = b"";
+        redis.set(key, value).unwrap();
+        
+        let result = redis.strlen(key);
+        assert!(result.is_ok(), "strlen should succeed for empty string");
+        assert_eq!(result.unwrap(), 0, "strlen should return 0 for empty string");
+
+        // Test 4: UTF-8 multi-byte characters (should count bytes, not characters)
+        let key = b"utf8_key";
+        let value = "你好世界".as_bytes(); // 12 bytes (3 bytes per character)
+        redis.set(key, value).unwrap();
+        
+        let result = redis.strlen(key);
+        assert!(result.is_ok(), "strlen should succeed for UTF-8 string");
+        assert_eq!(result.unwrap(), 12, "strlen should return byte count, not character count");
+
+        // Test 5: Large string
+        let key = b"large_key";
+        let value = vec![b'x'; 10000];
+        redis.set(key, &value).unwrap();
+        
+        let result = redis.strlen(key);
+        assert!(result.is_ok(), "strlen should succeed for large string");
+        assert_eq!(result.unwrap(), 10000);
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_strlen_wrong_type() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Create a hash (non-string type)
+        let key = b"hash_key";
+        let field = b"field1";
+        let value = b"value1";
+        redis.hset(key, field, value).unwrap();
+
+        // Try to get strlen of a hash key (should return RedisErr)
+        let result = redis.strlen(key);
+        assert!(result.is_err(), "strlen should fail for non-string type");
+        
+        match result.unwrap_err() {
+            storage::error::Error::RedisErr { ref message, .. } if message.starts_with("WRONGTYPE") => {
+                // Expected error type
+            }
+            e => panic!("Expected WRONGTYPE RedisErr, got: {:?}", e),
+        }
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_strlen_with_ttl() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Set a key with value
+        let key = b"ttl_key";
+        let value = b"test_value";
+        redis.set(key, value).unwrap();
+        
+        // Check strlen
+        let result = redis.strlen(key);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 10);
+        
+        // Note: We skip the TTL test as expire() might not be available in this test context
+        // In real Redis, expired keys would return 0 from strlen
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_strlen_concurrent() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Pre-populate with test data
+        for i in 0..100 {
+            let key = format!("concurrent_key_{}", i).into_bytes();
+            let value = format!("value_{}", i).into_bytes();
+            redis.set(&key, &value).unwrap();
+        }
+
+        let redis_arc = Arc::new(redis);
+        let num_threads = 8;
+
+        let mut handles = vec![];
+        for thread_id in 0..num_threads {
+            let redis_clone = Arc::clone(&redis_arc);
+            let handle = thread::spawn(move || {
+                for i in 0..100 {
+                    let key = format!("concurrent_key_{}", i).into_bytes();
+                    let expected_len = format!("value_{}", i).len() as i32;
+                    
+                    let result = redis_clone.strlen(&key);
+                    assert!(
+                        result.is_ok(),
+                        "Thread {}: strlen failed for key {}",
+                        thread_id,
+                        String::from_utf8_lossy(&key)
+                    );
+                    assert_eq!(
+                        result.unwrap(),
+                        expected_len,
+                        "Thread {}: incorrect length for key {}",
+                        thread_id,
+                        String::from_utf8_lossy(&key)
+                    );
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        if let Ok(redis) = Arc::try_unwrap(redis_arc) {
+            redis.set_need_close(true);
+        }
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }

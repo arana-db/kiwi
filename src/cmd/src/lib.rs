@@ -23,6 +23,7 @@ pub mod group_client;
 pub mod incr;
 mod incrby;
 pub mod set;
+mod strlen;
 pub mod table;
 
 use std::collections::HashMap;
