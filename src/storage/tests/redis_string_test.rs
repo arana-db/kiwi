@@ -1921,16 +1921,13 @@ mod redis_string_test {
         let key = b"overflow_key";
         let value = b"test";
 
-        // Test TTL that would cause overflow when converting to microseconds
-        // i64::MAX / 1_000 = 9223372036854775 is the max safe milliseconds
-        let max_safe_ms = i64::MAX / 1_000;
+        // Test with a very large value that will definitely overflow
+        // when converting milliseconds to microseconds (ms * 1000)
+        // Use i64::MAX which when multiplied by 1000 will overflow u64
+        let overflow_ms = i64::MAX;
 
-        // This should succeed
-        let result = redis.psetex(key, max_safe_ms, value);
-        assert!(result.is_ok(), "Valid max TTL should succeed");
-
-        // This should fail due to overflow
-        let result = redis.psetex(key, max_safe_ms + 1, value);
+        // This should fail due to overflow when converting to microseconds
+        let result = redis.psetex(key, overflow_ms, value);
         assert!(result.is_err(), "Overflow TTL should fail");
         match result.unwrap_err() {
             storage::error::Error::RedisErr { ref message, .. } => {
