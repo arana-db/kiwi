@@ -1503,14 +1503,17 @@ mod redis_string_test {
 
         // Test binary data with null bytes
         let key = b"binary_key";
-        redis.set(key, b"Hello\x00World").unwrap();
+        redis.set(key, b"Hello\x00World").unwrap(); // 11 bytes: H-e-l-l-o-\x00-W-o-r-l-d
 
+        // Overwrite 3 bytes starting at position 3
+        // Original: "Hello\x00World" (positions 0-10)
+        // After:    "Hel\x00\x00\x00World" (positions 0-10, total 11 bytes)
         let result = redis.setrange(key, 3, b"\x00\x00\x00");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 11);
 
         let value = redis.get(key).unwrap();
-        assert_eq!(value.as_bytes(), b"Hel\x00\x00\x00\x00World");
+        assert_eq!(value.as_bytes(), b"Hel\x00\x00\x00World");
 
         redis.set_need_close(true);
         drop(redis);
