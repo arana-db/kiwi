@@ -662,28 +662,22 @@ impl Redis {
         Ok(())
     }
 
+    /// SETNX key value
+    ///
     /// Set key to hold string value if key does not exist.
-    ///
-    /// This command is compatible with Redis SETNX (SET if Not eXists).
-    /// It sets a key to hold a string value only if the key does not already exist.
-    /// If the key already exists, no operation is performed.
-    ///
-    /// # Arguments
-    /// * `key` - The key to set
-    /// * `value` - The value to set
-    ///
-    /// # Returns
-    /// * `Ok(1)` - if the key was set (did not exist before)
-    /// * `Ok(0)` - if the key was not set (already exists)
-    ///
-    /// # Examples
-    /// - SETNX mykey "Hello" - Returns 1 if mykey was set, 0 if it already existed
+    /// When key already holds a value, no operation is performed.
+    /// SETNX is short for "SET if Not eXists".
     ///
     /// # Time Complexity
     /// O(1)
     ///
-    /// # Performance
-    /// This operation performs a read followed by a conditional write.
+    /// # Returns
+    /// Integer reply, specifically:
+    /// - 1 if the key was set
+    /// - 0 if the key was not set
+    ///
+    /// # Errors
+    /// Returns WRONGTYPE error if key exists but holds a non-string value
     pub fn setnx(&self, key: &[u8], value: &[u8]) -> Result<i32> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
@@ -701,6 +695,9 @@ impl Redis {
             .context(RocksSnafu)?;
 
         if let Some(val) = encode_value {
+            // Check type first, return WRONGTYPE error if not string
+            self.check_type(val.as_slice(), DataType::String)?;
+
             // Key exists, check if it's expired
             let string_value = ParsedStringsValue::new(&val[..])?;
             if !string_value.is_stale() {

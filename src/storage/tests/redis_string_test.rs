@@ -2110,4 +2110,48 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_setnx_wrong_type() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"hash_key";
+        let field = b"field1";
+        let value = b"value1";
+
+        // Create a hash type key
+        redis.hset(key, field, value).unwrap();
+
+        // Try to execute SETNX on hash key (should return WRONGTYPE error)
+        let result = redis.setnx(key, b"test_value");
+        assert!(result.is_err(), "SETNX should fail for non-string type");
+
+        match result.unwrap_err() {
+            storage::error::Error::RedisErr { ref message, .. }
+                if message.starts_with("WRONGTYPE") =>
+            {
+                // Expected error type
+            }
+            e => panic!("Expected WRONGTYPE RedisErr, got: {:?}", e),
+        }
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }
