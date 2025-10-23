@@ -1944,4 +1944,170 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_setnx_basic() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"mykey";
+        let value1 = b"Hello";
+
+        // First SETNX should succeed (key doesn't exist)
+        let result = redis.setnx(key, value1);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1, "First SETNX should return 1");
+
+        // Verify the value was set
+        let get_result = redis.get(key);
+        assert!(get_result.is_ok());
+        assert_eq!(get_result.unwrap().as_bytes(), value1);
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_setnx_existing_key() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"mykey";
+        let value1 = b"Hello";
+        let value2 = b"World";
+
+        // First, set the key using regular SET
+        redis.set(key, value1).unwrap();
+
+        // Second SETNX should fail (key already exists)
+        let result = redis.setnx(key, value2);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0, "SETNX on existing key should return 0");
+
+        // Verify the value wasn't changed
+        let get_result = redis.get(key).unwrap();
+        assert_eq!(get_result.as_bytes(), value1, "Value should not be changed");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_setnx_expired_key() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"expiring_key";
+        let value1 = b"expires_soon";
+        let value2 = b"new_value";
+
+        // Set a key with 1 second TTL
+        redis.setex(key, 1, value1).unwrap();
+
+        // Wait for expiration
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // SETNX should succeed on expired key (treated as non-existent)
+        let result = redis.setnx(key, value2);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1, "SETNX on expired key should return 1");
+
+        // Verify the new value was set
+        let get_result = redis.get(key);
+        assert!(get_result.is_ok());
+        assert_eq!(get_result.unwrap().as_bytes(), value2);
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_setnx_multiple_keys() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test SETNX with multiple different keys
+        let keys = vec![b"key1", b"key2", b"key3"];
+        let value = b"test_value";
+
+        for key in &keys {
+            let result = redis.setnx(*key, value);
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), 1, "SETNX should succeed for new key");
+        }
+
+        // Try SETNX again on same keys
+        for key in &keys {
+            let result = redis.setnx(*key, b"different_value");
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), 0, "SETNX should fail for existing key");
+
+            // Verify values weren't changed
+            let get_result = redis.get(*key).unwrap();
+            assert_eq!(get_result.as_bytes(), value);
+        }
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }

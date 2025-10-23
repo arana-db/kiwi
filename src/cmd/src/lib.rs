@@ -26,6 +26,7 @@ mod incrby;
 mod psetex;
 pub mod set;
 mod setex;
+mod setnx;
 mod setrange;
 mod strlen;
 pub mod table;

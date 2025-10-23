@@ -662,6 +662,70 @@ impl Redis {
         Ok(())
     }
 
+    /// Set key to hold string value if key does not exist.
+    ///
+    /// This command is compatible with Redis SETNX (SET if Not eXists).
+    /// It sets a key to hold a string value only if the key does not already exist.
+    /// If the key already exists, no operation is performed.
+    ///
+    /// # Arguments
+    /// * `key` - The key to set
+    /// * `value` - The value to set
+    ///
+    /// # Returns
+    /// * `Ok(1)` - if the key was set (did not exist before)
+    /// * `Ok(0)` - if the key was not set (already exists)
+    ///
+    /// # Examples
+    /// - SETNX mykey "Hello" - Returns 1 if mykey was set, 0 if it already existed
+    ///
+    /// # Time Complexity
+    /// O(1)
+    ///
+    /// # Performance
+    /// This operation performs a read followed by a conditional write.
+    pub fn setnx(&self, key: &[u8], value: &[u8]) -> Result<i32> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let string_key = BaseKey::new(key);
+
+        // Get lock for the key to ensure atomicity
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
+        // Check if key exists and is not expired
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?;
+
+        if let Some(val) = encode_value {
+            // Key exists, check if it's expired
+            let string_value = ParsedStringsValue::new(&val[..])?;
+            if !string_value.is_stale() {
+                // Key exists and is not expired, do not set
+                return Ok(0);
+            }
+            // Key is expired, treat as non-existent and continue to set
+        }
+
+        // Key doesn't exist or is expired, set the value
+        let string_value = StringValue::new(value.to_owned());
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(1)
+    }
+
     // /// Set key to hold string value and expiration time
     // pub fn setex(&self, key: &[u8], value: &[u8], ttl: i64) -> Result<()> {
     //     let db = self.db.as_ref().ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
