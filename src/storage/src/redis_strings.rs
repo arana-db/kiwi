@@ -98,6 +98,78 @@ impl Redis {
     //     Ok(())
     // }
 
+    /// Append a value to a key
+    /// Returns the length of the string after the append operation
+    pub fn append(&self, key: &[u8], value: &[u8]) -> Result<i32> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        // Get lock for the key
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
+        let string_key = BaseKey::new(key);
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
+
+        let new_value: Vec<u8>;
+        let mut ctime: u64 = Utc::now().timestamp_micros() as u64;
+        let mut etime: u64 = 0;
+
+        if !encode_value.is_empty() {
+            // Check if key exists and is a string type
+            self.check_type(encode_value.as_slice(), DataType::String)?;
+
+            let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+
+            // If key is stale (expired), treat as new key
+            if decode_value.is_stale() {
+                new_value = value.to_vec();
+                // ctime and etime remain at their initialized values (current time and 0)
+                // This is correct: expired keys don't preserve old metadata
+            } else {
+                // Append to existing value
+                let user_value = decode_value.user_value();
+                // Efficiently concatenate the old value and new value
+                new_value = [&user_value[..], value].concat();
+                ctime = decode_value.ctime();
+                etime = decode_value.etime();
+            }
+        } else {
+            // Key doesn't exist, create new
+            new_value = value.to_vec();
+        }
+
+        // Check for string length overflow (Redis compatible)
+        let new_len = new_value.len();
+        if new_len > i32::MAX as usize {
+            return Err(RedisErr {
+                message: "string exceeds maximum allowed size".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        // Set new value with metadata
+        let mut string_value = StringValue::new(new_value);
+        string_value.set_ctime(ctime);
+        string_value.set_etime(etime);
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(new_len as i32)
+    }
+
     // Get the value of a key
     pub fn get(&self, key: &[u8]) -> Result<String> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
