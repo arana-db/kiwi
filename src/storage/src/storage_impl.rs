@@ -64,6 +64,12 @@ impl Storage {
         self.insts[instance_id].getrange(key, start, end)
     }
 
+    pub fn setrange(&self, key: &[u8], offset: i64, value: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].setrange(key, offset, value)
+    }
+
     // // Atomically sets key to value and returns the old value stored at key
     // // Returns an error when key exists but does not hold a string value.
     // pub fn get_set(&self, key: &[u8], value: &[u8], old_value: &mut String) -> Status {

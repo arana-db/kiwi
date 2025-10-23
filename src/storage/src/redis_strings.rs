@@ -229,6 +229,141 @@ impl Redis {
         Ok(substring)
     }
 
+    /// Overwrites part of a string at key starting at the specified offset.
+    ///
+    /// This command is compatible with Redis SETRANGE. If the offset is larger than
+    /// the current string length, the string is padded with zero-bytes (\x00) to make
+    /// the offset fit. If the key doesn't exist, it's created as an empty string before
+    /// performing the operation.
+    ///
+    /// # Arguments
+    /// * `key` - The key to modify
+    /// * `offset` - The starting position to overwrite (must be >= 0)
+    /// * `value` - The value to write at the offset
+    ///
+    /// # Returns
+    /// * `Ok(length)` - the length of the string after modification
+    /// * `Err(RedisErr)` - if the key holds a value that is not a string (WRONGTYPE error)
+    /// * `Err(RedisErr)` - if offset is negative or out of range
+    /// * `Err(RedisErr)` - if the resulting string would exceed maximum size
+    ///
+    /// # Examples
+    /// - SETRANGE key 6 "Redis" on "Hello World" results in "Hello Redis"
+    /// - SETRANGE key 6 "Redis" on "Hello" results in "Hello\x00Redis"
+    /// - SETRANGE nonexistent 5 "Redis" creates "\x00\x00\x00\x00\x00Redis"
+    ///
+    /// # Time Complexity
+    /// O(1) for small strings when offset is within current length,
+    /// O(M) where M is the length of the value argument for other cases.
+    pub fn setrange(&self, key: &[u8], offset: i64, value: &[u8]) -> Result<i32> {
+        // Validate offset early to avoid unnecessary database operations
+        if offset < 0 {
+            return Err(RedisErr {
+                message: "ERR offset is out of range".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        // Check for offset upper bound to prevent potential overflow
+        if offset > i32::MAX as i64 {
+            return Err(RedisErr {
+                message: "ERR offset is out of range".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        // Get lock for the key
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
+        let string_key = BaseKey::new(key);
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
+
+        let mut existing_value = Vec::new();
+        let mut ctime: u64 = Utc::now().timestamp_micros() as u64;
+        let mut etime: u64 = 0;
+
+        if !encode_value.is_empty() {
+            // Check type first to match Redis compatibility
+            self.check_type(encode_value.as_slice(), DataType::String)?;
+
+            let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+
+            // If key is not expired, use existing value
+            if !decode_value.is_stale() {
+                existing_value = decode_value.user_value().to_vec();
+                ctime = decode_value.ctime();
+                etime = decode_value.etime();
+            }
+            // If expired, treat as empty string (existing_value remains empty)
+        }
+
+        // Early return optimization: if value is empty and offset is within bounds
+        if value.is_empty() {
+            let current_len = existing_value.len() as i32;
+            // If offset is within current string, no modification needed
+            if offset <= current_len as i64 {
+                return Ok(current_len);
+            }
+            // If offset is beyond current string, we need to pad
+        }
+
+        let offset_usize = offset as usize;
+        let current_len = existing_value.len();
+
+        // Calculate required length
+        let required_len = offset_usize + value.len();
+
+        // Check for string length overflow
+        if required_len > i32::MAX as usize {
+            return Err(RedisErr {
+                message: "ERR string exceeds maximum allowed size".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        let mut new_value = existing_value;
+
+        // If offset is beyond current length, pad with zero bytes
+        if offset_usize > current_len {
+            new_value.resize(offset_usize, 0);
+        }
+
+        // If new value extends beyond current length, extend the vector
+        if required_len > new_value.len() {
+            new_value.resize(required_len, 0);
+        }
+
+        // Overwrite the range with the new value
+        new_value[offset_usize..offset_usize + value.len()].copy_from_slice(value);
+
+        let new_len = new_value.len();
+
+        // Set new value with metadata
+        let mut string_value = StringValue::new(new_value);
+        string_value.set_ctime(ctime);
+        string_value.set_etime(etime);
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(new_len as i32)
+    }
+
     /// Append a value to a key
     /// Returns the length of the string after the append operation
     pub fn append(&self, key: &[u8], value: &[u8]) -> Result<i32> {

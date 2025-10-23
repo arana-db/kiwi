@@ -1274,4 +1274,249 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_setrange_basic() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test 1: Setrange on existing string (within bounds)
+        let key = b"test_key";
+        redis.set(key, b"Hello World").unwrap();
+
+        let result = redis.setrange(key, 6, b"Redis");
+        assert!(result.is_ok(), "setrange should succeed");
+        assert_eq!(result.unwrap(), 11, "length should be 11");
+
+        let value = redis.get(key).unwrap();
+        assert_eq!(value.as_bytes(), b"Hello Redis");
+
+        // Test 2: Setrange on existing string (extending)
+        let result = redis.setrange(key, 6, b"Rust Programming");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 22);
+
+        let value = redis.get(key).unwrap();
+        assert_eq!(value.as_bytes(), b"Hello Rust Programming");
+
+        // Test 3: Setrange with offset beyond string length (padding with \x00)
+        let key = b"padding_key";
+        redis.set(key, b"Hello").unwrap();
+
+        let result = redis.setrange(key, 10, b"World");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 15);
+
+        let value = redis.get(key).unwrap();
+        assert_eq!(value.as_bytes(), b"Hello\x00\x00\x00\x00\x00World");
+
+        // Test 4: Setrange on non-existing key
+        let key = b"new_key";
+        let result = redis.setrange(key, 5, b"Redis");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 10);
+
+        let value = redis.get(key).unwrap();
+        assert_eq!(value.as_bytes(), b"\x00\x00\x00\x00\x00Redis");
+
+        // Test 5: Setrange at offset 0
+        let key = b"offset_zero";
+        redis.set(key, b"Hello").unwrap();
+
+        let result = redis.setrange(key, 0, b"Goodbye");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 7);
+
+        let value = redis.get(key).unwrap();
+        assert_eq!(value.as_bytes(), b"Goodbye");
+
+        // Test 6: Setrange with empty value
+        let key = b"empty_value";
+        redis.set(key, b"Test").unwrap();
+
+        let result = redis.setrange(key, 2, b"");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 4, "length should remain 4");
+
+        let value = redis.get(key).unwrap();
+        assert_eq!(value.as_bytes(), b"Test");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_setrange_edge_cases() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test 1: Negative offset (should fail)
+        let key = b"negative_offset";
+        redis.set(key, b"Test").unwrap();
+
+        let result = redis.setrange(key, -1, b"X");
+        assert!(result.is_err(), "setrange should fail for negative offset");
+
+        match result.unwrap_err() {
+            storage::error::Error::RedisErr { ref message, .. } if message.contains("offset") => {
+                // Expected error - verify it has ERR prefix
+                assert!(
+                    message.starts_with("ERR"),
+                    "Error message should start with ERR prefix"
+                );
+            }
+            e => panic!("Expected offset error, got: {:?}", e),
+        }
+
+        // Test 1.5: Offset beyond i32::MAX (should fail)
+        let key = b"large_offset_overflow";
+        let result = redis.setrange(key, (i32::MAX as i64) + 1, b"X");
+        assert!(
+            result.is_err(),
+            "setrange should fail for offset > i32::MAX"
+        );
+
+        match result.unwrap_err() {
+            storage::error::Error::RedisErr { ref message, .. } if message.contains("offset") => {
+                // Expected error
+                assert!(
+                    message.starts_with("ERR"),
+                    "Error message should start with ERR prefix"
+                );
+            }
+            e => panic!("Expected offset error, got: {:?}", e),
+        }
+
+        // Test 2: Setrange on empty string
+        let key = b"empty_string";
+        redis.set(key, b"").unwrap();
+
+        let result = redis.setrange(key, 3, b"Hi");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 5);
+
+        let value = redis.get(key).unwrap();
+        assert_eq!(value.as_bytes(), b"\x00\x00\x00Hi");
+
+        // Test 3: Large offset (but within i32::MAX)
+        let key = b"large_offset";
+        let result = redis.setrange(key, 1000, b"X");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1001);
+
+        let value = redis.get(key).unwrap();
+        assert_eq!(value.len(), 1001);
+        assert_eq!(value.as_bytes()[1000], b'X');
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_setrange_wrong_type() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Create a hash (non-string type)
+        let key = b"hash_key";
+        let field = b"field1";
+        let value = b"value1";
+        redis.hset(key, field, value).unwrap();
+
+        // Try to setrange on a hash key (should return WRONGTYPE error)
+        let result = redis.setrange(key, 0, b"test");
+        assert!(result.is_err(), "setrange should fail for non-string type");
+
+        match result.unwrap_err() {
+            storage::error::Error::RedisErr { ref message, .. }
+                if message.starts_with("WRONGTYPE") =>
+            {
+                // Expected error type
+            }
+            e => panic!("Expected WRONGTYPE RedisErr, got: {:?}", e),
+        }
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_setrange_binary_safe() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test binary data with null bytes
+        let key = b"binary_key";
+        redis.set(key, b"Hello\x00World").unwrap();
+
+        let result = redis.setrange(key, 3, b"\x00\x00\x00");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 11);
+
+        let value = redis.get(key).unwrap();
+        assert_eq!(value.as_bytes(), b"Hel\x00\x00\x00\x00World");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }
