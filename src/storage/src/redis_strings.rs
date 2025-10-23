@@ -146,6 +146,89 @@ impl Redis {
         Ok(user_value.len() as i32)
     }
 
+    /// Returns a substring of the string value stored at key.
+    ///
+    /// This command is compatible with Redis GETRANGE. The substring is determined
+    /// by the start and end offsets (both inclusive). Negative offsets can be used
+    /// to provide an offset starting from the end of the string.
+    ///
+    /// # Arguments
+    /// * `key` - The key to get the substring from
+    /// * `start` - The starting offset (inclusive, can be negative)
+    /// * `end` - The ending offset (inclusive, can be negative)
+    ///
+    /// # Returns
+    /// * `Ok(String)` - the substring, or empty string if key doesn't exist or is expired
+    /// * `Err(RedisErr)` - if the key holds a value that is not a string (WRONGTYPE error)
+    ///
+    /// # Examples
+    /// - GETRANGE key 0 3 returns first 4 characters
+    /// - GETRANGE key -3 -1 returns last 3 characters
+    /// - GETRANGE key 0 -1 returns the entire string
+    /// - GETRANGE key 10 5 returns empty string (start > end after normalization)
+    ///
+    /// # Performance
+    /// This operation is O(N) where N is the length of the returned substring.
+    pub fn getrange(&self, key: &[u8], start: i64, end: i64) -> Result<Vec<u8>> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let string_key = BaseKey::new(key);
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
+
+        // If key doesn't exist, return empty string
+        if encode_value.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Check type first to match Redis compatibility
+        self.check_type(encode_value.as_slice(), DataType::String)?;
+
+        let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+
+        // If key is expired, return empty string
+        if decode_value.is_stale() {
+            return Ok(Vec::new());
+        }
+
+        let user_value = decode_value.user_value();
+        let len = user_value.len() as i64;
+
+        // Handle empty string
+        if len == 0 {
+            return Ok(Vec::new());
+        }
+
+        // Normalize negative indices
+        let start_idx = if start < 0 {
+            (len + start).max(0)
+        } else {
+            start.min(len)
+        };
+
+        let end_idx = if end < 0 {
+            (len + end).max(-1)
+        } else {
+            end.min(len - 1)
+        };
+
+        // If start > end after normalization, return empty string
+        if start_idx > end_idx {
+            return Ok(Vec::new());
+        }
+
+        // Extract substring (end is inclusive, so +1)
+        let start_pos = start_idx as usize;
+        let end_pos = (end_idx + 1) as usize;
+        let substring = user_value[start_pos..end_pos].to_vec();
+
+        Ok(substring)
+    }
+
     /// Append a value to a key
     /// Returns the length of the string after the append operation
     pub fn append(&self, key: &[u8], value: &[u8]) -> Result<i32> {

@@ -19,6 +19,7 @@ mod append;
 mod decr;
 mod decrby;
 pub mod get;
+mod getrange;
 pub mod group_client;
 pub mod incr;
 mod incrby;

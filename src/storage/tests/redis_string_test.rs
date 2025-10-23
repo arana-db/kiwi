@@ -1054,4 +1054,224 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_getrange_basic() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test 1: Get range from non-existing key (should return empty string)
+        let key = b"nonexistent_key";
+        let result = redis.getrange(key, 0, 5);
+        assert!(
+            result.is_ok(),
+            "getrange should succeed for non-existing key"
+        );
+        assert_eq!(
+            result.unwrap(),
+            Vec::<u8>::new(),
+            "getrange should return empty string for non-existing key"
+        );
+
+        // Test 2: Set a value and get different ranges
+        let key = b"test_key";
+        let value = b"Hello, World!";
+        redis.set(key, value).unwrap();
+
+        // Get first 5 characters (0-4)
+        let result = redis.getrange(key, 0, 4);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"Hello");
+
+        // Get middle part (7-11)
+        let result = redis.getrange(key, 7, 11);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"World");
+
+        // Get entire string (0 to -1)
+        let result = redis.getrange(key, 0, -1);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"Hello, World!");
+
+        // Get last 6 characters (-6 to -1)
+        let result = redis.getrange(key, -6, -1);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"World!");
+
+        // Get last character (-1 to -1)
+        let result = redis.getrange(key, -1, -1);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"!");
+
+        // Start > end (should return empty string)
+        let result = redis.getrange(key, 5, 2);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Vec::<u8>::new());
+
+        // Out of range indices
+        let result = redis.getrange(key, 100, 200);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Vec::<u8>::new());
+
+        // Test 3: Empty string
+        let key = b"empty_key";
+        redis.set(key, b"").unwrap();
+        let result = redis.getrange(key, 0, 5);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), Vec::<u8>::new());
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_getrange_negative_indices() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"test_key";
+        let value = b"0123456789";
+        redis.set(key, value).unwrap();
+
+        // Test various negative index combinations
+        // -3 to -1 should get "789"
+        let result = redis.getrange(key, -3, -1);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"789");
+
+        // -10 to -6 should get "01234"
+        let result = redis.getrange(key, -10, -6);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"01234");
+
+        // Mix of positive and negative: 2 to -3 should get "234567"
+        let result = redis.getrange(key, 2, -3);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"234567");
+
+        // Large negative index (should be clamped to 0)
+        let result = redis.getrange(key, -100, 4);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), b"01234");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_getrange_wrong_type() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Create a hash (non-string type)
+        let key = b"hash_key";
+        let field = b"field1";
+        let value = b"value1";
+        redis.hset(key, field, value).unwrap();
+
+        // Try to get range from a hash key (should return WRONGTYPE error)
+        let result = redis.getrange(key, 0, 5);
+        assert!(result.is_err(), "getrange should fail for non-string type");
+
+        match result.unwrap_err() {
+            storage::error::Error::RedisErr { ref message, .. }
+                if message.starts_with("WRONGTYPE") =>
+            {
+                // Expected error type
+            }
+            e => panic!("Expected WRONGTYPE RedisErr, got: {:?}", e),
+        }
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_getrange_utf8() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test with UTF-8 string (note: getrange works on bytes, not characters)
+        let key = b"utf8_key";
+        let value = "你好世界".as_bytes(); // Each character is 3 bytes in UTF-8
+        redis.set(key, value).unwrap();
+
+        // Get first character (first 3 bytes)
+        let result = redis.getrange(key, 0, 2);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "你".as_bytes());
+
+        // Get second character (bytes 3-5)
+        let result = redis.getrange(key, 3, 5);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "好".as_bytes());
+
+        // Get entire string
+        let result = redis.getrange(key, 0, -1);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "你好世界".as_bytes());
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }
