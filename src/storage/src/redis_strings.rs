@@ -595,6 +595,73 @@ impl Redis {
         Ok(())
     }
 
+    /// Set key to hold string value with TTL in milliseconds.
+    ///
+    /// This command is compatible with Redis PSETEX, which sets a key to hold a string value
+    /// and sets an expiration time in milliseconds. This is an atomic operation.
+    /// It is exactly equivalent to executing the following commands:
+    /// SET key value
+    /// PEXPIRE key milliseconds
+    ///
+    /// # Arguments
+    /// * `key` - The key to set
+    /// * `milliseconds` - TTL in milliseconds (must be positive)
+    /// * `value` - The value to set
+    ///
+    /// # Returns
+    /// * `Ok(())` - if the operation succeeded
+    /// * `Err(RedisErr)` - if TTL is invalid (not positive or causes overflow)
+    ///
+    /// # Examples
+    /// - PSETEX mykey 10000 "Hello" - Sets mykey to "Hello" with 10000 milliseconds (10 seconds) expiration
+    ///
+    /// # Time Complexity
+    /// O(1)
+    ///
+    /// # Performance
+    /// This operation is O(1) as it only performs a single database write.
+    pub fn psetex(&self, key: &[u8], milliseconds: i64, value: &[u8]) -> Result<()> {
+        // Validate TTL first - must be positive
+        if milliseconds <= 0 {
+            return Err(RedisErr {
+                message: "ERR invalid expire time in psetex".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        // Check overflow and convert to microseconds before acquiring lock
+        let ttl_micros = (milliseconds as u64)
+            .checked_mul(1_000)
+            .ok_or_else(|| RedisErr {
+                message: "ERR invalid expire time in psetex".to_string(),
+                location: Default::default(),
+            })?;
+
+        let string_key = BaseKey::new(key);
+        let mut string_value = StringValue::new(value.to_owned());
+        string_value.set_relative_etime(ttl_micros)?;
+
+        // Get lock for the key after validation
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(())
+    }
+
     // /// Set key to hold string value and expiration time
     // pub fn setex(&self, key: &[u8], value: &[u8], ttl: i64) -> Result<()> {
     //     let db = self.db.as_ref().ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;

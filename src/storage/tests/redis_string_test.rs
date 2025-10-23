@@ -1689,4 +1689,262 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_psetex_basic() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test 1: Basic PSETEX operation
+        let key = b"mykey";
+        let value = b"Hello";
+        let milliseconds = 10000; // 10 seconds
+
+        let result = redis.psetex(key, milliseconds, value);
+        assert!(result.is_ok());
+
+        // Verify the value was set
+        let get_result = redis.get(key);
+        assert!(get_result.is_ok());
+        assert_eq!(get_result.unwrap().as_bytes(), value);
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_psetex_overwrites_existing() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Set an existing key
+        let key = b"mykey";
+        redis.set(key, b"OldValue").unwrap();
+
+        // Overwrite with PSETEX
+        let result = redis.psetex(key, 5000, b"NewValue");
+        assert!(result.is_ok());
+
+        // Verify the new value
+        let get_result = redis.get(key).unwrap();
+        assert_eq!(get_result.as_bytes(), b"NewValue");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_psetex_invalid_ttl() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"mykey";
+        let value = b"test";
+
+        // Test negative TTL
+        let result = redis.psetex(key, -1, value);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            storage::error::Error::RedisErr { ref message, .. } => {
+                assert!(message.contains("invalid expire time"));
+                assert!(message.starts_with("ERR"));
+            }
+            e => panic!("Expected RedisErr, got: {:?}", e),
+        }
+
+        // Test zero TTL
+        let result = redis.psetex(key, 0, value);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            storage::error::Error::RedisErr { ref message, .. } => {
+                assert!(message.contains("invalid expire time"));
+                assert!(message.starts_with("ERR"));
+            }
+            e => panic!("Expected RedisErr, got: {:?}", e),
+        }
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_psetex_expiration() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Set a key with 1000 milliseconds (1 second) TTL
+        let key = b"expiring_key";
+        let value = b"expires_soon";
+        let result = redis.psetex(key, 1000, value);
+        assert!(result.is_ok());
+
+        // Immediately after setting, key should exist
+        let get_result = redis.get(key);
+        assert!(get_result.is_ok());
+        assert_eq!(get_result.unwrap().as_bytes(), value);
+
+        // Wait for expiration (2 seconds to be safe)
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // After expiration, key should not exist
+        let get_result = redis.get(key);
+        assert!(
+            get_result.is_err(),
+            "Key should be expired and return error"
+        );
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_psetex_vs_setex() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test that PSETEX with 1000ms is equivalent to SETEX with 1s
+        let key1 = b"key_setex";
+        let key2 = b"key_psetex";
+        let value = b"test_value";
+
+        // SETEX with 10 seconds
+        let result = redis.setex(key1, 10, value);
+        assert!(result.is_ok());
+
+        // PSETEX with 10000 milliseconds (10 seconds)
+        let result = redis.psetex(key2, 10000, value);
+        assert!(result.is_ok());
+
+        // Both keys should be readable
+        let get_result1 = redis.get(key1);
+        let get_result2 = redis.get(key2);
+        assert!(get_result1.is_ok());
+        assert!(get_result2.is_ok());
+        assert_eq!(get_result1.unwrap().as_bytes(), value);
+        assert_eq!(get_result2.unwrap().as_bytes(), value);
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_psetex_overflow_check() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"overflow_key";
+        let value = b"test";
+
+        // Test TTL that would cause overflow when converting to microseconds
+        // i64::MAX / 1_000 = 9223372036854775 is the max safe milliseconds
+        let max_safe_ms = i64::MAX / 1_000;
+
+        // This should succeed
+        let result = redis.psetex(key, max_safe_ms, value);
+        assert!(result.is_ok(), "Valid max TTL should succeed");
+
+        // This should fail due to overflow
+        let result = redis.psetex(key, max_safe_ms + 1, value);
+        assert!(result.is_err(), "Overflow TTL should fail");
+        match result.unwrap_err() {
+            storage::error::Error::RedisErr { ref message, .. } => {
+                assert!(message.contains("invalid expire time"));
+                assert!(message.starts_with("ERR"));
+            }
+            e => panic!("Expected RedisErr, got: {:?}", e),
+        }
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }

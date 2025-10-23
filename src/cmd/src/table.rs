@@ -65,6 +65,7 @@ pub fn create_command_table() -> CmdTable {
         crate::getrange::GetrangeCmd,
         crate::setrange::SetrangeCmd,
         crate::setex::SetexCmd,
+        crate::psetex::PsetexCmd,
         // TODO: add more commands...
     );
 

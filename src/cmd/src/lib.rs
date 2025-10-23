@@ -23,6 +23,7 @@ mod getrange;
 pub mod group_client;
 pub mod incr;
 mod incrby;
+mod psetex;
 pub mod set;
 mod setex;
 mod setrange;
