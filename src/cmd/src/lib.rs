@@ -20,6 +20,7 @@ mod decr;
 mod decrby;
 pub mod get;
 mod getrange;
+mod getset;
 pub mod group_client;
 pub mod incr;
 mod incrby;

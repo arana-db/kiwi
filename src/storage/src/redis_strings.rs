@@ -723,6 +723,78 @@ impl Redis {
         Ok(1)
     }
 
+    /// GETSET key value
+    ///
+    /// Atomically sets key to value and returns the old value stored at key.
+    /// Returns an error when key exists but does not hold a string value.
+    ///
+    /// This command is useful for implementing atomic counters and similar patterns.
+    ///
+    /// # Time Complexity
+    /// O(1)
+    ///
+    /// # Returns
+    /// Bulk string reply: the old value stored at key, or nil when key did not exist
+    ///
+    /// # Errors
+    /// Returns WRONGTYPE error if key exists but holds a non-string value
+    ///
+    /// # Examples
+    /// ```text
+    /// GETSET mykey "new value"  // Returns old value and sets new value
+    /// GETSET counter "0"        // Atomic counter reset pattern
+    /// ```
+    pub fn getset(&self, key: &[u8], value: &[u8]) -> Result<Option<String>> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let string_key = BaseKey::new(key);
+
+        // Get lock for the key to ensure atomicity
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
+        // Try to get the old value
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?;
+
+        let old_value = if let Some(val) = encode_value {
+            // Check type first, return WRONGTYPE error if not string
+            self.check_type(val.as_slice(), DataType::String)?;
+
+            // Parse the old value
+            let string_value = ParsedStringsValue::new(&val[..])?;
+            if !string_value.is_stale() {
+                // Key exists and is not expired, return old value
+                let user_value = string_value.user_value();
+                Some(String::from_utf8_lossy(&user_value).to_string())
+            } else {
+                // Key is expired, treat as non-existent
+                None
+            }
+        } else {
+            // Key doesn't exist
+            None
+        };
+
+        // Set the new value
+        let string_value = StringValue::new(value.to_owned());
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(old_value)
+    }
+
     // /// Set key to hold string value and expiration time
     // pub fn setex(&self, key: &[u8], value: &[u8], ttl: i64) -> Result<()> {
     //     let db = self.db.as_ref().ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;

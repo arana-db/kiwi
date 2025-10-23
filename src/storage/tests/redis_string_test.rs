@@ -2154,4 +2154,224 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_getset_basic() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"mykey";
+        let old_value = b"Hello";
+        let new_value = b"World";
+
+        // Set initial value
+        redis.set(key, old_value).unwrap();
+
+        // GETSET should return old value and set new value
+        let result = redis.getset(key, new_value);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            Some(String::from_utf8_lossy(old_value).to_string()),
+            "GETSET should return old value"
+        );
+
+        // Verify new value was set
+        let get_result = redis.get(key).unwrap();
+        assert_eq!(get_result.as_bytes(), new_value, "New value should be set");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_getset_non_existing_key() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"nonexistent";
+        let value = b"NewValue";
+
+        // GETSET on non-existing key should return None
+        let result = redis.getset(key, value);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            None,
+            "GETSET should return None for non-existing key"
+        );
+
+        // Verify value was set
+        let get_result = redis.get(key).unwrap();
+        assert_eq!(get_result.as_bytes(), value, "Value should be set");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_getset_expired_key() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"expiring_key";
+        let old_value = b"expires_soon";
+        let new_value = b"new_value";
+
+        // Set a key with 1 second TTL
+        redis.setex(key, 1, old_value).unwrap();
+
+        // Wait for expiration
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // GETSET on expired key should return None (treated as non-existent)
+        let result = redis.getset(key, new_value);
+        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            None,
+            "GETSET should return None for expired key"
+        );
+
+        // Verify new value was set
+        let get_result = redis.get(key).unwrap();
+        assert_eq!(get_result.as_bytes(), new_value);
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_getset_wrong_type() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"hash_key";
+        let field = b"field1";
+        let value = b"value1";
+
+        // Create a hash type key
+        redis.hset(key, field, value).unwrap();
+
+        // Try to execute GETSET on hash key (should return WRONGTYPE error)
+        let result = redis.getset(key, b"test_value");
+        assert!(result.is_err(), "GETSET should fail for non-string type");
+
+        match result.unwrap_err() {
+            storage::error::Error::RedisErr { ref message, .. }
+                if message.starts_with("WRONGTYPE") =>
+            {
+                // Expected error type
+            }
+            e => panic!("Expected WRONGTYPE RedisErr, got: {:?}", e),
+        }
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_getset_atomic_counter_reset() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"mycounter";
+
+        // Increment counter multiple times
+        for _ in 0..10 {
+            redis.incr_decr(key, 1).unwrap();
+        }
+
+        // Verify counter value
+        assert_eq!(redis.get(key).unwrap(), "10");
+
+        // Atomically get counter value and reset to 0
+        let old_counter = redis.getset(key, b"0").unwrap();
+        assert_eq!(
+            old_counter,
+            Some("10".to_string()),
+            "Should get old counter value"
+        );
+
+        // Verify counter was reset
+        assert_eq!(redis.get(key).unwrap(), "0", "Counter should be reset to 0");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }
