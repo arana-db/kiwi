@@ -535,6 +535,57 @@ impl Redis {
         Ok(results)
     }
 
+    /// MSET key value [key value ...]
+    ///
+    /// Sets the given keys to their respective values. MSET replaces existing values
+    /// and is atomic within a single storage instance.
+    ///
+    /// # Time Complexity
+    /// O(N) where N is the number of keys to set
+    ///
+    /// # Returns
+    /// Simple string reply: `OK` when successful
+    pub fn mset(&self, kvs: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+        if kvs.is_empty() {
+            return Ok(());
+        }
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+
+        let mut lock_keys: Vec<String> = kvs
+            .iter()
+            .map(|(key, _)| String::from_utf8_lossy(key).to_string())
+            .collect();
+        lock_keys.sort_unstable();
+        lock_keys.dedup();
+
+        let _locks: Vec<_> = lock_keys
+            .into_iter()
+            .map(|key| ScopeRecordLock::new(self.lock_mgr.as_ref(), &key))
+            .collect();
+
+        let mut batch = rocksdb::WriteBatch::default();
+
+        for (key, value) in kvs {
+            let string_key = BaseKey::new(key);
+            let string_value = StringValue::new(value.clone());
+            batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+        }
+
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(())
+    }
+
     // /// Get the value and TTL of a key
     // pub fn get_with_ttl(&self, key: &[u8], value: &mut String, ttl: &mut i64) -> Result<()> {
     //     let db = self.db.as_ref().ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
@@ -957,32 +1008,19 @@ impl Redis {
     //     self.update_specific_key_statistics(DataType::String, &String::from_utf8_lossy(key).to_string(), 1)?;
 
     //     Ok(())
+    //
     // }
 
-    // /// Set multiple keys to multiple values
-    // pub fn mset(&self, kvs: &[KeyValue]) -> Result<()> {
-    //     let db = self.db.as_ref().ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
-
-    //     let mut batch = WriteBatch::default();
-
-    //     for kv in kvs {
-    //         // Create the new value
-    //         let internal_value = InternalValue::new(DataType::String, &kv.value);
-    //         let encoded_value = internal_value.encode();
-
-    //         // Add to batch
-    //         batch.put(&kv.key, &encoded_value);
-
-    //         // Update statistics
-    //         self.update_specific_key_statistics(DataType::String, &String::from_utf8_lossy(&kv.key).to_string(), 1)?;
-    //     }
-
-    //     // Write batch to DB
-    //     db.write_opt(batch, &self.default_write_options)?;
-
-    //     Ok(())
-    // }
-
+    /// MSET key value [key value ...]
+    ///
+    /// Sets the given keys to their respective values. MSET replaces existing values
+    /// with new values, just like regular SET. MSET is atomic, so all given keys are
+    /// set at once. It is not possible for clients to see that some of the keys were
+    /// updated while others are unchanged.
+    ///
+    /// # Time Complexity
+    /// O(N) where N is the number of keys to set
+    ///
     // /// Set multiple keys to multiple values, only if none of the keys exist
     // pub fn msetnx(&self, kvs: &[KeyValue], ret: &mut i32) -> Result<()> {
     //     let db = self.db.as_ref().ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;

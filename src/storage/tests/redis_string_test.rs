@@ -2572,4 +2572,241 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_mset_basic() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // MSET multiple key-value pairs
+        let kvs = vec![
+            (b"key1".to_vec(), b"value1".to_vec()),
+            (b"key2".to_vec(), b"value2".to_vec()),
+            (b"key3".to_vec(), b"value3".to_vec()),
+        ];
+
+        let result = redis.mset(&kvs);
+        assert!(result.is_ok(), "mset should succeed");
+
+        // Verify all values were set
+        assert_eq!(redis.get(b"key1").unwrap(), "value1");
+        assert_eq!(redis.get(b"key2").unwrap(), "value2");
+        assert_eq!(redis.get(b"key3").unwrap(), "value3");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_mset_overwrite_existing() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Set initial values
+        redis.set(b"key1", b"old_value1").unwrap();
+        redis.set(b"key2", b"old_value2").unwrap();
+
+        // MSET should overwrite existing values
+        let kvs = vec![
+            (b"key1".to_vec(), b"new_value1".to_vec()),
+            (b"key2".to_vec(), b"new_value2".to_vec()),
+            (b"key3".to_vec(), b"new_value3".to_vec()),
+        ];
+
+        let result = redis.mset(&kvs);
+        assert!(result.is_ok(), "mset should succeed");
+
+        // Verify all values were updated/set
+        assert_eq!(redis.get(b"key1").unwrap(), "new_value1");
+        assert_eq!(redis.get(b"key2").unwrap(), "new_value2");
+        assert_eq!(redis.get(b"key3").unwrap(), "new_value3");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_mset_empty_kvs() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // MSET with empty key-value pairs
+        let kvs: Vec<(Vec<u8>, Vec<u8>)> = vec![];
+        let result = redis.mset(&kvs);
+        assert!(result.is_ok(), "mset with empty kvs should succeed");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_mset_binary_safe() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // MSET with binary data (including null bytes)
+        let kvs = vec![
+            (b"binary_key1".to_vec(), b"value\x00with\x00nulls".to_vec()),
+            (b"binary_key2".to_vec(), vec![0, 1, 2, 3, 255, 254, 253]),
+            (b"utf8_key".to_vec(), "你好世界".as_bytes().to_vec()),
+        ];
+
+        let result = redis.mset(&kvs);
+        assert!(result.is_ok(), "mset with binary data should succeed");
+
+        // Verify binary data integrity
+        assert_eq!(redis.get(b"binary_key1").unwrap().as_bytes(), b"value\x00with\x00nulls");
+        let lossy_expected = String::from_utf8_lossy(&kvs[1].1).into_owned();
+        assert_eq!(redis.get(b"binary_key2").unwrap(), lossy_expected);
+        assert_eq!(redis.get(b"utf8_key").unwrap().as_bytes(), "你好世界".as_bytes());
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_mset_large_batch() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // MSET with large batch (1000 key-value pairs)
+        let mut kvs = Vec::with_capacity(1000);
+        for i in 0..1000 {
+            let key = format!("key_{}", i).into_bytes();
+            let value = format!("value_{}", i).into_bytes();
+            kvs.push((key, value));
+        }
+
+        let result = redis.mset(&kvs);
+        assert!(result.is_ok(), "mset with large batch should succeed");
+
+        // Verify some random values
+        assert_eq!(redis.get(b"key_0").unwrap(), "value_0");
+        assert_eq!(redis.get(b"key_500").unwrap(), "value_500");
+        assert_eq!(redis.get(b"key_999").unwrap(), "value_999");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_mset_atomicity() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Set initial values
+        redis.set(b"key1", b"initial1").unwrap();
+        redis.set(b"key2", b"initial2").unwrap();
+
+        // MSET should be atomic - all keys should be updated together
+        let kvs = vec![
+            (b"key1".to_vec(), b"atomic1".to_vec()),
+            (b"key2".to_vec(), b"atomic2".to_vec()),
+            (b"key3".to_vec(), b"atomic3".to_vec()),
+        ];
+
+        let result = redis.mset(&kvs);
+        assert!(result.is_ok(), "mset should succeed");
+
+        // All keys should have new values (atomicity test)
+        let keys = vec![b"key1".to_vec(), b"key2".to_vec(), b"key3".to_vec()];
+        let values = redis.mget(&keys).unwrap();
+        
+        assert_eq!(values[0], Some("atomic1".to_string()));
+        assert_eq!(values[1], Some("atomic2".to_string()));
+        assert_eq!(values[2], Some("atomic3".to_string()));
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }

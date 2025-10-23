@@ -78,6 +78,34 @@ impl Storage {
         Ok(results)
     }
 
+    pub fn mset(&self, kvs: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+        if kvs.is_empty() {
+            return Ok(());
+        }
+
+        if self.insts.len() == 1 {
+            return self.insts[0].mset(kvs);
+        }
+
+        let mut instance_map: std::collections::HashMap<usize, Vec<(Vec<u8>, Vec<u8>)>> =
+            std::collections::HashMap::new();
+
+        for (key, value) in kvs {
+            let slot_id = key_to_slot_id(key);
+            let instance_id = self.slot_indexer.get_instance_id(slot_id);
+            instance_map
+                .entry(instance_id)
+                .or_default()
+                .push((key.clone(), value.clone()));
+        }
+
+        for (instance_id, instance_kvs) in instance_map {
+            self.insts[instance_id].mset(&instance_kvs)?;
+        }
+
+        Ok(())
+    }
+
     pub fn incr_decr(&self, key: &[u8], incr: i64) -> Result<i64> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
@@ -148,13 +176,6 @@ impl Storage {
     // // Returns the bit value at offset in the string value stored at key
     // pub fn get_bit(&self, key: &[u8], offset: i64, ret: &mut i32) -> Status {
     //     // Implementation of get bit logic
-    //     Ok(())
-    // }
-
-    // // Sets the given keys to their respective values
-    // // MSET replaces existing values with new values
-    // pub fn mset(&self, kvs: &[KeyValue]) -> Status {
-    //     // Implementation of batch set key-value logic
     //     Ok(())
     // }
 
