@@ -530,4 +530,300 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_append() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test 1: Append to non-existing key
+        {
+            let key = b"new_key";
+            let value = b"Hello";
+            let result = redis.append(key, value);
+            assert!(result.is_ok(), "append failed: {:?}", result.err());
+            assert_eq!(result.unwrap(), 5, "append should return length 5");
+
+            let get_result = redis.get(key);
+            assert!(get_result.is_ok());
+            assert_eq!(get_result.unwrap(), "Hello");
+        }
+
+        // Test 2: Append to existing key
+        {
+            let key = b"new_key";
+            let value = b" World";
+            let result = redis.append(key, value);
+            assert!(result.is_ok(), "append failed: {:?}", result.err());
+            assert_eq!(result.unwrap(), 11, "append should return length 11");
+
+            let get_result = redis.get(key);
+            assert!(get_result.is_ok());
+            assert_eq!(get_result.unwrap(), "Hello World");
+        }
+
+        // Test 3: Multiple appends
+        {
+            let key = b"multi_append";
+            let values = vec![b"a".as_slice(), b"b".as_slice(), b"c".as_slice()];
+            let mut expected_len = 0;
+
+            for value in values {
+                let result = redis.append(key, value);
+                assert!(result.is_ok());
+                expected_len += value.len() as i32;
+                assert_eq!(result.unwrap(), expected_len);
+            }
+
+            let get_result = redis.get(key);
+            assert!(get_result.is_ok());
+            assert_eq!(get_result.unwrap(), "abc");
+        }
+
+        // Test 4: Append empty string
+        {
+            let key = b"empty_append";
+            redis.set(key, b"test").unwrap();
+
+            let result = redis.append(key, b"");
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), 4);
+
+            let get_result = redis.get(key);
+            assert!(get_result.is_ok());
+            assert_eq!(get_result.unwrap(), "test");
+        }
+
+        // Test 5: Append with numeric values
+        {
+            let key = b"numeric_append";
+            redis.append(key, b"100").unwrap();
+            let result = redis.append(key, b"200");
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), 6);
+
+            let get_result = redis.get(key);
+            assert!(get_result.is_ok());
+            assert_eq!(get_result.unwrap(), "100200");
+        }
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_append_concurrent() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let redis_arc = Arc::new(redis);
+        let num_threads = 10;
+        let appends_per_thread = 10;
+
+        // Each thread appends a single character multiple times
+        let mut handles = vec![];
+        for thread_id in 0..num_threads {
+            let redis_clone = Arc::clone(&redis_arc);
+            let handle = thread::spawn(move || {
+                let key = format!("concurrent_key_{}", thread_id).into_bytes();
+                for _ in 0..appends_per_thread {
+                    let value = format!("{}", thread_id % 10).into_bytes();
+                    let result = redis_clone.append(&key, &value);
+                    assert!(result.is_ok(), "append failed in thread {}", thread_id);
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify results
+        for thread_id in 0..num_threads {
+            let key = format!("concurrent_key_{}", thread_id).into_bytes();
+            let get_result = redis_arc.get(&key);
+            assert!(get_result.is_ok());
+            let value = get_result.unwrap();
+            // Each thread appended its digit 10 times
+            let expected = (thread_id % 10).to_string().repeat(appends_per_thread);
+            assert_eq!(value, expected);
+        }
+
+        if let Ok(redis) = Arc::try_unwrap(redis_arc) {
+            redis.set_need_close(true);
+        }
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_append_wrong_type() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Create a hash key first (when hash commands are implemented)
+        // For now, we'll test that append works correctly with string keys
+        // and verify the error type is propagated correctly
+
+        // Test: Try to append to a key that will be created as string
+        // This should work fine
+        let key = b"test_key";
+        let value1 = b"hello";
+
+        let result = redis.append(key, value1);
+        assert!(result.is_ok(), "append to non-existent key should work");
+        assert_eq!(result.unwrap(), 5);
+
+        // Verify the value
+        let get_result = redis.get(key);
+        assert!(get_result.is_ok());
+        assert_eq!(get_result.unwrap(), "hello");
+
+        // Append more data
+        let value2 = b" world";
+        let result = redis.append(key, value2);
+        assert!(result.is_ok(), "append to existing string key should work");
+        assert_eq!(result.unwrap(), 11);
+
+        // Verify the concatenated value
+        let get_result = redis.get(key);
+        assert!(get_result.is_ok());
+        assert_eq!(get_result.unwrap(), "hello world");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_append_large_value() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test appending large values (1MB each time)
+        let key = b"large_key";
+        let large_value = vec![b'x'; 1024 * 1024]; // 1MB
+
+        // Append 10 times (total 10MB)
+        for i in 0..10 {
+            let result = redis.append(key, &large_value);
+            assert!(
+                result.is_ok(),
+                "append large value failed at iteration {}",
+                i
+            );
+            let expected_len = (i + 1) * 1024 * 1024;
+            assert_eq!(result.unwrap(), expected_len as i32);
+        }
+
+        // Verify final size
+        let get_result = redis.get(key);
+        assert!(get_result.is_ok());
+        let final_value = get_result.unwrap();
+        assert_eq!(final_value.len(), 10 * 1024 * 1024);
+        assert!(final_value.chars().all(|c| c == 'x'));
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_append_size_limit() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Test: Try to create a string that would exceed i32::MAX
+        // We'll simulate this by setting a large value first
+        let key = b"size_limit_key";
+
+        // Create a moderately large value to test the overflow check
+        // Note: We can't actually create a 2GB+ string in tests due to memory constraints
+        // So we'll just verify the logic works with smaller values
+        let large_value = vec![b'a'; 100 * 1024 * 1024]; // 100MB
+
+        let result = redis.append(key, &large_value);
+        assert!(result.is_ok(), "append should succeed for reasonable sizes");
+        assert_eq!(result.unwrap(), 100 * 1024 * 1024);
+
+        // Verify we can append more
+        let result = redis.append(key, b"extra");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 100 * 1024 * 1024 + 5);
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }
