@@ -1142,6 +1142,80 @@ impl Redis {
         Ok(())
     }
 
+    /// MSETNX key value [key value ...]
+    ///
+    /// Sets the given keys to their respective values, only if all keys don't exist.
+    /// MSETNX is atomic, so either all keys are set or no keys are set.
+    ///
+    /// # Arguments
+    /// * `kvs` - A slice of (key, value) tuples to set
+    ///
+    /// # Returns
+    /// * `Ok(true)` - if all keys were set
+    /// * `Ok(false)` - if no keys were set because at least one key already exists
+    /// * `Err(_)` - if the operation failed
+    ///
+    /// # Time Complexity
+    /// O(N) where N is the number of keys to set
+    ///
+    /// # Examples
+    /// ```text
+    /// MSETNX key1 "Hello" key2 "World"  // Sets both keys if neither exists
+    /// ```
+    pub fn msetnx(&self, kvs: &[(Vec<u8>, Vec<u8>)]) -> Result<bool> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+
+        // Check if any key exists and is not expired
+        for (key, _) in kvs {
+            let string_key = BaseKey::new(key);
+            
+            match db
+                .get_opt(&string_key.encode()?, &self.read_options)
+                .context(RocksSnafu)?
+            {
+                Some(val) => {
+                    // Check type first, return WRONGTYPE error if not string
+                    self.check_type(val.as_slice(), DataType::String)?;
+                    
+                    // Key exists, check if it's expired
+                    let string_value = ParsedStringsValue::new(&val[..])?;
+                    if !string_value.is_stale() {
+                        // Key exists and is not expired, do not set any keys
+                        return Ok(false);
+                    }
+                    // Key is expired, treat as non-existent and continue checking
+                }
+                None => {
+                    // Key doesn't exist, continue checking
+                }
+            }
+        }
+
+        // All keys don't exist or are expired, set them all
+        let mut batch = rocksdb::WriteBatch::default();
+
+        // Process all key-value pairs
+        for (key, value) in kvs {
+            let string_key = BaseKey::new(key);
+            let string_value = StringValue::new(value.to_owned());
+            batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+        }
+
+        // Atomic write of all key-value pairs
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(true)
+    }
+
     pub fn incr_decr(&self, key: &[u8], incr: i64) -> Result<i64> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),

@@ -2817,4 +2817,138 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+
+    #[test]
+    fn test_redis_msetnx() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // MSETNX with non-existing keys should succeed
+        let kvs = vec![
+            (b"key1".to_vec(), b"value1".to_vec()),
+            (b"key2".to_vec(), b"value2".to_vec()),
+            (b"key3".to_vec(), b"value3".to_vec()),
+        ];
+
+        let result = redis.msetnx(&kvs);
+        assert!(result.is_ok(), "msetnx with non-existing keys should succeed");
+        assert_eq!(result.unwrap(), true, "msetnx should return true when keys are set");
+
+        // Verify values are set
+        assert_eq!(redis.get(b"key1").unwrap(), "value1");
+        assert_eq!(redis.get(b"key2").unwrap(), "value2");
+        assert_eq!(redis.get(b"key3").unwrap(), "value3");
+
+        // MSETNX with existing keys should fail
+        let kvs2 = vec![
+            (b"key1".to_vec(), b"newvalue1".to_vec()),
+            (b"key4".to_vec(), b"value4".to_vec()),
+        ];
+
+        let result = redis.msetnx(&kvs2);
+        assert!(result.is_ok(), "msetnx should not fail even if keys exist");
+        assert_eq!(result.unwrap(), false, "msetnx should return false when at least one key exists");
+
+        // Verify original values are unchanged
+        assert_eq!(redis.get(b"key1").unwrap(), "value1", "key1 should retain original value");
+        assert_eq!(redis.get(b"key2").unwrap(), "value2", "key2 should retain original value");
+        assert_eq!(redis.get(b"key3").unwrap(), "value3", "key3 should retain original value");
+        
+        // key4 should not be set
+        let result = redis.get(b"key4");
+        assert!(result.is_err(), "key4 should not be set");
+
+        // MSETNX with all non-existing keys should succeed
+        let kvs3 = vec![
+            (b"key4".to_vec(), b"value4".to_vec()),
+            (b"key5".to_vec(), b"value5".to_vec()),
+        ];
+
+        let result = redis.msetnx(&kvs3);
+        assert!(result.is_ok(), "msetnx with non-existing keys should succeed");
+        assert_eq!(result.unwrap(), true, "msetnx should return true when keys are set");
+
+        // Verify new values are set
+        assert_eq!(redis.get(b"key4").unwrap(), "value4");
+        assert_eq!(redis.get(b"key5").unwrap(), "value5");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_redis_msetnx_with_expired_keys() {
+        let test_db_path = unique_test_db_path();
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(&test_db_path).unwrap();
+        }
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Set a key with a short expiration
+        redis.setex(b"expiring_key", 1, b"expiring_value").unwrap();
+        
+        // Wait for the key to expire
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // MSETNX with the expired key should succeed
+        let kvs = vec![
+            (b"expiring_key".to_vec(), b"new_value".to_vec()),
+            (b"new_key".to_vec(), b"new_value2".to_vec()),
+        ];
+
+        let result = redis.msetnx(&kvs);
+        assert!(result.is_ok(), "msetnx with expired keys should succeed");
+        assert_eq!(result.unwrap(), true, "msetnx should return true when expired keys are treated as non-existing");
+
+        // Verify values are set
+        assert_eq!(redis.get(b"expiring_key").unwrap(), "new_value");
+        assert_eq!(redis.get(b"new_key").unwrap(), "new_value2");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
+}
+
+        // All keys should have new values (atomicity test)
+        let keys = vec![b"key1".to_vec(), b"key2".to_vec(), b"key3".to_vec()];
+        let values = redis.mget(&keys).unwrap();
+
+        assert_eq!(values[0], Some("atomic1".to_string()));
+        assert_eq!(values[1], Some("atomic2".to_string()));
+        assert_eq!(values[2], Some("atomic3".to_string()));
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        if test_db_path.exists() {
+            std::fs::remove_dir_all(test_db_path).unwrap();
+        }
+    }
 }

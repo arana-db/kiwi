@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage::Storage;
 
@@ -109,6 +109,46 @@ impl Storage {
         }
 
         Ok(())
+    }
+
+    pub fn msetnx(&self, kvs: &[(Vec<u8>, Vec<u8>)]) -> Result<bool> {
+        if kvs.is_empty() {
+            return Ok(true);
+        }
+
+        if self.insts.len() == 1 {
+            return self.insts[0].msetnx(kvs);
+        }
+
+        type InstanceKvs = std::collections::HashMap<usize, Vec<(Vec<u8>, Vec<u8>)>>;
+        let mut instance_kvs: InstanceKvs = std::collections::HashMap::new();
+
+        for (key, value) in kvs {
+            let slot_id = key_to_slot_id(key);
+            let instance_id = self.slot_indexer.get_instance_id(slot_id);
+            instance_kvs
+                .entry(instance_id)
+                .or_default()
+                .push((key.clone(), value.clone()));
+        }
+
+        for (instance_id, kv_pairs) in &instance_kvs {
+            let instance = &self.insts[*instance_id];
+            for (key, _) in kv_pairs {
+                match instance.get_binary(key) {
+                    Ok(_) => return Ok(false),
+                    Err(Error::KeyNotFound { .. }) => continue,
+                    Err(err @ Error::RedisErr { .. }) => return Err(err),
+                    Err(err) => return Err(err),
+                }
+            }
+        }
+
+        for (instance_id, kv_pairs) in instance_kvs {
+            self.insts[instance_id].mset(&kv_pairs)?;
+        }
+
+        Ok(true)
     }
 
     pub fn incr_decr(&self, key: &[u8], incr: i64) -> Result<i64> {

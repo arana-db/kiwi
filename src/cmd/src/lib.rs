@@ -26,6 +26,7 @@ pub mod incr;
 mod incrby;
 mod mget;
 mod mset;
+mod msetnx;
 mod psetex;
 pub mod set;
 mod setex;
