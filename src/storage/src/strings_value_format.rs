@@ -45,6 +45,10 @@ impl StringValue {
         }
     }
 
+    pub fn user_value_len(&self) -> usize {
+        self.inner.user_value.len()
+    }
+
     pub fn encode(&self) -> BytesMut {
         let needed = TYPE_LENGTH
             + self.inner.user_value.len()

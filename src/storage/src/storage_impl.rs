@@ -199,6 +199,36 @@ impl Storage {
         self.insts[instance_id].setnx(key, value)
     }
 
+    pub fn setbit(&self, key: &[u8], offset: i64, value: i64) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].setbit(key, offset, value)
+    }
+
+    pub fn getbit(&self, key: &[u8], offset: i64) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].getbit(key, offset)
+    }
+
+    pub fn bitcount(&self, key: &[u8], start: Option<i64>, end: Option<i64>) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].bitcount(key, start, end)
+    }
+
+    pub fn bitpos(&self, key: &[u8], bit: i64, start: Option<i64>, end: Option<i64>, is_bit_mode: bool) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].bitpos(key, bit, start, end, is_bit_mode)
+    }
+
+    pub fn bitop(&self, operation: &str, dest_key: &[u8], src_keys: &[&[u8]]) -> Result<i64> {
+        let slot_id = key_to_slot_id(dest_key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].bitop(operation, dest_key, src_keys)
+    }
+
     pub fn getset(&self, key: &[u8], value: &[u8]) -> Result<Option<String>> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
@@ -361,7 +391,7 @@ impl Storage {
     //     Ok(())
     // }
 
-    // // Zsets Commands Implementation
+    // Zsets Commands Implementation
 
     // // Adds all the specified members with the specified scores to the sorted set
     // // stored at key. It is possible to specify multiple score / member pairs. If
@@ -380,7 +410,7 @@ impl Storage {
     //     Ok(())
     // }
 
-    // // Keys Commands Implementation
+    // Keys Commands Implementation
 
     // // Set a timeout on key
     // // return -1 operation exception errors happen in database
@@ -398,7 +428,7 @@ impl Storage {
     //     0
     // }
 
-    // // Admin Commands Implementation
+    // Admin Commands Implementation
 
     // pub fn compact(&self, type_: &DataType, sync: bool) -> Status {
     //     // Implementation of compaction logic

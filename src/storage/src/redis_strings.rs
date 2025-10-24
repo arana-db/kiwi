@@ -1283,4 +1283,652 @@ impl Redis {
 
         Ok(value)
     }
+
+    /// SETBIT key offset value
+    ///
+    /// Sets or clears the bit at offset in the string value stored at key.
+    /// The bit is either set or cleared depending on value, which can be either 0 or 1.
+    /// When key does not exist, a new string value is created. The string is grown to make sure
+    /// it can hold a bit at offset. When the string at key is grown, added bits are set to 0.
+    ///
+    /// # Arguments
+    /// * `key` - The key to modify
+    /// * `offset` - The bit offset to set (must be >= 0)
+    /// * `value` - The bit value to set (0 or 1)
+    ///
+    /// # Returns
+    /// * `Ok(old_bit)` - the original bit value stored at offset
+    /// * `Err(RedisErr)` - if the key holds a value that is not a string (WRONGTYPE error)
+    /// * `Err(RedisErr)` - if offset is negative or out of range
+    ///
+    /// # Time Complexity
+    /// O(1) for small strings, O(N) for larger strings where N is the byte length of the string
+    pub fn setbit(&self, key: &[u8], offset: i64, value: i64) -> Result<i64> {
+        // Validate offset early to avoid unnecessary database operations
+        if offset < 0 {
+            return Err(RedisErr {
+                message: "ERR bit offset is not an integer or out of range".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        // Validate bit value
+        if value != 0 && value != 1 {
+            return Err(RedisErr {
+                message: "ERR bit is not an integer or out of range".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        // Check for offset upper bound to prevent potential overflow
+        // Redis has a limit of 2^32-1 for bit offsets
+        if offset > (1i64 << 32) - 1 {
+            return Err(RedisErr {
+                message: "ERR bit offset is not an integer or out of range".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        // Get lock for the key
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
+        let string_key = BaseKey::new(key);
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
+
+        let mut existing_value = Vec::new();
+        let mut ctime: u64 = Utc::now().timestamp_micros() as u64;
+        let mut etime: u64 = 0;
+
+        if !encode_value.is_empty() {
+            // Check type first to match Redis compatibility
+            self.check_type(encode_value.as_slice(), DataType::String)?;
+
+            let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+
+            // If key is not expired, use existing value
+            if !decode_value.is_stale() {
+                existing_value = decode_value.user_value().to_vec();
+                ctime = decode_value.ctime();
+                etime = decode_value.etime();
+            }
+            // If expired, treat as empty string (existing_value remains empty)
+        }
+
+        // Calculate byte and bit positions
+        let byte_offset = (offset / 8) as usize;
+        let bit_offset = (offset % 8) as usize;
+        let bit_mask = 1u8 << (7 - bit_offset); // Redis uses big-endian bit ordering
+
+        // Ensure the string is large enough to accommodate the bit at offset
+        if byte_offset >= existing_value.len() {
+            existing_value.resize(byte_offset + 1, 0);
+        }
+
+        // Get the original bit value
+        let old_byte = existing_value[byte_offset];
+        let old_bit = if (old_byte & bit_mask) != 0 { 1 } else { 0 };
+
+        // Set or clear the bit
+        if value == 1 {
+            existing_value[byte_offset] |= bit_mask; // Set bit
+        } else {
+            existing_value[byte_offset] &= !bit_mask; // Clear bit
+        }
+
+        // Set new value with metadata
+        let mut string_value = StringValue::new(existing_value);
+        string_value.set_ctime(ctime);
+        string_value.set_etime(etime);
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(old_bit)
+    }
+
+    /// GETBIT key offset
+    ///
+    /// Returns the bit value at offset in the string value stored at key.
+    /// When key does not exist, or the bit at offset does not exist, the default value is 0.
+    ///
+    /// # Arguments
+    /// * `key` - The key to get the bit from
+    /// * `offset` - The bit offset to get (must be >= 0)
+    ///
+    /// # Returns
+    /// * `Ok(bit_value)` - the bit value (0 or 1) stored at offset
+    /// * `Err(RedisErr)` - if the key holds a value that is not a string (WRONGTYPE error)
+    /// * `Err(RedisErr)` - if offset is negative or out of range
+    ///
+    /// # Time Complexity
+    /// O(1)
+    pub fn getbit(&self, key: &[u8], offset: i64) -> Result<i64> {
+        // Validate offset early to avoid unnecessary database operations
+        if offset < 0 {
+            return Err(RedisErr {
+                message: "ERR bit offset is not an integer or out of range".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        // Check for offset upper bound to prevent potential overflow
+        // Redis has a limit of 2^32-1 for bit offsets
+        if offset > (1i64 << 32) - 1 {
+            return Err(RedisErr {
+                message: "ERR bit offset is not an integer or out of range".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let string_key = BaseKey::new(key);
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
+
+        // If key doesn't exist, return 0
+        if encode_value.is_empty() {
+            return Ok(0);
+        }
+
+        // Check type first to match Redis compatibility
+        self.check_type(encode_value.as_slice(), DataType::String)?;
+
+        let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+
+        // If key is expired, return 0
+        if decode_value.is_stale() {
+            return Ok(0);
+        }
+
+        let user_value = decode_value.user_value();
+
+        // Calculate byte and bit positions
+        let byte_offset = (offset / 8) as usize;
+        let bit_offset = (offset % 8) as usize;
+        let bit_mask = 1u8 << (7 - bit_offset); // Redis uses big-endian bit ordering
+
+        // If the offset is beyond the string length, return 0
+        if byte_offset >= user_value.len() {
+            return Ok(0);
+        }
+
+        // Get the bit value
+        let byte = user_value[byte_offset];
+        let bit_value = if (byte & bit_mask) != 0 { 1 } else { 0 };
+
+        Ok(bit_value)
+    }
+
+    /// BITCOUNT key [start end]
+    ///
+    /// Count the number of set bits (population counting) in a string.
+    /// By default all the bytes contained in the string are examined.
+    /// It is possible to specify the counting operation only in an interval passing the additional arguments start and end.
+    ///
+    /// # Arguments
+    /// * `key` - The key to count bits in
+    /// * `start` - Optional start byte index (inclusive, can be negative)
+    /// * `end` - Optional end byte index (inclusive, can be negative)
+    ///
+    /// # Returns
+    /// * `Ok(count)` - the number of bits set to 1
+    /// * `Err(RedisErr)` - if the key holds a value that is not a string (WRONGTYPE error)
+    ///
+    /// # Time Complexity
+    /// O(N) where N is the length of the string
+    pub fn bitcount(&self, key: &[u8], start: Option<i64>, end: Option<i64>) -> Result<i64> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let string_key = BaseKey::new(key);
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
+
+        // If key doesn't exist, return 0
+        if encode_value.is_empty() {
+            return Ok(0);
+        }
+
+        // Check type first to match Redis compatibility
+        self.check_type(encode_value.as_slice(), DataType::String)?;
+
+        let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+
+        // If key is expired, return 0
+        if decode_value.is_stale() {
+            return Ok(0);
+        }
+
+        let user_value = decode_value.user_value();
+
+        // If no range specified, count all bits
+        let (start_idx, end_idx) = if start.is_none() && end.is_none() {
+            (0, user_value.len() as i64 - 1)
+        } else {
+            // Handle range parameters
+            let start_val = start.unwrap_or(0);
+            let end_val = end.unwrap_or(user_value.len() as i64 - 1);
+
+            // Normalize negative indices
+            let start_idx = if start_val < 0 {
+                (user_value.len() as i64 + start_val).max(0)
+            } else {
+                start_val
+            };
+
+            let end_idx = if end_val < 0 {
+                (user_value.len() as i64 + end_val).max(-1)
+            } else {
+                end_val
+            };
+
+            // If start > end after normalization, return 0
+            if start_idx > end_idx {
+                return Ok(0);
+            }
+
+            (start_idx, end_idx)
+        };
+
+        // Clamp indices to valid range
+        let start_pos = (start_idx.max(0) as usize).min(user_value.len());
+        let end_pos = (end_idx.max(-1) as usize).min(user_value.len().saturating_sub(1));
+
+        // If start position is beyond the string length, return 0
+        if start_pos >= user_value.len() {
+            return Ok(0);
+        }
+
+        // Count bits in the specified range
+        let mut count = 0i64;
+        for i in start_pos..=end_pos {
+            let byte = user_value[i];
+            // Count bits set to 1 in the byte
+            count += byte.count_ones() as i64;
+        }
+
+        Ok(count)
+    }
+
+    /// BITPOS key bit [start] [end] [BYTE | BIT]
+    ///
+    /// Return the position of the first bit set to 1 or 0 in a string.
+    /// The position is returned, thinking of the string as an array of bits from left to right,
+    /// where the first byte's most significant bit is at position 0, the second byte's most significant bit is at position 8, and so forth.
+    ///
+    /// # Arguments
+    /// * `key` - The key to search bits in
+    /// * `bit` - The bit value to search for (0 or 1)
+    /// * `start` - Optional start position (inclusive, can be negative)
+    /// * `end` - Optional end position (inclusive, can be negative)
+    /// * `is_bit_mode` - Whether to interpret start/end as bit positions (true) or byte positions (false)
+    ///
+    /// # Returns
+    /// * `Ok(position)` - the position of the first bit matching the given value, or -1 if not found
+    /// * `Err(RedisErr)` - if the key holds a value that is not a string (WRONGTYPE error) or invalid arguments
+    ///
+    /// # Time Complexity
+    /// O(N) where N is the length of the string
+    pub fn bitpos(&self, key: &[u8], bit: i64, start: Option<i64>, end: Option<i64>, is_bit_mode: bool) -> Result<i64> {
+        // Validate bit argument
+        if bit != 0 && bit != 1 {
+            return Err(RedisErr {
+                message: "ERR The bit argument must be 1 or 0".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let string_key = BaseKey::new(key);
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
+
+        // If key doesn't exist, return -1 for bit=1, 0 for bit=0 (Redis behavior)
+        if encode_value.is_empty() {
+            return Ok(if bit == 1 { -1 } else { 0 });
+        }
+
+        // Check type first to match Redis compatibility
+        self.check_type(encode_value.as_slice(), DataType::String)?;
+
+        let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+
+        // If key is expired, return -1 for bit=1, 0 for bit=0 (Redis behavior)
+        if decode_value.is_stale() {
+            return Ok(if bit == 1 { -1 } else { 0 });
+        }
+
+        let user_value = decode_value.user_value();
+
+        // Determine search range
+        let (start_pos, end_pos) = if is_bit_mode {
+            // Bit mode: start and end are bit positions
+            let start_bit = start.unwrap_or(0);
+            let end_bit = end.unwrap_or((user_value.len() as i64 * 8) - 1);
+
+            // Normalize negative indices
+            let start_bit = if start_bit < 0 {
+                (user_value.len() as i64 * 8 + start_bit).max(0)
+            } else {
+                start_bit
+            };
+
+            let end_bit = if end_bit < 0 {
+                (user_value.len() as i64 * 8 + end_bit).max(-1)
+            } else {
+                end_bit
+            };
+
+            // Clamp to valid range
+            let start_bit = start_bit.max(0).min(user_value.len() as i64 * 8 - 1);
+            let end_bit = end_bit.max(-1).min(user_value.len() as i64 * 8 - 1);
+
+            // Convert bit positions to byte positions for iteration
+            (start_bit, end_bit)
+        } else {
+            // Byte mode: start and end are byte positions
+            let start_byte = start.unwrap_or(0);
+            let end_byte = end.unwrap_or(user_value.len() as i64 - 1);
+
+            // Normalize negative indices
+            let start_byte = if start_byte < 0 {
+                (user_value.len() as i64 + start_byte).max(0)
+            } else {
+                start_byte
+            };
+
+            let end_byte = if end_byte < 0 {
+                (user_value.len() as i64 + end_byte).max(-1)
+            } else {
+                end_byte
+            };
+
+            // Clamp to valid range
+            let start_byte = start_byte.max(0).min(user_value.len() as i64 - 1);
+            let end_byte = end_byte.max(-1).min(user_value.len() as i64 - 1);
+
+            // If start > end after normalization, return -1
+            if start_byte > end_byte {
+                return Ok(-1);
+            }
+
+            // Convert to bit positions for consistent processing
+            (start_byte * 8, (end_byte + 1) * 8 - 1)
+        };
+
+        // Search for the bit
+        let target_bit = bit as u8;
+        
+        // Iterate through the bit range
+        for bit_pos in start_pos..=end_pos {
+            let byte_index = (bit_pos / 8) as usize;
+            
+            // Check bounds
+            if byte_index >= user_value.len() {
+                break;
+            }
+            
+            let bit_index = (bit_pos % 8) as u8;
+            let byte = user_value[byte_index];
+            
+            // Extract the bit (bit 0 is the most significant bit)
+            let current_bit = (byte >> (7 - bit_index)) & 1;
+            
+            if current_bit == target_bit {
+                return Ok(bit_pos);
+            }
+        }
+
+        // Bit not found
+        Ok(-1)
+    }
+
+    /// BITOP operation destkey key [key ...]
+    ///
+    /// Perform bitwise operations between strings.
+    ///
+    /// # Arguments
+    /// * `operation` - The bitwise operation to perform (AND, OR, XOR, NOT)
+    /// * `dest_key` - The key where the result will be stored
+    /// * `src_keys` - The source keys to perform the operation on
+    ///
+    /// # Returns
+    /// * `Ok(size)` - the size of the string stored in the destination key
+    /// * `Err(RedisErr)` - if any key holds a value that is not a string (WRONGTYPE error) or invalid arguments
+    ///
+    /// # Time Complexity
+    /// O(N) where N is the size of the longest string
+    pub fn bitop(&self, operation: &str, dest_key: &[u8], src_keys: &[&[u8]]) -> Result<i64> {
+        // Validate operation
+        let op_func = match operation.to_uppercase().as_str() {
+            "AND" => |a: u8, b: u8| a & b,
+            "OR" => |a: u8, b: u8| a | b,
+            "XOR" => |a: u8, b: u8| a ^ b,
+            "NOT" => {
+                // NOT operation only takes one source key
+                if src_keys.len() != 1 {
+                    return Err(RedisErr {
+                        message: "ERR BITOP NOT must be called with a single source key".to_string(),
+                        location: Default::default(),
+                    });
+                }
+                |a: u8, _b: u8| !a
+            }
+            _ => {
+                return Err(RedisErr {
+                    message: "ERR syntax error".to_string(),
+                    location: Default::default(),
+                });
+            }
+        };
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        // Get lock for the destination key
+        let dest_key_str = String::from_utf8_lossy(dest_key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &dest_key_str);
+
+        // For NOT operation, we only need one source key
+        if operation.to_uppercase() == "NOT" {
+            if src_keys.len() != 1 {
+                return Err(RedisErr {
+                    message: "ERR BITOP NOT must be called with a single source key".to_string(),
+                    location: Default::default(),
+                });
+            }
+
+            let src_key = src_keys[0];
+            let string_key = BaseKey::new(src_key);
+            let encode_value = db
+                .get_opt(&string_key.encode()?, &self.read_options)
+                .context(RocksSnafu)?
+                .unwrap_or_else(Vec::new);
+
+            // If source key doesn't exist or is empty, result is empty
+            if encode_value.is_empty() {
+                // Delete destination key if it exists
+                let dest_string_key = BaseKey::new(dest_key);
+                let cf = self
+                    .get_cf_handle(ColumnFamilyIndex::MetaCF)
+                    .context(OptionNoneSnafu {
+                        message: "cf is not initialized".to_string(),
+                    })?;
+                let mut batch = rocksdb::WriteBatch::default();
+                batch.delete_cf(&cf, dest_string_key.encode()?);
+                db.write_opt(batch, &self.write_options)
+                    .context(RocksSnafu)?;
+                return Ok(0);
+            }
+
+            // Check type first to match Redis compatibility
+            self.check_type(encode_value.as_slice(), DataType::String)?;
+
+            let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+
+            // If source key is expired, result is empty
+            if decode_value.is_stale() {
+                // Delete destination key if it exists
+                let dest_string_key = BaseKey::new(dest_key);
+                let cf = self
+                    .get_cf_handle(ColumnFamilyIndex::MetaCF)
+                    .context(OptionNoneSnafu {
+                        message: "cf is not initialized".to_string(),
+                    })?;
+                let mut batch = rocksdb::WriteBatch::default();
+                batch.delete_cf(&cf, dest_string_key.encode()?);
+                db.write_opt(batch, &self.write_options)
+                    .context(RocksSnafu)?;
+                return Ok(0);
+            }
+
+            let user_value = decode_value.user_value();
+            
+            // Apply NOT operation to each byte
+            let result: Vec<u8> = user_value.iter().map(|&byte| !byte).collect();
+
+            // Store result
+            let mut string_value = StringValue::new(result);
+            string_value.set_ctime(Utc::now().timestamp_micros() as u64);
+            string_value.set_etime(0); // No expiration by default
+
+            let dest_string_key = BaseKey::new(dest_key);
+            let cf = self
+                .get_cf_handle(ColumnFamilyIndex::MetaCF)
+                .context(OptionNoneSnafu {
+                    message: "cf is not initialized".to_string(),
+                })?;
+            let mut batch = rocksdb::WriteBatch::default();
+            batch.put_cf(&cf, dest_string_key.encode()?, string_value.encode());
+            db.write_opt(batch, &self.write_options)
+                .context(RocksSnafu)?;
+
+            return Ok(string_value.user_value_len() as i64);
+        }
+
+        // For AND, OR, XOR operations
+        if src_keys.is_empty() {
+            return Err(RedisErr {
+                message: "ERR wrong number of arguments for 'bitop' command".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        // Get all source values
+        let mut src_values: Vec<Vec<u8>> = Vec::new();
+        let mut max_len = 0;
+
+        for src_key in src_keys {
+            let string_key = BaseKey::new(src_key);
+            let encode_value = db
+                .get_opt(&string_key.encode()?, &self.read_options)
+                .context(RocksSnafu)?
+                .unwrap_or_else(Vec::new);
+
+            // If any source key doesn't exist or is empty, treat as empty string
+            if encode_value.is_empty() {
+                src_values.push(Vec::new());
+                continue;
+            }
+
+            // Check type first to match Redis compatibility
+            self.check_type(encode_value.as_slice(), DataType::String)?;
+
+            let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+
+            // If source key is expired, treat as empty string
+            if decode_value.is_stale() {
+                src_values.push(Vec::new());
+                continue;
+            }
+
+            let user_value = decode_value.user_value();
+            max_len = max_len.max(user_value.len());
+            src_values.push(user_value.to_vec());
+        }
+
+        // If all source keys are empty, result is empty
+        if max_len == 0 {
+            // Delete destination key if it exists
+            let dest_string_key = BaseKey::new(dest_key);
+            let cf = self
+                .get_cf_handle(ColumnFamilyIndex::MetaCF)
+                .context(OptionNoneSnafu {
+                    message: "cf is not initialized".to_string(),
+                })?;
+            let mut batch = rocksdb::WriteBatch::default();
+            batch.delete_cf(&cf, dest_string_key.encode()?);
+            db.write_opt(batch, &self.write_options)
+                .context(RocksSnafu)?;
+            return Ok(0);
+        }
+
+        // Apply the operation
+        let mut result = vec![0u8; max_len];
+        
+        // For each byte position
+        for i in 0..max_len {
+            let mut current_byte = if operation.to_uppercase() == "AND" { 0xFF } else { 0x00 };
+            
+            // For each source value
+            for src_value in &src_values {
+                let byte = if i < src_value.len() { 
+                    src_value[i] 
+                } else { 
+                    0x00  // Pad with zeros for shorter strings
+                };
+                
+                current_byte = op_func(current_byte, byte);
+            }
+            
+            result[i] = current_byte;
+        }
+
+        // Store result
+        let mut string_value = StringValue::new(result);
+        string_value.set_ctime(Utc::now().timestamp_micros() as u64);
+        string_value.set_etime(0); // No expiration by default
+
+        let dest_string_key = BaseKey::new(dest_key);
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(&cf, dest_string_key.encode()?, string_value.encode());
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(string_value.user_value_len() as i64)
+    }
 }

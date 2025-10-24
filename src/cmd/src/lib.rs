@@ -16,9 +16,13 @@
 // limitations under the License.
 
 mod append;
+mod bitcount;
+mod bitop;
+mod bitpos;
 mod decr;
 mod decrby;
 pub mod get;
+mod getbit;
 mod getrange;
 mod getset;
 pub mod group_client;
@@ -27,13 +31,13 @@ mod incrby;
 mod mget;
 mod mset;
 mod msetnx;
-mod psetex;
 pub mod set;
+mod setbit;
 mod setex;
 mod setnx;
 mod setrange;
 mod strlen;
-pub mod table;
+mod psetex;
 
 use std::collections::HashMap;
 use std::sync::Arc;

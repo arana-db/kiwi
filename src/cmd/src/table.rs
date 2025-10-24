@@ -71,6 +71,11 @@ pub fn create_command_table() -> CmdTable {
         crate::mget::MgetCmd,
         crate::mset::MsetCmd,
         crate::msetnx::MsetnxCmd,
+        crate::setbit::SetbitCmd,
+        crate::getbit::GetbitCmd,
+        crate::bitcount::BitcountCmd,
+        crate::bitpos::BitposCmd,
+        crate::bitop::BitopCmd,
         // TODO: add more commands...
     );
 
