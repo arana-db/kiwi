@@ -1176,7 +1176,7 @@ impl Redis {
         // Check if any key exists and is not expired
         for (key, _) in kvs {
             let string_key = BaseKey::new(key);
-            
+
             match db
                 .get_opt(&string_key.encode()?, &self.read_options)
                 .context(RocksSnafu)?
@@ -1184,7 +1184,7 @@ impl Redis {
                 Some(val) => {
                     // Check type first, return WRONGTYPE error if not string
                     self.check_type(val.as_slice(), DataType::String)?;
-                    
+
                     // Key exists, check if it's expired
                     let string_value = ParsedStringsValue::new(&val[..])?;
                     if !string_value.is_stale() {

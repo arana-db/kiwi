@@ -2842,8 +2842,15 @@ mod redis_string_test {
         ];
 
         let result = redis.msetnx(&kvs);
-        assert!(result.is_ok(), "msetnx with non-existing keys should succeed");
-        assert_eq!(result.unwrap(), true, "msetnx should return true when keys are set");
+        assert!(
+            result.is_ok(),
+            "msetnx with non-existing keys should succeed"
+        );
+        assert_eq!(
+            result.unwrap(),
+            true,
+            "msetnx should return true when keys are set"
+        );
 
         // Verify values are set
         assert_eq!(redis.get(b"key1").unwrap(), "value1");
@@ -2858,13 +2865,29 @@ mod redis_string_test {
 
         let result = redis.msetnx(&kvs2);
         assert!(result.is_ok(), "msetnx should not fail even if keys exist");
-        assert_eq!(result.unwrap(), false, "msetnx should return false when at least one key exists");
+        assert_eq!(
+            result.unwrap(),
+            false,
+            "msetnx should return false when at least one key exists"
+        );
 
         // Verify original values are unchanged
-        assert_eq!(redis.get(b"key1").unwrap(), "value1", "key1 should retain original value");
-        assert_eq!(redis.get(b"key2").unwrap(), "value2", "key2 should retain original value");
-        assert_eq!(redis.get(b"key3").unwrap(), "value3", "key3 should retain original value");
-        
+        assert_eq!(
+            redis.get(b"key1").unwrap(),
+            "value1",
+            "key1 should retain original value"
+        );
+        assert_eq!(
+            redis.get(b"key2").unwrap(),
+            "value2",
+            "key2 should retain original value"
+        );
+        assert_eq!(
+            redis.get(b"key3").unwrap(),
+            "value3",
+            "key3 should retain original value"
+        );
+
         // key4 should not be set
         let result = redis.get(b"key4");
         assert!(result.is_err(), "key4 should not be set");
@@ -2876,8 +2899,15 @@ mod redis_string_test {
         ];
 
         let result = redis.msetnx(&kvs3);
-        assert!(result.is_ok(), "msetnx with non-existing keys should succeed");
-        assert_eq!(result.unwrap(), true, "msetnx should return true when keys are set");
+        assert!(
+            result.is_ok(),
+            "msetnx with non-existing keys should succeed"
+        );
+        assert_eq!(
+            result.unwrap(),
+            true,
+            "msetnx should return true when keys are set"
+        );
 
         // Verify new values are set
         assert_eq!(redis.get(b"key4").unwrap(), "value4");
@@ -2909,7 +2939,7 @@ mod redis_string_test {
 
         // Set a key with a short expiration
         redis.setex(b"expiring_key", 1, b"expiring_value").unwrap();
-        
+
         // Wait for the key to expire
         std::thread::sleep(std::time::Duration::from_secs(2));
 
@@ -2921,28 +2951,15 @@ mod redis_string_test {
 
         let result = redis.msetnx(&kvs);
         assert!(result.is_ok(), "msetnx with expired keys should succeed");
-        assert_eq!(result.unwrap(), true, "msetnx should return true when expired keys are treated as non-existing");
+        assert_eq!(
+            result.unwrap(),
+            true,
+            "msetnx should return true when expired keys are treated as non-existing"
+        );
 
         // Verify values are set
         assert_eq!(redis.get(b"expiring_key").unwrap(), "new_value");
         assert_eq!(redis.get(b"new_key").unwrap(), "new_value2");
-
-        redis.set_need_close(true);
-        drop(redis);
-
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
-    }
-}
-
-        // All keys should have new values (atomicity test)
-        let keys = vec![b"key1".to_vec(), b"key2".to_vec(), b"key3".to_vec()];
-        let values = redis.mget(&keys).unwrap();
-
-        assert_eq!(values[0], Some("atomic1".to_string()));
-        assert_eq!(values[1], Some("atomic2".to_string()));
-        assert_eq!(values[2], Some("atomic3".to_string()));
 
         redis.set_need_close(true);
         drop(redis);
