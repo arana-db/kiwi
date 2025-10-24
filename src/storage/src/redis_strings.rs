@@ -468,6 +468,38 @@ impl Redis {
         }
     }
 
+    /// Get the value of a key as bytes, preserving binary data
+    pub fn get_binary(&self, key: &[u8]) -> Result<Vec<u8>> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        let string_key = BaseKey::new(key);
+
+        match db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+        {
+            Some(val) => {
+                let string_value = ParsedStringsValue::new(&val[..])?;
+
+                // Check if key is expired
+                if string_value.is_stale() {
+                    return KeyNotFoundSnafu {
+                        key: String::from_utf8_lossy(key).to_string(),
+                    }
+                    .fail();
+                }
+
+                let user_value = string_value.user_value();
+                Ok(user_value.to_vec())
+            }
+            None => KeyNotFoundSnafu {
+                key: String::from_utf8_lossy(key).to_string(),
+            }
+            .fail(),
+        }
+    }
+
     /// MGET key [key ...]
     ///
     /// Returns the values of all specified keys. For every key that does not hold
@@ -954,7 +986,7 @@ impl Redis {
     //     db.put_opt(key, &encoded_value, &self.default_write_options)?;
 
     //     // Update statistics
-    //     self.update_specific_key_statistics(DataType::String, &String::from_utf8_lossy(key).to_string(), 1)?;
+    //     self.update_specific_key_statistics(DataType::String, &String::from_utf8_lossy(&kv.key).to_string(), 1)?;
 
     //     Ok(())
     // }

@@ -2711,9 +2711,17 @@ mod redis_string_test {
         assert!(result.is_ok(), "mset with binary data should succeed");
 
         // Verify binary data integrity
-        assert_eq!(redis.get(b"binary_key1").unwrap().as_bytes(), b"value\x00with\x00nulls");
-        assert_eq!(redis.get(b"binary_key2").unwrap().as_bytes(), &[0, 1, 2, 3, 255, 254, 253]);
-        assert_eq!(redis.get(b"utf8_key").unwrap().as_bytes(), "你好世界".as_bytes());
+        assert_eq!(
+            redis.get(b"binary_key1").unwrap().as_bytes(),
+            b"value\x00with\x00nulls"
+        );
+        assert_eq!(redis.get_binary(b"binary_key2").unwrap(), vec![
+            0, 1, 2, 3, 255, 254, 253
+        ]);
+        assert_eq!(
+            redis.get(b"utf8_key").unwrap().as_bytes(),
+            "你好世界".as_bytes()
+        );
 
         redis.set_need_close(true);
         drop(redis);
@@ -2796,7 +2804,7 @@ mod redis_string_test {
         // All keys should have new values (atomicity test)
         let keys = vec![b"key1".to_vec(), b"key2".to_vec(), b"key3".to_vec()];
         let values = redis.mget(&keys).unwrap();
-        
+
         assert_eq!(values[0], Some("atomic1".to_string()));
         assert_eq!(values[1], Some("atomic2".to_string()));
         assert_eq!(values[2], Some("atomic3".to_string()));

@@ -88,9 +88,11 @@ impl Storage {
             return self.insts[0].mset(kvs);
         }
 
+        // Define type alias for complex HashMap type to satisfy clippy::type_complexity
+        type InstanceKvs = std::collections::HashMap<usize, Vec<(Vec<u8>, Vec<u8>)>>;
+
         // Multi-instance: group key-value pairs by instance and process
-        let mut instance_kvs: std::collections::HashMap<usize, Vec<(Vec<u8>, Vec<u8>)>> =
-            std::collections::HashMap::new();
+        let mut instance_kvs: InstanceKvs = std::collections::HashMap::new();
 
         for (key, value) in kvs {
             let slot_id = key_to_slot_id(key);

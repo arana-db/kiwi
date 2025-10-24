@@ -66,7 +66,9 @@ impl Cmd for MsetCmd {
         // MSET key1 value1 key2 value2 ... means argv.len() must be odd (>= 3)
         if argv.len() < 3 || argv.len() % 2 == 0 {
             client.set_reply(RespData::Error(
-                "ERR wrong number of arguments for 'mset' command".to_string().into(),
+                "ERR wrong number of arguments for 'mset' command"
+                    .to_string()
+                    .into(),
             ));
             return false;
         }

@@ -1,3 +1,20 @@
+# Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 #!/usr/bin/env python3
 """
 MSET 命令测试
@@ -121,6 +138,18 @@ class TestMsetPerformance:
         assert r.get('test_batch_key_0') == 'batch_value_0'
         assert r.get('test_batch_key_50') == 'batch_value_50'
         assert r.get('test_batch_key_99') == 'batch_value_99'
+
+    @pytest.mark.benchmark
+    def test_mset_performance_benchmark(self, redis_clean, benchmark):
+        """MSET 性能基准测试"""
+        r = redis_clean
+        
+        # 创建测试数据
+        data = {f'benchmark_key_{i}': f'benchmark_value_{i}' for i in range(1000)}
+        
+        # 运行基准测试
+        result = benchmark(r.mset, data)
+        assert result == True
 
 
 class TestMsetBinary:
