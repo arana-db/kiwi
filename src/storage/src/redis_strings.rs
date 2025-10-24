@@ -393,12 +393,21 @@ impl Redis {
     // }
     pub fn setbit(&self, key: &[u8], offset: i64, on: i32) -> Result<i32> {
         // Validate offset
-        if offset < 0 {
+        if offset < 0 || offset >= (1_i64 << 32) {
             InvalidArgumentSnafu {
-                message: "offset < 0".to_string(),
+                message: "offset must be 0 <= offset < 2^32".to_string(),
             }
             .fail()?;
         }
+
+        // Validate value
+        if on != 0 && on != 1 {
+            return Err(Error::InvalidArgument {
+                message: "value must be 0 or 1".to_string(),
+                location: snafu::location!(),
+            });
+        }
+
         let base_key = BaseKey::new(key);
         let l = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &l);
@@ -414,8 +423,14 @@ impl Redis {
         {
             Some(val) => {
                 let parsed_value = ParsedStringsValue::new(&val[..])?;
-                data_value = parsed_value.user_value().to_vec();
-                timestamp = parsed_value.etime();
+                if parsed_value.is_stale() {
+                    // Treat as non-existent. Do not preserve TTL.
+                    data_value.clear();
+                    timestamp = 0;
+                } else {
+                    data_value = parsed_value.user_value().to_vec();
+                    timestamp = parsed_value.etime();
+                }
             }
             None => {
                 // Key doesn't exist, data_value remains empty
@@ -423,8 +438,8 @@ impl Redis {
         }
         // calculate byte and bit position
         let byte = (offset >> 3) as usize;
-        let bit = (offset & 0x7) as usize;
-
+        // MSB-first: bit 0 is the most significant bit
+        let bit = (7 - (offset & 0x7)) as usize;
         let value_length = data_value.len();
         let mut byte_val: u8;
         let ret: i32;
@@ -443,12 +458,12 @@ impl Redis {
         byte_val = byte_val | ((on as u8 & 0x1) << bit);
 
         // update or extend the data_value
-        if byte + 1 <= value_length {
+        if byte < value_length {
             data_value[byte] = byte_val;
         } else {
-            // extend with zeros and append the byte
-            data_value.resize(byte, 0);
-            data_value.push(byte_val);
+            // extend with zeros and write the target byte
+            data_value.resize(byte + 1, 0);
+            data_value[byte] = byte_val;
         }
 
         // create new base value with updated data
@@ -471,6 +486,12 @@ impl Redis {
         Ok(ret)
     }
     pub fn getbit(&self, key: &[u8], offset: i64) -> Result<i32> {
+        if offset < 0 {
+            return Err(Error::InvalidArgument {
+                message: "offset < 0".to_string(),
+                location: snafu::location!(),
+            });
+        }
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -493,9 +514,9 @@ impl Redis {
 
                 let data_value = parsed_value.user_value();
 
-                // Calculate byte and bit position (LSB-first, matching setbit)
+                // Calculate byte and bit position (MSB-first)
                 let byte = (offset >> 3) as usize;
-                let bit = (offset & 0x7) as usize; // Changed: removed the "7 -"  
+                let bit = (7 - (offset & 0x7)) as usize;
 
                 // Check if offset is within bounds
                 if byte >= data_value.len() {
@@ -531,12 +552,9 @@ impl Redis {
                         location: snafu::location!(),
                     })?;
 
-                // check if value is stale(expired)
+                // Expired => treat as empty
                 if parsed_value.is_stale() {
-                    return KeyNotFoundSnafu {
-                        key: String::from_utf8_lossy(key).to_string(),
-                    }
-                    .fail();
+                    return Ok(0);
                 }
 
                 let data_value = parsed_value.user_value();
@@ -637,8 +655,7 @@ impl Redis {
                     let parsed = ParsedStringsValue::new(&val[..])?;
 
                     // Check if value is stale (expired)
-                    let current_time = chrono::Utc::now().timestamp_micros() as u64;
-                    if parsed.etime() != 0 && parsed.etime() < current_time {
+                    if parsed.is_stale() {
                         src_values.push(Vec::new());
                     } else {
                         let user_value = parsed.user_value().to_vec();
@@ -727,32 +744,22 @@ impl Redis {
 
     /// Find the first occurrence of a specified bit value in a byte array  
     /// Returns the bit position (in bits), or 8 * bytes if not found  
-    /// Uses LSB-first ordering to match setbit/getbit  
+    /// MSB-first to match Redis (bit 0 = MSB of first byte)
     fn get_bit_pos(data: &[u8], bit: i32) -> i64 {
         let bytes = data.len();
 
         if bit == 1 {
-            // Find the first bit set to 1
             for (byte_idx, &byte) in data.iter().enumerate() {
                 if byte != 0 {
-                    // Found a non-zero byte, search for the first 1 bit (LSB-first)
-                    for bit_idx in 0..8 {
-                        if (byte & (1 << bit_idx)) != 0 {
-                            return (byte_idx * 8 + bit_idx) as i64;
-                        }
-                    }
+                    let lz = (byte as u8).leading_zeros() as usize;
+                    return (byte_idx * 8 + lz) as i64;
                 }
             }
         } else {
-            // Find the first bit set to 0
             for (byte_idx, &byte) in data.iter().enumerate() {
                 if byte != 0xFF {
-                    // Found a non-0xFF byte, search for the first 0 bit (LSB-first)
-                    for bit_idx in 0..8 {
-                        if (byte & (1 << bit_idx)) == 0 {
-                            return (byte_idx * 8 + bit_idx) as i64;
-                        }
-                    }
+                    let lz = ((!byte) as u8).leading_zeros() as usize;
+                    return (byte_idx * 8 + lz) as i64;
                 }
             }
         }
@@ -804,9 +811,13 @@ impl Redis {
 
                 let pos = Self::get_bit_pos(&user_value[start_offset as usize..], bit);
 
-                // If searching for 1 and not found, also return -1
                 if pos == (bytes * 8) as i64 {
-                    return Ok(-1);
+                    // Not found
+                    return Ok(if bit == 1 {
+                        -1
+                    } else {
+                        (value_length * 8) as i64
+                    });
                 }
 
                 // Adjust position (add start offset)
@@ -872,18 +883,16 @@ impl Redis {
 
                 // Check boundary conditions
                 if start > end_offset || start > value_length - 1 {
-                    return Ok(-1);
+                    return Ok(if bit == 1 { -1 } else { value_length * 8 });
                 }
 
                 // Find bit position
                 let bytes = (end_offset - start + 1) as usize;
                 let pos = Self::get_bit_pos(&user_value[start as usize..], bit);
 
-                // If searching for 1 and not found, also return -1
                 if pos == (bytes * 8) as i64 {
-                    return Ok(-1);
+                    return Ok(if bit == 1 { -1 } else { value_length * 8 });
                 }
-
                 // Adjust position (add start offset)
                 if pos != -1 {
                     Ok(pos + 8 * start)

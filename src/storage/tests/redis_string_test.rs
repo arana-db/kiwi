@@ -913,6 +913,15 @@ mod redis_string_test {
         assert!(pos.is_ok());
         assert_eq!(pos.unwrap(), -1, "should not find 0 bit in all-ones byte");
 
+        // Spec: without range, searching for 0 returns the first bit after the string (bit length)
+        let pos = redis.bitpos(key, 0);
+        assert!(pos.is_ok());
+        assert_eq!(
+            pos.unwrap(),
+            8,
+            "1-byte all-ones => first 0 at bit-length 8"
+        );
+
         // Search for 1 bit in non-existent key
         let pos = redis.bitpos(b"nonexistent", 1);
         assert!(pos.is_ok());
@@ -958,6 +967,14 @@ mod redis_string_test {
         // Test SETBIT with negative offset (should fail)
         let result = redis.setbit(b"key", -1, 1);
         assert!(result.is_err(), "setbit with negative offset should fail");
+
+        // Test GETBIT with negative offset (should fail)
+        let result = redis.getbit(b"key", -1);
+        assert!(result.is_err(), "getbit with negative offset should fail");
+
+        // Test SETBIT with invalid bit value (should fail)
+        let result = redis.setbit(b"key", 0, 2);
+        assert!(result.is_err(), "setbit with value != 0/1 should fail");
 
         // Test BITPOS with invalid bit value
         let result = redis.bitpos(b"key", 2);
