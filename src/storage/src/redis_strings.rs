@@ -1061,6 +1061,55 @@ impl Redis {
     //     }
     // }
 
+    /// MSET key value [key value ...]
+    ///
+    /// Sets the given keys to their respective values.
+    /// MSET replaces existing values with new values, just like regular SET.
+    /// MSET is atomic, so all given keys are set at once. It is not possible
+    /// for clients to see that some of the keys were updated while others are unchanged.
+    ///
+    /// # Arguments
+    /// * `kvs` - A slice of (key, value) tuples to set
+    ///
+    /// # Returns
+    /// * `Ok(())` - if the operation succeeded
+    /// * `Err(_)` - if the operation failed
+    ///
+    /// # Time Complexity
+    /// O(N) where N is the number of keys to set
+    ///
+    /// # Examples
+    /// ```text
+    /// MSET key1 "Hello" key2 "World"  // Sets both keys atomically
+    /// ```
+    pub fn mset(&self, kvs: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+
+        // Use WriteBatch for atomic operation
+        let mut batch = rocksdb::WriteBatch::default();
+
+        // Process all key-value pairs
+        for (key, value) in kvs {
+            let string_key = BaseKey::new(key);
+            let string_value = StringValue::new(value.to_owned());
+            batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+        }
+
+        // Atomic write of all key-value pairs
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(())
+    }
+
     pub fn incr_decr(&self, key: &[u8], incr: i64) -> Result<i64> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),

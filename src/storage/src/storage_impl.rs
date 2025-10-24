@@ -78,6 +78,37 @@ impl Storage {
         Ok(results)
     }
 
+    pub fn mset(&self, kvs: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+        if kvs.is_empty() {
+            return Ok(());
+        }
+
+        // If single instance, process directly for better performance
+        if self.insts.len() == 1 {
+            return self.insts[0].mset(kvs);
+        }
+
+        // Multi-instance: group key-value pairs by instance and process
+        let mut instance_kvs: std::collections::HashMap<usize, Vec<(Vec<u8>, Vec<u8>)>> =
+            std::collections::HashMap::new();
+
+        for (key, value) in kvs {
+            let slot_id = key_to_slot_id(key);
+            let instance_id = self.slot_indexer.get_instance_id(slot_id);
+            instance_kvs
+                .entry(instance_id)
+                .or_default()
+                .push((key.clone(), value.clone()));
+        }
+
+        // Execute mset on each instance
+        for (instance_id, instance_kvs) in instance_kvs {
+            self.insts[instance_id].mset(&instance_kvs)?;
+        }
+
+        Ok(())
+    }
+
     pub fn incr_decr(&self, key: &[u8], incr: i64) -> Result<i64> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
