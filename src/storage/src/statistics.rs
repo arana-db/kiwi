@@ -123,7 +123,9 @@ pub struct KeyStatisticsDurationGuard {
 #[allow(dead_code)]
 impl KeyStatisticsDurationGuard {
     pub fn new<F>(dtype: DataType, key: String, callback: F) -> Self
-    where F: FnOnce(DataType, String, Duration) + Send + 'static {
+    where
+        F: FnOnce(DataType, String, Duration) + Send + 'static,
+    {
         Self {
             callback: Some(Box::new(callback)),
             key,

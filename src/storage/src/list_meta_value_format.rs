@@ -49,7 +49,9 @@ delegate_internal_value!(ListsMetaValue);
 #[allow(dead_code)]
 impl ListsMetaValue {
     pub fn new<T>(list_size: T) -> Self
-    where T: Into<Bytes> {
+    where
+        T: Into<Bytes>,
+    {
         Self {
             inner: InternalValue::new(DataType::List, list_size),
             left_index: INITIAL_LEFT_INDEX,
@@ -122,7 +124,9 @@ impl ParsedListsMetaValue {
         TYPE_LENGTH + BASE_META_VALUE_COUNT_LENGTH + Self::LISTS_META_VALUE_SUFFIX_LENGTH;
 
     pub fn new<T>(internal_value: T) -> Result<Self>
-    where T: Into<BytesMut> {
+    where
+        T: Into<BytesMut>,
+    {
         let value: BytesMut = internal_value.into();
         let value_len = value.len();
         ensure!(

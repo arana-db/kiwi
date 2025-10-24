@@ -80,7 +80,9 @@ pub struct InternalValue {
 
 impl InternalValue {
     pub fn new<T>(data_type: DataType, user_value: T) -> Self
-    where T: Into<Bytes> {
+    where
+        T: Into<Bytes>,
+    {
         Self {
             data_type,
             user_value: user_value.into(),
