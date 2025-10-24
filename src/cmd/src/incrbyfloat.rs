@@ -77,9 +77,9 @@ impl Cmd for IncrbyFloatCmd {
         let result = storage.incr_decr_float(&key, incr);
         match result {
             Ok(v) => {
-                // Format the float result similar to Redis
-                let formatted = if v.fract() == 0.0 {
-                    format!("{}", v as i64)
+                // Format as integer notation if no fractional part, otherwise standard float
+                let formatted = if v.fract() == 0.0 && v.abs() < (i64::MAX as f64) {
+                    format!("{:.0}", v)
                 } else {
                     format!("{}", v)
                 };
