@@ -32,9 +32,16 @@ use snafu::{OptionExt, ResultExt};
 use crate::{
     ColumnFamilyIndex, Redis, Result,
     base_key_format::BaseKey,
-    error::{KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
+    error::{Error, InvalidArgumentSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
     strings_value_format::{ParsedStringsValue, StringValue},
 };
+
+pub enum BitOpType {
+    And,
+    Or,
+    Xor,
+    Not,
+}
 
 impl Redis {
     // /// Append a value to the string stored at key
@@ -384,4 +391,601 @@ impl Redis {
     //         }
     //     }
     // }
+    pub fn setbit(&self, key: &[u8], offset: i64, on: i32) -> Result<i32> {
+        // Validate offset
+        if offset < 0 {
+            InvalidArgumentSnafu {
+                message: "offset < 0".to_string(),
+            }
+            .fail()?;
+        }
+        let base_key = BaseKey::new(key);
+        let l = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &l);
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        // try to get existing value
+        let mut data_value = Vec::new();
+        let mut timestamp = 0u64;
+        match db
+            .get_opt(&base_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+        {
+            Some(val) => {
+                let parsed_value = ParsedStringsValue::new(&val[..])?;
+                data_value = parsed_value.user_value().to_vec();
+                timestamp = parsed_value.etime();
+            }
+            None => {
+                // Key doesn't exist, data_value remains empty
+            }
+        }
+        // calculate byte and bit position
+        let byte = (offset >> 3) as usize;
+        let bit = (offset & 0x7) as usize;
+
+        let value_length = data_value.len();
+        let mut byte_val: u8;
+        let ret: i32;
+
+        // get current bit value
+        if byte + 1 > value_length {
+            ret = 0;
+            byte_val = 0;
+        } else {
+            ret = ((data_value[byte] & (1 << bit)) >> bit) as i32;
+            byte_val = data_value[byte];
+        }
+
+        // set or clear the bit
+        byte_val = byte_val & (!(1 << bit));
+        byte_val = byte_val | ((on as u8 & 0x1) << bit);
+
+        // update or extend the data_value
+        if byte + 1 <= value_length {
+            data_value[byte] = byte_val;
+        } else {
+            // extend with zeros and append the byte
+            data_value.resize(byte, 0);
+            data_value.push(byte_val);
+        }
+
+        // create new base value with updated data
+        let mut base_value = StringValue::new(data_value);
+        base_value.set_etime(timestamp);
+
+        // write to db
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(&cf, base_key.encode()?, base_value.encode());
+
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(ret)
+    }
+    pub fn getbit(&self, key: &[u8], offset: i64) -> Result<i32> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        let base_key = BaseKey::new(key);
+        match db
+            .get_opt(&base_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+        {
+            Some(val) => {
+                let parsed_value =
+                    ParsedStringsValue::new(&val[..]).map_err(|e| Error::InvalidArgument {
+                        message: e.to_string(),
+                        location: snafu::location!(),
+                    })?;
+
+                // Check if value is stale (expired)
+                if parsed_value.is_stale() {
+                    return Ok(0);
+                }
+
+                let data_value = parsed_value.user_value();
+
+                // Calculate byte and bit position (LSB-first, matching setbit)
+                let byte = (offset >> 3) as usize;
+                let bit = (offset & 0x7) as usize; // Changed: removed the "7 -"  
+
+                // Check if offset is within bounds
+                if byte >= data_value.len() {
+                    Ok(0)
+                } else {
+                    Ok(((data_value[byte] & (1 << bit)) >> bit) as i32)
+                }
+            }
+            None => Ok(0),
+        }
+    }
+
+    pub fn bitcount(
+        &self,
+        key: &[u8],
+        start_offset: Option<i64>,
+        end_offset: Option<i64>,
+    ) -> Result<i32> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let base_key = BaseKey::new(key);
+
+        match db
+            .get_opt(&base_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+        {
+            Some(val) => {
+                let parsed_value =
+                    ParsedStringsValue::new(&val[..]).map_err(|e| Error::InvalidArgument {
+                        message: e.to_string(),
+                        location: snafu::location!(),
+                    })?;
+
+                // check if value is stale(expired)
+                if parsed_value.is_stale() {
+                    return KeyNotFoundSnafu {
+                        key: String::from_utf8_lossy(key).to_string(),
+                    }
+                    .fail();
+                }
+
+                let data_value = parsed_value.user_value();
+                let value_length = data_value.len() as i64;
+
+                // calculate start and end byte positions
+                let (start_byte, end_byte) =
+                    if let (Some(mut start), Some(mut end)) = (start_offset, end_offset) {
+                        // handle negative offsets
+                        if start < 0 {
+                            start = start + value_length;
+                        }
+                        if end < 0 {
+                            end = end + value_length;
+                        }
+
+                        // clamp to valid range
+                        if start < 0 {
+                            start = 0;
+                        }
+                        if end < 0 {
+                            end = 0;
+                        }
+
+                        if end >= value_length {
+                            end = value_length - 1;
+                        }
+                        // if start > end return 0
+                        if start > end {
+                            return Ok(0);
+                        }
+                        (start as usize, (end + 1) as usize)
+                    } else {
+                        // no range specified, count entire value
+                        (0, value_length.max(0) as usize)
+                    };
+
+                // get the slice and count bits
+                let slice = &data_value[start_byte..end_byte];
+                Ok(Self::get_bit_count(slice, slice.len() as i64))
+            }
+            None => Ok(0),
+        }
+    }
+
+    pub fn get_bit_count(value: &[u8], bytes: i64) -> i32 {
+        static BITS_IN_BYTE: [u8; 256] = [
+            0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3,
+            4, 4, 5, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4,
+            4, 5, 4, 5, 5, 6, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5, 2, 3, 3, 4, 3, 4, 4,
+            5, 3, 4, 4, 5, 4, 5, 5, 6, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 3, 4, 4, 5,
+            4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7, 1, 2, 2, 3, 2, 3, 3, 4, 2, 3, 3, 4, 3, 4, 4, 5, 2,
+            3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5, 5, 6, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4, 5, 4, 5,
+            5, 6, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7, 2, 3, 3, 4, 3, 4, 4, 5, 3, 4, 4,
+            5, 4, 5, 5, 6, 3, 4, 4, 5, 4, 5, 5, 6, 4, 5, 5, 6, 5, 6, 6, 7, 3, 4, 4, 5, 4, 5, 5, 6,
+            4, 5, 5, 6, 5, 6, 6, 7, 4, 5, 5, 6, 5, 6, 6, 7, 5, 6, 6, 7, 6, 7, 7, 8,
+        ];
+
+        let mut bit_num = 0i32;
+        let byte_count = bytes.min(value.len() as i64) as usize;
+
+        for i in 0..byte_count {
+            bit_num += BITS_IN_BYTE[value[i] as usize] as i32;
+        }
+        bit_num
+    }
+    pub fn bitop(&self, op: BitOpType, dest_key: &[u8], src_keys: &[&[u8]]) -> Result<i64> {
+        // Validate arguments
+        if matches!(op, BitOpType::Not) && src_keys.len() != 1 {
+            return Err(Error::InvalidArgument {
+                message: "BITOP NOT requires exactly one source key".to_string(),
+                location: snafu::location!(),
+            });
+        }
+        if src_keys.is_empty() {
+            return Err(Error::InvalidArgument {
+                message: "BITOP requires at least one source key".to_string(),
+                location: snafu::location!(),
+            });
+        }
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        // Collect source values
+        let mut max_len = 0usize;
+        let mut src_values = Vec::with_capacity(src_keys.len());
+
+        for &src_key in src_keys {
+            let string_key = BaseKey::new(src_key);
+
+            match db
+                .get_opt(&string_key.encode()?, &self.read_options)
+                .context(RocksSnafu)?
+            {
+                Some(val) => {
+                    let parsed = ParsedStringsValue::new(&val[..])?;
+
+                    // Check if value is stale (expired)
+                    let current_time = chrono::Utc::now().timestamp_micros() as u64;
+                    if parsed.etime() != 0 && parsed.etime() < current_time {
+                        src_values.push(Vec::new());
+                    } else {
+                        let user_value = parsed.user_value().to_vec();
+                        max_len = max_len.max(user_value.len());
+                        src_values.push(user_value);
+                    }
+                }
+                None => {
+                    src_values.push(Vec::new());
+                }
+            }
+        }
+
+        // Perform bitwise operation
+        let dest_value = self.bitop_operate(op, &src_values, max_len);
+        let result_len = dest_value.len() as i64;
+
+        // Store result
+        let dest_string_key = BaseKey::new(dest_key);
+        let dest_string_value = StringValue::new(dest_value);
+
+        let key_str = String::from_utf8_lossy(dest_key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+
+        let mut batch = rocksdb::WriteBatch::default();
+        batch.put_cf(&cf, dest_string_key.encode()?, dest_string_value.encode());
+
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
+
+        Ok(result_len)
+    }
+
+    fn bitop_operate(&self, op: BitOpType, src_values: &[Vec<u8>], max_len: usize) -> Vec<u8> {
+        let mut result = vec![0u8; max_len];
+
+        match op {
+            BitOpType::And => {
+                // Initialize with all 1s
+                result.fill(0xFF);
+                for src in src_values {
+                    for (i, &byte) in src.iter().enumerate() {
+                        result[i] &= byte;
+                    }
+                    // AND with 0 for remaining bytes
+                    for i in src.len()..max_len {
+                        result[i] = 0;
+                    }
+                }
+            }
+            BitOpType::Or => {
+                for src in src_values {
+                    for (i, &byte) in src.iter().enumerate() {
+                        result[i] |= byte;
+                    }
+                }
+            }
+            BitOpType::Xor => {
+                for src in src_values {
+                    for (i, &byte) in src.iter().enumerate() {
+                        result[i] ^= byte;
+                    }
+                }
+            }
+            BitOpType::Not => {
+                // NOT operation on single source
+                if let Some(src) = src_values.first() {
+                    for (i, &byte) in src.iter().enumerate() {
+                        result[i] = !byte;
+                    }
+                    for i in src.len()..max_len {
+                        result[i] = 0xFF;
+                    }
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Find the first occurrence of a specified bit value in a byte array  
+    /// Returns the bit position (in bits), or 8 * bytes if not found  
+    /// Uses LSB-first ordering to match setbit/getbit  
+    fn get_bit_pos(data: &[u8], bit: i32) -> i64 {
+        let bytes = data.len();
+
+        if bit == 1 {
+            // Find the first bit set to 1
+            for (byte_idx, &byte) in data.iter().enumerate() {
+                if byte != 0 {
+                    // Found a non-zero byte, search for the first 1 bit (LSB-first)
+                    for bit_idx in 0..8 {
+                        if (byte & (1 << bit_idx)) != 0 {
+                            return (byte_idx * 8 + bit_idx) as i64;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Find the first bit set to 0
+            for (byte_idx, &byte) in data.iter().enumerate() {
+                if byte != 0xFF {
+                    // Found a non-0xFF byte, search for the first 0 bit (LSB-first)
+                    for bit_idx in 0..8 {
+                        if (byte & (1 << bit_idx)) == 0 {
+                            return (byte_idx * 8 + bit_idx) as i64;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Not found, return total number of bits
+        (bytes * 8) as i64
+    }
+
+    /// BITPOS key bit - Search for bit in the entire string  
+    pub fn bitpos(&self, key: &[u8], bit: i32) -> Result<i64> {
+        // Validate parameters
+        if bit != 0 && bit != 1 {
+            return Err(Error::InvalidArgument {
+                message: "bit must be 0 or 1".to_string(),
+                location: snafu::location!(),
+            });
+        }
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let string_key = BaseKey::new(key);
+
+        match db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+        {
+            Some(val) => {
+                let parsed = ParsedStringsValue::new(&val[..])?;
+
+                // Check if expired
+                if parsed.is_stale() {
+                    return Ok(if bit == 1 { -1 } else { 0 });
+                }
+
+                // Get user value
+                let user_value = parsed.user_value();
+                let value_length = user_value.len() as i64;
+
+                if value_length == 0 {
+                    return Ok(if bit == 1 { -1 } else { 0 });
+                }
+
+                // Find bit position
+                let start_offset = 0i64;
+                let end_offset = value_length - 1;
+                let bytes = (end_offset - start_offset + 1) as usize;
+
+                let pos = Self::get_bit_pos(&user_value[start_offset as usize..], bit);
+
+                // If searching for 1 and not found, also return -1
+                if pos == (bytes * 8) as i64 {
+                    return Ok(-1);
+                }
+
+                // Adjust position (add start offset)
+                if pos != -1 {
+                    Ok(pos + 8 * start_offset)
+                } else {
+                    Ok(-1)
+                }
+            }
+            None => {
+                // Key does not exist
+                Ok(if bit == 1 { -1 } else { 0 })
+            }
+        }
+    }
+
+    /// BITPOS key bit start - Search starting from specified byte offset  
+    pub fn bitpos_with_start(&self, key: &[u8], bit: i32, start_offset: i64) -> Result<i64> {
+        // Validate parameters
+        if bit != 0 && bit != 1 {
+            return Err(Error::InvalidArgument {
+                message: "bit must be 0 or 1".to_string(),
+                location: snafu::location!(),
+            });
+        }
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let string_key = BaseKey::new(key);
+
+        match db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+        {
+            Some(val) => {
+                let parsed = ParsedStringsValue::new(&val[..])?;
+
+                // Check if expired
+                if parsed.is_stale() {
+                    return Ok(if bit == 1 { -1 } else { 0 });
+                }
+
+                // Get user value
+                let user_value = parsed.user_value();
+                let value_length = user_value.len() as i64;
+
+                if value_length == 0 {
+                    return Ok(if bit == 1 { -1 } else { 0 });
+                }
+
+                // Handle negative offset
+                let mut start = start_offset;
+                if start < 0 {
+                    start = start + value_length;
+                }
+                if start < 0 {
+                    start = 0;
+                }
+
+                let end_offset = value_length - 1;
+
+                // Check boundary conditions
+                if start > end_offset || start > value_length - 1 {
+                    return Ok(-1);
+                }
+
+                // Find bit position
+                let bytes = (end_offset - start + 1) as usize;
+                let pos = Self::get_bit_pos(&user_value[start as usize..], bit);
+
+                // If searching for 1 and not found, also return -1
+                if pos == (bytes * 8) as i64 {
+                    return Ok(-1);
+                }
+
+                // Adjust position (add start offset)
+                if pos != -1 {
+                    Ok(pos + 8 * start)
+                } else {
+                    Ok(-1)
+                }
+            }
+            None => {
+                // Key does not exist
+                Ok(if bit == 1 { -1 } else { 0 })
+            }
+        }
+    }
+
+    /// BITPOS key bit start end - Search within specified byte range  
+    pub fn bitpos_with_range(
+        &self,
+        key: &[u8],
+        bit: i32,
+        start_offset: i64,
+        end_offset: i64,
+    ) -> Result<i64> {
+        // Validate parameters
+        if bit != 0 && bit != 1 {
+            return Err(Error::InvalidArgument {
+                message: "bit must be 0 or 1".to_string(),
+                location: snafu::location!(),
+            });
+        }
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let string_key = BaseKey::new(key);
+
+        match db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+        {
+            Some(val) => {
+                let parsed = ParsedStringsValue::new(&val[..])?;
+
+                // Check if expired
+                if parsed.is_stale() {
+                    return Ok(if bit == 1 { -1 } else { 0 });
+                }
+
+                // Get user value
+                let user_value = parsed.user_value();
+                let value_length = user_value.len() as i64;
+
+                if value_length == 0 {
+                    return Ok(if bit == 1 { -1 } else { 0 });
+                }
+
+                // Handle negative offsets
+                let mut start = start_offset;
+                if start < 0 {
+                    start = start + value_length;
+                }
+                if start < 0 {
+                    start = 0;
+                }
+
+                let mut end = end_offset;
+                if end < 0 {
+                    end = end + value_length;
+                }
+                if end > value_length - 1 {
+                    end = value_length - 1;
+                }
+                if end < 0 {
+                    end = 0;
+                }
+
+                // Check boundary conditions
+                if start > end || start > value_length - 1 {
+                    return Ok(-1);
+                }
+
+                // Find bit position
+                let bytes = (end - start + 1) as usize;
+                let search_slice = &user_value[start as usize..=end as usize];
+                let pos = Self::get_bit_pos(search_slice, bit);
+
+                // If searching for 1 and not found, also return -1
+                if pos == (bytes * 8) as i64 {
+                    return Ok(-1);
+                }
+
+                // Adjust position (add start offset)
+                if pos != -1 {
+                    Ok(pos + 8 * start)
+                } else {
+                    Ok(-1)
+                }
+            }
+            None => {
+                // Key does not exist
+                Ok(if bit == 1 { -1 } else { 0 })
+            }
+        }
+    }
 }
