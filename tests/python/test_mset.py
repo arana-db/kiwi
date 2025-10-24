@@ -252,40 +252,113 @@ def run_standalone_tests():
         cleanup(r)
 
 
-def test_basic(r):
-    r.mset({'test_key1': 'value1', 'test_key2': 'value2'})
-    assert r.get('test_key1') == 'value1'
-    assert r.get('test_key2') == 'value2'
+def test_basic():
+    """独立测试函数 - 基本功能"""
+    try:
+        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r.ping()
+        cleanup_keys(r, ['test_key1', 'test_key2'])
+        
+        r.mset({'test_key1': 'value1', 'test_key2': 'value2'})
+        assert r.get('test_key1') == 'value1'
+        assert r.get('test_key2') == 'value2'
+        
+        cleanup_keys(r, ['test_key1', 'test_key2'])
+    except redis.ConnectionError:
+        pytest.skip("Redis server not available")
 
 
-def test_with_mget(r):
-    r.mset({'test_mget1': 'v1', 'test_mget2': 'v2'})
-    values = r.mget(['test_mget1', 'test_mget2'])
-    assert values == ['v1', 'v2']
+def test_with_mget():
+    """独立测试函数 - 与 MGET 配合"""
+    try:
+        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r.ping()
+        cleanup_keys(r, ['test_mget1', 'test_mget2'])
+        
+        r.mset({'test_mget1': 'v1', 'test_mget2': 'v2'})
+        values = r.mget(['test_mget1', 'test_mget2'])
+        assert values == ['v1', 'v2']
+        
+        cleanup_keys(r, ['test_mget1', 'test_mget2'])
+    except redis.ConnectionError:
+        pytest.skip("Redis server not available")
 
 
-def test_overwrite(r):
-    r.set('test_over', 'old')
-    r.mset({'test_over': 'new'})
-    assert r.get('test_over') == 'new'
+def test_overwrite():
+    """独立测试函数 - 覆盖测试"""
+    try:
+        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r.ping()
+        cleanup_keys(r, ['test_over'])
+        
+        r.set('test_over', 'old')
+        r.mset({'test_over': 'new'})
+        assert r.get('test_over') == 'new'
+        
+        cleanup_keys(r, ['test_over'])
+    except redis.ConnectionError:
+        pytest.skip("Redis server not available")
 
 
-def test_single_pair(r):
-    r.mset({'test_single': 'value'})
-    assert r.get('test_single') == 'value'
+def test_single_pair():
+    """独立测试函数 - 单个键值对"""
+    try:
+        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r.ping()
+        cleanup_keys(r, ['test_single'])
+        
+        r.mset({'test_single': 'value'})
+        assert r.get('test_single') == 'value'
+        
+        cleanup_keys(r, ['test_single'])
+    except redis.ConnectionError:
+        pytest.skip("Redis server not available")
 
 
-def test_large_batch(r):
-    large_dict = {f'test_batch_{i}': f'val_{i}' for i in range(100)}
-    r.mset(large_dict)
-    assert r.get('test_batch_0') == 'val_0'
-    assert r.get('test_batch_99') == 'val_99'
+def test_large_batch():
+    """独立测试函数 - 大批量操作"""
+    try:
+        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r.ping()
+        
+        # 清理可能存在的键
+        keys_to_clean = [f'test_batch_{i}' for i in range(100)]
+        cleanup_keys(r, keys_to_clean)
+        
+        large_dict = {f'test_batch_{i}': f'val_{i}' for i in range(100)}
+        r.mset(large_dict)
+        assert r.get('test_batch_0') == 'val_0'
+        assert r.get('test_batch_99') == 'val_99'
+        
+        cleanup_keys(r, keys_to_clean)
+    except redis.ConnectionError:
+        pytest.skip("Redis server not available")
 
 
-def test_atomicity(r):
-    r.mset({'test_a1': 'v1', 'test_a2': 'v2'})
-    values = r.mget(['test_a1', 'test_a2'])
-    assert values == ['v1', 'v2']
+def test_atomicity():
+    """独立测试函数 - 原子性测试"""
+    try:
+        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r.ping()
+        cleanup_keys(r, ['test_a1', 'test_a2'])
+        
+        r.mset({'test_a1': 'v1', 'test_a2': 'v2'})
+        values = r.mget(['test_a1', 'test_a2'])
+        assert values == ['v1', 'v2']
+        
+        cleanup_keys(r, ['test_a1', 'test_a2'])
+    except redis.ConnectionError:
+        pytest.skip("Redis server not available")
+
+
+def cleanup_keys(r, keys):
+    """清理指定的键"""
+    existing_keys = []
+    for key in keys:
+        if r.exists(key):
+            existing_keys.append(key)
+    if existing_keys:
+        r.delete(*existing_keys)
 
 
 def cleanup(r):
@@ -302,7 +375,7 @@ if __name__ == '__main__':
     try:
         import pytest
         # 使用 pytest 运行
-        sys.exit(pytest.main([__file__, '-v']))
+        sys.exit(pytest.main([__file__, '-v', '--tb=short']))
     except ImportError:
         # 降级到独立模式
         print("提示: 未安装 pytest，使用独立测试模式")

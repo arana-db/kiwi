@@ -54,7 +54,7 @@ test-unit:
 .PHONY: test-python
 test-python:
 	@echo "运行 Python 集成测试..."
-	$(PYTEST) $(PYTHON_TEST_DIR)/ -v
+	$(PYTEST) $(PYTHON_TEST_DIR)/ -v --tb=short
 
 # 运行特定的 MSET 测试
 .PHONY: test-mset

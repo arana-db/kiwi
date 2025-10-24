@@ -74,6 +74,12 @@ def redis_clean(redis_client):
         redis_client.delete(*keys)
 
 
+@pytest.fixture(scope="function")
+def r(redis_clean):
+    """兼容旧版测试用例的别名，保持每次测试的隔离性。"""
+    return redis_clean
+
+
 @pytest.fixture(scope="session")
 def redis_binary_client():
     """
