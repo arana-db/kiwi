@@ -682,14 +682,14 @@ mod redis_string_test {
 
         // Test OR
         let result = redis.bitop(BitOpType::Or, dest_or, &[key1, key2]);
-        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
         assert_eq!(redis.getbit(dest_or, 0).unwrap(), 1);
         assert_eq!(redis.getbit(dest_or, 1).unwrap(), 1);
         assert_eq!(redis.getbit(dest_or, 2).unwrap(), 1);
 
         // Test XOR
         let result = redis.bitop(BitOpType::Xor, dest_xor, &[key1, key2]);
-        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
         assert_eq!(redis.getbit(dest_xor, 0).unwrap(), 1);
         assert_eq!(redis.getbit(dest_xor, 1).unwrap(), 1);
         assert_eq!(redis.getbit(dest_xor, 2).unwrap(), 0); // XOR of 1 and 1 is 0  

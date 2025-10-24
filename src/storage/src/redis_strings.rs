@@ -468,7 +468,9 @@ impl Redis {
 
         // create new base value with updated data
         let mut base_value = StringValue::new(data_value);
-        base_value.set_etime(timestamp);
+        if timestamp > 0 {
+            base_value.set_etime(timestamp);
+        }
 
         // write to db
         let cf = self
@@ -697,48 +699,48 @@ impl Redis {
 
     fn bitop_operate(&self, op: BitOpType, src_values: &[Vec<u8>], max_len: usize) -> Vec<u8> {
         let mut result = vec![0u8; max_len];
-
         match op {
             BitOpType::And => {
-                // Initialize with all 1s
-                result.fill(0xFF);
-                for src in src_values {
-                    for (i, &byte) in src.iter().enumerate() {
-                        result[i] &= byte;
+                for i in 0..max_len {
+                    let mut acc = 0xFFu8;
+                    for src in src_values {
+                        acc &= src.get(i).copied().unwrap_or(0);
+                        if acc == 0 {
+                            break;
+                        }
                     }
-                    // AND with 0 for remaining bytes
-                    for i in src.len()..max_len {
-                        result[i] = 0;
-                    }
+                    result[i] = acc;
                 }
             }
             BitOpType::Or => {
-                for src in src_values {
-                    for (i, &byte) in src.iter().enumerate() {
-                        result[i] |= byte;
+                for i in 0..max_len {
+                    let mut acc = 0u8;
+                    for src in src_values {
+                        acc |= src.get(i).copied().unwrap_or(0);
+                        if acc == 0xFF {
+                            break;
+                        }
                     }
+                    result[i] = acc;
                 }
             }
             BitOpType::Xor => {
-                for src in src_values {
-                    for (i, &byte) in src.iter().enumerate() {
-                        result[i] ^= byte;
+                for i in 0..max_len {
+                    let mut acc = 0u8;
+                    for src in src_values {
+                        acc ^= src.get(i).copied().unwrap_or(0);
                     }
+                    result[i] = acc;
                 }
             }
             BitOpType::Not => {
-                // NOT operation on single source
                 if let Some(src) = src_values.first() {
                     for (i, &byte) in src.iter().enumerate() {
                         result[i] = !byte;
                     }
-                    for i in src.len()..max_len {
-                        result[i] = 0xFF;
-                    }
                 }
             }
         }
-
         result
     }
 
