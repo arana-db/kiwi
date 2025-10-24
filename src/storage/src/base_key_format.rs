@@ -75,9 +75,12 @@ impl ParsedBaseKey {
     }
 
     fn decode(encoded_key: &[u8], key_str: &mut BytesMut) -> Result<()> {
-        ensure!(!encoded_key.is_empty(), InvalidFormatSnafu {
-            message: "Encoded key too short to contain prefix, suffix, and data".to_string(),
-        });
+        ensure!(
+            !encoded_key.is_empty(),
+            InvalidFormatSnafu {
+                message: "Encoded key too short to contain prefix, suffix, and data".to_string(),
+            }
+        );
 
         let start_idx = PREFIX_RESERVE_LENGTH;
         let end_idx = encoded_key.len() - SUFFIX_RESERVE_LENGTH;

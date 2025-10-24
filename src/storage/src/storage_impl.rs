@@ -40,10 +40,129 @@ impl Storage {
         self.insts[instance_id].get(key)
     }
 
+    pub fn mget(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // If single instance, process directly for better performance
+        if self.insts.len() == 1 {
+            return self.insts[0].mget(keys);
+        }
+
+        // Multi-instance: group keys by instance and process
+        let mut instance_keys: std::collections::HashMap<usize, Vec<(usize, &Vec<u8>)>> =
+            std::collections::HashMap::new();
+
+        for (idx, key) in keys.iter().enumerate() {
+            let slot_id = key_to_slot_id(key);
+            let instance_id = self.slot_indexer.get_instance_id(slot_id);
+            instance_keys
+                .entry(instance_id)
+                .or_default()
+                .push((idx, key));
+        }
+
+        let mut results = vec![None; keys.len()];
+
+        for (instance_id, key_indices) in instance_keys {
+            let instance_keys: Vec<Vec<u8>> =
+                key_indices.iter().map(|(_, key)| (*key).clone()).collect();
+            let instance_results = self.insts[instance_id].mget(&instance_keys)?;
+
+            for ((original_idx, _), result) in key_indices.iter().zip(instance_results) {
+                results[*original_idx] = result;
+            }
+        }
+
+        Ok(results)
+    }
+
+    pub fn mset(&self, kvs: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+        if kvs.is_empty() {
+            return Ok(());
+        }
+
+        // If single instance, process directly for better performance
+        if self.insts.len() == 1 {
+            return self.insts[0].mset(kvs);
+        }
+
+        // Define type alias for complex HashMap type to satisfy clippy::type_complexity
+        type InstanceKvs = std::collections::HashMap<usize, Vec<(Vec<u8>, Vec<u8>)>>;
+
+        // Multi-instance: group key-value pairs by instance and process
+        let mut instance_kvs: InstanceKvs = std::collections::HashMap::new();
+
+        for (key, value) in kvs {
+            let slot_id = key_to_slot_id(key);
+            let instance_id = self.slot_indexer.get_instance_id(slot_id);
+            instance_kvs
+                .entry(instance_id)
+                .or_default()
+                .push((key.clone(), value.clone()));
+        }
+
+        // Execute mset on each instance
+        for (instance_id, instance_kvs) in instance_kvs {
+            self.insts[instance_id].mset(&instance_kvs)?;
+        }
+
+        Ok(())
+    }
+
     pub fn incr_decr(&self, key: &[u8], incr: i64) -> Result<i64> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].incr_decr(key, incr)
+    }
+
+    pub fn append(&self, key: &[u8], value: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].append(key, value)
+    }
+
+    pub fn strlen(&self, key: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].strlen(key)
+    }
+
+    pub fn getrange(&self, key: &[u8], start: i64, end: i64) -> Result<Vec<u8>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].getrange(key, start, end)
+    }
+
+    pub fn setrange(&self, key: &[u8], offset: i64, value: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].setrange(key, offset, value)
+    }
+
+    pub fn setex(&self, key: &[u8], seconds: i64, value: &[u8]) -> Result<()> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].setex(key, seconds, value)
+    }
+
+    pub fn psetex(&self, key: &[u8], milliseconds: i64, value: &[u8]) -> Result<()> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].psetex(key, milliseconds, value)
+    }
+
+    pub fn setnx(&self, key: &[u8], value: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].setnx(key, value)
+    }
+
+    pub fn getset(&self, key: &[u8], value: &[u8]) -> Result<Option<String>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].getset(key, value)
     }
 
     // // Atomically sets key to value and returns the old value stored at key

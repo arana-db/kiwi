@@ -107,9 +107,12 @@ pub fn decode_user_key(encoded_key_part: &[u8], user_key: &mut BytesMut) -> Resu
         }
     }
 
-    ensure!(delim_found, InvalidFormatSnafu {
-        message: "Encoded key delimiter not found or key ends unexpectedly".to_string()
-    });
+    ensure!(
+        delim_found,
+        InvalidFormatSnafu {
+            message: "Encoded key delimiter not found or key ends unexpectedly".to_string()
+        }
+    );
 
     Ok(())
 }
