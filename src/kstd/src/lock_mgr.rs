@@ -250,7 +250,7 @@ impl<'a> MultiScopeRecordLock<'a> {
                     locked_keys.push(*key);
                     prev_key = *key;
                 } else {
-                    for locked_key in locked_keys {
+                    for locked_key in locked_keys.iter().rev() {
                         mgr.unlock(locked_key);
                     }
                     return false;
@@ -265,17 +265,8 @@ impl<'a> MultiScopeRecordLock<'a> {
 impl<'a> Drop for MultiScopeRecordLock<'a> {
     fn drop(&mut self) {
         if self.locked {
-            let mut prev_key = "";
-
-            if !self.keys.is_empty() && self.keys[0].is_empty() {
-                self.mgr.unlock(prev_key);
-            }
-
-            for key in &self.keys {
-                if prev_key != *key {
-                    self.mgr.unlock(key);
-                    prev_key = *key;
-                }
+            for key in self.keys.iter().rev() {
+                self.mgr.unlock(key);
             }
         }
     }
@@ -856,5 +847,42 @@ mod tests {
 
         let try_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
         assert!(try_lock.is_some());
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_reverse_unlock_order() {
+        let mgr = LockMgr::new(4);
+        let keys = ["key1", "key2", "key3", "key4"];
+
+        {
+            let _multi_lock = MultiScopeRecordLock::new(&mgr, &keys);
+            assert!(_multi_lock.is_locked());
+            
+            for key in &keys {
+                let status = mgr.try_lock(key);
+                assert!(!status.is_ok(), "Key {} should be locked", key);
+            }
+        }
+
+        for key in &keys {
+            let status = mgr.try_lock(key);
+            assert!(status.is_ok(), "Key {} should be unlocked", key);
+            mgr.unlock(key);
+        }
+    }
+
+    #[test]
+    fn test_multi_scope_record_lock_rollback_reverse_order() {
+        let mgr = LockMgr::with_max_locks(4, 2);
+        let keys = ["key1", "key2", "key3"];
+
+        let multi_lock = MultiScopeRecordLock::try_new(&mgr, &keys);
+        assert!(multi_lock.is_none(), "Should fail due to max locks limit");
+
+        for key in &keys {
+            let status = mgr.try_lock(key);
+            assert!(status.is_ok(), "Key {} should be unlocked after rollback", key);
+            mgr.unlock(key);
+        }
     }
 }
