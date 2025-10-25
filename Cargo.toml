@@ -61,6 +61,7 @@ tokio-util = "0.7.16"
 async-trait = "0.1"
 foyer = { version = "0.17" }
 clap = { version = "4.0", features = ["derive"] }
+rand = "0.8"
 openraft = { version = "0.9.21", features = ["serde"] }
 
 ## workspaces members
