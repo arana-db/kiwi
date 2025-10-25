@@ -20,7 +20,9 @@ use serde::{Deserialize, Deserializer, de};
 
 use crate::error::MemoryParseError;
 pub fn deserialize_bool_from_yes_no<'de, D>(deserializer: D) -> Result<bool, D::Error>
-where D: Deserializer<'de> {
+where
+    D: Deserializer<'de>,
+{
     let s: String = Deserialize::deserialize(deserializer)?;
     match s.to_lowercase().as_str() {
         "yes" | "true" | "1" | "on" => Ok(true),
@@ -32,7 +34,9 @@ where D: Deserializer<'de> {
 }
 
 pub fn deserialize_memory<'de, D>(deserializer: D) -> Result<u64, D::Error>
-where D: Deserializer<'de> {
+where
+    D: Deserializer<'de>,
+{
     let s: String = Deserialize::deserialize(deserializer)?;
     match parse_memory(s.as_str()) {
         Ok(num) => Ok(num),

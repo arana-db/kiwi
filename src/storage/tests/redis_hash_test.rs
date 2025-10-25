@@ -72,7 +72,7 @@ mod redis_hash_test {
             "hexists failed: {:?}",
             hexists_result.err()
         );
-        assert_eq!(hexists_result.unwrap(), true);
+        assert!(hexists_result.unwrap());
 
         let expected_val = b"value2";
         // Test hget - should return the value

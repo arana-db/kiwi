@@ -32,6 +32,7 @@ unknown_lints = "deny"
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
 
 [workspace.dependencies]
+
 bytes = "1"
 chrono = "0.4.40"
 proc-macro2 = "1.0.66"
@@ -57,7 +58,7 @@ crc16 = "0.4"
 async-channel = "2.5.0"
 tokio-util = "0.7.16"
 async-trait = "0.1"
-foyer = { version = "0.18", features = ["nightly"] }
+foyer = { version = "0.17" }
 clap = { version = "4.0", features = ["derive"] }
 
 ## workspaces members

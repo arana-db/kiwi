@@ -15,14 +15,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod decr;
-mod decrby;
+pub mod append;
+pub mod bitcount;
+pub mod bitop;
+pub mod bitpos;
+pub mod decr;
+pub mod decrby;
 pub mod get;
+pub mod getbit;
+pub mod getrange;
+pub mod getset;
 pub mod group_client;
 pub mod incr;
-mod incrby;
-mod incrbyfloat;
+pub mod incrby;
+pub mod incrbyfloat;
+pub mod mget;
+pub mod mset;
+pub mod msetnx;
+pub mod psetex;
 pub mod set;
+pub mod setbit;
+pub mod setex;
+pub mod setnx;
+pub mod setrange;
+pub mod strlen;
 pub mod table;
 
 use std::collections::HashMap;

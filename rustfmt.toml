@@ -18,9 +18,10 @@
 edition = "2024"
 style_edition = "2024"
 reorder_imports = true
-group_imports = "StdExternalCrate"
-where_single_line = true
-trailing_comma = "Vertical"
-overflow_delimited_expr = true
-format_code_in_doc_comments = true
-normalize_comments = true
+# 注释掉仅在nightly版本中可用的不稳定特性
+# group_imports = "StdExternalCrate"
+# where_single_line = true
+# trailing_comma = "Vertical"
+# overflow_delimited_expr = true
+# format_code_in_doc_comments = true
+# normalize_comments = true
