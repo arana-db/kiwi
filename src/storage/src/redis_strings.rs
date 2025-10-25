@@ -1284,7 +1284,6 @@ impl Redis {
         Ok(value)
     }
 
-<<<<<<< HEAD
     /// SETBIT key offset value
     ///
     /// Sets or clears the bit at offset in the string value stored at key.
@@ -1330,9 +1329,6 @@ impl Redis {
             });
         }
 
-=======
-    pub fn incr_decr_float(&self, key: &[u8], incr: f64) -> Result<f64> {
->>>>>>> main
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -1341,17 +1337,12 @@ impl Redis {
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
 
-<<<<<<< HEAD
-=======
-        // get value by key
->>>>>>> main
         let string_key = BaseKey::new(key);
         let encode_value = db
             .get_opt(&string_key.encode()?, &self.read_options)
             .context(RocksSnafu)?
             .unwrap_or_else(Vec::new);
 
-<<<<<<< HEAD
         let mut existing_value = Vec::new();
         let mut ctime: u64 = Utc::now().timestamp_micros() as u64;
         let mut etime: u64 = 0;
@@ -1431,47 +1422,10 @@ impl Redis {
         if offset < 0 {
             return Err(RedisErr {
                 message: "ERR bit offset is not an integer or out of range".to_string(),
-=======
-        // check key type
-        self.check_type(encode_value.as_slice(), DataType::String)?;
-
-        let mut value: f64 = 0.0;
-        let mut ctime: u64 = Utc::now().timestamp_micros() as u64;
-        let mut etime: u64 = 0;
-
-        // convert user_value to f64
-        if !encode_value.is_empty() {
-            let decode_value = ParsedStringsValue::new(&encode_value[..])?;
-            // check ttl
-            if !decode_value.is_stale() {
-                let user_value = decode_value.user_value();
-                value = match String::from_utf8_lossy(&user_value).to_string().parse() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(RedisErr {
-                            message: "value is not a valid float".to_string(),
-                            location: Default::default(),
-                        });
-                    }
-                };
-                ctime = decode_value.ctime();
-                etime = decode_value.etime();
-            }
-        }
-
-        // perform increment
-        value += incr;
-
-        // check for NaN or infinity
-        if value.is_nan() || value.is_infinite() {
-            return Err(RedisErr {
-                message: "increment would produce NaN or Infinity".to_string(),
->>>>>>> main
                 location: Default::default(),
             });
         }
 
-<<<<<<< HEAD
         // Check for offset upper bound to prevent potential overflow
         // Redis has a limit of 2^32-1 for bit offsets
         if offset > (1i64 << 32) - 1 {
@@ -1681,7 +1635,10 @@ impl Redis {
 
         let user_value = decode_value.user_value();
 
-        // Determine search range
+        // If user value is empty, return -1 for bit=1, 0 for bit=0 (Redis behavior)
+        if user_value.is_empty() {
+            return Ok(if bit == 1 { -1 } else { 0 });
+        }
         let (start_pos, end_pos) = if is_bit_mode {
             // Bit mode: start and end are bit positions
             let start_bit = start.unwrap_or(0);
@@ -1734,7 +1691,7 @@ impl Redis {
             }
 
             // Convert to bit positions for consistent processing
-            (start_byte * 8, (end_byte + 1) * 8 - 1)
+            (start_byte * 8, end_byte * 8 + 7)
         };
 
         // Search for the bit
@@ -1876,20 +1833,12 @@ impl Redis {
             string_value.set_etime(0); // No expiration by default
 
             let dest_string_key = BaseKey::new(dest_key);
-=======
-        // set new value
-        {
-            let mut string_value = StringValue::new(format!("{}", value).to_owned());
-            string_value.set_ctime(ctime);
-            string_value.set_etime(etime);
->>>>>>> main
             let cf = self
                 .get_cf_handle(ColumnFamilyIndex::MetaCF)
                 .context(OptionNoneSnafu {
                     message: "cf is not initialized".to_string(),
                 })?;
             let mut batch = rocksdb::WriteBatch::default();
-<<<<<<< HEAD
             batch.put_cf(&cf, dest_string_key.encode()?, string_value.encode());
             db.write_opt(batch, &self.write_options)
                 .context(RocksSnafu)?;
@@ -1996,13 +1945,78 @@ impl Redis {
             .context(RocksSnafu)?;
 
         Ok(string_value.user_value_len() as i64)
-=======
+    }
+
+    pub fn incr_decr_float(&self, key: &[u8], incr: f64) -> Result<f64> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        // Get lock for the key
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
+        // get value by key
+        let string_key = BaseKey::new(key);
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
+
+        // check key type
+        self.check_type(encode_value.as_slice(), DataType::String)?;
+
+        let mut value: f64 = 0.0;
+        let mut ctime: u64 = Utc::now().timestamp_micros() as u64;
+        let mut etime: u64 = 0;
+
+        // convert user_value to f64
+        if !encode_value.is_empty() {
+            let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+            // check ttl
+            if !decode_value.is_stale() {
+                let user_value = decode_value.user_value();
+                value = match String::from_utf8_lossy(&user_value).to_string().parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Err(RedisErr {
+                            message: "value is not a valid float".to_string(),
+                            location: Default::default(),
+                        });
+                    }
+                };
+                ctime = decode_value.ctime();
+                etime = decode_value.etime();
+            }
+        }
+
+        // perform increment
+        value += incr;
+
+        // check for NaN or infinity
+        if value.is_nan() || value.is_infinite() {
+            return Err(RedisErr {
+                message: "increment would produce NaN or Infinity".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        // set new value
+        {
+            let mut string_value = StringValue::new(format!("{}", value).to_owned());
+            string_value.set_ctime(ctime);
+            string_value.set_etime(etime);
+            let cf = self
+                .get_cf_handle(ColumnFamilyIndex::MetaCF)
+                .context(OptionNoneSnafu {
+                    message: "cf is not initialized".to_string(),
+                })?;
+            let mut batch = rocksdb::WriteBatch::default();
             batch.put_cf(&cf, string_key.encode()?, string_value.encode());
             db.write_opt(batch, &self.write_options)
                 .context(RocksSnafu)?;
         }
 
         Ok(value)
->>>>>>> main
     }
 }

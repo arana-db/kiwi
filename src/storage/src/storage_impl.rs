@@ -157,7 +157,6 @@ impl Storage {
         self.insts[instance_id].incr_decr(key, incr)
     }
 
-<<<<<<< HEAD
     pub fn append(&self, key: &[u8], value: &[u8]) -> Result<i32> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
@@ -241,12 +240,6 @@ impl Storage {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].getset(key, value)
-=======
-    pub fn incr_decr_float(&self, key: &[u8], incr: f64) -> Result<f64> {
-        let slot_id = key_to_slot_id(key);
-        let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        self.insts[instance_id].incr_decr_float(key, incr)
->>>>>>> main
     }
 
     // // Atomically sets key to value and returns the old value stored at key
@@ -545,4 +538,10 @@ impl Storage {
     //     // Implementation of get RocksDB information logic
     //     String::new()
     // }
+
+    pub fn incr_decr_float(&self, key: &[u8], incr: f64) -> Result<f64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].incr_decr_float(key, incr)
+    }
 }
