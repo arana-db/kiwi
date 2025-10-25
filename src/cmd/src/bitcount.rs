@@ -52,7 +52,7 @@ impl Cmd for BitcountCmd {
     /// Count the number of set bits (population counting) in a string.
     fn do_initial(&self, client: &Client) -> bool {
         let argv = client.argv();
-        
+
         // Check if the number of arguments is valid
         if argv.len() < 2 || argv.len() > 4 {
             client.set_reply(RespData::Error(

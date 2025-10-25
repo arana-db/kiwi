@@ -217,7 +217,14 @@ impl Storage {
         self.insts[instance_id].bitcount(key, start, end)
     }
 
-    pub fn bitpos(&self, key: &[u8], bit: i64, start: Option<i64>, end: Option<i64>, is_bit_mode: bool) -> Result<i64> {
+    pub fn bitpos(
+        &self,
+        key: &[u8],
+        bit: i64,
+        start: Option<i64>,
+        end: Option<i64>,
+        is_bit_mode: bool,
+    ) -> Result<i64> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].bitpos(key, bit, start, end, is_bit_mode)

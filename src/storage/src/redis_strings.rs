@@ -1592,7 +1592,14 @@ impl Redis {
     ///
     /// # Time Complexity
     /// O(N) where N is the length of the string
-    pub fn bitpos(&self, key: &[u8], bit: i64, start: Option<i64>, end: Option<i64>, is_bit_mode: bool) -> Result<i64> {
+    pub fn bitpos(
+        &self,
+        key: &[u8],
+        bit: i64,
+        start: Option<i64>,
+        end: Option<i64>,
+        is_bit_mode: bool,
+    ) -> Result<i64> {
         // Validate bit argument
         if bit != 0 && bit != 1 {
             return Err(RedisErr {
@@ -1686,22 +1693,22 @@ impl Redis {
 
         // Search for the bit
         let target_bit = bit as u8;
-        
+
         // Iterate through the bit range
         for bit_pos in start_pos..=end_pos {
             let byte_index = (bit_pos / 8) as usize;
-            
+
             // Check bounds
             if byte_index >= user_value.len() {
                 break;
             }
-            
+
             let bit_index = (bit_pos % 8) as u8;
             let byte = user_value[byte_index];
-            
+
             // Extract the bit (bit 0 is the most significant bit)
             let current_bit = (byte >> (7 - bit_index)) & 1;
-            
+
             if current_bit == target_bit {
                 return Ok(bit_pos);
             }
@@ -1736,7 +1743,8 @@ impl Redis {
                 // NOT operation only takes one source key
                 if src_keys.len() != 1 {
                     return Err(RedisErr {
-                        message: "ERR BITOP NOT must be called with a single source key".to_string(),
+                        message: "ERR BITOP NOT must be called with a single source key"
+                            .to_string(),
                         location: Default::default(),
                     });
                 }
@@ -1778,11 +1786,11 @@ impl Redis {
             if encode_value.is_empty() {
                 // Delete destination key if it exists
                 let dest_string_key = BaseKey::new(dest_key);
-                let cf = self
-                    .get_cf_handle(ColumnFamilyIndex::MetaCF)
-                    .context(OptionNoneSnafu {
-                        message: "cf is not initialized".to_string(),
-                    })?;
+                let cf =
+                    self.get_cf_handle(ColumnFamilyIndex::MetaCF)
+                        .context(OptionNoneSnafu {
+                            message: "cf is not initialized".to_string(),
+                        })?;
                 let mut batch = rocksdb::WriteBatch::default();
                 batch.delete_cf(&cf, dest_string_key.encode()?);
                 db.write_opt(batch, &self.write_options)
@@ -1799,11 +1807,11 @@ impl Redis {
             if decode_value.is_stale() {
                 // Delete destination key if it exists
                 let dest_string_key = BaseKey::new(dest_key);
-                let cf = self
-                    .get_cf_handle(ColumnFamilyIndex::MetaCF)
-                    .context(OptionNoneSnafu {
-                        message: "cf is not initialized".to_string(),
-                    })?;
+                let cf =
+                    self.get_cf_handle(ColumnFamilyIndex::MetaCF)
+                        .context(OptionNoneSnafu {
+                            message: "cf is not initialized".to_string(),
+                        })?;
                 let mut batch = rocksdb::WriteBatch::default();
                 batch.delete_cf(&cf, dest_string_key.encode()?);
                 db.write_opt(batch, &self.write_options)
@@ -1812,7 +1820,7 @@ impl Redis {
             }
 
             let user_value = decode_value.user_value();
-            
+
             // Apply NOT operation to each byte
             let result: Vec<u8> = user_value.iter().map(|&byte| !byte).collect();
 
@@ -1894,22 +1902,26 @@ impl Redis {
 
         // Apply the operation
         let mut result = vec![0u8; max_len];
-        
+
         // For each byte position
         for i in 0..max_len {
-            let mut current_byte = if operation.to_uppercase() == "AND" { 0xFF } else { 0x00 };
-            
+            let mut current_byte = if operation.to_uppercase() == "AND" {
+                0xFF
+            } else {
+                0x00
+            };
+
             // For each source value
             for src_value in &src_values {
-                let byte = if i < src_value.len() { 
-                    src_value[i] 
-                } else { 
-                    0x00  // Pad with zeros for shorter strings
+                let byte = if i < src_value.len() {
+                    src_value[i]
+                } else {
+                    0x00 // Pad with zeros for shorter strings
                 };
-                
+
                 current_byte = op_func(current_byte, byte);
             }
-            
+
             result[i] = current_byte;
         }
 

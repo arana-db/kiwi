@@ -15,29 +15,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-mod append;
-mod bitcount;
-mod bitop;
-mod bitpos;
-mod decr;
-mod decrby;
+pub mod append;
+pub mod bitcount;
+pub mod bitop;
+pub mod bitpos;
+pub mod decr;
+pub mod decrby;
 pub mod get;
-mod getbit;
-mod getrange;
-mod getset;
+pub mod getbit;
+pub mod getrange;
+pub mod getset;
 pub mod group_client;
 pub mod incr;
-mod incrby;
-mod mget;
-mod mset;
-mod msetnx;
+pub mod incrby;
+pub mod mget;
+pub mod mset;
+pub mod msetnx;
+pub mod psetex;
 pub mod set;
-mod setbit;
-mod setex;
-mod setnx;
-mod setrange;
-mod strlen;
-mod psetex;
+pub mod setbit;
+pub mod setex;
+pub mod setnx;
+pub mod setrange;
+pub mod strlen;
+pub mod table;
 
 use std::collections::HashMap;
 use std::sync::Arc;

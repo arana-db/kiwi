@@ -1956,7 +1956,11 @@ mod redis_string_test {
         // Try to set a bit in the expired key (should work as if key doesn't exist)
         let result = redis.setbit(key, 20, 1);
         assert!(result.is_ok(), "setbit command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 0, "original bit value should be 0 for expired key");
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "original bit value should be 0 for expired key"
+        );
 
         redis.set_need_close(true);
         drop(redis);
@@ -1987,44 +1991,88 @@ mod redis_string_test {
         // Set some bits
         // String "a" in binary: 01100001 (has 3 bits set)
         redis.set(key, b"a").unwrap();
-        
+
         // Count all bits
         let result = redis.bitcount(key, None, None);
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap(), 3, "bitcount should be 3 for 'a'");
 
         // String "aa" in binary: 01100001 01100001 (has 6 bits set)
         redis.set(key, b"aa").unwrap();
-        
+
         // Count all bits
         let result = redis.bitcount(key, None, None);
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap(), 6, "bitcount should be 6 for 'aa'");
 
         // Count bits in range [0, 0] (first byte)
         let result = redis.bitcount(key, Some(0), Some(0));
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 3, "bitcount should be 3 for first byte of 'aa'");
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            result.unwrap(),
+            3,
+            "bitcount should be 3 for first byte of 'aa'"
+        );
 
         // Count bits in range [1, 1] (second byte)
         let result = redis.bitcount(key, Some(1), Some(1));
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 3, "bitcount should be 3 for second byte of 'aa'");
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            result.unwrap(),
+            3,
+            "bitcount should be 3 for second byte of 'aa'"
+        );
 
         // Count bits in range [0, 1] (both bytes)
         let result = redis.bitcount(key, Some(0), Some(1));
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 6, "bitcount should be 6 for both bytes of 'aa'");
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            result.unwrap(),
+            6,
+            "bitcount should be 6 for both bytes of 'aa'"
+        );
 
         // Test with non-existing key (should return 0)
         let result = redis.bitcount(b"non_existing_key", None, None);
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 0, "bitcount should be 0 for non-existing key");
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
+        assert_eq!(
+            result.unwrap(),
+            0,
+            "bitcount should be 0 for non-existing key"
+        );
 
         // Test with empty string
         redis.set(b"empty_key", b"").unwrap();
         let result = redis.bitcount(b"empty_key", None, None);
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap(), 0, "bitcount should be 0 for empty string");
 
         redis.set_need_close(true);
@@ -2059,19 +2107,31 @@ mod redis_string_test {
         // Count bits with negative indices
         // -1 refers to the last byte
         let result = redis.bitcount(key, Some(-1), Some(-1));
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
         // 'o' in binary: 01101111 (has 6 bits set)
         assert_eq!(result.unwrap(), 6, "bitcount should be 6 for last byte 'o'");
 
         // Count bits from start to -1 (entire string)
         let result = redis.bitcount(key, Some(0), Some(-1));
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
         // "hello" bits: h(3) + e(4) + l(4) + l(4) + o(6) = 21
         assert_eq!(result.unwrap(), 21, "bitcount should be 21 for 'hello'");
 
         // Count bits from -3 to -1 (last 3 bytes: "llo")
         let result = redis.bitcount(key, Some(-3), Some(-1));
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
         // "llo" bits: l(4) + l(4) + o(6) = 14
         assert_eq!(result.unwrap(), 14, "bitcount should be 14 for 'llo'");
 
@@ -2106,7 +2166,11 @@ mod redis_string_test {
 
         // Count bits in the key
         let result = redis.bitcount(key, None, None);
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
         // "test" bits: t(4) + e(4) + s(5) + t(4) = 17
         assert_eq!(result.unwrap(), 17, "bitcount should be 17 for 'test'");
 
@@ -2115,7 +2179,11 @@ mod redis_string_test {
 
         // Try to count bits from the expired key (should return 0)
         let result = redis.bitcount(key, None, None);
-        assert!(result.is_ok(), "bitcount command failed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "bitcount command failed: {:?}",
+            result.err()
+        );
         assert_eq!(result.unwrap(), 0, "bitcount should be 0 for expired key");
 
         redis.set_need_close(true);
@@ -2124,7 +2192,9 @@ mod redis_string_test {
         if test_db_path.exists() {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
-        #[test]
+    }
+
+    #[test]
     fn test_redis_bitpos() {
         let test_db_path = unique_test_db_path();
 
@@ -2132,651 +2202,720 @@ mod redis_string_test {
             std::fs::remove_dir_all(&test_db_path).unwrap();
         }
 
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
 
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
-        let key = b"test_bitpos_key";
+            let key = b"test_bitpos_key";
 
-        // Set a string: "a" in binary is 01100001
-        redis.set(key, b"a").unwrap();
+            // Set a string: "a" in binary is 01100001
+            redis.set(key, b"a").unwrap();
 
-        // Find first bit set to 1 (should be at position 1)
-        let result = redis.bitpos(key, 1, None, None, false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 1, "First bit set to 1 should be at position 1");
+            // Find first bit set to 1 (should be at position 1)
+            let result = redis.bitpos(key, 1, None, None, false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                1,
+                "First bit set to 1 should be at position 1"
+            );
 
-        // Find first bit set to 0 (should be at position 0)
-        let result = redis.bitpos(key, 0, None, None, false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 0, "First bit set to 0 should be at position 0");
+            // Find first bit set to 0 (should be at position 0)
+            let result = redis.bitpos(key, 0, None, None, false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                0,
+                "First bit set to 0 should be at position 0"
+            );
 
-        // Test with non-existing key (should return -1 for bit=1, 0 for bit=0)
-        let result = redis.bitpos(b"non_existing_key", 1, None, None, false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), -1, "Non-existing key should return -1 for bit=1");
+            // Test with non-existing key (should return -1 for bit=1, 0 for bit=0)
+            let result = redis.bitpos(b"non_existing_key", 1, None, None, false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                -1,
+                "Non-existing key should return -1 for bit=1"
+            );
 
-        let result = redis.bitpos(b"non_existing_key", 0, None, None, false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 0, "Non-existing key should return 0 for bit=0");
+            let result = redis.bitpos(b"non_existing_key", 0, None, None, false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                0,
+                "Non-existing key should return 0 for bit=0"
+            );
 
-        // Test with empty string
-        redis.set(b"empty_key", b"").unwrap();
-        let result = redis.bitpos(b"empty_key", 1, None, None, false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), -1, "Empty string should return -1 for bit=1");
+            // Test with empty string
+            redis.set(b"empty_key", b"").unwrap();
+            let result = redis.bitpos(b"empty_key", 1, None, None, false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                -1,
+                "Empty string should return -1 for bit=1"
+            );
 
-        let result = redis.bitpos(b"empty_key", 0, None, None, false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 0, "Empty string should return 0 for bit=0");
+            let result = redis.bitpos(b"empty_key", 0, None, None, false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(result.unwrap(), 0, "Empty string should return 0 for bit=0");
 
-        redis.set_need_close(true);
-        drop(redis);
+            redis.set_need_close(true);
+            drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
         }
-    }
 
     #[test]
     fn test_redis_bitpos_with_range() {
-        let test_db_path = unique_test_db_path();
+            let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(&test_db_path).unwrap();
+            }
+
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+            let key = b"test_bitpos_range";
+
+            // Set a string: "ab" in binary is:
+            // 'a': 01100001 (positions 0-7)
+            // 'b': 01100010 (positions 8-15)
+            redis.set(key, b"ab").unwrap();
+
+            // Find first bit set to 1 in the entire string (should be at position 1)
+            let result = redis.bitpos(key, 1, None, None, false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                1,
+                "First bit set to 1 should be at position 1"
+            );
+
+            // Find first bit set to 1 in range [1, 1] (second byte, 'b')
+            // 'b': 01100010, first bit set to 1 is at position 9 (bit 1 of second byte)
+            let result = redis.bitpos(key, 1, Some(1), Some(1), false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                9,
+                "First bit set to 1 in second byte should be at position 9"
+            );
+
+            // Find first bit set to 0 in range [0, 0] (first byte, 'a')
+            // 'a': 01100001, first bit set to 0 is at position 0
+            let result = redis.bitpos(key, 0, Some(0), Some(0), false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                0,
+                "First bit set to 0 in first byte should be at position 0"
+            );
+
+            // Find first bit set to 0 in range [1, 1] (second byte, 'b')
+            // 'b': 01100010, first bit set to 0 is at position 8
+            let result = redis.bitpos(key, 0, Some(1), Some(1), false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                8,
+                "First bit set to 0 in second byte should be at position 8"
+            );
+
+            redis.set_need_close(true);
+            drop(redis);
+
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
         }
-
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
-
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
-
-        let key = b"test_bitpos_range";
-
-        // Set a string: "ab" in binary is:
-        // 'a': 01100001 (positions 0-7)
-        // 'b': 01100010 (positions 8-15)
-        redis.set(key, b"ab").unwrap();
-
-        // Find first bit set to 1 in the entire string (should be at position 1)
-        let result = redis.bitpos(key, 1, None, None, false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 1, "First bit set to 1 should be at position 1");
-
-        // Find first bit set to 1 in range [1, 1] (second byte, 'b')
-        // 'b': 01100010, first bit set to 1 is at position 9 (bit 1 of second byte)
-        let result = redis.bitpos(key, 1, Some(1), Some(1), false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 9, "First bit set to 1 in second byte should be at position 9");
-
-        // Find first bit set to 0 in range [0, 0] (first byte, 'a')
-        // 'a': 01100001, first bit set to 0 is at position 0
-        let result = redis.bitpos(key, 0, Some(0), Some(0), false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 0, "First bit set to 0 in first byte should be at position 0");
-
-        // Find first bit set to 0 in range [1, 1] (second byte, 'b')
-        // 'b': 01100010, first bit set to 0 is at position 8
-        let result = redis.bitpos(key, 0, Some(1), Some(1), false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 8, "First bit set to 0 in second byte should be at position 8");
-
-        redis.set_need_close(true);
-        drop(redis);
-
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
-    }
 
     #[test]
     fn test_redis_bitpos_with_negative_indices() {
-        let test_db_path = unique_test_db_path();
+            let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(&test_db_path).unwrap();
+            }
+
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+            let key = b"test_negative_indices";
+
+            // Set a string: "hello" (5 bytes)
+            redis.set(key, b"hello").unwrap();
+
+            // Find first bit set to 1 from the end (-1 refers to the last byte)
+            // Last byte 'o': 01101111, first bit set to 1 is at position 0 (of that byte)
+            // But in the entire string, it's at position (4*8 + 0) = 32
+            let result = redis.bitpos(key, 1, Some(-1), Some(-1), false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                32,
+                "First bit set to 1 in last byte should be at position 32"
+            );
+
+            // Find first bit set to 0 from start to -1 (entire string)
+            let result = redis.bitpos(key, 0, Some(0), Some(-1), false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                0,
+                "First bit set to 0 should be at position 0"
+            );
+
+            redis.set_need_close(true);
+            drop(redis);
+
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
         }
-
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
-
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
-
-        let key = b"test_negative_indices";
-
-        // Set a string: "hello" (5 bytes)
-        redis.set(key, b"hello").unwrap();
-
-        // Find first bit set to 1 from the end (-1 refers to the last byte)
-        // Last byte 'o': 01101111, first bit set to 1 is at position 0 (of that byte)
-        // But in the entire string, it's at position (4*8 + 0) = 32
-        let result = redis.bitpos(key, 1, Some(-1), Some(-1), false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 32, "First bit set to 1 in last byte should be at position 32");
-
-        // Find first bit set to 0 from start to -1 (entire string)
-        let result = redis.bitpos(key, 0, Some(0), Some(-1), false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 0, "First bit set to 0 should be at position 0");
-
-        redis.set_need_close(true);
-        drop(redis);
-
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
-    }
 
     #[test]
     fn test_redis_bitpos_with_expired_key() {
-        let test_db_path = unique_test_db_path();
+            let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(&test_db_path).unwrap();
+            }
+
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+            let key = b"expiring_bitpos_key";
+
+            // Set a key with a short expiration
+            redis.setex(key, 1, b"test").unwrap();
+
+            // Find first bit set to 1
+            let result = redis.bitpos(key, 1, None, None, false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            // "test" first bit set to 1 is at position 0 ('t': 01110100)
+            assert_eq!(
+                result.unwrap(),
+                1,
+                "First bit set to 1 should be at position 1"
+            );
+
+            // Wait for the key to expire
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // Try to find first bit set to 1 from the expired key (should return -1)
+            let result = redis.bitpos(key, 1, None, None, false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                -1,
+                "Bitpos should return -1 for expired key with bit=1"
+            );
+
+            // Try to find first bit set to 0 from the expired key (should return 0)
+            let result = redis.bitpos(key, 0, None, None, false);
+            assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
+            assert_eq!(
+                result.unwrap(),
+                0,
+                "Bitpos should return 0 for expired key with bit=0"
+            );
+
+            redis.set_need_close(true);
+            drop(redis);
+
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
         }
-
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
-
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
-
-        let key = b"expiring_bitpos_key";
-
-        // Set a key with a short expiration
-        redis.setex(key, 1, b"test").unwrap();
-
-        // Find first bit set to 1
-        let result = redis.bitpos(key, 1, None, None, false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        // "test" first bit set to 1 is at position 0 ('t': 01110100)
-        assert_eq!(result.unwrap(), 1, "First bit set to 1 should be at position 1");
-
-        // Wait for the key to expire
-        std::thread::sleep(std::time::Duration::from_secs(2));
-
-        // Try to find first bit set to 1 from the expired key (should return -1)
-        let result = redis.bitpos(key, 1, None, None, false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), -1, "Bitpos should return -1 for expired key with bit=1");
-
-        // Try to find first bit set to 0 from the expired key (should return 0)
-        let result = redis.bitpos(key, 0, None, None, false);
-        assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 0, "Bitpos should return 0 for expired key with bit=0");
-
-        redis.set_need_close(true);
-        drop(redis);
-
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
-    }
 
     #[test]
     fn test_redis_bitpos_invalid_bit_value() {
-        let test_db_path = unique_test_db_path();
+            let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
-
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
-
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
-
-        let key = b"test_invalid_bit";
-
-        // Set a string
-        redis.set(key, b"test").unwrap();
-
-        // Try with invalid bit value (2)
-        let result = redis.bitpos(key, 2, None, None, false);
-        assert!(result.is_err(), "bitpos should fail with invalid bit value");
-        match result.unwrap_err() {
-            storage::error::Error::RedisErr { ref message, .. } => {
-                assert!(message.contains("The bit argument must be 1 or 0"));
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(&test_db_path).unwrap();
             }
-            e => panic!("Expected RedisErr with bit argument error, got: {:?}", e),
-        }
 
-        // Try with invalid bit value (-1)
-        let result = redis.bitpos(key, -1, None, None, false);
-        assert!(result.is_err(), "bitpos should fail with invalid bit value");
-        match result.unwrap_err() {
-            storage::error::Error::RedisErr { ref message, .. } => {
-                assert!(message.contains("The bit argument must be 1 or 0"));
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+            let key = b"test_invalid_bit";
+
+            // Set a string
+            redis.set(key, b"test").unwrap();
+
+            // Try with invalid bit value (2)
+            let result = redis.bitpos(key, 2, None, None, false);
+            assert!(result.is_err(), "bitpos should fail with invalid bit value");
+            match result.unwrap_err() {
+                storage::error::Error::RedisErr { ref message, .. } => {
+                    assert!(message.contains("The bit argument must be 1 or 0"));
+                }
+                e => panic!("Expected RedisErr with bit argument error, got: {:?}", e),
             }
-            e => panic!("Expected RedisErr with bit argument error, got: {:?}", e),
-        }
 
-        redis.set_need_close(true);
-        drop(redis);
+            // Try with invalid bit value (-1)
+            let result = redis.bitpos(key, -1, None, None, false);
+            assert!(result.is_err(), "bitpos should fail with invalid bit value");
+            match result.unwrap_err() {
+                storage::error::Error::RedisErr { ref message, .. } => {
+                    assert!(message.contains("The bit argument must be 1 or 0"));
+                }
+                e => panic!("Expected RedisErr with bit argument error, got: {:?}", e),
+            }
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            redis.set_need_close(true);
+            drop(redis);
+
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
         }
-    }
 
     #[test]
     fn test_redis_bitop() {
-        let test_db_path = unique_test_db_path();
+            let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(&test_db_path).unwrap();
+            }
+
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+            // Test AND operation
+            {
+                let key1 = b"key1";
+                let key2 = b"key2";
+                let dest_key = b"and_result";
+
+                // Set source keys
+                // "a" in binary: 01100001
+                // "b" in binary: 01100010
+                // AND result:    01100000 ('`')
+                redis.set(key1, b"a").unwrap();
+                redis.set(key2, b"b").unwrap();
+
+                // Perform AND operation
+                let src_keys = vec![key1.as_slice(), key2.as_slice()];
+                let result = redis.bitop("AND", dest_key, &src_keys);
+                assert!(result.is_ok(), "bitop AND failed: {:?}", result.err());
+                assert_eq!(result.unwrap(), 1); // Length of result
+
+                // Check result
+                let get_result = redis.get(dest_key);
+                assert!(get_result.is_ok());
+                assert_eq!(get_result.unwrap(), "`"); // '`' is the result of 'a' AND 'b'
+            }
+
+            // Test OR operation
+            {
+                let key1 = b"key1_or";
+                let key2 = b"key2_or";
+                let dest_key = b"or_result";
+
+                // Set source keys
+                // "a" in binary: 01100001
+                // "b" in binary: 01100010
+                // OR result:     01100011 ('c')
+                redis.set(key1, b"a").unwrap();
+                redis.set(key2, b"b").unwrap();
+
+                // Perform OR operation
+                let src_keys = vec![key1.as_slice(), key2.as_slice()];
+                let result = redis.bitop("OR", dest_key, &src_keys);
+                assert!(result.is_ok(), "bitop OR failed: {:?}", result.err());
+                assert_eq!(result.unwrap(), 1); // Length of result
+
+                // Check result
+                let get_result = redis.get(dest_key);
+                assert!(get_result.is_ok());
+                assert_eq!(get_result.unwrap(), "c"); // 'c' is the result of 'a' OR 'b'
+            }
+
+            // Test XOR operation
+            {
+                let key1 = b"key1_xor";
+                let key2 = b"key2_xor";
+                let dest_key = b"xor_result";
+
+                // Set source keys
+                // "a" in binary: 01100001
+                // "b" in binary: 01100010
+                // XOR result:    00000011 (ETX - end of transmission character)
+                redis.set(key1, b"a").unwrap();
+                redis.set(key2, b"b").unwrap();
+
+                // Perform XOR operation
+                let src_keys = vec![key1.as_slice(), key2.as_slice()];
+                let result = redis.bitop("XOR", dest_key, &src_keys);
+                assert!(result.is_ok(), "bitop XOR failed: {:?}", result.err());
+                assert_eq!(result.unwrap(), 1); // Length of result
+
+                // Check result
+                let get_result = redis.get(dest_key);
+                assert!(get_result.is_ok());
+                let result_value = get_result.unwrap();
+                assert_eq!(result_value.len(), 1);
+                assert_eq!(result_value.as_bytes()[0], 0x03); // ETX character
+            }
+
+            // Test NOT operation
+            {
+                let key = b"key_not";
+                let dest_key = b"not_result";
+
+                // Set source key
+                // "a" in binary: 01100001
+                // NOT result:    10011110 ( - a special character)
+                redis.set(key, b"a").unwrap();
+
+                // Perform NOT operation
+                let src_keys = vec![key.as_slice()];
+                let result = redis.bitop("NOT", dest_key, &src_keys);
+                assert!(result.is_ok(), "bitop NOT failed: {:?}", result.err());
+                assert_eq!(result.unwrap(), 1); // Length of result
+
+                // Check result
+                let get_result = redis.get(dest_key);
+                assert!(get_result.is_ok());
+                let result_value = get_result.unwrap();
+                assert_eq!(result_value.len(), 1);
+                assert_eq!(result_value.as_bytes()[0], 0x9E); // NOT of 'a'
+            }
+
+            // Test with non-existing keys
+            {
+                let dest_key = b"empty_result";
+                let src_keys = vec![b"non_existing1".as_slice(), b"non_existing2".as_slice()];
+
+                // Perform AND operation with non-existing keys
+                let result = redis.bitop("AND", dest_key, &src_keys);
+                assert!(
+                    result.is_ok(),
+                    "bitop AND with non-existing keys failed: {:?}",
+                    result.err()
+                );
+                assert_eq!(result.unwrap(), 0); // Empty result
+
+                // Check that destination key doesn't exist
+                let get_result = redis.get(dest_key);
+                assert!(get_result.is_ok());
+                assert_eq!(get_result.unwrap(), ""); // Empty string
+            }
+
+            redis.set_need_close(true);
+            drop(redis);
+
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
         }
-
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
-
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
-
-        // Test AND operation
-        {
-            let key1 = b"key1";
-            let key2 = b"key2";
-            let dest_key = b"and_result";
-
-            // Set source keys
-            // "a" in binary: 01100001
-            // "b" in binary: 01100010
-            // AND result:    01100000 ('`')
-            redis.set(key1, b"a").unwrap();
-            redis.set(key2, b"b").unwrap();
-
-            // Perform AND operation
-            let src_keys = vec![key1.as_slice(), key2.as_slice()];
-            let result = redis.bitop("AND", dest_key, &src_keys);
-            assert!(result.is_ok(), "bitop AND failed: {:?}", result.err());
-            assert_eq!(result.unwrap(), 1); // Length of result
-
-            // Check result
-            let get_result = redis.get(dest_key);
-            assert!(get_result.is_ok());
-            assert_eq!(get_result.unwrap(), "`"); // '`' is the result of 'a' AND 'b'
-        }
-
-        // Test OR operation
-        {
-            let key1 = b"key1_or";
-            let key2 = b"key2_or";
-            let dest_key = b"or_result";
-
-            // Set source keys
-            // "a" in binary: 01100001
-            // "b" in binary: 01100010
-            // OR result:     01100011 ('c')
-            redis.set(key1, b"a").unwrap();
-            redis.set(key2, b"b").unwrap();
-
-            // Perform OR operation
-            let src_keys = vec![key1.as_slice(), key2.as_slice()];
-            let result = redis.bitop("OR", dest_key, &src_keys);
-            assert!(result.is_ok(), "bitop OR failed: {:?}", result.err());
-            assert_eq!(result.unwrap(), 1); // Length of result
-
-            // Check result
-            let get_result = redis.get(dest_key);
-            assert!(get_result.is_ok());
-            assert_eq!(get_result.unwrap(), "c"); // 'c' is the result of 'a' OR 'b'
-        }
-
-        // Test XOR operation
-        {
-            let key1 = b"key1_xor";
-            let key2 = b"key2_xor";
-            let dest_key = b"xor_result";
-
-            // Set source keys
-            // "a" in binary: 01100001
-            // "b" in binary: 01100010
-            // XOR result:    00000011 (ETX - end of transmission character)
-            redis.set(key1, b"a").unwrap();
-            redis.set(key2, b"b").unwrap();
-
-            // Perform XOR operation
-            let src_keys = vec![key1.as_slice(), key2.as_slice()];
-            let result = redis.bitop("XOR", dest_key, &src_keys);
-            assert!(result.is_ok(), "bitop XOR failed: {:?}", result.err());
-            assert_eq!(result.unwrap(), 1); // Length of result
-
-            // Check result
-            let get_result = redis.get(dest_key);
-            assert!(get_result.is_ok());
-            let result_value = get_result.unwrap();
-            assert_eq!(result_value.len(), 1);
-            assert_eq!(result_value.as_bytes()[0], 0x03); // ETX character
-        }
-
-        // Test NOT operation
-        {
-            let key = b"key_not";
-            let dest_key = b"not_result";
-
-            // Set source key
-            // "a" in binary: 01100001
-            // NOT result:    10011110 ( - a special character)
-            redis.set(key, b"a").unwrap();
-
-            // Perform NOT operation
-            let src_keys = vec![key.as_slice()];
-            let result = redis.bitop("NOT", dest_key, &src_keys);
-            assert!(result.is_ok(), "bitop NOT failed: {:?}", result.err());
-            assert_eq!(result.unwrap(), 1); // Length of result
-
-            // Check result
-            let get_result = redis.get(dest_key);
-            assert!(get_result.is_ok());
-            let result_value = get_result.unwrap();
-            assert_eq!(result_value.len(), 1);
-            assert_eq!(result_value.as_bytes()[0], 0x9E); // NOT of 'a'
-        }
-
-        // Test with non-existing keys
-        {
-            let dest_key = b"empty_result";
-            let src_keys = vec![b"non_existing1".as_slice(), b"non_existing2".as_slice()];
-
-            // Perform AND operation with non-existing keys
-            let result = redis.bitop("AND", dest_key, &src_keys);
-            assert!(result.is_ok(), "bitop AND with non-existing keys failed: {:?}", result.err());
-            assert_eq!(result.unwrap(), 0); // Empty result
-
-            // Check that destination key doesn't exist
-            let get_result = redis.get(dest_key);
-            assert!(get_result.is_ok());
-            assert_eq!(get_result.unwrap(), ""); // Empty string
-        }
-
-        redis.set_need_close(true);
-        drop(redis);
-
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
-    }
 
     #[test]
     fn test_redis_bitop_with_expired_keys() {
-        let test_db_path = unique_test_db_path();
+            let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(&test_db_path).unwrap();
+            }
+
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+            let key1 = b"expiring_key1";
+            let key2 = b"expiring_key2";
+            let dest_key = b"bitop_result";
+
+            // Set keys with short expiration
+            redis.setex(key1, 1, b"a").unwrap(); // "a" in binary: 01100001
+            redis.setex(key2, 1, b"b").unwrap(); // "b" in binary: 01100010
+
+            // Perform AND operation before expiration
+            let src_keys = vec![key1.as_slice(), key2.as_slice()];
+            let result = redis.bitop("AND", dest_key, &src_keys);
+            assert!(
+                result.is_ok(),
+                "bitop AND before expiration failed: {:?}",
+                result.err()
+            );
+            assert_eq!(result.unwrap(), 1); // Length of result
+
+            // Check result before expiration
+            let get_result = redis.get(dest_key);
+            assert!(get_result.is_ok());
+            assert_eq!(get_result.unwrap(), "`"); // '`' is the result of 'a' AND 'b'
+
+            // Wait for keys to expire
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // Perform AND operation after expiration
+            let result = redis.bitop("AND", dest_key, &src_keys);
+            assert!(
+                result.is_ok(),
+                "bitop AND after expiration failed: {:?}",
+                result.err()
+            );
+            assert_eq!(result.unwrap(), 0); // Empty result
+
+            // Check that destination key is now empty
+            let get_result = redis.get(dest_key);
+            assert!(get_result.is_ok());
+            assert_eq!(get_result.unwrap(), ""); // Empty string
+
+            redis.set_need_close(true);
+            drop(redis);
+
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
         }
-
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
-
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
-
-        let key1 = b"expiring_key1";
-        let key2 = b"expiring_key2";
-        let dest_key = b"bitop_result";
-
-        // Set keys with short expiration
-        redis.setex(key1, 1, b"a").unwrap(); // "a" in binary: 01100001
-        redis.setex(key2, 1, b"b").unwrap(); // "b" in binary: 01100010
-
-        // Perform AND operation before expiration
-        let src_keys = vec![key1.as_slice(), key2.as_slice()];
-        let result = redis.bitop("AND", dest_key, &src_keys);
-        assert!(result.is_ok(), "bitop AND before expiration failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 1); // Length of result
-
-        // Check result before expiration
-        let get_result = redis.get(dest_key);
-        assert!(get_result.is_ok());
-        assert_eq!(get_result.unwrap(), "`"); // '`' is the result of 'a' AND 'b'
-
-        // Wait for keys to expire
-        std::thread::sleep(std::time::Duration::from_secs(2));
-
-        // Perform AND operation after expiration
-        let result = redis.bitop("AND", dest_key, &src_keys);
-        assert!(result.is_ok(), "bitop AND after expiration failed: {:?}", result.err());
-        assert_eq!(result.unwrap(), 0); // Empty result
-
-        // Check that destination key is now empty
-        let get_result = redis.get(dest_key);
-        assert!(get_result.is_ok());
-        assert_eq!(get_result.unwrap(), ""); // Empty string
-
-        redis.set_need_close(true);
-        drop(redis);
-
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
-    }
 
     #[test]
     fn test_redis_bitop_invalid_operation() {
-        let test_db_path = unique_test_db_path();
+            let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
-
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
-
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
-
-        let dest_key = b"invalid_result";
-        let src_keys = vec![b"key1".as_slice()];
-
-        // Try with invalid operation
-        let result = redis.bitop("INVALID", dest_key, &src_keys);
-        assert!(result.is_err(), "bitop should fail with invalid operation");
-        match result.unwrap_err() {
-            storage::error::Error::RedisErr { ref message, .. } => {
-                assert!(message.contains("syntax error"));
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(&test_db_path).unwrap();
             }
-            e => panic!("Expected RedisErr with syntax error, got: {:?}", e),
-        }
 
-        redis.set_need_close(true);
-        drop(redis);
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+            let dest_key = b"invalid_result";
+            let src_keys = vec![b"key1".as_slice()];
+
+            // Try with invalid operation
+            let result = redis.bitop("INVALID", dest_key, &src_keys);
+            assert!(result.is_err(), "bitop should fail with invalid operation");
+            match result.unwrap_err() {
+                storage::error::Error::RedisErr { ref message, .. } => {
+                    assert!(message.contains("syntax error"));
+                }
+                e => panic!("Expected RedisErr with syntax error, got: {:?}", e),
+            }
+
+            redis.set_need_close(true);
+            drop(redis);
+
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
         }
-    }
 
     #[test]
     fn test_redis_bitop_not_with_multiple_keys() {
-        let test_db_path = unique_test_db_path();
+            let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
-
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
-
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
-
-        let dest_key = b"not_result";
-        let src_keys = vec![b"key1".as_slice(), b"key2".as_slice()];
-
-        // Try NOT operation with multiple keys (should fail)
-        let result = redis.bitop("NOT", dest_key, &src_keys);
-        assert!(result.is_err(), "bitop NOT should fail with multiple keys");
-        match result.unwrap_err() {
-            storage::error::Error::RedisErr { ref message, .. } => {
-                assert!(message.contains("single source key"));
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(&test_db_path).unwrap();
             }
-            e => panic!("Expected RedisErr with single source key error, got: {:?}", e),
-        }
 
-        redis.set_need_close(true);
-        drop(redis);
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+            let dest_key = b"not_result";
+            let src_keys = vec![b"key1".as_slice(), b"key2".as_slice()];
+
+            // Try NOT operation with multiple keys (should fail)
+            let result = redis.bitop("NOT", dest_key, &src_keys);
+            assert!(result.is_err(), "bitop NOT should fail with multiple keys");
+            match result.unwrap_err() {
+                storage::error::Error::RedisErr { ref message, .. } => {
+                    assert!(message.contains("single source key"));
+                }
+                e => panic!(
+                    "Expected RedisErr with single source key error, got: {:?}",
+                    e
+                ),
+            }
+
+            redis.set_need_close(true);
+            drop(redis);
+
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
         }
-    }
 
     #[test]
     fn test_redis_psetex_expiration() {
-        let test_db_path = unique_test_db_path();
+            let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(&test_db_path).unwrap();
+            }
+
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+            // Set a key with 1000 milliseconds (1 second) TTL
+            let key = b"expiring_key";
+            let value = b"expires_soon";
+            let result = redis.psetex(key, 1000, value);
+            assert!(result.is_ok());
+
+            // Immediately after setting, key should exist
+            let get_result = redis.get(key);
+            assert!(get_result.is_ok());
+            assert_eq!(get_result.unwrap().as_bytes(), value);
+
+            // Wait for expiration (2 seconds to be safe)
+            std::thread::sleep(std::time::Duration::from_secs(2));
+
+            // After expiration, key should not exist
+            let get_result = redis.get(key);
+            assert!(
+                get_result.is_err(),
+                "Key should be expired and return error"
+            );
+
+            redis.set_need_close(true);
+            drop(redis);
+
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
         }
-
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
-
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
-
-        // Set a key with 1000 milliseconds (1 second) TTL
-        let key = b"expiring_key";
-        let value = b"expires_soon";
-        let result = redis.psetex(key, 1000, value);
-        assert!(result.is_ok());
-
-        // Immediately after setting, key should exist
-        let get_result = redis.get(key);
-        assert!(get_result.is_ok());
-        assert_eq!(get_result.unwrap().as_bytes(), value);
-
-        // Wait for expiration (2 seconds to be safe)
-        std::thread::sleep(std::time::Duration::from_secs(2));
-
-        // After expiration, key should not exist
-        let get_result = redis.get(key);
-        assert!(
-            get_result.is_err(),
-            "Key should be expired and return error"
-        );
-
-        redis.set_need_close(true);
-        drop(redis);
-
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
-    }
 
     #[test]
     fn test_redis_psetex_vs_setex() {
-        let test_db_path = unique_test_db_path();
+            let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(&test_db_path).unwrap();
+            }
+
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+            // Test that PSETEX with 1000ms is equivalent to SETEX with 1s
+            let key1 = b"key_setex";
+            let key2 = b"key_psetex";
+            let value = b"test_value";
+
+            // SETEX with 10 seconds
+            let result = redis.setex(key1, 10, value);
+            assert!(result.is_ok());
+
+            // PSETEX with 10000 milliseconds (10 seconds)
+            let result = redis.psetex(key2, 10000, value);
+            assert!(result.is_ok());
+
+            // Both keys should be readable
+            let get_result1 = redis.get(key1);
+            let get_result2 = redis.get(key2);
+            assert!(get_result1.is_ok());
+            assert!(get_result2.is_ok());
+            assert_eq!(get_result1.unwrap().as_bytes(), value);
+            assert_eq!(get_result2.unwrap().as_bytes(), value);
+
+            redis.set_need_close(true);
+            drop(redis);
+
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
         }
-
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
-
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
-
-        // Test that PSETEX with 1000ms is equivalent to SETEX with 1s
-        let key1 = b"key_setex";
-        let key2 = b"key_psetex";
-        let value = b"test_value";
-
-        // SETEX with 10 seconds
-        let result = redis.setex(key1, 10, value);
-        assert!(result.is_ok());
-
-        // PSETEX with 10000 milliseconds (10 seconds)
-        let result = redis.psetex(key2, 10000, value);
-        assert!(result.is_ok());
-
-        // Both keys should be readable
-        let get_result1 = redis.get(key1);
-        let get_result2 = redis.get(key2);
-        assert!(get_result1.is_ok());
-        assert!(get_result2.is_ok());
-        assert_eq!(get_result1.unwrap().as_bytes(), value);
-        assert_eq!(get_result2.unwrap().as_bytes(), value);
-
-        redis.set_need_close(true);
-        drop(redis);
-
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
-    }
 
     #[test]
     fn test_redis_psetex_overflow_check() {
-        let test_db_path = unique_test_db_path();
+            let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(&test_db_path).unwrap();
+            }
 
-        let storage_options = Arc::new(StorageOptions::default());
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        let lock_mgr = Arc::new(LockMgr::new(1000));
-        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
 
-        let result = redis.open(test_db_path.to_str().unwrap());
-        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+            let result = redis.open(test_db_path.to_str().unwrap());
+            assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
-        // Test that setting a key with a very large TTL does not cause overflow
-        let key = b"expiring_key";
-        let value = b"test_value";
-        let result = redis.psetex(key, i64::MAX, value);
-        assert!(result.is_ok());
+            // Test that setting a key with a very large TTL does not cause overflow
+            let key = b"expiring_key";
+            let value = b"test_value";
+            let result = redis.psetex(key, i64::MAX, value);
+            assert!(result.is_ok());
 
-        // Verify values are set
-        assert_eq!(redis.get(b"expiring_key").unwrap(), "test_value");
+            // Verify values are set
+            assert_eq!(redis.get(b"expiring_key").unwrap(), "test_value");
 
-        // Test that setting a key with a very large TTL does not cause overflow
-        let result = redis.psetex(b"new_key", i64::MAX, b"new_value2");
-        assert!(result.is_ok());
+            // Test that setting a key with a very large TTL does not cause overflow
+            let result = redis.psetex(b"new_key", i64::MAX, b"new_value2");
+            assert!(result.is_ok());
 
-        // Verify values are set
-        assert_eq!(redis.get(b"expiring_key").unwrap(), "new_value");
-        assert_eq!(redis.get(b"new_key").unwrap(), "new_value2");
+            // Verify values are set
+            assert_eq!(redis.get(b"expiring_key").unwrap(), "new_value");
+            assert_eq!(redis.get(b"new_key").unwrap(), "new_value2");
 
-        redis.set_need_close(true);
-        drop(redis);
+            redis.set_need_close(true);
+            drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+            if test_db_path.exists() {
+                std::fs::remove_dir_all(test_db_path).unwrap();
+            }
     }
-
-}
 
     #[test]
     fn test_redis_setnx_basic() {
