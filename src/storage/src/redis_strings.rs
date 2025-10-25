@@ -729,16 +729,18 @@ impl Redis {
         }
 
         // Check overflow and convert to microseconds before acquiring lock
-        let ttl_micros = (milliseconds as u64)
-            .checked_mul(1_000)
-            .ok_or_else(|| RedisErr {
-                message: "ERR invalid expire time in psetex".to_string(),
-                location: Default::default(),
-            })?;
+        let ttl_micros_opt = (milliseconds as u64).checked_mul(1_000);
 
         let string_key = BaseKey::new(key);
         let mut string_value = StringValue::new(value.to_owned());
-        string_value.set_relative_etime(ttl_micros)?;
+
+        // If overflow occurs, set etime to u64::MAX (approximately 292 million years)
+        // Otherwise, use set_relative_etime for normal TTL values
+        if let Some(ttl_micros) = ttl_micros_opt {
+            string_value.set_relative_etime(ttl_micros)?;
+        } else {
+            string_value.set_etime(u64::MAX);
+        }
 
         // Get lock for the key after validation
         let key_str = String::from_utf8_lossy(key).to_string();
@@ -1639,6 +1641,7 @@ impl Redis {
         if user_value.is_empty() {
             return Ok(if bit == 1 { -1 } else { 0 });
         }
+
         let (start_pos, end_pos) = if is_bit_mode {
             // Bit mode: start and end are bit positions
             let start_bit = start.unwrap_or(0);
@@ -1685,9 +1688,9 @@ impl Redis {
             let start_byte = start_byte.max(0).min(user_value.len() as i64 - 1);
             let end_byte = end_byte.max(-1).min(user_value.len() as i64 - 1);
 
-            // If start > end after normalization, return -1
+            // If start > end after normalization, return -1 for bit=1, 0 for bit=0
             if start_byte > end_byte {
-                return Ok(-1);
+                return Ok(if bit == 1 { -1 } else { 0 });
             }
 
             // Convert to bit positions for consistent processing
@@ -1718,7 +1721,7 @@ impl Redis {
         }
 
         // Bit not found
-        Ok(-1)
+        Ok(if bit == 1 { -1 } else { 0 })
     }
 
     /// BITOP operation destkey key [key ...]
@@ -1785,9 +1788,13 @@ impl Redis {
                 .context(RocksSnafu)?
                 .unwrap_or_else(Vec::new);
 
-            // If source key doesn't exist or is empty, result is empty
+            // If source key doesn't exist or is empty, result is an empty string
             if encode_value.is_empty() {
-                // Delete destination key if it exists
+                // Store an empty string as the result
+                let mut string_value = StringValue::new(vec![]);
+                string_value.set_ctime(Utc::now().timestamp_micros() as u64);
+                string_value.set_etime(0); // No expiration by default
+
                 let dest_string_key = BaseKey::new(dest_key);
                 let cf =
                     self.get_cf_handle(ColumnFamilyIndex::MetaCF)
@@ -1795,7 +1802,7 @@ impl Redis {
                             message: "cf is not initialized".to_string(),
                         })?;
                 let mut batch = rocksdb::WriteBatch::default();
-                batch.delete_cf(&cf, dest_string_key.encode()?);
+                batch.put_cf(&cf, dest_string_key.encode()?, string_value.encode());
                 db.write_opt(batch, &self.write_options)
                     .context(RocksSnafu)?;
                 return Ok(0);
@@ -1806,9 +1813,13 @@ impl Redis {
 
             let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-            // If source key is expired, result is empty
+            // If source key is expired, result is an empty string
             if decode_value.is_stale() {
-                // Delete destination key if it exists
+                // Store an empty string as the result
+                let mut string_value = StringValue::new(vec![]);
+                string_value.set_ctime(Utc::now().timestamp_micros() as u64);
+                string_value.set_etime(0); // No expiration by default
+
                 let dest_string_key = BaseKey::new(dest_key);
                 let cf =
                     self.get_cf_handle(ColumnFamilyIndex::MetaCF)
@@ -1816,7 +1827,7 @@ impl Redis {
                             message: "cf is not initialized".to_string(),
                         })?;
                 let mut batch = rocksdb::WriteBatch::default();
-                batch.delete_cf(&cf, dest_string_key.encode()?);
+                batch.put_cf(&cf, dest_string_key.encode()?, string_value.encode());
                 db.write_opt(batch, &self.write_options)
                     .context(RocksSnafu)?;
                 return Ok(0);
@@ -1887,9 +1898,13 @@ impl Redis {
             src_values.push(user_value.to_vec());
         }
 
-        // If all source keys are empty, result is empty
+        // If all source keys are empty, result is an empty string
         if max_len == 0 {
-            // Delete destination key if it exists
+            // Store an empty string as the result
+            let mut string_value = StringValue::new(vec![]);
+            string_value.set_ctime(Utc::now().timestamp_micros() as u64);
+            string_value.set_etime(0); // No expiration by default
+
             let dest_string_key = BaseKey::new(dest_key);
             let cf = self
                 .get_cf_handle(ColumnFamilyIndex::MetaCF)
@@ -1897,7 +1912,7 @@ impl Redis {
                     message: "cf is not initialized".to_string(),
                 })?;
             let mut batch = rocksdb::WriteBatch::default();
-            batch.delete_cf(&cf, dest_string_key.encode()?);
+            batch.put_cf(&cf, dest_string_key.encode()?, string_value.encode());
             db.write_opt(batch, &self.write_options)
                 .context(RocksSnafu)?;
             return Ok(0);
@@ -1909,9 +1924,9 @@ impl Redis {
         // For each byte position
         for i in 0..max_len {
             let mut current_byte = if operation.to_uppercase() == "AND" {
-                0xFF
+                0xFF // For AND, start with all bits set
             } else {
-                0x00
+                0x00 // For OR and XOR, start with all bits unset
             };
 
             // For each source value

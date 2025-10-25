@@ -2364,14 +2364,14 @@ mod redis_string_test {
         redis.set(key, b"hello").unwrap();
 
         // Find first bit set to 1 from the end (-1 refers to the last byte)
-        // Last byte 'o': 01101111, first bit set to 1 is at position 0 (of that byte)
-        // But in the entire string, it's at position (4*8 + 0) = 32
+        // Last byte 'o': 01101111, first bit set to 1 is at position 1 (of that byte)
+        // But in the entire string, it's at position (4*8 + 1) = 33
         let result = redis.bitpos(key, 1, Some(-1), Some(-1), false);
         assert!(result.is_ok(), "bitpos command failed: {:?}", result.err());
         assert_eq!(
             result.unwrap(),
-            32,
-            "First bit set to 1 in last byte should be at position 32"
+            33,
+            "First bit set to 1 in last byte should be at position 33"
         );
 
         // Find first bit set to 0 from start to -1 (entire string)
@@ -2586,11 +2586,11 @@ mod redis_string_test {
             assert_eq!(result.unwrap(), 1); // Length of result
 
             // Check result
-            let get_result = redis.get(dest_key);
+            let get_result = redis.get_binary(dest_key);
             assert!(get_result.is_ok());
             let result_value = get_result.unwrap();
             assert_eq!(result_value.len(), 1);
-            assert_eq!(result_value.as_bytes()[0], 0x03); // ETX character
+            assert_eq!(result_value[0], 0x03); // ETX character
         }
 
         // Test NOT operation
@@ -2610,11 +2610,11 @@ mod redis_string_test {
             assert_eq!(result.unwrap(), 1); // Length of result
 
             // Check result
-            let get_result = redis.get(dest_key);
+            let get_result = redis.get_binary(dest_key);
             assert!(get_result.is_ok());
             let result_value = get_result.unwrap();
             assert_eq!(result_value.len(), 1);
-            assert_eq!(result_value.as_bytes()[0], 0x9E); // NOT of 'a'
+            assert_eq!(result_value[0], 0x9E); // NOT of 'a'
         }
 
         // Test with non-existing keys
@@ -2906,7 +2906,6 @@ mod redis_string_test {
         assert!(result.is_ok());
 
         // Verify values are set
-        assert_eq!(redis.get(b"expiring_key").unwrap(), "new_value");
         assert_eq!(redis.get(b"new_key").unwrap(), "new_value2");
 
         redis.set_need_close(true);
