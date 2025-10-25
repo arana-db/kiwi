@@ -18,14 +18,6 @@
 //! Redis strings operations implementation
 //! This module provides string operations for Redis storage
 
-// use std::time::{SystemTime, UNIX_EPOCH};
-// use rocksdb::{WriteBatch, WriteOptions, ReadOptions};
-
-// use crate::{Result, StorageError};
-// use crate::base_data_value_format::{DataType, InternalValue, ParsedInternalValue};
-
-// use crate::types::KeyValue;
-
 use chrono::Utc;
 use kstd::lock_mgr::ScopeRecordLock;
 use snafu::{OptionExt, ResultExt};
@@ -39,15 +31,6 @@ use crate::{
 };
 
 impl Redis {
-    // /// Append a value to the string stored at key
-    // pub fn append(&self, key: &[u8], value: &[u8], ret: &mut i32) -> Result<()> {
-    //     let db = self.db.as_ref().ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
-
-    //     let mut string_value = String::new();
-    //     let mut version = 0;
-    //     let mut timestamp = 0;
-
-    //     // Try to get the existing value
     //     let read_options = ReadOptions::default();
     //     match db.get_opt(key, &read_options)? {
     //         Some(existing) => {
@@ -76,27 +59,6 @@ impl Redis {
     //             // Create a new value
     //             string_value = String::from_utf8_lossy(value).to_string();
     //         }
-    //     }
-
-    //     // Create the new value
-    //     let mut internal_value = InternalValue::new(DataType::String, string_value.as_bytes());
-    //     internal_value.set_version(version);
-    //     if timestamp > 0 {
-    //         internal_value.set_etime(timestamp);
-    //     }
-
-    //     // Write to DB
-    //     let encoded_value = internal_value.encode();
-    //     db.put_opt(key, &encoded_value, &self.default_write_options)?;
-
-    //     // Set the return value to the new string length
-    //     *ret = string_value.len() as i32;
-
-    //     // Update statistics
-    //     self.update_specific_key_statistics(DataType::String, &String::from_utf8_lossy(key).to_string(), 1)?;
-
-    //     Ok(())
-    // }
 
     /// Returns the length of the string value stored at key in bytes.
     ///
@@ -130,16 +92,16 @@ impl Redis {
             return Ok(0);
         }
 
-        // Check type first to match Redis compatibility
-        // Redis returns WRONGTYPE regardless of expiration status for non-string keys
-        self.check_type(encode_value.as_slice(), DataType::String)?;
-
         let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-        // Then check expiration
+        // Check if key is expired first - expired keys are treated as non-existent
         if decode_value.is_stale() {
             return Ok(0);
         }
+
+        // Now check type on live key to match Redis compatibility
+        // Redis returns WRONGTYPE only for live non-string keys
+        self.check_type(encode_value.as_slice(), DataType::String)?;
 
         // Return the length of the string value
         let user_value = decode_value.user_value();
@@ -185,15 +147,16 @@ impl Redis {
             return Ok(Vec::new());
         }
 
-        // Check type first to match Redis compatibility
-        self.check_type(encode_value.as_slice(), DataType::String)?;
-
         let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-        // If key is expired, return empty string
+        // Check if key is expired first - expired keys are treated as non-existent
         if decode_value.is_stale() {
             return Ok(Vec::new());
         }
+
+        // Now check type on live key to match Redis compatibility
+        // Redis returns WRONGTYPE only for live non-string keys
+        self.check_type(encode_value.as_slice(), DataType::String)?;
 
         let user_value = decode_value.user_value();
         let len = user_value.len() as i64;
@@ -291,13 +254,14 @@ impl Redis {
         let mut etime: u64 = 0;
 
         if !encode_value.is_empty() {
-            // Check type first to match Redis compatibility
-            self.check_type(encode_value.as_slice(), DataType::String)?;
-
             let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-            // If key is not expired, use existing value
+            // Check if key is expired first - expired keys are treated as non-existent
             if !decode_value.is_stale() {
+                // Now check type on live key to match Redis compatibility
+                // Redis returns WRONGTYPE only for live non-string keys
+                self.check_type(encode_value.as_slice(), DataType::String)?;
+
                 existing_value = decode_value.user_value().to_vec();
                 ctime = decode_value.ctime();
                 etime = decode_value.etime();
@@ -386,17 +350,18 @@ impl Redis {
         let mut etime: u64 = 0;
 
         if !encode_value.is_empty() {
-            // Check if key exists and is a string type
-            self.check_type(encode_value.as_slice(), DataType::String)?;
-
             let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-            // If key is stale (expired), treat as new key
+            // Check if key is expired first - expired keys are treated as non-existent
             if decode_value.is_stale() {
                 new_value = value.to_vec();
                 // ctime and etime remain at their initialized values (current time and 0)
                 // This is correct: expired keys don't preserve old metadata
             } else {
+                // Now check type on live key to match Redis compatibility
+                // Redis returns WRONGTYPE only for live non-string keys
+                self.check_type(encode_value.as_slice(), DataType::String)?;
+
                 // Append to existing value
                 let user_value = decode_value.user_value();
                 // Efficiently concatenate the old value and new value
@@ -796,12 +761,14 @@ impl Redis {
             .context(RocksSnafu)?;
 
         if let Some(val) = encode_value {
-            // Check type first, return WRONGTYPE error if not string
-            self.check_type(val.as_slice(), DataType::String)?;
-
-            // Key exists, check if it's expired
             let string_value = ParsedStringsValue::new(&val[..])?;
+
+            // Check if key is expired first - expired keys are treated as non-existent
             if !string_value.is_stale() {
+                // Now check type on live key to match Redis compatibility
+                // Redis returns WRONGTYPE only for live non-string keys
+                self.check_type(val.as_slice(), DataType::String)?;
+
                 // Key exists and is not expired, do not set
                 return Ok(0);
             }
@@ -862,12 +829,14 @@ impl Redis {
             .context(RocksSnafu)?;
 
         let old_value = if let Some(val) = encode_value {
-            // Check type first, return WRONGTYPE error if not string
-            self.check_type(val.as_slice(), DataType::String)?;
-
-            // Parse the old value
             let string_value = ParsedStringsValue::new(&val[..])?;
+
+            // Check if key is expired first - expired keys are treated as non-existent
             if !string_value.is_stale() {
+                // Now check type on live key to match Redis compatibility
+                // Redis returns WRONGTYPE only for live non-string keys
+                self.check_type(val.as_slice(), DataType::String)?;
+
                 // Key exists and is not expired, return old value
                 let user_value = string_value.user_value();
                 Some(String::from_utf8_lossy(&user_value).to_string())
@@ -1184,13 +1153,12 @@ impl Redis {
                 .context(RocksSnafu)?
             {
                 Some(val) => {
-                    // Check type first, return WRONGTYPE error if not string
-                    self.check_type(val.as_slice(), DataType::String)?;
-
-                    // Key exists, check if it's expired
                     let string_value = ParsedStringsValue::new(&val[..])?;
+
+                    // MSETNX returns false if any live key exists (regardless of type)
+                    // Redis never returns WRONGTYPE for MSETNX - it only checks existence
                     if !string_value.is_stale() {
-                        // Key exists and is not expired, do not set any keys
+                        // Any live key (any type) blocks the batch
                         return Ok(false);
                     }
                     // Key is expired, treat as non-existent and continue checking
@@ -1234,9 +1202,6 @@ impl Redis {
             .context(RocksSnafu)?
             .unwrap_or_else(Vec::new);
 
-        // check key type
-        self.check_type(encode_value.as_slice(), DataType::String)?;
-
         let mut value: i64 = 0;
         let mut ctime: u64 = Utc::now().timestamp_micros() as u64;
         let mut etime: u64 = 0;
@@ -1244,8 +1209,12 @@ impl Redis {
         // convert user_value to i64
         if !encode_value.is_empty() {
             let decode_value = ParsedStringsValue::new(&encode_value[..])?;
-            // check ttl
+            // Check if key is expired first - expired keys are treated as non-existent
             if !decode_value.is_stale() {
+                // Now check type on live key to match Redis compatibility
+                // Redis returns WRONGTYPE only for live non-string keys
+                self.check_type(encode_value.as_slice(), DataType::String)?;
+
                 let user_value = decode_value.user_value();
                 value = match String::from_utf8_lossy(&user_value).to_string().parse() {
                     Ok(v) => v,
@@ -1284,6 +1253,108 @@ impl Redis {
         }
 
         Ok(value)
+    }
+
+    pub fn incr_decr_float(&self, key: &[u8], incr: f64) -> Result<f64> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        // Get lock for the key
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
+        // get value by key
+        let string_key = BaseKey::new(key);
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
+
+        let mut value: f64 = 0.0;
+        let mut ctime: u64 = Utc::now().timestamp_micros() as u64;
+        let mut etime: u64 = 0;
+
+        // convert user_value to f64
+        if !encode_value.is_empty() {
+            let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+            // Check if key is expired first - expired keys are treated as non-existent
+            if !decode_value.is_stale() {
+                // Now check type on live key to match Redis compatibility
+                // Redis returns WRONGTYPE only for live non-string keys
+                self.check_type(encode_value.as_slice(), DataType::String)?;
+
+                let user_value = decode_value.user_value();
+                value = match String::from_utf8_lossy(&user_value).to_string().parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Err(RedisErr {
+                            message: "value is not a valid float".to_string(),
+                            location: Default::default(),
+                        });
+                    }
+                };
+                ctime = decode_value.ctime();
+                etime = decode_value.etime();
+            }
+        }
+
+        // perform increment
+        value += incr;
+
+        // check for NaN or infinity
+        if value.is_nan() || value.is_infinite() {
+            return Err(RedisErr {
+                message: "increment would produce NaN or Infinity".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        // set new value
+        {
+            let mut string_value = StringValue::new(format!("{}", value).to_owned());
+            string_value.set_ctime(ctime);
+            string_value.set_etime(etime);
+            let cf = self
+                .get_cf_handle(ColumnFamilyIndex::MetaCF)
+                .context(OptionNoneSnafu {
+                    message: "cf is not initialized".to_string(),
+                })?;
+            let mut batch = rocksdb::WriteBatch::default();
+            batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+            db.write_opt(batch, &self.write_options)
+                .context(RocksSnafu)?;
+        }
+
+        Ok(value)
+    }
+
+    /// Check if a key exists and is not expired (type-agnostic)
+    ///
+    /// This helper is used for MSETNX to check key existence without type validation,
+    /// preventing WRONGTYPE errors on expired non-string keys.
+    ///
+    /// # Arguments
+    /// * key - The key to check
+    ///
+    /// # Returns
+    /// * Ok(true) - if the key exists and is not expired
+    /// * Ok(false) - if the key doesn't exist or is expired
+    /// * Err(RedisErr) - if there's a database error
+    pub fn key_exists_live(&self, key: &[u8]) -> Result<bool> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        let string_key = BaseKey::new(key);
+        if let Some(val) = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+        {
+            let meta = ParsedStringsValue::new(&val[..])?;
+            Ok(!meta.is_stale())
+        } else {
+            Ok(false)
+        }
     }
 
     /// SETBIT key offset value
@@ -1350,13 +1421,14 @@ impl Redis {
         let mut etime: u64 = 0;
 
         if !encode_value.is_empty() {
-            // Check type first to match Redis compatibility
-            self.check_type(encode_value.as_slice(), DataType::String)?;
-
             let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-            // If key is not expired, use existing value
+            // Check if key is expired first - expired keys are treated as non-existent
             if !decode_value.is_stale() {
+                // Now check type on live key to match Redis compatibility
+                // Redis returns WRONGTYPE only for live non-string keys
+                self.check_type(encode_value.as_slice(), DataType::String)?;
+
                 existing_value = decode_value.user_value().to_vec();
                 ctime = decode_value.ctime();
                 etime = decode_value.etime();
@@ -1452,15 +1524,16 @@ impl Redis {
             return Ok(0);
         }
 
-        // Check type first to match Redis compatibility
-        self.check_type(encode_value.as_slice(), DataType::String)?;
-
         let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-        // If key is expired, return 0
+        // Check if key is expired first - expired keys are treated as non-existent
         if decode_value.is_stale() {
             return Ok(0);
         }
+
+        // Now check type on live key to match Redis compatibility
+        // Redis returns WRONGTYPE only for live non-string keys
+        self.check_type(encode_value.as_slice(), DataType::String)?;
 
         let user_value = decode_value.user_value();
 
@@ -1514,15 +1587,16 @@ impl Redis {
             return Ok(0);
         }
 
-        // Check type first to match Redis compatibility
-        self.check_type(encode_value.as_slice(), DataType::String)?;
-
         let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-        // If key is expired, return 0
+        // Check if key is expired first - expired keys are treated as non-existent
         if decode_value.is_stale() {
             return Ok(0);
         }
+
+        // Now check type on live key to match Redis compatibility
+        // Redis returns WRONGTYPE only for live non-string keys
+        self.check_type(encode_value.as_slice(), DataType::String)?;
 
         let user_value = decode_value.user_value();
 
@@ -1625,15 +1699,16 @@ impl Redis {
             return Ok(if bit == 1 { -1 } else { 0 });
         }
 
-        // Check type first to match Redis compatibility
-        self.check_type(encode_value.as_slice(), DataType::String)?;
-
         let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-        // If key is expired, return -1 for bit=1, 0 for bit=0 (Redis behavior)
+        // Check if key is expired first - expired keys are treated as non-existent
         if decode_value.is_stale() {
             return Ok(if bit == 1 { -1 } else { 0 });
         }
+
+        // Now check type on live key to match Redis compatibility
+        // Redis returns WRONGTYPE only for live non-string keys
+        self.check_type(encode_value.as_slice(), DataType::String)?;
 
         let user_value = decode_value.user_value();
 
@@ -1808,12 +1883,9 @@ impl Redis {
                 return Ok(0);
             }
 
-            // Check type first to match Redis compatibility
-            self.check_type(encode_value.as_slice(), DataType::String)?;
-
             let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-            // If source key is expired, result is an empty string
+            // Check if key is expired first - expired keys are treated as non-existent
             if decode_value.is_stale() {
                 // Store an empty string as the result
                 let mut string_value = StringValue::new(vec![]);
@@ -1882,16 +1954,17 @@ impl Redis {
                 continue;
             }
 
-            // Check type first to match Redis compatibility
-            self.check_type(encode_value.as_slice(), DataType::String)?;
-
             let decode_value = ParsedStringsValue::new(&encode_value[..])?;
 
-            // If source key is expired, treat as empty string
+            // Check if key is expired first - expired keys are treated as non-existent
             if decode_value.is_stale() {
                 src_values.push(Vec::new());
                 continue;
             }
+
+            // Now check type on live key to match Redis compatibility
+            // Redis returns WRONGTYPE only for live non-string keys
+            self.check_type(encode_value.as_slice(), DataType::String)?;
 
             let user_value = decode_value.user_value();
             max_len = max_len.max(user_value.len());
@@ -1960,78 +2033,5 @@ impl Redis {
             .context(RocksSnafu)?;
 
         Ok(string_value.user_value_len() as i64)
-    }
-
-    pub fn incr_decr_float(&self, key: &[u8], incr: f64) -> Result<f64> {
-        let db = self.db.as_ref().context(OptionNoneSnafu {
-            message: "db is not initialized".to_string(),
-        })?;
-
-        // Get lock for the key
-        let key_str = String::from_utf8_lossy(key).to_string();
-        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
-
-        // get value by key
-        let string_key = BaseKey::new(key);
-        let encode_value = db
-            .get_opt(&string_key.encode()?, &self.read_options)
-            .context(RocksSnafu)?
-            .unwrap_or_else(Vec::new);
-
-        // check key type
-        self.check_type(encode_value.as_slice(), DataType::String)?;
-
-        let mut value: f64 = 0.0;
-        let mut ctime: u64 = Utc::now().timestamp_micros() as u64;
-        let mut etime: u64 = 0;
-
-        // convert user_value to f64
-        if !encode_value.is_empty() {
-            let decode_value = ParsedStringsValue::new(&encode_value[..])?;
-            // check ttl
-            if !decode_value.is_stale() {
-                let user_value = decode_value.user_value();
-                value = match String::from_utf8_lossy(&user_value).to_string().parse() {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(RedisErr {
-                            message: "value is not a valid float".to_string(),
-                            location: Default::default(),
-                        });
-                    }
-                };
-                ctime = decode_value.ctime();
-                etime = decode_value.etime();
-            }
-        }
-
-        // perform increment
-        value += incr;
-
-        // check for NaN or infinity
-        if value.is_nan() || value.is_infinite() {
-            return Err(RedisErr {
-                message: "increment would produce NaN or Infinity".to_string(),
-                location: Default::default(),
-            });
-        }
-
-        // set new value
-        {
-            let mut string_value = StringValue::new(format!("{}", value).to_owned());
-            string_value.set_ctime(ctime);
-            string_value.set_etime(etime);
-            let cf = self
-                .get_cf_handle(ColumnFamilyIndex::MetaCF)
-                .context(OptionNoneSnafu {
-                    message: "cf is not initialized".to_string(),
-                })?;
-            let mut batch = rocksdb::WriteBatch::default();
-            batch.put_cf(&cf, string_key.encode()?, string_value.encode());
-            db.write_opt(batch, &self.write_options)
-                .context(RocksSnafu)?;
-        }
-
-        Ok(value)
     }
 }

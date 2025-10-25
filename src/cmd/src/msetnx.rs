@@ -60,8 +60,7 @@ impl Cmd for MsetnxCmd {
     fn do_initial(&self, client: &Client) -> bool {
         let argv = client.argv();
 
-        // Check if the number of arguments is valid (must be odd: command + key-value pairs)
-        // MSETNX key1 value1 key2 value2 ... means argv.len() must be odd (>= 3)
+        // len must be odd (cmd + pairs), and at least 3
         if argv.len() < 3 || argv.len().is_multiple_of(2) {
             client.set_reply(RespData::Error(
                 "ERR wrong number of arguments for 'msetnx' command"

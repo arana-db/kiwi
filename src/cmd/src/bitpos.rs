@@ -109,21 +109,54 @@ impl Cmd for BitposCmd {
         let mut start: Option<i64> = None;
         let mut end: Option<i64> = None;
         let mut is_bit_mode = false; // Default to byte mode
+        let mode_specified = false; // Track if BIT/BYTE mode has been specified
 
         let mut i = 3;
         while i < argv.len() {
             let arg = String::from_utf8_lossy(&argv[i]);
             match arg.to_uppercase().as_str() {
                 "BIT" => {
+                    // BIT/BYTE must be the last argument
+                    if mode_specified {
+                        // Already specified mode, this is an error
+                        client.set_reply(RespData::Error("ERR syntax error".to_string().into()));
+                        return;
+                    }
+
+                    if i != argv.len() - 1 {
+                        // BIT/BYTE is not the last argument
+                        client.set_reply(RespData::Error("ERR syntax error".to_string().into()));
+                        return;
+                    }
+
                     is_bit_mode = true;
-                    i += 1;
+                    break; // BIT/BYTE is always the last argument
                 }
                 "BYTE" => {
+                    // BIT/BYTE must be the last argument
+                    if mode_specified {
+                        // Already specified mode, this is an error
+                        client.set_reply(RespData::Error("ERR syntax error".to_string().into()));
+                        return;
+                    }
+
+                    if i != argv.len() - 1 {
+                        // BYTE is not the last argument
+                        client.set_reply(RespData::Error("ERR syntax error".to_string().into()));
+                        return;
+                    }
+
                     is_bit_mode = false;
-                    i += 1;
+                    break; // BIT/BYTE is always the last argument
                 }
                 _ => {
                     // Try to parse as start or end position
+                    // But if we've already seen BIT/BYTE, this is an error
+                    if mode_specified {
+                        client.set_reply(RespData::Error("ERR syntax error".to_string().into()));
+                        return;
+                    }
+
                     match arg.parse::<i64>() {
                         Ok(val) => {
                             if start.is_none() {

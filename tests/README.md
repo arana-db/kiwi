@@ -154,7 +154,7 @@ def test_newcmd_basic():
 
 在 `tests/integration/` 创建 Markdown 文档：
 
-```markdown
+```
 # NEWCMD 测试指南
 
 ## 测试步骤

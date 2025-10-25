@@ -705,7 +705,7 @@ mod redis_string_test {
                 i
             );
             let expected_len = (i + 1) * 1024 * 1024;
-            assert_eq!(result.unwrap(), expected_len as i32);
+            assert_eq!(result.unwrap(), expected_len);
         }
 
         // Verify final size
@@ -3822,9 +3822,8 @@ mod redis_string_test {
             result.is_ok(),
             "msetnx with non-existing keys should succeed"
         );
-        assert_eq!(
+        assert!(
             result.unwrap(),
-            true,
             "msetnx should return true when keys are set"
         );
 
@@ -3841,9 +3840,8 @@ mod redis_string_test {
 
         let result = redis.msetnx(&kvs2);
         assert!(result.is_ok(), "msetnx should not fail even if keys exist");
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "msetnx should return false when at least one key exists"
         );
 
@@ -3879,9 +3877,8 @@ mod redis_string_test {
             result.is_ok(),
             "msetnx with non-existing keys should succeed"
         );
-        assert_eq!(
+        assert!(
             result.unwrap(),
-            true,
             "msetnx should return true when keys are set"
         );
 
@@ -3927,9 +3924,8 @@ mod redis_string_test {
 
         let result = redis.msetnx(&kvs);
         assert!(result.is_ok(), "msetnx with expired keys should succeed");
-        assert_eq!(
+        assert!(
             result.unwrap(),
-            true,
             "msetnx should return true when expired keys are treated as non-existing"
         );
 
