@@ -454,4 +454,77 @@ impl Redis {
 
         Ok(value)
     }
+
+    pub fn incr_decr_float(&self, key: &[u8], incr: f64) -> Result<f64> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        // Get lock for the key
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
+        // get value by key
+        let string_key = BaseKey::new(key);
+        let encode_value = db
+            .get_opt(&string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
+
+        // check key type
+        self.check_type(encode_value.as_slice(), DataType::String)?;
+
+        let mut value: f64 = 0.0;
+        let mut ctime: u64 = Utc::now().timestamp_micros() as u64;
+        let mut etime: u64 = 0;
+
+        // convert user_value to f64
+        if !encode_value.is_empty() {
+            let decode_value = ParsedStringsValue::new(&encode_value[..])?;
+            // check ttl
+            if !decode_value.is_stale() {
+                let user_value = decode_value.user_value();
+                value = match String::from_utf8_lossy(&user_value).to_string().parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Err(RedisErr {
+                            message: "value is not a valid float".to_string(),
+                            location: Default::default(),
+                        });
+                    }
+                };
+                ctime = decode_value.ctime();
+                etime = decode_value.etime();
+            }
+        }
+
+        // perform increment
+        value += incr;
+
+        // check for NaN or infinity
+        if value.is_nan() || value.is_infinite() {
+            return Err(RedisErr {
+                message: "increment would produce NaN or Infinity".to_string(),
+                location: Default::default(),
+            });
+        }
+
+        // set new value
+        {
+            let mut string_value = StringValue::new(format!("{}", value).to_owned());
+            string_value.set_ctime(ctime);
+            string_value.set_etime(etime);
+            let cf = self
+                .get_cf_handle(ColumnFamilyIndex::MetaCF)
+                .context(OptionNoneSnafu {
+                    message: "cf is not initialized".to_string(),
+                })?;
+            let mut batch = rocksdb::WriteBatch::default();
+            batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+            db.write_opt(batch, &self.write_options)
+                .context(RocksSnafu)?;
+        }
+
+        Ok(value)
+    }
 }
