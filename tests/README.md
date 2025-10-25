@@ -4,7 +4,7 @@
 
 ## 📁 目录结构
 
-```
+```text
 tests/
 ├── README.md           # 本文件
 ├── python/             # Python 集成测试
@@ -154,7 +154,7 @@ def test_newcmd_basic():
 
 在 `tests/integration/` 创建 Markdown 文档：
 
-```
+```text
 # NEWCMD 测试指南
 
 ## 测试步骤

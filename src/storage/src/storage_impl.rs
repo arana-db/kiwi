@@ -130,16 +130,18 @@ impl Storage {
                 .push((key.clone(), value.clone()));
         }
 
-        // Sort keys to prevent deadlock
+        // Sort keys to prevent deadlock, then dedup to avoid re-locking the same key
         let mut sorted_keys: Vec<&Vec<u8>> = kvs.iter().map(|(key, _)| key).collect();
         sorted_keys.sort();
+        sorted_keys.dedup();
 
         // Acquire locks on all keys to ensure atomicity
+        // Use hex encoding to avoid lock aliasing from binary keys
         let _locks: Vec<_> = sorted_keys
             .iter()
             .map(|key| {
-                let key_str = String::from_utf8_lossy(key).to_string();
-                self.lock_mgr.lock(&key_str)
+                let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+                self.lock_mgr.lock(&key_hex)
             })
             .collect();
 
