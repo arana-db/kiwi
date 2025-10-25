@@ -59,6 +59,7 @@ pub fn create_command_table() -> CmdTable {
         crate::get::GetCmd,
         crate::incr::IncrCmd,
         crate::incrby::IncrbyCmd,
+        crate::incrbyfloat::IncrbyFloatCmd,
         crate::decr::DecrCmd,
         crate::decrby::DecrbyCmd,
         crate::strlen::StrlenCmd,

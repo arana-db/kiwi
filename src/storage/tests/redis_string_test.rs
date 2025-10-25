@@ -470,7 +470,11 @@ mod redis_string_test {
     }
 
     #[test]
+<<<<<<< HEAD
     fn test_redis_append() {
+=======
+    fn test_redis_incr_decr_float() {
+>>>>>>> main
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
@@ -485,6 +489,7 @@ mod redis_string_test {
         let result = redis.open(test_db_path.to_str().unwrap());
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
+<<<<<<< HEAD
         // Test 1: Append to non-existing key
         {
             let key = b"new_key";
@@ -3073,6 +3078,109 @@ mod redis_string_test {
             // Verify values weren't changed
             let get_result = redis.get(*key).unwrap();
             assert_eq!(get_result.as_bytes(), value);
+=======
+        // wrong key type
+        {
+            let key = b"test_hash_float";
+            let field = b"field1";
+            let value = b"value1";
+
+            let hset_result = redis.hset(key, field, value);
+            assert_eq!(hset_result.unwrap(), 1);
+
+            let incr_result = redis.incr_decr_float(key, 1.5);
+            assert_eq!(
+                incr_result.err().unwrap().to_string(),
+                "WRONGTYPE Operation against a key holding the wrong kind of value"
+            );
+        }
+
+        // wrong value type
+        {
+            let key = b"test_incr_float_key_wrong_value";
+            let value = b"not_a_number";
+            let set_result = redis.set(key, value);
+            assert!(set_result.is_ok());
+            let incr_result = redis.incr_decr_float(key, 1.5);
+            assert_eq!(
+                incr_result.err().unwrap().to_string(),
+                "value is not a valid float"
+            );
+        }
+
+        // normal incr and decr with float
+        {
+            let key = b"test_incr_float_key";
+
+            // add 1.5 to non-existing key (should start from 0)
+            assert_eq!(redis.incr_decr_float(key, 1.5).unwrap(), 1.5);
+            assert_eq!(redis.get(key).unwrap(), "1.5".to_string());
+
+            // add 2.5
+            assert_eq!(redis.incr_decr_float(key, 2.5).unwrap(), 4.0);
+            assert_eq!(redis.get(key).unwrap(), "4".to_string());
+
+            // subtract 1.5
+            assert_eq!(redis.incr_decr_float(key, -1.5).unwrap(), 2.5);
+            assert_eq!(redis.get(key).unwrap(), "2.5".to_string());
+
+            // add negative value
+            assert_eq!(redis.incr_decr_float(key, -0.5).unwrap(), 2.0);
+            assert_eq!(redis.get(key).unwrap(), "2".to_string());
+        }
+
+        // test with existing integer value
+        {
+            let key = b"test_incr_float_existing_int";
+            let set_result = redis.set(key, b"10");
+            assert!(set_result.is_ok());
+
+            // add float to integer
+            assert_eq!(redis.incr_decr_float(key, 0.5).unwrap(), 10.5);
+            assert_eq!(redis.get(key).unwrap(), "10.5".to_string());
+        }
+
+        // test with existing float value
+        {
+            let key = b"test_incr_float_existing_float";
+            let set_result = redis.set(key, b"3.14");
+            assert!(set_result.is_ok());
+
+            // add float to float
+            assert_eq!(redis.incr_decr_float(key, 1.86).unwrap(), 5.0);
+            assert_eq!(redis.get(key).unwrap(), "5".to_string());
+        }
+
+        // test NaN and infinity detection
+        {
+            let key = b"test_incr_float_nan";
+
+            // Test with very large numbers that could cause overflow
+            let set_result = redis.set(key, b"1.7976931348623157e+308"); // close to f64::MAX
+            assert!(set_result.is_ok());
+
+            let incr_result = redis.incr_decr_float(key, 1.7976931348623157e+308);
+            assert_eq!(
+                incr_result.err().unwrap().to_string(),
+                "increment would produce NaN or Infinity"
+            );
+        }
+
+        // test precision with small numbers
+        {
+            let key = b"test_incr_float_precision";
+
+            assert_eq!(redis.incr_decr_float(key, 0.1).unwrap(), 0.1);
+            assert_eq!(
+                redis.incr_decr_float(key, 0.2).unwrap(),
+                0.30000000000000004
+            ); // floating point precision
+            assert_eq!(
+                redis.incr_decr_float(key, -0.30000000000000004).unwrap(),
+                0.0
+            );
+            assert_eq!(redis.get(key).unwrap(), "0".to_string());
+>>>>>>> main
         }
 
         redis.set_need_close(true);
@@ -3082,6 +3190,7 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+<<<<<<< HEAD
 
     #[test]
     fn test_redis_setnx_wrong_type() {
@@ -3940,4 +4049,6 @@ mod redis_string_test {
             std::fs::remove_dir_all(test_db_path).unwrap();
         }
     }
+=======
+>>>>>>> main
 }

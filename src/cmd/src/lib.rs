@@ -28,6 +28,7 @@ pub mod getset;
 pub mod group_client;
 pub mod incr;
 pub mod incrby;
+pub mod incrbyfloat;
 pub mod mget;
 pub mod mset;
 pub mod msetnx;
