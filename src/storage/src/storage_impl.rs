@@ -435,15 +435,16 @@ impl Storage {
         // Check if key exists in storage
         match self.insts[instance_id].key_exists_live(key) {
             Ok(false) => return Ok(-2), // Key doesn't exist
-            Err(_) => return Ok(-2),    // Error means key doesn't exist
+            Err(e) => return Err(e),    // Propagate storage errors
             Ok(true) => {}              // Key exists, continue
         }
 
         if let Some(expiration_manager) = &self.expiration_manager {
             match expiration_manager.get_ttl_seconds(&key_str) {
-                Some(-1) => Ok(-1), // Key exists but has no expiration or is expired
-                Some(ttl) => Ok(ttl),
-                None => Ok(-1), // Key has no expiration
+                Some(-2) => Ok(-2), // Key expired (treat as doesn't exist)
+                Some(-1) => Ok(-1), // Key exists but has no expiration
+                Some(ttl) => Ok(ttl), // Positive TTL value
+                None => Ok(-1), // Shouldn't happen with new API, key has no expiration
             }
         } else {
             Ok(-1) // No expiration manager, key has no expiration
@@ -461,15 +462,16 @@ impl Storage {
         // Check if key exists in storage
         match self.insts[instance_id].key_exists_live(key) {
             Ok(false) => return Ok(-2), // Key doesn't exist
-            Err(_) => return Ok(-2),    // Error means key doesn't exist
+            Err(e) => return Err(e),    // Propagate storage errors
             Ok(true) => {}              // Key exists, continue
         }
 
         if let Some(expiration_manager) = &self.expiration_manager {
             match expiration_manager.get_ttl_milliseconds(&key_str) {
-                Some(-1) => Ok(-1), // Key exists but has no expiration or is expired
-                Some(ttl) => Ok(ttl),
-                None => Ok(-1), // Key has no expiration
+                Some(-2) => Ok(-2), // Key expired (treat as doesn't exist)
+                Some(-1) => Ok(-1), // Key exists but has no expiration
+                Some(ttl) => Ok(ttl), // Positive TTL value
+                None => Ok(-1), // Shouldn't happen with new API, key has no expiration
             }
         } else {
             Ok(-1) // No expiration manager, key has no expiration
@@ -615,7 +617,11 @@ impl Storage {
             
             match self.insts[instance_id].key_exists_live(key) {
                 Ok(true) => count += 1,
-                Ok(false) | Err(_) => {} // Key doesn't exist or error
+                Ok(false) => {} // Key doesn't exist
+                Err(e) => {
+                    // Log error but continue counting other keys
+                    log::warn!("Error checking key existence: {:?}", e);
+                }
             }
         }
 
@@ -647,7 +653,11 @@ impl Storage {
             // Try to delete the key - this will handle all data types
             match self.insts[instance_id].del_key(key) {
                 Ok(true) => deleted_count += 1,
-                Ok(false) | Err(_) => {} // Key doesn't exist or error
+                Ok(false) => {} // Key doesn't exist
+                Err(e) => {
+                    // Log error but continue deleting other keys
+                    log::warn!("Error deleting key: {:?}", e);
+                }
             }
         }
 

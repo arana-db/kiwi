@@ -2048,10 +2048,17 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
+        // Get MetaCF handle for reading metadata
+        let cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "MetaCF is not initialized".to_string(),
+            })?;
+
         // Check string type first (MetaCF)
         let string_key = BaseKey::new(key);
         if let Some(val) = db
-            .get_opt(&string_key.encode()?, &self.read_options)
+            .get_cf_opt(&cf, &string_key.encode()?, &self.read_options)
             .context(RocksSnafu)?
         {
             let meta = ParsedStringsValue::new(&val[..])?;
@@ -2064,7 +2071,7 @@ impl Redis {
         // Since all data types use the same meta key format, we need to check the data type field in the value
         let meta_key = BaseMetaKey::new(key);
         if let Some(val) = db
-            .get_opt(&meta_key.encode()?, &self.read_options)
+            .get_cf_opt(&cf, &meta_key.encode()?, &self.read_options)
             .context(RocksSnafu)?
         {
             // The first byte indicates the data type
@@ -2117,17 +2124,38 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
-        // Try to delete from default CF (strings and meta keys)
+        // Get MetaCF handle for metadata operations
+        let meta_cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "MetaCF is not initialized".to_string(),
+            })?;
+
+        // Check if key exists in MetaCF (where all metadata is stored)
         let string_key = BaseKey::new(key);
-        let key_existed = db.get_opt(&string_key.encode()?, &self.read_options)
+        let meta_key = BaseMetaKey::new(key);
+        
+        let string_existed = db.get_cf_opt(&meta_cf, &string_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .is_some();
+        let meta_existed = db.get_cf_opt(&meta_cf, &meta_key.encode()?, &self.read_options)
             .context(RocksSnafu)?
             .is_some();
 
-        if key_existed {
+        if string_existed || meta_existed {
             let mut batch = rocksdb::WriteBatch::default();
-            batch.delete(string_key.encode()?);
             
-            // Also try to delete from other column families in case it's a complex data type
+            let encoded = string_key.encode()?;
+            
+            // Delete from MetaCF
+            if string_existed {
+                batch.delete_cf(&meta_cf, &encoded);
+            }
+            if meta_existed {
+                batch.delete_cf(&meta_cf, meta_key.encode()?);
+            }
+            
+            // For composite data types, perform prefix scan to delete all related entries
             for cf_index in [
                 ColumnFamilyIndex::HashesDataCF,
                 ColumnFamilyIndex::SetsDataCF,
@@ -2136,10 +2164,18 @@ impl Redis {
                 ColumnFamilyIndex::ZsetsScoreCF,
             ] {
                 if let Some(cf) = self.get_cf_handle(cf_index) {
-                    // For data CFs, we need to scan and delete related keys
-                    // This is a simplified implementation - in practice, we'd need to
-                    // scan for keys with the given prefix and delete them
-                    batch.delete_cf(&cf, string_key.encode()?);
+                    // Prefix-scan data CF and delete all derived keys
+                    let iter = db.iterator_cf(
+                        &cf,
+                        rocksdb::IteratorMode::From(&encoded, rocksdb::Direction::Forward),
+                    );
+                    for item in iter {
+                        let (k, _) = item.context(RocksSnafu)?;
+                        if !k.starts_with(&encoded) {
+                            break;
+                        }
+                        batch.delete_cf(&cf, k);
+                    }
                 }
             }
             
@@ -2156,16 +2192,52 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
+        // Get MetaCF handle to iterate over metadata
+        let meta_cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "MetaCF is not initialized".to_string(),
+            })?;
+
         let mut keys = Vec::new();
-        let iter = db.iterator(rocksdb::IteratorMode::Start);
+        let iter = db.iterator_cf(&meta_cf, rocksdb::IteratorMode::Start);
         
         for item in iter {
-            let (key_bytes, _) = item.context(RocksSnafu)?;
-            let key_str = String::from_utf8_lossy(&key_bytes);
+            let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
             
-            // Simple pattern matching - in a full implementation, we'd support glob patterns
-            if pattern == "*" || key_str.contains(pattern) {
-                keys.push(key_str.to_string());
+            // Decode the key to get the actual user key
+            if let Ok(base_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
+                let key_str = String::from_utf8_lossy(base_key.key());
+                
+                // Check if key is not expired
+                if let Ok(parsed) = ParsedStringsValue::new(&value_bytes[..]) {
+                    if !parsed.is_stale() {
+                        // Simple pattern matching - in a full implementation, we'd support glob patterns
+                        if pattern == "*" || key_str.contains(pattern) {
+                            keys.push(key_str.to_string());
+                        }
+                    }
+                }
+            } else if let Ok(meta_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
+                let key_str = String::from_utf8_lossy(meta_key.key());
+                
+                // Check if meta key is not expired using appropriate parser
+                if !value_bytes.is_empty() {
+                    let is_valid = if let Ok(meta) = crate::base_meta_value_format::ParsedBaseMetaValue::new(&value_bytes[..]) {
+                        !meta.is_stale() && meta.count() > 0
+                    } else if let Ok(list_meta) = crate::list_meta_value_format::ParsedListsMetaValue::new(&value_bytes[..]) {
+                        !list_meta.is_stale() && list_meta.count() > 0
+                    } else {
+                        false
+                    };
+                    
+                    if is_valid {
+                        // Simple pattern matching
+                        if pattern == "*" || key_str.contains(pattern) {
+                            keys.push(key_str.to_string());
+                        }
+                    }
+                }
             }
         }
 
@@ -2180,12 +2252,14 @@ impl Redis {
 
         // Delete all keys from all column families
         let mut batch = rocksdb::WriteBatch::default();
-        
-        // Iterate through all keys and delete them
-        let iter = db.iterator(rocksdb::IteratorMode::Start);
-        for item in iter {
-            let (key_bytes, _) = item.context(RocksSnafu)?;
-            batch.delete(&key_bytes);
+
+        // Clear MetaCF (where string and metadata keys are stored)
+        if let Some(meta_cf) = self.get_cf_handle(ColumnFamilyIndex::MetaCF) {
+            let iter = db.iterator_cf(&meta_cf, rocksdb::IteratorMode::Start);
+            for item in iter {
+                let (key_bytes, _) = item.context(RocksSnafu)?;
+                batch.delete_cf(&meta_cf, &key_bytes);
+            }
         }
 
         // Also clear other column families
@@ -2220,17 +2294,41 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
-        // Simple implementation: get the first key we find
-        let iter = db.iterator(rocksdb::IteratorMode::Start);
+        // Get MetaCF handle to iterate over metadata
+        let meta_cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "MetaCF is not initialized".to_string(),
+            })?;
+
+        // Simple implementation: get the first non-expired key we find
+        let iter = db.iterator_cf(&meta_cf, rocksdb::IteratorMode::Start);
         for item in iter {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
             
-            // Check if the key is not expired
-            if !value_bytes.is_empty() {
-                let parsed_value = ParsedStringsValue::new(bytes::BytesMut::from(&value_bytes[..]));
-                if let Ok(parsed) = parsed_value {
-                    if !parsed.is_stale() {
-                        return Ok(Some(String::from_utf8_lossy(&key_bytes).to_string()));
+            // Decode the key to get the actual user key
+            if let Ok(base_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
+                // Check if the string key is not expired
+                if !value_bytes.is_empty() {
+                    if let Ok(parsed) = ParsedStringsValue::new(&value_bytes[..]) {
+                        if !parsed.is_stale() {
+                            return Ok(Some(String::from_utf8_lossy(base_key.key()).to_string()));
+                        }
+                    }
+                }
+            } else if let Ok(meta_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
+                // Check if meta key is not expired
+                if !value_bytes.is_empty() {
+                    let is_valid = if let Ok(meta) = crate::base_meta_value_format::ParsedBaseMetaValue::new(&value_bytes[..]) {
+                        !meta.is_stale() && meta.count() > 0
+                    } else if let Ok(list_meta) = crate::list_meta_value_format::ParsedListsMetaValue::new(&value_bytes[..]) {
+                        !list_meta.is_stale() && list_meta.count() > 0
+                    } else {
+                        false
+                    };
+                    
+                    if is_valid {
+                        return Ok(Some(String::from_utf8_lossy(meta_key.key()).to_string()));
                     }
                 }
             }

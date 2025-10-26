@@ -76,6 +76,13 @@ impl Cmd for PexpireCmd {
             }
         };
 
+        if milliseconds < 0 {
+            client.set_reply(RespData::Error(
+                "ERR invalid expire time in pexpire".into(),
+            ));
+            return;
+        }
+
         match storage.pexpire(&key, milliseconds) {
             Ok(success) => {
                 client.set_reply(RespData::Integer(if success { 1 } else { 0 }));

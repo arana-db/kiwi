@@ -52,6 +52,10 @@ impl Cmd for HSetNXCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let argv = client.argv();
+        if argv.len() != 4 {
+            client.set_reply(RespData::Error("ERR wrong number of arguments for 'hsetnx' command".into()));
+            return;
+        }
         let key = &argv[1];
         let field = &argv[2];
         let value = &argv[3];

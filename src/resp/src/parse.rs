@@ -55,6 +55,7 @@ pub struct RespParse {
     buffer: BytesMut,
     commands: VecDeque<RespResult<RespCommand>>,
     is_pipeline: bool,
+    version_detected: bool,
 }
 
 impl Default for RespParse {
@@ -70,6 +71,7 @@ impl RespParse {
             buffer: BytesMut::new(),
             commands: VecDeque::new(),
             is_pipeline: false,
+            version_detected: false,
         }
     }
 
@@ -100,6 +102,7 @@ impl RespParse {
         if detected_version != self.version {
             self.set_version(detected_version);
         }
+        self.version_detected = true;
     }
 
     fn parse_inline(input: &[u8]) -> IResult<&[u8], RespData> {
@@ -230,23 +233,19 @@ impl RespParse {
 
     fn parse_double(input: &[u8]) -> IResult<&[u8], RespData> {
         let (input, _) = char(',')(input)?;
-        let mut map_parser = map_res(
-            terminated(
-                recognize((
-                    opt(char('-')),
-                    digit1,
-                    opt((char('.'), digit1)),
-                    opt((char('e').or(char('E')), opt(char('-').or(char('+'))), digit1)),
-                )),
-                line_ending,
-            ),
-            |s: &[u8]| {
-                str::from_utf8(s)
-                    .map_err(|_| ())
-                    .and_then(|s| s.parse::<f64>().map_err(|_| ()))
-            },
-        );
-        let (input, value) = map_parser.parse(input)?;
+        let (input, raw) = terminated(not_line_ending, line_ending).parse(input)?;
+        let s = str::from_utf8(raw).map_err(|_| {
+            nom::Err::Error(nom::error::Error::new(raw, nom::error::ErrorKind::MapRes))
+        })?;
+        let sl = s.to_ascii_lowercase();
+        let value = match sl.as_str() {
+            "inf" => f64::INFINITY,
+            "-inf" => f64::NEG_INFINITY,
+            "nan" => f64::NAN,
+            _ => s.parse::<f64>().map_err(|_| {
+                nom::Err::Error(nom::error::Error::new(raw, nom::error::ErrorKind::MapRes))
+            })?,
+        };
         Ok((input, RespData::Double(value)))
     }
 
@@ -301,6 +300,14 @@ impl RespParse {
         let (input, data) = ter_parser.parse(input)?;
         
         if data.len() < 4 {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Verify,
+            )));
+        }
+
+        // Validate that byte 3 is the ':' separator (format is "fmt:data")
+        if data[3] != b':' {
             return Err(nom::Err::Error(nom::error::Error::new(
                 input,
                 nom::error::ErrorKind::Verify,
@@ -458,8 +465,8 @@ impl RespParse {
 
 impl Parse for RespParse {
     fn parse(&mut self, data: Bytes) -> RespParseResult {
-        // Auto-detect protocol version if buffer is empty (new connection)
-        if self.buffer.is_empty() && !data.is_empty() {
+        // Auto-detect protocol version on first data received (handles partial initial data)
+        if !self.version_detected && !data.is_empty() {
             self.auto_detect_version(&data);
         }
 
@@ -476,6 +483,7 @@ impl Parse for RespParse {
         self.buffer.clear();
         self.commands.clear();
         self.is_pipeline = false;
+        self.version_detected = false;
     }
 }
 

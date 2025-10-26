@@ -95,16 +95,15 @@ impl Redis {
                 }
 
                 if del_cnt > 0 {
-                    let count_change = (-del_cnt) as i64;
-                    let current_count = meta_val.count() as i64;
-                    let new_count = current_count + count_change;
-                    if new_count < 0 {
+                    let current = meta_val.count();
+                    let to_del = del_cnt as u64;
+                    if to_del > current {
                         return RedisErrSnafu {
-                            message: "hash size overflow".to_string(),
+                            message: "hash size underflow".to_string(),
                         }
                         .fail();
                     }
-                    meta_val.set_count(new_count as u64);
+                    meta_val.set_count(current - to_del);
                     batch.put_cf(meta_cf, &base_meta_key, meta_val.encoded());
                     db.write_opt(batch, &self.write_options)
                         .context(RocksSnafu)?;
@@ -213,7 +212,11 @@ impl Redis {
                 let data_key = MemberDataKey::new(key, version, &[]);
                 let prefix = data_key.encode_seek_key()?;
 
-                let iter = db.iterator_cf(data_cf, rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward));
+                let iter = db.iterator_cf_opt(
+                    data_cf,
+                    &self.read_options,
+                    rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
+                );
                 let mut fields = Vec::new();
                 for item in iter {
                     let (k, _) = item.context(RocksSnafu)?;
@@ -422,7 +425,11 @@ impl Redis {
                 let data_key = MemberDataKey::new(key, version, &[]);
                 let prefix = data_key.encode_seek_key()?;
 
-                let iter = db.iterator_cf(data_cf, rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward));
+                let iter = db.iterator_cf_opt(
+                    data_cf,
+                    &self.read_options,
+                    rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
+                );
                 let mut result = Vec::new();
                 for item in iter {
                     let (k, v) = item.context(RocksSnafu)?;
@@ -483,7 +490,11 @@ impl Redis {
                 let data_key = MemberDataKey::new(key, version, &[]);
                 let prefix = data_key.encode_seek_key()?;
 
-                let iter = db.iterator_cf(data_cf, rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward));
+                let iter = db.iterator_cf_opt(
+                    data_cf,
+                    &self.read_options,
+                    rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
+                );
                 let mut values = Vec::new();
                 for item in iter {
                     let (k, v) = item.context(RocksSnafu)?;

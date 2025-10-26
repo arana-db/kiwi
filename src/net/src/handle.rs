@@ -112,7 +112,7 @@ pub async fn process_cluster_connection(
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
-    raft_node: Arc<dyn Send + Sync>,
+    raft_compatibility: Arc<raft::RedisProtocolCompatibility>,
 ) -> std::io::Result<()> {
     let mut buf = vec![0; 1024];
     let mut resp_parser = resp::RespParse::new(resp::RespVersion::RESP2);
@@ -141,7 +141,7 @@ pub async fn process_cluster_connection(
                                         storage.clone(), 
                                         cmd_table.clone(), 
                                         executor.clone(),
-                                        raft_node.clone()
+                                        raft_compatibility.clone()
                                     ).await;
                                     
                                     // Extract the reply from the connection and send it
@@ -178,18 +178,18 @@ async fn handle_cluster_command(
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
-    raft_node: Arc<dyn Send + Sync>,
+    raft_compatibility: Arc<raft::RedisProtocolCompatibility>,
 ) {
     // Convert the command name from &[u8] to a lowercase String for lookup
     let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
 
     if let Some(cmd) = cmd_table.get(&cmd_name) {
-        // Create cluster-aware execution that can route through Raft
+        // Create cluster-aware execution that routes through Raft
         let cluster_exec = ClusterCmdExecution {
             cmd: cmd.clone(),
             client: client.clone(),
             storage,
-            raft_node,
+            raft_compatibility,
         };
         
         // For now, use the regular executor but with cluster awareness

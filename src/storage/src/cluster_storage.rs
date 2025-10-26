@@ -92,7 +92,7 @@ impl std::ops::Deref for ClusterStorage {
     type Target = Storage;
     
     fn deref(&self) -> &Self::Target {
-        &self.local_storage
+        self.local_storage.as_ref()
     }
 }
 

@@ -88,12 +88,24 @@ pub struct SnapshotMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisCommand {
     pub command: String,
-    pub args: Vec<Vec<u8>>,
+    pub args: Vec<Bytes>,
 }
 
 impl RedisCommand {
-    pub fn new(command: String, args: Vec<Vec<u8>>) -> Self {
+    pub fn new(command: String, args: Vec<Bytes>) -> Self {
         Self { command, args }
+    }
+    
+    /// Create from string arguments
+    pub fn from_strings(command: String, args: Vec<String>) -> Self {
+        let byte_args = args.into_iter().map(|s| Bytes::from(s)).collect();
+        Self { command, args: byte_args }
+    }
+    
+    /// Create from byte vector arguments
+    pub fn from_bytes(command: String, args: Vec<Vec<u8>>) -> Self {
+        let byte_args = args.into_iter().map(|v| Bytes::from(v)).collect();
+        Self { command, args: byte_args }
     }
 }
 
@@ -109,8 +121,28 @@ pub struct ClientRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientResponse {
     pub id: RequestId,
-    pub result: Result<Vec<u8>, String>,
+    pub result: Result<Bytes, String>,
     pub leader_id: Option<NodeId>,
+}
+
+impl ClientResponse {
+    /// Create a successful response
+    pub fn success(id: RequestId, data: Bytes, leader_id: Option<NodeId>) -> Self {
+        Self {
+            id,
+            result: Ok(data),
+            leader_id,
+        }
+    }
+    
+    /// Create an error response
+    pub fn error(id: RequestId, error: String, leader_id: Option<NodeId>) -> Self {
+        Self {
+            id,
+            result: Err(error),
+            leader_id,
+        }
+    }
 }
 
 /// Type configuration for openraft
@@ -122,11 +154,20 @@ impl openraft::RaftTypeConfig for TypeConfig {
     type R = ClientResponse;
     type NodeId = NodeId;
     type Node = BasicNode;
-    type Entry = openraft::Entry<Self>;
+    type Entry = openraft::Entry<TypeConfig>;
     type SnapshotData = std::io::Cursor<Vec<u8>>;
     type AsyncRuntime = openraft::TokioRuntime;
-    type Responder = openraft::impls::OneshotResponder<Self>;
+    type Responder = openraft::impls::OneshotResponder<TypeConfig>;
 }
+
+/// Raft storage type alias
+pub type RaftStorage = openraft::storage::Adaptor<TypeConfig, crate::storage::RaftStorage>;
+
+/// Raft state machine type alias  
+pub type RaftStateMachine = openraft::storage::Adaptor<TypeConfig, crate::state_machine::KiwiStateMachine>;
+
+/// Raft network type alias
+pub type RaftNetwork = crate::network::RaftNetworkClient;
 
 /// Read consistency levels
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -171,6 +212,19 @@ impl Default for ClusterConfig {
             max_payload_entries: 100,
         }
     }
+}
+
+/// Cluster health information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClusterHealth {
+    pub total_members: usize,
+    pub healthy_members: usize,
+    pub learners: usize,
+    pub partitioned_nodes: usize,
+    pub current_leader: Option<NodeId>,
+    pub is_healthy: bool,
+    pub last_log_index: u64,
+    pub commit_index: u64,
 }
 
 #[cfg(test)]

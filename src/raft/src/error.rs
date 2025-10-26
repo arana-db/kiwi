@@ -44,6 +44,12 @@ pub enum RaftError {
     #[error("Configuration error: {message}")]
     Configuration { message: String },
 
+    #[error("Consistency error: {message}")]
+    Consistency { message: String },
+
+    #[error("Fatal error: {0}")]
+    Fatal(#[from] openraft::error::Fatal<NodeId>),
+
     #[error("State machine error: {message}")]
     StateMachine { message: String },
 
@@ -60,6 +66,13 @@ pub enum NetworkError {
     #[error("Connection failed to node {node_id}: {source}")]
     ConnectionFailed {
         node_id: NodeId,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("Connection failed to address {address}: {source}")]
+    ConnectionFailedToAddress {
+        address: String,
         #[source]
         source: std::io::Error,
     },
@@ -106,6 +119,13 @@ impl RaftError {
     /// Create a configuration error
     pub fn configuration<S: Into<String>>(message: S) -> Self {
         Self::Configuration {
+            message: message.into(),
+        }
+    }
+
+    /// Create a consistency error
+    pub fn consistency<S: Into<String>>(message: S) -> Self {
+        Self::Consistency {
             message: message.into(),
         }
     }

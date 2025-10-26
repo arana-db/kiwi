@@ -21,31 +21,61 @@
 //! using the Raft consensus algorithm via the openraft library.
 
 use openraft::Config;
-use serde::{Deserialize, Serialize};
 
+pub mod cluster_config;
+pub mod config_change;
 // pub mod consistency;
+pub mod consistency_handler;
+pub mod discovery;
 pub mod error;
-// pub mod metrics;
-// pub mod network;
+pub mod logging;
+pub mod metrics;
+pub mod network;
 pub mod node;
 // pub mod performance;
+pub mod protocol_compatibility;
+pub mod redis_integration;
 // pub mod serialization;
-// pub mod state_machine;
-// pub mod storage;
+pub mod state_machine;
+pub mod storage;
 pub mod types;
 
 // Re-export commonly used types
+pub use cluster_config::{
+    ClusterConfigManager, ClusterConfiguration, NodeEndpoint, BootstrapConfig, RaftConfiguration
+};
+pub use config_change::{
+    ConfigChangeManager, ConfigChangeType, ConfigChangeRequest, ConfigChangeResult, 
+    ConfigChangeStatus, ConfigChangeOperation
+};
 // pub use consistency::{ConsistencyChecker, ConsistencyMonitor, ConsistencyStatus};
+pub use consistency_handler::{ConsistencyHandler, ConsistencyConfig};
+pub use discovery::{
+    NodeDiscovery, HealthMonitor, ClusterTopology, NodeStatus, HealthCheckResult, HealthMonitorConfig,
+    ClusterStatusReporter, ClusterStatusReport, NodeStatusReport, NodeRole, LeadershipStatus,
+    ReplicationStatus, ClusterPerformanceMetrics, ClusterHealthSummary, ReplicationLagSummary
+};
 pub use error::RaftError;
-// pub use metrics::{MetricsCollector, RaftMetrics, RaftStateMetrics, PerformanceMetrics, ReplicationMetrics, NetworkMetrics, StorageMetrics};
+pub use logging::{
+    RaftLogger, RaftDebugger, RaftEvent, RaftLogEntry, DebugSnapshot, LogLevel,
+    ElectionEventType, ReplicationEventType, SnapshotEventType, NetworkEventType, ConfigChangeEventType
+};
+pub use metrics::{MetricsCollector, RaftMetrics, RaftStateMetrics, PerformanceMetrics, ReplicationMetrics, NetworkMetrics, StorageMetrics};
+pub use network::{
+    KiwiRaftNetworkFactory, RaftNetworkClient, ConnectionPool, MessageRouter, MessageEnvelope, 
+    RaftMessage, PartitionDetector, TlsConfig, NodeAuth, SecureStream
+};
 pub use node::{RaftNode, RaftNodeInterface};
 // pub use performance::{
 //     BatchConfig, RequestBatcher, PipelineConfig, ReplicationPipeline,
 //     read_optimization::{ReadOptimizer, ReadOptimizationConfig},
 //     resource_management::{ResourceManager, ResourceConfig, MemoryTracker},
 // };
+pub use protocol_compatibility::RedisProtocolCompatibility;
+pub use redis_integration::RaftRedisHandler;
 // pub use serialization::CommandSerializer;
-// pub use state_machine::KiwiStateMachine;
+pub use state_machine::KiwiStateMachine;
+pub use storage::RaftStorage as KiwiRaftStorage;
 pub use types::*;
 
 /// Create default Raft configuration
@@ -75,7 +105,7 @@ mod tests {
     fn test_client_request_serialization() {
         let request = ClientRequest {
             id: RequestId::new(),
-            command: RedisCommand::new("SET".to_string(), vec![b"key".to_vec(), b"value".to_vec()]),
+            command: RedisCommand::from_bytes("SET".to_string(), vec![b"key".to_vec(), b"value".to_vec()]),
             consistency_level: ConsistencyLevel::Linearizable,
         };
 
@@ -87,3 +117,6 @@ mod tests {
         assert_eq!(request.consistency_level, deserialized.consistency_level);
     }
 }
+#[
+cfg(test)]
+pub mod integration_tests;

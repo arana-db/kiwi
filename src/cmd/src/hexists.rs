@@ -52,6 +52,7 @@ impl Cmd for HExistsCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let argv = client.argv();
+        // Note: Parameter count is already validated by the framework via arity check
         let key = &argv[1];
         let field = &argv[2];
         

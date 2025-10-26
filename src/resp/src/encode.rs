@@ -404,7 +404,13 @@ impl RespEncode for RespEncoder {
                 self.append_crlf()
             }
             RespData::Double(d) => {
-                let _ = write!(self.buffer, ",{d}");
+                if d.is_nan() {
+                    self.buffer.extend_from_slice(b",nan");
+                } else if d.is_infinite() {
+                    self.buffer.extend_from_slice(if d.is_sign_negative() { b",-inf" } else { b",inf" });
+                } else {
+                    let _ = write!(self.buffer, ",{}", d);
+                }
                 self.append_crlf()
             }
             RespData::BigNumber(bytes) => {
@@ -468,7 +474,13 @@ impl RespEncode for RespEncoder {
     }
 
     fn append_double(&mut self, value: f64) -> &mut Self {
-        let _ = write!(self.buffer, ",{value}");
+        if value.is_nan() {
+            self.buffer.extend_from_slice(b",nan");
+        } else if value.is_infinite() {
+            self.buffer.extend_from_slice(if value.is_sign_negative() { b",-inf" } else { b",inf" });
+        } else {
+            let _ = write!(self.buffer, ",{}", value);
+        }
         self.append_crlf()
     }
 

@@ -166,6 +166,10 @@ impl ExpirationManager {
     }
 
     /// Get remaining time to live for a key in seconds
+    /// Returns:
+    /// - Some(positive) if key exists and hasn't expired (TTL in seconds)
+    /// - Some(-1) if key exists but has no expiration
+    /// - Some(-2) if key doesn't exist or has expired
     pub fn get_ttl_seconds(&self, key: &str) -> Option<i64> {
         let key_expiry = self.key_expiry.read();
         if let Some(&expire_time_micros) = key_expiry.get(key) {
@@ -174,14 +178,18 @@ impl ExpirationManager {
                 let remaining_micros = expire_time_micros - current_micros;
                 Some((remaining_micros / 1_000_000) as i64)
             } else {
-                Some(-1) // Key has expired
+                Some(-2) // Key has expired (treat as non-existent)
             }
         } else {
-            Some(-1) // Key doesn't exist or has no expiration
+            Some(-1) // Key has no expiration (may or may not exist)
         }
     }
 
     /// Get remaining time to live for a key in milliseconds
+    /// Returns:
+    /// - Some(positive) if key exists and hasn't expired (TTL in milliseconds)
+    /// - Some(-1) if key exists but has no expiration
+    /// - Some(-2) if key doesn't exist or has expired
     pub fn get_ttl_milliseconds(&self, key: &str) -> Option<i64> {
         let key_expiry = self.key_expiry.read();
         if let Some(&expire_time_micros) = key_expiry.get(key) {
@@ -190,10 +198,10 @@ impl ExpirationManager {
                 let remaining_micros = expire_time_micros - current_micros;
                 Some((remaining_micros / 1_000) as i64)
             } else {
-                Some(-1) // Key has expired
+                Some(-2) // Key has expired (treat as non-existent)
             }
         } else {
-            Some(-1) // Key doesn't exist or has no expiration
+            Some(-1) // Key has no expiration (may or may not exist)
         }
     }
 
@@ -205,6 +213,13 @@ impl ExpirationManager {
 
     /// Convert seconds to microseconds timestamp
     pub fn seconds_to_expire_time(seconds: i64) -> Result<u64> {
+        if seconds < 0 {
+            return Err(crate::error::Error::InvalidFormat {
+                message: "Negative TTL seconds".to_string(),
+                location: snafu::location!(),
+            });
+        }
+        
         let current_micros = Utc::now().timestamp_micros() as u64;
         let seconds_micros = (seconds as u64)
             .checked_mul(1_000_000)
@@ -223,6 +238,13 @@ impl ExpirationManager {
 
     /// Convert milliseconds to microseconds timestamp
     pub fn milliseconds_to_expire_time(milliseconds: i64) -> Result<u64> {
+        if milliseconds < 0 {
+            return Err(crate::error::Error::InvalidFormat {
+                message: "Negative TTL milliseconds".to_string(),
+                location: snafu::location!(),
+            });
+        }
+        
         let current_micros = Utc::now().timestamp_micros() as u64;
         let milliseconds_micros = (milliseconds as u64)
             .checked_mul(1_000)

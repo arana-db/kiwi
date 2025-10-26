@@ -20,6 +20,7 @@ use std::sync::Arc;
 use client::Client;
 use cmd::Cmd;
 use log::{error, info, warn};
+use raft::{RaftNode, RedisProtocolCompatibility, RedisCommand};
 use resp::RespData;
 use storage::storage::Storage;
 use tokio::{sync::oneshot, task::JoinHandle};
@@ -32,7 +33,7 @@ pub struct ClusterCmdExecution {
     pub cmd: Arc<dyn Cmd>,
     pub client: Arc<Client>,
     pub storage: Arc<Storage>,
-    pub raft_node: Arc<dyn Send + Sync>,
+    pub raft_compatibility: Arc<RedisProtocolCompatibility>,
 }
 
 /// Work item for cluster command execution
@@ -94,14 +95,18 @@ impl ClusterCmdExecutor {
 
         // Send the work to the worker pool
         match self.work_tx.send(work).await {
-            Ok(_) => {}
-            Err(async_channel::SendError(_)) => {
-                panic!("Failed to send work to worker; cluster executor likely closed");
+            Ok(_) => {
+                // Wait for completion
+                let _ = done_rx.await;
+            }
+            Err(async_channel::SendError(work)) => {
+                // Executor has been closed; set error response
+                log::error!("Failed to send work to worker; cluster executor is closed");
+                work.exec.client.set_reply(RespData::Error(
+                    "ERR cluster executor is closed".into()
+                ));
             }
         }
-
-        // Wait for completion
-        let _ = done_rx.await;
     }
 
     pub async fn close(&mut self) {
@@ -118,18 +123,20 @@ impl ClusterCmdExecutor {
     async fn do_execute_once(work: ClusterCmdExecutionWork) {
         let exec = work.exec;
         
-        // Determine if this is a write command that needs Raft consensus
-        let cmd_name = String::from_utf8_lossy(&exec.client.cmd_name()).to_lowercase();
-        let is_write_command = Self::is_write_command(&cmd_name);
+        // Convert client command to RedisCommand format
+        let cmd_name = String::from_utf8_lossy(&exec.client.cmd_name()).to_string();
+        let args: Vec<Vec<u8>> = exec.client.argv().iter().skip(1).cloned().collect();
+        let redis_command = RedisCommand::new(cmd_name.clone(), args);
         
-        if is_write_command {
-            // TODO: Route through Raft consensus for write commands
-            // For now, execute directly (will be enhanced when Raft is fully implemented)
-            warn!("Write command '{}' executed directly - Raft integration pending", cmd_name);
-            exec.cmd.execute(exec.client.as_ref(), exec.storage);
-        } else {
-            // Read commands can be executed directly on local storage
-            exec.cmd.execute(exec.client.as_ref(), exec.storage);
+        // Process command through Raft-aware Redis protocol compatibility layer
+        match exec.raft_compatibility.process_redis_command(&exec.client, redis_command).await {
+            Ok(response) => {
+                exec.client.set_reply(response);
+            }
+            Err(e) => {
+                error!("Cluster command execution failed: {}", e);
+                exec.client.set_reply(RespData::Error(format!("ERR {}", e).into()));
+            }
         }
 
         // Notify completion
@@ -179,13 +186,13 @@ impl ClusterCmdExecutor {
 }
 
 /// Convert regular CmdExecution to ClusterCmdExecution
-impl From<(CmdExecution, Arc<dyn Send + Sync>)> for ClusterCmdExecution {
-    fn from((exec, raft_node): (CmdExecution, Arc<dyn Send + Sync>)) -> Self {
+impl From<(CmdExecution, Arc<RedisProtocolCompatibility>)> for ClusterCmdExecution {
+    fn from((exec, raft_compatibility): (CmdExecution, Arc<RedisProtocolCompatibility>)) -> Self {
         Self {
             cmd: exec.cmd,
             client: exec.client,
             storage: exec.storage,
-            raft_node,
+            raft_compatibility,
         }
     }
 }

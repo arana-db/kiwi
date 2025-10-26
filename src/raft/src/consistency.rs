@@ -242,9 +242,11 @@ impl ConsistencyChecker {
 
     /// Check if recovery is needed based on consistency status
     pub fn needs_recovery(&self, status: &ConsistencyStatus) -> bool {
-        matches!(status, 
-            ConsistencyStatus::Behind { .. } | 
-            ConsistencyStatus::Corrupted { .. }
+        matches!(
+            status,
+            ConsistencyStatus::Behind { .. }
+                | ConsistencyStatus::Ahead { .. }
+                | ConsistencyStatus::Corrupted { .. }
         )
     }
 

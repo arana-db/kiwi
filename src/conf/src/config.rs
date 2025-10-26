@@ -380,6 +380,38 @@ impl Config {
             }
         }
 
+        // Validate cluster configuration invariants (Raft timing constraints)
+        if config.cluster.enabled {
+            if config.cluster.election_timeout_min_ms == 0 {
+                return Err(Error::InvalidConfig {
+                    source: serde_ini::de::Error::Custom(
+                        "cluster-election-timeout-min must be > 0".to_string(),
+                    ),
+                });
+            }
+            if config.cluster.election_timeout_min_ms >= config.cluster.election_timeout_max_ms {
+                return Err(Error::InvalidConfig {
+                    source: serde_ini::de::Error::Custom(
+                        "cluster-election-timeout-min must be < cluster-election-timeout-max".to_string(),
+                    ),
+                });
+            }
+            if config.cluster.heartbeat_interval_ms >= config.cluster.election_timeout_min_ms {
+                return Err(Error::InvalidConfig {
+                    source: serde_ini::de::Error::Custom(
+                        "cluster-heartbeat-interval must be < cluster-election-timeout-min for proper Raft operation".to_string(),
+                    ),
+                });
+            }
+            if config.cluster.node_id == 0 {
+                return Err(Error::InvalidConfig {
+                    source: serde_ini::de::Error::Custom(
+                        "cluster-node-id must be >= 1 (0 is reserved)".to_string(),
+                    ),
+                });
+            }
+        }
+
         config
             .validate()
             .map_err(|_e| Error::ValidConfigFail { source: _e })?;
