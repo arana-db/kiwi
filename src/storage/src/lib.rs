@@ -49,6 +49,7 @@ mod redis_strings;
 pub mod error;
 pub mod options;
 pub mod storage;
+pub mod cluster_storage;
 
 pub use base_key_format::BaseMetaKey;
 pub use base_value_format::*;
@@ -59,3 +60,4 @@ pub use redis::{ColumnFamilyIndex, Redis};
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use util::unique_test_db_path;
+pub use cluster_storage::ClusterStorage;

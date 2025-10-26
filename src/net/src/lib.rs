@@ -27,10 +27,11 @@ pub mod error;
 pub mod unix;
 
 use std::error::Error;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::tcp::TcpServer;
+use crate::tcp::{TcpServer, ClusterTcpServer};
 
 #[async_trait]
 pub trait ServerTrait: Send + Sync + 'static {
@@ -47,6 +48,17 @@ impl ServerFactory {
             "unix" => Some(Box::new(unix::UnixServer::new(addr))),
             #[cfg(not(unix))]
             "unix" => None,
+            _ => None,
+        }
+    }
+    
+    pub fn create_cluster_server(
+        protocol: &str, 
+        addr: Option<String>, 
+        raft_node: Arc<dyn Send + Sync>
+    ) -> Option<Box<dyn ServerTrait>> {
+        match protocol.to_lowercase().as_str() {
+            "tcp" => Some(Box::new(ClusterTcpServer::new(addr, raft_node))),
             _ => None,
         }
     }

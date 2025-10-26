@@ -103,12 +103,17 @@ pub fn create_command_table() -> CmdTable {
         crate::list::LSetCmd,
         crate::list::LTrimCmd,
         crate::list::LRemCmd,
+        // Admin commands
+        crate::admin::InfoCmd,
+        crate::admin::ConfigCmd,
         // TODO: add more commands...
     );
 
     register_group_cmd!(
         cmd_table,
         crate::group_client::new_client_group_cmd,
+        crate::cluster::new_cluster_group_cmd,
+        crate::cluster::new_raft_group_cmd,
         // TODO: add more group commands...
     );
 

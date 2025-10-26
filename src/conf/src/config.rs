@@ -16,12 +16,44 @@
 // limitations under the License.
 use snafu::ResultExt;
 use validator::Validate;
+use std::collections::BTreeSet;
 
 use crate::de_func::{parse_bool_from_string, parse_memory, parse_redis_config};
 use crate::error::Error;
 
 const DEFAULT_BINDING: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 7379; // Redis-compatible port (7xxx variant of 6379)
+
+// Cluster configuration
+#[derive(Debug, Clone)]
+pub struct ClusterConfig {
+    pub enabled: bool,
+    pub node_id: u64,
+    pub cluster_members: BTreeSet<String>, // Format: "node_id:host:port"
+    pub data_dir: String,
+    pub heartbeat_interval_ms: u64,
+    pub election_timeout_min_ms: u64,
+    pub election_timeout_max_ms: u64,
+    pub snapshot_threshold: u64,
+    pub max_payload_entries: u64,
+}
+
+impl Default for ClusterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            node_id: 1,
+            cluster_members: BTreeSet::new(),
+            data_dir: "./raft_data".to_string(),
+            heartbeat_interval_ms: 1000,
+            election_timeout_min_ms: 3000,
+            election_timeout_max_ms: 6000,
+            snapshot_threshold: 1000,
+            max_payload_entries: 100,
+        }
+    }
+}
+
 // config struct define - keeping original config items but using Redis-style format
 #[derive(Debug, Validate)]
 pub struct Config {
@@ -53,6 +85,9 @@ pub struct Config {
     pub log_dir: String,
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
+    
+    // Cluster configuration
+    pub cluster: ClusterConfig,
 }
 
 // set default value for config
@@ -85,6 +120,8 @@ impl Default for Config {
             db_instance_num: 3,
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
+            
+            cluster: ClusterConfig::default(),
         }
     }
 }
@@ -266,6 +303,75 @@ impl Config {
                                 e
                             )),
                         })?;
+                }
+                // Cluster configuration
+                "cluster-enabled" => {
+                    config.cluster.enabled = parse_bool_from_string(&value)
+                        .map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid cluster-enabled: {}",
+                                e
+                            )),
+                        })?;
+                }
+                "cluster-node-id" => {
+                    config.cluster.node_id = value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!(
+                            "Invalid cluster-node-id: {}",
+                            e
+                        )),
+                    })?;
+                }
+                "cluster-members" => {
+                    // Parse comma-separated list of cluster members
+                    config.cluster.cluster_members = value
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect();
+                }
+                "cluster-data-dir" => {
+                    config.cluster.data_dir = value;
+                }
+                "cluster-heartbeat-interval" => {
+                    config.cluster.heartbeat_interval_ms = value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!(
+                            "Invalid cluster-heartbeat-interval: {}",
+                            e
+                        )),
+                    })?;
+                }
+                "cluster-election-timeout-min" => {
+                    config.cluster.election_timeout_min_ms = value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!(
+                            "Invalid cluster-election-timeout-min: {}",
+                            e
+                        )),
+                    })?;
+                }
+                "cluster-election-timeout-max" => {
+                    config.cluster.election_timeout_max_ms = value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!(
+                            "Invalid cluster-election-timeout-max: {}",
+                            e
+                        )),
+                    })?;
+                }
+                "cluster-snapshot-threshold" => {
+                    config.cluster.snapshot_threshold = value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!(
+                            "Invalid cluster-snapshot-threshold: {}",
+                            e
+                        )),
+                    })?;
+                }
+                "cluster-max-payload-entries" => {
+                    config.cluster.max_payload_entries = value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!(
+                            "Invalid cluster-max-payload-entries: {}",
+                            e
+                        )),
+                    })?;
                 }
                 _ => {
                     // Unknown configuration key, skip it

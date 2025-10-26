@@ -15,10 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod admin;
 pub mod append;
 pub mod bitcount;
 pub mod bitop;
 pub mod bitpos;
+pub mod cluster;
 pub mod decr;
 pub mod decrby;
 pub mod del;
