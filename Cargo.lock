@@ -414,6 +414,7 @@ name = "cmd"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "bytes",
  "client",
  "log",
  "num-traits",

@@ -273,4 +273,90 @@ impl Storage {
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].incr_decr_float(key, incr)
     }
+
+    // Hash Commands Implementation
+
+    pub fn hset(&self, key: &[u8], field: &[u8], value: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hset(key, field, value)
+    }
+
+    pub fn hget(&self, key: &[u8], field: &[u8]) -> Result<Option<String>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hget(key, field)
+    }
+
+    pub fn hdel(&self, key: &[u8], fields: &[Vec<u8>]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hdel(key, fields)
+    }
+
+    pub fn hexists(&self, key: &[u8], field: &[u8]) -> Result<bool> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hexists(key, field)
+    }
+
+    pub fn hlen(&self, key: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hlen(key)
+    }
+
+    pub fn hkeys(&self, key: &[u8]) -> Result<Vec<String>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hkeys(key)
+    }
+
+    pub fn hgetall(&self, key: &[u8]) -> Result<Vec<(String, String)>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hgetall(key)
+    }
+
+    pub fn hvals(&self, key: &[u8]) -> Result<Vec<String>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hvals(key)
+    }
+
+    pub fn hmget(&self, key: &[u8], fields: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hmget(key, fields)
+    }
+
+    pub fn hmset(&self, key: &[u8], field_values: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hmset(key, field_values)
+    }
+
+    pub fn hsetnx(&self, key: &[u8], field: &[u8], value: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hsetnx(key, field, value)
+    }
+
+    pub fn hincrby(&self, key: &[u8], field: &[u8], increment: i64) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hincrby(key, field, increment)
+    }
+
+    pub fn hincrbyfloat(&self, key: &[u8], field: &[u8], increment: f64) -> Result<f64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hincrbyfloat(key, field, increment)
+    }
+
+    pub fn hstrlen(&self, key: &[u8], field: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hstrlen(key, field)
+    }
 }

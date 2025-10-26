@@ -77,6 +77,21 @@ pub fn create_command_table() -> CmdTable {
         crate::bitcount::BitcountCmd,
         crate::bitpos::BitposCmd,
         crate::bitop::BitopCmd,
+        // Hash commands
+        crate::hset::HSetCmd,
+        crate::hget::HGetCmd,
+        crate::hdel::HDelCmd,
+        crate::hexists::HExistsCmd,
+        crate::hlen::HLenCmd,
+        crate::hkeys::HKeysCmd,
+        crate::hmset::HMSetCmd,
+        crate::hmget::HMGetCmd,
+        crate::hgetall::HGetAllCmd,
+        crate::hvals::HValsCmd,
+        crate::hincrby::HIncrByCmd,
+        crate::hincrbyfloat::HIncrByFloatCmd,
+        crate::hsetnx::HSetNXCmd,
+        crate::hstrlen::HStrLenCmd,
         // TODO: add more commands...
     );
 
