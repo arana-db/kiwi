@@ -18,19 +18,22 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use client::{Client, StreamTrait};
 use cmd::table::{CmdTable, create_command_table};
 use executor::{CmdExecutor, CmdExecutorBuilder};
-use log::info;
+use log::{info, warn};
 use storage::options::StorageOptions;
 use storage::storage::Storage;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::time::interval;
 
 use crate::ServerTrait;
 use crate::handle::process_connection;
+use crate::pool::{ConnectionPool, PoolConfig};
 
 pub struct TcpStreamWrapper {
     stream: TcpStream,
@@ -52,11 +55,19 @@ impl StreamTrait for TcpStreamWrapper {
     }
 }
 
+/// Connection handler resources that can be pooled
+pub struct ConnectionResources {
+    pub storage: Arc<Storage>,
+    pub cmd_table: Arc<CmdTable>,
+    pub executor: Arc<CmdExecutor>,
+}
+
 pub struct TcpServer {
     addr: String,
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
+    resource_pool: Arc<ConnectionPool<ConnectionResources>>,
 }
 
 impl TcpServer {
@@ -71,12 +82,45 @@ impl TcpServer {
         // The caller should call storage.open(storage_options, db_path) and spawn the bg_task_worker as needed.
         storage.open(storage_options, db_path).unwrap();
 
+        // Configure connection pool
+        let pool_config = PoolConfig {
+            max_connections: 1000,
+            connection_timeout: Duration::from_secs(30),
+            idle_timeout: Duration::from_secs(300),
+            min_connections: 10,
+        };
+
+        let storage = Arc::new(storage);
+        let cmd_table = Arc::new(create_command_table());
+
         Self {
             addr: addr.unwrap_or("127.0.0.1:7379".to_string()),
-            storage: Arc::new(storage),
-            cmd_table: Arc::new(create_command_table()),
-            executor,
+            storage: storage.clone(),
+            cmd_table: cmd_table.clone(),
+            executor: executor.clone(),
+            resource_pool: Arc::new(ConnectionPool::new(pool_config)),
         }
+    }
+
+    /// Start background task for resource pool cleanup
+    async fn start_pool_cleanup(&self) {
+        let pool = self.resource_pool.clone();
+        tokio::spawn(async move {
+            let mut cleanup_interval = interval(Duration::from_secs(60)); // Cleanup every minute
+            
+            loop {
+                cleanup_interval.tick().await;
+                pool.cleanup_idle().await;
+                
+                let stats = pool.stats().await;
+                if stats.active_connections > 0 || stats.available_connections > 0 {
+                    info!(
+                        "Resource pool stats - Active: {}, Available: {}, Max: {}",
+                        stats.active_connections, stats.available_connections, stats.max_connections
+                    );
+                }
+            }
+        });
     }
 }
 
@@ -87,21 +131,51 @@ impl ServerTrait for TcpServer {
 
         info!("Listening on TCP: {}", self.addr);
 
+        // Start background cleanup task
+        self.start_pool_cleanup().await;
+
         loop {
-            let (socket, _) = listener.accept().await?;
+            let (socket, addr) = listener.accept().await?;
 
-            let s = TcpStreamWrapper::new(socket);
-
-            let client = Arc::new(Client::new(Box::new(s)));
-
+            let pool = self.resource_pool.clone();
             let storage = self.storage.clone();
             let cmd_table = self.cmd_table.clone();
             let executor = self.executor.clone();
 
             tokio::spawn(async move {
-                process_connection(client, storage, cmd_table, executor)
-                    .await
-                    .unwrap();
+                // Get or create resources from the pool
+                let pooled_resources = match pool.get_connection(|| async {
+                    Ok(ConnectionResources {
+                        storage: storage.clone(),
+                        cmd_table: cmd_table.clone(),
+                        executor: executor.clone(),
+                    })
+                }).await {
+                    Ok(resources) => resources,
+                    Err(e) => {
+                        warn!("Failed to get resources from pool for {}: {}", addr, e);
+                        return;
+                    }
+                };
+
+                // Create client for this specific connection
+                let stream = TcpStreamWrapper::new(socket);
+                let client = Arc::new(Client::new(Box::new(stream)));
+
+                // Process the connection
+                let result = process_connection(
+                    client,
+                    pooled_resources.connection.storage.clone(),
+                    pooled_resources.connection.cmd_table.clone(),
+                    pooled_resources.connection.executor.clone(),
+                ).await;
+
+                if let Err(e) = result {
+                    warn!("Connection processing error for {}: {}", addr, e);
+                }
+
+                // Return resources to pool
+                pool.return_connection(pooled_resources).await;
             });
         }
     }

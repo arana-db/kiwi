@@ -413,6 +413,7 @@ dependencies = [
 name = "cmd"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bitflags",
  "bytes",
  "client",
@@ -420,6 +421,7 @@ dependencies = [
  "num-traits",
  "resp",
  "storage",
+ "tokio",
 ]
 
 [[package]]
@@ -1494,11 +1496,14 @@ dependencies = [
  "bytes",
  "client",
  "cmd",
+ "env_logger",
  "executor",
  "log",
+ "parking_lot",
  "resp",
  "snafu",
  "storage",
+ "thiserror 1.0.69",
  "tokio",
 ]
 

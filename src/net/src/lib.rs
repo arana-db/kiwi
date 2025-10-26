@@ -15,7 +15,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod buffer;
 pub mod handle;
+pub mod optimized_handler;
+pub mod pipeline;
+pub mod pool;
 pub mod tcp;
 
 // TODO: delete this module

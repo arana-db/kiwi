@@ -14,6 +14,14 @@ path = "tests/redis_basic_test.rs"
 name = "storage_basic_test"
 path = "tests/storage_basic_test.rs"
 
+[[test]]
+name = "redis_list_test"
+path = "tests/redis_list_test.rs"
+
+[[test]]
+name = "ttl_test"
+path = "tests/ttl_test.rs"
+
 [dependencies]
 rocksdb.workspace = true 
 log.workspace = true

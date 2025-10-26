@@ -13,3 +13,7 @@ bytes = { workspace = true }
 storage = { path = "../storage" }
 client = { path = "../client" }
 resp = { path = "../resp" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
+async-trait = "0.1"

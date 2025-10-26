@@ -169,6 +169,7 @@ pub enum CommandType {
 
     // Connection
     Quit,
+    Hello,
 
     // Unknown command
     Unknown,
@@ -323,6 +324,7 @@ impl FromStr for CommandType {
 
             // Connection
             "QUIT" => Ok(CommandType::Quit),
+            "HELLO" => Ok(CommandType::Hello),
 
             // Unknown command
             _ => Ok(CommandType::Unknown),
@@ -477,6 +479,7 @@ impl fmt::Display for CommandType {
 
             // Connection
             CommandType::Quit => write!(f, "QUIT"),
+            CommandType::Hello => write!(f, "HELLO"),
 
             // Unknown command
             CommandType::Unknown => write!(f, "UNKNOWN"),

@@ -84,7 +84,7 @@ impl ListsMetaValue {
         self.right_index += index;
     }
 
-    fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         // type(1) + user_value + version(8) + left_index(8) + right_index(8) + reserve(16) + ctime(8) + etime(8)
         let needed = TYPE_LENGTH
             + self.inner.user_value.len()
@@ -179,7 +179,15 @@ impl ParsedListsMetaValue {
         self.set_right_index(INITIAL_RIGHT_INDEX);
         self.set_etime(0);
         self.set_ctime(0);
+        self.set_data_type_to_value(DataType::List);
         self.update_version()
+    }
+
+    fn set_data_type_to_value(&mut self, data_type: DataType) {
+        if !self.inner.value.is_empty() {
+            self.inner.value[0] = data_type as u8;
+            self.inner.data_type = data_type; // Also update the internal field
+        }
     }
 
     fn set_version_to_value(&mut self) {
@@ -290,6 +298,10 @@ impl ParsedListsMetaValue {
     pub fn modify_right_index(&mut self, index: u64) {
         self.right_index += index;
         self.set_index_to_value();
+    }
+
+    pub fn value(&self) -> &[u8] {
+        &self.inner.value
     }
 
     pub fn strip_suffix(&mut self) {
