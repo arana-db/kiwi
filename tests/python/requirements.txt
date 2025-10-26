@@ -7,7 +7,7 @@
 # (the "License"); you may not use this file except in compliance with
 # the License.  You may obtain a copy of the License at
 #
-#   http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,13 +15,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-edition = "2024"
-style_edition = "2024"
-reorder_imports = true
-# 注释掉仅在nightly版本中可用的不稳定特性
-# group_imports = "StdExternalCrate"
-# where_single_line = true
-# trailing_comma = "Vertical"
-# overflow_delimited_expr = true
-# format_code_in_doc_comments = true
-# normalize_comments = true
+# Python 测试依赖
+
+# Redis 客户端
+redis>=5.0.0
+
+# 测试框架
+pytest>=7.0.0
+pytest-timeout>=2.1.0
+
+# 代码覆盖率
+pytest-cov>=4.0.0
+
+# 性能基准测试
+pytest-benchmark>=4.0.0
+
+# 异步支持（如需要）
+pytest-asyncio>=0.21.0

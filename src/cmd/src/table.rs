@@ -54,6 +54,7 @@ pub fn create_command_table() -> CmdTable {
 
     register_cmd!(
         cmd_table,
+        crate::append::AppendCmd,
         crate::set::SetCmd,
         crate::get::GetCmd,
         crate::incr::IncrCmd,
@@ -61,6 +62,21 @@ pub fn create_command_table() -> CmdTable {
         crate::incrbyfloat::IncrbyFloatCmd,
         crate::decr::DecrCmd,
         crate::decrby::DecrbyCmd,
+        crate::strlen::StrlenCmd,
+        crate::getrange::GetrangeCmd,
+        crate::setrange::SetrangeCmd,
+        crate::setex::SetexCmd,
+        crate::psetex::PsetexCmd,
+        crate::setnx::SetnxCmd,
+        crate::getset::GetsetCmd,
+        crate::mget::MgetCmd,
+        crate::mset::MsetCmd,
+        crate::msetnx::MsetnxCmd,
+        crate::setbit::SetbitCmd,
+        crate::getbit::GetbitCmd,
+        crate::bitcount::BitcountCmd,
+        crate::bitpos::BitposCmd,
+        crate::bitop::BitopCmd,
         // TODO: add more commands...
     );
 

@@ -37,10 +37,16 @@ pub struct StringValue {
 delegate_internal_value!(StringValue);
 impl StringValue {
     pub fn new<T>(user_value: T) -> Self
-    where T: Into<Bytes> {
+    where
+        T: Into<Bytes>,
+    {
         Self {
             inner: InternalValue::new(DataType::String, user_value),
         }
+    }
+
+    pub fn user_value_len(&self) -> usize {
+        self.inner.user_value.len()
     }
 
     pub fn encode(&self) -> BytesMut {
@@ -68,7 +74,9 @@ pub struct ParsedStringsValue {
 delegate_parsed_value!(ParsedStringsValue);
 impl ParsedStringsValue {
     pub fn new<T>(internal_value: T) -> Result<Self>
-    where T: Into<BytesMut> {
+    where
+        T: Into<BytesMut>,
+    {
         let value: BytesMut = internal_value.into();
         ensure!(
             value.len() >= STRING_VALUE_SUFFIXLENGTH,

@@ -54,7 +54,9 @@ delegate_internal_value!(BaseMetaValue);
 #[allow(dead_code)]
 impl BaseMetaValue {
     pub fn new<T>(user_value: T) -> Self
-    where T: Into<Bytes> {
+    where
+        T: Into<Bytes>,
+    {
         Self {
             inner: InternalValue::new(DataType::None, user_value),
         }
@@ -99,16 +101,21 @@ delegate_parsed_value! {ParsedBaseMetaValue}
 #[allow(dead_code)]
 impl ParsedBaseMetaValue {
     pub fn new<T>(internal_value: T) -> Result<Self>
-    where T: Into<BytesMut> {
+    where
+        T: Into<BytesMut>,
+    {
         let value: BytesMut = internal_value.into();
         let value_len = value.len();
-        ensure!(value_len >= BASE_META_VALUE_LENGTH, InvalidFormatSnafu {
-            message: format!(
-                "invalid meta value length: {} < {}",
-                value.len(),
-                BASE_META_VALUE_LENGTH,
-            )
-        });
+        ensure!(
+            value_len >= BASE_META_VALUE_LENGTH,
+            InvalidFormatSnafu {
+                message: format!(
+                    "invalid meta value length: {} < {}",
+                    value.len(),
+                    BASE_META_VALUE_LENGTH,
+                )
+            }
+        );
 
         let mut val_reader = Cursor::new(&value[..]);
         let data_type: DataType = val_reader.get_u8().try_into()?;
