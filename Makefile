@@ -25,7 +25,7 @@ MAKEFLAGS += --no-print-directory
 
 build:
 	@echo "Building project..."
-	@cargo build --verbose
+	@cargo build
 
 run:
 	@echo "Running project..."
@@ -33,7 +33,7 @@ run:
 
 test:
 	@echo "Running tests..."
-	@cargo test --verbose
+	@cargo test
 
 clean:
 	@echo "Cleaning project..."
@@ -41,7 +41,7 @@ clean:
 
 fmt:
 	@echo "Formatting code..."
-	@cargo fmt --manifest-path ./Cargo.toml --all -- --check
+	@cargo fmt --manifest-path ./Cargo.toml --all
 
 lint:
 	@echo "Linting code..."
