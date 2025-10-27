@@ -18,13 +18,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
-use tokio::sync::mpsc;
-use tokio::time::timeout;
-
-use crate::buffer::{BufferConfig, BufferManager, BufferedReader};
-use crate::pipeline::{CommandPipeline, PipelineConfig};
-use crate::pool::{ConnectionPool, PoolConfig};
+use net::buffer::{BufferConfig, BufferManager, BufferedReader};
+use net::pool::{ConnectionPool, PoolConfig};
 
 /// Performance test results
 #[derive(Debug, Clone)]
@@ -175,7 +170,7 @@ impl NetworkPerformanceTests {
                     
                     // Simulate buffer usage
                     buffer.buffer.extend_from_slice(b"Hello, World! This is test data.");
-                    let _slice = manager_clone.create_bytes_slice(&buffer, 0, 5);
+                    let _ = manager_clone.create_bytes_slice(&buffer, 0, 5);
                     
                     manager_clone.return_buffer(buffer).await;
                     client_successful += 1;
@@ -238,7 +233,7 @@ impl NetworkPerformanceTests {
                     let mut reader = BufferedReader::new(manager_clone.clone());
                     
                     // Read data
-                    let bytes_read = reader.read_data(data).await;
+                    let bytes_read = reader.read_data(&data).await;
                     if bytes_read > 0 {
                         // Process available data
                         if let Some(available) = reader.available_data() {
@@ -475,6 +470,7 @@ impl NetworkPerformanceTests {
 /// Mock connection for testing
 #[derive(Debug)]
 struct MockConnection {
+    #[allow(dead_code)]
     id: u32,
 }
 

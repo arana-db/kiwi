@@ -240,9 +240,9 @@ impl ServerTrait for ClusterTcpServer {
                 // Process the connection with cluster awareness
                 let result = process_cluster_connection(
                     client,
-                    pooled_resources.connection.cluster_storage.local_storage().clone(),
-                    pooled_resources.connection.cmd_table.clone(),
-                    pooled_resources.connection.executor.clone(),
+                    pooled_resources.inner().cluster_storage.local_storage().clone(),
+                    pooled_resources.inner().cmd_table.clone(),
+                    pooled_resources.inner().executor.clone(),
                     // raft_node, // Temporarily disabled
                 ).await;
 
@@ -298,9 +298,9 @@ impl ServerTrait for TcpServer {
                 // Process the connection
                 let result = process_connection(
                     client,
-                    pooled_resources.connection.storage.clone(),
-                    pooled_resources.connection.cmd_table.clone(),
-                    pooled_resources.connection.executor.clone(),
+                    pooled_resources.inner().storage.clone(),
+                    pooled_resources.inner().cmd_table.clone(),
+                    pooled_resources.inner().executor.clone(),
                 ).await;
 
                 if let Err(e) = result {

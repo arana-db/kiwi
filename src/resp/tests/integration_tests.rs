@@ -289,7 +289,7 @@ fn test_protocol_negotiation_with_setname() {
 
 #[test]
 fn test_resp3_to_resp2_conversion() {
-    let negotiator = ProtocolNegotiator::new();
+    let _negotiator = ProtocolNegotiator::new();
     
     // Test various RESP3 types conversion to RESP2
     let test_cases = vec![

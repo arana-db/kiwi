@@ -131,13 +131,30 @@ impl BufferManager {
         // Start cleanup task
         manager.start_cleanup_task();
 
-        // Pre-populate pool with minimum buffers
-        tokio::spawn({
-            let manager = manager.clone();
-            async move {
-                manager.populate_initial_buffers().await;
-            }
+        // Pre-populate pool with minimum buffers in a background task
+        // We'll use a tokio handle to spawn it if available
+        let manager_clone = manager.clone();
+        tokio::spawn(async move {
+            manager_clone.populate_initial_buffers().await;
         });
+
+        manager
+    }
+    
+    /// Create a new BufferManager and wait for initial population
+    pub async fn new_with_init(config: BufferConfig) -> Self {
+        let manager = Self {
+            config: config.clone(),
+            buffer_pool: Arc::new(Mutex::new(VecDeque::new())),
+            buffer_counter: Arc::new(Mutex::new(0)),
+            stats: Arc::new(Mutex::new(BufferStats::default())),
+        };
+
+        // Pre-populate pool synchronously
+        manager.populate_initial_buffers().await;
+        
+        // Start cleanup task after population
+        manager.start_cleanup_task();
 
         manager
     }
@@ -275,11 +292,13 @@ impl BufferManager {
     async fn populate_initial_buffers(&self) {
         let mut pool = self.buffer_pool.lock().await;
         let mut counter = self.buffer_counter.lock().await;
+        let mut stats = self.stats.lock().await;
         
         for _ in 0..self.config.min_pool_size {
             *counter += 1;
             let buffer = PooledBuffer::new(self.config.initial_buffer_size, *counter);
             pool.push_back(buffer);
+            stats.buffers_created += 1;
         }
         
         debug!("Pre-populated buffer pool with {} buffers", self.config.min_pool_size);
@@ -408,7 +427,6 @@ impl BufferedReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::sleep;
 
     #[tokio::test]
     async fn test_buffer_manager_basic() {
@@ -442,10 +460,7 @@ mod tests {
             ..Default::default()
         };
         
-        let manager = BufferManager::new(config);
-        
-        // Wait for initial population
-        sleep(Duration::from_millis(10)).await;
+        let manager = BufferManager::new_with_init(config).await;
         
         let stats = manager.stats().await;
         assert!(stats.buffers_created > 0);

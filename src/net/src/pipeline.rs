@@ -381,11 +381,6 @@ mod tests {
     use std::time::Duration;
     use tokio::time::sleep;
 
-    // Mock implementations for testing
-    struct MockStorage;
-    struct MockCmdTable;
-    struct MockExecutor;
-
     #[tokio::test]
     async fn test_pipeline_basic() {
         // This test would require proper mock implementations
@@ -397,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_batch() {
-        let mut batch = CommandBatch::new(1);
+        let batch = CommandBatch::new(1);
         assert!(batch.is_empty());
         assert!(!batch.is_full(10));
         

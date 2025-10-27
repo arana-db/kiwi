@@ -29,7 +29,7 @@ use tokio::select;
 
 use crate::buffer::{BufferManager, BufferedReader};
 use crate::pipeline::{CommandPipeline, PipelineConfig};
-use crate::pool::{ConnectionPool, PoolConfig, PooledConnection};
+use crate::pool::{ConnectionPool, PoolConfig};
 
 /// Configuration for optimized connection handling
 #[derive(Debug, Clone)]
@@ -109,7 +109,7 @@ impl OptimizedConnectionHandler {
     }
 
     /// Get resources from pool or create new ones
-    async fn get_pooled_resources(&self) -> Result<PooledConnection<ConnectionResources>, crate::pool::PoolError> {
+    async fn get_pooled_resources(&self) -> Result<crate::pool::ActiveConnection<ConnectionResources>, crate::pool::PoolError> {
         let storage = Arc::new(Storage::new(1, 0)); // This should come from config
         let cmd_table = Arc::new(cmd::table::create_command_table());
         let executor = Arc::new(executor::CmdExecutorBuilder::new().build());
@@ -139,9 +139,9 @@ impl OptimizedConnectionHandler {
     async fn process_with_pipeline(
         &self,
         client: Arc<Client>,
-        resources: &PooledConnection<ConnectionResources>,
+        resources: &crate::pool::ActiveConnection<ConnectionResources>,
     ) -> std::io::Result<()> {
-        let pipeline = resources.connection.pipeline.as_ref()
+        let pipeline = resources.inner().pipeline.as_ref()
             .ok_or_else(|| std::io::Error::other("Pipeline not available"))?;
 
         let _buffered_reader = BufferedReader::new(self.buffer_manager.clone());
@@ -225,7 +225,7 @@ impl OptimizedConnectionHandler {
     async fn process_without_pipeline(
         &self,
         client: Arc<Client>,
-        resources: &PooledConnection<ConnectionResources>,
+        resources: &crate::pool::ActiveConnection<ConnectionResources>,
     ) -> std::io::Result<()> {
         // Use the original processing logic but with buffer optimization
         let mut read_buffer = if self.config.enable_buffer_pooling {
@@ -262,9 +262,9 @@ impl OptimizedConnectionHandler {
                                         // Execute command directly
                                         self.handle_command_direct(
                                             client.clone(),
-                                            resources.connection.storage.clone(),
-                                            resources.connection.cmd_table.clone(),
-                                            resources.connection.executor.clone(),
+                                            resources.inner().storage.clone(),
+                                            resources.inner().cmd_table.clone(),
+                                            resources.inner().executor.clone(),
                                         ).await;
                                         
                                         // Send response

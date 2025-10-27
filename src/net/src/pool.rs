@@ -75,6 +75,39 @@ impl<T> PooledConnection<T> {
     }
 }
 
+/// Represents an active connection with a semaphore permit
+#[derive(Debug)]
+pub struct ActiveConnection<T> {
+    /// The pooled connection
+    pub connection: PooledConnection<T>,
+    /// Semaphore permit to track active connections
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl<T> ActiveConnection<T> {
+    pub fn new(connection: PooledConnection<T>, permit: tokio::sync::OwnedSemaphorePermit) -> Self {
+        Self {
+            connection,
+            _permit: permit,
+        }
+    }
+    
+    /// Get a reference to the inner connection
+    pub fn inner(&self) -> &T {
+        &self.connection.connection
+    }
+    
+    /// Get a mutable reference to the inner connection
+    pub fn inner_mut(&mut self) -> &mut T {
+        &mut self.connection.connection
+    }
+    
+    /// Get the connection ID
+    pub fn id(&self) -> u64 {
+        self.connection.id
+    }
+}
+
 /// Generic connection pool implementation
 pub struct ConnectionPool<T> {
     /// Pool configuration
@@ -103,13 +136,13 @@ where
     }
 
     /// Get a connection from the pool or create a new one
-    pub async fn get_connection<F, Fut>(&self, create_fn: F) -> Result<PooledConnection<T>, PoolError>
+    pub async fn get_connection<F, Fut>(&self, create_fn: F) -> Result<ActiveConnection<T>, PoolError>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>,
     {
         // Try to acquire a permit from the semaphore
-        let _permit = timeout(self.config.connection_timeout, self.semaphore.acquire())
+        let permit = timeout(self.config.connection_timeout, self.semaphore.clone().acquire_owned())
             .await
             .map_err(|_| PoolError::Timeout)?
             .map_err(|_| PoolError::Closed)?;
@@ -131,7 +164,7 @@ where
             // Return an available connection if one exists
             if let Some(mut conn) = available.pop_front() {
                 conn.touch();
-                return Ok(conn);
+                return Ok(ActiveConnection::new(conn, permit));
             }
         }
 
@@ -142,11 +175,12 @@ where
         *counter += 1;
         let id = *counter;
         
-        Ok(PooledConnection::new(connection, id))
+        Ok(ActiveConnection::new(PooledConnection::new(connection, id), permit))
     }
 
     /// Return a connection to the pool
-    pub async fn return_connection(&self, mut connection: PooledConnection<T>) {
+    pub async fn return_connection(&self, active_conn: ActiveConnection<T>) {
+        let mut connection = active_conn.connection;
         connection.touch();
         
         let mut available = self.available.lock().await;
@@ -156,6 +190,7 @@ where
             available.push_back(connection);
         }
         // Connection will be dropped if pool is full
+        // Permit is automatically dropped here, freeing up the slot
     }
 
     /// Get current pool statistics
@@ -224,6 +259,7 @@ mod tests {
 
     #[derive(Debug)]
     struct MockConnection {
+        #[allow(dead_code)]
         id: u32,
     }
 
@@ -243,7 +279,7 @@ mod tests {
             Ok(MockConnection { id: 1 })
         }).await.unwrap();
         
-        assert_eq!(conn1.id, 1);
+        assert_eq!(conn1.id(), 1);
         
         // Return connection to pool
         pool.return_connection(conn1).await;
@@ -254,7 +290,7 @@ mod tests {
         }).await.unwrap();
         
         // Should reuse the first connection
-        assert_eq!(conn2.id, 1);
+        assert_eq!(conn2.id(), 1);
     }
 
     #[tokio::test]
@@ -286,7 +322,7 @@ mod tests {
             Ok(MockConnection { id: 2 })
         }).await.unwrap();
         
-        assert_eq!(new_conn.id, 2);
+        assert_eq!(new_conn.id(), 2);
     }
 
     #[tokio::test]
