@@ -48,7 +48,7 @@ impl Cmd for HSetCmd {
 
     fn do_initial(&self, client: &Client) -> bool {
         let argv = client.argv();
-        if argv.len() < 4 || (argv.len() - 2) % 2 != 0 {
+        if argv.len() < 4 || !(argv.len() - 2).is_multiple_of(2) {
             client.set_reply(RespData::Error(
                 "ERR wrong number of arguments for 'hset' command".into(),
             ));

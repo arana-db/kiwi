@@ -95,10 +95,10 @@ impl ExpirationManager {
                         key_expiry_write.remove(key);
 
                         // Remove from expiry_index
-                        if let Some(keys_set) = expiry_index_write.get_mut(&expire_time) {
+                        if let Some(keys_set) = expiry_index_write.get_mut(expire_time) {
                             keys_set.remove(key);
                             if keys_set.is_empty() {
-                                expiry_index_write.remove(&expire_time);
+                                expiry_index_write.remove(expire_time);
                             }
                         }
                     }
@@ -143,7 +143,7 @@ impl ExpirationManager {
         key_expiry.insert(key.to_string(), expire_time_micros);
         expiry_index
             .entry(expire_time_micros)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(key.to_string());
     }
 

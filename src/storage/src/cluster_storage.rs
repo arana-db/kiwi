@@ -26,6 +26,7 @@ pub struct ClusterStorage {
     /// Underlying storage implementation
     local_storage: Arc<Storage>,
     /// Raft node for consensus operations
+    #[allow(dead_code)]
     raft_node: Arc<dyn Send + Sync>,
     /// Whether this node is currently the leader
     is_leader: std::sync::atomic::AtomicBool,
@@ -62,7 +63,7 @@ impl ClusterStorage {
     }
     
     /// Execute a write operation through Raft consensus
-    pub async fn execute_write_operation(&self, operation: &[u8]) -> Result<Vec<u8>, String> {
+    pub async fn execute_write_operation(&self, _operation: &[u8]) -> Result<Vec<u8>, String> {
         if !self.is_leader() {
             return Err("MOVED - not leader".to_string());
         }
@@ -76,7 +77,7 @@ impl ClusterStorage {
     }
     
     /// Execute a read operation (can be local or consensus-based depending on consistency level)
-    pub async fn execute_read_operation(&self, operation: &[u8], linearizable: bool) -> Result<Vec<u8>, String> {
+    pub async fn execute_read_operation(&self, _operation: &[u8], linearizable: bool) -> Result<Vec<u8>, String> {
         if linearizable && !self.is_leader() {
             return Err("MOVED - not leader for linearizable reads".to_string());
         }

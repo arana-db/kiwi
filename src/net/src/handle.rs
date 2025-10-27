@@ -20,7 +20,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use client::Client;
 use cmd::table::CmdTable;
-use executor::{CmdExecution, CmdExecutor, ClusterCmdExecution, ClusterCmdExecutor};
+use executor::{CmdExecution, CmdExecutor, ClusterCmdExecution};
 use log::error;
 use resp::encode::RespEncoder;
 use resp::{Parse, RespData, RespEncode, RespParseResult, RespVersion};
@@ -112,7 +112,7 @@ pub async fn process_cluster_connection(
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
-    raft_compatibility: Arc<raft::RedisProtocolCompatibility>,
+    // raft_compatibility: Arc<raft::RedisProtocolCompatibility>, // Temporarily disabled
 ) -> std::io::Result<()> {
     let mut buf = vec![0; 1024];
     let mut resp_parser = resp::RespParse::new(resp::RespVersion::RESP2);
@@ -140,8 +140,8 @@ pub async fn process_cluster_connection(
                                         client.clone(), 
                                         storage.clone(), 
                                         cmd_table.clone(), 
-                                        executor.clone(),
-                                        raft_compatibility.clone()
+                                        executor.clone()
+                                        // raft_compatibility.clone() // Temporarily disabled
                                     ).await;
                                     
                                     // Extract the reply from the connection and send it
@@ -178,7 +178,7 @@ async fn handle_cluster_command(
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
-    raft_compatibility: Arc<raft::RedisProtocolCompatibility>,
+    // raft_compatibility: Arc<raft::RedisProtocolCompatibility>, // Temporarily disabled
 ) {
     // Convert the command name from &[u8] to a lowercase String for lookup
     let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
@@ -189,7 +189,7 @@ async fn handle_cluster_command(
             cmd: cmd.clone(),
             client: client.clone(),
             storage,
-            raft_compatibility,
+            // raft_compatibility, // Temporarily disabled
         };
         
         // For now, use the regular executor but with cluster awareness

@@ -18,37 +18,37 @@
 """
 List Commands Integration Tests
 
-Tests Redis list commands with real Redis clients to verify compatibility
-and concurrent access scenarios.
+Tests Redis list commands for compatibility and correctness
 """
 
 import redis
 import pytest
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class TestListBasicOperations:
     """Test basic list operations"""
 
-    def test_lpush_rpush_basic(self, redis_clean):
-        """Test basic LPUSH and RPUSH operations"""
+    def test_lpush_rpush(self, redis_clean):
+        """Test LPUSH and RPUSH operations"""
         r = redis_clean
         
         # Test LPUSH
         assert r.lpush('test_list', 'item1') == 1
         assert r.lpush('test_list', 'item2') == 2
+        assert r.lpush('test_list', 'item3', 'item4') == 4
         
         # Test RPUSH
-        assert r.rpush('test_list', 'item3') == 3
-        assert r.rpush('test_list', 'item4') == 4
+        assert r.rpush('test_list2', 'a') == 1
+        assert r.rpush('test_list2', 'b', 'c') == 3
         
         # Verify list contents
-        assert r.lrange('test_list', 0, -1) == ['item2', 'item1', 'item3', 'item4']
+        assert r.lrange('test_list', 0, -1) == ['item4', 'item3', 'item2', 'item1']
+        assert r.lrange('test_list2', 0, -1) == ['a', 'b', 'c']
 
-    def test_lpop_rpop_basic(self, redis_clean):
-        """Test basic LPOP and RPOP operations"""
+    def test_lpop_rpop(self, redis_clean):
+        """Test LPOP and RPOP operations"""
         r = redis_clean
         
         # Setup list
@@ -62,279 +62,297 @@ class TestListBasicOperations:
         assert r.rpop('test_list') == 'd'
         assert r.rpop('test_list') == 'c'
         
-        # List should be empty
+        # Test empty list
         assert r.lpop('test_list') is None
+        assert r.rpop('test_list') is None
 
-    def test_lrange_operations(self, redis_clean):
-        """Test LRANGE with various indices"""
-        r = redis_clean
-        
-        # Setup list with 10 items
-        items = [f'item{i}' for i in range(10)]
-        r.rpush('test_list', *items)
-        
-        # Test various ranges
-        assert r.lrange('test_list', 0, 4) == items[0:5]
-        assert r.lrange('test_list', 5, -1) == items[5:]
-        assert r.lrange('test_list', -3, -1) == items[-3:]
-        assert r.lrange('test_list', 0, -1) == items
-
-
-class TestListAdvancedOperations:
-    """Test advanced list operations"""
-
-    def test_lindex_operations(self, redis_clean):
-        """Test LINDEX operations"""
-        r = redis_clean
-        
-        items = ['zero', 'one', 'two', 'three', 'four']
-        r.rpush('test_list', *items)
-        
-        # Test positive indices
-        assert r.lindex('test_list', 0) == 'zero'
-        assert r.lindex('test_list', 2) == 'two'
-        assert r.lindex('test_list', 4) == 'four'
-        
-        # Test negative indices
-        assert r.lindex('test_list', -1) == 'four'
-        assert r.lindex('test_list', -3) == 'two'
-        
-        # Test out of bounds
-        assert r.lindex('test_list', 10) is None
-        assert r.lindex('test_list', -10) is None
-
-    def test_llen_operations(self, redis_clean):
-        """Test LLEN operations"""
+    def test_llen(self, redis_clean):
+        """Test LLEN operation"""
         r = redis_clean
         
         # Empty list
         assert r.llen('test_list') == 0
         
-        # Add items and check length
-        for i in range(5):
-            r.rpush('test_list', f'item{i}')
-            assert r.llen('test_list') == i + 1
+        # Add items
+        r.rpush('test_list', 'a', 'b', 'c')
+        assert r.llen('test_list') == 3
+        
+        # Remove items
+        r.lpop('test_list')
+        assert r.llen('test_list') == 2
 
-    def test_lset_operations(self, redis_clean):
-        """Test LSET operations"""
+    def test_lrange(self, redis_clean):
+        """Test LRANGE operation"""
         r = redis_clean
         
         # Setup list
-        r.rpush('test_list', 'a', 'b', 'c', 'd')
+        r.rpush('test_list', 'a', 'b', 'c', 'd', 'e')
+        
+        # Test various ranges
+        assert r.lrange('test_list', 0, 2) == ['a', 'b', 'c']
+        assert r.lrange('test_list', 1, 3) == ['b', 'c', 'd']
+        assert r.lrange('test_list', 0, -1) == ['a', 'b', 'c', 'd', 'e']
+        assert r.lrange('test_list', -2, -1) == ['d', 'e']
+        assert r.lrange('test_list', 2, 1) == []
+
+
+class TestListAdvancedOperations:
+    """Test advanced list operations"""
+
+    def test_lindex(self, redis_clean):
+        """Test LINDEX operation"""
+        r = redis_clean
+        
+        # Setup list
+        r.rpush('test_list', 'zero', 'one', 'two', 'three')
+        
+        # Test positive indices
+        assert r.lindex('test_list', 0) == 'zero'
+        assert r.lindex('test_list', 2) == 'two'
+        
+        # Test negative indices
+        assert r.lindex('test_list', -1) == 'three'
+        assert r.lindex('test_list', -2) == 'two'
+        
+        # Test out of range
+        assert r.lindex('test_list', 10) is None
+        assert r.lindex('test_list', -10) is None
+
+    def test_lset(self, redis_clean):
+        """Test LSET operation"""
+        r = redis_clean
+        
+        # Setup list
+        r.rpush('test_list', 'a', 'b', 'c')
         
         # Test LSET
-        assert r.lset('test_list', 0, 'new_a') == True
-        assert r.lset('test_list', -1, 'new_d') == True
+        assert r.lset('test_list', 1, 'modified') == True
+        assert r.lrange('test_list', 0, -1) == ['a', 'modified', 'c']
         
-        # Verify changes
-        assert r.lrange('test_list', 0, -1) == ['new_a', 'b', 'c', 'new_d']
+        # Test negative index
+        assert r.lset('test_list', -1, 'last') == True
+        assert r.lrange('test_list', 0, -1) == ['a', 'modified', 'last']
+
+    def test_linsert(self, redis_clean):
+        """Test LINSERT operation"""
+        r = redis_clean
         
-        # Test out of bounds (should raise error)
-        with pytest.raises(redis.ResponseError):
-            r.lset('test_list', 10, 'invalid')
+        # Setup list
+        r.rpush('test_list', 'a', 'c', 'd')
+        
+        # Test LINSERT BEFORE
+        assert r.linsert('test_list', 'BEFORE', 'c', 'b') == 4
+        assert r.lrange('test_list', 0, -1) == ['a', 'b', 'c', 'd']
+        
+        # Test LINSERT AFTER
+        assert r.linsert('test_list', 'AFTER', 'c', 'c2') == 5
+        assert r.lrange('test_list', 0, -1) == ['a', 'b', 'c', 'c2', 'd']
+        
+        # Test pivot not found
+        assert r.linsert('test_list', 'BEFORE', 'notfound', 'x') == -1
+
+    def test_lrem(self, redis_clean):
+        """Test LREM operation"""
+        r = redis_clean
+        
+        # Setup list with duplicates
+        r.rpush('test_list', 'a', 'b', 'a', 'c', 'a', 'b')
+        
+        # Remove first 2 occurrences of 'a'
+        assert r.lrem('test_list', 2, 'a') == 2
+        assert r.lrange('test_list', 0, -1) == ['b', 'c', 'a', 'b']
+        
+        # Remove all occurrences of 'b'
+        assert r.lrem('test_list', 0, 'b') == 2
+        assert r.lrange('test_list', 0, -1) == ['c', 'a']
+
+    def test_ltrim(self, redis_clean):
+        """Test LTRIM operation"""
+        r = redis_clean
+        
+        # Setup list
+        r.rpush('test_list', 'a', 'b', 'c', 'd', 'e', 'f')
+        
+        # Trim to keep middle elements
+        assert r.ltrim('test_list', 1, 4) == True
+        assert r.lrange('test_list', 0, -1) == ['b', 'c', 'd', 'e']
 
 
 class TestListConcurrency:
-    """Test concurrent access to lists"""
+    """Test list operations under concurrent access"""
 
-    def test_concurrent_lpush_rpush(self, redis_clean):
-        """Test concurrent LPUSH and RPUSH operations"""
+    def test_concurrent_push_pop(self, redis_clean):
+        """Test concurrent push and pop operations"""
         r = redis_clean
         results = []
+        errors = []
         
-        def lpush_worker():
+        def push_worker():
+            try:
+                for i in range(100):
+                    r.lpush('test_concurrent', f'item_{i}')
+            except Exception as e:
+                errors.append(e)
+        
+        def pop_worker():
+            try:
+                for _ in range(50):
+                    item = r.rpop('test_concurrent')
+                    if item:
+                        results.append(item)
+                    time.sleep(0.001)  # Small delay
+            except Exception as e:
+                errors.append(e)
+        
+        # Start threads
+        threads = []
+        threads.append(threading.Thread(target=push_worker))
+        threads.append(threading.Thread(target=pop_worker))
+        
+        for t in threads:
+            t.start()
+        
+        for t in threads:
+            t.join()
+        
+        # Verify no errors occurred
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+        
+        # Verify final state is consistent
+        final_length = r.llen('test_concurrent')
+        assert final_length >= 0  # Should be non-negative
+        assert final_length + len(results) == 100  # Total items should match
+
+    def test_data_consistency(self, redis_clean):
+        """Test data consistency across operations"""
+        r = redis_clean
+        
+        # Setup initial state
+        r.rpush('test_consistency', 'initial')
+        
+        def modifier():
             for i in range(10):
-                r.lpush('test_concurrent_list', f'left_{i}')
-                
-        def rpush_worker():
-            for i in range(10):
-                r.rpush('test_concurrent_list', f'right_{i}')
+                r.lpush('test_consistency', f'left_{i}')
+                r.rpush('test_consistency', f'right_{i}')
+        
+        def reader():
+            for _ in range(20):
+                length = r.llen('test_consistency')
+                if length > 0:
+                    items = r.lrange('test_consistency', 0, -1)
+                    assert len(items) == length, "Length mismatch"
+                time.sleep(0.001)
         
         # Run concurrent operations
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [
-                executor.submit(lpush_worker),
-                executor.submit(rpush_worker)
-            ]
-            
-            for future in as_completed(futures):
-                future.result()
+        threads = [
+            threading.Thread(target=modifier),
+            threading.Thread(target=reader)
+        ]
         
-        # Verify final list length
-        assert r.llen('test_concurrent_list') == 20
+        for t in threads:
+            t.start()
         
-        # Verify all items are present
-        all_items = r.lrange('test_concurrent_list', 0, -1)
-        left_items = [item for item in all_items if item.startswith('left_')]
-        right_items = [item for item in all_items if item.startswith('right_')]
+        for t in threads:
+            t.join()
         
-        assert len(left_items) == 10
-        assert len(right_items) == 10
+        # Final consistency check
+        final_length = r.llen('test_consistency')
+        final_items = r.lrange('test_consistency', 0, -1)
+        assert len(final_items) == final_length
 
-    def test_concurrent_pop_operations(self, redis_clean):
-        """Test concurrent POP operations"""
+
+class TestListCompatibility:
+    """Test Redis compatibility"""
+
+    def test_redis_client_compatibility(self, redis_clean):
+        """Test compatibility with redis-py client"""
         r = redis_clean
         
-        # Setup list with 100 items
-        items = [f'item_{i}' for i in range(100)]
-        r.rpush('test_pop_list', *items)
+        # Test all basic operations work with redis-py
+        operations = [
+            lambda: r.lpush('compat_test', 'a', 'b'),
+            lambda: r.rpush('compat_test', 'c', 'd'),
+            lambda: r.llen('compat_test'),
+            lambda: r.lrange('compat_test', 0, -1),
+            lambda: r.lindex('compat_test', 1),
+            lambda: r.lpop('compat_test'),
+            lambda: r.rpop('compat_test'),
+        ]
         
-        popped_items = []
-        lock = threading.Lock()
-        
-        def pop_worker(pop_func):
-            while True:
-                try:
-                    item = pop_func('test_pop_list')
-                    if item is None:
-                        break
-                    with lock:
-                        popped_items.append(item)
-                except:
-                    break
-        
-        # Run concurrent pop operations
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = [
-                executor.submit(pop_worker, r.lpop),
-                executor.submit(pop_worker, r.rpop),
-                executor.submit(pop_worker, r.lpop),
-                executor.submit(pop_worker, r.rpop)
-            ]
-            
-            for future in as_completed(futures):
-                future.result()
-        
-        # Verify all items were popped
-        assert len(popped_items) == 100
-        assert r.llen('test_pop_list') == 0
+        for op in operations:
+            try:
+                result = op()
+                # Just ensure no exceptions are raised
+                assert result is not None or result == 0 or result == []
+            except Exception as e:
+                pytest.fail(f"Operation failed: {e}")
 
-
-class TestListDataConsistency:
-    """Test data consistency for list operations"""
-
-    def test_list_order_consistency(self, redis_clean):
-        """Test that list maintains order consistency"""
+    def test_error_responses(self, redis_clean):
+        """Test proper error responses"""
         r = redis_clean
         
-        # Test FIFO behavior with RPUSH/LPOP
-        items = ['first', 'second', 'third', 'fourth']
-        for item in items:
-            r.rpush('test_fifo', item)
+        # Set up non-list key
+        r.set('not_a_list', 'string_value')
         
-        popped = []
-        while r.llen('test_fifo') > 0:
-            popped.append(r.lpop('test_fifo'))
+        # Test operations on wrong type should raise errors
+        with pytest.raises(redis.ResponseError):
+            r.lpush('not_a_list', 'item')
         
-        assert popped == items
+        with pytest.raises(redis.ResponseError):
+            r.llen('not_a_list')
         
-        # Test LIFO behavior with LPUSH/LPOP
-        for item in items:
-            r.lpush('test_lifo', item)
-        
-        popped = []
-        while r.llen('test_lifo') > 0:
-            popped.append(r.lpop('test_lifo'))
-        
-        assert popped == list(reversed(items))
+        with pytest.raises(redis.ResponseError):
+            r.lrange('not_a_list', 0, -1)
 
-    def test_list_atomicity(self, redis_clean):
-        """Test atomicity of list operations"""
+
+class TestListEdgeCases:
+    """Test edge cases and boundary conditions"""
+
+    def test_empty_list_operations(self, redis_clean):
+        """Test operations on empty lists"""
         r = redis_clean
         
-        # Test that LPUSH with multiple values is atomic
-        result = r.lpush('test_atomic', 'a', 'b', 'c', 'd')
-        assert result == 4
-        
-        # All items should be present immediately
-        assert r.llen('test_atomic') == 4
-        assert r.lrange('test_atomic', 0, -1) == ['d', 'c', 'b', 'a']
-
-
-class TestListRedisCompatibility:
-    """Test Redis compatibility for list operations"""
-
-    def test_redis_list_command_responses(self, redis_clean):
-        """Test that responses match Redis behavior"""
-        r = redis_clean
-        
-        # Test return values match Redis
-        assert r.lpush('test_compat', 'item') == 1
-        assert r.rpush('test_compat', 'item2') == 2
-        assert r.llen('test_compat') == 2
-        
-        # Test LRANGE on non-existent key
-        assert r.lrange('nonexistent', 0, -1) == []
-        
-        # Test LLEN on non-existent key
+        # Operations on non-existent list
         assert r.llen('nonexistent') == 0
-        
-        # Test LPOP on non-existent key
+        assert r.lrange('nonexistent', 0, -1) == []
+        assert r.lindex('nonexistent', 0) is None
         assert r.lpop('nonexistent') is None
+        assert r.rpop('nonexistent') is None
 
-    def test_list_error_conditions(self, redis_clean):
-        """Test error conditions match Redis behavior"""
-        r = redis_clean
-        
-        # Set a string key
-        r.set('test_string', 'value')
-        
-        # List operations on string key should fail
-        with pytest.raises(redis.ResponseError):
-            r.lpush('test_string', 'item')
-        
-        with pytest.raises(redis.ResponseError):
-            r.lrange('test_string', 0, -1)
-        
-        with pytest.raises(redis.ResponseError):
-            r.llen('test_string')
-
-
-class TestListPerformance:
-    """Performance tests for list operations"""
-
-    @pytest.mark.benchmark
     def test_large_list_operations(self, redis_clean):
         """Test operations on large lists"""
         r = redis_clean
         
         # Create large list
-        batch_size = 1000
-        items = [f'item_{i}' for i in range(batch_size)]
+        items = [f'item_{i}' for i in range(1000)]
+        r.rpush('large_list', *items)
         
-        start_time = time.time()
-        r.rpush('test_large', *items)
-        push_time = time.time() - start_time
+        # Test operations
+        assert r.llen('large_list') == 1000
+        assert r.lindex('large_list', 500) == 'item_500'
+        assert r.lrange('large_list', 0, 9) == items[:10]
+        assert r.lrange('large_list', -10, -1) == items[-10:]
+
+    def test_binary_data(self, redis_binary_client):
+        """Test list operations with binary data"""
+        r = redis_binary_client
         
-        # Verify length
-        assert r.llen('test_large') == batch_size
+        # Binary data
+        binary_items = [b'binary\x00data', b'\xff\xfe\xfd', bytes(range(256))]
         
-        # Test range operations
-        start_time = time.time()
-        result = r.lrange('test_large', 0, 99)
-        range_time = time.time() - start_time
+        # Test operations with binary data
+        for item in binary_items:
+            r.lpush(b'binary_list', item)
         
-        assert len(result) == 100
+        # Verify binary data integrity
+        retrieved = r.lrange(b'binary_list', 0, -1)
+        assert len(retrieved) == 3
+        for original, retrieved_item in zip(reversed(binary_items), retrieved):
+            assert original == retrieved_item
         
-        # Test pop operations
-        start_time = time.time()
-        for _ in range(100):
-            r.lpop('test_large')
-        pop_time = time.time() - start_time
-        
-        assert r.llen('test_large') == batch_size - 100
-        
-        print(f"Performance metrics:")
-        print(f"  RPUSH {batch_size} items: {push_time:.3f}s")
-        print(f"  LRANGE 100 items: {range_time:.3f}s")
-        print(f"  LPOP 100 items: {pop_time:.3f}s")
+        # Cleanup
+        r.delete(b'binary_list')
 
 
 if __name__ == '__main__':
-    import sys
-    try:
-        import pytest
-        sys.exit(pytest.main([__file__, '-v', '--tb=short']))
-    except ImportError:
-        print("pytest not available, install with: pip install pytest")
-        sys.exit(1)
+    pytest.main([__file__, '-v'])

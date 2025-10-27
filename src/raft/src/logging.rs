@@ -207,14 +207,15 @@ impl RaftLogger {
         };
 
         // Add to buffer
-        {
-            let mut buffer = self.log_buffer.lock().unwrap();
+        if let Ok(mut buffer) = self.log_buffer.lock() {
             buffer.push(log_entry.clone());
             
             // Keep buffer size under limit
             if buffer.len() > self.max_buffer_size {
                 buffer.remove(0);
             }
+        } else {
+            log::error!("Failed to acquire log buffer lock (poisoned)");
         }
 
         // Log to standard logger
@@ -315,23 +316,36 @@ impl RaftLogger {
 
     /// Get recent log entries
     pub fn get_recent_logs(&self, count: usize) -> Vec<RaftLogEntry> {
-        let buffer = self.log_buffer.lock().unwrap();
-        let start = if buffer.len() > count {
-            buffer.len() - count
+        if let Ok(buffer) = self.log_buffer.lock() {
+            let start = if buffer.len() > count {
+                buffer.len() - count
+            } else {
+                0
+            };
+            buffer[start..].to_vec()
         } else {
-            0
-        };
-        buffer[start..].to_vec()
+            log::error!("Failed to acquire log buffer lock (poisoned)");
+            Vec::new()
+        }
     }
 
     /// Get all log entries
     pub fn get_all_logs(&self) -> Vec<RaftLogEntry> {
-        self.log_buffer.lock().unwrap().clone()
+        if let Ok(buffer) = self.log_buffer.lock() {
+            buffer.clone()
+        } else {
+            log::error!("Failed to acquire log buffer lock (poisoned)");
+            Vec::new()
+        }
     }
 
     /// Clear log buffer
     pub fn clear_logs(&self) {
-        self.log_buffer.lock().unwrap().clear();
+        if let Ok(mut buffer) = self.log_buffer.lock() {
+            buffer.clear();
+        } else {
+            log::error!("Failed to acquire log buffer lock (poisoned)");
+        }
     }
 }
 
@@ -411,8 +425,11 @@ impl RaftDebugger {
         DebugSnapshot {
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
+                .map(|d| d.as_secs())
+                .unwrap_or_else(|_| {
+                    log::warn!("System clock appears to be before UNIX_EPOCH, using 0");
+                    0
+                }),
             node_id: self.node_id,
             current_term,
             current_leader,

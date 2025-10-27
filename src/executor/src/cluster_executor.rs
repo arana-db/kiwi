@@ -20,7 +20,7 @@ use std::sync::Arc;
 use client::Client;
 use cmd::Cmd;
 use log::{error, info, warn};
-use raft::{RaftNode, RedisProtocolCompatibility, RedisCommand};
+// use raft::{RaftNode, RedisProtocolCompatibility, RedisCommand}; // Temporarily disabled
 use resp::RespData;
 use storage::storage::Storage;
 use tokio::{sync::oneshot, task::JoinHandle};
@@ -33,7 +33,7 @@ pub struct ClusterCmdExecution {
     pub cmd: Arc<dyn Cmd>,
     pub client: Arc<Client>,
     pub storage: Arc<Storage>,
-    pub raft_compatibility: Arc<RedisProtocolCompatibility>,
+    // pub raft_compatibility: Arc<RedisProtocolCompatibility>, // Temporarily disabled
 }
 
 /// Work item for cluster command execution
@@ -123,27 +123,22 @@ impl ClusterCmdExecutor {
     async fn do_execute_once(work: ClusterCmdExecutionWork) {
         let exec = work.exec;
         
-        // Convert client command to RedisCommand format
-        let cmd_name = String::from_utf8_lossy(&exec.client.cmd_name()).to_string();
-        let args: Vec<Vec<u8>> = exec.client.argv().iter().skip(1).cloned().collect();
-        let redis_command = RedisCommand::new(cmd_name.clone(), args);
+        // Convert client command to RedisCommand format (temporarily disabled)
+        // let cmd_name = String::from_utf8_lossy(&exec.client.cmd_name()).to_string();
+        // let args: Vec<Vec<u8>> = exec.client.argv().iter().skip(1).cloned().collect();
+        // let redis_command = RedisCommand::new(cmd_name.clone(), args);
         
         // Process command through Raft-aware Redis protocol compatibility layer
-        match exec.raft_compatibility.process_redis_command(&exec.client, redis_command).await {
-            Ok(response) => {
-                exec.client.set_reply(response);
-            }
-            Err(e) => {
-                error!("Cluster command execution failed: {}", e);
-                exec.client.set_reply(RespData::Error(format!("ERR {}", e).into()));
-            }
-        }
+        // Temporarily disabled - using basic execution instead
+        // Execute the command directly (no raft consensus for now)
+        exec.cmd.execute(&exec.client, exec.storage.clone());
 
         // Notify completion
         let _ = work.done.send(());
     }
 
     /// Determine if a command is a write operation that requires Raft consensus
+    #[allow(dead_code)]
     fn is_write_command(cmd_name: &str) -> bool {
         matches!(cmd_name, 
             "set" | "del" | "expire" | "expireat" | "persist" | "rename" | "renamenx" |
@@ -186,13 +181,13 @@ impl ClusterCmdExecutor {
 }
 
 /// Convert regular CmdExecution to ClusterCmdExecution
-impl From<(CmdExecution, Arc<RedisProtocolCompatibility>)> for ClusterCmdExecution {
-    fn from((exec, raft_compatibility): (CmdExecution, Arc<RedisProtocolCompatibility>)) -> Self {
+impl From<CmdExecution> for ClusterCmdExecution {
+    fn from(exec: CmdExecution) -> Self {
         Self {
             cmd: exec.cmd,
             client: exec.client,
             storage: exec.storage,
-            raft_compatibility,
+            // raft_compatibility, // Temporarily disabled
         }
     }
 }

@@ -28,8 +28,9 @@ use crate::node::RaftNode;
 use crate::storage::RaftStorage;
 use crate::state_machine::KiwiStateMachine;
 use crate::network::RaftNetwork;
-use crate::types::{NodeId, ClientRequest, ClientResponse, RedisCommand};
+use crate::types::{NodeId, ClientRequest, ClientResponse, RedisCommand, RequestId, ConsistencyLevel};
 use crate::error::RaftResult;
+use bytes::Bytes;
 
 /// Test cluster configuration
 #[derive(Debug, Clone)]
@@ -48,6 +49,18 @@ impl Default for TestClusterConfig {
             election_timeout_ms: 150,
             heartbeat_interval_ms: 50,
         }
+    }
+}
+
+/// Helper function to create a test client request
+fn create_test_request(id: u64, command: &str, args: Vec<&str>) -> ClientRequest {
+    ClientRequest {
+        id: RequestId(id),
+        command: RedisCommand {
+            command: command.to_string(),
+            args: args.iter().map(|s| Bytes::from(s.to_string())).collect(),
+        },
+        consistency_level: ConsistencyLevel::Linearizable,
     }
 }
 
@@ -239,16 +252,10 @@ mod integration_tests {
         let cluster = TestCluster::new(config).await.unwrap();
         
         let node_id = 1;
-        let request = ClientRequest {
-            id: 1,
-            command: RedisCommand {
-                command: "SET".to_string(),
-                args: vec!["test_key".to_string(), "test_value".to_string()],
-            },
-        };
+        let request = create_test_request(1, "SET", vec!["test_key", "test_value"]);
         
         let response = cluster.send_request(node_id, request).await.unwrap();
-        assert_eq!(response.id, 1);
+        assert_eq!(response.id, RequestId(1));
         assert!(response.result.is_ok());
     }
 

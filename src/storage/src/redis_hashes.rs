@@ -214,7 +214,7 @@ impl Redis {
 
                 let iter = db.iterator_cf_opt(
                     data_cf,
-                    &self.read_options,
+                    ReadOptions::default(),
                     rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
                 );
                 let mut fields = Vec::new();
@@ -427,7 +427,7 @@ impl Redis {
 
                 let iter = db.iterator_cf_opt(
                     data_cf,
-                    &self.read_options,
+                    ReadOptions::default(),
                     rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
                 );
                 let mut result = Vec::new();
@@ -492,7 +492,7 @@ impl Redis {
 
                 let iter = db.iterator_cf_opt(
                     data_cf,
-                    &self.read_options,
+                    ReadOptions::default(),
                     rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
                 );
                 let mut values = Vec::new();

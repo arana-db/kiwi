@@ -215,7 +215,7 @@ impl ServerTrait for ClusterTcpServer {
             let cluster_storage = self.cluster_storage.clone();
             let cmd_table = self.cmd_table.clone();
             let executor = self.executor.clone();
-            let raft_node = self.raft_node.clone();
+            let _raft_node = self.raft_node.clone();
 
             tokio::spawn(async move {
                 // Get or create resources from the pool
@@ -243,7 +243,7 @@ impl ServerTrait for ClusterTcpServer {
                     pooled_resources.connection.cluster_storage.local_storage().clone(),
                     pooled_resources.connection.cmd_table.clone(),
                     pooled_resources.connection.executor.clone(),
-                    raft_node,
+                    // raft_node, // Temporarily disabled
                 ).await;
 
                 if let Err(e) = result {

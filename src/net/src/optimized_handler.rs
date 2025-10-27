@@ -92,7 +92,7 @@ impl OptimizedConnectionHandler {
             Ok(resources) => resources,
             Err(e) => {
                 error!("Failed to get resources from pool: {}", e);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
+                return Err(std::io::Error::other(e.to_string()));
             }
         };
 
@@ -142,7 +142,7 @@ impl OptimizedConnectionHandler {
         resources: &PooledConnection<ConnectionResources>,
     ) -> std::io::Result<()> {
         let pipeline = resources.connection.pipeline.as_ref()
-            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "Pipeline not available"))?;
+            .ok_or_else(|| std::io::Error::other("Pipeline not available"))?;
 
         let _buffered_reader = BufferedReader::new(self.buffer_manager.clone());
         let mut resp_parser = resp::RespParse::new(RespVersion::RESP2);

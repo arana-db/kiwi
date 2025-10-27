@@ -186,6 +186,12 @@ impl RedisProtocolCompatibility {
 
             let status = if endpoint.is_reachable { "connected" } else { "disconnected" };
             
+            let master_id = if is_leader {
+                "-".to_string()
+            } else {
+                topology.leader_id.map(|id| id.to_string()).unwrap_or_else(|| "0".to_string())
+            };
+            
             // Format: node_id:port@cport flags master ping_sent ping_recv config_epoch link_state slots
             nodes_info.push_str(&format!(
                 "{} {}:{} {} {} 0 0 1 {} 0-16383\n",
@@ -193,7 +199,7 @@ impl RedisProtocolCompatibility {
                 endpoint.host,
                 endpoint.port,
                 flags,
-                if is_leader { "-" } else { topology.leader_id.unwrap_or(0).to_string().as_str() },
+                master_id,
                 status
             ));
         }

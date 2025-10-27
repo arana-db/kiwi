@@ -117,6 +117,6 @@ mod tests {
         assert_eq!(request.consistency_level, deserialized.consistency_level);
     }
 }
-#[
-cfg(test)]
+
+#[cfg(test)]
 pub mod integration_tests;

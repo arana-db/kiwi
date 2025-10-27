@@ -187,16 +187,16 @@ impl ProtocolNegotiator {
 
     /// Check if the current protocol supports a specific feature
     pub fn supports_feature(&self, feature: &str) -> bool {
-        match (self.current_version, feature) {
-            (RespVersion::RESP3, "maps") => true,
-            (RespVersion::RESP3, "sets") => true,
-            (RespVersion::RESP3, "booleans") => true,
-            (RespVersion::RESP3, "doubles") => true,
-            (RespVersion::RESP3, "big_numbers") => true,
-            (RespVersion::RESP3, "verbatim_strings") => true,
-            (RespVersion::RESP3, "push_messages") => true,
-            _ => false,
-        }
+        matches!(
+            (self.current_version, feature),
+            (RespVersion::RESP3, "maps")
+                | (RespVersion::RESP3, "sets")
+                | (RespVersion::RESP3, "booleans")
+                | (RespVersion::RESP3, "doubles")
+                | (RespVersion::RESP3, "big_numbers")
+                | (RespVersion::RESP3, "verbatim_strings")
+                | (RespVersion::RESP3, "push_messages")
+        )
     }
 
     /// Gracefully fallback to RESP2 if needed
@@ -207,7 +207,7 @@ impl ProtocolNegotiator {
     }
 
     /// Convert RESP3 data to RESP2 compatible format for fallback
-    pub fn convert_to_resp2(&self, data: &RespData) -> RespData {
+    pub fn convert_to_resp2(data: &RespData) -> RespData {
         match data {
             // RESP3 specific types that need conversion
             RespData::Null => RespData::BulkString(None),
@@ -220,19 +220,19 @@ impl ProtocolNegotiator {
                 // Convert map to array of alternating key-value pairs
                 let mut array = Vec::with_capacity(pairs.len() * 2);
                 for (key, value) in pairs {
-                    array.push(self.convert_to_resp2(key));
-                    array.push(self.convert_to_resp2(value));
+                    array.push(Self::convert_to_resp2(key));
+                    array.push(Self::convert_to_resp2(value));
                 }
                 RespData::Array(Some(array))
             }
             RespData::Set(items) => {
                 // Convert set to array
-                let converted_items: Vec<_> = items.iter().map(|item| self.convert_to_resp2(item)).collect();
+                let converted_items: Vec<_> = items.iter().map(Self::convert_to_resp2).collect();
                 RespData::Array(Some(converted_items))
             }
             RespData::Push(items) => {
                 // Convert push to array
-                let converted_items: Vec<_> = items.iter().map(|item| self.convert_to_resp2(item)).collect();
+                let converted_items: Vec<_> = items.iter().map(Self::convert_to_resp2).collect();
                 RespData::Array(Some(converted_items))
             }
             // RESP2 compatible types - return as-is
@@ -243,7 +243,7 @@ impl ProtocolNegotiator {
             RespData::Inline(_) => data.clone(),
             RespData::Array(Some(items)) => {
                 // Recursively convert array items
-                let converted_items: Vec<_> = items.iter().map(|item| self.convert_to_resp2(item)).collect();
+                let converted_items: Vec<_> = items.iter().map(Self::convert_to_resp2).collect();
                 RespData::Array(Some(converted_items))
             }
             RespData::Array(None) => data.clone(),
@@ -317,11 +317,11 @@ mod tests {
 
     #[test]
     fn test_resp3_to_resp2_conversion() {
-        let negotiator = ProtocolNegotiator::new();
+        let _negotiator = ProtocolNegotiator::new();
         
         // Test boolean conversion
         let bool_data = RespData::Boolean(true);
-        let converted = negotiator.convert_to_resp2(&bool_data);
+        let converted = ProtocolNegotiator::convert_to_resp2(&bool_data);
         assert_eq!(converted, RespData::Integer(1));
         
         // Test map conversion
@@ -329,7 +329,7 @@ mod tests {
             (RespData::BulkString(Some(Bytes::from("key1"))), RespData::BulkString(Some(Bytes::from("value1")))),
             (RespData::BulkString(Some(Bytes::from("key2"))), RespData::Integer(42)),
         ]);
-        let converted = negotiator.convert_to_resp2(&map_data);
+        let converted = ProtocolNegotiator::convert_to_resp2(&map_data);
         if let RespData::Array(Some(items)) = converted {
             assert_eq!(items.len(), 4); // 2 key-value pairs = 4 items
         } else {

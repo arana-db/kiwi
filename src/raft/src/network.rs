@@ -199,7 +199,7 @@ impl SecureStream {
                 source: std::io::Error::new(std::io::ErrorKind::ConnectionRefused, e),
             }))?;
 
-        Ok(SecureStream::Tls(tokio_rustls::TlsStream::Client(tls_stream)))
+        Ok(SecureStream::Tls(tls_stream))
     }
 
     /// Create a plain TCP connection
@@ -398,7 +398,7 @@ impl PartitionDetector {
         let contacts = self.last_successful_contact.read().await;
         match contacts.get(&node_id) {
             Some(last_contact) => last_contact.elapsed() > self.partition_timeout,
-            None => true, // Never contacted, assume partitioned
+            None => false, // Unknown -> allow first contact
         }
     }
 

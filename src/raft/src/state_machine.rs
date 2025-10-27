@@ -276,6 +276,7 @@ impl KiwiStateMachine {
             applied_index: AtomicU64::new(self.applied_index()),
             snapshot_data: Arc::clone(&self.snapshot_data),
             node_id: self.node_id,
+            engine: Arc::clone(&self.engine),
         })
     }
 
@@ -300,14 +301,14 @@ impl KiwiStateMachine {
         Ok(None)
     }
 }
-#[cfg(
-test)]
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
     use tempfile::TempDir;
     use engine::RocksdbEngine;
-    use crate::types::{ClientRequest, RedisCommand};
+    use crate::types::{ClientRequest, RedisCommand, ConsistencyLevel, RequestId};
+    use bytes::Bytes;
 
     fn create_test_engine() -> (Arc<RocksdbEngine>, TempDir) {
         let temp_dir = TempDir::new().unwrap();
@@ -328,6 +329,7 @@ mod tests {
                 command: command.to_string(),
                 args,
             },
+            consistency_level: ConsistencyLevel::Linearizable,
         }
     }
 
@@ -342,10 +344,10 @@ mod tests {
     async fn test_set_command() {
         let (state_machine, _temp_dir) = create_test_state_machine();
         
-        let request = create_test_request(1, "SET", vec![Bytes::from("key1"), Bytes::from("value1")]);
+        let request = create_test_request(RequestId(1), "SET", vec![Bytes::from("key1"), Bytes::from("value1")]);
         let response = state_machine.apply_redis_command(&request).await.unwrap();
         
-        assert_eq!(response.id, 1);
+        assert_eq!(response.id, RequestId(1));
         assert!(response.result.is_ok());
         assert_eq!(response.result.unwrap(), bytes::Bytes::from_static(b"OK"));
     }
@@ -355,14 +357,14 @@ mod tests {
         let (state_machine, _temp_dir) = create_test_state_machine();
         
         // First set a value
-        let set_request = create_test_request(1, "SET", vec![Bytes::from("key1"), Bytes::from("value1")]);
+        let set_request = create_test_request(RequestId(1), "SET", vec![Bytes::from("key1"), Bytes::from("value1")]);
         state_machine.apply_redis_command(&set_request).await.unwrap();
         
         // Then get the value
-        let get_request = create_test_request(2, "GET", vec![Bytes::from("key1")]);
+        let get_request = create_test_request(RequestId(2), "GET", vec![Bytes::from("key1")]);
         let response = state_machine.apply_redis_command(&get_request).await.unwrap();
         
-        assert_eq!(response.id, 2);
+        assert_eq!(response.id, RequestId(2));
         assert!(response.result.is_ok());
         assert_eq!(response.result.unwrap(), bytes::Bytes::from("value1"));
     }
@@ -371,10 +373,10 @@ mod tests {
     async fn test_get_nonexistent_key() {
         let (state_machine, _temp_dir) = create_test_state_machine();
         
-        let get_request = create_test_request(1, "GET", vec![Bytes::from("nonexistent")]);
+        let get_request = create_test_request(RequestId(1), "GET", vec![Bytes::from("nonexistent")]);
         let response = state_machine.apply_redis_command(&get_request).await.unwrap();
         
-        assert_eq!(response.id, 1);
+        assert_eq!(response.id, RequestId(1));
         assert!(response.result.is_ok());
         assert_eq!(response.result.unwrap(), bytes::Bytes::new());
     }
@@ -384,21 +386,21 @@ mod tests {
         let (state_machine, _temp_dir) = create_test_state_machine();
         
         // Set some values
-        let set1 = create_test_request(1, "SET", vec![Bytes::from("key1"), Bytes::from("value1")]);
-        let set2 = create_test_request(2, "SET", vec![Bytes::from("key2"), Bytes::from("value2")]);
+        let set1 = create_test_request(RequestId(1), "SET", vec![Bytes::from("key1"), Bytes::from("value1")]);
+        let set2 = create_test_request(RequestId(2), "SET", vec![Bytes::from("key2"), Bytes::from("value2")]);
         state_machine.apply_redis_command(&set1).await.unwrap();
         state_machine.apply_redis_command(&set2).await.unwrap();
         
         // Delete one key
-        let del_request = create_test_request(3, "DEL", vec![Bytes::from("key1")]);
+        let del_request = create_test_request(RequestId(3), "DEL", vec![Bytes::from("key1")]);
         let response = state_machine.apply_redis_command(&del_request).await.unwrap();
         
-        assert_eq!(response.id, 3);
+        assert_eq!(response.id, RequestId(3));
         assert!(response.result.is_ok());
         assert_eq!(response.result.unwrap(), bytes::Bytes::from("1"));
         
         // Verify key is deleted
-        let get_request = create_test_request(4, "GET", vec![Bytes::from("key1")]);
+        let get_request = create_test_request(RequestId(4), "GET", vec![Bytes::from("key1")]);
         let get_response = state_machine.apply_redis_command(&get_request).await.unwrap();
         assert_eq!(get_response.result.unwrap(), bytes::Bytes::new());
     }
@@ -407,10 +409,10 @@ mod tests {
     async fn test_ping_command() {
         let (state_machine, _temp_dir) = create_test_state_machine();
         
-        let ping_request = create_test_request(1, "PING", vec![]);
+        let ping_request = create_test_request(RequestId(1), "PING", vec![]);
         let response = state_machine.apply_redis_command(&ping_request).await.unwrap();
         
-        assert_eq!(response.id, 1);
+        assert_eq!(response.id, RequestId(1));
         assert!(response.result.is_ok());
         assert_eq!(response.result.unwrap(), bytes::Bytes::from_static(b"PONG"));
     }
@@ -419,10 +421,10 @@ mod tests {
     async fn test_invalid_command() {
         let (state_machine, _temp_dir) = create_test_state_machine();
         
-        let invalid_request = create_test_request(1, "INVALID", vec![]);
+        let invalid_request = create_test_request(RequestId(1), "INVALID", vec![]);
         let response = state_machine.apply_redis_command(&invalid_request).await.unwrap();
         
-        assert_eq!(response.id, 1);
+        assert_eq!(response.id, RequestId(1));
         assert!(response.result.is_err());
         assert!(response.result.unwrap_err().contains("Unsupported command"));
     }

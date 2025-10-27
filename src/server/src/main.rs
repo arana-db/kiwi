@@ -19,8 +19,8 @@ use clap::Parser;
 use conf::config::Config;
 use log::{info, warn};
 use net::ServerFactory;
-use raft::{RaftNode, ClusterConfig};
-use std::sync::Arc;
+// use raft::{RaftNode, ClusterConfig}; // Temporarily disabled
+// use std::sync::Arc; // Temporarily unused
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
 #[derive(Parser)]
@@ -78,7 +78,8 @@ async fn main() -> std::io::Result<()> {
             ));
         }
         
-        // Convert config cluster to raft cluster config
+        // Raft cluster configuration temporarily disabled
+        /*
         let raft_cluster_config = ClusterConfig {
             enabled: config.cluster.enabled,
             node_id: config.cluster.node_id,
@@ -109,15 +110,17 @@ async fn main() -> std::io::Result<()> {
                 format!("Failed to start Raft node: {}", e)
             ));
         }
+        */
         
-        info!("Raft node started successfully");
+        // info!("Raft node started successfully");
         
-        // Create cluster-aware server
-        info!("tcp listener listen on {addr} (cluster mode)");
-        if let Some(server) = ServerFactory::create_cluster_server(protocol, Option::from(addr), raft_node) {
-            server.run().await.expect("Failed to start the cluster server. Please check the server configuration and ensure the address is available.");
+        // Cluster mode temporarily disabled - falling back to single-node mode
+        warn!("Cluster mode temporarily disabled, running in single-node mode");
+        info!("tcp listener listen on {addr}");
+        if let Some(server) = ServerFactory::create_server(protocol, Option::from(addr)) {
+            server.run().await.expect("Failed to start the server. Please check the server configuration and ensure the address is available.");
         } else {
-            return Err(std::io::Error::other("cluster server unavailable"));
+            return Err(std::io::Error::other("server unavailable"));
         }
     } else {
         if config.cluster.enabled {

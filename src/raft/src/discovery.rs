@@ -261,7 +261,7 @@ impl HealthMonitor {
         
         // Limit concurrent health checks to prevent resource exhaustion
         const MAX_CONCURRENT_CHECKS: usize = 10;
-        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CHECKS));
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CHECKS));
         let mut check_tasks = Vec::new();
 
         for (node_id, endpoint) in known_nodes {
@@ -279,11 +279,18 @@ impl HealthMonitor {
             let prev_result = self.health_results.read().await.get(&node_id).cloned();
 
             let task = tokio::spawn(async move {
-                // Acquire semaphore permit before checking
-                let _permit = sem.acquire().await.ok();
+                // Acquire semaphore permit before checking; if closed, skip this check
+                let permit = match sem.acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        log::warn!("Health check semaphore closed; skipping node {}", node_id);
+                        return;
+                    }
+                };
                 let result = Self::check_node_health(&endpoint, &config, prev_result).await;
                 let mut results = health_results.write().await;
                 results.insert(node_id, result);
+                drop(permit);
             });
 
             check_tasks.push(task);

@@ -309,21 +309,21 @@ fn test_resp3_to_resp2_conversion() {
     ];
     
     for (resp3_data, expected_resp2) in test_cases {
-        let converted = negotiator.convert_to_resp2(&resp3_data);
+        let converted = ProtocolNegotiator::convert_to_resp2(&resp3_data);
         assert_eq!(converted, expected_resp2, "Failed to convert {:?}", resp3_data);
     }
 }
 
 #[test]
 fn test_resp3_map_to_resp2_array_conversion() {
-    let negotiator = ProtocolNegotiator::new();
+    let _negotiator = ProtocolNegotiator::new();
     
     let map_data = RespData::Map(vec![
         (RespData::SimpleString(Bytes::from("key1")), RespData::Integer(1)),
         (RespData::SimpleString(Bytes::from("key2")), RespData::Boolean(true)),
     ]);
     
-    let converted = negotiator.convert_to_resp2(&map_data);
+    let converted = ProtocolNegotiator::convert_to_resp2(&map_data);
     
     match converted {
         RespData::Array(Some(items)) => {

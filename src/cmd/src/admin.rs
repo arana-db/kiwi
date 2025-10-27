@@ -86,7 +86,7 @@ impl Cmd for InfoCmd {
                 info.push_str("raft_last_applied:0\r\n");
                 info.push_str("raft_log_size:0\r\n");
             }
-            "server" | "default" | _ => {
+            "server" | "default" => {
                 info.push_str("# Server\r\n");
                 info.push_str("redis_version:7.0.0\r\n");
                 info.push_str("redis_git_sha1:00000000\r\n");
@@ -115,6 +115,12 @@ impl Cmd for InfoCmd {
                     info.push_str("cluster_known_nodes:1\r\n");
                     info.push_str("cluster_size:1\r\n");
                 }
+            }
+            _ => {
+                // Default to server info for unknown sections
+                info.push_str("# Server\r\n");
+                info.push_str("redis_version:7.0.0\r\n");
+                info.push_str("redis_mode:cluster\r\n");
             }
         }
 
