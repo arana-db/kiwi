@@ -22,8 +22,8 @@ mod cursor_management_test {
     use storage::error::Error;
     use storage::{DataType, StorageOptions, storage::Storage, unique_test_db_path};
 
-    #[test]
-    fn test_store_and_load_cursor_basic() {
+    #[tokio::test]
+    async fn test_store_and_load_cursor_basic() {
         let test_db_path = unique_test_db_path();
         let mut storage = Storage::new(1, 0);
         let options = Arc::new(StorageOptions::default());
@@ -47,8 +47,8 @@ mod cursor_management_test {
         }
     }
 
-    #[test]
-    fn test_load_nonexist_cursor() {
+    #[tokio::test]
+    async fn test_load_nonexist_cursor() {
         let test_db_path = unique_test_db_path();
         let mut storage = Storage::new(1, 0);
         let options = Arc::new(StorageOptions::default());
@@ -66,8 +66,8 @@ mod cursor_management_test {
         }
     }
 
-    #[test]
-    fn test_multiple_data_types() {
+    #[tokio::test]
+    async fn test_multiple_data_types() {
         let test_db_path = unique_test_db_path();
         let mut storage = Storage::new(1, 0);
         let options = Arc::new(StorageOptions::default());
@@ -100,8 +100,8 @@ mod cursor_management_test {
         }
     }
 
-    #[test]
-    fn test_empty_next_key_remove() {
+    #[tokio::test]
+    async fn test_empty_next_key_remove() {
         let test_db_path = unique_test_db_path();
         let mut storage = Storage::new(1, 0);
         let options = Arc::new(StorageOptions::default());

@@ -328,6 +328,9 @@ async fn test_lrem() {
     
     // Test remove all occurrences
     redis.rpush(key, &[b"value1".to_vec()]).expect("rpush should succeed");
+    
+
+    
     let removed = redis.lrem(key, 0, b"value1").expect("lrem should succeed");
     assert_eq!(removed, 2); // Should remove the remaining 2 occurrences
     
@@ -342,16 +345,29 @@ async fn test_mixed_operations() {
     
     // Test mixed lpush and rpush
     redis.lpush(key, &[b"left1".to_vec()]).expect("lpush should succeed");
+    println!("After lpush left1: {:?}", redis.lrange(key, 0, -1).expect("lrange should succeed").iter().map(|v| String::from_utf8_lossy(v)).collect::<Vec<_>>());
+    
     redis.rpush(key, &[b"right1".to_vec()]).expect("rpush should succeed");
+    println!("After rpush right1: {:?}", redis.lrange(key, 0, -1).expect("lrange should succeed").iter().map(|v| String::from_utf8_lossy(v)).collect::<Vec<_>>());
+    
     redis.lpush(key, &[b"left2".to_vec()]).expect("lpush should succeed");
+    println!("After lpush left2: {:?}", redis.lrange(key, 0, -1).expect("lrange should succeed").iter().map(|v| String::from_utf8_lossy(v)).collect::<Vec<_>>());
+    
     redis.rpush(key, &[b"right2".to_vec()]).expect("rpush should succeed");
+    println!("After rpush right2: {:?}", redis.lrange(key, 0, -1).expect("lrange should succeed").iter().map(|v| String::from_utf8_lossy(v)).collect::<Vec<_>>());
     
     let len = redis.llen(key).expect("llen should succeed");
     assert_eq!(len, 4);
     
     // Check order: left2, left1, right1, right2
     let result = redis.lrange(key, 0, -1).expect("lrange should succeed");
-    assert_eq!(result[0], b"left2");
+    println!("Mixed operations final result: {:?}", result.iter().map(|v| String::from_utf8_lossy(v)).collect::<Vec<_>>());
+    println!("Expected: [left2, left1, right1, right2]");
+    if !result.is_empty() {
+        assert_eq!(result[0], b"left2");
+    } else {
+        panic!("Result is empty, expected 4 elements");
+    }
     assert_eq!(result[1], b"left1");
     assert_eq!(result[2], b"right1");
     assert_eq!(result[3], b"right2");
