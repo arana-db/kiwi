@@ -213,6 +213,9 @@ impl KiwiStateMachine {
     /// Get the current applied state for Raft
     pub async fn get_applied_state(&self) -> (Option<openraft::LogId<NodeId>>, EffectiveMembership<NodeId, openraft::BasicNode>) {
         let applied_index = self.applied_index();
+        // Note: This function is currently unused but exported for future integration with RaftStateMachine Adaptor.
+        // The term is placeholder (1) since we don't track applied term yet. This should be sourced from actual
+        // Raft state before this method is used in production.
         let log_id = if applied_index > 0 {
             Some(openraft::LogId::new(openraft::CommittedLeaderId::new(1, self.node_id), applied_index))
         } else {

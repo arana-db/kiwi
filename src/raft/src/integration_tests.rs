@@ -105,7 +105,7 @@ impl TestCluster {
             let state_machine = Arc::new(KiwiStateMachine::new(engine, node_id));
             
             // Create network
-            let network = Arc::new(RaftNetwork::new());
+            let network = Arc::new(RaftNetwork::new(node_id));
             
             let test_node = TestNode {
                 node_id,

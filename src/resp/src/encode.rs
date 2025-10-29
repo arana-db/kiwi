@@ -663,4 +663,27 @@ mod tests {
         encoder.clear().encode_resp_data(&RespData::BulkString(Some(Bytes::from("hello"))));
         assert_eq!(encoder.get_response(), Bytes::from("$5\r\nhello\r\n"));
     }
+
+    #[test]
+    fn test_resp3_data_with_resp2_encoder() {
+        // Test that RESP3 data gracefully degrades or fails with RESP2 encoder
+        let mut encoder = RespEncoder::new(RespVersion::RESP2);
+        
+        // RESP3-specific types should either fail or downgrade gracefully
+        // For now, these will encode as RESP2 equivalents or be unsupported
+        // Boolean (RESP3) - will use simple string fallback
+        encoder.encode_resp_data(&RespData::Boolean(true));
+        let result = encoder.get_response();
+        // Should not panic, result depends on implementation
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_resp3_null_with_resp2_encoder() {
+        let mut encoder = RespEncoder::new(RespVersion::RESP2);
+        encoder.encode_resp_data(&RespData::Null);
+        // Should encode as RESP2 null (bulk string null)
+        let result = encoder.get_response();
+        assert!(!result.is_empty());
+    }
 }

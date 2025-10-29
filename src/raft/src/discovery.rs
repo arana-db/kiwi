@@ -644,8 +644,11 @@ impl ClusterStatusReporter {
     ) -> RaftResult<ClusterStatusReport> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+            .map(|d| d.as_secs())
+            .unwrap_or_else(|_| {
+                log::warn!("System clock appears to be before UNIX_EPOCH, using 0");
+                0
+            });
 
         // Get cluster health
         let cluster_health = self.topology.health_monitor.get_cluster_health().await;
@@ -671,9 +674,9 @@ impl ClusterStatusReporter {
                 endpoint,
                 health,
                 role,
-                last_contact: Some(SystemTime::now()), // This would be updated from actual Raft state
+                last_contact: None, // TODO: Track actual last contact time from Raft metrics
                 replication_lag: replication_lag_value,
-                is_voting_member: true, // This would be determined from cluster configuration
+                is_voting_member: true, // TODO: Determine from actual cluster configuration
             };
 
             node_statuses.insert(node_id, node_status);

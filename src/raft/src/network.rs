@@ -278,8 +278,8 @@ impl MessageEnvelope {
             to,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64,
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or_else(|_| 0),
             message,
             hmac: None,
         }
@@ -693,7 +693,8 @@ impl RaftConnection {
                 Err(e) => {
                     last_error = Some(e);
                     if attempt < max_retries {
-                        let delay = Duration::from_millis(100 * (1 << attempt)); // Exponential backoff
+                        let exp = (attempt as u32).min(20);
+                        let delay = Duration::from_millis(100u64.saturating_mul(1u64 << exp));
                         tokio::time::sleep(delay).await;
                         log::warn!("Retry attempt {} for node {} failed, retrying in {:?}", 
                                  attempt + 1, self.node_id, delay);

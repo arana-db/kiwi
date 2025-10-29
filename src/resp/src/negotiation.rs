@@ -56,27 +56,25 @@ impl ProtocolNegotiator {
     /// Handle HELLO command for protocol negotiation
     pub fn handle_hello(&mut self, command: &RespCommand) -> RespResult<RespData> {
         // HELLO [protover [AUTH username password] [SETNAME clientname]]
-        let mut args_iter = command.args.iter();
-        
-        // Parse protocol version if provided
-        let requested_version = if let Some(version_arg) = args_iter.next() {
-            let version_str = std::str::from_utf8(version_arg)
+        let mut args_iter = command.args.iter().peekable();
+
+        // Parse protocol version if the first arg is "2" or "3"
+        let requested_version = if let Some(first) = args_iter.peek() {
+            let s = std::str::from_utf8(first)
                 .map_err(|_| RespError::InvalidData("Invalid protocol version".to_string()))?;
-            
-            match version_str {
-                "2" => RespVersion::RESP2,
-                "3" => RespVersion::RESP3,
-                _ => return Err(RespError::InvalidData(
-                    "Unsupported protocol version. Supported versions: 2, 3".to_string()
-                )),
+            match s {
+                "2" => { args_iter.next(); Some(RespVersion::RESP2) }
+                "3" => { args_iter.next(); Some(RespVersion::RESP3) }
+                _ => None, // Not a version; proceed to parse AUTH/SETNAME
             }
         } else {
-            // If no version specified, default to RESP2
-            RespVersion::RESP2
+            None
         };
 
-        // Update current version
-        self.current_version = requested_version;
+        // Update current version only if explicitly requested
+        if let Some(v) = requested_version {
+            self.current_version = v;
+        }
 
         // Parse additional arguments (AUTH, SETNAME, etc.)
         while let Some(arg) = args_iter.next() {

@@ -192,15 +192,17 @@ impl RedisProtocolCompatibility {
                 topology.leader_id.map(|id| id.to_string()).unwrap_or_else(|| "0".to_string())
             };
             
-            // Format: node_id:port@cport flags master ping_sent ping_recv config_epoch link_state slots
+            // Format: node_id ip:port flags master ping_sent ping_recv config_epoch link_state slots
+            let slots = if is_leader { "0-16383" } else { "-" };
             nodes_info.push_str(&format!(
-                "{} {}:{} {} {} 0 0 1 {} 0-16383\n",
+                "{} {}:{} {} {} 0 0 1 {} {}\n",
                 node_id,
                 endpoint.host,
                 endpoint.port,
                 flags,
                 master_id,
-                status
+                status,
+                slots
             ));
         }
 
