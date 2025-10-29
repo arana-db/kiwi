@@ -665,25 +665,38 @@ mod tests {
     }
 
     #[test]
-    fn test_resp3_data_with_resp2_encoder() {
-        // Test that RESP3 data gracefully degrades or fails with RESP2 encoder
+    fn test_resp3_boolean_with_resp2_encoder() {
+        // Test that RESP3 Boolean encodes with RESP2 encoder
         let mut encoder = RespEncoder::new(RespVersion::RESP2);
-        
-        // RESP3-specific types should either fail or downgrade gracefully
-        // For now, these will encode as RESP2 equivalents or be unsupported
-        // Boolean (RESP3) - will use simple string fallback
         encoder.encode_resp_data(&RespData::Boolean(true));
         let result = encoder.get_response();
-        // Should not panic, result depends on implementation
-        assert!(!result.is_empty());
+        // Should encode as RESP3 format even with RESP2 encoder (current implementation)
+        // In future, this should either error or auto-convert to Integer(1)
+        assert_eq!(result, Bytes::from("#t\r\n"));
     }
 
     #[test]
     fn test_resp3_null_with_resp2_encoder() {
         let mut encoder = RespEncoder::new(RespVersion::RESP2);
         encoder.encode_resp_data(&RespData::Null);
-        // Should encode as RESP2 null (bulk string null)
+        // Should encode as RESP3 format even with RESP2 encoder (current implementation)
+        // In future, this should auto-convert to BulkString(None) "$-1\r\n"
         let result = encoder.get_response();
-        assert!(!result.is_empty());
+        assert_eq!(result, Bytes::from("_\r\n"));
+    }
+
+    #[test]
+    fn test_resp3_types_behavior() {
+        // Document current behavior: RESP3 types encode regardless of version
+        // Future improvement: Add version-aware encoding or fail early
+        let mut encoder = RespEncoder::new(RespVersion::RESP2);
+        
+        // Double
+        encoder.clear().encode_resp_data(&RespData::Double(3.14));
+        assert_eq!(encoder.get_response(), Bytes::from(",3.14\r\n"));
+        
+        // Map
+        encoder.clear().encode_resp_data(&RespData::Map(vec![]));
+        assert_eq!(encoder.get_response(), Bytes::from("%0\r\n"));
     }
 }

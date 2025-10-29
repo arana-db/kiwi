@@ -34,14 +34,14 @@ use crate::types::{TypeConfig, NodeId, ClientRequest, ClientResponse, RequestId,
 /// Snapshot data structure for state machine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StateMachineSnapshot {
-    pub data: HashMap<String, Vec<u8>>,
+    pub data: HashMap<Vec<u8>, Vec<u8>>,
     pub applied_index: u64,
 }
 
 /// Kiwi state machine for Raft integration
 pub struct KiwiStateMachine {
-    /// In-memory data store (will be replaced with RocksDB later)
-    data: Arc<RwLock<HashMap<String, Bytes>>>,
+    /// In-memory data store (binary-safe; will be replaced with RocksDB later)
+    data: Arc<RwLock<HashMap<Bytes, Bytes>>>,
     /// Last applied log index
     applied_index: AtomicU64,
     /// Snapshot storage
@@ -100,7 +100,7 @@ impl KiwiStateMachine {
             return Err(RaftError::invalid_request("SET requires key and value"));
         }
 
-        let key = String::from_utf8_lossy(&cmd.args[0]).to_string();
+        let key = cmd.args[0].clone();
         let value = cmd.args[1].clone();
 
         let mut data = self.data.write().await;
@@ -115,10 +115,10 @@ impl KiwiStateMachine {
             return Err(RaftError::invalid_request("GET requires key"));
         }
 
-        let key = String::from_utf8_lossy(&cmd.args[0]).to_string();
+        let key = &cmd.args[0];
         
         let data = self.data.read().await;
-        match data.get(&key) {
+        match data.get(key) {
             Some(value) => Ok(value.clone()),
             None => Ok(Bytes::new()), // Redis returns null for missing keys
         }
@@ -134,8 +134,7 @@ impl KiwiStateMachine {
         let mut deleted_count = 0u64;
         
         for key_bytes in &cmd.args {
-            let key = String::from_utf8_lossy(key_bytes).to_string();
-            if data.remove(&key).is_some() {
+            if data.remove(key_bytes).is_some() {
                 deleted_count += 1;
             }
         }
@@ -153,8 +152,7 @@ impl KiwiStateMachine {
         let mut exists_count = 0u64;
         
         for key_bytes in &cmd.args {
-            let key = String::from_utf8_lossy(key_bytes).to_string();
-            if data.contains_key(&key) {
+            if data.contains_key(key_bytes) {
                 exists_count += 1;
             }
         }
@@ -173,7 +171,7 @@ impl KiwiStateMachine {
         let mut snapshot_data = HashMap::new();
         
         for (key, value) in data_guard.iter() {
-            snapshot_data.insert(key.clone(), value.to_vec());
+            snapshot_data.insert(key.to_vec(), value.to_vec());
         }
 
         Ok(StateMachineSnapshot {
@@ -188,7 +186,7 @@ impl KiwiStateMachine {
         data.clear();
         
         for (key, value) in &snapshot.data {
-            data.insert(key.clone(), Bytes::from(value.clone()));
+            data.insert(Bytes::from(key.clone()), Bytes::from(value.clone()));
         }
 
         self.applied_index.store(snapshot.applied_index, Ordering::Release);
@@ -202,7 +200,12 @@ impl KiwiStateMachine {
     
     /// Get all keys for debugging
     pub async fn get_all_keys(&self) -> Vec<String> {
-        self.data.read().await.keys().cloned().collect()
+        self.data
+            .read()
+            .await
+            .keys()
+            .map(|k| String::from_utf8_lossy(k).to_string())
+            .collect()
     }
 }
 

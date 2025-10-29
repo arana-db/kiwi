@@ -79,16 +79,16 @@ pub struct TcpServer {
 }
 
 impl TcpServer {
-    pub fn new(addr: Option<String>) -> Self {
+    pub fn new(addr: Option<String>) -> Result<Self, Box<dyn Error>> {
         // TODO: Get storage options from config
         let storage_options = Arc::new(StorageOptions::default());
         let db_path = PathBuf::from("./db");
         let mut storage = Storage::new(1, 0);
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
-        // Note: Storage::open returns a receiver, and should be called after construction, not in new.
-        // The caller should call storage.open(storage_options, db_path) and spawn the bg_task_worker as needed.
-        storage.open(storage_options, db_path).unwrap();
+        // Open storage and handle errors gracefully
+        storage.open(storage_options, db_path)
+            .map_err(|e| Box::new(e) as Box<dyn Error>)?;
 
         // Configure connection pool
         let pool_config = PoolConfig {
@@ -101,13 +101,13 @@ impl TcpServer {
         let storage = Arc::new(storage);
         let cmd_table = Arc::new(create_command_table());
 
-        Self {
+        Ok(Self {
             addr: addr.unwrap_or("127.0.0.1:7379".to_string()),
             storage: storage.clone(),
             cmd_table: cmd_table.clone(),
             executor: executor.clone(),
             resource_pool: Arc::new(ConnectionPool::new(pool_config)),
-        }
+        })
     }
 
     /// Start background task for resource pool cleanup
@@ -143,16 +143,16 @@ pub struct ClusterTcpServer {
 }
 
 impl ClusterTcpServer {
-    pub fn new(addr: Option<String>, raft_node: Arc<dyn Send + Sync>) -> Self {
+    pub fn new(addr: Option<String>, raft_node: Arc<dyn Send + Sync>) -> Result<Self, Box<dyn Error>> {
         // TODO: Get storage options from config
         let storage_options = Arc::new(StorageOptions::default());
         let db_path = PathBuf::from("./db");
         let mut storage = Storage::new(1, 0);
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
-        // Note: Storage::open returns a receiver, and should be called after construction, not in new.
-        // The caller should call storage.open(storage_options, db_path) and spawn the bg_task_worker as needed.
-        storage.open(storage_options, db_path).unwrap();
+        // Open storage and handle errors gracefully
+        storage.open(storage_options, db_path)
+            .map_err(|e| Box::new(e) as Box<dyn Error>)?;
 
         // Configure connection pool
         let pool_config = PoolConfig {
@@ -166,14 +166,14 @@ impl ClusterTcpServer {
         let cluster_storage = Arc::new(ClusterStorage::new(storage, raft_node.clone()));
         let cmd_table = Arc::new(create_command_table());
 
-        Self {
+        Ok(Self {
             addr: addr.unwrap_or("127.0.0.1:7379".to_string()),
             cluster_storage: cluster_storage.clone(),
             cmd_table: cmd_table.clone(),
             executor: executor.clone(),
             resource_pool: Arc::new(ConnectionPool::new(pool_config)),
             raft_node,
-        }
+        })
     }
 
     /// Start background task for resource pool cleanup

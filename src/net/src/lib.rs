@@ -43,7 +43,7 @@ pub struct ServerFactory;
 impl ServerFactory {
     pub fn create_server(protocol: &str, addr: Option<String>) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
-            "tcp" => Some(Box::new(TcpServer::new(addr))),
+            "tcp" => TcpServer::new(addr).ok().map(|s| Box::new(s) as Box<dyn ServerTrait>),
             #[cfg(unix)]
             "unix" => Some(Box::new(unix::UnixServer::new(addr))),
             #[cfg(not(unix))]
@@ -58,7 +58,7 @@ impl ServerFactory {
         raft_node: Arc<dyn Send + Sync>
     ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
-            "tcp" => Some(Box::new(ClusterTcpServer::new(addr, raft_node))),
+            "tcp" => ClusterTcpServer::new(addr, raft_node).ok().map(|s| Box::new(s) as Box<dyn ServerTrait>),
             _ => None,
         }
     }
