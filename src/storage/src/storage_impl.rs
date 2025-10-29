@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::error::{Error, Result};
+use crate::error::{Error, InvalidArgumentSnafu, Result};
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage::Storage;
 
@@ -427,11 +427,11 @@ impl Storage {
     /// Get time to live for a key in seconds
     pub fn ttl(&self, key: &[u8]) -> Result<i64> {
         let key_str = String::from_utf8_lossy(key);
-        
+
         // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        
+
         // Check if key exists in storage
         match self.insts[instance_id].key_exists_live(key) {
             Ok(false) => return Ok(-2), // Key doesn't exist
@@ -454,11 +454,11 @@ impl Storage {
     /// Get time to live for a key in milliseconds
     pub fn pttl(&self, key: &[u8]) -> Result<i64> {
         let key_str = String::from_utf8_lossy(key);
-        
+
         // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        
+
         // Check if key exists in storage
         match self.insts[instance_id].key_exists_live(key) {
             Ok(false) => return Ok(-2), // Key doesn't exist
@@ -485,11 +485,11 @@ impl Storage {
         }
 
         let key_str = String::from_utf8_lossy(key);
-        
+
         // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        
+
         // Check if key exists in storage
         match self.insts[instance_id].key_exists_live(key) {
             Ok(false) => return Ok(false), // Key doesn't exist
@@ -513,11 +513,11 @@ impl Storage {
         }
 
         let key_str = String::from_utf8_lossy(key);
-        
+
         // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        
+
         // Check if key exists in storage
         match self.insts[instance_id].key_exists_live(key) {
             Ok(false) => return Ok(false), // Key doesn't exist
@@ -537,11 +537,11 @@ impl Storage {
     /// Set the expiration for a key as a UNIX timestamp in seconds
     pub fn expireat(&self, key: &[u8], timestamp: i64) -> Result<bool> {
         let key_str = String::from_utf8_lossy(key);
-        
+
         // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        
+
         // Check if key exists in storage
         match self.insts[instance_id].key_exists_live(key) {
             Ok(false) => return Ok(false), // Key doesn't exist
@@ -561,11 +561,11 @@ impl Storage {
     /// Set the expiration for a key as a UNIX timestamp in milliseconds
     pub fn pexpireat(&self, key: &[u8], timestamp: i64) -> Result<bool> {
         let key_str = String::from_utf8_lossy(key);
-        
+
         // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        
+
         // Check if key exists in storage
         match self.insts[instance_id].key_exists_live(key) {
             Ok(false) => return Ok(false), // Key doesn't exist
@@ -585,11 +585,11 @@ impl Storage {
     /// Remove the expiration from a key
     pub fn persist(&self, key: &[u8]) -> Result<bool> {
         let key_str = String::from_utf8_lossy(key);
-        
+
         // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        
+
         // Check if key exists in storage
         match self.insts[instance_id].key_exists_live(key) {
             Ok(false) => return Ok(false), // Key doesn't exist
@@ -614,7 +614,7 @@ impl Storage {
         for key in keys {
             let slot_id = key_to_slot_id(key);
             let instance_id = self.slot_indexer.get_instance_id(slot_id);
-            
+
             match self.insts[instance_id].key_exists_live(key) {
                 Ok(true) => count += 1,
                 Ok(false) => {} // Key doesn't exist
@@ -632,7 +632,7 @@ impl Storage {
     pub fn key_type(&self, key: &[u8]) -> Result<String> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        
+
         match self.insts[instance_id].get_key_type(key) {
             Ok(data_type) => Ok(crate::base_value_format::data_type_to_string(data_type).to_string()),
             Err(_) => Ok("none".to_string()), // Key doesn't exist
@@ -649,7 +649,7 @@ impl Storage {
         for key in keys {
             let slot_id = key_to_slot_id(key);
             let instance_id = self.slot_indexer.get_instance_id(slot_id);
-            
+
             // Try to delete the key - this will handle all data types
             match self.insts[instance_id].del_key(key) {
                 Ok(true) => deleted_count += 1,
@@ -667,7 +667,7 @@ impl Storage {
     /// Find all keys matching the given pattern
     pub fn keys(&self, pattern: &str) -> Result<Vec<String>> {
         let mut all_keys = Vec::new();
-        
+
         for inst in &self.insts {
             // Continue with other instances on error
             if let Ok(keys) = inst.scan_keys(pattern) {
@@ -705,4 +705,203 @@ impl Storage {
         }
         Ok(None) // No keys found in any instance
     }
+
+    // Sets Commands Implementation
+
+    // Add the specified members to the set stored at key. Specified members that
+    // are already a member of this set are ignored. If key does not exist, a new
+    // set is created before adding the specified members.
+    pub fn sadd(&self, key: &[u8], members: &[&[u8]]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].sadd(key, members)
+    }
+
+    // Returns all the members of the set value stored at key.
+    pub fn smembers(&self, key: &[u8]) -> Result<Vec<String>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].smembers(key)
+    }
+
+    // Returns the set cardinality (number of elements) of the set stored at key.
+    pub fn scard(&self, key: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].scard(key)
+    }
+
+    // Check if member is a member of the set stored at key.
+    pub fn sismember(&self, key: &[u8], member: &[u8]) -> Result<bool> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].sismember(key, member)
+    }
+
+    // Get random members from a set.
+    pub fn srandmember(&self, key: &[u8], count: Option<i32>) -> Result<Vec<String>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].srandmember(key, count)
+    }
+
+    // Remove one or more members from a set.
+    pub fn srem(&self, key: &[u8], members: &[&[u8]]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].srem(key, members)
+    }
+
+    // Remove and return random members from a set.
+    pub fn spop(&self, key: &[u8], count: Option<i32>) -> Result<Vec<String>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].spop(key, count)
+    }
+
+    // Move member from source set to destination set.
+    pub fn smove(&self, source: &[u8], destination: &[u8], member: &[u8]) -> Result<bool> {
+        // For multi-key operations, we need to ensure both keys are on the same instance
+        let source_slot_id = key_to_slot_id(source);
+        let dest_slot_id = key_to_slot_id(destination);
+
+        if source_slot_id != dest_slot_id {
+            return InvalidArgumentSnafu {
+                message: "CROSSSLOT Keys in request don't hash to the same slot".to_string(),
+            }
+            .fail();
+        }
+
+        let instance_id = self.slot_indexer.get_instance_id(source_slot_id);
+        self.insts[instance_id].smove(source, destination, member)
+    }
+
+    // Returns the members of the set resulting from the difference between the
+    // first set and all the successive sets.
+    pub fn sdiff(&self, keys: &[&[u8]]) -> Result<Vec<String>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let slot_id = key_to_slot_id(keys[0]);
+        for &k in keys {
+            if key_to_slot_id(k) != slot_id {
+                return InvalidArgumentSnafu {
+                    message: "CROSSSLOT Keys in request don't hash to the same slot".to_string(),
+                }
+                .fail();
+            }
+        }
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].sdiff(keys)
+    }
+
+    // Returns the members of the set resulting from the intersection of all the given sets.
+    pub fn sinter(&self, keys: &[&[u8]]) -> Result<Vec<String>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let slot_id = key_to_slot_id(keys[0]);
+        for &k in keys {
+            if key_to_slot_id(k) != slot_id {
+                return InvalidArgumentSnafu {
+                    message: "CROSSSLOT Keys in request don't hash to the same slot".to_string(),
+                }
+                .fail();
+            }
+        }
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].sinter(keys)
+    }
+
+    // Returns the members of the set resulting from the union of all the given sets.
+    pub fn sunion(&self, keys: &[&[u8]]) -> Result<Vec<String>> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let slot_id = key_to_slot_id(keys[0]);
+        for &k in keys {
+            if key_to_slot_id(k) != slot_id {
+                return InvalidArgumentSnafu {
+                    message: "CROSSSLOT Keys in request don't hash to the same slot".to_string(),
+                }
+                .fail();
+            }
+        }
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].sunion(keys)
+    }
+
+    // Store the difference between the first set and all the successive sets into a destination key.
+    pub fn sdiffstore(&self, destination: &[u8], keys: &[&[u8]]) -> Result<i32> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        let slot_id = key_to_slot_id(destination);
+        for &k in keys {
+            if key_to_slot_id(k) != slot_id {
+                return InvalidArgumentSnafu {
+                    message: "CROSSSLOT Keys in request don't hash to the same slot".to_string(),
+                }
+                .fail();
+            }
+        }
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].sdiffstore(destination, keys)
+    }
+
+    // Store the intersection of all the given sets into a destination key.
+    pub fn sinterstore(&self, destination: &[u8], keys: &[&[u8]]) -> Result<i32> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        let slot_id = key_to_slot_id(destination);
+        for &k in keys {
+            if key_to_slot_id(k) != slot_id {
+                return InvalidArgumentSnafu {
+                    message: "CROSSSLOT Keys in request don't hash to the same slot".to_string(),
+                }
+                .fail();
+            }
+        }
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].sinterstore(destination, keys)
+    }
+
+    // Store the union of all the given sets into a destination key.
+    pub fn sunionstore(&self, destination: &[u8], keys: &[&[u8]]) -> Result<i32> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        let slot_id = key_to_slot_id(destination);
+        for &k in keys {
+            if key_to_slot_id(k) != slot_id {
+                return InvalidArgumentSnafu {
+                    message: "CROSSSLOT Keys in request don't hash to the same slot".to_string(),
+                }
+                .fail();
+            }
+        }
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].sunionstore(destination, keys)
+    }
+
+    // Scan set members with cursor-based iteration.
+    pub fn sscan(
+        &self,
+        key: &[u8],
+        cursor: u64,
+        pattern: Option<&str>,
+        count: Option<usize>,
+    ) -> Result<(u64, Vec<String>)> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].sscan(key, cursor, pattern, count)
+    }
+
 }

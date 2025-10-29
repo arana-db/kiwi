@@ -54,6 +54,7 @@ pub fn create_command_table() -> CmdTable {
 
     register_cmd!(
         cmd_table,
+        // String commands
         crate::append::AppendCmd,
         crate::set::SetCmd,
         crate::get::GetCmd,
@@ -106,6 +107,22 @@ pub fn create_command_table() -> CmdTable {
         // Admin commands
         crate::admin::InfoCmd,
         crate::admin::ConfigCmd,
+        // Set commands
+        crate::sadd::SaddCmd,
+        crate::scard::ScardCmd,
+        crate::sdiff::SdiffCmd,
+        crate::sdiffstore::SdiffstoreCmd,
+        crate::sinter::SinterCmd,
+        crate::sinterstore::SinterstoreCmd,
+        crate::sismember::SismemberCmd,
+        crate::smembers::SmembersCmd,
+        crate::smove::SmoveCmd,
+        crate::spop::SpopCmd,
+        crate::srandmember::SrandmemberCmd,
+        crate::srem::SremCmd,
+        crate::sscan::SscanCmd,
+        crate::sunion::SunionCmd,
+        crate::sunionstore::SunionstoreCmd,
         // TODO: add more commands...
     );
 
