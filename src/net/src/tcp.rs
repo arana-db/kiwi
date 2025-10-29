@@ -143,6 +143,9 @@ pub struct ClusterTcpServer {
 }
 
 impl ClusterTcpServer {
+    // TODO: Use RaftNodeInterface trait bound instead of generic Arc<dyn Send + Sync>
+    // The raft_node parameter should be constrained to Arc<dyn RaftNodeInterface> 
+    // but this requires adding raft as a dependency to the net module
     pub fn new(addr: Option<String>, raft_node: Arc<dyn Send + Sync>) -> Result<Self, Box<dyn Error>> {
         // TODO: Get storage options from config
         let storage_options = Arc::new(StorageOptions::default());

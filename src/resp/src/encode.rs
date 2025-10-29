@@ -666,22 +666,25 @@ mod tests {
 
     #[test]
     fn test_resp3_boolean_with_resp2_encoder() {
-        // Test that RESP3 Boolean encodes with RESP2 encoder
+        // Test current behavior: RESP3 Boolean encodes as RESP3 format even with RESP2 encoder
+        // This produces invalid RESP2 output (#t\r\n is not valid RESP2)
+        // TODO: Either fail with error or auto-convert Boolean(true) -> Integer(1) ":1\r\n"
         let mut encoder = RespEncoder::new(RespVersion::RESP2);
         encoder.encode_resp_data(&RespData::Boolean(true));
         let result = encoder.get_response();
-        // Should encode as RESP3 format even with RESP2 encoder (current implementation)
-        // In future, this should either error or auto-convert to Integer(1)
+        // Current implementation produces RESP3 format regardless of encoder version
         assert_eq!(result, Bytes::from("#t\r\n"));
     }
 
     #[test]
     fn test_resp3_null_with_resp2_encoder() {
+        // Test current behavior: RESP3 Null encodes as RESP3 format even with RESP2 encoder
+        // This produces invalid RESP2 output (_\r\n is not valid RESP2)
+        // TODO: Auto-convert Null -> BulkString(None) "$-1\r\n" for RESP2 compatibility
         let mut encoder = RespEncoder::new(RespVersion::RESP2);
         encoder.encode_resp_data(&RespData::Null);
-        // Should encode as RESP3 format even with RESP2 encoder (current implementation)
-        // In future, this should auto-convert to BulkString(None) "$-1\r\n"
         let result = encoder.get_response();
+        // Current implementation produces RESP3 format regardless of encoder version
         assert_eq!(result, Bytes::from("_\r\n"));
     }
 

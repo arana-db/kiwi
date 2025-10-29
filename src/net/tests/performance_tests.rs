@@ -37,7 +37,6 @@ pub struct PerformanceResults {
 /// Performance test configuration
 #[derive(Debug, Clone)]
 pub struct PerformanceTestConfig {
-    pub duration: Duration,
     pub concurrent_clients: usize,
     pub operations_per_client: usize,
     pub warmup_duration: Duration,
@@ -46,7 +45,6 @@ pub struct PerformanceTestConfig {
 impl Default for PerformanceTestConfig {
     fn default() -> Self {
         Self {
-            duration: Duration::from_secs(10),
             concurrent_clients: 10,
             operations_per_client: 1000,
             warmup_duration: Duration::from_secs(2),
@@ -95,7 +93,7 @@ impl NetworkPerformanceTests {
                     match pool_clone.get_connection(|| async {
                         // Simulate connection creation
                         tokio::time::sleep(Duration::from_micros(100)).await;
-                        Ok(MockConnection { id: 1 })
+                        Ok(MockConnection { _id: 1 })
                     }).await {
                         Ok(conn) => {
                             // Simulate some work
@@ -233,7 +231,7 @@ impl NetworkPerformanceTests {
                     let mut reader = BufferedReader::new(manager_clone.clone());
                     
                     // Read data
-                    let bytes_read = reader.read_data(&data).await;
+                    let bytes_read = reader.read_data(&data[..]).await;
                     if bytes_read > 0 {
                         // Process available data
                         if let Some(available) = reader.available_data() {
@@ -402,7 +400,7 @@ impl NetworkPerformanceTests {
             let pool_clone = pool.clone();
             let handle = tokio::spawn(async move {
                 if let Ok(conn) = pool_clone.get_connection(|| async {
-                    Ok(MockConnection { id: 1 })
+                    Ok(MockConnection { _id: 1 })
                 }).await {
                     pool_clone.return_connection(conn).await;
                 }
@@ -470,8 +468,7 @@ impl NetworkPerformanceTests {
 /// Mock connection for testing
 #[derive(Debug)]
 struct MockConnection {
-    #[allow(dead_code)]
-    id: u32,
+    _id: u32,
 }
 
 #[cfg(test)]
@@ -481,9 +478,9 @@ mod tests {
     #[tokio::test]
     async fn test_performance_test_config() {
         let config = PerformanceTestConfig::default();
-        assert_eq!(config.duration, Duration::from_secs(10));
         assert_eq!(config.concurrent_clients, 10);
         assert_eq!(config.operations_per_client, 1000);
+        assert_eq!(config.warmup_duration, Duration::from_secs(2));
     }
 
     #[tokio::test]

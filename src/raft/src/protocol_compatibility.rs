@@ -391,14 +391,18 @@ impl RedisProtocolCompatibility {
             ClusterState::Fail
         };
         
-        // Update node information (simplified - in real implementation would get actual endpoints)
+        // Update node information
+        // TODO: Add public endpoint accessor to RaftNode and wire real endpoints
+        // RaftNode stores endpoints internally but doesn't expose them publicly.
+        // Need to add: pub async fn get_endpoint(&self, node_id: NodeId) -> Option<String>
         for &node_id in &membership {
             topology.nodes.entry(node_id).or_insert_with(|| {
+                // TODO: Replace with actual endpoint from RaftNode.get_endpoint(node_id)
                 NodeEndpoint {
                     node_id,
-                    host: "127.0.0.1".to_string(), // Placeholder
-                    port: 7379,                    // Placeholder
-                    is_reachable: true,
+                    host: "127.0.0.1".to_string(), // Placeholder - should be from RaftNode
+                    port: 7379,                    // Placeholder - should be from RaftNode
+                    is_reachable: true,            // TODO: Should check actual reachability
                 }
             });
         }
