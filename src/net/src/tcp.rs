@@ -36,6 +36,40 @@ use crate::ServerTrait;
 use crate::handle::{process_connection, process_cluster_connection};
 use crate::pool::{ConnectionPool, PoolConfig};
 
+/// Default pool configuration for connection pooling
+fn default_pool_config() -> PoolConfig {
+    PoolConfig {
+        max_connections: 1000,
+        connection_timeout: Duration::from_secs(30),
+        idle_timeout: Duration::from_secs(300),
+        min_connections: 10,
+    }
+}
+
+/// Start background cleanup task for a connection pool
+async fn start_pool_cleanup_task<R: Send + Sync + 'static>(
+    pool: Arc<ConnectionPool<R>>,
+    log_prefix: &'static str,
+) {
+    tokio::spawn(async move {
+        let mut cleanup_interval = interval(Duration::from_secs(60)); // Cleanup every minute
+        
+        loop {
+            cleanup_interval.tick().await;
+            pool.cleanup_idle().await;
+            
+            let stats = pool.stats().await;
+            if stats.active_connections > 0 || stats.available_connections > 0 {
+                info!(
+                    "{} - Active: {}, Available: {}, Max: {}",
+                    log_prefix, stats.active_connections, 
+                    stats.available_connections, stats.max_connections
+                );
+            }
+        }
+    });
+}
+
 pub struct TcpStreamWrapper {
     stream: TcpStream,
 }
@@ -91,12 +125,7 @@ impl TcpServer {
             .map_err(|e| Box::new(e) as Box<dyn Error>)?;
 
         // Configure connection pool
-        let pool_config = PoolConfig {
-            max_connections: 1000,
-            connection_timeout: Duration::from_secs(30),
-            idle_timeout: Duration::from_secs(300),
-            min_connections: 10,
-        };
+        let pool_config = default_pool_config();
 
         let storage = Arc::new(storage);
         let cmd_table = Arc::new(create_command_table());
@@ -112,23 +141,7 @@ impl TcpServer {
 
     /// Start background task for resource pool cleanup
     async fn start_pool_cleanup(&self) {
-        let pool = self.resource_pool.clone();
-        tokio::spawn(async move {
-            let mut cleanup_interval = interval(Duration::from_secs(60)); // Cleanup every minute
-            
-            loop {
-                cleanup_interval.tick().await;
-                pool.cleanup_idle().await;
-                
-                let stats = pool.stats().await;
-                if stats.active_connections > 0 || stats.available_connections > 0 {
-                    info!(
-                        "Resource pool stats - Active: {}, Available: {}, Max: {}",
-                        stats.active_connections, stats.available_connections, stats.max_connections
-                    );
-                }
-            }
-        });
+        start_pool_cleanup_task(self.resource_pool.clone(), "Resource pool stats").await;
     }
 }
 
@@ -158,12 +171,7 @@ impl ClusterTcpServer {
             .map_err(|e| Box::new(e) as Box<dyn Error>)?;
 
         // Configure connection pool
-        let pool_config = PoolConfig {
-            max_connections: 1000,
-            connection_timeout: Duration::from_secs(30),
-            idle_timeout: Duration::from_secs(300),
-            min_connections: 10,
-        };
+        let pool_config = default_pool_config();
 
         let storage = Arc::new(storage);
         let cluster_storage = Arc::new(ClusterStorage::new(storage, raft_node.clone()));
@@ -181,23 +189,7 @@ impl ClusterTcpServer {
 
     /// Start background task for resource pool cleanup
     async fn start_pool_cleanup(&self) {
-        let pool = self.resource_pool.clone();
-        tokio::spawn(async move {
-            let mut cleanup_interval = interval(Duration::from_secs(60)); // Cleanup every minute
-            
-            loop {
-                cleanup_interval.tick().await;
-                pool.cleanup_idle().await;
-                
-                let stats = pool.stats().await;
-                if stats.active_connections > 0 || stats.available_connections > 0 {
-                    info!(
-                        "Cluster resource pool stats - Active: {}, Available: {}, Max: {}",
-                        stats.active_connections, stats.available_connections, stats.max_connections
-                    );
-                }
-            }
-        });
+        start_pool_cleanup_task(self.resource_pool.clone(), "Cluster resource pool stats").await;
     }
 }
 

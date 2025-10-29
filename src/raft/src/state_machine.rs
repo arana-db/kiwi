@@ -464,7 +464,11 @@ mod tests {
         
         // Add some data
         for i in 1..=5 {
-            let set_req = create_test_request(i, "SET", vec![format!("key{}", i), format!("value{}", i)]);
+            let set_req = create_test_request(
+                RequestId(i as u64), 
+                "SET", 
+                vec![Bytes::from(format!("key{}", i)), Bytes::from(format!("value{}", i))]
+            );
             state_machine.apply_redis_command(&set_req).await.unwrap();
         }
         
@@ -478,9 +482,9 @@ mod tests {
         assert_eq!(snapshot.data.len(), 5);
         
         for i in 1..=5 {
-            let key = format!("key{}", i);
-            let expected_value = format!("value{}", i);
-            assert_eq!(snapshot.data.get(&key).unwrap(), expected_value.as_bytes());
+            let key = format!("key{}", i).into_bytes();
+            let expected_value = format!("value{}", i).into_bytes();
+            assert_eq!(snapshot.data.get(&key).unwrap(), &expected_value);
         }
     }
 

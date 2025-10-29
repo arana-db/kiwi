@@ -425,7 +425,9 @@ impl RespEncode for RespEncoder {
                 self.append_crlf()
             }
             RespData::VerbatimString { format, data } => {
-                debug_assert_eq!(format.len(), 3, "RESP3 VerbatimString format must be exactly 3 bytes");
+                if format.len() != 3 {
+                    panic!("RESP3 VerbatimString format must be exactly 3 bytes, got {}", format.len());
+                }
                 let total_len = format.len() + 1 + data.len(); // format + ':' + data
                 let _ = write!(self.buffer, "={total_len}");
                 self.append_crlf();
@@ -499,7 +501,9 @@ impl RespEncode for RespEncoder {
     }
 
     fn append_verbatim_string(&mut self, format: &str, data: &[u8]) -> &mut Self {
-        debug_assert_eq!(format.len(), 3, "RESP3 VerbatimString format must be exactly 3 bytes");
+        if format.len() != 3 {
+            panic!("RESP3 VerbatimString format must be exactly 3 bytes, got {}", format.len());
+        }
         let total_len = format.len() + 1 + data.len(); // format + ':' + data
         let _ = write!(self.buffer, "={total_len}");
         self.append_crlf();
