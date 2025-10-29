@@ -27,6 +27,7 @@ use tokio::sync::mpsc;
 
 use crate::base_value_format::DataType;
 use crate::error::{Error, MpscSnafu, Result};
+use crate::expiration_manager::ExpirationManager;
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
 use crate::{Redis, StorageOptions, data_type_to_tag};
@@ -101,6 +102,10 @@ pub struct Storage {
 
     pub cursors_store: Arc<Cache<String, String>>,
 
+    // For TTL management
+    pub expiration_manager: Option<Arc<ExpirationManager>>,
+    pub expiration_cleanup_task: Option<tokio::task::JoinHandle<()>>,
+
     // For scan keys in data base
     pub db_instance_num: usize,
     pub db_id: usize,
@@ -123,6 +128,8 @@ impl Storage {
             current_task_type: AtomicU8::new(TaskType::None.into()),
             scan_keynum_exit: AtomicBool::new(false),
             ignore_tasks: AtomicBool::new(false),
+            expiration_manager: None,
+            expiration_cleanup_task: None,
         }
     }
 
@@ -134,6 +141,12 @@ impl Storage {
         let (handler, receiver) = BgTaskHandler::new();
         let handler_arc = Arc::new(handler);
         self.bg_task_handler = Some(Arc::clone(&handler_arc));
+
+        // Initialize expiration manager
+        let expiration_manager = Arc::new(ExpirationManager::new(Arc::clone(&handler_arc)));
+        let cleanup_task = expiration_manager.start_cleanup_task();
+        self.expiration_manager = Some(expiration_manager);
+        self.expiration_cleanup_task = Some(cleanup_task);
 
         let db_path = db_path.as_ref();
         let handler_for_redis = Arc::clone(&handler_arc);
@@ -174,6 +187,10 @@ impl Storage {
             let _ = bg_task_handler.send(BgTask::Shutdown).await;
         }
         if let Some(handle) = self.bg_task.take() {
+            let _ = handle.await;
+        }
+        if let Some(handle) = self.expiration_cleanup_task.take() {
+            handle.abort();
             let _ = handle.await;
         }
     }

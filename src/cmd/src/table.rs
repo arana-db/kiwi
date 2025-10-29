@@ -77,12 +77,43 @@ pub fn create_command_table() -> CmdTable {
         crate::bitcount::BitcountCmd,
         crate::bitpos::BitposCmd,
         crate::bitop::BitopCmd,
+        // Hash commands
+        crate::hset::HSetCmd,
+        crate::hget::HGetCmd,
+        crate::hdel::HDelCmd,
+        crate::hexists::HExistsCmd,
+        crate::hlen::HLenCmd,
+        crate::hkeys::HKeysCmd,
+        crate::hmset::HMSetCmd,
+        crate::hmget::HMGetCmd,
+        crate::hgetall::HGetAllCmd,
+        crate::hvals::HValsCmd,
+        crate::hincrby::HIncrByCmd,
+        crate::hincrbyfloat::HIncrByFloatCmd,
+        crate::hsetnx::HSetNXCmd,
+        crate::hstrlen::HStrLenCmd,
+        // List commands
+        crate::list::LPushCmd,
+        crate::list::RPushCmd,
+        crate::list::LPopCmd,
+        crate::list::RPopCmd,
+        crate::list::LLenCmd,
+        crate::list::LIndexCmd,
+        crate::list::LRangeCmd,
+        crate::list::LSetCmd,
+        crate::list::LTrimCmd,
+        crate::list::LRemCmd,
+        // Admin commands
+        crate::admin::InfoCmd,
+        crate::admin::ConfigCmd,
         // TODO: add more commands...
     );
 
     register_group_cmd!(
         cmd_table,
         crate::group_client::new_client_group_cmd,
+        crate::cluster::new_cluster_group_cmd,
+        crate::cluster::new_raft_group_cmd,
         // TODO: add more group commands...
     );
 

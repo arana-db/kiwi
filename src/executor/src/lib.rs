@@ -17,7 +17,9 @@
 
 pub mod builder;
 pub mod executor;
+pub mod cluster_executor;
 
 pub use builder::CmdExecutorBuilder;
 pub use executor::CmdExecution;
 pub use executor::CmdExecutor;
+pub use cluster_executor::{ClusterCmdExecution, ClusterCmdExecutor};

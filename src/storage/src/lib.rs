@@ -33,6 +33,7 @@ mod coding;
 mod slot_indexer;
 mod statistics;
 mod util;
+mod expiration_manager;
 
 mod redis;
 mod storage_define;
@@ -41,18 +42,22 @@ mod storage_murmur3;
 
 // commands
 mod redis_hashes;
+mod redis_lists;
 mod redis_sets;
 mod redis_strings;
 
 pub mod error;
 pub mod options;
 pub mod storage;
+pub mod cluster_storage;
 
 pub use base_key_format::BaseMetaKey;
 pub use base_value_format::*;
 pub use error::Result;
+pub use expiration_manager::ExpirationManager;
 pub use options::StorageOptions;
 pub use redis::{ColumnFamilyIndex, Redis};
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use util::unique_test_db_path;
+pub use cluster_storage::ClusterStorage;

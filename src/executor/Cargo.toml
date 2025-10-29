@@ -18,6 +18,7 @@ async-trait = { workspace = true }
 cmd = { path = "../cmd" }
 client = { path = "../client" }
 storage = { path = "../storage" }
+# raft = { path = "../raft" } # Temporarily disabled
 
 [lints]
 workspace = true

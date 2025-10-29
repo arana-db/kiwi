@@ -13,6 +13,7 @@ env_logger.workspace = true
 log.workspace = true
 conf.workspace = true
 clap = { version = "4.0", features = ["derive"] }
+# raft = { path = "../raft" } # Temporarily disabled
 
 [lints]
 workspace = true

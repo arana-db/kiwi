@@ -68,6 +68,22 @@ impl MemberDataKey {
         dst.put_slice(&self.reserve2);
         Ok(dst)
     }
+
+    /// Encode a seek key prefix for iteration
+    pub fn encode_seek_key(&self) -> Result<BytesMut> {
+        let estimated_cap = PREFIX_RESERVE_LENGTH
+            + self.key.len() * 2
+            + size_of::<u64>()
+            + self.data.len()
+            + ENCODED_KEY_DELIM_SIZE;
+        let mut dst = BytesMut::with_capacity(estimated_cap);
+
+        dst.put_slice(&self.reserve1);
+        dst.put_u64(self.version);
+        encode_user_key(&self.key, &mut dst)?;
+        dst.put_slice(&self.data);
+        Ok(dst)
+    }
 }
 
 #[allow(dead_code)]

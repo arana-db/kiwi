@@ -297,6 +297,9 @@ name = "bytes"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d71b6127be86fdcfddb610f7182ac57211d4b18a3e9c82eb2d17662f2227ad6a"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "bzip2-sys"
@@ -413,12 +416,15 @@ dependencies = [
 name = "cmd"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bitflags",
+ "bytes",
  "client",
  "log",
  "num-traits",
  "resp",
  "storage",
+ "tokio",
 ]
 
 [[package]]
@@ -1493,11 +1499,14 @@ dependencies = [
  "bytes",
  "client",
  "cmd",
+ "env_logger",
  "executor",
  "log",
+ "parking_lot",
  "resp",
  "snafu",
  "storage",
+ "thiserror 1.0.69",
  "tokio",
 ]
 

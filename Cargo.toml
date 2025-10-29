@@ -12,6 +12,7 @@ members = [
 	"src/cmd",
 	"src/executor",
 	"src/client"
+	# "src/raft" # Temporarily disabled due to compilation errors
 ]
 
 [workspace.package]
@@ -33,7 +34,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
 
 [workspace.dependencies]
 
-bytes = "1"
+bytes = { version = "1", features = ["serde"] }
 chrono = "0.4.40"
 proc-macro2 = "1.0.66"
 quote = "1.0"
@@ -60,6 +61,7 @@ tokio-util = "0.7.16"
 async-trait = "0.1"
 foyer = { version = "0.17" }
 clap = { version = "4.0", features = ["derive"] }
+openraft = { version = "0.9.21", features = ["serde"] }
 
 ## workspaces members
 engine = { path = "src/engine" }
@@ -73,6 +75,7 @@ conf = { path = "src/conf" }
 cmd = { path = "src/cmd" }
 executor = { path = "src/executor" }
 client = { path = "src/client" }
+raft = { path = "src/raft" }
 
 [profile.dev]
 split-debuginfo = "unpacked"

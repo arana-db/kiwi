@@ -273,4 +273,436 @@ impl Storage {
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].incr_decr_float(key, incr)
     }
+
+    // Hash Commands Implementation
+
+    pub fn hset(&self, key: &[u8], field: &[u8], value: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hset(key, field, value)
+    }
+
+    pub fn hget(&self, key: &[u8], field: &[u8]) -> Result<Option<String>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hget(key, field)
+    }
+
+    pub fn hdel(&self, key: &[u8], fields: &[Vec<u8>]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hdel(key, fields)
+    }
+
+    pub fn hexists(&self, key: &[u8], field: &[u8]) -> Result<bool> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hexists(key, field)
+    }
+
+    pub fn hlen(&self, key: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hlen(key)
+    }
+
+    pub fn hkeys(&self, key: &[u8]) -> Result<Vec<String>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hkeys(key)
+    }
+
+    pub fn hgetall(&self, key: &[u8]) -> Result<Vec<(String, String)>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hgetall(key)
+    }
+
+    pub fn hvals(&self, key: &[u8]) -> Result<Vec<String>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hvals(key)
+    }
+
+    pub fn hmget(&self, key: &[u8], fields: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hmget(key, fields)
+    }
+
+    pub fn hmset(&self, key: &[u8], field_values: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hmset(key, field_values)
+    }
+
+    pub fn hsetnx(&self, key: &[u8], field: &[u8], value: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hsetnx(key, field, value)
+    }
+
+    pub fn hincrby(&self, key: &[u8], field: &[u8], increment: i64) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hincrby(key, field, increment)
+    }
+
+    pub fn hincrbyfloat(&self, key: &[u8], field: &[u8], increment: f64) -> Result<f64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hincrbyfloat(key, field, increment)
+    }
+
+    pub fn hstrlen(&self, key: &[u8], field: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hstrlen(key, field)
+    }
+
+    // List Commands Implementation
+
+    pub fn lpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].lpush(key, values)
+    }
+
+    pub fn rpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].rpush(key, values)
+    }
+
+    pub fn lpop(&self, key: &[u8], count: Option<usize>) -> Result<Option<Vec<Vec<u8>>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].lpop(key, count)
+    }
+
+    pub fn rpop(&self, key: &[u8], count: Option<usize>) -> Result<Option<Vec<Vec<u8>>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].rpop(key, count)
+    }
+
+    pub fn llen(&self, key: &[u8]) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].llen(key)
+    }
+
+    pub fn lindex(&self, key: &[u8], index: i64) -> Result<Option<Vec<u8>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].lindex(key, index)
+    }
+
+    pub fn lrange(&self, key: &[u8], start: i64, stop: i64) -> Result<Vec<Vec<u8>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].lrange(key, start, stop)
+    }
+
+    pub fn lset(&self, key: &[u8], index: i64, value: Vec<u8>) -> Result<()> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].lset(key, index, value)
+    }
+
+    pub fn ltrim(&self, key: &[u8], start: i64, stop: i64) -> Result<()> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].ltrim(key, start, stop)
+    }
+
+    pub fn lrem(&self, key: &[u8], count: i64, value: &[u8]) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].lrem(key, count, value)
+    }
+
+    // TTL Commands Implementation
+
+    /// Get time to live for a key in seconds
+    pub fn ttl(&self, key: &[u8]) -> Result<i64> {
+        let key_str = String::from_utf8_lossy(key);
+        
+        // First check if key exists
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        
+        // Check if key exists in storage
+        match self.insts[instance_id].key_exists_live(key) {
+            Ok(false) => return Ok(-2), // Key doesn't exist
+            Err(e) => return Err(e),    // Propagate storage errors
+            Ok(true) => {}              // Key exists, continue
+        }
+
+        if let Some(expiration_manager) = &self.expiration_manager {
+            match expiration_manager.get_ttl_seconds(&key_str) {
+                Some(-2) => Ok(-2), // Key expired (treat as doesn't exist)
+                Some(-1) => Ok(-1), // Key exists but has no expiration
+                Some(ttl) => Ok(ttl), // Positive TTL value
+                None => Ok(-1), // Shouldn't happen with new API, key has no expiration
+            }
+        } else {
+            Ok(-1) // No expiration manager, key has no expiration
+        }
+    }
+
+    /// Get time to live for a key in milliseconds
+    pub fn pttl(&self, key: &[u8]) -> Result<i64> {
+        let key_str = String::from_utf8_lossy(key);
+        
+        // First check if key exists
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        
+        // Check if key exists in storage
+        match self.insts[instance_id].key_exists_live(key) {
+            Ok(false) => return Ok(-2), // Key doesn't exist
+            Err(e) => return Err(e),    // Propagate storage errors
+            Ok(true) => {}              // Key exists, continue
+        }
+
+        if let Some(expiration_manager) = &self.expiration_manager {
+            match expiration_manager.get_ttl_milliseconds(&key_str) {
+                Some(-2) => Ok(-2), // Key expired (treat as doesn't exist)
+                Some(-1) => Ok(-1), // Key exists but has no expiration
+                Some(ttl) => Ok(ttl), // Positive TTL value
+                None => Ok(-1), // Shouldn't happen with new API, key has no expiration
+            }
+        } else {
+            Ok(-1) // No expiration manager, key has no expiration
+        }
+    }
+
+    /// Set a timeout on key in seconds
+    pub fn expire(&self, key: &[u8], seconds: i64) -> Result<bool> {
+        if seconds <= 0 {
+            return Ok(false);
+        }
+
+        let key_str = String::from_utf8_lossy(key);
+        
+        // First check if key exists
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        
+        // Check if key exists in storage
+        match self.insts[instance_id].key_exists_live(key) {
+            Ok(false) => return Ok(false), // Key doesn't exist
+            Err(_) => return Ok(false),    // Error means key doesn't exist
+            Ok(true) => {}                 // Key exists, continue
+        }
+
+        if let Some(expiration_manager) = &self.expiration_manager {
+            let expire_time = crate::expiration_manager::ExpirationManager::seconds_to_expire_time(seconds)?;
+            expiration_manager.set_expiration(&key_str, expire_time);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Set a timeout on key in milliseconds
+    pub fn pexpire(&self, key: &[u8], milliseconds: i64) -> Result<bool> {
+        if milliseconds <= 0 {
+            return Ok(false);
+        }
+
+        let key_str = String::from_utf8_lossy(key);
+        
+        // First check if key exists
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        
+        // Check if key exists in storage
+        match self.insts[instance_id].key_exists_live(key) {
+            Ok(false) => return Ok(false), // Key doesn't exist
+            Err(_) => return Ok(false),    // Error means key doesn't exist
+            Ok(true) => {}                 // Key exists, continue
+        }
+
+        if let Some(expiration_manager) = &self.expiration_manager {
+            let expire_time = crate::expiration_manager::ExpirationManager::milliseconds_to_expire_time(milliseconds)?;
+            expiration_manager.set_expiration(&key_str, expire_time);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Set the expiration for a key as a UNIX timestamp in seconds
+    pub fn expireat(&self, key: &[u8], timestamp: i64) -> Result<bool> {
+        let key_str = String::from_utf8_lossy(key);
+        
+        // First check if key exists
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        
+        // Check if key exists in storage
+        match self.insts[instance_id].key_exists_live(key) {
+            Ok(false) => return Ok(false), // Key doesn't exist
+            Err(_) => return Ok(false),    // Error means key doesn't exist
+            Ok(true) => {}                 // Key exists, continue
+        }
+
+        if let Some(expiration_manager) = &self.expiration_manager {
+            let expire_time = crate::expiration_manager::ExpirationManager::unix_seconds_to_expire_time(timestamp)?;
+            expiration_manager.set_expiration(&key_str, expire_time);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Set the expiration for a key as a UNIX timestamp in milliseconds
+    pub fn pexpireat(&self, key: &[u8], timestamp: i64) -> Result<bool> {
+        let key_str = String::from_utf8_lossy(key);
+        
+        // First check if key exists
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        
+        // Check if key exists in storage
+        match self.insts[instance_id].key_exists_live(key) {
+            Ok(false) => return Ok(false), // Key doesn't exist
+            Err(_) => return Ok(false),    // Error means key doesn't exist
+            Ok(true) => {}                 // Key exists, continue
+        }
+
+        if let Some(expiration_manager) = &self.expiration_manager {
+            let expire_time = crate::expiration_manager::ExpirationManager::unix_milliseconds_to_expire_time(timestamp)?;
+            expiration_manager.set_expiration(&key_str, expire_time);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Remove the expiration from a key
+    pub fn persist(&self, key: &[u8]) -> Result<bool> {
+        let key_str = String::from_utf8_lossy(key);
+        
+        // First check if key exists
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        
+        // Check if key exists in storage
+        match self.insts[instance_id].key_exists_live(key) {
+            Ok(false) => return Ok(false), // Key doesn't exist
+            Err(_) => return Ok(false),    // Error means key doesn't exist
+            Ok(true) => {}                 // Key exists, continue
+        }
+
+        if let Some(expiration_manager) = &self.expiration_manager {
+            Ok(expiration_manager.remove_expiration(&key_str))
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Check if one or more keys exist
+    pub fn exists(&self, keys: &[Vec<u8>]) -> Result<i64> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        let mut count = 0;
+        for key in keys {
+            let slot_id = key_to_slot_id(key);
+            let instance_id = self.slot_indexer.get_instance_id(slot_id);
+            
+            match self.insts[instance_id].key_exists_live(key) {
+                Ok(true) => count += 1,
+                Ok(false) => {} // Key doesn't exist
+                Err(e) => {
+                    // Log error but continue counting other keys
+                    log::warn!("Error checking key existence: {:?}", e);
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Get the data type of a key
+    pub fn key_type(&self, key: &[u8]) -> Result<String> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        
+        match self.insts[instance_id].get_key_type(key) {
+            Ok(data_type) => Ok(crate::base_value_format::data_type_to_string(data_type).to_string()),
+            Err(_) => Ok("none".to_string()), // Key doesn't exist
+        }
+    }
+
+    /// Delete one or more keys
+    pub fn del(&self, keys: &[Vec<u8>]) -> Result<i64> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+
+        let mut deleted_count = 0;
+        for key in keys {
+            let slot_id = key_to_slot_id(key);
+            let instance_id = self.slot_indexer.get_instance_id(slot_id);
+            
+            // Try to delete the key - this will handle all data types
+            match self.insts[instance_id].del_key(key) {
+                Ok(true) => deleted_count += 1,
+                Ok(false) => {} // Key doesn't exist
+                Err(e) => {
+                    // Log error but continue deleting other keys
+                    log::warn!("Error deleting key: {:?}", e);
+                }
+            }
+        }
+
+        Ok(deleted_count)
+    }
+
+    /// Find all keys matching the given pattern
+    pub fn keys(&self, pattern: &str) -> Result<Vec<String>> {
+        let mut all_keys = Vec::new();
+        
+        for inst in &self.insts {
+            // Continue with other instances on error
+            if let Ok(keys) = inst.scan_keys(pattern) {
+                all_keys.extend(keys);
+            }
+        }
+
+        Ok(all_keys)
+    }
+
+    /// Remove all keys from the current database
+    pub fn flushdb(&self) -> Result<()> {
+        for inst in &self.insts {
+            inst.flush_db()?;
+        }
+        Ok(())
+    }
+
+    /// Remove all keys from all databases
+    pub fn flushall(&self) -> Result<()> {
+        for inst in &self.insts {
+            inst.flush_all()?;
+        }
+        Ok(())
+    }
+
+    /// Return a random key from the database
+    pub fn randomkey(&self) -> Result<Option<String>> {
+        // Try each instance until we find a key
+        for inst in &self.insts {
+            match inst.random_key() {
+                Ok(Some(key)) => return Ok(Some(key)),
+                Ok(None) | Err(_) => continue,
+            }
+        }
+        Ok(None) // No keys found in any instance
+    }
 }

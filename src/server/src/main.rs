@@ -17,8 +17,10 @@
 
 use clap::Parser;
 use conf::config::Config;
-use log::info;
+use log::{info, warn};
 use net::ServerFactory;
+// use raft::{RaftNode, ClusterConfig}; // Temporarily disabled
+// use std::sync::Arc; // Temporarily unused
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
 #[derive(Parser)]
@@ -29,6 +31,14 @@ struct Args {
     /// Configuration file path
     #[arg(short, long)]
     config: Option<String>,
+    
+    /// Force single-node mode (disable cluster even if configured)
+    #[arg(long)]
+    single_node: bool,
+    
+    /// Initialize a new cluster (only for the first node)
+    #[arg(long)]
+    init_cluster: bool,
 }
 
 #[tokio::main]
@@ -52,11 +62,78 @@ async fn main() -> std::io::Result<()> {
     let addr = format!("{}:{}", config.binding, config.port);
     let protocol = "tcp";
 
-    info!("tcp listener listen on {addr}");
-    if let Some(server) = ServerFactory::create_server(protocol, Option::from(addr)) {
-        server.run().await.expect("Failed to start the server. Please check the server configuration and ensure the address is available.");
+    // Determine if we should run in cluster mode
+    let cluster_mode = config.cluster.enabled && !args.single_node;
+    
+    if cluster_mode {
+        info!("Starting Kiwi server in cluster mode");
+        info!("Node ID: {}", config.cluster.node_id);
+        info!("Cluster members: {:?}", config.cluster.cluster_members);
+        
+        // Validate cluster configuration
+        if config.cluster.cluster_members.is_empty() && !args.init_cluster {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Cluster mode enabled but no cluster members specified. Use --init-cluster for the first node."
+            ));
+        }
+        
+        // Raft cluster configuration temporarily disabled
+        /*
+        let raft_cluster_config = ClusterConfig {
+            enabled: config.cluster.enabled,
+            node_id: config.cluster.node_id,
+            cluster_members: config.cluster.cluster_members.clone(),
+            data_dir: config.cluster.data_dir.clone(),
+            heartbeat_interval_ms: config.cluster.heartbeat_interval_ms,
+            election_timeout_min_ms: config.cluster.election_timeout_min_ms,
+            election_timeout_max_ms: config.cluster.election_timeout_max_ms,
+            snapshot_threshold: config.cluster.snapshot_threshold,
+            max_payload_entries: config.cluster.max_payload_entries,
+        };
+        
+        // Initialize Raft node
+        let raft_node = match RaftNode::new(raft_cluster_config).await {
+            Ok(node) => Arc::new(node),
+            Err(e) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to initialize Raft node: {}", e)
+                ));
+            }
+        };
+        
+        // Start Raft node
+        if let Err(e) = raft_node.start(args.init_cluster).await {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to start Raft node: {}", e)
+            ));
+        }
+        */
+        
+        // info!("Raft node started successfully");
+        
+        // Cluster mode temporarily disabled - falling back to single-node mode
+        warn!("Cluster mode temporarily disabled, running in single-node mode");
+        info!("tcp listener listen on {addr}");
+        if let Some(server) = ServerFactory::create_server(protocol, Option::from(addr)) {
+            server.run().await.expect("Failed to start the server. Please check the server configuration and ensure the address is available.");
+        } else {
+            return Err(std::io::Error::other("server unavailable"));
+        }
     } else {
-        return Err(std::io::Error::other("server unavailable"));
+        if config.cluster.enabled {
+            warn!("Cluster mode disabled by --single-node flag");
+        }
+        info!("Starting Kiwi server in single-node mode");
+        
+        info!("tcp listener listen on {addr}");
+        if let Some(server) = ServerFactory::create_server(protocol, Option::from(addr)) {
+            server.run().await.expect("Failed to start the server. Please check the server configuration and ensure the address is available.");
+        } else {
+            return Err(std::io::Error::other("server unavailable"));
+        }
     }
 
     Ok(())

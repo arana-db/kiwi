@@ -97,6 +97,7 @@ mod tests {
             db_instance_num: 3,
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
+            cluster: config::ClusterConfig::default(),
         };
         assert!(invalid_config.validate().is_err());
 
