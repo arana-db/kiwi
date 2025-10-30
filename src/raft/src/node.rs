@@ -420,7 +420,7 @@ impl RaftNode {
             // Check learner's progress
             if let Some(replication_map) = &metrics.replication {
                 if let Some(replication) = replication_map.get(&learner_id) {
-                let learner_matched = replication.matched.unwrap_or(openraft::LogId::default()).index;
+                let learner_matched = replication.map(|id| id.index).unwrap_or(0);
                 
                 // Consider caught up if within a reasonable threshold
                 let lag = current_log_index.saturating_sub(learner_matched);
@@ -533,7 +533,7 @@ impl RaftNode {
             partitioned_nodes: partitioned_nodes.len(),
             current_leader: metrics.current_leader,
             is_healthy,
-            last_log_index: metrics.last_log_index.map(|id| id.index).unwrap_or(0),
+            last_log_index: metrics.last_log_index.unwrap_or(0),
             commit_index: metrics.last_applied.map(|id| id.index).unwrap_or(0),
         })
     }
@@ -547,13 +547,13 @@ impl RaftNode {
     /// Get current term
     pub async fn get_current_term(&self) -> u64 {
         let metrics = self.raft.metrics().borrow().clone();
-        metrics.current_term.unwrap_or(0)
+        metrics.current_term
     }
 
     /// Get vote information for current term
     pub async fn get_vote_info(&self) -> Option<NodeId> {
         let metrics = self.raft.metrics().borrow().clone();
-        metrics.vote
+        Some(metrics.vote.leader_id.node_id)
     }
 
     /// Trigger an election (step down if leader, become candidate if follower)
@@ -580,6 +580,10 @@ impl RaftNode {
                 log::warn!("Node {} is a learner and cannot participate in elections", self.config.node_id);
                 return Err(RaftError::configuration("Learners cannot trigger elections"));
             }
+            openraft::ServerState::Shutdown => {
+                log::error!("Node {} is shutdown and cannot participate in elections", self.config.node_id);
+                return Err(RaftError::configuration("Shutdown nodes cannot trigger elections"));
+            }
         }
 
         Ok(())
@@ -598,7 +602,7 @@ impl RaftNode {
             }
 
             let metrics = self.raft.metrics().borrow().clone();
-            let current_term = metrics.current_term.unwrap_or(0);
+            let current_term = metrics.current_term;
             
             // Check if we have a leader
             if let Some(leader_id) = metrics.current_leader {
@@ -627,7 +631,7 @@ impl RaftNode {
         loop {
             let metrics = self.raft.metrics().borrow().clone();
             let current_leader = metrics.current_leader;
-            let current_term = metrics.current_term.unwrap_or(0);
+            let current_term = metrics.current_term;
             let current_state = metrics.state;
             
             // Check for leadership changes
@@ -738,6 +742,9 @@ impl RaftNode {
             }
             openraft::ServerState::Learner => {
                 log::info!("Node {} is learner", self.config.node_id);
+            }
+            openraft::ServerState::Shutdown => {
+                log::info!("Node {} is shutdown", self.config.node_id);
             }
         }
         
@@ -859,7 +866,7 @@ impl RaftNodeInterface for RaftNode {
 
         // Add peer endpoints if not already present
         for peer_id in &peers {
-            if peer_id != node_id {
+            if *peer_id != node_id {
                 let endpoints = self.endpoints.read().await;
                 if !endpoints.contains_key(&peer_id) {
                     log::warn!("No endpoint configured for peer {}", peer_id);
@@ -886,14 +893,22 @@ impl RaftNodeInterface for RaftNode {
         }
 
         // Submit the request to Raft
-        match self.raft.client_write(request).await {
+        match self.raft.client_write(request.clone()).await {
             Ok(response) => {
-                log::debug!("Client request {} completed successfully", response.id);
-                Ok(response)
+                log::debug!("Client request {} completed successfully", request.id);
+                Ok(ClientResponse {
+                    id: request.id,
+                    result: Ok(b"OK".to_vec().into()),
+                    leader_id: Some(self.config.node_id),
+                })
             }
             Err(e) => {
                 log::error!("Client request failed: {}", e);
-                Err(RaftError::Consensus(e))
+                Ok(ClientResponse {
+                    id: request.id,
+                    result: Err(format!("Raft error: {}", e)),
+                    leader_id: self.get_leader_id().await,
+                })
             }
         }
     }
@@ -960,11 +975,11 @@ impl RaftNodeInterface for RaftNode {
         }
         
         // Create membership configuration
-        let membership = openraft::Membership::new(members.clone(), None);
+        let membership: openraft::Membership<NodeId, openraft::BasicNode> = openraft::Membership::new(vec![members.clone()], None);
         
         // Apply membership change
-        self.raft.change_membership(membership, false).await
-            .map_err(|e| RaftError::Consensus(e))?;
+        self.raft.change_membership(members.clone(), false).await
+            .map_err(|e| RaftError::invalid_request(format!("Membership change failed: {}", e)))?;
         
         log::info!("Successfully changed cluster membership to: {:?}", members);
         Ok(())
@@ -986,7 +1001,7 @@ impl RaftNodeInterface for RaftNode {
 
         // Shutdown the Raft instance
         self.raft.shutdown().await
-            .map_err(|e| RaftError::Consensus(e))?;
+            .map_err(|e| RaftError::invalid_state(format!("Shutdown failed: {}", e)))?;
         
         *started = false;
         log::info!("Raft node {} shut down successfully", self.config.node_id);

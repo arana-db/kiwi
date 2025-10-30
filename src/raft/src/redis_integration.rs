@@ -19,7 +19,7 @@
 
 use crate::consistency_handler::{ConsistencyHandler, ConsistencyConfig};
 use crate::error::{RaftError, RaftResult};
-use crate::node::RaftNode;
+use crate::node::{RaftNode, RaftNodeInterface};
 use crate::types::{ClientRequest, ClientResponse, ConsistencyLevel, RedisCommand, RequestId, NodeId};
 use bytes::Bytes;
 use resp::RespData;
@@ -257,7 +257,7 @@ impl RaftRedisHandler {
                 info.push_str(&format!("raft_last_applied:{}\r\n", 
                     metrics.last_applied.map(|id| id.index).unwrap_or(0)));
                 info.push_str(&format!("raft_log_size:{}\r\n", 
-                    metrics.last_log_index.map(|id| id.index).unwrap_or(0)));
+                    metrics.last_log_index.unwrap_or(0)));
             }
             "cluster" => {
                 let health = self.raft_node.get_cluster_health().await?;

@@ -213,7 +213,7 @@ impl MetricsCollector {
             .as_secs();
 
         // Update state metrics
-        metrics.state.current_term = openraft_metrics.current_term.unwrap_or(0);
+        metrics.state.current_term = openraft_metrics.current_term;
         metrics.state.current_leader = openraft_metrics.current_leader;
         metrics.state.node_state = format!("{:?}", openraft_metrics.state);
         metrics.state.last_log_index = openraft_metrics.last_log_index.unwrap_or(0);
@@ -223,7 +223,7 @@ impl MetricsCollector {
         // Update replication metrics
         if let Some(ref replication) = openraft_metrics.replication {
             for (node_id, progress) in replication {
-                let lag = metrics.state.last_log_index.saturating_sub(progress.matched.unwrap_or(0));
+                let lag = metrics.state.last_log_index.saturating_sub(progress.map(|id| id.index).unwrap_or(0));
                 metrics.replication.replication_lag.insert(*node_id, lag);
             }
         }

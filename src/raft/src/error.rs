@@ -58,6 +58,15 @@ pub enum RaftError {
 
     #[error("Invalid request: {message}")]
     InvalidRequest { message: String },
+
+    #[error("Invalid state: {message}")]
+    InvalidState { message: String },
+
+    #[error("Resource exhausted: {message}")]
+    ResourceExhausted { message: String },
+
+    #[error("Not found: {message}")]
+    NotFound { message: String },
 }
 
 /// Network-related errors
@@ -148,6 +157,34 @@ impl RaftError {
     pub fn invalid_request<S: Into<String>>(message: S) -> Self {
         Self::InvalidRequest {
             message: message.into(),
+        }
+    }
+
+    /// Create an invalid state error
+    pub fn invalid_state<S: Into<String>>(message: S) -> Self {
+        Self::InvalidState {
+            message: message.into(),
+        }
+    }
+
+    /// Create a resource exhausted error
+    pub fn resource_exhausted<S: Into<String>>(message: S) -> Self {
+        Self::ResourceExhausted {
+            message: message.into(),
+        }
+    }
+
+    /// Create a not found error
+    pub fn not_found<S: Into<String>>(message: S) -> Self {
+        Self::NotFound {
+            message: message.into(),
+        }
+    }
+
+    /// Create a not leader error
+    pub fn not_leader<S: Into<String>>(message: S) -> Self {
+        Self::NotLeader {
+            leader_id: None,
         }
     }
 

@@ -53,13 +53,13 @@ impl CommandSerializer {
         };
 
         bincode::serialize(&serialized_cmd)
-            .map_err(|e| RaftError::Serialization(serde_json::Error::custom(e.to_string())))
+            .map_err(|e| RaftError::invalid_request(format!("Serialization failed: {}", e)))
     }
 
     /// Deserialize bytes to RespCommand using bincode
     pub fn deserialize_resp_command(data: &[u8]) -> RaftResult<RespCommand> {
         let serialized_cmd: SerializedCommand = bincode::deserialize(data)
-            .map_err(|e| RaftError::Serialization(serde_json::Error::custom(e.to_string())))?;
+            .map_err(|e| RaftError::invalid_request(format!("Deserialization failed: {}", e)))?;
 
         let command_type = CommandType::from_str(&serialized_cmd.command)
             .map_err(|_| RaftError::invalid_request(format!("Invalid command: {}", serialized_cmd.command)))?;
@@ -81,13 +81,13 @@ impl CommandSerializer {
         };
 
         bincode::serialize(&serialized_cmd)
-            .map_err(|e| RaftError::Serialization(serde_json::Error::custom(e.to_string())))
+            .map_err(|e| RaftError::invalid_request(format!("Serialization failed: {}", e)))
     }
 
     /// Deserialize bytes to RedisCommand
     pub fn deserialize_redis_command(data: &[u8]) -> RaftResult<RedisCommand> {
         let serialized_cmd: SerializedCommand = bincode::deserialize(data)
-            .map_err(|e| RaftError::Serialization(serde_json::Error::custom(e.to_string())))?;
+            .map_err(|e| RaftError::invalid_request(format!("Deserialization failed: {}", e)))?;
 
         let args = serialized_cmd.args
             .into_iter()
@@ -100,7 +100,7 @@ impl CommandSerializer {
     /// Convert RespData to RedisCommand for Raft processing
     pub fn resp_data_to_redis_command(data: &RespData) -> RaftResult<RedisCommand> {
         match data {
-            RespData::Array(Some(array)) if !array.is_empty() => {
+            RespData::Array(Some(ref array)) if !array.is_empty() => {
                 let command_name = array[0].as_string().ok_or_else(|| {
                     RaftError::invalid_request("Command name must be a string")
                 })?;

@@ -159,7 +159,7 @@ impl ConsistencyHandler {
         let metrics = self.raft_node.get_metrics().await?;
         
         let commit_index = metrics.last_applied.map(|id| id.index).unwrap_or(0);
-        let last_log_index = metrics.last_log_index.map(|id| id.index).unwrap_or(0);
+        let last_log_index = metrics.last_log_index.unwrap_or(0);
         
         // Check if we're reasonably caught up (within 10 entries)
         let lag = last_log_index.saturating_sub(commit_index);
