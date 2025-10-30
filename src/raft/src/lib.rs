@@ -24,7 +24,7 @@ use openraft::Config;
 
 pub mod cluster_config;
 pub mod config_change;
-// pub mod consistency;
+pub mod consistency;
 pub mod consistency_handler;
 pub mod discovery;
 pub mod error;
@@ -32,50 +32,19 @@ pub mod logging;
 pub mod metrics;
 pub mod network;
 pub mod node;
-// pub mod performance;
+pub mod performance;
 pub mod protocol_compatibility;
 pub mod redis_integration;
-// pub mod serialization;
+pub mod serialization;
 pub mod state_machine;
 pub mod storage;
 pub mod types;
 
 // Re-export commonly used types
-pub use cluster_config::{
-    ClusterConfigManager, ClusterConfiguration, NodeEndpoint, BootstrapConfig, RaftConfiguration
-};
-pub use config_change::{
-    ConfigChangeManager, ConfigChangeType, ConfigChangeRequest, ConfigChangeResult, 
-    ConfigChangeStatus, ConfigChangeOperation
-};
-// pub use consistency::{ConsistencyChecker, ConsistencyMonitor, ConsistencyStatus};
-pub use consistency_handler::{ConsistencyHandler, ConsistencyConfig};
-pub use discovery::{
-    NodeDiscovery, HealthMonitor, ClusterTopology, NodeStatus, HealthCheckResult, HealthMonitorConfig,
-    ClusterStatusReporter, ClusterStatusReport, NodeStatusReport, NodeRole, LeadershipStatus,
-    ReplicationStatus, ClusterPerformanceMetrics, ClusterHealthSummary, ReplicationLagSummary
-};
 pub use error::RaftError;
-pub use logging::{
-    RaftLogger, RaftDebugger, RaftEvent, RaftLogEntry, DebugSnapshot, LogLevel,
-    ElectionEventType, ReplicationEventType, SnapshotEventType, NetworkEventType, ConfigChangeEventType
-};
-pub use metrics::{MetricsCollector, RaftMetrics, RaftStateMetrics, PerformanceMetrics, ReplicationMetrics, NetworkMetrics, StorageMetrics};
-pub use network::{
-    KiwiRaftNetworkFactory, RaftNetworkClient, ConnectionPool, MessageRouter, MessageEnvelope, 
-    RaftMessage, PartitionDetector, TlsConfig, NodeAuth, SecureStream
-};
 pub use node::{RaftNode, RaftNodeInterface};
-// pub use performance::{
-//     BatchConfig, RequestBatcher, PipelineConfig, ReplicationPipeline,
-//     read_optimization::{ReadOptimizer, ReadOptimizationConfig},
-//     resource_management::{ResourceManager, ResourceConfig, MemoryTracker},
-// };
-pub use protocol_compatibility::RedisProtocolCompatibility;
-pub use redis_integration::RaftRedisHandler;
-// pub use serialization::CommandSerializer;
 pub use state_machine::KiwiStateMachine;
-pub use storage::RaftStorage as KiwiRaftStorage;
+pub use storage::RaftStorage;
 pub use types::*;
 
 /// Create default Raft configuration

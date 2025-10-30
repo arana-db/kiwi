@@ -395,7 +395,7 @@ impl PipelineStats {
             0.0
         }
     }
-}/
+}
 // Read optimization strategies for Raft followers
 pub mod read_optimization {
     use super::*;
@@ -730,8 +730,9 @@ pub mod read_optimization {
         pub capacity: usize,
         pub hit_rate: f64,
     }
-}//
-/ Memory and resource management for Raft operations
+}
+
+// Memory and resource management for Raft operations
 pub mod resource_management {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
