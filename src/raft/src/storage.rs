@@ -397,6 +397,81 @@ impl RaftStorage {
 
         Ok(data)
     }
+
+    /// Create a RocksDB snapshot for consistent reads
+    pub fn create_rocksdb_snapshot(&self) -> rocksdb::Snapshot {
+        self.db.snapshot()
+    }
+
+    /// Delete old snapshot data to save space
+    pub fn delete_snapshot_data(&self, snapshot_id: &str) -> Result<(), RaftError> {
+        let cf_snapshot = self.get_cf_handle(CF_SNAPSHOT)?;
+
+        self.db.delete_cf(&cf_snapshot, snapshot_id)
+            .map_err(|e| RaftError::Storage(StorageError::RocksDb(e)))?;
+
+        Ok(())
+    }
+
+    /// List all available snapshots
+    pub fn list_snapshots(&self) -> Result<Vec<String>, RaftError> {
+        let cf_snapshot = self.get_cf_handle(CF_SNAPSHOT)?;
+        let mut snapshots = Vec::new();
+
+        let iter = self.db.iterator_cf(&cf_snapshot, rocksdb::IteratorMode::Start);
+        for result in iter {
+            let (key, _) = result
+                .map_err(|e| RaftError::Storage(StorageError::RocksDb(e)))?;
+            
+            // Skip metadata key
+            if key.as_ref() != KEY_SNAPSHOT_META.as_bytes() {
+                if let Ok(snapshot_id) = String::from_utf8(key.to_vec()) {
+                    snapshots.push(snapshot_id);
+                }
+            }
+        }
+
+        Ok(snapshots)
+    }
+
+    /// Get the size of a snapshot in bytes
+    pub fn get_snapshot_size(&self, snapshot_id: &str) -> Result<Option<usize>, RaftError> {
+        let cf_snapshot = self.get_cf_handle(CF_SNAPSHOT)?;
+
+        if let Some(data) = self.db.get_cf(&cf_snapshot, snapshot_id)
+            .map_err(|e| RaftError::Storage(StorageError::RocksDb(e)))?
+        {
+            Ok(Some(data.len()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Cleanup old snapshots, keeping only the most recent N snapshots
+    pub fn cleanup_old_snapshots(&self, keep_count: usize) -> Result<usize, RaftError> {
+        let mut snapshots = self.list_snapshots()?;
+        
+        if snapshots.len() <= keep_count {
+            return Ok(0);
+        }
+
+        // Sort snapshots by name (assuming timestamp-based naming)
+        snapshots.sort();
+        
+        let to_delete = snapshots.len() - keep_count;
+        let mut deleted_count = 0;
+
+        for snapshot_id in snapshots.iter().take(to_delete) {
+            if let Err(e) = self.delete_snapshot_data(snapshot_id) {
+                log::warn!("Failed to delete snapshot {}: {}", snapshot_id, e);
+            } else {
+                deleted_count += 1;
+                log::debug!("Deleted old snapshot: {}", snapshot_id);
+            }
+        }
+
+        Ok(deleted_count)
+    }
 }
 
 #[cfg(test)]
@@ -484,5 +559,52 @@ mod tests {
         storage.store_snapshot_data(&meta.snapshot_id, data).unwrap();
         let retrieved_data = storage.get_snapshot_data(&meta.snapshot_id).unwrap().unwrap();
         assert_eq!(retrieved_data, data);
+
+        // Test snapshot size
+        let size = storage.get_snapshot_size(&meta.snapshot_id).unwrap().unwrap();
+        assert_eq!(size, data.len());
+
+        // Test listing snapshots
+        let snapshots = storage.list_snapshots().unwrap();
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0], meta.snapshot_id);
+    }
+
+    #[test]
+    fn test_snapshot_cleanup() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = RaftStorage::new(temp_dir.path()).unwrap();
+
+        // Create multiple snapshots
+        for i in 1..=5 {
+            let snapshot_id = format!("snapshot_{}", i);
+            let data = format!("data_{}", i);
+            storage.store_snapshot_data(&snapshot_id, data.as_bytes()).unwrap();
+        }
+
+        // Verify all snapshots exist
+        let snapshots = storage.list_snapshots().unwrap();
+        assert_eq!(snapshots.len(), 5);
+
+        // Cleanup, keeping only 2 snapshots
+        let deleted_count = storage.cleanup_old_snapshots(2).unwrap();
+        assert_eq!(deleted_count, 3);
+
+        // Verify only 2 snapshots remain
+        let remaining_snapshots = storage.list_snapshots().unwrap();
+        assert_eq!(remaining_snapshots.len(), 2);
+    }
+
+    #[test]
+    fn test_rocksdb_snapshot_creation() {
+        let temp_dir = TempDir::new().unwrap();
+        let storage = RaftStorage::new(temp_dir.path()).unwrap();
+
+        // Test creating RocksDB snapshot
+        let snapshot = storage.create_rocksdb_snapshot();
+        
+        // The snapshot should be valid (we can't test much more without actual data)
+        // This mainly tests that the method doesn't panic
+        drop(snapshot);
     }
 }

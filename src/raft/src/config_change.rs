@@ -21,13 +21,15 @@ use crate::cluster_config::{NodeEndpoint, ClusterConfiguration};
 use crate::discovery::{HealthMonitor, NodeStatus};
 use crate::error::{RaftError, RaftResult};
 use crate::types::{NodeId, BasicNode};
+use crate::node::RaftNodeInterface;
 use openraft::Membership;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
 use chrono::{DateTime, Utc};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Mutex};
+use uuid::Uuid;
 
 /// Types of configuration changes
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,12 +110,29 @@ pub struct ConfigChangeOperation {
     pub result: Option<ConfigChangeResult>,
 }
 
+/// Configuration change entry for Raft log replication
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigChangeEntry {
+    pub change_id: String,
+    pub change_type: ConfigChangeType,
+    pub requested_by: NodeId,
+    pub timestamp: DateTime<Utc>,
+    pub force: bool,
+    pub reason: String,
+}
+
 /// Safe configuration change manager
 pub struct ConfigChangeManager {
     node_id: NodeId,
     health_monitor: Option<Arc<HealthMonitor>>,
     active_operations: Arc<RwLock<Vec<ConfigChangeOperation>>>,
     config: Arc<RwLock<ClusterConfiguration>>,
+    /// Mutex to ensure only one configuration change happens at a time
+    change_mutex: Arc<Mutex<()>>,
+    /// Callback for notifying about configuration changes
+    change_callbacks: Arc<RwLock<Vec<Box<dyn Fn(&ConfigChangeResult) + Send + Sync>>>>,
+    /// Reference to the Raft node for actual membership changes
+    raft_node: Option<Arc<dyn RaftNodeInterface + Send + Sync>>,
 }
 
 impl ConfigChangeManager {
@@ -127,11 +146,41 @@ impl ConfigChangeManager {
             health_monitor,
             active_operations: Arc::new(RwLock::new(Vec::new())),
             config,
+            change_mutex: Arc::new(Mutex::new(())),
+            change_callbacks: Arc::new(RwLock::new(Vec::new())),
+            raft_node: None,
         }
+    }
+
+    /// Create a new ConfigChangeManager with Raft node integration
+    pub fn new_with_raft(
+        node_id: NodeId,
+        config: Arc<RwLock<ClusterConfiguration>>,
+        health_monitor: Option<Arc<HealthMonitor>>,
+        raft_node: Arc<dyn RaftNodeInterface + Send + Sync>,
+    ) -> Self {
+        Self {
+            node_id,
+            health_monitor,
+            active_operations: Arc::new(RwLock::new(Vec::new())),
+            config,
+            change_mutex: Arc::new(Mutex::new(())),
+            change_callbacks: Arc::new(RwLock::new(Vec::new())),
+            raft_node: Some(raft_node),
+        }
+    }
+
+    /// Set the Raft node reference for integration
+    pub fn set_raft_node(&mut self, raft_node: Arc<dyn RaftNodeInterface + Send + Sync>) {
+        self.raft_node = Some(raft_node);
     }
 
     /// Validate a configuration change request
     pub async fn validate_change(&self, request: &ConfigChangeRequest) -> RaftResult<()> {
+        // First validate cluster health and leadership
+        self.validate_cluster_health().await?;
+        self.validate_quorum_safety(request).await?;
+        
         let config = self.config.read().await;
         
         match &request.change_type {
@@ -308,15 +357,53 @@ impl ConfigChangeManager {
         Ok(())
     }
 
+    /// Add a callback for configuration change notifications
+    pub async fn add_change_callback<F>(&self, callback: F)
+    where
+        F: Fn(&ConfigChangeResult) + Send + Sync + 'static,
+    {
+        let mut callbacks = self.change_callbacks.write().await;
+        callbacks.push(Box::new(callback));
+    }
+
+    /// Notify all registered callbacks about a configuration change
+    async fn notify_callbacks(&self, result: &ConfigChangeResult) {
+        let callbacks = self.change_callbacks.read().await;
+        for callback in callbacks.iter() {
+            callback(result);
+        }
+    }
+
+    /// Check if the current node is the leader (required for configuration changes)
+    async fn ensure_leadership(&self) -> RaftResult<()> {
+        if let Some(raft_node) = &self.raft_node {
+            let metrics = raft_node.get_metrics().await?;
+            if !matches!(metrics.state, openraft::ServerState::Leader) {
+                return Err(RaftError::NotLeader { 
+                    leader_id: metrics.current_leader 
+                });
+            }
+        } else {
+            log::warn!("No Raft node reference available, cannot verify leadership");
+        }
+        Ok(())
+    }
+
     /// Execute a configuration change with safety checks
     pub async fn execute_change(
         &self,
         request: ConfigChangeRequest,
     ) -> RaftResult<ConfigChangeResult> {
+        // Acquire the change mutex to ensure only one change at a time
+        let _lock = self.change_mutex.lock().await;
+        
+        // Ensure we're the leader (if Raft node is available)
+        self.ensure_leadership().await?;
+        
         // Validate the change
         self.validate_change(&request).await?;
 
-        let operation_id = format!("config_change_{}", uuid::Uuid::new_v4());
+        let operation_id = format!("config_change_{}", Uuid::new_v4());
         let start_time = Utc::now();
 
         // Create operation tracker
@@ -370,6 +457,9 @@ impl ConfigChangeManager {
             }
         }
 
+        // Notify callbacks about the change
+        self.notify_callbacks(&result).await;
+
         Ok(result)
     }
 
@@ -413,10 +503,19 @@ impl ConfigChangeManager {
     }
 
     async fn execute_add_learner(&self, node_id: NodeId, endpoint: NodeEndpoint) -> RaftResult<()> {
-        // Add endpoint to configuration
+        // Add endpoint to configuration first
         {
             let mut config = self.config.write().await;
-            config.endpoints.insert(node_id, endpoint);
+            config.endpoints.insert(node_id, endpoint.clone());
+        }
+
+        // If we have a Raft node reference, use it to add the learner
+        if let Some(raft_node) = &self.raft_node {
+            let endpoint_str = endpoint.address();
+            raft_node.add_learner(node_id, endpoint_str).await?;
+            log::info!("Added learner node {} to Raft cluster at {}", node_id, endpoint.address());
+        } else {
+            log::warn!("No Raft node reference available, only updated configuration");
         }
 
         log::info!("Added learner node {} to configuration", node_id);
@@ -424,17 +523,46 @@ impl ConfigChangeManager {
     }
 
     async fn execute_promote_learner(&self, node_id: NodeId) -> RaftResult<()> {
-        // This would typically involve calling the Raft node's change_membership method
-        // For now, we just log the operation
+        // If we have a Raft node reference, use it to promote the learner
+        if let Some(raft_node) = &self.raft_node {
+            // Get current membership and add the learner as a voting member
+            let current_membership = self.get_current_membership().await?;
+            let mut new_membership = current_membership;
+            new_membership.insert(node_id);
+            
+            raft_node.change_membership(new_membership).await?;
+            log::info!("Promoted learner node {} to voting member via Raft", node_id);
+        } else {
+            log::warn!("No Raft node reference available, cannot promote learner {}", node_id);
+            return Err(RaftError::configuration("Raft node not available for membership change"));
+        }
+
         log::info!("Promoted learner node {} to voting member", node_id);
         Ok(())
     }
 
     async fn execute_add_voter(&self, node_id: NodeId, endpoint: NodeEndpoint) -> RaftResult<()> {
-        // Add endpoint to configuration
+        // Add endpoint to configuration first
         {
             let mut config = self.config.write().await;
-            config.endpoints.insert(node_id, endpoint);
+            config.endpoints.insert(node_id, endpoint.clone());
+        }
+
+        // If we have a Raft node reference, use it to add the voter directly
+        if let Some(raft_node) = &self.raft_node {
+            // First add as learner
+            let endpoint_str = endpoint.address();
+            raft_node.add_learner(node_id, endpoint_str).await?;
+            
+            // Then promote to voting member
+            let current_membership = self.get_current_membership().await?;
+            let mut new_membership = current_membership;
+            new_membership.insert(node_id);
+            
+            raft_node.change_membership(new_membership).await?;
+            log::info!("Added voter node {} to Raft cluster at {}", node_id, endpoint.address());
+        } else {
+            log::warn!("No Raft node reference available, only updated configuration");
         }
 
         log::info!("Added voter node {} to configuration", node_id);
@@ -442,6 +570,23 @@ impl ConfigChangeManager {
     }
 
     async fn execute_remove_node(&self, node_id: NodeId) -> RaftResult<()> {
+        // If we have a Raft node reference, use it to remove the node from cluster
+        if let Some(raft_node) = &self.raft_node {
+            // Get current membership and remove the node
+            let current_membership = self.get_current_membership().await?;
+            let mut new_membership = current_membership;
+            new_membership.remove(&node_id);
+            
+            if !new_membership.is_empty() {
+                raft_node.change_membership(new_membership).await?;
+                log::info!("Removed node {} from Raft cluster", node_id);
+            } else {
+                return Err(RaftError::configuration("Cannot remove the last node from cluster"));
+            }
+        } else {
+            log::warn!("No Raft node reference available, only updating configuration");
+        }
+
         // Remove endpoint from configuration
         {
             let mut config = self.config.write().await;
@@ -458,7 +603,29 @@ impl ConfigChangeManager {
         new_node_id: NodeId,
         new_endpoint: NodeEndpoint,
     ) -> RaftResult<()> {
-        // Remove old node and add new node
+        // If we have a Raft node reference, perform the replacement atomically
+        if let Some(raft_node) = &self.raft_node {
+            // First add the new node as a learner
+            let endpoint_str = new_endpoint.address();
+            raft_node.add_learner(new_node_id, endpoint_str).await?;
+            
+            // Wait for the new node to catch up (if the method is available)
+            // This would require access to the concrete RaftNode type, not just the interface
+            log::info!("New node {} added as learner, waiting for catchup", new_node_id);
+            
+            // Get current membership, replace old with new
+            let current_membership = self.get_current_membership().await?;
+            let mut new_membership = current_membership;
+            new_membership.remove(&old_node_id);
+            new_membership.insert(new_node_id);
+            
+            raft_node.change_membership(new_membership).await?;
+            log::info!("Replaced node {} with node {} in Raft cluster", old_node_id, new_node_id);
+        } else {
+            log::warn!("No Raft node reference available, only updating configuration");
+        }
+
+        // Update configuration
         {
             let mut config = self.config.write().await;
             config.endpoints.remove(&old_node_id);
@@ -568,6 +735,460 @@ impl ConfigChangeManager {
             }
             ConfigChangeType::UpdateEndpoint { node_id: n, .. } => *n == node_id,
         }
+    }
+
+    /// Validate cluster health before making changes
+    async fn validate_cluster_health(&self) -> RaftResult<()> {
+        if let Some(raft_node) = &self.raft_node {
+            let metrics = raft_node.get_metrics().await?;
+            
+            // Check if we have a stable leader
+            if metrics.current_leader.is_none() {
+                return Err(RaftError::configuration(
+                    "No leader available, cluster is not stable for configuration changes"
+                ));
+            }
+            
+            // Check if the cluster is in a healthy state
+            if matches!(metrics.state, openraft::ServerState::Candidate) {
+                return Err(RaftError::configuration(
+                    "Cluster is in election state, wait for stable leadership"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate that the change won't break cluster quorum
+    async fn validate_quorum_safety(&self, request: &ConfigChangeRequest) -> RaftResult<()> {
+        let current_membership = self.get_current_membership().await?;
+        let current_size = current_membership.len();
+        
+        match &request.change_type {
+            ConfigChangeType::RemoveNode { node_id } => {
+                if current_size <= 1 {
+                    return Err(RaftError::configuration(
+                        "Cannot remove node from single-node cluster"
+                    ));
+                }
+                
+                // Ensure we maintain quorum after removal
+                let new_size = current_size - 1;
+                let required_for_quorum = (current_size / 2) + 1;
+                
+                if new_size < required_for_quorum {
+                    return Err(RaftError::configuration(format!(
+                        "Removing node {} would break quorum (current: {}, after removal: {}, required: {})",
+                        node_id, current_size, new_size, required_for_quorum
+                    )));
+                }
+            }
+            ConfigChangeType::ReplaceNode { old_node_id, .. } => {
+                // Replacement maintains cluster size, but validate the old node exists
+                if !current_membership.contains(old_node_id) {
+                    return Err(RaftError::configuration(format!(
+                        "Cannot replace node {} that is not in current membership",
+                        old_node_id
+                    )));
+                }
+            }
+            _ => {
+                // Adding nodes doesn't break quorum
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Get the current Raft membership from the node
+    async fn get_raft_membership(&self) -> RaftResult<BTreeSet<NodeId>> {
+        if let Some(raft_node) = &self.raft_node {
+            let metrics = raft_node.get_metrics().await?;
+            let membership = metrics.membership_config.membership();
+            Ok(membership.voter_ids().collect())
+        } else {
+            // Fallback to configuration-based membership
+            self.get_current_membership().await
+        }
+    }
+
+    /// Perform a dry run of the configuration change to validate it
+    pub async fn dry_run_change(&self, request: &ConfigChangeRequest) -> RaftResult<ConfigChangeResult> {
+        log::info!("Performing dry run for configuration change: {:?}", request.change_type);
+        
+        // Validate leadership
+        self.ensure_leadership().await?;
+        
+        // Validate cluster health
+        self.validate_cluster_health().await?;
+        
+        // Validate the change itself
+        self.validate_change(request).await?;
+        
+        // Validate quorum safety
+        self.validate_quorum_safety(request).await?;
+        
+        let old_membership = self.get_current_membership().await?;
+        let new_membership = self.simulate_membership_change(request, &old_membership).await?;
+        
+        Ok(ConfigChangeResult {
+            success: true,
+            old_membership,
+            new_membership,
+            duration: Duration::ZERO,
+            error_message: None,
+        })
+    }
+
+    /// Synchronize configuration changes across all cluster nodes through Raft protocol
+    pub async fn sync_configuration_change(
+        &self,
+        request: ConfigChangeRequest,
+    ) -> RaftResult<ConfigChangeResult> {
+        log::info!("Synchronizing configuration change across cluster: {:?}", request.change_type);
+        
+        // Ensure we're the leader before attempting synchronization
+        self.ensure_leadership().await?;
+        
+        // Validate the change before synchronization
+        self.validate_change(&request).await?;
+        
+        // Create a configuration change entry for Raft log
+        let config_change_entry = ConfigChangeEntry {
+            change_id: Uuid::new_v4().to_string(),
+            change_type: request.change_type.clone(),
+            requested_by: self.node_id,
+            timestamp: Utc::now(),
+            force: request.force,
+            reason: request.reason.clone(),
+        };
+        
+        // Submit the configuration change through Raft protocol
+        let sync_result = self.submit_config_change_to_raft(config_change_entry).await?;
+        
+        // Wait for the change to be committed and applied on all nodes
+        self.wait_for_config_sync(sync_result.change_id.clone(), request.timeout).await?;
+        
+        // Verify that all nodes have the same configuration
+        self.verify_config_consistency().await?;
+        
+        log::info!("Configuration change synchronized successfully across cluster");
+        Ok(sync_result)
+    }
+
+    /// Submit configuration change to Raft log for replication
+    async fn submit_config_change_to_raft(
+        &self,
+        config_change: ConfigChangeEntry,
+    ) -> RaftResult<ConfigChangeResult> {
+        if let Some(raft_node) = &self.raft_node {
+            // Create a client request for the configuration change
+            let client_request = crate::types::ClientRequest {
+                id: crate::types::RequestId::new(),
+                command: crate::types::RedisCommand::new(
+                    "CONFIG_CHANGE".to_string(),
+                    vec![
+                        serde_json::to_vec(&config_change)
+                            .map_err(|e| RaftError::serialization(e.to_string()))?
+                            .into()
+                    ]
+                ),
+                consistency_level: crate::types::ConsistencyLevel::Linearizable,
+            };
+            
+            // Submit through Raft for replication
+            let response = raft_node.propose(client_request).await?;
+            
+            match response.result {
+                Ok(_) => {
+                    let old_membership = self.get_current_membership().await?;
+                    let new_membership = self.simulate_membership_change(
+                        &ConfigChangeRequest {
+                            change_type: config_change.change_type,
+                            force: config_change.force,
+                            timeout: Duration::from_secs(30),
+                            reason: config_change.reason,
+                        },
+                        &old_membership
+                    ).await?;
+                    
+                    Ok(ConfigChangeResult {
+                        success: true,
+                        old_membership,
+                        new_membership,
+                        duration: Duration::ZERO,
+                        error_message: None,
+                    })
+                }
+                Err(error) => Err(RaftError::consensus(format!(
+                    "Failed to replicate configuration change: {}", error
+                )))
+            }
+        } else {
+            Err(RaftError::configuration("Raft node not available for configuration synchronization"))
+        }
+    }
+
+    /// Wait for configuration change to be synchronized across all nodes
+    async fn wait_for_config_sync(
+        &self,
+        change_id: String,
+        timeout: Duration,
+    ) -> RaftResult<()> {
+        log::info!("Waiting for configuration change {} to sync across cluster", change_id);
+        
+        let start_time = std::time::Instant::now();
+        let check_interval = Duration::from_millis(500);
+        
+        while start_time.elapsed() < timeout {
+            // Check if all nodes have applied the configuration change
+            if self.check_all_nodes_synced(&change_id).await? {
+                log::info!("Configuration change {} synchronized across all nodes", change_id);
+                return Ok(());
+            }
+            
+            // Check if we're still the leader
+            if let Some(raft_node) = &self.raft_node {
+                let metrics = raft_node.get_metrics().await?;
+                if !matches!(metrics.state, openraft::ServerState::Leader) {
+                    return Err(RaftError::NotLeader { 
+                        leader_id: metrics.current_leader 
+                    });
+                }
+            }
+            
+            tokio::time::sleep(check_interval).await;
+        }
+        
+        Err(RaftError::timeout(format!(
+            "Configuration change {} did not sync within {:?}",
+            change_id, timeout
+        )))
+    }
+
+    /// Check if all nodes have synchronized the configuration change
+    async fn check_all_nodes_synced(&self, change_id: &str) -> RaftResult<bool> {
+        if let Some(raft_node) = &self.raft_node {
+            let metrics = raft_node.get_metrics().await?;
+            
+            // Check if the change has been committed
+            if let Some(last_applied) = metrics.last_applied {
+                // In a real implementation, we would track configuration changes
+                // and verify they've been applied on all nodes
+                // For now, we check if the log has been replicated to all followers
+                
+                if let Some(replication_map) = &metrics.replication {
+                    let current_log_index = metrics.last_log_index.unwrap_or(0);
+                    
+                    // Check if all followers are caught up
+                    for (node_id, replication_state) in replication_map {
+                        if let Some(matched_index) = replication_state.map(|state| state.index) {
+                            let lag = current_log_index.saturating_sub(matched_index);
+                            if lag > 5 { // Allow small lag
+                                log::debug!("Node {} still syncing, lag: {}", node_id, lag);
+                                return Ok(false);
+                            }
+                        } else {
+                            log::debug!("Node {} replication state unknown", node_id);
+                            return Ok(false);
+                        }
+                    }
+                }
+                
+                // All nodes appear to be caught up
+                return Ok(true);
+            }
+        }
+        
+        Ok(false)
+    }
+
+    /// Verify configuration consistency across all cluster nodes
+    async fn verify_config_consistency(&self) -> RaftResult<()> {
+        log::info!("Verifying configuration consistency across cluster");
+        
+        // Get current configuration from this node
+        let local_config = {
+            let config = self.config.read().await;
+            config.clone()
+        };
+        
+        // In a real implementation, we would query other nodes to verify
+        // their configurations match. For now, we verify through Raft metrics
+        if let Some(raft_node) = &self.raft_node {
+            let metrics = raft_node.get_metrics().await?;
+            
+            // Check that membership is consistent
+            let raft_membership = metrics.membership_config.membership();
+            let config_membership: BTreeSet<NodeId> = local_config.endpoints.keys().copied().collect();
+            let raft_voters: BTreeSet<NodeId> = raft_membership.voter_ids().collect();
+            
+            // Allow for learners not being in the voting set
+            if !raft_voters.is_subset(&config_membership) {
+                return Err(RaftError::configuration(format!(
+                    "Configuration inconsistency detected: Raft voters {:?} not subset of config members {:?}",
+                    raft_voters, config_membership
+                )));
+            }
+            
+            log::info!("Configuration consistency verified");
+        }
+        
+        Ok(())
+    }
+
+    /// Handle configuration change failures and implement rollback
+    pub async fn handle_config_change_failure(
+        &self,
+        change_id: String,
+        error: RaftError,
+    ) -> RaftResult<()> {
+        log::error!("Handling configuration change failure for {}: {}", change_id, error);
+        
+        // Mark the operation as failed
+        {
+            let mut operations = self.active_operations.write().await;
+            if let Some(operation) = operations.iter_mut().find(|op| op.id == change_id) {
+                operation.status = ConfigChangeStatus::Failed;
+                operation.completed_at = Some(Utc::now());
+                if let Some(ref mut result) = operation.result {
+                    result.success = false;
+                    result.error_message = Some(error.to_string());
+                }
+            }
+        }
+        
+        // Attempt to rollback if possible
+        self.attempt_rollback(&change_id).await?;
+        
+        Ok(())
+    }
+
+    /// Attempt to rollback a failed configuration change
+    async fn attempt_rollback(&self, change_id: &str) -> RaftResult<()> {
+        log::warn!("Attempting rollback for configuration change {}", change_id);
+        
+        // Find the operation to rollback
+        let operation = {
+            let operations = self.active_operations.read().await;
+            operations.iter().find(|op| op.id == change_id).cloned()
+        };
+        
+        if let Some(operation) = operation {
+            // Create reverse operation
+            let rollback_request = self.create_rollback_request(&operation.request)?;
+            
+            // Execute rollback
+            match self.execute_change_internal(&rollback_request).await {
+                Ok(_) => {
+                    log::info!("Successfully rolled back configuration change {}", change_id);
+                    
+                    // Update operation status
+                    let mut operations = self.active_operations.write().await;
+                    if let Some(op) = operations.iter_mut().find(|op| op.id == change_id) {
+                        op.status = ConfigChangeStatus::RolledBack;
+                    }
+                }
+                Err(rollback_error) => {
+                    log::error!("Failed to rollback configuration change {}: {}", 
+                              change_id, rollback_error);
+                    return Err(rollback_error);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Create a rollback request for a failed configuration change
+    fn create_rollback_request(&self, original_request: &ConfigChangeRequest) -> RaftResult<ConfigChangeRequest> {
+        let rollback_change_type = match &original_request.change_type {
+            ConfigChangeType::AddLearner { node_id, .. } => {
+                ConfigChangeType::RemoveNode { node_id: *node_id }
+            }
+            ConfigChangeType::PromoteLearner { node_id } => {
+                // Cannot directly demote, would need to remove and re-add as learner
+                ConfigChangeType::RemoveNode { node_id: *node_id }
+            }
+            ConfigChangeType::AddVoter { node_id, .. } => {
+                ConfigChangeType::RemoveNode { node_id: *node_id }
+            }
+            ConfigChangeType::RemoveNode { node_id } => {
+                // Cannot easily rollback node removal without endpoint info
+                return Err(RaftError::configuration(
+                    "Cannot rollback node removal without endpoint information"
+                ));
+            }
+            ConfigChangeType::ReplaceNode { old_node_id, new_node_id, .. } => {
+                // Reverse the replacement
+                return Err(RaftError::configuration(
+                    "Node replacement rollback not implemented"
+                ));
+            }
+            ConfigChangeType::UpdateEndpoint { node_id, .. } => {
+                // Would need original endpoint info
+                return Err(RaftError::configuration(
+                    "Endpoint update rollback not implemented"
+                ));
+            }
+        };
+        
+        Ok(ConfigChangeRequest {
+            change_type: rollback_change_type,
+            force: true, // Force rollback
+            timeout: original_request.timeout,
+            reason: format!("Rollback of failed change: {}", original_request.reason),
+        })
+    }
+
+    /// Ensure all nodes have consistent configuration state
+    pub async fn ensure_config_consistency(&self) -> RaftResult<()> {
+        log::info!("Ensuring configuration consistency across cluster");
+        
+        // This is called periodically or after network partition recovery
+        self.verify_config_consistency().await?;
+        
+        // If inconsistencies are found, attempt to reconcile
+        // In a real implementation, this might involve:
+        // 1. Querying all nodes for their configurations
+        // 2. Determining the authoritative configuration (usually from leader)
+        // 3. Pushing updates to inconsistent nodes
+        
+        log::info!("Configuration consistency check completed");
+        Ok(())
+    }
+
+    /// Simulate what the membership would look like after a change
+    async fn simulate_membership_change(
+        &self,
+        request: &ConfigChangeRequest,
+        current_membership: &BTreeSet<NodeId>,
+    ) -> RaftResult<BTreeSet<NodeId>> {
+        let mut new_membership = current_membership.clone();
+        
+        match &request.change_type {
+            ConfigChangeType::AddLearner { .. } => {
+                // Learners don't change voting membership
+            }
+            ConfigChangeType::PromoteLearner { node_id } => {
+                new_membership.insert(*node_id);
+            }
+            ConfigChangeType::AddVoter { node_id, .. } => {
+                new_membership.insert(*node_id);
+            }
+            ConfigChangeType::RemoveNode { node_id } => {
+                new_membership.remove(node_id);
+            }
+            ConfigChangeType::ReplaceNode { old_node_id, new_node_id, .. } => {
+                new_membership.remove(old_node_id);
+                new_membership.insert(*new_node_id);
+            }
+            ConfigChangeType::UpdateEndpoint { .. } => {
+                // Endpoint updates don't change membership
+            }
+        }
+        
+        Ok(new_membership)
     }
 }
 

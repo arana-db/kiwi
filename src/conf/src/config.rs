@@ -21,6 +21,17 @@ use std::collections::BTreeSet;
 use crate::de_func::{parse_bool_from_string, parse_memory, parse_redis_config};
 use crate::error::Error;
 
+/// Information about cluster startup configuration
+#[derive(Debug, Clone)]
+pub struct ClusterStartupInfo {
+    pub enabled: bool,
+    pub node_id: u64,
+    pub self_endpoint: Option<String>,
+    pub peer_endpoints: Vec<String>,
+    pub data_dir: String,
+    pub is_valid_cluster: bool,
+}
+
 const DEFAULT_BINDING: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 7379; // Redis-compatible port (7xxx variant of 6379)
 
@@ -51,6 +62,133 @@ impl Default for ClusterConfig {
             snapshot_threshold: 1000,
             max_payload_entries: 100,
         }
+    }
+}
+
+impl ClusterConfig {
+    /// Validate cluster configuration
+    pub fn validate(&self) -> Result<(), String> {
+        if self.enabled {
+            // Validate node ID
+            if self.node_id == 0 {
+                return Err("cluster-node-id must be >= 1 (0 is reserved)".to_string());
+            }
+
+            // Validate timing constraints for Raft
+            if self.election_timeout_min_ms == 0 {
+                return Err("cluster-election-timeout-min must be > 0".to_string());
+            }
+            if self.election_timeout_min_ms >= self.election_timeout_max_ms {
+                return Err("cluster-election-timeout-min must be < cluster-election-timeout-max".to_string());
+            }
+            if self.heartbeat_interval_ms >= self.election_timeout_min_ms {
+                return Err("cluster-heartbeat-interval must be < cluster-election-timeout-min for proper Raft operation".to_string());
+            }
+
+            // Validate cluster members format
+            for member in &self.cluster_members {
+                if let Err(e) = self.validate_member_format(member) {
+                    return Err(format!("Invalid cluster member '{}': {}", member, e));
+                }
+            }
+
+            // Validate data directory
+            if self.data_dir.is_empty() {
+                return Err("cluster-data-dir cannot be empty".to_string());
+            }
+
+            // Validate thresholds
+            if self.snapshot_threshold == 0 {
+                return Err("cluster-snapshot-threshold must be > 0".to_string());
+            }
+            if self.max_payload_entries == 0 {
+                return Err("cluster-max-payload-entries must be > 0".to_string());
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate cluster member format: "node_id:host:port"
+    fn validate_member_format(&self, member: &str) -> Result<(), String> {
+        let parts: Vec<&str> = member.split(':').collect();
+        if parts.len() != 3 {
+            return Err("format must be 'node_id:host:port'".to_string());
+        }
+
+        // Validate node ID
+        let node_id: u64 = parts[0].parse()
+            .map_err(|_| "node_id must be a valid number")?;
+        if node_id == 0 {
+            return Err("node_id must be >= 1".to_string());
+        }
+
+        // Validate host (basic check)
+        let host = parts[1];
+        if host.is_empty() {
+            return Err("host cannot be empty".to_string());
+        }
+
+        // Validate port
+        let port: u16 = parts[2].parse()
+            .map_err(|_| "port must be a valid number between 1-65535")?;
+        if port == 0 {
+            return Err("port must be > 0".to_string());
+        }
+
+        Ok(())
+    }
+
+    /// Check if cluster mode is properly configured
+    pub fn is_cluster_mode(&self) -> bool {
+        self.enabled && !self.cluster_members.is_empty()
+    }
+
+    /// Get this node's endpoint from cluster members
+    pub fn get_self_endpoint(&self) -> Option<String> {
+        self.cluster_members.iter()
+            .find(|member| {
+                if let Ok(parts) = self.parse_member(member) {
+                    parts.0 == self.node_id
+                } else {
+                    false
+                }
+            })
+            .cloned()
+    }
+
+    /// Parse cluster member string into (node_id, host, port)
+    pub fn parse_member(&self, member: &str) -> Result<(u64, String, u16), String> {
+        let parts: Vec<&str> = member.split(':').collect();
+        if parts.len() != 3 {
+            return Err("Invalid format, expected 'node_id:host:port'".to_string());
+        }
+
+        let node_id = parts[0].parse::<u64>()
+            .map_err(|_| "Invalid node_id")?;
+        let host = parts[1].to_string();
+        let port = parts[2].parse::<u16>()
+            .map_err(|_| "Invalid port")?;
+
+        Ok((node_id, host, port))
+    }
+
+    /// Get all peer endpoints (excluding self)
+    pub fn get_peer_endpoints(&self) -> Vec<String> {
+        self.cluster_members.iter()
+            .filter(|member| {
+                if let Ok(parts) = self.parse_member(member) {
+                    parts.0 != self.node_id
+                } else {
+                    false
+                }
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Check if this node is part of the cluster
+    pub fn is_node_in_cluster(&self) -> bool {
+        self.get_self_endpoint().is_some()
     }
 }
 
@@ -127,6 +265,55 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Determine if the server should run in cluster mode
+    pub fn should_run_cluster_mode(&self, force_single_node: bool) -> bool {
+        !force_single_node && self.cluster.is_cluster_mode()
+    }
+
+    /// Validate cluster configuration for startup
+    pub fn validate_cluster_startup(&self, init_cluster: bool) -> Result<(), String> {
+        if !self.cluster.enabled {
+            return Ok(());
+        }
+
+        // Check if this node is configured in the cluster
+        if !self.cluster.is_node_in_cluster() {
+            return Err(format!(
+                "Node ID {} is not found in cluster members. Current members: {:?}",
+                self.cluster.node_id,
+                self.cluster.cluster_members
+            ));
+        }
+
+        // For non-bootstrap scenarios, require cluster members
+        if !init_cluster && self.cluster.cluster_members.is_empty() {
+            return Err(
+                "Cluster mode enabled but no cluster members specified. Use --init-cluster for the first node.".to_string()
+            );
+        }
+
+        // Validate that we have at least one other member for a proper cluster
+        if !init_cluster && self.cluster.cluster_members.len() < 2 {
+            return Err(
+                "Cluster requires at least 2 members. Current members: {}".to_string()
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Get cluster startup information
+    pub fn get_cluster_info(&self) -> ClusterStartupInfo {
+        ClusterStartupInfo {
+            enabled: self.cluster.enabled,
+            node_id: self.cluster.node_id,
+            self_endpoint: self.cluster.get_self_endpoint(),
+            peer_endpoints: self.cluster.get_peer_endpoints(),
+            data_dir: self.cluster.data_dir.clone(),
+            is_valid_cluster: self.cluster.is_cluster_mode() && self.cluster.is_node_in_cluster(),
+        }
+    }
+
     // load config from file - supports Redis-style format with comments
     pub fn load(path: &str) -> Result<Self, Error> {
         let content =
@@ -145,6 +332,31 @@ impl Config {
                 "port" => {
                     config.port = value.parse().map_err(|e| Error::InvalidConfig {
                         source: serde_ini::de::Error::Custom(format!("Invalid port: {}", e)),
+                    })?;
+                }
+                "binding" => {
+                    config.binding = value;
+                }
+                "timeout" => {
+                    config.timeout = value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!("Invalid timeout: {}", e)),
+                    })?;
+                }
+                "log-dir" => {
+                    config.log_dir = value;
+                }
+                "redis-compatible-mode" => {
+                    config.redis_compatible_mode = parse_bool_from_string(&value)
+                        .map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid redis-compatible-mode: {}",
+                                e
+                            )),
+                        })?;
+                }
+                "db-instance-num" => {
+                    config.db_instance_num = value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!("Invalid db-instance-num: {}", e)),
                     })?;
                 }
                 "memory" => {
@@ -380,36 +592,11 @@ impl Config {
             }
         }
 
-        // Validate cluster configuration invariants (Raft timing constraints)
-        if config.cluster.enabled {
-            if config.cluster.election_timeout_min_ms == 0 {
-                return Err(Error::InvalidConfig {
-                    source: serde_ini::de::Error::Custom(
-                        "cluster-election-timeout-min must be > 0".to_string(),
-                    ),
-                });
-            }
-            if config.cluster.election_timeout_min_ms >= config.cluster.election_timeout_max_ms {
-                return Err(Error::InvalidConfig {
-                    source: serde_ini::de::Error::Custom(
-                        "cluster-election-timeout-min must be < cluster-election-timeout-max".to_string(),
-                    ),
-                });
-            }
-            if config.cluster.heartbeat_interval_ms >= config.cluster.election_timeout_min_ms {
-                return Err(Error::InvalidConfig {
-                    source: serde_ini::de::Error::Custom(
-                        "cluster-heartbeat-interval must be < cluster-election-timeout-min for proper Raft operation".to_string(),
-                    ),
-                });
-            }
-            if config.cluster.node_id == 0 {
-                return Err(Error::InvalidConfig {
-                    source: serde_ini::de::Error::Custom(
-                        "cluster-node-id must be >= 1 (0 is reserved)".to_string(),
-                    ),
-                });
-            }
+        // Validate cluster configuration using the new validation method
+        if let Err(e) = config.cluster.validate() {
+            return Err(Error::InvalidConfig {
+                source: serde_ini::de::Error::Custom(e),
+            });
         }
 
         config

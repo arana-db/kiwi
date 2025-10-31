@@ -33,6 +33,7 @@ pub mod metrics;
 pub mod network;
 pub mod node;
 pub mod performance;
+pub mod placeholder_types;
 pub mod protocol_compatibility;
 pub mod redis_integration;
 pub mod serialization;

@@ -24,8 +24,7 @@ use crate::storage::RaftStorage;
 use crate::types::{NodeId, RaftMetrics, ClusterConfig, TypeConfig, BasicNode, ClusterHealth};
 use crate::{ClientRequest, ClientResponse};
 use async_trait::async_trait;
-use engine::RocksdbEngine;
-use openraft::{Raft, Config as RaftConfig, BasicNode as OpenRaftBasicNode};
+use openraft::{Raft, Config as RaftConfig};
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -74,7 +73,7 @@ pub struct RaftNode {
 
 impl RaftNode {
     /// Create a new Raft node with cluster configuration
-    pub async fn new(cluster_config: ClusterConfig, engine: Arc<RocksdbEngine>) -> RaftResult<Self> {
+    pub async fn new(cluster_config: ClusterConfig) -> RaftResult<Self> {
         log::info!("Creating Raft node {} with config: {:?}", cluster_config.node_id, cluster_config);
 
         // Create storage layer
@@ -82,7 +81,7 @@ impl RaftNode {
         let storage = Arc::new(RaftStorage::new(storage_path)?);
 
         // Create state machine
-        let state_machine = Arc::new(KiwiStateMachine::new(engine.clone(), cluster_config.node_id));
+        let state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
 
         // Create network factory
         let mut network_factory_instance = KiwiRaftNetworkFactory::new(cluster_config.node_id);

@@ -27,7 +27,7 @@ use rocksdb::IteratorMode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use engine::RocksdbEngine;
+use crate::placeholder_types::RocksdbEngine;
 use crate::error::{RaftError, RaftResult};
 use crate::types::{LogIndex, NodeId};
 

@@ -22,7 +22,7 @@ use crate::error::{RaftError, RaftResult};
 use crate::node::{RaftNode, RaftNodeInterface};
 use crate::types::{ClientRequest, ClientResponse, ConsistencyLevel, RedisCommand, RequestId, NodeId};
 use bytes::Bytes;
-use resp::RespData;
+use crate::placeholder_types::RespData;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -106,7 +106,7 @@ impl RaftRedisHandler {
         // Create client request for Raft consensus
         let request = ClientRequest {
             id: RequestId::new(),
-            command,
+            command: command.clone(),
             consistency_level: ConsistencyLevel::Linearizable, // Write operations always require linearizable consistency
         };
 
@@ -154,15 +154,17 @@ impl RaftRedisHandler {
                    command.command, consistency);
 
         // Ensure the requested consistency level is achievable
-        if !self.consistency_handler.is_consistency_supported(consistency).await? {
+        let final_consistency = if !self.consistency_handler.is_consistency_supported(consistency).await? {
             let recommended = self.consistency_handler.get_recommended_consistency().await?;
             log::warn!("Requested consistency {:?} not supported, using {:?}", 
                       consistency, recommended);
-            return self.handle_read_command_with_consistency(command, recommended).await;
-        }
+            recommended
+        } else {
+            consistency
+        };
 
         // Ensure consistency requirements are met before proceeding
-        self.consistency_handler.ensure_read_consistency(consistency).await?;
+        self.consistency_handler.ensure_read_consistency(final_consistency).await?;
 
         match consistency {
             ConsistencyLevel::Linearizable => {

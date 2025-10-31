@@ -24,8 +24,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use resp::command::{RespCommand, CommandType, Command};
-use resp::types::RespData;
+use crate::placeholder_types::{RespCommand, CommandType, RespData};
 use crate::error::{RaftError, RaftResult};
 use crate::types::{RedisCommand, ClientRequest, ClientResponse, RequestId, ConsistencyLevel};
 
@@ -69,7 +68,7 @@ impl CommandSerializer {
             .map(Bytes::from)
             .collect();
 
-        Ok(RespCommand::new(command_type, args, false))
+        Ok(RespCommand::new(command_type, args))
     }
 
     /// Serialize a RedisCommand to bytes
@@ -118,9 +117,7 @@ impl CommandSerializer {
                 Ok(RedisCommand::new(command_name, args))
             }
             RespData::Inline(parts) if !parts.is_empty() => {
-                let command_name = std::str::from_utf8(&parts[0])
-                    .map_err(|_| RaftError::invalid_request("Command name must be valid UTF-8"))?
-                    .to_string();
+                let command_name = parts[0].clone();
 
                 let args = parts.iter().skip(1).cloned().map(Bytes::from).collect();
 

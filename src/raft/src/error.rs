@@ -200,6 +200,21 @@ impl RaftError {
             RaftError::Network(_) | RaftError::Timeout { .. } | RaftError::NotLeader { .. }
         )
     }
+
+    /// Create a serialization error
+    pub fn serialization<S: Into<String>>(message: S) -> Self {
+        Self::InvalidRequest {
+            message: format!("Serialization error: {}", message.into()),
+        }
+    }
+
+    /// Create a consensus error
+    pub fn consensus<S: Into<String>>(message: S) -> Self {
+        // Create a generic consensus error - in practice this would be more specific
+        Self::InvalidRequest {
+            message: format!("Consensus error: {}", message.into()),
+        }
+    }
 }
 
 #[cfg(test)]
