@@ -22,6 +22,7 @@
 
 use openraft::Config;
 
+pub mod binlog;
 pub mod cluster_config;
 pub mod config_change;
 pub mod consistency;
@@ -37,8 +38,14 @@ pub mod node;
 pub mod performance;
 pub mod placeholder_types;
 pub mod protocol_compatibility;
+pub mod cluster_tests;
 pub mod redis_integration;
+pub mod replication_mode;
+pub mod rocksdb_integration;
+pub mod segment_log;
+pub mod sequence_mapping;
 pub mod serialization;
+pub mod snapshot;
 pub mod state_machine;
 pub mod storage;
 pub mod types;
