@@ -21,8 +21,8 @@
 //! 1. TablePropertiesCollector for persisting log index during flush
 //! 2. EventListener for monitoring memtable seal and flush events
 
-pub mod table_properties_collector;
 pub mod event_listener;
+pub mod table_properties_collector;
 
-pub use table_properties_collector::LogIndexTablePropertiesCollector;
 pub use event_listener::LogIndexEventListener;
+pub use table_properties_collector::LogIndexTablePropertiesCollector;

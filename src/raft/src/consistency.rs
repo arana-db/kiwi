@@ -27,8 +27,8 @@ use rocksdb::IteratorMode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::placeholder_types::RocksdbEngine;
 use crate::error::{RaftError, RaftResult};
+use crate::placeholder_types::RocksdbEngine;
 use crate::types::{LogIndex, NodeId};
 
 /// Consistency check result
@@ -37,9 +37,15 @@ pub enum ConsistencyStatus {
     /// State machine is consistent with the log
     Consistent,
     /// State machine is behind the log (missing applied entries)
-    Behind { expected_index: LogIndex, actual_index: LogIndex },
+    Behind {
+        expected_index: LogIndex,
+        actual_index: LogIndex,
+    },
     /// State machine is ahead of the log (extra applied entries)
-    Ahead { expected_index: LogIndex, actual_index: LogIndex },
+    Ahead {
+        expected_index: LogIndex,
+        actual_index: LogIndex,
+    },
     /// State machine data is corrupted or inconsistent
     Corrupted { reason: String },
 }
@@ -89,7 +95,10 @@ impl ConsistencyChecker {
     }
 
     /// Verify state machine consistency against expected log index
-    pub async fn verify_consistency(&self, expected_log_index: LogIndex) -> RaftResult<ConsistencyStatus> {
+    pub async fn verify_consistency(
+        &self,
+        expected_log_index: LogIndex,
+    ) -> RaftResult<ConsistencyStatus> {
         let current_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -122,7 +131,7 @@ impl ConsistencyChecker {
         if status != ConsistencyStatus::Consistent {
             let mut metadata = self.metadata.write().await;
             metadata.violation_count += 1;
-            
+
             log::warn!(
                 "Node {} consistency violation detected: {:?}",
                 self.node_id,
@@ -145,19 +154,23 @@ impl ConsistencyChecker {
             match item {
                 Ok((key, value)) => {
                     key_count += 1;
-                    
+
                     // Basic sanity checks
                     if key.is_empty() {
                         corruption_detected = true;
                         corruption_reason = "Empty key detected".to_string();
                         break;
                     }
-                    
+
                     // Check for extremely large values that might indicate corruption
-                    if value.len() > 100 * 1024 * 1024 { // 100MB threshold
+                    if value.len() > 100 * 1024 * 1024 {
+                        // 100MB threshold
                         corruption_detected = true;
-                        corruption_reason = format!("Suspiciously large value ({} bytes) for key: {:?}", 
-                                                   value.len(), String::from_utf8_lossy(&key));
+                        corruption_reason = format!(
+                            "Suspiciously large value ({} bytes) for key: {:?}",
+                            value.len(),
+                            String::from_utf8_lossy(&key)
+                        );
                         break;
                     }
                 }
@@ -172,15 +185,15 @@ impl ConsistencyChecker {
         if corruption_detected {
             let mut metadata = self.metadata.write().await;
             metadata.violation_count += 1;
-            
+
             log::error!(
                 "Node {} data corruption detected: {}",
                 self.node_id,
                 corruption_reason
             );
-            
-            return Ok(ConsistencyStatus::Corrupted { 
-                reason: corruption_reason 
+
+            return Ok(ConsistencyStatus::Corrupted {
+                reason: corruption_reason,
             });
         }
 
@@ -265,23 +278,27 @@ impl ConsistencyChecker {
         // In a real implementation, this would read from a special metadata key
         // For now, we'll use a simple approach
         const APPLIED_INDEX_KEY: &[u8] = b"__raft_applied_index__";
-        
+
         match self.engine.get(APPLIED_INDEX_KEY) {
             Ok(Some(value)) => {
                 let index_str = String::from_utf8(value)
                     .map_err(|_| RaftError::state_machine("Invalid applied index format"))?;
-                index_str.parse::<LogIndex>()
+                index_str
+                    .parse::<LogIndex>()
                     .map_err(|_| RaftError::state_machine("Failed to parse applied index"))
             }
             Ok(None) => Ok(0), // No applied index stored yet
-            Err(e) => Err(RaftError::state_machine(format!("Failed to read applied index: {}", e))),
+            Err(e) => Err(RaftError::state_machine(format!(
+                "Failed to read applied index: {}",
+                e
+            ))),
         }
     }
 
     /// Set the applied index in the state machine
     async fn set_applied_index(&self, index: LogIndex) -> RaftResult<()> {
         const APPLIED_INDEX_KEY: &[u8] = b"__raft_applied_index__";
-        
+
         self.engine
             .put(APPLIED_INDEX_KEY, index.to_string().as_bytes())
             .map_err(|e| RaftError::state_machine(format!("Failed to set applied index: {}", e)))
@@ -320,26 +337,27 @@ impl ConsistencyMonitor {
     pub async fn start_monitoring(&self, expected_log_index: Arc<RwLock<LogIndex>>) {
         let checker = Arc::clone(&self.checker);
         let interval = self.check_interval_secs;
-        
+
         tokio::spawn(async move {
-            let mut interval_timer = tokio::time::interval(
-                tokio::time::Duration::from_secs(interval)
-            );
-            
+            let mut interval_timer =
+                tokio::time::interval(tokio::time::Duration::from_secs(interval));
+
             loop {
                 interval_timer.tick().await;
-                
+
                 let current_expected_index = *expected_log_index.read().await;
-                
+
                 match checker.verify_consistency(current_expected_index).await {
                     Ok(ConsistencyStatus::Consistent) => {
                         log::debug!("Periodic consistency check passed");
                     }
                     Ok(status) => {
                         log::warn!("Periodic consistency check failed: {:?}", status);
-                        
+
                         if checker.needs_recovery(&status) {
-                            if let Err(e) = checker.recover_consistency(current_expected_index).await {
+                            if let Err(e) =
+                                checker.recover_consistency(current_expected_index).await
+                            {
                                 log::error!("Consistency recovery failed: {}", e);
                             }
                         }
@@ -392,10 +410,13 @@ mod tests {
 
         // Check consistency with expected index 5
         let status = checker.verify_consistency(5).await.unwrap();
-        assert_eq!(status, ConsistencyStatus::Behind {
-            expected_index: 5,
-            actual_index: 3,
-        });
+        assert_eq!(
+            status,
+            ConsistencyStatus::Behind {
+                expected_index: 5,
+                actual_index: 3,
+            }
+        );
     }
 
     #[tokio::test]
@@ -408,10 +429,13 @@ mod tests {
 
         // Check consistency with expected index 5
         let status = checker.verify_consistency(5).await.unwrap();
-        assert_eq!(status, ConsistencyStatus::Ahead {
-            expected_index: 5,
-            actual_index: 7,
-        });
+        assert_eq!(
+            status,
+            ConsistencyStatus::Ahead {
+                expected_index: 5,
+                actual_index: 7,
+            }
+        );
     }
 
     #[tokio::test]
@@ -433,14 +457,34 @@ mod tests {
         let checker = ConsistencyChecker::new(engine, 1);
 
         let consistent = ConsistencyStatus::Consistent;
-        let behind = ConsistencyStatus::Behind { expected_index: 5, actual_index: 3 };
-        let ahead = ConsistencyStatus::Ahead { expected_index: 3, actual_index: 5 };
-        let corrupted = ConsistencyStatus::Corrupted { reason: "test".to_string() };
+        let behind = ConsistencyStatus::Behind {
+            expected_index: 5,
+            actual_index: 3,
+        };
+        let ahead = ConsistencyStatus::Ahead {
+            expected_index: 3,
+            actual_index: 5,
+        };
+        let corrupted = ConsistencyStatus::Corrupted {
+            reason: "test".to_string(),
+        };
 
-        assert_eq!(checker.get_recovery_strategy(&consistent), RecoveryStrategy::None);
-        assert_eq!(checker.get_recovery_strategy(&behind), RecoveryStrategy::ReplayMissingEntries);
-        assert_eq!(checker.get_recovery_strategy(&ahead), RecoveryStrategy::RollbackExtraEntries);
-        assert_eq!(checker.get_recovery_strategy(&corrupted), RecoveryStrategy::FullStateReconstruction);
+        assert_eq!(
+            checker.get_recovery_strategy(&consistent),
+            RecoveryStrategy::None
+        );
+        assert_eq!(
+            checker.get_recovery_strategy(&behind),
+            RecoveryStrategy::ReplayMissingEntries
+        );
+        assert_eq!(
+            checker.get_recovery_strategy(&ahead),
+            RecoveryStrategy::RollbackExtraEntries
+        );
+        assert_eq!(
+            checker.get_recovery_strategy(&corrupted),
+            RecoveryStrategy::FullStateReconstruction
+        );
     }
 
     #[tokio::test]

@@ -20,14 +20,14 @@
 //! This module provides compatibility between master-slave mode and Raft mode.
 //! It allows using the same binlog format for both modes, with dynamic switching.
 
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use parking_lot::RwLock;
 
-use crate::error::RaftError;
-use crate::types::{LogIndex, Term};
 use crate::binlog::{BinlogEntry, OperationType};
+use crate::error::RaftError;
 use crate::segment_log::SegmentLog;
+use crate::types::{LogIndex, Term};
 use bytes::Bytes;
 
 /// Replication mode
@@ -60,7 +60,7 @@ impl ReplicationModeManager {
         initial_mode: ReplicationMode,
     ) -> Result<Self, RaftError> {
         let fake_term = 0; // Use term 0 for master-slave mode
-        
+
         Ok(Self {
             mode: Arc::new(RwLock::new(initial_mode)),
             segment_log,
@@ -69,31 +69,35 @@ impl ReplicationModeManager {
             is_leader: Arc::new(AtomicBool::new(true)),
         })
     }
-    
+
     /// Get current replication mode
     pub fn get_mode(&self) -> ReplicationMode {
         *self.mode.read()
     }
-    
+
     /// Switch replication mode
     pub fn switch_mode(&self, new_mode: ReplicationMode) -> Result<(), RaftError> {
         let mut mode = self.mode.write();
         let old_mode = *mode;
-        
+
         if old_mode == new_mode {
             return Ok(());
         }
-        
+
         // Flush current segment before switching
         self.segment_log.flush()?;
-        
+
         *mode = new_mode;
-        
-        log::info!("Replication mode switched from {:?} to {:?}", old_mode, new_mode);
-        
+
+        log::info!(
+            "Replication mode switched from {:?} to {:?}",
+            old_mode,
+            new_mode
+        );
+
         Ok(())
     }
-    
+
     /// Write binlog entry (master-slave mode)
     /// Uses fake term to reuse Raft log format
     pub fn write_binlog_master_slave(
@@ -108,17 +112,16 @@ impl ReplicationModeManager {
             *current += 1;
             index
         };
-        
+
         // Create binlog entry with fake term
-        let entry = BinlogEntry::new(operation, data)
-            .with_raft_info(log_index, self.fake_term);
-        
+        let entry = BinlogEntry::new(operation, data).with_raft_info(log_index, self.fake_term);
+
         // Append to segment log
         self.segment_log.append_entry(&entry)?;
-        
+
         Ok(log_index)
     }
-    
+
     /// Write binlog entry (Raft mode)
     /// Uses actual Raft term and log index
     pub fn write_binlog_raft(
@@ -129,15 +132,14 @@ impl ReplicationModeManager {
         term: Term,
     ) -> Result<(), RaftError> {
         // Create binlog entry with real Raft info
-        let entry = BinlogEntry::new(operation, data)
-            .with_raft_info(log_index, term);
-        
+        let entry = BinlogEntry::new(operation, data).with_raft_info(log_index, term);
+
         // Append to segment log
         self.segment_log.append_entry(&entry)?;
-        
+
         Ok(())
     }
-    
+
     /// Write binlog entry (automatic mode detection)
     pub fn write_binlog(
         &self,
@@ -156,41 +158,40 @@ impl ReplicationModeManager {
                 let log_idx = log_index.ok_or_else(|| {
                     RaftError::invalid_request("Log index required for Raft mode")
                 })?;
-                let raft_term = term.ok_or_else(|| {
-                    RaftError::invalid_request("Term required for Raft mode")
-                })?;
-                
+                let raft_term =
+                    term.ok_or_else(|| RaftError::invalid_request("Term required for Raft mode"))?;
+
                 self.write_binlog_raft(operation, data, log_idx, raft_term)?;
                 Ok(log_idx)
             }
         }
     }
-    
+
     /// Check if current mode is master-slave
     pub fn is_master_slave(&self) -> bool {
         self.get_mode() == ReplicationMode::MasterSlave
     }
-    
+
     /// Check if current mode is Raft
     pub fn is_raft(&self) -> bool {
         self.get_mode() == ReplicationMode::Raft
     }
-    
+
     /// Set leader status (for master-slave mode)
     pub fn set_leader(&self, is_leader: bool) {
         self.is_leader.store(is_leader, Ordering::SeqCst);
     }
-    
+
     /// Check if this node is leader/master
     pub fn is_leader(&self) -> bool {
         self.is_leader.load(Ordering::SeqCst)
     }
-    
+
     /// Get current log index (for master-slave mode)
     pub fn get_current_log_index(&self) -> LogIndex {
         *self.current_log_index.read()
     }
-    
+
     /// Set current log index (for recovery)
     pub fn set_current_log_index(&self, log_index: LogIndex) {
         let mut current = self.current_log_index.write();
@@ -206,18 +207,14 @@ mod tests {
     #[test]
     fn test_mode_switching() {
         let temp_dir = TempDir::new().unwrap();
-        let segment_log = Arc::new(
-            SegmentLog::new(temp_dir.path(), None).unwrap()
-        );
-        
-        let manager = ReplicationModeManager::new(
-            segment_log,
-            ReplicationMode::MasterSlave,
-        ).unwrap();
-        
+        let segment_log = Arc::new(SegmentLog::new(temp_dir.path(), None).unwrap());
+
+        let manager =
+            ReplicationModeManager::new(segment_log, ReplicationMode::MasterSlave).unwrap();
+
         assert!(manager.is_master_slave());
         assert!(!manager.is_raft());
-        
+
         // Switch to Raft mode
         manager.switch_mode(ReplicationMode::Raft).unwrap();
         assert!(manager.is_raft());
@@ -227,53 +224,50 @@ mod tests {
     #[test]
     fn test_write_binlog_master_slave() {
         let temp_dir = TempDir::new().unwrap();
-        let segment_log = Arc::new(
-            SegmentLog::new(temp_dir.path(), None).unwrap()
-        );
-        
-        let manager = ReplicationModeManager::new(
-            segment_log,
-            ReplicationMode::MasterSlave,
-        ).unwrap();
-        
-        let log_index1 = manager.write_binlog(
-            OperationType::Put,
-            Bytes::from("SET key1 value1"),
-            None,
-            None,
-        ).unwrap();
-        
+        let segment_log = Arc::new(SegmentLog::new(temp_dir.path(), None).unwrap());
+
+        let manager =
+            ReplicationModeManager::new(segment_log, ReplicationMode::MasterSlave).unwrap();
+
+        let log_index1 = manager
+            .write_binlog(
+                OperationType::Put,
+                Bytes::from("SET key1 value1"),
+                None,
+                None,
+            )
+            .unwrap();
+
         assert_eq!(log_index1, 1);
-        
-        let log_index2 = manager.write_binlog(
-            OperationType::Put,
-            Bytes::from("SET key2 value2"),
-            None,
-            None,
-        ).unwrap();
-        
+
+        let log_index2 = manager
+            .write_binlog(
+                OperationType::Put,
+                Bytes::from("SET key2 value2"),
+                None,
+                None,
+            )
+            .unwrap();
+
         assert_eq!(log_index2, 2);
     }
 
     #[test]
     fn test_write_binlog_raft() {
         let temp_dir = TempDir::new().unwrap();
-        let segment_log = Arc::new(
-            SegmentLog::new(temp_dir.path(), None).unwrap()
-        );
-        
-        let manager = ReplicationModeManager::new(
-            segment_log,
-            ReplicationMode::Raft,
-        ).unwrap();
-        
-        manager.write_binlog(
-            OperationType::Put,
-            Bytes::from("SET key1 value1"),
-            Some(100),
-            Some(5),
-        ).unwrap();
-        
+        let segment_log = Arc::new(SegmentLog::new(temp_dir.path(), None).unwrap());
+
+        let manager = ReplicationModeManager::new(segment_log, ReplicationMode::Raft).unwrap();
+
+        manager
+            .write_binlog(
+                OperationType::Put,
+                Bytes::from("SET key1 value1"),
+                Some(100),
+                Some(5),
+            )
+            .unwrap();
+
         // Verify log index was used
         assert_eq!(manager.get_current_log_index(), 1); // Still 1 (not used in Raft mode)
     }

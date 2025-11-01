@@ -20,12 +20,12 @@
 //! This collector stores the minimum log index for each SST file during flush,
 //! which allows us to quickly locate the replay starting point after crash recovery.
 
-use std::sync::Arc;
 use parking_lot::RwLock;
+use std::sync::Arc;
 
 use crate::error::RaftError;
-use crate::types::LogIndex;
 use crate::sequence_mapping::SequenceMappingQueue;
+use crate::types::LogIndex;
 
 /// Custom table properties key for log index
 const LOG_INDEX_PROPERTY_KEY: &str = "kiwi.raft.log_index.min";
@@ -49,7 +49,7 @@ impl LogIndexTablePropertiesCollector {
             min_sequence: Arc::new(RwLock::new(None)),
         }
     }
-    
+
     /// Add a key-value pair and update min log index
     pub fn add(&self, key: &[u8], _value: &[u8], sequence: u64) {
         // Try to find log index for this sequence
@@ -64,7 +64,7 @@ impl LogIndexTablePropertiesCollector {
                 }
             }
         }
-        
+
         // Track minimum sequence
         let mut min_seq = self.min_sequence.write();
         match *min_seq {
@@ -76,11 +76,11 @@ impl LogIndexTablePropertiesCollector {
             }
         }
     }
-    
+
     /// Finish collecting and return properties
     pub fn finish(&self) -> Result<Vec<(String, String)>, RaftError> {
         let mut properties = Vec::new();
-        
+
         // Add min log index if available
         if let Some(min_log_index) = *self.min_log_index.read() {
             properties.push((
@@ -88,7 +88,7 @@ impl LogIndexTablePropertiesCollector {
                 min_log_index.to_string(),
             ));
         }
-        
+
         // Add min sequence if available
         if let Some(min_sequence) = *self.min_sequence.read() {
             properties.push((
@@ -96,15 +96,15 @@ impl LogIndexTablePropertiesCollector {
                 min_sequence.to_string(),
             ));
         }
-        
+
         Ok(properties)
     }
-    
+
     /// Get minimum log index for this SST file
     pub fn get_min_log_index(&self) -> Option<LogIndex> {
         *self.min_log_index.read()
     }
-    
+
     /// Get minimum sequence number for this SST file
     pub fn get_min_sequence(&self) -> Option<u64> {
         *self.min_sequence.read()
@@ -141,22 +141,26 @@ mod tests {
     #[test]
     fn test_table_properties_collector() {
         let queue = Arc::new(SequenceMappingQueue::new(100));
-        
+
         // Add some mappings
         queue.add_mapping(100, 10).unwrap();
         queue.add_mapping(200, 20).unwrap();
         queue.add_mapping(300, 30).unwrap();
-        
+
         let collector = LogIndexTablePropertiesCollector::new(queue.clone());
-        
+
         // Simulate adding keys
         collector.add(b"key1", b"value1", 150);
         collector.add(b"key2", b"value2", 250);
-        
+
         // Finish and get properties
         let properties = collector.finish().unwrap();
-        
+
         // Should have min log index
-        assert!(properties.iter().any(|(k, v)| k == LOG_INDEX_PROPERTY_KEY && v == "10"));
+        assert!(
+            properties
+                .iter()
+                .any(|(k, v)| k == LOG_INDEX_PROPERTY_KEY && v == "10")
+        );
     }
 }

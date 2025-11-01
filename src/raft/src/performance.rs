@@ -66,10 +66,15 @@ impl RequestBatch {
 
     pub fn add_request(&mut self, request: ClientRequest) {
         // Estimate memory usage (rough approximation)
-        let size_estimate = std::mem::size_of::<ClientRequest>() 
+        let size_estimate = std::mem::size_of::<ClientRequest>()
             + request.command.command.len()
-            + request.command.args.iter().map(|arg| arg.len()).sum::<usize>();
-        
+            + request
+                .command
+                .args
+                .iter()
+                .map(|arg| arg.len())
+                .sum::<usize>();
+
         self.estimated_size += size_estimate;
         self.requests.push(request);
     }
@@ -135,7 +140,7 @@ impl RequestBatcher {
                     _ = tokio::time::sleep(Duration::from_millis(1)) => {
                         // Check for size-based flush
                         let batch = pending_batch.lock().await;
-                        if batch.len() >= config.max_batch_size || 
+                        if batch.len() >= config.max_batch_size ||
                            batch.estimated_size >= config.max_batch_memory {
                             drop(batch);
                             flush_notify.notify_waiters();
@@ -161,8 +166,9 @@ impl RequestBatcher {
         batch.add_request(request);
 
         // Check if we should flush immediately
-        if batch.len() >= self.config.max_batch_size || 
-           batch.estimated_size >= self.config.max_batch_memory {
+        if batch.len() >= self.config.max_batch_size
+            || batch.estimated_size >= self.config.max_batch_memory
+        {
             self.flush_notify.notify_waiters();
         }
 
@@ -254,7 +260,7 @@ impl ReplicationPipeline {
     pub async fn can_send_to_follower(&self, follower_id: NodeId) -> bool {
         let inflight = self.inflight_requests.read().await;
         let follower_queue = inflight.get(&follower_id);
-        
+
         match follower_queue {
             Some(queue) => queue.len() < self.config.max_inflight_requests,
             None => true,
@@ -262,10 +268,14 @@ impl ReplicationPipeline {
     }
 
     /// Track a new in-flight request
-    pub async fn track_request(&self, follower_id: NodeId, request_id: RequestId) -> RaftResult<()> {
+    pub async fn track_request(
+        &self,
+        follower_id: NodeId,
+        request_id: RequestId,
+    ) -> RaftResult<()> {
         let mut inflight = self.inflight_requests.write().await;
         let follower_queue = inflight.entry(follower_id).or_insert_with(VecDeque::new);
-        
+
         if follower_queue.len() >= self.config.max_inflight_requests {
             return Err(RaftError::resource_exhausted("Too many in-flight requests"));
         }
@@ -285,22 +295,26 @@ impl ReplicationPipeline {
     }
 
     /// Complete an in-flight request
-    pub async fn complete_request(&self, follower_id: NodeId, request_id: RequestId) -> RaftResult<Duration> {
+    pub async fn complete_request(
+        &self,
+        follower_id: NodeId,
+        request_id: RequestId,
+    ) -> RaftResult<Duration> {
         let mut inflight = self.inflight_requests.write().await;
         let follower_queue = inflight.get_mut(&follower_id);
-        
+
         if let Some(queue) = follower_queue {
             if let Some(pos) = queue.iter().position(|req| req.request_id == request_id) {
                 let request = queue.remove(pos).unwrap();
                 let latency = request.sent_at.elapsed();
-                
+
                 // Update stats
                 let mut stats = self.stats.write().await;
                 stats.total_requests_completed += 1;
                 stats.current_inflight_requests -= 1;
                 stats.total_latency += latency;
                 stats.max_latency = stats.max_latency.max(latency);
-                
+
                 return Ok(latency);
             }
         }
@@ -309,19 +323,23 @@ impl ReplicationPipeline {
     }
 
     /// Handle request timeout
-    pub async fn handle_timeout(&self, follower_id: NodeId, request_id: RequestId) -> RaftResult<()> {
+    pub async fn handle_timeout(
+        &self,
+        follower_id: NodeId,
+        request_id: RequestId,
+    ) -> RaftResult<()> {
         let mut inflight = self.inflight_requests.write().await;
         let follower_queue = inflight.get_mut(&follower_id);
-        
+
         if let Some(queue) = follower_queue {
             if let Some(pos) = queue.iter().position(|req| req.request_id == request_id) {
                 queue.remove(pos);
-                
+
                 // Update stats
                 let mut stats = self.stats.write().await;
                 stats.total_timeouts += 1;
                 stats.current_inflight_requests -= 1;
-                
+
                 return Ok(());
             }
         }
@@ -340,7 +358,7 @@ impl ReplicationPipeline {
                 if now.duration_since(request.sent_at) > request.timeout {
                     let expired = queue.pop_front().unwrap();
                     expired_requests.push((*follower_id, expired.request_id));
-                    
+
                     // Update stats
                     let mut stats = self.stats.write().await;
                     stats.total_timeouts += 1;
@@ -463,7 +481,7 @@ pub mod read_optimization {
                 .unwrap_or_default()
                 .as_millis() as u64;
             let last_confirmed = self.last_confirmed.load(Ordering::Acquire);
-            
+
             now.saturating_sub(last_confirmed) < self.lease_duration.as_millis() as u64
         }
 
@@ -474,7 +492,7 @@ pub mod read_optimization {
                 .unwrap_or_default()
                 .as_millis() as u64;
             let last_confirmed = self.last_confirmed.load(Ordering::Acquire);
-            
+
             Duration::from_millis(now.saturating_sub(last_confirmed))
         }
     }
@@ -537,7 +555,7 @@ pub mod read_optimization {
                     if !self.config.enable_follower_reads {
                         return Ok(false);
                     }
-                    
+
                     // This is a simplified check - in practice, we'd compare with leader's log index
                     Ok(true)
                 }
@@ -548,10 +566,10 @@ pub mod read_optimization {
         pub async fn confirm_leadership(&self) -> RaftResult<()> {
             if let Some(ref lease) = self.leadership_lease {
                 lease.confirm_leadership();
-                
+
                 let mut stats = self.read_stats.write().await;
                 stats.leadership_confirmations += 1;
-                
+
                 Ok(())
             } else {
                 Err(RaftError::not_leader("No leadership lease available"))
@@ -566,7 +584,7 @@ pub mod read_optimization {
             log_index: u64,
         ) -> RaftResult<()> {
             let mut cache = self.read_cache.write().await;
-            
+
             // Simple cache size management
             if cache.len() >= self.config.read_cache_size {
                 // Remove oldest entry (simplified LRU)
@@ -579,11 +597,14 @@ pub mod read_optimization {
                 }
             }
 
-            cache.insert(key, CachedValue {
-                value,
-                cached_at: Instant::now(),
-                log_index,
-            });
+            cache.insert(
+                key,
+                CachedValue {
+                    value,
+                    cached_at: Instant::now(),
+                    log_index,
+                },
+            );
 
             Ok(())
         }
@@ -596,7 +617,7 @@ pub mod read_optimization {
             consistency_level: ConsistencyLevel,
         ) -> Option<bytes::Bytes> {
             let cache = self.read_cache.read().await;
-            
+
             if let Some(cached) = cache.get(key) {
                 match consistency_level {
                     ConsistencyLevel::Linearizable => {
@@ -626,22 +647,22 @@ pub mod read_optimization {
             latency: Duration,
         ) {
             let mut stats = self.read_stats.write().await;
-            
+
             stats.total_reads += 1;
             stats.total_read_latency += latency;
             stats.max_read_latency = stats.max_read_latency.max(latency);
-            
+
             match consistency_level {
                 ConsistencyLevel::Linearizable => stats.linearizable_reads += 1,
                 ConsistencyLevel::Eventual => stats.eventual_reads += 1,
             }
-            
+
             if served_locally {
                 stats.local_reads += 1;
             } else {
                 stats.forwarded_reads += 1;
             }
-            
+
             if cache_hit {
                 stats.cache_hits += 1;
             } else {
@@ -735,9 +756,9 @@ pub mod read_optimization {
 // Memory and resource management for Raft operations
 pub mod resource_management {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use tokio::sync::{Semaphore, RwLock};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::{RwLock, Semaphore};
 
     /// Configuration for resource management
     #[derive(Debug, Clone)]
@@ -791,12 +812,12 @@ pub mod resource_management {
         /// Allocate memory for a category
         pub async fn allocate(&self, category: &str, size: usize) -> RaftResult<MemoryAllocation> {
             let current = self.current_usage.load(Ordering::Acquire);
-            
+
             if current + size > self.max_usage {
-                return Err(RaftError::resource_exhausted(
-                    format!("Memory allocation would exceed limit: {} + {} > {}", 
-                           current, size, self.max_usage)
-                ));
+                return Err(RaftError::resource_exhausted(format!(
+                    "Memory allocation would exceed limit: {} + {} > {}",
+                    current, size, self.max_usage
+                )));
             }
 
             // Update current usage
@@ -836,7 +857,7 @@ pub mod resource_management {
         /// Internal method to deallocate memory
         async fn deallocate(&self, category: &str, size: usize) {
             self.current_usage.fetch_sub(size, Ordering::AcqRel);
-            
+
             let mut usage_by_category = self.usage_by_category.write().await;
             if let Some(category_usage) = usage_by_category.get_mut(category) {
                 *category_usage = category_usage.saturating_sub(size);
@@ -911,7 +932,8 @@ pub mod resource_management {
                     let mut stats = resource_stats.write().await;
                     stats.current_memory_usage = memory_tracker.current_usage();
                     stats.memory_usage_percentage = memory_tracker.usage_percentage();
-                    stats.is_under_memory_pressure = memory_tracker.is_under_pressure(memory_threshold);
+                    stats.is_under_memory_pressure =
+                        memory_tracker.is_under_pressure(memory_threshold);
                     stats.memory_by_category = memory_tracker.get_usage_by_category().await;
 
                     // Log memory pressure warnings
@@ -936,13 +958,22 @@ pub mod resource_management {
         }
 
         /// Acquire memory for an operation
-        pub async fn acquire_memory(&self, category: &str, size: usize) -> RaftResult<MemoryAllocation> {
+        pub async fn acquire_memory(
+            &self,
+            category: &str,
+            size: usize,
+        ) -> RaftResult<MemoryAllocation> {
             // Check if we're under memory pressure
-            if self.memory_tracker.is_under_pressure(self.config.memory_pressure_threshold) {
+            if self
+                .memory_tracker
+                .is_under_pressure(self.config.memory_pressure_threshold)
+            {
                 let mut stats = self.resource_stats.write().await;
                 stats.memory_pressure_events += 1;
-                
-                return Err(RaftError::resource_exhausted("System under memory pressure"));
+
+                return Err(RaftError::resource_exhausted(
+                    "System under memory pressure",
+                ));
             }
 
             self.memory_tracker.allocate(category, size).await
@@ -950,7 +981,12 @@ pub mod resource_management {
 
         /// Acquire operation permit
         pub async fn acquire_operation_permit(&self) -> RaftResult<tokio::sync::SemaphorePermit> {
-            match timeout(Duration::from_millis(100), self.operation_semaphore.acquire()).await {
+            match timeout(
+                Duration::from_millis(100),
+                self.operation_semaphore.acquire(),
+            )
+            .await
+            {
                 Ok(Ok(permit)) => {
                     let mut stats = self.resource_stats.write().await;
                     stats.active_operations += 1;
@@ -967,8 +1003,10 @@ pub mod resource_management {
 
         /// Check if system can handle new operations
         pub async fn can_accept_operations(&self) -> bool {
-            !self.memory_tracker.is_under_pressure(self.config.memory_pressure_threshold) &&
-            self.operation_semaphore.available_permits() > 0
+            !self
+                .memory_tracker
+                .is_under_pressure(self.config.memory_pressure_threshold)
+                && self.operation_semaphore.available_permits() > 0
         }
 
         /// Get current resource statistics
@@ -1032,8 +1070,8 @@ pub mod resource_management {
         max_memory: usize,
     }
 
-    impl<T> BoundedQueue<T> 
-    where 
+    impl<T> BoundedQueue<T>
+    where
         T: Send + Sync,
     {
         pub fn new(max_size: usize, max_memory: usize) -> Self {
@@ -1048,7 +1086,7 @@ pub mod resource_management {
         /// Try to enqueue an item
         pub async fn try_enqueue(&self, item: T, item_size: usize) -> RaftResult<()> {
             let mut queue = self.queue.write().await;
-            
+
             if queue.len() >= self.max_size {
                 return Err(RaftError::resource_exhausted("Queue size limit exceeded"));
             }
@@ -1060,7 +1098,7 @@ pub mod resource_management {
 
             queue.push_back(item);
             self.current_memory.fetch_add(item_size, Ordering::AcqRel);
-            
+
             Ok(())
         }
 

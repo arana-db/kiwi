@@ -19,11 +19,11 @@
 
 use crate::error::{RaftError, RaftResult};
 use crate::node::RaftNode;
+use crate::placeholder_types::Client;
+use crate::placeholder_types::RespData;
 use crate::redis_integration::RaftRedisHandler;
 use crate::types::{ConsistencyLevel, NodeId, RedisCommand};
 use bytes::Bytes;
-use crate::placeholder_types::Client;
-use crate::placeholder_types::RespData;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -118,7 +118,7 @@ impl RedisProtocolCompatibility {
     /// Create a new Redis protocol compatibility layer
     pub fn new(raft_node: Arc<RaftNode>) -> Self {
         let redis_handler = Arc::new(RaftRedisHandler::new(raft_node.clone()));
-        
+
         Self {
             redis_handler,
             raft_node,
@@ -205,27 +205,35 @@ impl RedisProtocolCompatibility {
     }
 
     /// Handle special command cases that need specific error handling
-    async fn handle_special_command_cases(&self, cmd_name: &str, command: &RedisCommand) -> Option<RespData> {
+    async fn handle_special_command_cases(
+        &self,
+        cmd_name: &str,
+        command: &RedisCommand,
+    ) -> Option<RespData> {
         match cmd_name {
             // Commands that need special validation
-            "eval" | "evalsha" => {
-                Some(self.format_protocol_error(ProtocolError::NoScript))
-            }
+            "eval" | "evalsha" => Some(self.format_protocol_error(ProtocolError::NoScript)),
             "auth" => {
                 // Authentication not implemented in cluster mode
                 Some(RespData::SimpleString("OK".into()))
             }
             "select" => {
                 // Database selection not supported in cluster mode
-                Some(RespData::Error("ERR SELECT is not allowed in cluster mode".into()))
+                Some(RespData::Error(
+                    "ERR SELECT is not allowed in cluster mode".into(),
+                ))
             }
             "multi" | "exec" | "discard" | "watch" | "unwatch" => {
                 // Transactions have limited support in cluster mode
-                Some(RespData::Error("ERR Transactions not fully supported in cluster mode".into()))
+                Some(RespData::Error(
+                    "ERR Transactions not fully supported in cluster mode".into(),
+                ))
             }
             "subscribe" | "unsubscribe" | "psubscribe" | "punsubscribe" | "publish" => {
                 // Pub/Sub not implemented in cluster mode
-                Some(RespData::Error("ERR Pub/Sub not supported in cluster mode".into()))
+                Some(RespData::Error(
+                    "ERR Pub/Sub not supported in cluster mode".into(),
+                ))
             }
             "script" => {
                 if !command.args.is_empty() {
@@ -234,25 +242,27 @@ impl RedisProtocolCompatibility {
                         "load" | "exists" | "flush" | "kill" => {
                             Some(self.format_protocol_error(ProtocolError::NoScript))
                         }
-                        _ => None
+                        _ => None,
                     }
                 } else {
-                    Some(RespData::Error("ERR wrong number of arguments for 'script' command".into()))
+                    Some(RespData::Error(
+                        "ERR wrong number of arguments for 'script' command".into(),
+                    ))
                 }
             }
-            _ => None
+            _ => None,
         }
     }
 
     /// Process write command on leader node
     async fn process_write_command(&self, command: RedisCommand) -> RaftResult<RespData> {
         log::debug!("Processing write command on leader: {}", command.command);
-        
+
         // Additional validation for write commands
         if let Err(validation_error) = self.validate_write_command(&command) {
             return Ok(self.format_validation_error(&command.command, &validation_error));
         }
-        
+
         // Process the command through the Raft handler
         match self.redis_handler.handle_command(command.clone()).await {
             Ok(response) => Ok(response),
@@ -269,10 +279,14 @@ impl RedisProtocolCompatibility {
     }
 
     /// Process read command with appropriate consistency
-    async fn process_read_command(&self, client: &Client, command: RedisCommand) -> RaftResult<RespData> {
+    async fn process_read_command(
+        &self,
+        client: &Client,
+        command: RedisCommand,
+    ) -> RaftResult<RespData> {
         let client_info = self.get_client_info(client).await;
         let is_leader = self.raft_node.is_leader().await;
-        
+
         // Determine consistency level based on client preferences and node state
         let consistency = client_info.preferred_consistency.unwrap_or_else(|| {
             if is_leader {
@@ -282,7 +296,11 @@ impl RedisProtocolCompatibility {
             }
         });
 
-        log::debug!("Processing read command with consistency {:?}: {}", consistency, command.command);
+        log::debug!(
+            "Processing read command with consistency {:?}: {}",
+            consistency,
+            command.command
+        );
 
         // Additional validation for read commands
         if let Err(validation_error) = self.validate_read_command(&command) {
@@ -290,9 +308,15 @@ impl RedisProtocolCompatibility {
         }
 
         // Process through Raft handler with appropriate consistency
-        match self.redis_handler.handle_command_with_consistency(command.clone(), Some(consistency)).await {
+        match self
+            .redis_handler
+            .handle_command_with_consistency(command.clone(), Some(consistency))
+            .await
+        {
             Ok(response) => Ok(response),
-            Err(RaftError::NotLeader { leader_id }) if consistency == ConsistencyLevel::Linearizable => {
+            Err(RaftError::NotLeader { leader_id })
+                if consistency == ConsistencyLevel::Linearizable =>
+            {
                 // Linearizable reads require leader, redirect
                 Ok(self.format_cluster_error(ClusterErrorType::NotLeader { leader_id }, None))
             }
@@ -306,7 +330,7 @@ impl RedisProtocolCompatibility {
     /// Validate write command arguments and constraints
     fn validate_write_command(&self, command: &RedisCommand) -> Result<(), String> {
         let cmd_name = command.command.to_lowercase();
-        
+
         match cmd_name.as_str() {
             "set" => {
                 if command.args.len() < 2 {
@@ -321,7 +345,10 @@ impl RedisProtocolCompatibility {
             }
             "expire" | "expireat" => {
                 if command.args.len() != 2 {
-                    return Err(format!("wrong number of arguments for '{}' command", cmd_name));
+                    return Err(format!(
+                        "wrong number of arguments for '{}' command",
+                        cmd_name
+                    ));
                 }
                 // Validate timeout value
                 if let Ok(timeout_str) = String::from_utf8(command.args[1].to_vec()) {
@@ -332,14 +359,14 @@ impl RedisProtocolCompatibility {
             }
             _ => {} // Other commands pass through
         }
-        
+
         Ok(())
     }
 
     /// Validate read command arguments
     fn validate_read_command(&self, command: &RedisCommand) -> Result<(), String> {
         let cmd_name = command.command.to_lowercase();
-        
+
         match cmd_name.as_str() {
             "get" => {
                 if command.args.len() != 1 {
@@ -358,16 +385,20 @@ impl RedisProtocolCompatibility {
             }
             _ => {} // Other commands pass through
         }
-        
+
         Ok(())
     }
 
     /// Redirect write command to current leader
-    async fn redirect_write_to_leader(&self, client: &Client, command: RedisCommand) -> RaftResult<RespData> {
+    async fn redirect_write_to_leader(
+        &self,
+        client: &Client,
+        command: RedisCommand,
+    ) -> RaftResult<RespData> {
         let leader_id = self.raft_node.get_leader_id().await;
-        
+
         log::debug!("Redirecting write command to leader: {:?}", leader_id);
-        
+
         match leader_id {
             Some(leader) => {
                 // Check if we can proxy the command or need to redirect
@@ -387,26 +418,36 @@ impl RedisProtocolCompatibility {
     /// Check if we should proxy the command instead of redirecting
     async fn should_proxy_command(&self, client: &Client, _command: &RedisCommand) -> bool {
         let client_info = self.get_client_info(client).await;
-        
+
         // Don't proxy if client supports redirects (let client handle it)
         // Proxy for clients that don't support cluster redirects
         !client_info.supports_cluster_redirects
     }
 
     /// Proxy command to leader node
-    async fn proxy_command_to_leader(&self, leader_id: NodeId, command: RedisCommand) -> RaftResult<RespData> {
+    async fn proxy_command_to_leader(
+        &self,
+        leader_id: NodeId,
+        command: RedisCommand,
+    ) -> RaftResult<RespData> {
         let topology = self.topology.read().await;
-        
+
         if let Some(leader_endpoint) = topology.nodes.get(&leader_id) {
-            log::debug!("Proxying command to leader at {}:{}", leader_endpoint.host, leader_endpoint.port);
-            
+            log::debug!(
+                "Proxying command to leader at {}:{}",
+                leader_endpoint.host,
+                leader_endpoint.port
+            );
+
             // In a full implementation, this would:
             // 1. Create HTTP/TCP connection to leader
             // 2. Send the command
             // 3. Return the response
-            
+
             // For now, return an error indicating proxy is not implemented
-            Ok(RespData::Error("ERR command proxying not yet implemented, please connect to leader".into()))
+            Ok(RespData::Error(
+                "ERR command proxying not yet implemented, please connect to leader".into(),
+            ))
         } else {
             Ok(RespData::Error("ERR leader endpoint not found".into()))
         }
@@ -415,19 +456,22 @@ impl RedisProtocolCompatibility {
     /// Send redirect response to client
     async fn send_redirect_response(&self, leader_id: NodeId) -> RaftResult<RespData> {
         let topology = self.topology.read().await;
-        
+
         if let Some(leader_endpoint) = topology.nodes.get(&leader_id) {
-            Ok(RespData::Error(format!(
-                "MOVED 0 {}:{}",
-                leader_endpoint.host, leader_endpoint.port
-            ).into()))
+            Ok(RespData::Error(
+                format!("MOVED 0 {}:{}", leader_endpoint.host, leader_endpoint.port).into(),
+            ))
         } else {
             Ok(RespData::Error("CLUSTERDOWN The cluster is down".into()))
         }
     }
 
     /// Handle leader redirection with specific leader ID
-    async fn handle_leader_redirection_with_id(&self, command: RedisCommand, leader_id: Option<NodeId>) -> RaftResult<RespData> {
+    async fn handle_leader_redirection_with_id(
+        &self,
+        command: RedisCommand,
+        leader_id: Option<NodeId>,
+    ) -> RaftResult<RespData> {
         match leader_id {
             Some(leader) => self.send_redirect_response(leader).await,
             None => Ok(RespData::Error("CLUSTERDOWN The cluster is down".into())),
@@ -436,33 +480,64 @@ impl RedisProtocolCompatibility {
 
     /// Determine if a command is a write operation
     fn is_write_command(&self, cmd_name: &str) -> bool {
-        matches!(cmd_name, 
-            "set" | "del" | "expire" | "expireat" | "persist" | "rename" | "renamenx" |
-            "lpush" | "rpush" | "lpop" | "rpop" | "lset" | "lrem" | "ltrim" |
-            "sadd" | "srem" | "spop" | "smove" |
-            "zadd" | "zrem" | "zincrby" | "zremrangebyrank" | "zremrangebyscore" |
-            "hset" | "hdel" | "hincrby" | "hincrbyfloat" |
-            "incr" | "decr" | "incrby" | "decrby" | "incrbyfloat" |
-            "append" | "setrange" | "setex" | "setnx" | "mset" | "msetnx" |
-            "flushdb" | "flushall"
+        matches!(
+            cmd_name,
+            "set"
+                | "del"
+                | "expire"
+                | "expireat"
+                | "persist"
+                | "rename"
+                | "renamenx"
+                | "lpush"
+                | "rpush"
+                | "lpop"
+                | "rpop"
+                | "lset"
+                | "lrem"
+                | "ltrim"
+                | "sadd"
+                | "srem"
+                | "spop"
+                | "smove"
+                | "zadd"
+                | "zrem"
+                | "zincrby"
+                | "zremrangebyrank"
+                | "zremrangebyscore"
+                | "hset"
+                | "hdel"
+                | "hincrby"
+                | "hincrbyfloat"
+                | "incr"
+                | "decr"
+                | "incrby"
+                | "decrby"
+                | "incrbyfloat"
+                | "append"
+                | "setrange"
+                | "setex"
+                | "setnx"
+                | "mset"
+                | "msetnx"
+                | "flushdb"
+                | "flushall"
         )
     }
 
     /// Process a Redis command from client connection data (integration with existing command flow)
-    pub async fn process_client_command(
-        &self,
-        client: &Client,
-    ) -> RaftResult<RespData> {
+    pub async fn process_client_command(&self, client: &Client) -> RaftResult<RespData> {
         // Convert client command data to RedisCommand format
         let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_string();
-        let args: Vec<Bytes> = client.argv()
+        let args: Vec<Bytes> = client
+            .argv()
             .iter()
             .skip(1) // Skip command name
             .map(|arg| Bytes::from(arg.clone()))
             .collect();
-        
+
         let redis_command = RedisCommand::new(cmd_name, args);
-        
+
         // Process through the standard Redis command handler
         self.process_redis_command(client, redis_command).await
     }
@@ -470,120 +545,165 @@ impl RedisProtocolCompatibility {
     /// Validate and parse Redis command arguments
     pub fn validate_command(&self, command: &RedisCommand) -> RaftResult<()> {
         let cmd_name = command.command.to_lowercase();
-        
+
         match cmd_name.as_str() {
             // String commands
             "get" => {
                 if command.args.len() != 1 {
-                    return Err(RaftError::configuration("ERR wrong number of arguments for 'get' command"));
+                    return Err(RaftError::configuration(
+                        "ERR wrong number of arguments for 'get' command",
+                    ));
                 }
             }
             "set" => {
                 if command.args.len() < 2 || command.args.len() > 5 {
-                    return Err(RaftError::configuration("ERR wrong number of arguments for 'set' command"));
+                    return Err(RaftError::configuration(
+                        "ERR wrong number of arguments for 'set' command",
+                    ));
                 }
             }
             "del" => {
                 if command.args.is_empty() {
-                    return Err(RaftError::configuration("ERR wrong number of arguments for 'del' command"));
+                    return Err(RaftError::configuration(
+                        "ERR wrong number of arguments for 'del' command",
+                    ));
                 }
             }
-            
+
             // List commands
             "lpush" | "rpush" => {
                 if command.args.len() < 2 {
-                    return Err(RaftError::configuration(&format!("ERR wrong number of arguments for '{}' command", cmd_name)));
+                    return Err(RaftError::configuration(&format!(
+                        "ERR wrong number of arguments for '{}' command",
+                        cmd_name
+                    )));
                 }
             }
             "lpop" | "rpop" => {
                 if command.args.is_empty() || command.args.len() > 2 {
-                    return Err(RaftError::configuration(&format!("ERR wrong number of arguments for '{}' command", cmd_name)));
+                    return Err(RaftError::configuration(&format!(
+                        "ERR wrong number of arguments for '{}' command",
+                        cmd_name
+                    )));
                 }
             }
             "llen" | "lindex" => {
                 if command.args.len() != 1 && command.args.len() != 2 {
-                    return Err(RaftError::configuration(&format!("ERR wrong number of arguments for '{}' command", cmd_name)));
+                    return Err(RaftError::configuration(&format!(
+                        "ERR wrong number of arguments for '{}' command",
+                        cmd_name
+                    )));
                 }
             }
-            
+
             // Hash commands
             "hget" => {
                 if command.args.len() != 2 {
-                    return Err(RaftError::configuration("ERR wrong number of arguments for 'hget' command"));
+                    return Err(RaftError::configuration(
+                        "ERR wrong number of arguments for 'hget' command",
+                    ));
                 }
             }
             "hset" => {
                 if command.args.len() < 3 || command.args.len() % 2 == 0 {
-                    return Err(RaftError::configuration("ERR wrong number of arguments for 'hset' command"));
+                    return Err(RaftError::configuration(
+                        "ERR wrong number of arguments for 'hset' command",
+                    ));
                 }
             }
             "hdel" => {
                 if command.args.len() < 2 {
-                    return Err(RaftError::configuration("ERR wrong number of arguments for 'hdel' command"));
+                    return Err(RaftError::configuration(
+                        "ERR wrong number of arguments for 'hdel' command",
+                    ));
                 }
             }
-            
+
             // Set commands
             "sadd" | "srem" => {
                 if command.args.len() < 2 {
-                    return Err(RaftError::configuration(&format!("ERR wrong number of arguments for '{}' command", cmd_name)));
+                    return Err(RaftError::configuration(&format!(
+                        "ERR wrong number of arguments for '{}' command",
+                        cmd_name
+                    )));
                 }
             }
             "sismember" | "scard" => {
                 if command.args.len() != 1 && command.args.len() != 2 {
-                    return Err(RaftError::configuration(&format!("ERR wrong number of arguments for '{}' command", cmd_name)));
+                    return Err(RaftError::configuration(&format!(
+                        "ERR wrong number of arguments for '{}' command",
+                        cmd_name
+                    )));
                 }
             }
-            
+
             // Sorted set commands
             "zadd" => {
                 if command.args.len() < 3 || (command.args.len() - 1) % 2 != 0 {
-                    return Err(RaftError::configuration("ERR wrong number of arguments for 'zadd' command"));
+                    return Err(RaftError::configuration(
+                        "ERR wrong number of arguments for 'zadd' command",
+                    ));
                 }
             }
             "zrem" => {
                 if command.args.len() < 2 {
-                    return Err(RaftError::configuration("ERR wrong number of arguments for 'zrem' command"));
+                    return Err(RaftError::configuration(
+                        "ERR wrong number of arguments for 'zrem' command",
+                    ));
                 }
             }
             "zscore" | "zcard" => {
                 if command.args.len() != 1 && command.args.len() != 2 {
-                    return Err(RaftError::configuration(&format!("ERR wrong number of arguments for '{}' command", cmd_name)));
+                    return Err(RaftError::configuration(&format!(
+                        "ERR wrong number of arguments for '{}' command",
+                        cmd_name
+                    )));
                 }
             }
-            
+
             // Generic commands
             "exists" | "type" | "ttl" => {
                 if command.args.len() != 1 {
-                    return Err(RaftError::configuration(&format!("ERR wrong number of arguments for '{}' command", cmd_name)));
+                    return Err(RaftError::configuration(&format!(
+                        "ERR wrong number of arguments for '{}' command",
+                        cmd_name
+                    )));
                 }
             }
             "expire" | "expireat" => {
                 if command.args.len() != 2 {
-                    return Err(RaftError::configuration(&format!("ERR wrong number of arguments for '{}' command", cmd_name)));
+                    return Err(RaftError::configuration(&format!(
+                        "ERR wrong number of arguments for '{}' command",
+                        cmd_name
+                    )));
                 }
             }
-            
+
             // Info and cluster commands are handled separately
             "info" | "cluster" | "readonly" | "readwrite" => {
                 // These are handled in handle_cluster_commands
             }
-            
+
             _ => {
                 // Unknown command - let it pass through for now
                 log::warn!("Unknown command validation: {}", cmd_name);
             }
         }
-        
+
         Ok(())
     }
 
     /// Handle Redis cluster-specific commands
-    async fn handle_cluster_commands(&self, command: &RedisCommand) -> RaftResult<Option<RespData>> {
+    async fn handle_cluster_commands(
+        &self,
+        command: &RedisCommand,
+    ) -> RaftResult<Option<RespData>> {
         match command.command.to_lowercase().as_str() {
             "cluster" => {
                 if command.args.is_empty() {
-                    return Ok(Some(RespData::Error("ERR wrong number of arguments for 'cluster' command".into())));
+                    return Ok(Some(RespData::Error(
+                        "ERR wrong number of arguments for 'cluster' command".into(),
+                    )));
                 }
 
                 let subcommand = String::from_utf8_lossy(&command.args[0]).to_lowercase();
@@ -599,13 +719,21 @@ impl RedisProtocolCompatibility {
                     "failover" => Ok(Some(self.handle_cluster_failover(command).await?)),
                     "replicate" => Ok(Some(self.handle_cluster_replicate(command).await?)),
                     "saveconfig" => Ok(Some(self.handle_cluster_saveconfig(command).await?)),
-                    "set-config-epoch" => Ok(Some(self.handle_cluster_set_config_epoch(command).await?)),
+                    "set-config-epoch" => {
+                        Ok(Some(self.handle_cluster_set_config_epoch(command).await?))
+                    }
                     "myid" => Ok(Some(self.handle_cluster_myid().await?)),
-                    "count-failure-reports" => Ok(Some(self.handle_cluster_count_failure_reports(command).await?)),
+                    "count-failure-reports" => Ok(Some(
+                        self.handle_cluster_count_failure_reports(command).await?,
+                    )),
                     "keyslot" => Ok(Some(self.handle_cluster_keyslot(command).await?)),
-                    "countkeysinslot" => Ok(Some(self.handle_cluster_countkeysinslot(command).await?)),
+                    "countkeysinslot" => {
+                        Ok(Some(self.handle_cluster_countkeysinslot(command).await?))
+                    }
                     "getkeysinslot" => Ok(Some(self.handle_cluster_getkeysinslot(command).await?)),
-                    _ => Ok(Some(RespData::Error(format!("ERR unknown CLUSTER subcommand '{}'", subcommand).into()))),
+                    _ => Ok(Some(RespData::Error(
+                        format!("ERR unknown CLUSTER subcommand '{}'", subcommand).into(),
+                    ))),
                 }
             }
             "readonly" => {
@@ -613,7 +741,7 @@ impl RedisProtocolCompatibility {
                 Ok(None)
             }
             "readwrite" => {
-                // This will be handled in the main process_redis_command method  
+                // This will be handled in the main process_redis_command method
                 Ok(None)
             }
             _ => Ok(None), // Not a cluster command
@@ -628,34 +756,39 @@ impl RedisProtocolCompatibility {
         for (node_id, endpoint) in &topology.nodes {
             let is_leader = topology.leader_id == Some(*node_id);
             let is_self = *node_id == self.raft_node.node_id();
-            
+
             let flags = if is_self {
-                if is_leader { "myself,master" } else { "myself,slave" }
+                if is_leader {
+                    "myself,master"
+                } else {
+                    "myself,slave"
+                }
             } else if is_leader {
                 "master"
             } else {
                 "slave"
             };
 
-            let status = if endpoint.is_reachable { "connected" } else { "disconnected" };
-            
+            let status = if endpoint.is_reachable {
+                "connected"
+            } else {
+                "disconnected"
+            };
+
             let master_id = if is_leader {
                 "-".to_string()
             } else {
-                topology.leader_id.map(|id| id.to_string()).unwrap_or_else(|| "0".to_string())
+                topology
+                    .leader_id
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "0".to_string())
             };
-            
+
             // Format: node_id ip:port flags master ping_sent ping_recv config_epoch link_state slots
             let slots = if is_leader { "0-16383" } else { "-" };
             nodes_info.push_str(&format!(
                 "{} {}:{} {} {} 0 0 1 {} {}\n",
-                node_id,
-                endpoint.host,
-                endpoint.port,
-                flags,
-                master_id,
-                status,
-                slots
+                node_id, endpoint.host, endpoint.port, flags, master_id, status, slots
             ));
         }
 
@@ -666,10 +799,12 @@ impl RedisProtocolCompatibility {
     async fn handle_cluster_info(&self) -> RaftResult<RespData> {
         let health = self.raft_node.get_cluster_health().await?;
         let topology = self.topology.read().await;
-        
+
         let mut info = String::new();
-        info.push_str(&format!("cluster_state:{}\n", 
-            if health.is_healthy { "ok" } else { "fail" }));
+        info.push_str(&format!(
+            "cluster_state:{}\n",
+            if health.is_healthy { "ok" } else { "fail" }
+        ));
         info.push_str("cluster_slots_assigned:16384\n");
         info.push_str("cluster_slots_ok:16384\n");
         info.push_str("cluster_slots_pfail:0\n");
@@ -693,8 +828,8 @@ impl RedisProtocolCompatibility {
         if let Some(leader_id) = topology.leader_id {
             if let Some(leader_endpoint) = topology.nodes.get(&leader_id) {
                 let slot_range = vec![
-                    RespData::Integer(0),      // Start slot
-                    RespData::Integer(16383),  // End slot
+                    RespData::Integer(0),     // Start slot
+                    RespData::Integer(16383), // End slot
                     RespData::Array(Some(vec![
                         RespData::BulkString(Some(Bytes::from(leader_endpoint.host.clone()))),
                         RespData::Integer(leader_endpoint.port as i64),
@@ -711,7 +846,9 @@ impl RedisProtocolCompatibility {
     /// Handle CLUSTER MEET command
     async fn handle_cluster_meet(&self, command: &RedisCommand) -> RaftResult<RespData> {
         if command.args.len() < 2 {
-            return Ok(RespData::Error("ERR wrong number of arguments for 'cluster meet' command".into()));
+            return Ok(RespData::Error(
+                "ERR wrong number of arguments for 'cluster meet' command".into(),
+            ));
         }
 
         let host = String::from_utf8_lossy(&command.args[0]);
@@ -721,7 +858,9 @@ impl RedisProtocolCompatibility {
 
         // Check if we're the leader (only leader can initiate cluster changes)
         if !self.raft_node.is_leader().await {
-            return Ok(RespData::Error("ERR only leader can execute CLUSTER MEET".into()));
+            return Ok(RespData::Error(
+                "ERR only leader can execute CLUSTER MEET".into(),
+            ));
         }
 
         // Validate the endpoint
@@ -734,28 +873,34 @@ impl RedisProtocolCompatibility {
         // 2. Initiate Raft membership change
         // 3. Update cluster topology
         log::info!("CLUSTER MEET requested for {}:{}", host, port);
-        
+
         // For now, simulate adding the node to topology
         // In real implementation, this would go through Raft consensus
         let new_node_id = self.generate_node_id(&host, port).await;
-        self.update_node_endpoint(new_node_id, host.to_string(), port).await?;
-        
+        self.update_node_endpoint(new_node_id, host.to_string(), port)
+            .await?;
+
         Ok(RespData::SimpleString("OK".into()))
     }
 
     /// Handle CLUSTER FORGET command
     async fn handle_cluster_forget(&self, command: &RedisCommand) -> RaftResult<RespData> {
         if command.args.len() != 1 {
-            return Ok(RespData::Error("ERR wrong number of arguments for 'cluster forget' command".into()));
+            return Ok(RespData::Error(
+                "ERR wrong number of arguments for 'cluster forget' command".into(),
+            ));
         }
 
         let node_id_str = String::from_utf8_lossy(&command.args[0]);
-        let node_id: NodeId = node_id_str.parse()
+        let node_id: NodeId = node_id_str
+            .parse()
             .map_err(|_| RaftError::configuration("Invalid node ID"))?;
 
         // Check if we're the leader (only leader can initiate cluster changes)
         if !self.raft_node.is_leader().await {
-            return Ok(RespData::Error("ERR only leader can execute CLUSTER FORGET".into()));
+            return Ok(RespData::Error(
+                "ERR only leader can execute CLUSTER FORGET".into(),
+            ));
         }
 
         // Prevent forgetting self
@@ -774,10 +919,10 @@ impl RedisProtocolCompatibility {
         // 1. Initiate Raft membership change to remove the node
         // 2. Update cluster topology
         log::info!("CLUSTER FORGET requested for node {}", node_id);
-        
+
         // For now, simulate removing the node
         self.remove_node_from_topology(node_id).await?;
-        
+
         Ok(RespData::SimpleString("OK".into()))
     }
 
@@ -796,36 +941,51 @@ impl RedisProtocolCompatibility {
                 // Only allow if we're the only node in the cluster
                 let health = self.raft_node.get_cluster_health().await?;
                 if health.total_members > 1 {
-                    return Ok(RespData::Error("ERR CLUSTER RESET not allowed with multiple nodes in Raft mode".into()));
+                    return Ok(RespData::Error(
+                        "ERR CLUSTER RESET not allowed with multiple nodes in Raft mode".into(),
+                    ));
                 }
-                
-                log::warn!("CLUSTER RESET {} requested - this is dangerous in Raft mode", reset_type);
-                Ok(RespData::Error("ERR CLUSTER RESET not supported in Raft mode".into()))
+
+                log::warn!(
+                    "CLUSTER RESET {} requested - this is dangerous in Raft mode",
+                    reset_type
+                );
+                Ok(RespData::Error(
+                    "ERR CLUSTER RESET not supported in Raft mode".into(),
+                ))
             }
-            _ => {
-                Ok(RespData::Error("ERR invalid CLUSTER RESET option".into()))
-            }
+            _ => Ok(RespData::Error("ERR invalid CLUSTER RESET option".into())),
         }
     }
 
     /// Handle additional cluster commands
     async fn handle_cluster_addslots(&self, command: &RedisCommand) -> RaftResult<RespData> {
         if command.args.is_empty() {
-            return Ok(RespData::Error("ERR wrong number of arguments for 'cluster addslots' command".into()));
+            return Ok(RespData::Error(
+                "ERR wrong number of arguments for 'cluster addslots' command".into(),
+            ));
         }
 
         // In Redis cluster, slots are assigned to nodes
         // In our Raft implementation, we use a single slot space managed by the leader
-        Ok(RespData::Error("ERR CLUSTER ADDSLOTS not applicable in Raft mode - slots are managed automatically".into()))
+        Ok(RespData::Error(
+            "ERR CLUSTER ADDSLOTS not applicable in Raft mode - slots are managed automatically"
+                .into(),
+        ))
     }
 
     /// Handle CLUSTER DELSLOTS command
     async fn handle_cluster_delslots(&self, command: &RedisCommand) -> RaftResult<RespData> {
         if command.args.is_empty() {
-            return Ok(RespData::Error("ERR wrong number of arguments for 'cluster delslots' command".into()));
+            return Ok(RespData::Error(
+                "ERR wrong number of arguments for 'cluster delslots' command".into(),
+            ));
         }
 
-        Ok(RespData::Error("ERR CLUSTER DELSLOTS not applicable in Raft mode - slots are managed automatically".into()))
+        Ok(RespData::Error(
+            "ERR CLUSTER DELSLOTS not applicable in Raft mode - slots are managed automatically"
+                .into(),
+        ))
     }
 
     /// Handle CLUSTER FAILOVER command
@@ -839,21 +999,29 @@ impl RedisProtocolCompatibility {
         if force {
             log::warn!("CLUSTER FAILOVER FORCE requested");
             // In Raft, forced failover would be dangerous
-            Ok(RespData::Error("ERR CLUSTER FAILOVER FORCE not supported in Raft mode".into()))
+            Ok(RespData::Error(
+                "ERR CLUSTER FAILOVER FORCE not supported in Raft mode".into(),
+            ))
         } else {
             // Normal failover in Raft happens automatically through leader election
-            Ok(RespData::Error("ERR CLUSTER FAILOVER not needed in Raft mode - failover is automatic".into()))
+            Ok(RespData::Error(
+                "ERR CLUSTER FAILOVER not needed in Raft mode - failover is automatic".into(),
+            ))
         }
     }
 
     /// Handle CLUSTER REPLICATE command
     async fn handle_cluster_replicate(&self, command: &RedisCommand) -> RaftResult<RespData> {
         if command.args.len() != 1 {
-            return Ok(RespData::Error("ERR wrong number of arguments for 'cluster replicate' command".into()));
+            return Ok(RespData::Error(
+                "ERR wrong number of arguments for 'cluster replicate' command".into(),
+            ));
         }
 
         // In Raft, all nodes are replicas of the leader automatically
-        Ok(RespData::Error("ERR CLUSTER REPLICATE not applicable in Raft mode - replication is automatic".into()))
+        Ok(RespData::Error(
+            "ERR CLUSTER REPLICATE not applicable in Raft mode - replication is automatic".into(),
+        ))
     }
 
     /// Handle CLUSTER SAVECONFIG command
@@ -864,9 +1032,14 @@ impl RedisProtocolCompatibility {
     }
 
     /// Handle CLUSTER SET-CONFIG-EPOCH command
-    async fn handle_cluster_set_config_epoch(&self, command: &RedisCommand) -> RaftResult<RespData> {
+    async fn handle_cluster_set_config_epoch(
+        &self,
+        command: &RedisCommand,
+    ) -> RaftResult<RespData> {
         if command.args.len() != 1 {
-            return Ok(RespData::Error("ERR wrong number of arguments for 'cluster set-config-epoch' command".into()));
+            return Ok(RespData::Error(
+                "ERR wrong number of arguments for 'cluster set-config-epoch' command".into(),
+            ));
         }
 
         // In Raft, the term serves as the configuration epoch
@@ -877,7 +1050,7 @@ impl RedisProtocolCompatibility {
     async fn generate_node_id(&self, host: &str, port: u16) -> NodeId {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
-        
+
         let mut hasher = DefaultHasher::new();
         format!("{}:{}", host, port).hash(&mut hasher);
         hasher.finish()
@@ -898,13 +1071,19 @@ impl RedisProtocolCompatibility {
     }
 
     /// Handle CLUSTER COUNT-FAILURE-REPORTS command
-    async fn handle_cluster_count_failure_reports(&self, command: &RedisCommand) -> RaftResult<RespData> {
+    async fn handle_cluster_count_failure_reports(
+        &self,
+        command: &RedisCommand,
+    ) -> RaftResult<RespData> {
         if command.args.len() != 2 {
-            return Ok(RespData::Error("ERR wrong number of arguments for 'cluster count-failure-reports' command".into()));
+            return Ok(RespData::Error(
+                "ERR wrong number of arguments for 'cluster count-failure-reports' command".into(),
+            ));
         }
 
         let node_id_str = String::from_utf8_lossy(&command.args[1]);
-        let _node_id: NodeId = node_id_str.parse()
+        let _node_id: NodeId = node_id_str
+            .parse()
             .map_err(|_| RaftError::configuration("Invalid node ID"))?;
 
         // In Raft mode, failure detection is handled by the consensus algorithm
@@ -915,11 +1094,13 @@ impl RedisProtocolCompatibility {
     /// Handle CLUSTER KEYSLOT command
     async fn handle_cluster_keyslot(&self, command: &RedisCommand) -> RaftResult<RespData> {
         if command.args.len() != 2 {
-            return Ok(RespData::Error("ERR wrong number of arguments for 'cluster keyslot' command".into()));
+            return Ok(RespData::Error(
+                "ERR wrong number of arguments for 'cluster keyslot' command".into(),
+            ));
         }
 
         let key = &command.args[1];
-        
+
         // Calculate Redis cluster slot for the key
         let slot = self.calculate_redis_slot(key);
         Ok(RespData::Integer(slot as i64))
@@ -928,11 +1109,14 @@ impl RedisProtocolCompatibility {
     /// Handle CLUSTER COUNTKEYSINSLOT command
     async fn handle_cluster_countkeysinslot(&self, command: &RedisCommand) -> RaftResult<RespData> {
         if command.args.len() != 2 {
-            return Ok(RespData::Error("ERR wrong number of arguments for 'cluster countkeysinslot' command".into()));
+            return Ok(RespData::Error(
+                "ERR wrong number of arguments for 'cluster countkeysinslot' command".into(),
+            ));
         }
 
         let slot_str = String::from_utf8_lossy(&command.args[1]);
-        let slot: u16 = slot_str.parse()
+        let slot: u16 = slot_str
+            .parse()
             .map_err(|_| RaftError::configuration("Invalid slot number"))?;
 
         if slot > 16383 {
@@ -948,15 +1132,19 @@ impl RedisProtocolCompatibility {
     /// Handle CLUSTER GETKEYSINSLOT command
     async fn handle_cluster_getkeysinslot(&self, command: &RedisCommand) -> RaftResult<RespData> {
         if command.args.len() != 3 {
-            return Ok(RespData::Error("ERR wrong number of arguments for 'cluster getkeysinslot' command".into()));
+            return Ok(RespData::Error(
+                "ERR wrong number of arguments for 'cluster getkeysinslot' command".into(),
+            ));
         }
 
         let slot_str = String::from_utf8_lossy(&command.args[1]);
-        let slot: u16 = slot_str.parse()
+        let slot: u16 = slot_str
+            .parse()
             .map_err(|_| RaftError::configuration("Invalid slot number"))?;
 
         let count_str = String::from_utf8_lossy(&command.args[2]);
-        let count: usize = count_str.parse()
+        let count: usize = count_str
+            .parse()
             .map_err(|_| RaftError::configuration("Invalid count"))?;
 
         if slot > 16383 {
@@ -1001,38 +1189,30 @@ impl RedisProtocolCompatibility {
     /// CRC16 lookup table for Redis cluster slot calculation
     fn crc16_table() -> &'static [u16; 256] {
         static CRC16_TABLE: [u16; 256] = [
-            0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7,
-            0x8108, 0x9129, 0xa14a, 0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef,
-            0x1231, 0x0210, 0x3273, 0x2252, 0x52b5, 0x4294, 0x72f7, 0x62d6,
-            0x9339, 0x8318, 0xb37b, 0xa35a, 0xd3bd, 0xc39c, 0xf3ff, 0xe3de,
-            0x2462, 0x3443, 0x0420, 0x1401, 0x64e6, 0x74c7, 0x44a4, 0x5485,
-            0xa56a, 0xb54b, 0x8528, 0x9509, 0xe5ee, 0xf5cf, 0xc5ac, 0xd58d,
-            0x3653, 0x2672, 0x1611, 0x0630, 0x76d7, 0x66f6, 0x5695, 0x46b4,
-            0xb75b, 0xa77a, 0x9719, 0x8738, 0xf7df, 0xe7fe, 0xd79d, 0xc7bc,
-            0x48c4, 0x58e5, 0x6886, 0x78a7, 0x0840, 0x1861, 0x2802, 0x3823,
-            0xc9cc, 0xd9ed, 0xe98e, 0xf9af, 0x8948, 0x9969, 0xa90a, 0xb92b,
-            0x5af5, 0x4ad4, 0x7ab7, 0x6a96, 0x1a71, 0x0a50, 0x3a33, 0x2a12,
-            0xdbfd, 0xcbdc, 0xfbbf, 0xeb9e, 0x9b79, 0x8b58, 0xbb3b, 0xab1a,
-            0x6ca6, 0x7c87, 0x4ce4, 0x5cc5, 0x2c22, 0x3c03, 0x0c60, 0x1c41,
-            0xedae, 0xfd8f, 0xcdec, 0xddcd, 0xad2a, 0xbd0b, 0x8d68, 0x9d49,
-            0x7e97, 0x6eb6, 0x5ed5, 0x4ef4, 0x3e13, 0x2e32, 0x1e51, 0x0e70,
-            0xff9f, 0xefbe, 0xdfdd, 0xcffc, 0xbf1b, 0xaf3a, 0x9f59, 0x8f78,
-            0x9188, 0x81a9, 0xb1ca, 0xa1eb, 0xd10c, 0xc12d, 0xf14e, 0xe16f,
-            0x1080, 0x00a1, 0x30c2, 0x20e3, 0x5004, 0x4025, 0x7046, 0x6067,
-            0x83b9, 0x9398, 0xa3fb, 0xb3da, 0xc33d, 0xd31c, 0xe37f, 0xf35e,
-            0x02b1, 0x1290, 0x22f3, 0x32d2, 0x4235, 0x5214, 0x6277, 0x7256,
-            0xb5ea, 0xa5cb, 0x95a8, 0x8589, 0xf56e, 0xe54f, 0xd52c, 0xc50d,
-            0x34e2, 0x24c3, 0x14a0, 0x0481, 0x7466, 0x6447, 0x5424, 0x4405,
-            0xa7db, 0xb7fa, 0x8799, 0x97b8, 0xe75f, 0xf77e, 0xc71d, 0xd73c,
-            0x26d3, 0x36f2, 0x0691, 0x16b0, 0x6657, 0x7676, 0x4615, 0x5634,
-            0xd94c, 0xc96d, 0xf90e, 0xe92f, 0x99c8, 0x89e9, 0xb98a, 0xa9ab,
-            0x5844, 0x4865, 0x7806, 0x6827, 0x18c0, 0x08e1, 0x3882, 0x28a3,
-            0xcb7d, 0xdb5c, 0xeb3f, 0xfb1e, 0x8bf9, 0x9bd8, 0xabbb, 0xbb9a,
-            0x4a75, 0x5a54, 0x6a37, 0x7a16, 0x0af1, 0x1ad0, 0x2ab3, 0x3a92,
-            0xfd2e, 0xed0f, 0xdd6c, 0xcd4d, 0xbdaa, 0xad8b, 0x9de8, 0x8dc9,
-            0x7c26, 0x6c07, 0x5c64, 0x4c45, 0x3ca2, 0x2c83, 0x1ce0, 0x0cc1,
-            0xef1f, 0xff3e, 0xcf5d, 0xdf7c, 0xaf9b, 0xbfba, 0x8fd9, 0x9ff8,
-            0x6e17, 0x7e36, 0x4e55, 0x5e74, 0x2e93, 0x3eb2, 0x0ed1, 0x1ef0,
+            0x0000, 0x1021, 0x2042, 0x3063, 0x4084, 0x50a5, 0x60c6, 0x70e7, 0x8108, 0x9129, 0xa14a,
+            0xb16b, 0xc18c, 0xd1ad, 0xe1ce, 0xf1ef, 0x1231, 0x0210, 0x3273, 0x2252, 0x52b5, 0x4294,
+            0x72f7, 0x62d6, 0x9339, 0x8318, 0xb37b, 0xa35a, 0xd3bd, 0xc39c, 0xf3ff, 0xe3de, 0x2462,
+            0x3443, 0x0420, 0x1401, 0x64e6, 0x74c7, 0x44a4, 0x5485, 0xa56a, 0xb54b, 0x8528, 0x9509,
+            0xe5ee, 0xf5cf, 0xc5ac, 0xd58d, 0x3653, 0x2672, 0x1611, 0x0630, 0x76d7, 0x66f6, 0x5695,
+            0x46b4, 0xb75b, 0xa77a, 0x9719, 0x8738, 0xf7df, 0xe7fe, 0xd79d, 0xc7bc, 0x48c4, 0x58e5,
+            0x6886, 0x78a7, 0x0840, 0x1861, 0x2802, 0x3823, 0xc9cc, 0xd9ed, 0xe98e, 0xf9af, 0x8948,
+            0x9969, 0xa90a, 0xb92b, 0x5af5, 0x4ad4, 0x7ab7, 0x6a96, 0x1a71, 0x0a50, 0x3a33, 0x2a12,
+            0xdbfd, 0xcbdc, 0xfbbf, 0xeb9e, 0x9b79, 0x8b58, 0xbb3b, 0xab1a, 0x6ca6, 0x7c87, 0x4ce4,
+            0x5cc5, 0x2c22, 0x3c03, 0x0c60, 0x1c41, 0xedae, 0xfd8f, 0xcdec, 0xddcd, 0xad2a, 0xbd0b,
+            0x8d68, 0x9d49, 0x7e97, 0x6eb6, 0x5ed5, 0x4ef4, 0x3e13, 0x2e32, 0x1e51, 0x0e70, 0xff9f,
+            0xefbe, 0xdfdd, 0xcffc, 0xbf1b, 0xaf3a, 0x9f59, 0x8f78, 0x9188, 0x81a9, 0xb1ca, 0xa1eb,
+            0xd10c, 0xc12d, 0xf14e, 0xe16f, 0x1080, 0x00a1, 0x30c2, 0x20e3, 0x5004, 0x4025, 0x7046,
+            0x6067, 0x83b9, 0x9398, 0xa3fb, 0xb3da, 0xc33d, 0xd31c, 0xe37f, 0xf35e, 0x02b1, 0x1290,
+            0x22f3, 0x32d2, 0x4235, 0x5214, 0x6277, 0x7256, 0xb5ea, 0xa5cb, 0x95a8, 0x8589, 0xf56e,
+            0xe54f, 0xd52c, 0xc50d, 0x34e2, 0x24c3, 0x14a0, 0x0481, 0x7466, 0x6447, 0x5424, 0x4405,
+            0xa7db, 0xb7fa, 0x8799, 0x97b8, 0xe75f, 0xf77e, 0xc71d, 0xd73c, 0x26d3, 0x36f2, 0x0691,
+            0x16b0, 0x6657, 0x7676, 0x4615, 0x5634, 0xd94c, 0xc96d, 0xf90e, 0xe92f, 0x99c8, 0x89e9,
+            0xb98a, 0xa9ab, 0x5844, 0x4865, 0x7806, 0x6827, 0x18c0, 0x08e1, 0x3882, 0x28a3, 0xcb7d,
+            0xdb5c, 0xeb3f, 0xfb1e, 0x8bf9, 0x9bd8, 0xabbb, 0xbb9a, 0x4a75, 0x5a54, 0x6a37, 0x7a16,
+            0x0af1, 0x1ad0, 0x2ab3, 0x3a92, 0xfd2e, 0xed0f, 0xdd6c, 0xcd4d, 0xbdaa, 0xad8b, 0x9de8,
+            0x8dc9, 0x7c26, 0x6c07, 0x5c64, 0x4c45, 0x3ca2, 0x2c83, 0x1ce0, 0x0cc1, 0xef1f, 0xff3e,
+            0xcf5d, 0xdf7c, 0xaf9b, 0xbfba, 0x8fd9, 0x9ff8, 0x6e17, 0x7e36, 0x4e55, 0x5e74, 0x2e93,
+            0x3eb2, 0x0ed1, 0x1ef0,
         ];
         &CRC16_TABLE
     }
@@ -1041,8 +1221,9 @@ impl RedisProtocolCompatibility {
     async fn handle_readonly_command(&self, client: &Client) -> RaftResult<RespData> {
         // In Redis cluster, READONLY allows reading from replicas
         // In our Raft implementation, this sets eventual consistency for reads
-        self.set_client_consistency(client, ConsistencyLevel::Eventual).await?;
-        
+        self.set_client_consistency(client, ConsistencyLevel::Eventual)
+            .await?;
+
         log::debug!("Client set to READONLY mode (eventual consistency)");
         Ok(RespData::SimpleString("OK".into()))
     }
@@ -1050,8 +1231,9 @@ impl RedisProtocolCompatibility {
     /// Handle READWRITE command
     async fn handle_readwrite_command(&self, client: &Client) -> RaftResult<RespData> {
         // READWRITE disables replica reads, requiring linearizable consistency
-        self.set_client_consistency(client, ConsistencyLevel::Linearizable).await?;
-        
+        self.set_client_consistency(client, ConsistencyLevel::Linearizable)
+            .await?;
+
         log::debug!("Client set to READWRITE mode (linearizable consistency)");
         Ok(RespData::SimpleString("OK".into()))
     }
@@ -1064,17 +1246,17 @@ impl RedisProtocolCompatibility {
         leader_id: Option<NodeId>,
     ) -> RaftResult<RespData> {
         let client_info = self.get_client_info(client).await;
-        
+
         if client_info.supports_cluster_redirects {
             // Client supports cluster redirects, send MOVED response
             match leader_id {
                 Some(leader) => {
                     let topology = self.topology.read().await;
                     if let Some(leader_endpoint) = topology.nodes.get(&leader) {
-                        Ok(RespData::Error(format!(
-                            "MOVED 0 {}:{}",
-                            leader_endpoint.host, leader_endpoint.port
-                        ).into()))
+                        Ok(RespData::Error(
+                            format!("MOVED 0 {}:{}", leader_endpoint.host, leader_endpoint.port)
+                                .into(),
+                        ))
                     } else {
                         Ok(RespData::Error("CLUSTERDOWN The cluster is down".into()))
                     }
@@ -1084,7 +1266,9 @@ impl RedisProtocolCompatibility {
         } else {
             // Client doesn't support redirects, try to proxy the command
             // For now, return an error asking client to reconnect
-            Ok(RespData::Error("ERR please reconnect to the current leader".into()))
+            Ok(RespData::Error(
+                "ERR please reconnect to the current leader".into(),
+            ))
         }
     }
 
@@ -1097,14 +1281,10 @@ impl RedisProtocolCompatibility {
                         // Try to get leader endpoint for MOVED response
                         RespData::Error(format!("MOVED 0 leader-{}", leader).into())
                     }
-                    None => {
-                        RespData::Error("CLUSTERDOWN The cluster is down".into())
-                    }
+                    None => RespData::Error("CLUSTERDOWN The cluster is down".into()),
                 }
             }
-            RaftError::Timeout => {
-                RespData::Error("ERR timeout".into())
-            }
+            RaftError::Timeout => RespData::Error("ERR timeout".into()),
             RaftError::Configuration(msg) => {
                 // Map configuration errors to appropriate Redis error types
                 if msg.contains("wrong number of arguments") {
@@ -1136,16 +1316,16 @@ impl RedisProtocolCompatibility {
             RaftError::Serialization(msg) => {
                 RespData::Error(format!("ERR protocol error: {}", msg).into())
             }
-            _ => {
-                RespData::Error(format!("ERR {}", error).into())
-            }
+            _ => RespData::Error(format!("ERR {}", error).into()),
         }
     }
 
     /// Format validation errors in Redis-compatible format
     pub fn format_validation_error(&self, command: &str, message: &str) -> RespData {
         if message.contains("wrong number of arguments") {
-            RespData::Error(format!("ERR wrong number of arguments for '{}' command", command).into())
+            RespData::Error(
+                format!("ERR wrong number of arguments for '{}' command", command).into(),
+            )
         } else if message.contains("invalid") {
             RespData::Error(format!("ERR invalid argument for '{}' command", command).into())
         } else {
@@ -1154,30 +1334,22 @@ impl RedisProtocolCompatibility {
     }
 
     /// Format cluster-specific errors
-    pub fn format_cluster_error(&self, error_type: ClusterErrorType, message: Option<&str>) -> RespData {
+    pub fn format_cluster_error(
+        &self,
+        error_type: ClusterErrorType,
+        message: Option<&str>,
+    ) -> RespData {
         match error_type {
             ClusterErrorType::ClusterDown => {
                 RespData::Error("CLUSTERDOWN The cluster is down".into())
             }
-            ClusterErrorType::NoLeader => {
-                RespData::Error("CLUSTERDOWN No leader available".into())
-            }
-            ClusterErrorType::NotLeader { leader_id } => {
-                match leader_id {
-                    Some(leader) => {
-                        RespData::Error(format!("MOVED 0 leader-{}", leader).into())
-                    }
-                    None => {
-                        RespData::Error("CLUSTERDOWN The cluster is down".into())
-                    }
-                }
-            }
-            ClusterErrorType::NodeNotFound => {
-                RespData::Error("ERR unknown node".into())
-            }
-            ClusterErrorType::InvalidSlot => {
-                RespData::Error("ERR slot out of range".into())
-            }
+            ClusterErrorType::NoLeader => RespData::Error("CLUSTERDOWN No leader available".into()),
+            ClusterErrorType::NotLeader { leader_id } => match leader_id {
+                Some(leader) => RespData::Error(format!("MOVED 0 leader-{}", leader).into()),
+                None => RespData::Error("CLUSTERDOWN The cluster is down".into()),
+            },
+            ClusterErrorType::NodeNotFound => RespData::Error("ERR unknown node".into()),
+            ClusterErrorType::InvalidSlot => RespData::Error("ERR slot out of range".into()),
             ClusterErrorType::ConfigurationError => {
                 let msg = message.unwrap_or("configuration error");
                 RespData::Error(format!("ERR {}", msg).into())
@@ -1191,90 +1363,74 @@ impl RedisProtocolCompatibility {
     /// Handle Redis protocol-specific error formatting
     pub fn format_protocol_error(&self, error: ProtocolError) -> RespData {
         match error {
-            ProtocolError::InvalidCommand => {
-                RespData::Error("ERR unknown command".into())
-            }
-            ProtocolError::WrongType => {
-                RespData::Error("WRONGTYPE Operation against a key holding the wrong kind of value".into())
-            }
-            ProtocolError::OutOfRange => {
-                RespData::Error("ERR index out of range".into())
-            }
-            ProtocolError::SyntaxError => {
-                RespData::Error("ERR syntax error".into())
-            }
-            ProtocolError::NoAuth => {
-                RespData::Error("NOAUTH Authentication required".into())
-            }
+            ProtocolError::InvalidCommand => RespData::Error("ERR unknown command".into()),
+            ProtocolError::WrongType => RespData::Error(
+                "WRONGTYPE Operation against a key holding the wrong kind of value".into(),
+            ),
+            ProtocolError::OutOfRange => RespData::Error("ERR index out of range".into()),
+            ProtocolError::SyntaxError => RespData::Error("ERR syntax error".into()),
+            ProtocolError::NoAuth => RespData::Error("NOAUTH Authentication required".into()),
             ProtocolError::Loading => {
                 RespData::Error("LOADING Redis is loading the dataset in memory".into())
             }
-            ProtocolError::Busy => {
-                RespData::Error("BUSY Redis is busy running a script".into())
-            }
+            ProtocolError::Busy => RespData::Error("BUSY Redis is busy running a script".into()),
             ProtocolError::ReadOnly => {
                 RespData::Error("READONLY You can't write against a read only replica".into())
             }
             ProtocolError::NoScript => {
                 RespData::Error("NOSCRIPT No matching script. Please use EVAL".into())
             }
-            ProtocolError::MasterDown => {
-                RespData::Error("MASTERDOWN Link with MASTER is down and replica-serve-stale-data is set to 'no'".into())
-            }
+            ProtocolError::MasterDown => RespData::Error(
+                "MASTERDOWN Link with MASTER is down and replica-serve-stale-data is set to 'no'"
+                    .into(),
+            ),
         }
     }
 
     /// Check if a command is supported in cluster mode
     pub fn is_command_supported(&self, command: &str) -> bool {
         let cmd_name = command.to_lowercase();
-        
+
         // Commands that are not supported in cluster mode
         let unsupported_commands = [
-            "flushall",    // Would affect all nodes inconsistently
-            "flushdb",     // Would affect all nodes inconsistently  
-            "debug",       // Debug commands are node-specific
-            "config",      // Configuration changes should go through Raft
-            "shutdown",    // Node shutdown should be coordinated
-            "save",        // Snapshots are handled by Raft
-            "bgsave",      // Snapshots are handled by Raft
-            "lastsave",    // Not applicable in Raft mode
-            "monitor",     // Monitoring is node-specific
-            "sync",        // Replication is handled by Raft
-            "psync",       // Replication is handled by Raft
+            "flushall", // Would affect all nodes inconsistently
+            "flushdb",  // Would affect all nodes inconsistently
+            "debug",    // Debug commands are node-specific
+            "config",   // Configuration changes should go through Raft
+            "shutdown", // Node shutdown should be coordinated
+            "save",     // Snapshots are handled by Raft
+            "bgsave",   // Snapshots are handled by Raft
+            "lastsave", // Not applicable in Raft mode
+            "monitor",  // Monitoring is node-specific
+            "sync",     // Replication is handled by Raft
+            "psync",    // Replication is handled by Raft
         ];
-        
+
         !unsupported_commands.contains(&cmd_name.as_str())
     }
 
     /// Get appropriate error message for unsupported commands
     pub fn get_unsupported_command_error(&self, command: &str) -> RespData {
         let cmd_name = command.to_lowercase();
-        
+
         match cmd_name.as_str() {
             "flushall" | "flushdb" => {
                 RespData::Error("ERR FLUSHALL/FLUSHDB not supported in cluster mode".into())
             }
-            "config" => {
-                RespData::Error("ERR CONFIG commands not supported in cluster mode".into())
-            }
-            "shutdown" => {
-                RespData::Error("ERR SHUTDOWN not supported in cluster mode".into())
-            }
-            "save" | "bgsave" | "lastsave" => {
-                RespData::Error("ERR Manual save commands not supported in cluster mode, snapshots are automatic".into())
-            }
-            "monitor" => {
-                RespData::Error("ERR MONITOR not supported in cluster mode".into())
-            }
-            "sync" | "psync" => {
-                RespData::Error("ERR Replication commands not supported in cluster mode, use Raft consensus".into())
-            }
-            "debug" => {
-                RespData::Error("ERR DEBUG commands not supported in cluster mode".into())
-            }
-            _ => {
-                RespData::Error(format!("ERR command '{}' not supported in cluster mode", command).into())
-            }
+            "config" => RespData::Error("ERR CONFIG commands not supported in cluster mode".into()),
+            "shutdown" => RespData::Error("ERR SHUTDOWN not supported in cluster mode".into()),
+            "save" | "bgsave" | "lastsave" => RespData::Error(
+                "ERR Manual save commands not supported in cluster mode, snapshots are automatic"
+                    .into(),
+            ),
+            "monitor" => RespData::Error("ERR MONITOR not supported in cluster mode".into()),
+            "sync" | "psync" => RespData::Error(
+                "ERR Replication commands not supported in cluster mode, use Raft consensus".into(),
+            ),
+            "debug" => RespData::Error("ERR DEBUG commands not supported in cluster mode".into()),
+            _ => RespData::Error(
+                format!("ERR command '{}' not supported in cluster mode", command).into(),
+            ),
         }
     }
 
@@ -1282,22 +1438,25 @@ impl RedisProtocolCompatibility {
     async fn update_client_activity(&self, client: &Client) -> RaftResult<()> {
         let client_id = format!("{:p}", client as *const Client);
         let mut connections = self.client_connections.write().await;
-        
+
         // Check if this is a new client or update existing
         if let Some(existing) = connections.get_mut(&client_id) {
             existing.last_activity = std::time::Instant::now();
         } else {
             // New client - detect capabilities
             let supports_redirects = self.detect_client_cluster_support(client).await;
-            
-            connections.insert(client_id.clone(), ClientConnectionInfo {
-                client_id: client_id.clone(),
-                last_activity: std::time::Instant::now(),
-                preferred_consistency: None,
-                supports_cluster_redirects: supports_redirects,
-            });
+
+            connections.insert(
+                client_id.clone(),
+                ClientConnectionInfo {
+                    client_id: client_id.clone(),
+                    last_activity: std::time::Instant::now(),
+                    preferred_consistency: None,
+                    supports_cluster_redirects: supports_redirects,
+                },
+            );
         }
-        
+
         Ok(())
     }
 
@@ -1307,35 +1466,51 @@ impl RedisProtocolCompatibility {
         // 1. Check client connection info/user agent
         // 2. Look for previous CLUSTER commands from this client
         // 3. Check if client has handled MOVED responses correctly
-        
+
         // For now, assume all clients support redirects
         // This can be made configurable or more sophisticated
         true
     }
 
     /// Set client consistency preference
-    pub async fn set_client_consistency(&self, client: &Client, consistency: ConsistencyLevel) -> RaftResult<()> {
+    pub async fn set_client_consistency(
+        &self,
+        client: &Client,
+        consistency: ConsistencyLevel,
+    ) -> RaftResult<()> {
         let client_id = format!("{:p}", client as *const Client);
         let mut connections = self.client_connections.write().await;
-        
+
         if let Some(client_info) = connections.get_mut(&client_id) {
             client_info.preferred_consistency = Some(consistency);
-            log::debug!("Set client {} consistency preference to {:?}", client_id, consistency);
+            log::debug!(
+                "Set client {} consistency preference to {:?}",
+                client_id,
+                consistency
+            );
         }
-        
+
         Ok(())
     }
 
     /// Set client cluster redirect support
-    pub async fn set_client_redirect_support(&self, client: &Client, supports_redirects: bool) -> RaftResult<()> {
+    pub async fn set_client_redirect_support(
+        &self,
+        client: &Client,
+        supports_redirects: bool,
+    ) -> RaftResult<()> {
         let client_id = format!("{:p}", client as *const Client);
         let mut connections = self.client_connections.write().await;
-        
+
         if let Some(client_info) = connections.get_mut(&client_id) {
             client_info.supports_cluster_redirects = supports_redirects;
-            log::debug!("Set client {} redirect support to {}", client_id, supports_redirects);
+            log::debug!(
+                "Set client {} redirect support to {}",
+                client_id,
+                supports_redirects
+            );
         }
-        
+
         Ok(())
     }
 
@@ -1343,15 +1518,16 @@ impl RedisProtocolCompatibility {
     async fn get_client_info(&self, client: &Client) -> ClientConnectionInfo {
         let client_id = format!("{:p}", client as *const Client);
         let connections = self.client_connections.read().await;
-        
-        connections.get(&client_id).cloned().unwrap_or_else(|| {
-            ClientConnectionInfo {
+
+        connections
+            .get(&client_id)
+            .cloned()
+            .unwrap_or_else(|| ClientConnectionInfo {
                 client_id,
                 last_activity: std::time::Instant::now(),
                 preferred_consistency: None,
                 supports_cluster_redirects: true,
-            }
-        })
+            })
     }
 
     /// Check and handle topology changes
@@ -1360,12 +1536,12 @@ impl RedisProtocolCompatibility {
         let health = self.raft_node.get_cluster_health().await?;
         let membership = self.raft_node.get_membership().await?;
         let leader_id = self.raft_node.get_leader_id().await;
-        
+
         let mut topology = self.topology.write().await;
-        
+
         // Update leader information
         topology.leader_id = leader_id;
-        
+
         // Update cluster state
         topology.state = if health.is_healthy {
             ClusterState::Ok
@@ -1374,7 +1550,7 @@ impl RedisProtocolCompatibility {
         } else {
             ClusterState::Fail
         };
-        
+
         // Update node information
         // TODO: Add public endpoint accessor to RaftNode and wire real endpoints
         // RaftNode stores endpoints internally but doesn't expose them publicly.
@@ -1390,36 +1566,44 @@ impl RedisProtocolCompatibility {
                 }
             });
         }
-        
+
         topology.last_update = std::time::Instant::now();
-        
+
         Ok(())
     }
 
     /// Update cluster topology with actual node endpoints
-    pub async fn update_node_endpoint(&self, node_id: NodeId, host: String, port: u16) -> RaftResult<()> {
+    pub async fn update_node_endpoint(
+        &self,
+        node_id: NodeId,
+        host: String,
+        port: u16,
+    ) -> RaftResult<()> {
         let mut topology = self.topology.write().await;
-        
-        topology.nodes.insert(node_id, NodeEndpoint {
+
+        topology.nodes.insert(
             node_id,
-            host,
-            port,
-            is_reachable: true,
-        });
-        
+            NodeEndpoint {
+                node_id,
+                host,
+                port,
+                is_reachable: true,
+            },
+        );
+
         topology.last_update = std::time::Instant::now();
-        
+
         Ok(())
     }
 
     /// Mark a node as unreachable
     pub async fn mark_node_unreachable(&self, node_id: NodeId) -> RaftResult<()> {
         let mut topology = self.topology.write().await;
-        
+
         if let Some(endpoint) = topology.nodes.get_mut(&node_id) {
             endpoint.is_reachable = false;
         }
-        
+
         Ok(())
     }
 
@@ -1427,11 +1611,9 @@ impl RedisProtocolCompatibility {
     pub async fn cleanup_inactive_clients(&self, max_idle: Duration) -> RaftResult<()> {
         let mut connections = self.client_connections.write().await;
         let now = std::time::Instant::now();
-        
-        connections.retain(|_, info| {
-            now.duration_since(info.last_activity) < max_idle
-        });
-        
+
+        connections.retain(|_, info| now.duration_since(info.last_activity) < max_idle);
+
         Ok(())
     }
 
@@ -1466,7 +1648,7 @@ mod tests {
             port: 7379,
             is_reachable: true,
         };
-        
+
         assert_eq!(endpoint.node_id, 1);
         assert_eq!(endpoint.host, "localhost");
         assert_eq!(endpoint.port, 7379);

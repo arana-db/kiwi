@@ -24,6 +24,7 @@ use openraft::Config;
 
 pub mod binlog;
 pub mod cluster_config;
+pub mod cluster_tests;
 pub mod config_change;
 pub mod consistency;
 pub mod consistency_handler;
@@ -38,7 +39,6 @@ pub mod node;
 pub mod performance;
 pub mod placeholder_types;
 pub mod protocol_compatibility;
-pub mod cluster_tests;
 pub mod redis_integration;
 pub mod replication_mode;
 pub mod rocksdb_integration;
@@ -84,13 +84,16 @@ mod tests {
     fn test_client_request_serialization() {
         let request = ClientRequest {
             id: RequestId::new(),
-            command: RedisCommand::from_bytes("SET".to_string(), vec![b"key".to_vec(), b"value".to_vec()]),
+            command: RedisCommand::from_bytes(
+                "SET".to_string(),
+                vec![b"key".to_vec(), b"value".to_vec()],
+            ),
             consistency_level: ConsistencyLevel::Linearizable,
         };
 
         let serialized = serde_json::to_string(&request).unwrap();
         let deserialized: ClientRequest = serde_json::from_str(&serialized).unwrap();
-        
+
         assert_eq!(request.id, deserialized.id);
         assert_eq!(request.command.command, deserialized.command.command);
         assert_eq!(request.consistency_level, deserialized.consistency_level);

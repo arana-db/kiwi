@@ -29,7 +29,7 @@ mod tests {
     fn create_test_config() -> Arc<RwLock<ClusterConfiguration>> {
         use std::collections::BTreeMap;
         use std::path::PathBuf;
-        
+
         let mut endpoints = BTreeMap::new();
         endpoints.insert(1, NodeEndpoint::new(1, "127.0.0.1".to_string(), 7379));
         endpoints.insert(2, NodeEndpoint::new(2, "127.0.0.1".to_string(), 7380));
@@ -54,9 +54,9 @@ mod tests {
     #[tokio::test]
     async fn test_safety_checkpoint_creation() {
         let manager = create_test_manager();
-        
+
         let checkpoint = manager.create_safety_checkpoint().await.unwrap();
-        
+
         assert!(!checkpoint.id.is_empty());
         assert_eq!(checkpoint.membership_snapshot.len(), 3);
         assert!(checkpoint.membership_snapshot.contains(&1));
@@ -67,7 +67,7 @@ mod tests {
     #[tokio::test]
     async fn test_validate_change_preconditions() {
         let manager = create_test_manager();
-        
+
         let request = ConfigChangeRequest {
             change_type: ConfigChangeType::AddLearner {
                 node_id: 4,
@@ -80,7 +80,7 @@ mod tests {
 
         // This should pass basic validation (though it may fail on Raft-specific checks)
         let result = manager.validate_change_preconditions(&request).await;
-        
+
         // We expect this to fail because we don't have a Raft node configured
         // but it should fail at the cluster stability check, not earlier
         assert!(result.is_err());
@@ -89,7 +89,7 @@ mod tests {
     #[tokio::test]
     async fn test_timing_constraints_validation() {
         let manager = create_test_manager();
-        
+
         let request = ConfigChangeRequest {
             change_type: ConfigChangeType::AddLearner {
                 node_id: 4,
@@ -133,7 +133,7 @@ mod tests {
     #[tokio::test]
     async fn test_pause_and_resume_operations() {
         let manager = create_test_manager();
-        
+
         let request = ConfigChangeRequest {
             change_type: ConfigChangeType::RemoveNode { node_id: 2 },
             force: false,
@@ -141,8 +141,11 @@ mod tests {
             reason: "Test pause operations".to_string(),
         };
 
-        let paused_ops = manager.pause_conflicting_operations(&request).await.unwrap();
-        
+        let paused_ops = manager
+            .pause_conflicting_operations(&request)
+            .await
+            .unwrap();
+
         // Resume should not fail
         let result = manager.resume_operations(paused_ops).await;
         assert!(result.is_ok());
@@ -152,7 +155,7 @@ mod tests {
     async fn test_simulate_membership_change() {
         let manager = create_test_manager();
         let current_membership = manager.get_current_membership().await.unwrap();
-        
+
         // Test adding a node
         let add_request = ConfigChangeRequest {
             change_type: ConfigChangeType::AddLearner {
@@ -164,7 +167,10 @@ mod tests {
             reason: "Test simulation".to_string(),
         };
 
-        let new_membership = manager.simulate_membership_change(&add_request, &current_membership).await.unwrap();
+        let new_membership = manager
+            .simulate_membership_change(&add_request, &current_membership)
+            .await
+            .unwrap();
         assert_eq!(new_membership.len(), 4);
         assert!(new_membership.contains(&4));
 
@@ -176,7 +182,10 @@ mod tests {
             reason: "Test simulation".to_string(),
         };
 
-        let new_membership = manager.simulate_membership_change(&remove_request, &current_membership).await.unwrap();
+        let new_membership = manager
+            .simulate_membership_change(&remove_request, &current_membership)
+            .await
+            .unwrap();
         assert_eq!(new_membership.len(), 2);
         assert!(!new_membership.contains(&3));
     }
@@ -184,7 +193,7 @@ mod tests {
     #[tokio::test]
     async fn test_rollback_request_creation() {
         let manager = create_test_manager();
-        
+
         // Test rollback for add learner
         let add_request = ConfigChangeRequest {
             change_type: ConfigChangeType::AddLearner {
@@ -219,7 +228,7 @@ mod tests {
     #[tokio::test]
     async fn test_operation_tracking() {
         let manager = create_test_manager();
-        
+
         // Initially no operations
         let ops = manager.get_active_operations().await;
         assert_eq!(ops.len(), 0);
@@ -262,7 +271,7 @@ mod tests {
     #[tokio::test]
     async fn test_cleanup_operations() {
         let manager = create_test_manager();
-        
+
         // Add some old completed operations
         {
             let mut operations = manager.active_operations.write().await;
@@ -282,7 +291,7 @@ mod tests {
                 completed_at: Some(chrono::Utc::now() - chrono::Duration::hours(2)),
                 result: None,
             });
-            
+
             operations.push(ConfigChangeOperation {
                 id: "recent_op".to_string(),
                 request: ConfigChangeRequest {

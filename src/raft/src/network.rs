@@ -21,22 +21,22 @@ use crate::error::{NetworkError, RaftError, RaftResult};
 use crate::types::{NodeId, TypeConfig};
 use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use hmac::{Hmac, Mac};
 use openraft::network::{RaftNetwork as OpenRaftNetwork, RaftNetworkFactory};
 use openraft::{AppData, AppDataResponse};
+use reqwest::{Client as HttpClient, Response};
+use rustls::{Certificate, ClientConfig, PrivateKey, ServerConfig};
+use rustls_pemfile::{certs, pkcs8_private_keys};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{RwLock, mpsc};
-use tokio::time::{timeout as tokio_timeout};
+use tokio::time::timeout as tokio_timeout;
 use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
-use rustls::{Certificate, ClientConfig, PrivateKey, ServerConfig};
-use rustls_pemfile::{certs, pkcs8_private_keys};
-use sha2::{Sha256, Digest};
-use hmac::{Hmac, Mac};
-use reqwest::{Client as HttpClient, Response};
 use url::Url;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -117,11 +117,15 @@ impl NodeAuth {
 
     /// Generate HMAC for message authentication
     pub fn generate_hmac(&self, data: &[u8]) -> RaftResult<Vec<u8>> {
-        let mut mac = HmacSha256::new_from_slice(&self.shared_secret)
-            .map_err(|e| RaftError::Network(NetworkError::SerializationFailed(
-                serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("HMAC key error: {}", e)))
-            )))?;
-        
+        let mut mac = HmacSha256::new_from_slice(&self.shared_secret).map_err(|e| {
+            RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("HMAC key error: {}", e),
+                ),
+            )))
+        })?;
+
         mac.update(data);
         Ok(mac.finalize().into_bytes().to_vec())
     }
@@ -154,34 +158,48 @@ impl SecureStream {
         server_name: &str,
     ) -> RaftResult<Self> {
         // Load certificates and key
-        let cert_file = std::fs::File::open(&tls_config.cert_path)
-            .map_err(|e| RaftError::Network(NetworkError::ConnectionFailed {
+        let cert_file = std::fs::File::open(&tls_config.cert_path).map_err(|e| {
+            RaftError::Network(NetworkError::ConnectionFailed {
                 node_id: 0,
                 source: e,
-            }))?;
+            })
+        })?;
         let mut cert_reader = std::io::BufReader::new(cert_file);
         let certs = certs(&mut cert_reader)
-            .map_err(|e| RaftError::Network(NetworkError::SerializationFailed(
-                serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Certificate parsing error: {}", e)))
-            )))?
+            .map_err(|e| {
+                RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Certificate parsing error: {}", e),
+                    ),
+                )))
+            })?
             .into_iter()
             .map(Certificate)
             .collect();
 
-        let key_file = std::fs::File::open(&tls_config.key_path)
-            .map_err(|e| RaftError::Network(NetworkError::ConnectionFailed {
+        let key_file = std::fs::File::open(&tls_config.key_path).map_err(|e| {
+            RaftError::Network(NetworkError::ConnectionFailed {
                 node_id: 0,
                 source: e,
-            }))?;
+            })
+        })?;
         let mut key_reader = std::io::BufReader::new(key_file);
-        let mut keys = pkcs8_private_keys(&mut key_reader)
-            .map_err(|e| RaftError::Network(NetworkError::SerializationFailed(
-                serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Private key parsing error: {}", e)))
-            )))?;
+        let mut keys = pkcs8_private_keys(&mut key_reader).map_err(|e| {
+            RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Private key parsing error: {}", e),
+                ),
+            )))
+        })?;
 
         if keys.is_empty() {
             return Err(RaftError::Network(NetworkError::SerializationFailed(
-                serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, "No private keys found"))
+                serde_json::Error::io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "No private keys found",
+                )),
             )));
         }
 
@@ -192,9 +210,14 @@ impl SecureStream {
             .with_safe_defaults()
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_client_auth_cert(certs, key)
-            .map_err(|e| RaftError::Network(NetworkError::SerializationFailed(
-                serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("TLS config error: {}", e)))
-            )))?;
+            .map_err(|e| {
+                RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("TLS config error: {}", e),
+                    ),
+                )))
+            })?;
 
         // Disable certificate verification if requested (for testing)
         if !tls_config.verify_peer {
@@ -204,27 +227,47 @@ impl SecureStream {
         }
 
         let connector = TlsConnector::from(Arc::new(config));
-        let tcp_stream = TcpStream::connect(addr).await
-            .map_err(|e| NetworkError::ConnectionFailed { node_id: 0, source: e })?;
+        let tcp_stream =
+            TcpStream::connect(addr)
+                .await
+                .map_err(|e| NetworkError::ConnectionFailed {
+                    node_id: 0,
+                    source: e,
+                })?;
 
-        let server_name = rustls::ServerName::try_from(server_name)
-            .map_err(|e| RaftError::Network(NetworkError::SerializationFailed(
-                serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Invalid server name: {}", e)))
-            )))?;
+        let server_name = rustls::ServerName::try_from(server_name).map_err(|e| {
+            RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Invalid server name: {}", e),
+                ),
+            )))
+        })?;
 
-        let tls_stream = connector.connect(server_name, tcp_stream).await
-            .map_err(|e| RaftError::Network(NetworkError::ConnectionFailed {
-                node_id: 0,
-                source: std::io::Error::new(std::io::ErrorKind::ConnectionRefused, e),
-            }))?;
+        let tls_stream = connector
+            .connect(server_name, tcp_stream)
+            .await
+            .map_err(|e| {
+                RaftError::Network(NetworkError::ConnectionFailed {
+                    node_id: 0,
+                    source: std::io::Error::new(std::io::ErrorKind::ConnectionRefused, e),
+                })
+            })?;
 
-        Ok(SecureStream::Tls(tokio_rustls::TlsStream::Client(tls_stream)))
+        Ok(SecureStream::Tls(tokio_rustls::TlsStream::Client(
+            tls_stream,
+        )))
     }
 
     /// Create a plain TCP connection
     pub async fn connect_plain(addr: std::net::SocketAddr) -> RaftResult<Self> {
-        let stream = TcpStream::connect(addr).await
-            .map_err(|e| NetworkError::ConnectionFailed { node_id: 0, source: e })?;
+        let stream =
+            TcpStream::connect(addr)
+                .await
+                .map_err(|e| NetworkError::ConnectionFailed {
+                    node_id: 0,
+                    source: e,
+                })?;
         Ok(SecureStream::Plain(stream))
     }
 
@@ -258,11 +301,11 @@ impl SecureStream {
             SecureStream::Plain(stream) => {
                 use tokio::io::AsyncReadExt;
                 stream.read_exact(buf).await
-            },
+            }
             SecureStream::Tls(stream) => {
                 use tokio::io::AsyncReadExt;
                 stream.read_exact(buf).await
-            },
+            }
         }
     }
 }
@@ -296,7 +339,7 @@ impl MessageEnvelope {
     pub fn new(from: NodeId, to: NodeId, message: RaftMessage) -> Self {
         use std::sync::atomic::{AtomicU64, Ordering};
         static MESSAGE_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
-        
+
         Self {
             message_id: MESSAGE_ID_COUNTER.fetch_add(1, Ordering::Relaxed),
             from,
@@ -329,11 +372,14 @@ impl MessageEnvelope {
             message_id: self.message_id,
             from: self.from,
             to: self.to,
-            message: RaftMessage::Heartbeat { from: self.from, term: 0 }, // Placeholder
+            message: RaftMessage::Heartbeat {
+                from: self.from,
+                term: 0,
+            }, // Placeholder
             timestamp: self.timestamp,
             hmac: None,
         };
-        
+
         // For now, skip HMAC generation due to serialization complexity
         self.hmac = None;
         Ok(())
@@ -347,14 +393,18 @@ impl MessageEnvelope {
 
     /// Serialize the message envelope to bytes
     pub fn serialize(&self) -> RaftResult<Bytes> {
-        let data = bincode::serialize(self)
-            .map_err(|e| RaftError::Serialization(serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))))?;
-        
+        let data = bincode::serialize(self).map_err(|e| {
+            RaftError::Serialization(serde_json::Error::io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            )))
+        })?;
+
         // Create a frame with length prefix
         let mut buf = BytesMut::with_capacity(4 + data.len());
         buf.put_u32(data.len() as u32);
         buf.put_slice(&data);
-        
+
         Ok(buf.freeze())
     }
 
@@ -368,16 +418,19 @@ impl MessageEnvelope {
         }
 
         let len = data.get_u32() as usize;
-        
+
         // Prevent DoS attacks via unbounded memory allocation
         const MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
         if len > MAX_MESSAGE_SIZE {
             return Err(RaftError::Network(NetworkError::InvalidResponse {
                 node_id: 0,
-                message: format!("Message too large: {} bytes (max: {} bytes)", len, MAX_MESSAGE_SIZE),
+                message: format!(
+                    "Message too large: {} bytes (max: {} bytes)",
+                    len, MAX_MESSAGE_SIZE
+                ),
             }));
         }
-        
+
         if data.len() < len {
             return Err(RaftError::Network(NetworkError::InvalidResponse {
                 node_id: 0,
@@ -386,8 +439,12 @@ impl MessageEnvelope {
         }
 
         let message_data = data.split_to(len);
-        bincode::deserialize(&message_data)
-            .map_err(|e| RaftError::Serialization(serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))))
+        bincode::deserialize(&message_data).map_err(|e| {
+            RaftError::Serialization(serde_json::Error::io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                e.to_string(),
+            )))
+        })
     }
 }
 
@@ -426,7 +483,7 @@ impl PartitionDetector {
     pub async fn get_partitioned_nodes(&self) -> Vec<NodeId> {
         let contacts = self.last_successful_contact.read().await;
         let now = Instant::now();
-        
+
         contacts
             .iter()
             .filter(|(_, &last_contact)| now.duration_since(last_contact) > self.partition_timeout)
@@ -473,7 +530,7 @@ impl MessageRouter {
             pending_requests: Arc::new(RwLock::new(HashMap::new())),
             request_timeout: Duration::from_secs(30),
         };
-        
+
         // Start cleanup task for expired requests
         router.start_cleanup_task();
         router
@@ -483,7 +540,7 @@ impl MessageRouter {
     fn start_cleanup_task(&self) {
         let pending_requests = self.pending_requests.clone();
         let request_timeout = self.request_timeout;
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(10));
             loop {
@@ -501,13 +558,13 @@ impl MessageRouter {
         let mut requests = pending_requests.write().await;
         let now = Instant::now();
         let mut expired_ids = Vec::new();
-        
+
         for (id, request) in requests.iter() {
             if now.duration_since(request.timestamp) > request_timeout {
                 expired_ids.push(*id);
             }
         }
-        
+
         for id in expired_ids {
             if let Some(request) = requests.remove(&id) {
                 // Send timeout error to waiting client
@@ -518,14 +575,18 @@ impl MessageRouter {
                 ));
             }
         }
-        
+
         if !requests.is_empty() {
             log::debug!("Cleaned up expired requests. Remaining: {}", requests.len());
         }
     }
 
     /// Register a message handler for a node
-    pub async fn register_handler(&self, node_id: NodeId, sender: mpsc::UnboundedSender<MessageEnvelope>) {
+    pub async fn register_handler(
+        &self,
+        node_id: NodeId,
+        sender: mpsc::UnboundedSender<MessageEnvelope>,
+    ) {
         let mut handlers = self.message_handlers.write().await;
         handlers.insert(node_id, sender);
     }
@@ -543,23 +604,25 @@ impl MessageRouter {
         // Route to appropriate handler based on message type and priority
         let priority = self.get_message_priority(&envelope.message);
         let target_node = envelope.to;
-        
+
         let handlers = self.message_handlers.read().await;
         if let Some(sender) = handlers.get(&target_node) {
             // For high priority messages, try to send immediately
             if priority >= MessagePriority::High {
-                sender.send(envelope)
-                    .map_err(|_| RaftError::Network(NetworkError::InvalidResponse {
+                sender.send(envelope).map_err(|_| {
+                    RaftError::Network(NetworkError::InvalidResponse {
                         node_id: target_node,
                         message: "Handler channel closed".to_string(),
-                    }))?;
+                    })
+                })?;
             } else {
                 // For normal/low priority, queue the message
-                sender.send(envelope)
-                    .map_err(|_| RaftError::Network(NetworkError::InvalidResponse {
+                sender.send(envelope).map_err(|_| {
+                    RaftError::Network(NetworkError::InvalidResponse {
                         node_id: target_node,
                         message: "Handler channel closed".to_string(),
-                    }))?;
+                    })
+                })?;
             }
         } else {
             log::warn!("No handler registered for node {}", target_node);
@@ -571,14 +634,14 @@ impl MessageRouter {
     /// Handle response messages by matching them to pending requests
     async fn handle_response(&self, envelope: &MessageEnvelope) -> RaftResult<bool> {
         let mut pending_requests = self.pending_requests.write().await;
-        
+
         // Check if this is a response to a pending request
         if let Some(request) = pending_requests.remove(&envelope.message_id) {
             // Send response to waiting client
             let _ = request.sender.send(envelope.clone());
             return Ok(true);
         }
-        
+
         Ok(false)
     }
 
@@ -586,9 +649,15 @@ impl MessageRouter {
     fn get_message_priority(&self, message: &RaftMessage) -> MessagePriority {
         match message {
             RaftMessage::Vote(_) | RaftMessage::VoteResponse(_) => MessagePriority::Critical,
-            RaftMessage::AppendEntries(_) | RaftMessage::AppendEntriesResponse(_) => MessagePriority::High,
-            RaftMessage::InstallSnapshot(_) | RaftMessage::InstallSnapshotResponse(_) => MessagePriority::Normal,
-            RaftMessage::Heartbeat { .. } | RaftMessage::HeartbeatResponse { .. } => MessagePriority::Low,
+            RaftMessage::AppendEntries(_) | RaftMessage::AppendEntriesResponse(_) => {
+                MessagePriority::High
+            }
+            RaftMessage::InstallSnapshot(_) | RaftMessage::InstallSnapshotResponse(_) => {
+                MessagePriority::Normal
+            }
+            RaftMessage::Heartbeat { .. } | RaftMessage::HeartbeatResponse { .. } => {
+                MessagePriority::Low
+            }
         }
     }
 
@@ -602,16 +671,19 @@ impl MessageRouter {
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let envelope = MessageEnvelope::new(self.node_id, target_node, message.clone());
         let message_id = envelope.message_id;
-        
+
         // Store pending request
         {
             let mut pending_requests = self.pending_requests.write().await;
-            pending_requests.insert(message_id, PendingRequest {
+            pending_requests.insert(
                 message_id,
-                sender,
-                timestamp: Instant::now(),
-                priority: self.get_message_priority(&message),
-            });
+                PendingRequest {
+                    message_id,
+                    sender,
+                    timestamp: Instant::now(),
+                    priority: self.get_message_priority(&message),
+                },
+            );
         }
 
         // Send the message (this would typically go through the network client)
@@ -629,8 +701,10 @@ impl MessageRouter {
                 // Remove from pending requests on timeout
                 let mut pending_requests = self.pending_requests.write().await;
                 pending_requests.remove(&message_id);
-                
-                Err(RaftError::Network(NetworkError::RequestTimeout { node_id: target_node }))
+
+                Err(RaftError::Network(NetworkError::RequestTimeout {
+                    node_id: target_node,
+                }))
             }
         }
     }
@@ -639,7 +713,7 @@ impl MessageRouter {
     pub async fn get_routing_stats(&self) -> MessageRoutingStats {
         let handlers = self.message_handlers.read().await;
         let pending_requests = self.pending_requests.read().await;
-        
+
         MessageRoutingStats {
             registered_handlers: handlers.len(),
             pending_requests: pending_requests.len(),
@@ -684,7 +758,7 @@ impl ConnectionPool {
             cleanup_interval: Duration::from_secs(60),
             max_idle_time: Duration::from_secs(300),
         };
-        
+
         // Start background cleanup task
         pool.start_cleanup_task();
         pool
@@ -702,7 +776,7 @@ impl ConnectionPool {
             cleanup_interval: Duration::from_secs(60),
             max_idle_time: Duration::from_secs(300),
         };
-        
+
         // Start background cleanup task
         pool.start_cleanup_task();
         pool
@@ -713,7 +787,7 @@ impl ConnectionPool {
         let connections = self.connections.clone();
         let cleanup_interval = self.cleanup_interval;
         let max_idle_time = self.max_idle_time;
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(cleanup_interval);
             loop {
@@ -730,7 +804,7 @@ impl ConnectionPool {
     ) {
         let mut connections_guard = connections.write().await;
         let mut nodes_to_remove = Vec::new();
-        
+
         for (node_id, node_connections) in connections_guard.iter_mut() {
             // Remove unhealthy connections
             node_connections.retain(|conn| {
@@ -738,29 +812,31 @@ impl ConnectionPool {
                     tokio::runtime::Handle::current().block_on(conn.is_healthy())
                 })
             });
-            
+
             // Remove connections that have been idle too long
             let now = Instant::now();
             node_connections.retain(|conn| {
                 let last_activity = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(async {
-                        *conn.last_activity.lock().await
-                    })
+                    tokio::runtime::Handle::current()
+                        .block_on(async { *conn.last_activity.lock().await })
                 });
                 now.duration_since(last_activity) <= max_idle_time
             });
-            
+
             if node_connections.is_empty() {
                 nodes_to_remove.push(*node_id);
             }
         }
-        
+
         // Remove nodes with no connections
         for node_id in nodes_to_remove {
             connections_guard.remove(&node_id);
         }
-        
-        log::debug!("Connection pool cleanup completed. Active nodes: {}", connections_guard.len());
+
+        log::debug!(
+            "Connection pool cleanup completed. Active nodes: {}",
+            connections_guard.len()
+        );
     }
 
     /// Add node authentication
@@ -776,7 +852,11 @@ impl ConnectionPool {
     }
 
     /// Get or create a connection to the specified node
-    pub async fn get_connection(&self, node_id: NodeId, endpoint: &str) -> RaftResult<Arc<RaftConnection>> {
+    pub async fn get_connection(
+        &self,
+        node_id: NodeId,
+        endpoint: &str,
+    ) -> RaftResult<Arc<RaftConnection>> {
         // Try to get an existing healthy connection
         {
             let mut connections = self.connections.write().await;
@@ -790,7 +870,7 @@ impl ConnectionPool {
                         return Ok(conn);
                     }
                 }
-                
+
                 // Remove all unhealthy connections
                 node_connections.clear();
             }
@@ -798,18 +878,18 @@ impl ConnectionPool {
 
         // Create a new connection
         let connection = self.create_new_connection(node_id, endpoint).await?;
-        
+
         // Store the connection in the pool
         {
             let mut connections = self.connections.write().await;
             let node_connections = connections.entry(node_id).or_insert_with(Vec::new);
-            
+
             // Ensure we don't exceed max connections per node
             if node_connections.len() >= self.max_connections_per_node {
                 // Remove the oldest connection
                 node_connections.remove(0);
             }
-            
+
             node_connections.push(connection.clone());
         }
 
@@ -817,7 +897,11 @@ impl ConnectionPool {
     }
 
     /// Create a new connection with proper configuration
-    async fn create_new_connection(&self, node_id: NodeId, endpoint: &str) -> RaftResult<Arc<RaftConnection>> {
+    async fn create_new_connection(
+        &self,
+        node_id: NodeId,
+        endpoint: &str,
+    ) -> RaftResult<Arc<RaftConnection>> {
         // Get node authentication if available
         let node_auth = {
             let auths = self.node_auths.read().await;
@@ -832,7 +916,8 @@ impl ConnectionPool {
                 self.connection_timeout,
                 tls_config.clone(),
                 node_auth,
-            ).await?
+            )
+            .await?
         } else {
             RaftConnection::new(node_id, endpoint, self.connection_timeout).await?
         };
@@ -852,7 +937,7 @@ impl ConnectionPool {
         let mut total_connections = 0;
         let mut healthy_connections = 0;
         let active_nodes = connections.len();
-        
+
         for node_connections in connections.values() {
             total_connections += node_connections.len();
             for conn in node_connections {
@@ -861,7 +946,7 @@ impl ConnectionPool {
                 }
             }
         }
-        
+
         ConnectionPoolStats {
             active_nodes,
             total_connections,
@@ -934,21 +1019,25 @@ impl RaftConnection {
         node_auth: Option<NodeAuth>,
     ) -> RaftResult<Self> {
         log::debug!("Creating connection to node {} at {}", node_id, endpoint);
-        
+
         // Parse endpoint (format: "host:port")
-        let addr = endpoint.parse::<std::net::SocketAddr>()
-            .map_err(|e| NetworkError::ConnectionFailed {
+        let addr = endpoint.parse::<std::net::SocketAddr>().map_err(|e| {
+            NetworkError::ConnectionFailed {
                 node_id,
                 source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e),
-            })?;
+            }
+        })?;
 
         // Create secure or plain connection
         let stream = if let Some(ref tls_config) = tls_config {
             // Extract hostname from endpoint for TLS
             let hostname = endpoint.split(':').next().unwrap_or("localhost");
-            tokio_timeout(timeout, SecureStream::connect_tls(addr, tls_config, hostname))
-                .await
-                .map_err(|_| NetworkError::RequestTimeout { node_id })?
+            tokio_timeout(
+                timeout,
+                SecureStream::connect_tls(addr, tls_config, hostname),
+            )
+            .await
+            .map_err(|_| NetworkError::RequestTimeout { node_id })?
         } else {
             tokio_timeout(timeout, SecureStream::connect_plain(addr))
                 .await
@@ -989,14 +1078,17 @@ impl RaftConnection {
         }
 
         let mut last_error = None;
-        
+
         for attempt in 0..=max_retries {
             match self.send_message(&envelope).await {
                 Ok(response) => {
                     // Verify response authentication if configured
                     if let Some(ref auth) = self.node_auth {
                         if !response.verify_authentication(auth) {
-                            log::warn!("Authentication verification failed for response from node {}", self.node_id);
+                            log::warn!(
+                                "Authentication verification failed for response from node {}",
+                                self.node_id
+                            );
                             return Err(RaftError::Network(NetworkError::InvalidResponse {
                                 node_id: self.node_id,
                                 message: "Authentication verification failed".to_string(),
@@ -1014,8 +1106,12 @@ impl RaftConnection {
                         let exp = (attempt as u32).min(20);
                         let delay = Duration::from_millis(100u64.saturating_mul(1u64 << exp));
                         tokio::time::sleep(delay).await;
-                        log::warn!("Retry attempt {} for node {} failed, retrying in {:?}", 
-                                 attempt + 1, self.node_id, delay);
+                        log::warn!(
+                            "Retry attempt {} for node {} failed, retrying in {:?}",
+                            attempt + 1,
+                            self.node_id,
+                            delay
+                        );
                     }
                 }
             }
@@ -1026,44 +1122,63 @@ impl RaftConnection {
 
     /// Send a message to the connected node
     async fn send_message(&self, envelope: &MessageEnvelope) -> RaftResult<MessageEnvelope> {
-        let stream = self.stream.as_ref()
-            .ok_or_else(|| RaftError::Network(NetworkError::ConnectionFailed {
+        let stream = self.stream.as_ref().ok_or_else(|| {
+            RaftError::Network(NetworkError::ConnectionFailed {
                 node_id: self.node_id,
                 source: std::io::Error::new(std::io::ErrorKind::NotConnected, "No connection"),
-            }))?;
+            })
+        })?;
 
         let mut stream_guard = stream.lock().await;
-        
+
         // Serialize and send the message
         let serialized = envelope.serialize()?;
-        stream_guard.write_all(&serialized).await
-            .map_err(|e| NetworkError::ConnectionFailed { node_id: self.node_id, source: e })?;
+        stream_guard
+            .write_all(&serialized)
+            .await
+            .map_err(|e| NetworkError::ConnectionFailed {
+                node_id: self.node_id,
+                source: e,
+            })?;
 
         // Read the response
         let mut length_buf = [0u8; 4];
-        stream_guard.read_exact(&mut length_buf).await
-            .map_err(|e| NetworkError::ConnectionFailed { node_id: self.node_id, source: e })?;
-        
+        stream_guard
+            .read_exact(&mut length_buf)
+            .await
+            .map_err(|e| NetworkError::ConnectionFailed {
+                node_id: self.node_id,
+                source: e,
+            })?;
+
         let length = u32::from_be_bytes(length_buf) as usize;
-        
+
         // Prevent DoS attacks via unbounded memory allocation
         const MAX_MESSAGE_SIZE: usize = 64 * 1024 * 1024; // 64 MiB
         if length == 0 || length > MAX_MESSAGE_SIZE {
             return Err(RaftError::Network(NetworkError::InvalidResponse {
                 node_id: self.node_id,
-                message: format!("Response size invalid: {} bytes (max: {} bytes)", length, MAX_MESSAGE_SIZE),
+                message: format!(
+                    "Response size invalid: {} bytes (max: {} bytes)",
+                    length, MAX_MESSAGE_SIZE
+                ),
             }));
         }
-        
+
         let mut response_buf = vec![0u8; length];
-        stream_guard.read_exact(&mut response_buf).await
-            .map_err(|e| NetworkError::ConnectionFailed { node_id: self.node_id, source: e })?;
+        stream_guard
+            .read_exact(&mut response_buf)
+            .await
+            .map_err(|e| NetworkError::ConnectionFailed {
+                node_id: self.node_id,
+                source: e,
+            })?;
 
         // Deserialize the response
         let mut response_bytes = BytesMut::with_capacity(4 + length);
         response_bytes.put_u32(length as u32);
         response_bytes.put_slice(&response_buf);
-        
+
         MessageEnvelope::deserialize(response_bytes.freeze())
     }
 }
@@ -1217,24 +1332,34 @@ impl RaftNetworkClient {
     async fn get_connection(&self) -> RaftResult<Arc<RaftConnection>> {
         let endpoint = {
             let endpoints = self.endpoints.read().await;
-            endpoints.get(&self.target_node)
-                .ok_or_else(|| RaftError::Network(NetworkError::ConnectionFailed {
-                    node_id: self.target_node,
-                    source: std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "Endpoint not found for node",
-                    ),
-                }))?
+            endpoints
+                .get(&self.target_node)
+                .ok_or_else(|| {
+                    RaftError::Network(NetworkError::ConnectionFailed {
+                        node_id: self.target_node,
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "Endpoint not found for node",
+                        ),
+                    })
+                })?
                 .clone()
         };
 
-        self.connection_pool.get_connection(self.target_node, &endpoint).await
+        self.connection_pool
+            .get_connection(self.target_node, &endpoint)
+            .await
     }
 
     /// Send a Raft message and wait for response
     async fn send_raft_message(&mut self, message: RaftMessage) -> RaftResult<RaftMessage> {
         // Check for network partition first
-        if self.message_router.partition_detector().is_partitioned(self.target_node).await {
+        if self
+            .message_router
+            .partition_detector()
+            .is_partitioned(self.target_node)
+            .await
+        {
             return Err(RaftError::Network(NetworkError::NetworkPartition));
         }
 
@@ -1242,11 +1367,16 @@ impl RaftNetworkClient {
         match self.send_http_message(&message).await {
             Ok(response) => Ok(response),
             Err(_) => {
-                log::debug!("HTTP request failed, falling back to TCP for node {}", self.target_node);
+                log::debug!(
+                    "HTTP request failed, falling back to TCP for node {}",
+                    self.target_node
+                );
                 let connection = self.get_connection().await?;
                 let envelope = MessageEnvelope::new(self.source_node, self.target_node, message);
-                
-                let response_envelope = connection.send_message_with_retry(envelope, self.max_retries).await?;
+
+                let response_envelope = connection
+                    .send_message_with_retry(envelope, self.max_retries)
+                    .await?;
                 Ok(response_envelope.message)
             }
         }
@@ -1256,14 +1386,17 @@ impl RaftNetworkClient {
     async fn send_http_message(&self, message: &RaftMessage) -> RaftResult<RaftMessage> {
         let endpoint = {
             let endpoints = self.endpoints.read().await;
-            endpoints.get(&self.target_node)
-                .ok_or_else(|| RaftError::Network(NetworkError::ConnectionFailed {
-                    node_id: self.target_node,
-                    source: std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "Endpoint not found for node",
-                    ),
-                }))?
+            endpoints
+                .get(&self.target_node)
+                .ok_or_else(|| {
+                    RaftError::Network(NetworkError::ConnectionFailed {
+                        node_id: self.target_node,
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "Endpoint not found for node",
+                        ),
+                    })
+                })?
                 .clone()
         };
 
@@ -1277,34 +1410,46 @@ impl RaftNetworkClient {
         let client = HttpClient::builder()
             .timeout(self.request_timeout)
             .build()
-            .map_err(|e| RaftError::Network(NetworkError::ConnectionFailed {
-                node_id: self.target_node,
-                source: std::io::Error::new(std::io::ErrorKind::Other, e),
-            }))?;
+            .map_err(|e| {
+                RaftError::Network(NetworkError::ConnectionFailed {
+                    node_id: self.target_node,
+                    source: std::io::Error::new(std::io::ErrorKind::Other, e),
+                })
+            })?;
 
         // Create message envelope
         let envelope = MessageEnvelope::new(self.source_node, self.target_node, message.clone());
-        
+
         // Serialize message
-        let serialized_data = serde_json::to_vec(&envelope)
-            .map_err(|e| RaftError::Serialization(e))?;
+        let serialized_data =
+            serde_json::to_vec(&envelope).map_err(|e| RaftError::Serialization(e))?;
 
         let mut last_error = None;
-        
+
         // Retry logic with exponential backoff
         for attempt in 0..=self.max_retries {
-            match self.send_http_request_attempt(&client, &url, &serialized_data).await {
+            match self
+                .send_http_request_attempt(&client, &url, &serialized_data)
+                .await
+            {
                 Ok(response_message) => {
                     // Record successful contact
-                    self.message_router.partition_detector().record_contact(self.target_node).await;
+                    self.message_router
+                        .partition_detector()
+                        .record_contact(self.target_node)
+                        .await;
                     return Ok(response_message);
                 }
                 Err(e) => {
                     last_error = Some(e);
                     if attempt < self.max_retries {
                         let delay = Duration::from_millis(100 * (1 << attempt.min(10)));
-                        log::warn!("HTTP request attempt {} failed for node {}, retrying in {:?}", 
-                                 attempt + 1, self.target_node, delay);
+                        log::warn!(
+                            "HTTP request attempt {} failed for node {}, retrying in {:?}",
+                            attempt + 1,
+                            self.target_node,
+                            delay
+                        );
                         tokio::time::sleep(delay).await;
                     }
                 }
@@ -1329,10 +1474,12 @@ impl RaftNetworkClient {
             .body(data.to_vec())
             .send()
             .await
-            .map_err(|e| RaftError::Network(NetworkError::ConnectionFailed {
-                node_id: self.target_node,
-                source: std::io::Error::new(std::io::ErrorKind::Other, e),
-            }))?;
+            .map_err(|e| {
+                RaftError::Network(NetworkError::ConnectionFailed {
+                    node_id: self.target_node,
+                    source: std::io::Error::new(std::io::ErrorKind::Other, e),
+                })
+            })?;
 
         if !response.status().is_success() {
             return Err(RaftError::Network(NetworkError::InvalidResponse {
@@ -1341,14 +1488,15 @@ impl RaftNetworkClient {
             }));
         }
 
-        let response_data = response.bytes().await
-            .map_err(|e| RaftError::Network(NetworkError::SerializationFailed(
-                serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::Other, e))
-            )))?;
+        let response_data = response.bytes().await.map_err(|e| {
+            RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
+                std::io::Error::new(std::io::ErrorKind::Other, e),
+            )))
+        })?;
 
         // Deserialize response
-        let response_envelope: MessageEnvelope = serde_json::from_slice(&response_data)
-            .map_err(|e| RaftError::Serialization(e))?;
+        let response_envelope: MessageEnvelope =
+            serde_json::from_slice(&response_data).map_err(|e| RaftError::Serialization(e))?;
 
         // Validate response
         if response_envelope.from != self.target_node || response_envelope.to != self.source_node {
@@ -1373,7 +1521,7 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
         openraft::error::RPCError<NodeId, openraft::BasicNode, openraft::error::RaftError<NodeId>>,
     > {
         log::debug!("Sending append_entries to node {}", self.target_node);
-        
+
         let message = RaftMessage::AppendEntries(req);
         match self.send_raft_message(message).await {
             Ok(RaftMessage::AppendEntriesResponse(response)) => Ok(response),
@@ -1382,8 +1530,8 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
                     NetworkError::InvalidResponse {
                         node_id: self.target_node,
                         message: "Unexpected response type".to_string(),
-                    }
-                ))
+                    },
+                )),
             )),
             Err(e) => {
                 // Handle network partitions gracefully
@@ -1391,7 +1539,7 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
                     log::warn!("Network partition detected with node {}", self.target_node);
                 }
                 Err(openraft::error::RPCError::Network(
-                    openraft::error::NetworkError::new(&e)
+                    openraft::error::NetworkError::new(&e),
                 ))
             }
         }
@@ -1406,7 +1554,7 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
         openraft::error::RPCError<NodeId, openraft::BasicNode, openraft::error::RaftError<NodeId>>,
     > {
         log::debug!("Sending install_snapshot to node {}", self.target_node);
-        
+
         let message = RaftMessage::InstallSnapshot(req);
         match self.send_raft_message(message).await {
             Ok(RaftMessage::InstallSnapshotResponse(response)) => Ok(response),
@@ -1415,8 +1563,8 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
                     NetworkError::InvalidResponse {
                         node_id: self.target_node,
                         message: "Unexpected response type".to_string(),
-                    }
-                ))
+                    },
+                )),
             )),
             Err(e) => {
                 // Handle network partitions gracefully
@@ -1424,7 +1572,7 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
                     log::warn!("Network partition detected with node {}", self.target_node);
                 }
                 Err(openraft::error::RPCError::Network(
-                    openraft::error::NetworkError::new(&e)
+                    openraft::error::NetworkError::new(&e),
                 ))
             }
         }
@@ -1439,7 +1587,7 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
         openraft::error::RPCError<NodeId, openraft::BasicNode, openraft::error::RaftError<NodeId>>,
     > {
         log::debug!("Sending vote request to node {}", self.target_node);
-        
+
         let message = RaftMessage::Vote(req);
         match self.send_raft_message(message).await {
             Ok(RaftMessage::VoteResponse(response)) => Ok(response),
@@ -1448,8 +1596,8 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
                     NetworkError::InvalidResponse {
                         node_id: self.target_node,
                         message: "Unexpected response type".to_string(),
-                    }
-                ))
+                    },
+                )),
             )),
             Err(e) => {
                 // Handle network partitions gracefully
@@ -1457,7 +1605,7 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
                     log::warn!("Network partition detected with node {}", self.target_node);
                 }
                 Err(openraft::error::RPCError::Network(
-                    openraft::error::NetworkError::new(&e)
+                    openraft::error::NetworkError::new(&e),
                 ))
             }
         }

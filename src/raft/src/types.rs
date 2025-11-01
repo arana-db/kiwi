@@ -17,10 +17,10 @@
 
 //! Core type definitions for Raft consensus implementation
 
-use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::collections::BTreeSet;
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+use std::fmt;
 
 /// Node identifier type
 pub type NodeId = u64;
@@ -95,17 +95,23 @@ impl RedisCommand {
     pub fn new(command: String, args: Vec<Bytes>) -> Self {
         Self { command, args }
     }
-    
+
     /// Create from string arguments
     pub fn from_strings(command: String, args: Vec<String>) -> Self {
         let byte_args = args.into_iter().map(|s| Bytes::from(s)).collect();
-        Self { command, args: byte_args }
+        Self {
+            command,
+            args: byte_args,
+        }
     }
-    
+
     /// Create from byte vector arguments
     pub fn from_bytes(command: String, args: Vec<Vec<u8>>) -> Self {
         let byte_args = args.into_iter().map(|v| Bytes::from(v)).collect();
-        Self { command, args: byte_args }
+        Self {
+            command,
+            args: byte_args,
+        }
     }
 }
 
@@ -134,7 +140,7 @@ impl ClientResponse {
             leader_id,
         }
     }
-    
+
     /// Create an error response
     pub fn error(id: RequestId, error: String, leader_id: Option<NodeId>) -> Self {
         Self {

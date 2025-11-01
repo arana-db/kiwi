@@ -66,19 +66,18 @@ impl From<OperationType> for i32 {
 pub struct BinlogEntry {
     /// Operation type
     pub operation: OperationType,
-    
     /// Command data (serialized Redis command)
     pub data: Bytes,
-    
+
     /// Timestamp for ordering (nanoseconds since epoch)
     pub timestamp_ns: Option<i64>,
-    
+
     /// Sequence number for mapping to RocksDB sequence
     pub sequence: Option<u64>,
-    
+
     /// Raft log index (for Raft mode)
     pub log_index: Option<LogIndex>,
-    
+
     /// Raft term (for Raft mode)
     pub term: Option<Term>,
 }
@@ -90,7 +89,7 @@ impl BinlogEntry {
             .duration_since(UNIX_EPOCH)
             .ok()
             .map(|d| d.as_nanos() as i64);
-        
+
         Self {
             operation,
             data,
@@ -100,20 +99,20 @@ impl BinlogEntry {
             term: None,
         }
     }
-    
+
     /// Set sequence number for RocksDB mapping
     pub fn with_sequence(mut self, sequence: u64) -> Self {
         self.sequence = Some(sequence);
         self
     }
-    
+
     /// Set Raft log index and term (for Raft mode)
     pub fn with_raft_info(mut self, log_index: LogIndex, term: Term) -> Self {
         self.log_index = Some(log_index);
         self.term = Some(term);
         self
     }
-    
+
     /// Serialize binlog entry to protobuf
     pub fn to_proto(&self) -> binlog::BinlogEntry {
         binlog::BinlogEntry {
@@ -123,7 +122,7 @@ impl BinlogEntry {
             sequence: self.sequence,
         }
     }
-    
+
     /// Deserialize binlog entry from protobuf
     pub fn from_proto(proto: binlog::BinlogEntry) -> Result<Self, RaftError> {
         Ok(Self {
@@ -135,18 +134,20 @@ impl BinlogEntry {
             term: None,
         })
     }
-    
+
     /// Serialize binlog entry to bytes
     pub fn serialize(&self) -> Result<Vec<u8>, RaftError> {
         let proto = self.to_proto();
-        prost::Message::encode(&proto)
-            .map_err(|e| RaftError::state_machine(format!("Failed to serialize binlog entry: {}", e)))
+        prost::Message::encode(&proto).map_err(|e| {
+            RaftError::state_machine(format!("Failed to serialize binlog entry: {}", e))
+        })
     }
-    
+
     /// Deserialize binlog entry from bytes
     pub fn deserialize(data: &[u8]) -> Result<Self, RaftError> {
-        let proto = binlog::BinlogEntry::decode(data)
-            .map_err(|e| RaftError::state_machine(format!("Failed to deserialize binlog entry: {}", e)))?;
+        let proto = binlog::BinlogEntry::decode(data).map_err(|e| {
+            RaftError::state_machine(format!("Failed to deserialize binlog entry: {}", e))
+        })?;
         Self::from_proto(proto)
     }
 }
@@ -161,16 +162,16 @@ mod tests {
         let entry = BinlogEntry::new(OperationType::Put, Bytes::from("SET key value"));
         let serialized = entry.serialize().unwrap();
         let deserialized = BinlogEntry::deserialize(&serialized).unwrap();
-        
+
         assert_eq!(entry.operation, deserialized.operation);
         assert_eq!(entry.data, deserialized.data);
     }
 
     #[test]
     fn test_binlog_entry_with_sequence() {
-        let entry = BinlogEntry::new(OperationType::Put, Bytes::from("SET key value"))
-            .with_sequence(12345);
-        
+        let entry =
+            BinlogEntry::new(OperationType::Put, Bytes::from("SET key value")).with_sequence(12345);
+
         assert_eq!(entry.sequence, Some(12345));
     }
 
@@ -178,7 +179,7 @@ mod tests {
     fn test_binlog_entry_with_raft_info() {
         let entry = BinlogEntry::new(OperationType::Put, Bytes::from("SET key value"))
             .with_raft_info(100, 5);
-        
+
         assert_eq!(entry.log_index, Some(100));
         assert_eq!(entry.term, Some(5));
     }

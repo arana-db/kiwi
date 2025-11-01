@@ -27,7 +27,7 @@ mod tests {
     fn test_request_id_creation() {
         let id1 = RequestId::new();
         let id2 = RequestId::new();
-        
+
         // IDs should be unique
         assert_ne!(id1, id2);
         assert!(id2.as_u64() > id1.as_u64());
@@ -37,7 +37,7 @@ mod tests {
     fn test_request_id_default() {
         let id1 = RequestId::default();
         let id2 = RequestId::default();
-        
+
         // Default should create new unique IDs
         assert_ne!(id1, id2);
     }
@@ -53,11 +53,11 @@ mod tests {
     #[test]
     fn test_request_id_serialization() {
         let original_id = RequestId::new();
-        
+
         // Test JSON serialization
         let serialized = serde_json::to_string(&original_id).unwrap();
         let deserialized: RequestId = serde_json::from_str(&serialized).unwrap();
-        
+
         assert_eq!(original_id, deserialized);
         assert_eq!(original_id.as_u64(), deserialized.as_u64());
     }
@@ -66,9 +66,9 @@ mod tests {
     fn test_redis_command_creation() {
         let cmd = RedisCommand::new(
             "SET".to_string(),
-            vec![Bytes::from("key"), Bytes::from("value")]
+            vec![Bytes::from("key"), Bytes::from("value")],
         );
-        
+
         assert_eq!(cmd.command, "SET");
         assert_eq!(cmd.args.len(), 2);
         assert_eq!(cmd.args[0], Bytes::from("key"));
@@ -77,11 +77,8 @@ mod tests {
 
     #[test]
     fn test_redis_command_from_strings() {
-        let cmd = RedisCommand::from_strings(
-            "GET".to_string(),
-            vec!["key".to_string()]
-        );
-        
+        let cmd = RedisCommand::from_strings("GET".to_string(), vec!["key".to_string()]);
+
         assert_eq!(cmd.command, "GET");
         assert_eq!(cmd.args.len(), 1);
         assert_eq!(cmd.args[0], Bytes::from("key"));
@@ -89,11 +86,9 @@ mod tests {
 
     #[test]
     fn test_redis_command_from_bytes() {
-        let cmd = RedisCommand::from_bytes(
-            "DEL".to_string(),
-            vec![b"key1".to_vec(), b"key2".to_vec()]
-        );
-        
+        let cmd =
+            RedisCommand::from_bytes("DEL".to_string(), vec![b"key1".to_vec(), b"key2".to_vec()]);
+
         assert_eq!(cmd.command, "DEL");
         assert_eq!(cmd.args.len(), 2);
         assert_eq!(cmd.args[0], Bytes::from("key1"));
@@ -105,14 +100,16 @@ mod tests {
         let original_cmd = RedisCommand::new(
             "MSET".to_string(),
             vec![
-                Bytes::from("key1"), Bytes::from("value1"),
-                Bytes::from("key2"), Bytes::from("value2")
-            ]
+                Bytes::from("key1"),
+                Bytes::from("value1"),
+                Bytes::from("key2"),
+                Bytes::from("value2"),
+            ],
         );
-        
+
         let serialized = serde_json::to_string(&original_cmd).unwrap();
         let deserialized: RedisCommand = serde_json::from_str(&serialized).unwrap();
-        
+
         assert_eq!(original_cmd.command, deserialized.command);
         assert_eq!(original_cmd.args, deserialized.args);
     }
@@ -124,7 +121,7 @@ mod tests {
             command: RedisCommand::new("PING".to_string(), vec![]),
             consistency_level: ConsistencyLevel::Linearizable,
         };
-        
+
         assert_eq!(request.command.command, "PING");
         assert_eq!(request.consistency_level, ConsistencyLevel::Linearizable);
         assert!(request.command.args.is_empty());
@@ -135,7 +132,7 @@ mod tests {
         let id = RequestId::new();
         let data = Bytes::from("OK");
         let response = ClientResponse::success(id, data.clone(), Some(1));
-        
+
         assert_eq!(response.id, id);
         assert_eq!(response.result, Ok(data));
         assert_eq!(response.leader_id, Some(1));
@@ -146,7 +143,7 @@ mod tests {
         let id = RequestId::new();
         let error_msg = "Command failed".to_string();
         let response = ClientResponse::error(id, error_msg.clone(), Some(2));
-        
+
         assert_eq!(response.id, id);
         assert_eq!(response.result, Err(error_msg));
         assert_eq!(response.leader_id, Some(2));
@@ -160,11 +157,8 @@ mod tests {
 
     #[test]
     fn test_consistency_level_serialization() {
-        let levels = vec![
-            ConsistencyLevel::Linearizable,
-            ConsistencyLevel::Eventual,
-        ];
-        
+        let levels = vec![ConsistencyLevel::Linearizable, ConsistencyLevel::Eventual];
+
         for level in levels {
             let serialized = serde_json::to_string(&level).unwrap();
             let deserialized: ConsistencyLevel = serde_json::from_str(&serialized).unwrap();
@@ -175,7 +169,7 @@ mod tests {
     #[test]
     fn test_cluster_config_default() {
         let config = ClusterConfig::default();
-        
+
         assert!(!config.enabled);
         assert_eq!(config.node_id, 1);
         assert!(config.cluster_members.is_empty());
@@ -192,13 +186,13 @@ mod tests {
         let mut config = ClusterConfig::default();
         config.enabled = true;
         config.node_id = 2;
-        
+
         let mut members = BTreeSet::new();
         members.insert("1:127.0.0.1:7379".to_string());
         members.insert("2:127.0.0.1:7380".to_string());
         members.insert("3:127.0.0.1:7381".to_string());
         config.cluster_members = members;
-        
+
         assert!(config.enabled);
         assert_eq!(config.node_id, 2);
         assert_eq!(config.cluster_members.len(), 3);
@@ -217,7 +211,7 @@ mod tests {
             last_log_index: 100,
             commit_index: 95,
         };
-        
+
         assert_eq!(health.total_members, 3);
         assert_eq!(health.healthy_members, 3);
         assert!(health.is_healthy);
@@ -238,10 +232,10 @@ mod tests {
             last_log_index: 200,
             commit_index: 180,
         };
-        
+
         let serialized = serde_json::to_string(&health).unwrap();
         let deserialized: ClusterHealth = serde_json::from_str(&serialized).unwrap();
-        
+
         assert_eq!(health.total_members, deserialized.total_members);
         assert_eq!(health.healthy_members, deserialized.healthy_members);
         assert_eq!(health.learners, deserialized.learners);
@@ -256,12 +250,12 @@ mod tests {
     fn test_type_config_consistency() {
         // Test that TypeConfig implements required traits
         let _config = TypeConfig::default();
-        
+
         // Test type aliases are properly defined
         let node_id: NodeId = 1;
         let term: Term = 100;
         let log_index: LogIndex = 50;
-        
+
         assert_eq!(node_id, 1);
         assert_eq!(term, 100);
         assert_eq!(log_index, 50);
@@ -275,16 +269,18 @@ mod tests {
                 "HMSET".to_string(),
                 vec![
                     Bytes::from("hash_key"),
-                    Bytes::from("field1"), Bytes::from("value1"),
-                    Bytes::from("field2"), Bytes::from("value2"),
-                ]
+                    Bytes::from("field1"),
+                    Bytes::from("value1"),
+                    Bytes::from("field2"),
+                    Bytes::from("value2"),
+                ],
             ),
             consistency_level: ConsistencyLevel::Eventual,
         };
-        
+
         let serialized = serde_json::to_string(&request).unwrap();
         let deserialized: ClientRequest = serde_json::from_str(&serialized).unwrap();
-        
+
         assert_eq!(request.id, deserialized.id);
         assert_eq!(request.command.command, deserialized.command.command);
         assert_eq!(request.command.args, deserialized.command.args);
@@ -294,7 +290,7 @@ mod tests {
     #[test]
     fn test_empty_redis_command() {
         let cmd = RedisCommand::new("PING".to_string(), vec![]);
-        
+
         assert_eq!(cmd.command, "PING");
         assert!(cmd.args.is_empty());
     }
@@ -304,9 +300,9 @@ mod tests {
         let binary_data = vec![0u8, 1, 2, 3, 255];
         let cmd = RedisCommand::from_bytes(
             "SET".to_string(),
-            vec![b"binary_key".to_vec(), binary_data.clone()]
+            vec![b"binary_key".to_vec(), binary_data.clone()],
         );
-        
+
         assert_eq!(cmd.command, "SET");
         assert_eq!(cmd.args.len(), 2);
         assert_eq!(cmd.args[0], Bytes::from("binary_key"));

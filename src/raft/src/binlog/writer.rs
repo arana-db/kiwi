@@ -21,11 +21,11 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 
-use parking_lot::RwLock;
 use bytes::Bytes;
+use parking_lot::RwLock;
 
-use crate::error::RaftError;
 use super::entry::BinlogEntry;
+use crate::error::RaftError;
 
 /// Binlog writer for writing binlog entries to storage
 pub struct BinlogWriter {
@@ -40,12 +40,12 @@ impl BinlogWriter {
             buffer: Arc::new(RwLock::new(Vec::new())),
         }
     }
-    
+
     /// Write a binlog entry
     pub fn write_entry(&self, entry: &BinlogEntry) -> Result<usize, RaftError> {
         let serialized = entry.serialize()?;
         let length = serialized.len() as u32;
-        
+
         // Encode length as varint
         let mut len_bytes = Vec::new();
         let mut v = length;
@@ -59,30 +59,30 @@ impl BinlogWriter {
                 len_bytes.push(byte | 0x80);
             }
         }
-        
+
         let mut buffer = self.buffer.write();
         let start_pos = buffer.len();
-        
+
         // Write length-prefixed entry
         buffer.extend_from_slice(&len_bytes);
         buffer.extend_from_slice(&serialized);
-        
+
         let written = buffer.len() - start_pos;
         Ok(written)
     }
-    
+
     /// Flush buffer to storage
     pub fn flush(&self) -> Result<Vec<u8>, RaftError> {
         let buffer = self.buffer.read();
         Ok(buffer.clone())
     }
-    
+
     /// Clear buffer
     pub fn clear(&self) {
         let mut buffer = self.buffer.write();
         buffer.clear();
     }
-    
+
     /// Get current buffer size
     pub fn size(&self) -> usize {
         let buffer = self.buffer.read();
@@ -104,15 +104,15 @@ mod tests {
     #[test]
     fn test_binlog_writer() {
         let writer = BinlogWriter::new();
-        
+
         let entry1 = BinlogEntry::new(OperationType::Put, Bytes::from("SET key1 value1"));
         let entry2 = BinlogEntry::new(OperationType::Delete, Bytes::from("DEL key2"));
-        
+
         writer.write_entry(&entry1).unwrap();
         writer.write_entry(&entry2).unwrap();
-        
+
         assert!(writer.size() > 0);
-        
+
         let buffer = writer.flush().unwrap();
         assert!(!buffer.is_empty());
     }

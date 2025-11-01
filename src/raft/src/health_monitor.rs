@@ -20,9 +20,9 @@
 //! This module provides comprehensive cluster health monitoring, including
 //! real-time health status updates, anomaly detection, and health history tracking.
 
-use crate::types::{NodeId, ClusterHealth};
-use crate::metrics::MetricsCollector;
 use crate::error::RaftResult;
+use crate::metrics::MetricsCollector;
+use crate::types::{ClusterHealth, NodeId};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
@@ -164,12 +164,9 @@ pub struct ClusterHealthMonitor {
 
 impl ClusterHealthMonitor {
     /// Create a new health monitor
-    pub fn new(
-        config: HealthMonitorConfig,
-        metrics_collector: Arc<MetricsCollector>,
-    ) -> Self {
+    pub fn new(config: HealthMonitorConfig, metrics_collector: Arc<MetricsCollector>) -> Self {
         let (status_broadcaster, _) = broadcast::channel(100);
-        
+
         let initial_status = ClusterHealthStatus {
             overall_status: HealthStatus::Healthy,
             node_status: HashMap::new(),
@@ -221,10 +218,10 @@ impl ClusterHealthMonitor {
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(config.check_interval_secs));
-            
+
             while *running.read().unwrap() {
                 interval.tick().await;
-                
+
                 if let Err(e) = Self::perform_health_check(
                     &config,
                     &current_status,
@@ -232,7 +229,9 @@ impl ClusterHealthMonitor {
                     &anomalies,
                     &metrics_collector,
                     &status_broadcaster,
-                ).await {
+                )
+                .await
+                {
                     log::error!("Health check failed: {}", e);
                 }
             }
@@ -261,7 +260,9 @@ impl ClusterHealthMonitor {
 
     /// Get active anomalies
     pub fn get_active_anomalies(&self) -> Vec<Anomaly> {
-        self.anomalies.read().unwrap()
+        self.anomalies
+            .read()
+            .unwrap()
             .iter()
             .filter(|a| a.active)
             .cloned()
@@ -300,12 +301,14 @@ impl ClusterHealthMonitor {
 
         // Detect anomalies
         let mut detected_anomalies = Vec::new();
-        
+
         // Check latency
         if metrics.performance.avg_request_latency_ms > config.max_latency_ms {
             detected_anomalies.push(Anomaly {
                 anomaly_type: AnomalyType::HighLatency,
-                severity: if metrics.performance.avg_request_latency_ms > config.max_latency_ms * 2.0 {
+                severity: if metrics.performance.avg_request_latency_ms
+                    > config.max_latency_ms * 2.0
+                {
                     HealthStatus::Critical
                 } else {
                     HealthStatus::Degraded
@@ -314,14 +317,22 @@ impl ClusterHealthMonitor {
                 affected_node: None,
                 description: format!(
                     "High average request latency: {:.2}ms (threshold: {:.2}ms)",
-                    metrics.performance.avg_request_latency_ms,
-                    config.max_latency_ms
+                    metrics.performance.avg_request_latency_ms, config.max_latency_ms
                 ),
                 metrics: {
                     let mut m = HashMap::new();
-                    m.insert("avg_latency_ms".to_string(), metrics.performance.avg_request_latency_ms);
-                    m.insert("p95_latency_ms".to_string(), metrics.performance.p95_request_latency_ms);
-                    m.insert("p99_latency_ms".to_string(), metrics.performance.p99_request_latency_ms);
+                    m.insert(
+                        "avg_latency_ms".to_string(),
+                        metrics.performance.avg_request_latency_ms,
+                    );
+                    m.insert(
+                        "p95_latency_ms".to_string(),
+                        metrics.performance.p95_request_latency_ms,
+                    );
+                    m.insert(
+                        "p99_latency_ms".to_string(),
+                        metrics.performance.p99_request_latency_ms,
+                    );
                     m
                 },
                 active: true,
@@ -332,7 +343,8 @@ impl ClusterHealthMonitor {
         if metrics.errors.error_rate_percent > config.max_error_rate_percent {
             detected_anomalies.push(Anomaly {
                 anomaly_type: AnomalyType::HighErrorRate,
-                severity: if metrics.errors.error_rate_percent > config.max_error_rate_percent * 2.0 {
+                severity: if metrics.errors.error_rate_percent > config.max_error_rate_percent * 2.0
+                {
                     HealthStatus::Critical
                 } else {
                     HealthStatus::Degraded
@@ -341,14 +353,22 @@ impl ClusterHealthMonitor {
                 affected_node: None,
                 description: format!(
                     "High error rate: {:.2}% (threshold: {:.2}%)",
-                    metrics.errors.error_rate_percent,
-                    config.max_error_rate_percent
+                    metrics.errors.error_rate_percent, config.max_error_rate_percent
                 ),
                 metrics: {
                     let mut m = HashMap::new();
-                    m.insert("error_rate_percent".to_string(), metrics.errors.error_rate_percent);
-                    m.insert("total_operations".to_string(), metrics.errors.total_operations as f64);
-                    m.insert("failed_operations".to_string(), metrics.errors.failed_operations as f64);
+                    m.insert(
+                        "error_rate_percent".to_string(),
+                        metrics.errors.error_rate_percent,
+                    );
+                    m.insert(
+                        "total_operations".to_string(),
+                        metrics.errors.total_operations as f64,
+                    );
+                    m.insert(
+                        "failed_operations".to_string(),
+                        metrics.errors.failed_operations as f64,
+                    );
                     m
                 },
                 active: true,
@@ -386,7 +406,9 @@ impl ClusterHealthMonitor {
         if metrics.performance.memory_usage_bytes > config.max_memory_usage_bytes {
             detected_anomalies.push(Anomaly {
                 anomaly_type: AnomalyType::HighMemoryUsage,
-                severity: if metrics.performance.memory_usage_bytes > config.max_memory_usage_bytes * 2 {
+                severity: if metrics.performance.memory_usage_bytes
+                    > config.max_memory_usage_bytes * 2
+                {
                     HealthStatus::Critical
                 } else {
                     HealthStatus::Degraded
@@ -395,12 +417,14 @@ impl ClusterHealthMonitor {
                 affected_node: None,
                 description: format!(
                     "High memory usage: {} bytes (threshold: {} bytes)",
-                    metrics.performance.memory_usage_bytes,
-                    config.max_memory_usage_bytes
+                    metrics.performance.memory_usage_bytes, config.max_memory_usage_bytes
                 ),
                 metrics: {
                     let mut m = HashMap::new();
-                    m.insert("memory_usage_bytes".to_string(), metrics.performance.memory_usage_bytes as f64);
+                    m.insert(
+                        "memory_usage_bytes".to_string(),
+                        metrics.performance.memory_usage_bytes as f64,
+                    );
                     m
                 },
                 active: true,
@@ -410,41 +434,44 @@ impl ClusterHealthMonitor {
         // Update anomalies
         {
             let mut anomalies_guard = anomalies.write().unwrap();
-            
+
             // Mark existing anomalies as inactive if they're resolved
             for anomaly in anomalies_guard.iter_mut() {
                 if anomaly.active {
                     let resolved = match anomaly.anomaly_type {
                         AnomalyType::HighLatency => {
                             metrics.performance.avg_request_latency_ms <= config.max_latency_ms
-                        },
+                        }
                         AnomalyType::HighErrorRate => {
                             metrics.errors.error_rate_percent <= config.max_error_rate_percent
-                        },
+                        }
                         AnomalyType::ReplicationLag => {
                             if let Some(node_id) = anomaly.affected_node {
-                                metrics.replication.replication_lag.get(&node_id)
+                                metrics
+                                    .replication
+                                    .replication_lag
+                                    .get(&node_id)
                                     .map(|lag| *lag <= config.max_replication_lag)
                                     .unwrap_or(true)
                             } else {
                                 false
                             }
-                        },
+                        }
                         AnomalyType::HighMemoryUsage => {
                             metrics.performance.memory_usage_bytes <= config.max_memory_usage_bytes
-                        },
+                        }
                         _ => false, // Other anomaly types need manual resolution
                     };
-                    
+
                     if resolved {
                         anomaly.active = false;
                     }
                 }
             }
-            
+
             // Add new anomalies
             anomalies_guard.extend(detected_anomalies.clone());
-            
+
             // Keep only recent anomalies
             let max_anomalies = config.max_anomalies;
             if anomalies_guard.len() > max_anomalies {
@@ -454,11 +481,19 @@ impl ClusterHealthMonitor {
         }
 
         // Determine overall health status
-        let overall_status = if detected_anomalies.iter().any(|a| a.severity == HealthStatus::Critical) {
+        let overall_status = if detected_anomalies
+            .iter()
+            .any(|a| a.severity == HealthStatus::Critical)
+        {
             HealthStatus::Critical
-        } else if detected_anomalies.iter().any(|a| a.severity == HealthStatus::Degraded) {
+        } else if detected_anomalies
+            .iter()
+            .any(|a| a.severity == HealthStatus::Degraded)
+        {
             HealthStatus::Degraded
-        } else if !metrics.state.node_state.contains("Leader") && !metrics.state.node_state.contains("Follower") {
+        } else if !metrics.state.node_state.contains("Leader")
+            && !metrics.state.node_state.contains("Follower")
+        {
             HealthStatus::Down
         } else {
             HealthStatus::Healthy
@@ -470,11 +505,13 @@ impl ClusterHealthMonitor {
             status.overall_status = overall_status;
             status.active_anomalies = detected_anomalies.clone();
             status.last_updated = now;
-            
+
             // Update individual node status based on replication metrics
             status.node_status.clear();
-            status.node_status.insert(metrics.state.node_id, overall_status);
-            
+            status
+                .node_status
+                .insert(metrics.state.node_id, overall_status);
+
             for (node_id, lag) in &metrics.replication.replication_lag {
                 let node_status = if *lag > config.max_replication_lag * 2 {
                     HealthStatus::Critical
@@ -485,7 +522,7 @@ impl ClusterHealthMonitor {
                 };
                 status.node_status.insert(*node_id, node_status);
             }
-            
+
             status.clone()
         };
 
@@ -497,19 +534,35 @@ impl ClusterHealthMonitor {
                 status: overall_status,
                 metrics: {
                     let mut m = HashMap::new();
-                    m.insert("avg_latency_ms".to_string(), metrics.performance.avg_request_latency_ms);
-                    m.insert("error_rate_percent".to_string(), metrics.errors.error_rate_percent);
-                    m.insert("memory_usage_bytes".to_string(), metrics.performance.memory_usage_bytes as f64);
-                    m.insert("requests_per_second".to_string(), metrics.performance.requests_per_second);
+                    m.insert(
+                        "avg_latency_ms".to_string(),
+                        metrics.performance.avg_request_latency_ms,
+                    );
+                    m.insert(
+                        "error_rate_percent".to_string(),
+                        metrics.errors.error_rate_percent,
+                    );
+                    m.insert(
+                        "memory_usage_bytes".to_string(),
+                        metrics.performance.memory_usage_bytes as f64,
+                    );
+                    m.insert(
+                        "requests_per_second".to_string(),
+                        metrics.performance.requests_per_second,
+                    );
                     m
                 },
-                anomalies: detected_anomalies.iter().map(|a| a.anomaly_type.clone()).collect(),
+                anomalies: detected_anomalies
+                    .iter()
+                    .map(|a| a.anomaly_type.clone())
+                    .collect(),
             };
-            
+
             history.push_back(record);
-            
+
             // Keep only recent history
-            let max_history_size = (config.history_retention_hours * 3600 / config.check_interval_secs) as usize;
+            let max_history_size =
+                (config.history_retention_hours * 3600 / config.check_interval_secs) as usize;
             while history.len() > max_history_size {
                 history.pop_front();
             }
@@ -534,7 +587,7 @@ mod tests {
         let metrics_collector = Arc::new(MetricsCollector::new(1));
         let config = HealthMonitorConfig::default();
         let monitor = ClusterHealthMonitor::new(config, metrics_collector);
-        
+
         let status = monitor.get_current_status();
         assert_eq!(status.overall_status, HealthStatus::Healthy);
         assert!(status.active_anomalies.is_empty());
@@ -548,16 +601,16 @@ mod tests {
             ..Default::default()
         };
         let monitor = ClusterHealthMonitor::new(config, metrics_collector);
-        
+
         // Start monitoring
         monitor.start().await.unwrap();
-        
+
         // Let it run for a bit
         sleep(Duration::from_millis(100)).await;
-        
+
         // Stop monitoring
         monitor.stop();
-        
+
         // Should not panic
     }
 
@@ -570,21 +623,21 @@ mod tests {
             ..Default::default()
         };
         let monitor = ClusterHealthMonitor::new(config, metrics_collector.clone());
-        
+
         // Simulate high latency
         metrics_collector.record_request_latency(Duration::from_millis(200));
-        
+
         // Simulate errors
         metrics_collector.record_operation_failure("TestError", "Test error", "test_op");
         metrics_collector.record_operation_success(); // To get a meaningful error rate
-        
+
         // Perform health check manually
         let config = HealthMonitorConfig {
             max_latency_ms: 100.0,
             max_error_rate_percent: 1.0,
             ..Default::default()
         };
-        
+
         ClusterHealthMonitor::perform_health_check(
             &config,
             &monitor.current_status,
@@ -592,13 +645,19 @@ mod tests {
             &monitor.anomalies,
             &metrics_collector,
             &monitor.status_broadcaster,
-        ).await.unwrap();
-        
+        )
+        .await
+        .unwrap();
+
         let status = monitor.get_current_status();
         assert!(!status.active_anomalies.is_empty());
-        
+
         let anomalies = monitor.get_active_anomalies();
-        assert!(anomalies.iter().any(|a| a.anomaly_type == AnomalyType::HighLatency));
+        assert!(
+            anomalies
+                .iter()
+                .any(|a| a.anomaly_type == AnomalyType::HighLatency)
+        );
     }
 
     #[test]
@@ -618,7 +677,7 @@ mod tests {
             metrics: HashMap::new(),
             active: true,
         };
-        
+
         assert_eq!(anomaly.anomaly_type, AnomalyType::HighLatency);
         assert_eq!(anomaly.severity, HealthStatus::Degraded);
         assert!(anomaly.active);

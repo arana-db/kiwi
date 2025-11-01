@@ -183,9 +183,7 @@ impl RaftError {
 
     /// Create a not leader error
     pub fn not_leader<S: Into<String>>(message: S) -> Self {
-        Self::NotLeader {
-            leader_id: None,
-        }
+        Self::NotLeader { leader_id: None }
     }
 
     /// Check if this error indicates the node is not the leader

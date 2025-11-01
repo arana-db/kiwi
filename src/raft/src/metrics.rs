@@ -20,10 +20,10 @@
 //! This module provides comprehensive metrics collection for Raft operations,
 //! performance monitoring, and health status reporting.
 
-use crate::types::{NodeId, Term, LogIndex, RaftMetrics as OpenRaftMetrics};
+use crate::types::{LogIndex, NodeId, RaftMetrics as OpenRaftMetrics, Term};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -257,13 +257,22 @@ impl MetricsCollector {
         metrics.state.current_leader = openraft_metrics.current_leader;
         metrics.state.node_state = format!("{:?}", openraft_metrics.state);
         metrics.state.last_log_index = openraft_metrics.last_log_index.unwrap_or(0);
-        metrics.state.commit_index = openraft_metrics.last_applied.map(|id| id.index).unwrap_or(0);
-        metrics.state.applied_index = openraft_metrics.last_applied.map(|id| id.index).unwrap_or(0);
-        
+        metrics.state.commit_index = openraft_metrics
+            .last_applied
+            .map(|id| id.index)
+            .unwrap_or(0);
+        metrics.state.applied_index = openraft_metrics
+            .last_applied
+            .map(|id| id.index)
+            .unwrap_or(0);
+
         // Update replication metrics
         if let Some(ref replication) = openraft_metrics.replication {
             for (node_id, progress) in replication {
-                let lag = metrics.state.last_log_index.saturating_sub(progress.map(|id| id.index).unwrap_or(0));
+                let lag = metrics
+                    .state
+                    .last_log_index
+                    .saturating_sub(progress.map(|id| id.index).unwrap_or(0));
                 metrics.replication.replication_lag.insert(*node_id, lag);
             }
         }
@@ -298,20 +307,22 @@ impl MetricsCollector {
 
     /// Record failed operation
     pub fn record_operation_failure(&self, error_type: &str, message: &str, operation: &str) {
-        self.error_tracker.record_operation_failure(error_type, message, operation);
+        self.error_tracker
+            .record_operation_failure(error_type, message, operation);
     }
 
     /// Update Raft state metrics manually
-    pub fn update_raft_state(&self, 
-        current_term: Term, 
-        current_leader: Option<NodeId>, 
+    pub fn update_raft_state(
+        &self,
+        current_term: Term,
+        current_leader: Option<NodeId>,
         node_state: &str,
         last_log_index: LogIndex,
         commit_index: LogIndex,
         applied_index: LogIndex,
         cluster_size: usize,
-        last_heartbeat_ms: u64) {
-        
+        last_heartbeat_ms: u64,
+    ) {
         let mut metrics = self.metrics.write().unwrap();
         metrics.state.current_term = current_term;
         metrics.state.current_leader = current_leader;
@@ -324,28 +335,43 @@ impl MetricsCollector {
     }
 
     /// Update replication metrics for a specific follower
-    pub fn update_replication_metrics(&self, 
-        follower_id: NodeId, 
+    pub fn update_replication_metrics(
+        &self,
+        follower_id: NodeId,
         replication_lag: LogIndex,
         last_contact_ms: u64,
-        replication_latency_ms: f64) {
-        
+        replication_latency_ms: f64,
+    ) {
         let mut metrics = self.metrics.write().unwrap();
-        metrics.replication.replication_lag.insert(follower_id, replication_lag);
-        metrics.replication.last_contact.insert(follower_id, last_contact_ms);
-        metrics.replication.replication_latency_ms.insert(follower_id, replication_latency_ms);
+        metrics
+            .replication
+            .replication_lag
+            .insert(follower_id, replication_lag);
+        metrics
+            .replication
+            .last_contact
+            .insert(follower_id, last_contact_ms);
+        metrics
+            .replication
+            .replication_latency_ms
+            .insert(follower_id, replication_latency_ms);
     }
 
     /// Record replication failure for a follower
     pub fn record_replication_failure(&self, follower_id: NodeId) {
         let mut metrics = self.metrics.write().unwrap();
-        let failures = metrics.replication.replication_failures.entry(follower_id).or_insert(0);
+        let failures = metrics
+            .replication
+            .replication_failures
+            .entry(follower_id)
+            .or_insert(0);
         *failures += 1;
     }
 
     /// Update network connection status
     pub fn update_network_connections(&self, active_connections: u32) {
-        self.network_tracker.update_active_connections(active_connections);
+        self.network_tracker
+            .update_active_connections(active_connections);
     }
 
     /// Record connection failure
@@ -360,12 +386,13 @@ impl MetricsCollector {
     }
 
     /// Update storage metrics
-    pub fn update_storage_metrics(&self, 
+    pub fn update_storage_metrics(
+        &self,
         log_entries_count: u64,
         log_size_bytes: u64,
         snapshots_count: u64,
-        snapshot_size_bytes: u64) {
-        
+        snapshot_size_bytes: u64,
+    ) {
         let mut metrics = self.metrics.write().unwrap();
         metrics.storage.log_entries_count = log_entries_count;
         metrics.storage.log_size_bytes = log_size_bytes;
@@ -376,32 +403,32 @@ impl MetricsCollector {
     /// Get current metrics snapshot
     pub fn get_metrics(&self) -> RaftMetrics {
         let mut metrics = self.metrics.read().unwrap().clone();
-        
+
         // Update performance metrics from tracker
         let perf_stats = self.performance_tracker.get_stats();
         metrics.performance = perf_stats;
-        
+
         // Update network metrics from tracker
         let network_stats = self.network_tracker.get_stats();
         metrics.network.bytes_sent = network_stats.bytes_sent;
         metrics.network.bytes_received = network_stats.bytes_received;
         metrics.network.active_connections = network_stats.active_connections;
         metrics.network.connection_failures = network_stats.connection_failures;
-        
+
         // Update storage metrics from tracker
         let storage_stats = self.storage_tracker.get_stats();
         metrics.storage.disk_ops_per_second = storage_stats.ops_per_second;
         metrics.storage.disk_latency_ms = storage_stats.avg_latency_ms;
-        
+
         // Update error metrics from tracker
         let error_stats = self.error_tracker.get_stats();
         metrics.errors = error_stats;
-        
+
         metrics.timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        
+
         metrics
     }
 
@@ -435,8 +462,9 @@ impl PerformanceTracker {
     fn record_latency(&self, latency: Duration) {
         let latency_ms = latency.as_millis() as u64;
         self.request_count.fetch_add(1, Ordering::Relaxed);
-        self.total_latency_ms.fetch_add(latency_ms, Ordering::Relaxed);
-        
+        self.total_latency_ms
+            .fetch_add(latency_ms, Ordering::Relaxed);
+
         // Keep only recent latencies (last 1000 requests)
         let mut latencies = self.latencies.write().unwrap();
         latencies.push(latency_ms);
@@ -449,13 +477,13 @@ impl PerformanceTracker {
         let count = self.request_count.load(Ordering::Relaxed);
         let total_latency = self.total_latency_ms.load(Ordering::Relaxed);
         let elapsed = self.last_reset.read().unwrap().elapsed();
-        
+
         let avg_latency = if count > 0 {
             total_latency as f64 / count as f64
         } else {
             0.0
         };
-        
+
         let rps = if elapsed.as_secs() > 0 {
             count as f64 / elapsed.as_secs() as f64
         } else {
@@ -466,17 +494,23 @@ impl PerformanceTracker {
         let latencies = self.latencies.read().unwrap();
         let mut sorted_latencies = latencies.clone();
         sorted_latencies.sort_unstable();
-        
+
         let p95 = if !sorted_latencies.is_empty() {
             let idx = (sorted_latencies.len() as f64 * 0.95) as usize;
-            sorted_latencies.get(idx.min(sorted_latencies.len() - 1)).copied().unwrap_or(0) as f64
+            sorted_latencies
+                .get(idx.min(sorted_latencies.len() - 1))
+                .copied()
+                .unwrap_or(0) as f64
         } else {
             0.0
         };
-        
+
         let p99 = if !sorted_latencies.is_empty() {
             let idx = (sorted_latencies.len() as f64 * 0.99) as usize;
-            sorted_latencies.get(idx.min(sorted_latencies.len() - 1)).copied().unwrap_or(0) as f64
+            sorted_latencies
+                .get(idx.min(sorted_latencies.len() - 1))
+                .copied()
+                .unwrap_or(0) as f64
         } else {
             0.0
         };
@@ -486,9 +520,9 @@ impl PerformanceTracker {
             p95_request_latency_ms: p95,
             p99_request_latency_ms: p99,
             requests_per_second: rps,
-            commands_per_second: rps, // Simplified - same as RPS for now
+            commands_per_second: rps,    // Simplified - same as RPS for now
             log_entries_per_second: rps, // Simplified - same as RPS for now
-            memory_usage_bytes: 0, // TODO: Implement memory tracking
+            memory_usage_bytes: 0,       // TODO: Implement memory tracking
         }
     }
 
@@ -577,20 +611,21 @@ impl StorageTracker {
     fn record_operation(&self, latency: Duration) {
         let latency_ms = latency.as_millis() as u64;
         self.operation_count.fetch_add(1, Ordering::Relaxed);
-        self.total_latency_ms.fetch_add(latency_ms, Ordering::Relaxed);
+        self.total_latency_ms
+            .fetch_add(latency_ms, Ordering::Relaxed);
     }
 
     fn get_stats(&self) -> StorageStats {
         let count = self.operation_count.load(Ordering::Relaxed);
         let total_latency = self.total_latency_ms.load(Ordering::Relaxed);
         let elapsed = self.last_reset.read().unwrap().elapsed();
-        
+
         let avg_latency = if count > 0 {
             total_latency as f64 / count as f64
         } else {
             0.0
         };
-        
+
         let ops_per_second = if elapsed.as_secs() > 0 {
             count as f64 / elapsed.as_secs() as f64
         } else {
@@ -659,7 +694,7 @@ impl ErrorTracker {
                 message: message.to_string(),
                 operation: operation.to_string(),
             };
-            
+
             recent_errors.push(error_sample);
             if recent_errors.len() > 100 {
                 recent_errors.remove(0);
@@ -670,7 +705,7 @@ impl ErrorTracker {
     fn get_stats(&self) -> ErrorRateMetrics {
         let total = self.total_operations.load(Ordering::Relaxed);
         let failed = self.failed_operations.load(Ordering::Relaxed);
-        
+
         let error_rate = if total > 0 {
             (failed as f64 / total as f64) * 100.0
         } else {
@@ -703,7 +738,7 @@ mod tests {
     fn test_metrics_collector_creation() {
         let collector = MetricsCollector::new(1);
         let metrics = collector.get_metrics();
-        
+
         assert_eq!(metrics.state.node_id, 1);
         assert_eq!(metrics.state.current_term, 0);
         assert_eq!(metrics.state.node_state, "Follower");
@@ -712,12 +747,12 @@ mod tests {
     #[test]
     fn test_performance_tracking() {
         let collector = MetricsCollector::new(1);
-        
+
         // Record some latencies
         collector.record_request_latency(Duration::from_millis(10));
         collector.record_request_latency(Duration::from_millis(20));
         collector.record_request_latency(Duration::from_millis(30));
-        
+
         let metrics = collector.get_metrics();
         assert!(metrics.performance.avg_request_latency_ms > 0.0);
         assert!(metrics.performance.requests_per_second >= 0.0);
@@ -726,10 +761,10 @@ mod tests {
     #[test]
     fn test_network_tracking() {
         let collector = MetricsCollector::new(1);
-        
+
         collector.record_bytes_sent(1024);
         collector.record_bytes_received(2048);
-        
+
         let metrics = collector.get_metrics();
         assert_eq!(metrics.network.bytes_sent, 1024);
         assert_eq!(metrics.network.bytes_received, 2048);
@@ -738,10 +773,10 @@ mod tests {
     #[test]
     fn test_storage_tracking() {
         let collector = MetricsCollector::new(1);
-        
+
         collector.record_storage_operation(Duration::from_millis(5));
         collector.record_storage_operation(Duration::from_millis(15));
-        
+
         let metrics = collector.get_metrics();
         assert!(metrics.storage.disk_latency_ms > 0.0);
         assert!(metrics.storage.disk_ops_per_second >= 0.0);
@@ -750,16 +785,16 @@ mod tests {
     #[test]
     fn test_error_tracking() {
         let collector = MetricsCollector::new(1);
-        
+
         // Record some successful operations
         collector.record_operation_success();
         collector.record_operation_success();
-        
+
         // Record some failures
         collector.record_operation_failure("NetworkError", "Connection timeout", "append_entries");
         collector.record_operation_failure("StorageError", "Disk full", "write_log");
         collector.record_operation_failure("NetworkError", "Connection refused", "heartbeat");
-        
+
         let metrics = collector.get_metrics();
         assert_eq!(metrics.errors.total_operations, 5);
         assert_eq!(metrics.errors.failed_operations, 3);
@@ -772,9 +807,9 @@ mod tests {
     #[test]
     fn test_raft_state_updates() {
         let collector = MetricsCollector::new(1);
-        
+
         collector.update_raft_state(5, Some(2), "Follower", 100, 95, 90, 3, 1000);
-        
+
         let metrics = collector.get_metrics();
         assert_eq!(metrics.state.current_term, 5);
         assert_eq!(metrics.state.current_leader, Some(2));
@@ -789,29 +824,32 @@ mod tests {
     #[test]
     fn test_replication_metrics() {
         let collector = MetricsCollector::new(1);
-        
+
         collector.update_replication_metrics(2, 5, 1234567890, 15.5);
         collector.update_replication_metrics(3, 10, 1234567891, 25.0);
         collector.record_replication_failure(2);
-        
+
         let metrics = collector.get_metrics();
         assert_eq!(metrics.replication.replication_lag.get(&2), Some(&5));
         assert_eq!(metrics.replication.replication_lag.get(&3), Some(&10));
         assert_eq!(metrics.replication.last_contact.get(&2), Some(&1234567890));
-        assert_eq!(metrics.replication.replication_latency_ms.get(&2), Some(&15.5));
+        assert_eq!(
+            metrics.replication.replication_latency_ms.get(&2),
+            Some(&15.5)
+        );
         assert_eq!(metrics.replication.replication_failures.get(&2), Some(&1));
     }
 
     #[test]
     fn test_network_metrics_enhanced() {
         let collector = MetricsCollector::new(1);
-        
+
         collector.record_bytes_sent(1024);
         collector.record_bytes_received(2048);
         collector.update_network_connections(5);
         collector.record_connection_failure();
         collector.update_network_rtt(2, 12.5);
-        
+
         let metrics = collector.get_metrics();
         assert_eq!(metrics.network.bytes_sent, 1024);
         assert_eq!(metrics.network.bytes_received, 2048);
@@ -823,10 +861,10 @@ mod tests {
     #[test]
     fn test_storage_metrics_enhanced() {
         let collector = MetricsCollector::new(1);
-        
+
         collector.update_storage_metrics(1000, 1024000, 5, 512000);
         collector.record_storage_operation(Duration::from_millis(5));
-        
+
         let metrics = collector.get_metrics();
         assert_eq!(metrics.storage.log_entries_count, 1000);
         assert_eq!(metrics.storage.log_size_bytes, 1024000);
@@ -838,16 +876,16 @@ mod tests {
     #[test]
     fn test_metrics_reset() {
         let collector = MetricsCollector::new(1);
-        
+
         collector.record_request_latency(Duration::from_millis(10));
         collector.record_bytes_sent(1024);
         collector.record_operation_failure("TestError", "Test message", "test_op");
-        
+
         collector.reset();
-        
+
         // Give some time for reset to take effect
         thread::sleep(Duration::from_millis(10));
-        
+
         let metrics = collector.get_metrics();
         // After reset, counters should be reset but we can't guarantee exact values
         // due to timing, so we just verify the reset method doesn't panic

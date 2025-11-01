@@ -20,8 +20,8 @@
 //! This module provides comprehensive logging for Raft operations and state changes,
 //! along with debugging tools for cluster state inspection.
 
-use crate::types::{NodeId, Term, LogIndex};
-use log::{debug, info, warn, error, trace};
+use crate::types::{LogIndex, NodeId, Term};
+use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
@@ -277,7 +277,7 @@ impl RaftLogger {
         // Add to buffer
         if let Ok(mut buffer) = self.log_buffer.lock() {
             buffer.push(log_entry.clone());
-            
+
             // Keep buffer size under limit
             if buffer.len() > self.config.max_buffer_size {
                 buffer.remove(0);
@@ -336,8 +336,11 @@ impl RaftLogger {
         let context_str = if entry.context.is_empty() {
             String::new()
         } else {
-            format!(" [{}]", 
-                entry.context.iter()
+            format!(
+                " [{}]",
+                entry
+                    .context
+                    .iter()
                     .map(|(k, v)| format!("{}={}", k, v))
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -368,9 +371,11 @@ impl RaftLogger {
                     let timestamp = chrono::DateTime::from_timestamp(entry.timestamp as i64, 0)
                         .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
                         .unwrap_or_else(|| entry.timestamp.to_string());
-                    
-                    format!("{} [{}] [Node {}] {:?} {:?}\n", 
-                        timestamp, entry.level, entry.node_id, entry.event, entry.context)
+
+                    format!(
+                        "{} [{}] [Node {}] {:?} {:?}\n",
+                        timestamp, entry.level, entry.node_id, entry.event, entry.context
+                    )
                 };
 
                 if let Err(e) = std::io::Write::write_all(file, log_line.as_bytes()) {
@@ -434,16 +439,23 @@ impl RaftLogger {
             term,
             reason: reason.to_string(),
         };
-        
+
         let mut context = HashMap::new();
         context.insert("transition".to_string(), format!("{} -> {}", from, to));
         context.insert("term".to_string(), term.to_string());
-        
+
         self.log_event(LogLevel::Info, event, context);
     }
 
     /// Log election event
-    pub fn log_election(&self, event_type: ElectionEventType, term: Term, candidate_id: NodeId, votes_received: usize, total_nodes: usize) {
+    pub fn log_election(
+        &self,
+        event_type: ElectionEventType,
+        term: Term,
+        candidate_id: NodeId,
+        votes_received: usize,
+        total_nodes: usize,
+    ) {
         let event = RaftEvent::Election {
             event_type: event_type.clone(),
             term,
@@ -451,17 +463,28 @@ impl RaftLogger {
             votes_received,
             total_nodes,
         };
-        
+
         let mut context = HashMap::new();
         context.insert("election_type".to_string(), format!("{:?}", event_type));
         context.insert("candidate".to_string(), candidate_id.to_string());
-        context.insert("votes".to_string(), format!("{}/{}", votes_received, total_nodes));
-        
+        context.insert(
+            "votes".to_string(),
+            format!("{}/{}", votes_received, total_nodes),
+        );
+
         self.log_event(LogLevel::Info, event, context);
     }
 
     /// Log replication event
-    pub fn log_replication(&self, event_type: ReplicationEventType, target_node: NodeId, log_index: LogIndex, term: Term, success: bool, error: Option<String>) {
+    pub fn log_replication(
+        &self,
+        event_type: ReplicationEventType,
+        target_node: NodeId,
+        log_index: LogIndex,
+        term: Term,
+        success: bool,
+        error: Option<String>,
+    ) {
         let event = RaftEvent::Replication {
             event_type: event_type.clone(),
             target_node,
@@ -470,19 +493,30 @@ impl RaftLogger {
             success,
             error: error.clone(),
         };
-        
+
         let mut context = HashMap::new();
         context.insert("replication_type".to_string(), format!("{:?}", event_type));
         context.insert("target".to_string(), target_node.to_string());
         context.insert("log_index".to_string(), log_index.to_string());
         context.insert("success".to_string(), success.to_string());
-        
-        let level = if success { LogLevel::Debug } else { LogLevel::Warn };
+
+        let level = if success {
+            LogLevel::Debug
+        } else {
+            LogLevel::Warn
+        };
         self.log_event(level, event, context);
     }
 
     /// Log client request
-    pub fn log_client_request(&self, request_id: &str, command: &str, processing_time_ms: u64, success: bool, error: Option<String>) {
+    pub fn log_client_request(
+        &self,
+        request_id: &str,
+        command: &str,
+        processing_time_ms: u64,
+        success: bool,
+        error: Option<String>,
+    ) {
         let event = RaftEvent::ClientRequest {
             request_id: request_id.to_string(),
             command: command.to_string(),
@@ -490,13 +524,17 @@ impl RaftLogger {
             success,
             error: error.clone(),
         };
-        
+
         let mut context = HashMap::new();
         context.insert("request_id".to_string(), request_id.to_string());
         context.insert("command".to_string(), command.to_string());
         context.insert("duration_ms".to_string(), processing_time_ms.to_string());
-        
-        let level = if success { LogLevel::Debug } else { LogLevel::Error };
+
+        let level = if success {
+            LogLevel::Debug
+        } else {
+            LogLevel::Error
+        };
         self.log_event(level, event, context);
     }
 
@@ -535,8 +573,14 @@ impl RaftLogger {
     }
 
     /// Log snapshot event
-    pub fn log_snapshot(&self, event_type: SnapshotEventType, last_included_index: LogIndex, 
-                       last_included_term: Term, size_bytes: u64, duration_ms: u64) {
+    pub fn log_snapshot(
+        &self,
+        event_type: SnapshotEventType,
+        last_included_index: LogIndex,
+        last_included_term: Term,
+        size_bytes: u64,
+        duration_ms: u64,
+    ) {
         let event = RaftEvent::Snapshot {
             event_type: event_type.clone(),
             last_included_index,
@@ -544,25 +588,35 @@ impl RaftLogger {
             size_bytes,
             duration_ms,
         };
-        
+
         let mut context = HashMap::new();
         context.insert("snapshot_type".to_string(), format!("{:?}", event_type));
         context.insert("last_index".to_string(), last_included_index.to_string());
         context.insert("last_term".to_string(), last_included_term.to_string());
-        context.insert("size_mb".to_string(), format!("{:.2}", size_bytes as f64 / 1024.0 / 1024.0));
+        context.insert(
+            "size_mb".to_string(),
+            format!("{:.2}", size_bytes as f64 / 1024.0 / 1024.0),
+        );
         context.insert("duration_ms".to_string(), duration_ms.to_string());
-        
+
         let level = match event_type {
             SnapshotEventType::Failed => LogLevel::Error,
             _ => LogLevel::Info,
         };
-        
+
         self.log_event(level, event, context);
     }
 
     /// Log network event
-    pub fn log_network(&self, event_type: NetworkEventType, peer_id: NodeId, message_type: &str, 
-                      bytes: u64, latency_ms: Option<u64>, error: Option<String>) {
+    pub fn log_network(
+        &self,
+        event_type: NetworkEventType,
+        peer_id: NodeId,
+        message_type: &str,
+        bytes: u64,
+        latency_ms: Option<u64>,
+        error: Option<String>,
+    ) {
         let event = RaftEvent::Network {
             event_type: event_type.clone(),
             peer_id,
@@ -571,24 +625,34 @@ impl RaftLogger {
             latency_ms,
             error: error.clone(),
         };
-        
+
         let mut context = HashMap::new();
         context.insert("network_type".to_string(), format!("{:?}", event_type));
         context.insert("peer".to_string(), peer_id.to_string());
         context.insert("message".to_string(), message_type.to_string());
         context.insert("bytes".to_string(), bytes.to_string());
-        
+
         if let Some(latency) = latency_ms {
             context.insert("latency_ms".to_string(), latency.to_string());
         }
-        
-        let level = if error.is_some() { LogLevel::Error } else { LogLevel::Debug };
+
+        let level = if error.is_some() {
+            LogLevel::Error
+        } else {
+            LogLevel::Debug
+        };
         self.log_event(level, event, context);
     }
 
     /// Log configuration change event
-    pub fn log_config_change(&self, event_type: ConfigChangeEventType, old_config: Vec<NodeId>, 
-                            new_config: Vec<NodeId>, success: bool, error: Option<String>) {
+    pub fn log_config_change(
+        &self,
+        event_type: ConfigChangeEventType,
+        old_config: Vec<NodeId>,
+        new_config: Vec<NodeId>,
+        success: bool,
+        error: Option<String>,
+    ) {
         let event = RaftEvent::ConfigChange {
             event_type: event_type.clone(),
             old_config: old_config.clone(),
@@ -596,26 +660,45 @@ impl RaftLogger {
             success,
             error: error.clone(),
         };
-        
+
         let mut context = HashMap::new();
         context.insert("change_type".to_string(), format!("{:?}", event_type));
         context.insert("old_nodes".to_string(), format!("{:?}", old_config));
         context.insert("new_nodes".to_string(), format!("{:?}", new_config));
         context.insert("success".to_string(), success.to_string());
-        
-        let level = if success { LogLevel::Info } else { LogLevel::Error };
+
+        let level = if success {
+            LogLevel::Info
+        } else {
+            LogLevel::Error
+        };
         self.log_event(level, event, context);
     }
 
     /// Log performance metrics periodically
     pub fn log_performance_metrics(&self, metrics: &PerformanceMetrics) {
         let mut context = HashMap::new();
-        context.insert("avg_latency_ms".to_string(), format!("{:.2}", metrics.avg_request_latency_ms));
-        context.insert("p95_latency_ms".to_string(), format!("{:.2}", metrics.p95_request_latency_ms));
-        context.insert("p99_latency_ms".to_string(), format!("{:.2}", metrics.p99_request_latency_ms));
-        context.insert("rps".to_string(), format!("{:.2}", metrics.requests_per_second));
-        context.insert("memory_mb".to_string(), format!("{:.2}", metrics.memory_usage_bytes as f64 / 1024.0 / 1024.0));
-        
+        context.insert(
+            "avg_latency_ms".to_string(),
+            format!("{:.2}", metrics.avg_request_latency_ms),
+        );
+        context.insert(
+            "p95_latency_ms".to_string(),
+            format!("{:.2}", metrics.p95_request_latency_ms),
+        );
+        context.insert(
+            "p99_latency_ms".to_string(),
+            format!("{:.2}", metrics.p99_request_latency_ms),
+        );
+        context.insert(
+            "rps".to_string(),
+            format!("{:.2}", metrics.requests_per_second),
+        );
+        context.insert(
+            "memory_mb".to_string(),
+            format!("{:.2}", metrics.memory_usage_bytes as f64 / 1024.0 / 1024.0),
+        );
+
         let event = RaftEvent::ClientRequest {
             request_id: "performance_metrics".to_string(),
             command: "METRICS".to_string(),
@@ -623,7 +706,7 @@ impl RaftLogger {
             success: true,
             error: None,
         };
-        
+
         self.log_event(LogLevel::Info, event, context);
     }
 
@@ -631,7 +714,7 @@ impl RaftLogger {
     pub fn get_log_stats(&self) -> LogStats {
         if let Ok(buffer) = self.log_buffer.lock() {
             let mut stats = LogStats::default();
-            
+
             for entry in buffer.iter() {
                 stats.total_entries += 1;
                 match entry.level {
@@ -642,14 +725,14 @@ impl RaftLogger {
                     LogLevel::Error => stats.error_count += 1,
                 }
             }
-            
+
             stats.buffer_size = buffer.len();
             stats.max_buffer_size = self.config.max_buffer_size;
-            
+
             if let Ok(file_size) = self.current_log_file_size.lock() {
                 stats.current_file_size = *file_size;
             }
-            
+
             stats
         } else {
             LogStats::default()
@@ -723,7 +806,8 @@ impl RaftDebugger {
     }
 
     /// Format cluster state for debugging
-    pub fn format_cluster_state(&self, 
+    pub fn format_cluster_state(
+        &self,
         current_term: Term,
         current_leader: Option<NodeId>,
         node_state: &str,
@@ -758,22 +842,26 @@ impl RaftDebugger {
     }
 
     /// Format replication status for debugging
-    pub fn format_replication_status(&self, replication_status: &HashMap<NodeId, (LogIndex, bool)>) -> String {
+    pub fn format_replication_status(
+        &self,
+        replication_status: &HashMap<NodeId, (LogIndex, bool)>,
+    ) -> String {
         let mut output = format!("=== Replication Status (Node {}) ===\n", self.node_id);
-        
+
         for (node_id, (matched_index, is_active)) in replication_status {
             output.push_str(&format!(
                 "Node {}: matched_index={}, active={}\n",
                 node_id, matched_index, is_active
             ));
         }
-        
+
         output.push_str("=====================================");
         output
     }
 
     /// Create a debug snapshot of current state
-    pub fn create_debug_snapshot(&self, 
+    pub fn create_debug_snapshot(
+        &self,
         current_term: Term,
         current_leader: Option<NodeId>,
         node_state: &str,
@@ -807,7 +895,7 @@ impl RaftDebugger {
         // Store the snapshot
         if let Ok(mut snapshots) = self.debug_snapshots.lock() {
             snapshots.push(snapshot.clone());
-            
+
             // Keep only the most recent snapshots
             if snapshots.len() > self.config.max_debug_snapshots {
                 snapshots.remove(0);
@@ -818,7 +906,8 @@ impl RaftDebugger {
     }
 
     /// Record election debug information
-    pub fn record_election_debug(&self, 
+    pub fn record_election_debug(
+        &self,
         election_term: Term,
         candidate_id: NodeId,
         votes_requested: Vec<NodeId>,
@@ -849,7 +938,7 @@ impl RaftDebugger {
 
         if let Ok(mut election_info) = self.election_debug_info.lock() {
             election_info.push(debug_info);
-            
+
             // Keep only recent election info (last 50 elections)
             if election_info.len() > 50 {
                 election_info.remove(0);
@@ -858,7 +947,8 @@ impl RaftDebugger {
     }
 
     /// Record replication debug information
-    pub fn record_replication_debug(&self,
+    pub fn record_replication_debug(
+        &self,
         target_node: NodeId,
         log_index: LogIndex,
         term: Term,
@@ -889,7 +979,7 @@ impl RaftDebugger {
         if let Ok(mut replication_info) = self.replication_debug_info.lock() {
             let node_info = replication_info.entry(target_node).or_insert_with(Vec::new);
             node_info.push(debug_info);
-            
+
             // Keep only recent replication info per node (last 100 operations)
             if node_info.len() > 100 {
                 node_info.remove(0);
@@ -912,7 +1002,11 @@ impl RaftDebugger {
     }
 
     /// Get replication debug information for a specific node
-    pub fn get_replication_debug_info(&self, node_id: NodeId, count: usize) -> Vec<ReplicationDebugInfo> {
+    pub fn get_replication_debug_info(
+        &self,
+        node_id: NodeId,
+        count: usize,
+    ) -> Vec<ReplicationDebugInfo> {
         if let Ok(replication_info) = self.replication_debug_info.lock() {
             if let Some(node_info) = replication_info.get(&node_id) {
                 let start = if node_info.len() > count {
@@ -959,7 +1053,7 @@ impl RaftDebugger {
     pub fn generate_debug_report(&self) -> DebugReport {
         let snapshots = self.get_debug_snapshots();
         let recent_elections = self.get_election_debug_info(10);
-        
+
         let mut replication_summary = HashMap::new();
         if let Ok(replication_info) = self.replication_debug_info.lock() {
             for (node_id, info_list) in replication_info.iter() {
@@ -1016,10 +1110,15 @@ pub struct DebugSnapshot {
 
 impl fmt::Display for DebugSnapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, 
+        write!(
+            f,
             "DebugSnapshot[Node {}, Term {}, State {}, Leader {:?}, LogIndex {}, CommitIndex {}]",
-            self.node_id, self.current_term, self.node_state, 
-            self.current_leader, self.last_log_index, self.commit_index
+            self.node_id,
+            self.current_term,
+            self.node_state,
+            self.current_leader,
+            self.last_log_index,
+            self.commit_index
         )
     }
 }
@@ -1100,8 +1199,12 @@ impl fmt::Display for DebugReport {
         writeln!(f, "Generated at: {}", self.generated_at)?;
         writeln!(f, "Debug snapshots: {}", self.snapshots.len())?;
         writeln!(f, "Recent elections: {}", self.recent_elections.len())?;
-        writeln!(f, "Replication info for {} nodes", self.replication_summary.len())?;
-        
+        writeln!(
+            f,
+            "Replication info for {} nodes",
+            self.replication_summary.len()
+        )?;
+
         if let Some(latest_snapshot) = self.snapshots.last() {
             writeln!(f, "\nLatest State:")?;
             writeln!(f, "  Term: {}", latest_snapshot.current_term)?;
@@ -1110,17 +1213,20 @@ impl fmt::Display for DebugReport {
             writeln!(f, "  Log Index: {}", latest_snapshot.last_log_index)?;
             writeln!(f, "  Commit Index: {}", latest_snapshot.commit_index)?;
         }
-        
+
         if let Some(latest_election) = self.recent_elections.last() {
             writeln!(f, "\nLatest Election:")?;
             writeln!(f, "  Term: {}", latest_election.election_term)?;
             writeln!(f, "  Candidate: {}", latest_election.candidate_id)?;
             writeln!(f, "  Result: {:?}", latest_election.election_result)?;
-            writeln!(f, "  Votes: {}/{}", 
-                latest_election.votes_received.len(), 
-                latest_election.votes_requested.len())?;
+            writeln!(
+                f,
+                "  Votes: {}/{}",
+                latest_election.votes_received.len(),
+                latest_election.votes_requested.len()
+            )?;
         }
-        
+
         writeln!(f, "=====================================")
     }
 }
@@ -1217,7 +1323,13 @@ impl PerformanceLogger {
     }
 
     /// Record an operation timing
-    pub fn record_operation(&self, operation: &str, duration_ms: u64, success: bool, context: HashMap<String, String>) {
+    pub fn record_operation(
+        &self,
+        operation: &str,
+        duration_ms: u64,
+        success: bool,
+        context: HashMap<String, String>,
+    ) {
         if !self.config.enabled {
             return;
         }
@@ -1238,7 +1350,7 @@ impl PerformanceLogger {
 
         if let Ok(mut buffer) = self.metrics_buffer.lock() {
             buffer.push(metric_entry);
-            
+
             // Keep buffer size under limit
             if buffer.len() > self.config.max_metrics_buffer {
                 buffer.remove(0);
@@ -1254,9 +1366,11 @@ impl PerformanceLogger {
         };
 
         if let Ok(mut timings) = self.operation_timings.lock() {
-            let operation_timings = timings.entry(operation.to_string()).or_insert_with(Vec::new);
+            let operation_timings = timings
+                .entry(operation.to_string())
+                .or_insert_with(Vec::new);
             operation_timings.push(timing);
-            
+
             // Keep timing history under limit
             if operation_timings.len() > self.config.max_operation_timings {
                 operation_timings.remove(0);
@@ -1290,10 +1404,11 @@ impl PerformanceLogger {
 
         if let Ok(timings) = self.operation_timings.lock() {
             let one_minute_ago = timestamp.saturating_sub(60);
-            
+
             for (operation, timing_list) in timings.iter() {
                 // Filter to last minute
-                let recent_timings: Vec<_> = timing_list.iter()
+                let recent_timings: Vec<_> = timing_list
+                    .iter()
                     .filter(|t| t.timestamp >= one_minute_ago)
                     .collect();
 
@@ -1327,7 +1442,7 @@ impl PerformanceLogger {
         // Store periodic metrics
         if let Ok(mut periodic) = self.periodic_metrics.lock() {
             periodic.push(metrics.clone());
-            
+
             // Keep only recent periodic metrics (last 24 hours)
             let one_day_ago = timestamp.saturating_sub(24 * 3600);
             periodic.retain(|m| m.timestamp >= one_day_ago);
@@ -1347,10 +1462,10 @@ impl PerformanceLogger {
                 let total_operations = timing_list.len();
                 let successful_operations = timing_list.iter().filter(|t| t.success).count();
                 let total_duration: u64 = timing_list.iter().map(|t| t.duration_ms).sum();
-                
+
                 let mut durations: Vec<u64> = timing_list.iter().map(|t| t.duration_ms).collect();
                 durations.sort_unstable();
-                
+
                 let p50 = durations[durations.len() / 2];
                 let p95 = durations[(durations.len() as f64 * 0.95) as usize];
                 let p99 = durations[(durations.len() as f64 * 0.99) as usize];
@@ -1375,7 +1490,7 @@ impl PerformanceLogger {
     /// Get all operation statistics
     pub fn get_all_operation_stats(&self) -> HashMap<String, OperationStats> {
         let mut stats = HashMap::new();
-        
+
         if let Ok(timings) = self.operation_timings.lock() {
             for operation in timings.keys() {
                 if let Some(operation_stats) = self.get_operation_stats(operation) {
@@ -1383,7 +1498,7 @@ impl PerformanceLogger {
                 }
             }
         }
-        
+
         stats
     }
 
@@ -1405,7 +1520,12 @@ impl PerformanceLogger {
     pub fn cleanup_old_metrics(&self) {
         if let Ok(mut last_cleanup) = self.last_cleanup.lock() {
             let now = SystemTime::now();
-            if now.duration_since(*last_cleanup).unwrap_or_default().as_secs() < self.config.cleanup_interval_secs {
+            if now
+                .duration_since(*last_cleanup)
+                .unwrap_or_default()
+                .as_secs()
+                < self.config.cleanup_interval_secs
+            {
                 return;
             }
             *last_cleanup = now;
@@ -1413,7 +1533,10 @@ impl PerformanceLogger {
 
         let cutoff_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs().saturating_sub(self.config.cleanup_interval_secs))
+            .map(|d| {
+                d.as_secs()
+                    .saturating_sub(self.config.cleanup_interval_secs)
+            })
             .unwrap_or(0);
 
         // Cleanup metrics buffer
@@ -1527,12 +1650,17 @@ mod tests {
     fn test_log_state_transition() {
         let logger = RaftLogger::new(1);
         logger.log_state_transition("Follower", "Candidate", 5, "Election timeout");
-        
+
         let logs = logger.get_all_logs();
         assert_eq!(logs.len(), 1);
-        
+
         match &logs[0].event {
-            RaftEvent::StateTransition { from, to, term, reason } => {
+            RaftEvent::StateTransition {
+                from,
+                to,
+                term,
+                reason,
+            } => {
                 assert_eq!(from, "Follower");
                 assert_eq!(to, "Candidate");
                 assert_eq!(*term, 5);
@@ -1546,12 +1674,18 @@ mod tests {
     fn test_log_election() {
         let logger = RaftLogger::new(1);
         logger.log_election(ElectionEventType::Won, 3, 1, 3, 5);
-        
+
         let logs = logger.get_all_logs();
         assert_eq!(logs.len(), 1);
-        
+
         match &logs[0].event {
-            RaftEvent::Election { event_type, term, candidate_id, votes_received, total_nodes } => {
+            RaftEvent::Election {
+                event_type,
+                term,
+                candidate_id,
+                votes_received,
+                total_nodes,
+            } => {
                 assert!(matches!(event_type, ElectionEventType::Won));
                 assert_eq!(*term, 3);
                 assert_eq!(*candidate_id, 1);
@@ -1566,15 +1700,15 @@ mod tests {
     fn test_log_buffer_limit() {
         let mut logger = RaftLogger::new(1);
         logger.max_buffer_size = 3; // Set small limit for testing
-        
+
         // Add more logs than the limit
         for i in 0..5 {
             logger.log_state_transition("Follower", "Candidate", i, "Test");
         }
-        
+
         let logs = logger.get_all_logs();
         assert_eq!(logs.len(), 3); // Should be limited to max_buffer_size
-        
+
         // Should contain the last 3 entries
         match &logs[0].event {
             RaftEvent::StateTransition { term, .. } => assert_eq!(*term, 2),
@@ -1585,10 +1719,8 @@ mod tests {
     #[test]
     fn test_debugger_format_cluster_state() {
         let debugger = RaftDebugger::new(1);
-        let state = debugger.format_cluster_state(
-            5, Some(2), "Follower", 100, 95, 90, &[1, 2, 3]
-        );
-        
+        let state = debugger.format_cluster_state(5, Some(2), "Follower", 100, 95, 90, &[1, 2, 3]);
+
         assert!(state.contains("Node 1"));
         assert!(state.contains("Current Term: 5"));
         assert!(state.contains("Current Leader: Some(2)"));
@@ -1603,12 +1735,19 @@ mod tests {
         let mut replication_status = HashMap::new();
         replication_status.insert(2, (95, true));
         replication_status.insert(3, (90, false));
-        
+
         let snapshot = debugger.create_debug_snapshot(
-            5, Some(2), "Follower", 100, 95, 90, &[1, 2, 3], 
-            &replication_status, &[]
+            5,
+            Some(2),
+            "Follower",
+            100,
+            95,
+            90,
+            &[1, 2, 3],
+            &replication_status,
+            &[],
         );
-        
+
         assert_eq!(snapshot.node_id, 1);
         assert_eq!(snapshot.current_term, 5);
         assert_eq!(snapshot.current_leader, Some(2));

@@ -24,9 +24,9 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::placeholder_types::{RespCommand, CommandType, RespData};
 use crate::error::{RaftError, RaftResult};
-use crate::types::{RedisCommand, ClientRequest, ClientResponse, RequestId, ConsistencyLevel};
+use crate::placeholder_types::{CommandType, RespCommand, RespData};
+use crate::types::{ClientRequest, ClientResponse, ConsistencyLevel, RedisCommand, RequestId};
 
 /// Serialization format for Redis commands in Raft log entries
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,13 +60,11 @@ impl CommandSerializer {
         let serialized_cmd: SerializedCommand = bincode::deserialize(data)
             .map_err(|e| RaftError::invalid_request(format!("Deserialization failed: {}", e)))?;
 
-        let command_type = CommandType::from_str(&serialized_cmd.command)
-            .map_err(|_| RaftError::invalid_request(format!("Invalid command: {}", serialized_cmd.command)))?;
+        let command_type = CommandType::from_str(&serialized_cmd.command).map_err(|_| {
+            RaftError::invalid_request(format!("Invalid command: {}", serialized_cmd.command))
+        })?;
 
-        let args = serialized_cmd.args
-            .into_iter()
-            .map(Bytes::from)
-            .collect();
+        let args = serialized_cmd.args.into_iter().map(Bytes::from).collect();
 
         Ok(RespCommand::new(command_type, args))
     }
@@ -88,10 +86,7 @@ impl CommandSerializer {
         let serialized_cmd: SerializedCommand = bincode::deserialize(data)
             .map_err(|e| RaftError::invalid_request(format!("Deserialization failed: {}", e)))?;
 
-        let args = serialized_cmd.args
-            .into_iter()
-            .map(Bytes::from)
-            .collect();
+        let args = serialized_cmd.args.into_iter().map(Bytes::from).collect();
 
         Ok(RedisCommand::new(serialized_cmd.command, args))
     }
@@ -100,16 +95,18 @@ impl CommandSerializer {
     pub fn resp_data_to_redis_command(data: &RespData) -> RaftResult<RedisCommand> {
         match data {
             RespData::Array(Some(ref array)) if !array.is_empty() => {
-                let command_name = array[0].as_string().ok_or_else(|| {
-                    RaftError::invalid_request("Command name must be a string")
-                })?;
+                let command_name = array[0]
+                    .as_string()
+                    .ok_or_else(|| RaftError::invalid_request("Command name must be a string"))?;
 
                 let args = array
                     .iter()
                     .skip(1)
                     .map(|data| {
                         data.as_bytes().ok_or_else(|| {
-                            RaftError::invalid_request("Command argument must be convertible to bytes")
+                            RaftError::invalid_request(
+                                "Command argument must be convertible to bytes",
+                            )
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -130,7 +127,7 @@ impl CommandSerializer {
     /// Convert RedisCommand to RespData for response
     pub fn redis_command_to_resp_data(cmd: &RedisCommand) -> RespData {
         let mut parts = vec![RespData::BulkString(Some(cmd.command.clone().into()))];
-        
+
         for arg in &cmd.args {
             parts.push(RespData::BulkString(Some(arg.clone())));
         }
@@ -141,7 +138,7 @@ impl CommandSerializer {
     /// Create a ClientRequest from RespData with default consistency level
     pub fn create_client_request(data: &RespData) -> RaftResult<ClientRequest> {
         let redis_command = Self::resp_data_to_redis_command(data)?;
-        
+
         Ok(ClientRequest {
             id: RequestId::new(),
             command: redis_command,
@@ -155,7 +152,7 @@ impl CommandSerializer {
         consistency: ConsistencyLevel,
     ) -> RaftResult<ClientRequest> {
         let redis_command = Self::resp_data_to_redis_command(data)?;
-        
+
         Ok(ClientRequest {
             id: RequestId::new(),
             command: redis_command,
@@ -165,26 +162,22 @@ impl CommandSerializer {
 
     /// Serialize ClientRequest for network transmission
     pub fn serialize_client_request(request: &ClientRequest) -> RaftResult<Vec<u8>> {
-        serde_json::to_vec(request)
-            .map_err(RaftError::Serialization)
+        serde_json::to_vec(request).map_err(RaftError::Serialization)
     }
 
     /// Deserialize ClientRequest from network data
     pub fn deserialize_client_request(data: &[u8]) -> RaftResult<ClientRequest> {
-        serde_json::from_slice(data)
-            .map_err(RaftError::Serialization)
+        serde_json::from_slice(data).map_err(RaftError::Serialization)
     }
 
     /// Serialize ClientResponse for network transmission
     pub fn serialize_client_response(response: &ClientResponse) -> RaftResult<Vec<u8>> {
-        serde_json::to_vec(response)
-            .map_err(RaftError::Serialization)
+        serde_json::to_vec(response).map_err(RaftError::Serialization)
     }
 
     /// Deserialize ClientResponse from network data
     pub fn deserialize_client_response(data: &[u8]) -> RaftResult<ClientResponse> {
-        serde_json::from_slice(data)
-            .map_err(RaftError::Serialization)
+        serde_json::from_slice(data).map_err(RaftError::Serialization)
     }
 
     /// Estimate serialized size of a command (for batching optimization)
@@ -196,14 +189,44 @@ impl CommandSerializer {
 
     /// Check if command is read-only (for optimization purposes)
     pub fn is_read_only_command(cmd: &RedisCommand) -> bool {
-        matches!(cmd.command.to_uppercase().as_str(), 
-            "GET" | "MGET" | "EXISTS" | "TTL" | "PTTL" | "TYPE" | 
-            "STRLEN" | "GETRANGE" | "GETBIT" | "LLEN" | "LINDEX" | 
-            "LRANGE" | "SCARD" | "SISMEMBER" | "SMEMBERS" | "SRANDMEMBER" |
-            "ZCARD" | "ZCOUNT" | "ZRANGE" | "ZRANGEBYSCORE" | "ZRANK" |
-            "ZREVRANGE" | "ZREVRANGEBYSCORE" | "ZREVRANK" | "ZSCORE" |
-            "HGET" | "HMGET" | "HGETALL" | "HEXISTS" | "HKEYS" | "HVALS" |
-            "HLEN" | "HSTRLEN" | "PING" | "ECHO" | "INFO"
+        matches!(
+            cmd.command.to_uppercase().as_str(),
+            "GET"
+                | "MGET"
+                | "EXISTS"
+                | "TTL"
+                | "PTTL"
+                | "TYPE"
+                | "STRLEN"
+                | "GETRANGE"
+                | "GETBIT"
+                | "LLEN"
+                | "LINDEX"
+                | "LRANGE"
+                | "SCARD"
+                | "SISMEMBER"
+                | "SMEMBERS"
+                | "SRANDMEMBER"
+                | "ZCARD"
+                | "ZCOUNT"
+                | "ZRANGE"
+                | "ZRANGEBYSCORE"
+                | "ZRANK"
+                | "ZREVRANGE"
+                | "ZREVRANGEBYSCORE"
+                | "ZREVRANK"
+                | "ZSCORE"
+                | "HGET"
+                | "HMGET"
+                | "HGETALL"
+                | "HEXISTS"
+                | "HKEYS"
+                | "HVALS"
+                | "HLEN"
+                | "HSTRLEN"
+                | "PING"
+                | "ECHO"
+                | "INFO"
         )
     }
 

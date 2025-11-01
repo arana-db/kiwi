@@ -17,12 +17,14 @@
 
 //! Redis protocol integration with Raft consensus
 
-use crate::consistency_handler::{ConsistencyHandler, ConsistencyConfig};
+use crate::consistency_handler::{ConsistencyConfig, ConsistencyHandler};
 use crate::error::{RaftError, RaftResult};
 use crate::node::{RaftNode, RaftNodeInterface};
-use crate::types::{ClientRequest, ClientResponse, ConsistencyLevel, RedisCommand, RequestId, NodeId};
-use bytes::Bytes;
 use crate::placeholder_types::RespData;
+use crate::types::{
+    ClientRequest, ClientResponse, ConsistencyLevel, NodeId, RedisCommand, RequestId,
+};
+use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,9 +36,9 @@ enum ReadRoutingDecision {
     /// Redirect to the specified leader
     RedirectToLeader { leader_id: NodeId },
     /// Reject the request with optional alternative
-    Rejected { 
-        reason: String, 
-        alternative: Option<ConsistencyLevel> 
+    Rejected {
+        reason: String,
+        alternative: Option<ConsistencyLevel>,
     },
     /// Request timed out
     Timeout { reason: String },
@@ -90,15 +92,16 @@ impl RaftRedisHandler {
 
     /// Handle a Redis command with explicit consistency level
     pub async fn handle_command_with_consistency(
-        &self, 
-        command: RedisCommand, 
-        consistency: Option<ConsistencyLevel>
+        &self,
+        command: RedisCommand,
+        consistency: Option<ConsistencyLevel>,
     ) -> RaftResult<RespData> {
         let cmd_name = command.command.to_lowercase();
-        
+
         // Determine the appropriate consistency level
         let effective_consistency = consistency.unwrap_or_else(|| {
-            self.consistency_handler.get_command_consistency(&cmd_name, None)
+            self.consistency_handler
+                .get_command_consistency(&cmd_name, None)
         });
 
         if self.is_write_command(&cmd_name) {
@@ -106,7 +109,8 @@ impl RaftRedisHandler {
             self.handle_write_command(command).await
         } else {
             // Read commands use the specified consistency level
-            self.handle_read_command_with_consistency(command, effective_consistency).await
+            self.handle_read_command_with_consistency(command, effective_consistency)
+                .await
         }
     }
 
@@ -150,56 +154,73 @@ impl RaftRedisHandler {
             }
             Err(e) => {
                 log::error!("Raft consensus failed: {}", e);
-                Ok(RespData::Error(format!("ERR consensus failed: {}", e).into()))
+                Ok(RespData::Error(
+                    format!("ERR consensus failed: {}", e).into(),
+                ))
             }
         }
     }
 
     /// Handle read commands with appropriate consistency level
     pub async fn handle_read_command(&self, command: RedisCommand) -> RaftResult<RespData> {
-        self.handle_read_command_with_consistency(command, self.read_consistency).await
+        self.handle_read_command_with_consistency(command, self.read_consistency)
+            .await
     }
 
     /// Handle read commands with explicit consistency level
     pub async fn handle_read_command_with_consistency(
-        &self, 
-        command: RedisCommand, 
-        consistency: ConsistencyLevel
+        &self,
+        command: RedisCommand,
+        consistency: ConsistencyLevel,
     ) -> RaftResult<RespData> {
-        log::debug!("Handling read command: {} with consistency: {:?}", 
-                   command.command, consistency);
+        log::debug!(
+            "Handling read command: {} with consistency: {:?}",
+            command.command,
+            consistency
+        );
 
         // Route the read request based on consistency level and cluster state
-        match self.route_read_request(command.clone(), consistency).await? {
+        match self
+            .route_read_request(command.clone(), consistency)
+            .await?
+        {
             ReadRoutingDecision::ServeLocally => {
                 self.serve_read_locally(command, consistency).await
             }
             ReadRoutingDecision::RedirectToLeader { leader_id } => {
                 self.redirect_read_to_leader(command, leader_id).await
             }
-            ReadRoutingDecision::Rejected { reason, alternative } => {
+            ReadRoutingDecision::Rejected {
+                reason,
+                alternative,
+            } => {
                 if let Some(alt_consistency) = alternative {
-                    log::info!("Retrying read with alternative consistency: {:?}", alt_consistency);
-                    self.handle_read_command_with_consistency(command, alt_consistency).await
+                    log::info!(
+                        "Retrying read with alternative consistency: {:?}",
+                        alt_consistency
+                    );
+                    self.handle_read_command_with_consistency(command, alt_consistency)
+                        .await
                 } else {
                     Err(RaftError::consistency(reason))
                 }
             }
-            ReadRoutingDecision::Timeout { reason } => {
-                Err(RaftError::timeout(reason))
-            }
+            ReadRoutingDecision::Timeout { reason } => Err(RaftError::timeout(reason)),
         }
     }
-    
+
     /// Route read request based on consistency level and cluster state
     async fn route_read_request(
-        &self, 
-        command: RedisCommand, 
-        consistency: ConsistencyLevel
+        &self,
+        command: RedisCommand,
+        consistency: ConsistencyLevel,
     ) -> RaftResult<ReadRoutingDecision> {
         // Validate the consistency request
-        let validation = self.consistency_handler.validate_consistency_request(consistency).await?;
-        
+        let validation = self
+            .consistency_handler
+            .validate_consistency_request(consistency)
+            .await?;
+
         match validation {
             crate::consistency_handler::ConsistencyValidation::Accepted => {
                 // Check if we can serve this read locally
@@ -207,7 +228,10 @@ impl RaftRedisHandler {
                     Ok(ReadRoutingDecision::ServeLocally)
                 } else {
                     // Need to redirect to leader
-                    let leader_id = self.raft_node.get_leader_id().await
+                    let leader_id = self
+                        .raft_node
+                        .get_leader_id()
+                        .await
                         .ok_or_else(|| RaftError::consistency("No leader available"))?;
                     Ok(ReadRoutingDecision::RedirectToLeader { leader_id })
                 }
@@ -215,16 +239,20 @@ impl RaftRedisHandler {
             crate::consistency_handler::ConsistencyValidation::RequiresRedirect { leader_id } => {
                 Ok(ReadRoutingDecision::RedirectToLeader { leader_id })
             }
-            crate::consistency_handler::ConsistencyValidation::Rejected { reason, alternative } => {
-                Ok(ReadRoutingDecision::Rejected { reason, alternative })
-            }
+            crate::consistency_handler::ConsistencyValidation::Rejected {
+                reason,
+                alternative,
+            } => Ok(ReadRoutingDecision::Rejected {
+                reason,
+                alternative,
+            }),
             crate::consistency_handler::ConsistencyValidation::Degraded { reason } => {
                 log::warn!("Serving read with degraded performance: {}", reason);
                 Ok(ReadRoutingDecision::ServeLocally)
             }
         }
     }
-    
+
     /// Check if we can serve a read request locally
     async fn can_serve_read_locally(&self, consistency: ConsistencyLevel) -> RaftResult<bool> {
         match consistency {
@@ -233,7 +261,7 @@ impl RaftRedisHandler {
                 if !self.raft_node.is_leader().await {
                     return Ok(false);
                 }
-                
+
                 // Check if we can confirm leadership with majority
                 let can_confirm = self.consistency_handler.can_reach_majority().await?;
                 Ok(can_confirm)
@@ -241,58 +269,75 @@ impl RaftRedisHandler {
             ConsistencyLevel::Eventual => {
                 // Eventual reads can be served locally if follower reads are allowed
                 // or if we're the leader
-                Ok(self.read_consistency == ConsistencyLevel::Eventual || 
-                   self.raft_node.is_leader().await)
+                Ok(self.read_consistency == ConsistencyLevel::Eventual
+                    || self.raft_node.is_leader().await)
             }
         }
     }
-    
+
     /// Serve read request locally after consistency checks
     async fn serve_read_locally(
-        &self, 
-        command: RedisCommand, 
-        consistency: ConsistencyLevel
+        &self,
+        command: RedisCommand,
+        consistency: ConsistencyLevel,
     ) -> RaftResult<RespData> {
         // Ensure consistency requirements are met
         let start_time = std::time::Instant::now();
-        
-        match self.consistency_handler.ensure_read_consistency(consistency).await {
+
+        match self
+            .consistency_handler
+            .ensure_read_consistency(consistency)
+            .await
+        {
             Ok(()) => {
-                log::debug!("Consistency ensured in {:?}, executing read locally", start_time.elapsed());
+                log::debug!(
+                    "Consistency ensured in {:?}, executing read locally",
+                    start_time.elapsed()
+                );
                 self.execute_local_read(command).await
             }
             Err(RaftError::NotLeader { leader_id }) => {
                 // Leadership changed during consistency check, redirect
-                self.redirect_read_to_leader(command, leader_id.unwrap_or(0)).await
+                self.redirect_read_to_leader(command, leader_id.unwrap_or(0))
+                    .await
             }
             Err(e) => Err(e),
         }
     }
-    
+
     /// Redirect read request to the leader
     async fn redirect_read_to_leader(
-        &self, 
-        command: RedisCommand, 
-        leader_id: NodeId
+        &self,
+        command: RedisCommand,
+        leader_id: NodeId,
     ) -> RaftResult<RespData> {
-        log::debug!("Redirecting read command {} to leader {}", command.command, leader_id);
-        
+        log::debug!(
+            "Redirecting read command {} to leader {}",
+            command.command,
+            leader_id
+        );
+
         // In a full implementation, this would forward the request to the leader
         // For now, we'll return a Redis MOVED error to indicate redirection
         let leader_endpoint = self.get_leader_endpoint(leader_id).await?;
-        
+
         Ok(RespData::Error(
-            format!("MOVED {} {}", self.get_slot_for_key(&command), leader_endpoint).into()
+            format!(
+                "MOVED {} {}",
+                self.get_slot_for_key(&command),
+                leader_endpoint
+            )
+            .into(),
         ))
     }
-    
+
     /// Get endpoint for a given node ID
     async fn get_leader_endpoint(&self, leader_id: NodeId) -> RaftResult<String> {
         // In a full implementation, this would look up the leader's endpoint
         // from the cluster configuration
         Ok(format!("127.0.0.1:{}", 7379 + leader_id - 1))
     }
-    
+
     /// Get Redis slot for a key (simplified implementation)
     fn get_slot_for_key(&self, command: &RedisCommand) -> u16 {
         // Simplified slot calculation - in a real implementation,
@@ -305,11 +350,11 @@ impl RaftRedisHandler {
             0
         }
     }
-    
+
     /// Perform leader confirmation with timeout
     pub async fn confirm_leadership_with_timeout(&self, timeout: Duration) -> RaftResult<bool> {
         let start_time = std::time::Instant::now();
-        
+
         while start_time.elapsed() < timeout {
             if self.raft_node.is_leader().await {
                 // Double-check by ensuring we can reach majority
@@ -317,34 +362,34 @@ impl RaftRedisHandler {
                     return Ok(true);
                 }
             }
-            
+
             // Brief sleep before retry
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        
+
         Ok(false)
     }
-    
+
     /// Check if a read command can be optimized for local execution
     pub fn can_optimize_read_locally(&self, command: &RedisCommand) -> bool {
         // Commands that are safe to read from local state with eventual consistency
         match command.command.to_lowercase().as_str() {
             // Monitoring commands
             "ping" | "echo" | "time" | "info" => true,
-            
+
             // Scan operations (can tolerate staleness)
             "keys" | "scan" | "hscan" | "sscan" | "zscan" => true,
-            
+
             // Administrative commands
             "config" | "client" | "debug" => true,
-            
+
             // Commands that don't depend on exact state
             "randomkey" | "dbsize" => true,
-            
+
             _ => false,
         }
     }
-    
+
     /// Route read based on command characteristics and cluster state
     pub async fn smart_route_read(
         &self,
@@ -359,18 +404,25 @@ impl RaftRedisHandler {
             if self.can_optimize_read_locally(&command) {
                 ConsistencyLevel::Eventual
             } else {
-                self.consistency_handler.get_command_consistency(&command.command, None)
+                self.consistency_handler
+                    .get_command_consistency(&command.command, None)
             }
         };
-        
+
         // Get recommended consistency based on cluster state
-        let recommended = self.consistency_handler.get_recommended_consistency().await?;
-        
+        let recommended = self
+            .consistency_handler
+            .get_recommended_consistency()
+            .await?;
+
         // Use the more relaxed consistency level for better performance
         let final_consistency = match (consistency, recommended) {
             (ConsistencyLevel::Linearizable, ConsistencyLevel::Eventual) => {
                 if self.can_optimize_read_locally(&command) {
-                    log::debug!("Optimizing read for command '{}' with eventual consistency", command.command);
+                    log::debug!(
+                        "Optimizing read for command '{}' with eventual consistency",
+                        command.command
+                    );
                     ConsistencyLevel::Eventual
                 } else {
                     ConsistencyLevel::Linearizable
@@ -378,8 +430,9 @@ impl RaftRedisHandler {
             }
             _ => consistency,
         };
-        
-        self.handle_read_command_with_consistency(command, final_consistency).await
+
+        self.handle_read_command_with_consistency(command, final_consistency)
+            .await
     }
 
     /// Handle read request with timeout support
@@ -390,12 +443,14 @@ impl RaftRedisHandler {
         timeout: Duration,
     ) -> RaftResult<RespData> {
         let start_time = std::time::Instant::now();
-        
+
         // Set up timeout for the entire read operation
         let result = tokio::time::timeout(timeout, async {
-            self.handle_read_command_with_consistency(command.clone(), consistency).await
-        }).await;
-        
+            self.handle_read_command_with_consistency(command.clone(), consistency)
+                .await
+        })
+        .await;
+
         match result {
             Ok(read_result) => {
                 log::debug!("Read completed in {:?}", start_time.elapsed());
@@ -410,15 +465,17 @@ impl RaftRedisHandler {
             }
         }
     }
-    
+
     /// Handle linearizable reads with leader confirmation
     async fn handle_linearizable_read(&self, command: RedisCommand) -> RaftResult<RespData> {
         // Verify we're still the leader before executing
         if !self.raft_node.is_leader().await {
             let leader_id = self.raft_node.get_leader_id().await;
-            return self.redirect_read_to_leader(command, leader_id.unwrap_or(0)).await;
+            return self
+                .redirect_read_to_leader(command, leader_id.unwrap_or(0))
+                .await;
         }
-        
+
         // Execute the read with linearizable guarantees
         self.execute_local_read(command).await
     }
@@ -434,28 +491,34 @@ impl RaftRedisHandler {
     async fn execute_local_read(&self, command: RedisCommand) -> RaftResult<RespData> {
         // Get the state machine and execute the read operation
         let state_machine = self.raft_node.state_machine();
-        
+
         // For now, we'll create a mock response since the state machine integration
         // is not fully implemented yet. In a complete implementation, this would
         // delegate to the actual state machine.
         match command.command.to_lowercase().as_str() {
             "get" => {
                 if command.args.len() != 1 {
-                    return Ok(RespData::Error("ERR wrong number of arguments for 'get' command".into()));
+                    return Ok(RespData::Error(
+                        "ERR wrong number of arguments for 'get' command".into(),
+                    ));
                 }
                 // Mock response - in real implementation, would query state machine
                 Ok(RespData::BulkString(None)) // Key not found
             }
             "exists" => {
                 if command.args.is_empty() {
-                    return Ok(RespData::Error("ERR wrong number of arguments for 'exists' command".into()));
+                    return Ok(RespData::Error(
+                        "ERR wrong number of arguments for 'exists' command".into(),
+                    ));
                 }
                 // Mock response - in real implementation, would check state machine
                 Ok(RespData::Integer(0)) // No keys exist
             }
             "keys" => {
                 if command.args.len() != 1 {
-                    return Ok(RespData::Error("ERR wrong number of arguments for 'keys' command".into()));
+                    return Ok(RespData::Error(
+                        "ERR wrong number of arguments for 'keys' command".into(),
+                    ));
                 }
                 // Mock response - in real implementation, would query state machine
                 Ok(RespData::Array(Some(vec![]))) // No keys match
@@ -467,7 +530,13 @@ impl RaftRedisHandler {
             _ => {
                 // For other read commands, return a generic response
                 log::warn!("Unhandled read command: {}", command.command);
-                Ok(RespData::Error(format!("ERR command '{}' not implemented in Raft mode", command.command).into()))
+                Ok(RespData::Error(
+                    format!(
+                        "ERR command '{}' not implemented in Raft mode",
+                        command.command
+                    )
+                    .into(),
+                ))
             }
         }
     }
@@ -492,22 +561,34 @@ impl RaftRedisHandler {
                 info.push_str("# Raft\r\n");
                 info.push_str(&format!("raft_state:{:?}\r\n", state));
                 info.push_str(&format!("raft_term:{}\r\n", term));
-                info.push_str(&format!("raft_leader:{}\r\n", 
-                    leader_id.map(|id| id.to_string()).unwrap_or_else(|| "none".to_string())));
-                info.push_str(&format!("raft_commit_index:{}\r\n", 
-                    metrics.last_applied.map(|id| id.index).unwrap_or(0)));
-                info.push_str(&format!("raft_last_applied:{}\r\n", 
-                    metrics.last_applied.map(|id| id.index).unwrap_or(0)));
-                info.push_str(&format!("raft_log_size:{}\r\n", 
-                    metrics.last_log_index.unwrap_or(0)));
+                info.push_str(&format!(
+                    "raft_leader:{}\r\n",
+                    leader_id
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| "none".to_string())
+                ));
+                info.push_str(&format!(
+                    "raft_commit_index:{}\r\n",
+                    metrics.last_applied.map(|id| id.index).unwrap_or(0)
+                ));
+                info.push_str(&format!(
+                    "raft_last_applied:{}\r\n",
+                    metrics.last_applied.map(|id| id.index).unwrap_or(0)
+                ));
+                info.push_str(&format!(
+                    "raft_log_size:{}\r\n",
+                    metrics.last_log_index.unwrap_or(0)
+                ));
             }
             "cluster" => {
                 let health = self.raft_node.get_cluster_health().await?;
-                
+
                 info.push_str("# Cluster\r\n");
                 info.push_str("cluster_enabled:1\r\n");
-                info.push_str(&format!("cluster_state:{}\r\n", 
-                    if health.is_healthy { "ok" } else { "fail" }));
+                info.push_str(&format!(
+                    "cluster_state:{}\r\n",
+                    if health.is_healthy { "ok" } else { "fail" }
+                ));
                 info.push_str("cluster_slots_assigned:16384\r\n");
                 info.push_str("cluster_slots_ok:16384\r\n");
                 info.push_str("cluster_slots_pfail:0\r\n");
@@ -538,13 +619,15 @@ impl RaftRedisHandler {
                 info.push_str("lru_clock:1\r\n");
                 info.push_str("executable:/path/to/kiwi-server\r\n");
                 info.push_str("config_file:\r\n");
-                
+
                 if section == "default" {
                     let health = self.raft_node.get_cluster_health().await?;
                     info.push_str("\r\n# Cluster\r\n");
                     info.push_str("cluster_enabled:1\r\n");
-                    info.push_str(&format!("cluster_state:{}\r\n", 
-                        if health.is_healthy { "ok" } else { "fail" }));
+                    info.push_str(&format!(
+                        "cluster_state:{}\r\n",
+                        if health.is_healthy { "ok" } else { "fail" }
+                    ));
                     info.push_str(&format!("cluster_known_nodes:{}\r\n", health.total_members));
                     info.push_str(&format!("cluster_size:{}\r\n", health.healthy_members));
                 }
@@ -561,7 +644,11 @@ impl RaftRedisHandler {
     }
 
     /// Redirect to a specific leader
-    async fn redirect_to_leader_with_id(&self, _command: RedisCommand, leader_id: Option<NodeId>) -> RaftResult<RespData> {
+    async fn redirect_to_leader_with_id(
+        &self,
+        _command: RedisCommand,
+        leader_id: Option<NodeId>,
+    ) -> RaftResult<RespData> {
         match leader_id {
             Some(leader) => {
                 // In a full implementation, we would forward the command to the leader
@@ -577,15 +664,48 @@ impl RaftRedisHandler {
 
     /// Static helper to determine if a command is a write operation (for testing)
     pub(crate) fn is_write_command_name(cmd_name: &str) -> bool {
-        matches!(cmd_name, 
-            "set" | "del" | "expire" | "expireat" | "persist" | "rename" | "renamenx" |
-            "lpush" | "rpush" | "lpop" | "rpop" | "lset" | "lrem" | "ltrim" |
-            "sadd" | "srem" | "spop" | "smove" |
-            "zadd" | "zrem" | "zincrby" | "zremrangebyrank" | "zremrangebyscore" |
-            "hset" | "hdel" | "hincrby" | "hincrbyfloat" |
-            "incr" | "decr" | "incrby" | "decrby" | "incrbyfloat" |
-            "append" | "setrange" | "setex" | "setnx" | "mset" | "msetnx" |
-            "flushdb" | "flushall"
+        matches!(
+            cmd_name,
+            "set"
+                | "del"
+                | "expire"
+                | "expireat"
+                | "persist"
+                | "rename"
+                | "renamenx"
+                | "lpush"
+                | "rpush"
+                | "lpop"
+                | "rpop"
+                | "lset"
+                | "lrem"
+                | "ltrim"
+                | "sadd"
+                | "srem"
+                | "spop"
+                | "smove"
+                | "zadd"
+                | "zrem"
+                | "zincrby"
+                | "zremrangebyrank"
+                | "zremrangebyscore"
+                | "hset"
+                | "hdel"
+                | "hincrby"
+                | "hincrbyfloat"
+                | "incr"
+                | "decr"
+                | "incrby"
+                | "decrby"
+                | "incrbyfloat"
+                | "append"
+                | "setrange"
+                | "setex"
+                | "setnx"
+                | "mset"
+                | "msetnx"
+                | "flushdb"
+                | "flushall"
         )
     }
 
@@ -615,8 +735,13 @@ impl RaftRedisHandler {
     }
 
     /// Check if a consistency level is supported
-    pub async fn is_consistency_supported(&self, consistency: ConsistencyLevel) -> RaftResult<bool> {
-        self.consistency_handler.is_consistency_supported(consistency).await
+    pub async fn is_consistency_supported(
+        &self,
+        consistency: ConsistencyLevel,
+    ) -> RaftResult<bool> {
+        self.consistency_handler
+            .is_consistency_supported(consistency)
+            .await
     }
 
     /// Get recommended consistency level for current cluster state
@@ -655,7 +780,10 @@ mod read_routing_tests {
         }
 
         match rejected {
-            ReadRoutingDecision::Rejected { reason, alternative } => {
+            ReadRoutingDecision::Rejected {
+                reason,
+                alternative,
+            } => {
                 assert_eq!(reason, "test");
                 assert_eq!(alternative, Some(ConsistencyLevel::Eventual));
             }
@@ -686,7 +814,7 @@ mod read_routing_tests {
         assert!(slot1 < 16384);
         assert!(slot2 < 16384);
         assert_eq!(slot_no_args, 0);
-        
+
         // Keys with same content should produce same slot
         let command1_dup = RedisCommand::new("GET".to_string(), vec![b"key1".to_vec()]);
         let slot1_dup = calculate_test_slot(&command1_dup);

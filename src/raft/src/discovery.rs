@@ -17,11 +17,11 @@
 
 //! Node discovery and health monitoring for Raft cluster
 
-use crate::cluster_config::{NodeEndpoint, ClusterConfiguration};
-use crate::error::{RaftError, RaftResult, NetworkError};
-use crate::types::{NodeId, ClusterHealth, Term, LogIndex};
+use crate::cluster_config::{ClusterConfiguration, NodeEndpoint};
+use crate::error::{NetworkError, RaftError, RaftResult};
+use crate::types::{ClusterHealth, LogIndex, NodeId, Term};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, BTreeSet};
+use std::collections::{BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -134,8 +134,14 @@ pub struct NodeDiscovery {
 
 impl NodeDiscovery {
     pub fn new(config: Arc<ClusterConfiguration>) -> Self {
-        let known_nodes = Arc::new(RwLock::new(config.endpoints.iter().map(|(k, v)| (*k, v.clone())).collect()));
-        
+        let known_nodes = Arc::new(RwLock::new(
+            config
+                .endpoints
+                .iter()
+                .map(|(k, v)| (*k, v.clone()))
+                .collect(),
+        ));
+
         Self {
             config,
             known_nodes,
@@ -146,7 +152,7 @@ impl NodeDiscovery {
     pub async fn discover_nodes(&self) -> RaftResult<Vec<NodeEndpoint>> {
         let mut discovered = Vec::new();
         let known = self.known_nodes.read().await;
-        
+
         // Start with configured endpoints
         for endpoint in known.values() {
             discovered.push(endpoint.clone());
@@ -179,11 +185,11 @@ impl NodeDiscovery {
     pub async fn add_discovered_node(&self, endpoint: NodeEndpoint) -> RaftResult<()> {
         // Validate the endpoint
         endpoint.socket_addr()?;
-        
+
         let node_id = endpoint.node_id;
         let mut known = self.known_nodes.write().await;
         known.insert(node_id, endpoint.clone());
-        
+
         log::info!("Discovered new node: {}", endpoint);
         Ok(())
     }
@@ -232,7 +238,7 @@ impl NodeDiscovery {
                     if line.is_empty() || line.starts_with('#') {
                         continue;
                     }
-                    
+
                     match NodeEndpoint::from_str(line) {
                         Ok(endpoint) => {
                             log::debug!("Discovered node from file: {}", endpoint);
@@ -255,7 +261,7 @@ impl NodeDiscovery {
     /// Validate node connectivity
     pub async fn validate_node_connectivity(&self, endpoint: &NodeEndpoint) -> RaftResult<bool> {
         use tokio::net::TcpStream;
-        use tokio::time::{timeout, Duration};
+        use tokio::time::{Duration, timeout};
 
         let addr = endpoint.socket_addr()?;
         let connect_timeout = Duration::from_secs(5);
@@ -266,18 +272,30 @@ impl NodeDiscovery {
                 Ok(true)
             }
             Ok(Err(e)) => {
-                log::debug!("Node {} is not reachable at {}: {}", endpoint.node_id, addr, e);
+                log::debug!(
+                    "Node {} is not reachable at {}: {}",
+                    endpoint.node_id,
+                    addr,
+                    e
+                );
                 Ok(false)
             }
             Err(_) => {
-                log::debug!("Connection to node {} at {} timed out", endpoint.node_id, addr);
+                log::debug!(
+                    "Connection to node {} at {} timed out",
+                    endpoint.node_id,
+                    addr
+                );
                 Ok(false)
             }
         }
     }
 
     /// Resolve node address with hostname resolution
-    pub async fn resolve_node_address(&self, endpoint: &NodeEndpoint) -> RaftResult<Vec<SocketAddr>> {
+    pub async fn resolve_node_address(
+        &self,
+        endpoint: &NodeEndpoint,
+    ) -> RaftResult<Vec<SocketAddr>> {
         use tokio::net::lookup_host;
 
         let address = endpoint.address();
@@ -289,10 +307,9 @@ impl NodeDiscovery {
             }
             Err(e) => {
                 log::warn!("Failed to resolve address {}: {}", address, e);
-                Err(RaftError::Network(NetworkError::ConnectionFailedToAddress {
-                    address,
-                    source: e,
-                }))
+                Err(RaftError::Network(
+                    NetworkError::ConnectionFailedToAddress { address, source: e },
+                ))
             }
         }
     }
@@ -303,15 +320,23 @@ impl NodeDiscovery {
         let mut validated = Vec::new();
 
         let discovered_count = discovered.len();
-        
+
         // Validate connectivity for each discovered node
         for endpoint in discovered {
-            if self.validate_node_connectivity(&endpoint).await.unwrap_or(false) {
+            if self
+                .validate_node_connectivity(&endpoint)
+                .await
+                .unwrap_or(false)
+            {
                 validated.push(endpoint);
             }
         }
 
-        log::info!("Validated {} out of {} discovered nodes", validated.len(), discovered_count);
+        log::info!(
+            "Validated {} out of {} discovered nodes",
+            validated.len(),
+            discovered_count
+        );
         Ok(validated)
     }
 }
@@ -371,10 +396,10 @@ impl HealthMonitor {
     /// Main monitoring loop
     async fn monitoring_loop(&self) {
         let mut check_interval = interval(self.config.check_interval);
-        
+
         while *self.running.read().await {
             check_interval.tick().await;
-            
+
             if let Err(e) = self.perform_health_checks().await {
                 log::error!("Health check failed: {}", e);
             }
@@ -384,7 +409,7 @@ impl HealthMonitor {
     /// Perform health checks on all known nodes
     async fn perform_health_checks(&self) -> RaftResult<()> {
         let known_nodes = self.discovery.get_known_nodes().await;
-        
+
         // Limit concurrent health checks to prevent resource exhaustion
         const MAX_CONCURRENT_CHECKS: usize = 10;
         let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CHECKS));
@@ -400,7 +425,7 @@ impl HealthMonitor {
             let config = self.config.clone();
             let health_results = self.health_results.clone();
             let sem = semaphore.clone();
-            
+
             // Get previous health check result to preserve counters
             let prev_result = self.health_results.read().await.get(&node_id).cloned();
 
@@ -443,7 +468,7 @@ impl HealthMonitor {
         result.total_checks = result.total_checks.saturating_add(1);
 
         let start_time = Instant::now();
-        
+
         match timeout(config.check_timeout, Self::tcp_health_check(endpoint)).await {
             Ok(Ok(())) => {
                 // Health check succeeded
@@ -474,13 +499,15 @@ impl HealthMonitor {
     /// Perform TCP-based health check
     async fn tcp_health_check(endpoint: &NodeEndpoint) -> RaftResult<()> {
         let addr = endpoint.socket_addr()?;
-        
+
         match TcpStream::connect(addr).await {
             Ok(_) => Ok(()),
-            Err(e) => Err(RaftError::Network(crate::error::NetworkError::ConnectionFailedToAddress {
-                address: addr.to_string(),
-                source: e,
-            })),
+            Err(e) => Err(RaftError::Network(
+                crate::error::NetworkError::ConnectionFailedToAddress {
+                    address: addr.to_string(),
+                    source: e,
+                },
+            )),
         }
     }
 
@@ -533,11 +560,11 @@ impl HealthMonitor {
     pub async fn get_cluster_health(&self) -> ClusterHealth {
         let all_health = self.get_all_health().await;
         let known_nodes = self.discovery.get_known_nodes().await;
-        
+
         let total_members = known_nodes.len();
         let healthy_members = all_health.values().filter(|r| r.is_healthy()).count();
         let failed_members = all_health.values().filter(|r| r.is_failed()).count();
-        
+
         // A cluster is healthy if majority of nodes are healthy
         let is_healthy = healthy_members > total_members / 2;
 
@@ -549,7 +576,7 @@ impl HealthMonitor {
             current_leader: None, // This would be populated by the Raft node
             is_healthy,
             last_log_index: 0, // This would be populated by the Raft node
-            commit_index: 0, // This would be populated by the Raft node
+            commit_index: 0,   // This would be populated by the Raft node
         }
     }
 
@@ -563,7 +590,7 @@ impl HealthMonitor {
     pub async fn get_nodes_for_removal(&self) -> Vec<NodeId> {
         let all_health = self.get_all_health().await;
         let now = SystemTime::now();
-        
+
         all_health
             .iter()
             .filter(|(_, result)| {
@@ -571,12 +598,12 @@ impl HealthMonitor {
                 if result.total_checks == 0 || result.successful_checks == 0 {
                     return false;
                 }
-                
+
                 // Node must be marked as Failed
                 if result.status != NodeStatus::Failed {
                     return false;
                 }
-                
+
                 // Check if node has been failing for longer than max_retry_duration
                 match now.duration_since(result.last_seen) {
                     Ok(duration) => duration > self.config.max_retry_duration,
@@ -630,21 +657,23 @@ impl ClusterTopology {
     }
 
     /// Get current cluster topology
-    pub async fn get_topology(&self) -> RaftResult<HashMap<NodeId, (NodeEndpoint, HealthCheckResult)>> {
+    pub async fn get_topology(
+        &self,
+    ) -> RaftResult<HashMap<NodeId, (NodeEndpoint, HealthCheckResult)>> {
         let known_nodes = self.discovery.get_known_nodes().await;
         let health_results = self.health_monitor.get_all_health().await;
-        
+
         let mut topology = HashMap::new();
-        
+
         for (node_id, endpoint) in known_nodes {
             let health = health_results
                 .get(&node_id)
                 .cloned()
                 .unwrap_or_else(|| HealthCheckResult::new(node_id));
-            
+
             topology.insert(node_id, (endpoint, health));
         }
-        
+
         Ok(topology)
     }
 
@@ -717,20 +746,24 @@ impl ClusterTopology {
         partition_config: PartitionDetectorConfig,
     ) -> (Arc<Self>, Arc<NetworkPartitionDetector>) {
         let discovery = Arc::new(NodeDiscovery::new(cluster_config));
-        let health_monitor = Arc::new(HealthMonitor::new(health_config, node_id, discovery.clone()));
+        let health_monitor = Arc::new(HealthMonitor::new(
+            health_config,
+            node_id,
+            discovery.clone(),
+        ));
         let partition_detector = Arc::new(NetworkPartitionDetector::new(
             node_id,
             health_monitor.clone(),
             discovery.clone(),
             partition_config,
         ));
-        
+
         let topology = Arc::new(Self::with_partition_detection(
             discovery,
             health_monitor,
             partition_detector.clone(),
         ));
-        
+
         (topology, partition_detector)
     }
 }
@@ -953,7 +986,7 @@ impl ClusterStatusReporter {
             };
 
             let replication_lag_value = replication_lag.get(&node_id).copied();
-            
+
             let node_status = NodeStatusReport {
                 node_id,
                 endpoint,
@@ -1033,21 +1066,33 @@ impl ClusterStatusReporter {
 
         let mut history = self.election_history.write().await;
         history.push(SystemTime::now());
-        
+
         // Keep only recent elections (last 100)
         if history.len() > 100 {
             history.remove(0);
         }
 
-        log::info!("Leadership change recorded: new leader {:?}, total changes: {}", new_leader, *changes);
+        log::info!(
+            "Leadership change recorded: new leader {:?}, total changes: {}",
+            new_leader,
+            *changes
+        );
     }
 
     /// Record a network partition event
-    pub async fn record_partition_event(&self, event_type: PartitionEventType, affected_nodes: Vec<NodeId>) {
+    pub async fn record_partition_event(
+        &self,
+        event_type: PartitionEventType,
+        affected_nodes: Vec<NodeId>,
+    ) {
         let mut metrics = self.performance_metrics.write().await;
         metrics.network_partition_events += 1;
-        
-        log::warn!("Network partition event recorded: {:?}, affected nodes: {:?}", event_type, affected_nodes);
+
+        log::warn!(
+            "Network partition event recorded: {:?}, affected nodes: {:?}",
+            event_type,
+            affected_nodes
+        );
     }
 
     /// Update performance metrics
@@ -1073,7 +1118,10 @@ impl ClusterStatusReporter {
     }
 
     /// Get replication lag summary
-    pub async fn get_replication_lag_summary(&self, replication_lag: &HashMap<NodeId, LogIndex>) -> ReplicationLagSummary {
+    pub async fn get_replication_lag_summary(
+        &self,
+        replication_lag: &HashMap<NodeId, LogIndex>,
+    ) -> ReplicationLagSummary {
         if replication_lag.is_empty() {
             return ReplicationLagSummary {
                 max_lag: 0,
@@ -1084,7 +1132,8 @@ impl ClusterStatusReporter {
         }
 
         let max_lag = replication_lag.values().max().copied().unwrap_or(0);
-        let avg_lag = replication_lag.values().sum::<LogIndex>() as f64 / replication_lag.len() as f64;
+        let avg_lag =
+            replication_lag.values().sum::<LogIndex>() as f64 / replication_lag.len() as f64;
         let nodes_behind_count = replication_lag.values().filter(|&&lag| lag > 10).count();
         let critical_lag_nodes: Vec<NodeId> = replication_lag
             .iter()
@@ -1122,8 +1171,11 @@ impl NetworkPartitionDetector {
 
     /// Start the partition detection service
     pub async fn start(&self) -> RaftResult<()> {
-        log::info!("Starting network partition detector for node {}", self.node_id);
-        
+        log::info!(
+            "Starting network partition detector for node {}",
+            self.node_id
+        );
+
         // Spawn partition detection task
         let detector = self.clone();
         tokio::spawn(async move {
@@ -1136,10 +1188,10 @@ impl NetworkPartitionDetector {
     /// Main partition detection loop
     async fn detection_loop(&self) {
         let mut detection_interval = interval(self.config.detection_window);
-        
+
         loop {
             detection_interval.tick().await;
-            
+
             if let Err(e) = self.detect_partitions().await {
                 log::error!("Partition detection failed: {}", e);
             }
@@ -1150,27 +1202,27 @@ impl NetworkPartitionDetector {
     pub async fn detect_partitions(&self) -> RaftResult<()> {
         let all_health = self.health_monitor.get_all_health().await;
         let known_nodes = self.discovery.get_known_nodes().await;
-        
+
         // Categorize nodes by health status
         let mut healthy_nodes = Vec::new();
         let mut unreachable_nodes = Vec::new();
         let mut failed_nodes = Vec::new();
-        
+
         for (node_id, endpoint) in &known_nodes {
             if *node_id == self.node_id {
                 healthy_nodes.push(*node_id); // Assume self is healthy
                 continue;
             }
-            
+
             match all_health.get(node_id) {
-                Some(health) => {
-                    match health.status {
-                        NodeStatus::Healthy => healthy_nodes.push(*node_id),
-                        NodeStatus::Unreachable | NodeStatus::Suspected => unreachable_nodes.push(*node_id),
-                        NodeStatus::Failed => failed_nodes.push(*node_id),
-                        NodeStatus::Unknown => unreachable_nodes.push(*node_id),
+                Some(health) => match health.status {
+                    NodeStatus::Healthy => healthy_nodes.push(*node_id),
+                    NodeStatus::Unreachable | NodeStatus::Suspected => {
+                        unreachable_nodes.push(*node_id)
                     }
-                }
+                    NodeStatus::Failed => failed_nodes.push(*node_id),
+                    NodeStatus::Unknown => unreachable_nodes.push(*node_id),
+                },
                 None => unreachable_nodes.push(*node_id),
             }
         }
@@ -1180,24 +1232,24 @@ impl NetworkPartitionDetector {
         if total_unreachable < self.config.min_partition_size {
             // No significant partition detected, check for recovery
             if let Some(current_state) = self.current_partition_state.read().await.as_ref() {
-                self.handle_partition_recovery(current_state.partition_id).await?;
+                self.handle_partition_recovery(current_state.partition_id)
+                    .await?;
             }
             return Ok(());
         }
 
         // Analyze partition topology
-        let partition_analysis = self.analyze_partition_topology(
-            &healthy_nodes,
-            &unreachable_nodes,
-            &failed_nodes,
-        ).await?;
+        let partition_analysis = self
+            .analyze_partition_topology(&healthy_nodes, &unreachable_nodes, &failed_nodes)
+            .await?;
 
         // Check if this is a new partition or continuation of existing one
         let current_state = self.current_partition_state.read().await;
         match current_state.as_ref() {
             Some(existing_state) => {
                 // Update existing partition state
-                self.update_partition_state(&partition_analysis, existing_state.partition_id).await?;
+                self.update_partition_state(&partition_analysis, existing_state.partition_id)
+                    .await?;
             }
             None => {
                 // New partition detected
@@ -1223,18 +1275,19 @@ impl NetworkPartitionDetector {
 
         // Determine if we have a majority
         let has_majority = healthy_count > total_nodes / 2;
-        
+
         // Check for split-brain scenario
-        let split_brain_threshold_count = (total_nodes as f64 * self.config.split_brain_threshold) as usize;
-        let is_split_brain = healthy_count >= split_brain_threshold_count && 
-                            unreachable_count >= split_brain_threshold_count;
+        let split_brain_threshold_count =
+            (total_nodes as f64 * self.config.split_brain_threshold) as usize;
+        let is_split_brain = healthy_count >= split_brain_threshold_count
+            && unreachable_count >= split_brain_threshold_count;
 
         // Create partition groups
         let mut partition_groups = Vec::new();
         if !healthy_nodes.is_empty() {
             partition_groups.push(healthy_nodes.to_vec());
         }
-        
+
         // Group unreachable nodes (in real implementation, we'd try to determine
         // which unreachable nodes can communicate with each other)
         if !unreachable_nodes.is_empty() {
@@ -1257,9 +1310,13 @@ impl NetworkPartitionDetector {
     }
 
     /// Calculate the severity of the partition
-    fn calculate_partition_severity(&self, healthy_count: usize, total_nodes: usize) -> PartitionSeverity {
+    fn calculate_partition_severity(
+        &self,
+        healthy_count: usize,
+        total_nodes: usize,
+    ) -> PartitionSeverity {
         let healthy_ratio = healthy_count as f64 / total_nodes as f64;
-        
+
         if healthy_ratio >= 0.8 {
             PartitionSeverity::Minor
         } else if healthy_ratio >= 0.5 {
@@ -1280,7 +1337,7 @@ impl NetworkPartitionDetector {
         };
 
         let now = SystemTime::now();
-        
+
         // Determine partition type
         let event_type = if analysis.is_split_brain {
             PartitionEventType::SplitBrainDetected
@@ -1301,10 +1358,13 @@ impl NetworkPartitionDetector {
                 None
             },
             minority_groups: if analysis.has_majority {
-                vec![analysis.unreachable_nodes.clone(), analysis.failed_nodes.clone()]
-                    .into_iter()
-                    .filter(|group| !group.is_empty())
-                    .collect()
+                vec![
+                    analysis.unreachable_nodes.clone(),
+                    analysis.failed_nodes.clone(),
+                ]
+                .into_iter()
+                .filter(|group| !group.is_empty())
+                .collect()
             } else {
                 analysis.partition_groups.clone()
             },
@@ -1332,7 +1392,7 @@ impl NetworkPartitionDetector {
         {
             let mut events = self.partition_events.write().await;
             events.push(partition_event);
-            
+
             // Keep only recent events (last 1000)
             if events.len() > 1000 {
                 events.remove(0);
@@ -1349,7 +1409,8 @@ impl NetworkPartitionDetector {
         );
 
         // Take appropriate action based on partition type
-        self.handle_partition_action(&partition_state, &analysis).await?;
+        self.handle_partition_action(&partition_state, &analysis)
+            .await?;
 
         Ok(())
     }
@@ -1357,7 +1418,7 @@ impl NetworkPartitionDetector {
     /// Handle partition recovery
     async fn handle_partition_recovery(&self, partition_id: u64) -> RaftResult<()> {
         let now = SystemTime::now();
-        
+
         // Update current state
         let recovered_state = {
             let mut current_state = self.current_partition_state.write().await;
@@ -1366,7 +1427,7 @@ impl NetworkPartitionDetector {
 
         if let Some(state) = recovered_state {
             let duration = now.duration_since(state.detected_at).unwrap_or_default();
-            
+
             // Update the partition event with recovery information
             {
                 let mut events = self.partition_events.write().await;
@@ -1381,7 +1442,12 @@ impl NetworkPartitionDetector {
                 event_id: partition_id,
                 timestamp: now,
                 event_type: PartitionEventType::PartitionRecovered,
-                affected_nodes: state.partition_groups.clone().into_iter().flatten().collect(),
+                affected_nodes: state
+                    .partition_groups
+                    .clone()
+                    .into_iter()
+                    .flatten()
+                    .collect(),
                 partition_groups: Vec::new(),
                 duration: Some(duration),
                 recovery_timestamp: Some(now),
@@ -1406,9 +1472,13 @@ impl NetworkPartitionDetector {
     }
 
     /// Update existing partition state
-    async fn update_partition_state(&self, analysis: &PartitionAnalysis, partition_id: u64) -> RaftResult<()> {
+    async fn update_partition_state(
+        &self,
+        analysis: &PartitionAnalysis,
+        partition_id: u64,
+    ) -> RaftResult<()> {
         let mut current_state = self.current_partition_state.write().await;
-        
+
         if let Some(state) = current_state.as_mut() {
             // Update partition groups
             state.partition_groups = analysis.partition_groups.clone();
@@ -1459,7 +1529,11 @@ impl NetworkPartitionDetector {
     }
 
     /// Handle actions to take when a partition is detected
-    async fn handle_partition_action(&self, state: &NetworkPartitionState, analysis: &PartitionAnalysis) -> RaftResult<()> {
+    async fn handle_partition_action(
+        &self,
+        state: &NetworkPartitionState,
+        analysis: &PartitionAnalysis,
+    ) -> RaftResult<()> {
         if analysis.is_split_brain {
             log::error!("Split-brain scenario detected! Taking protective measures.");
             // In a real implementation, this might involve:
@@ -1478,14 +1552,23 @@ impl NetworkPartitionDetector {
 
         // Record metrics
         // This would integrate with the metrics system
-        log::info!("Partition action completed for partition ID: {}", state.partition_id);
+        log::info!(
+            "Partition action completed for partition ID: {}",
+            state.partition_id
+        );
 
         Ok(())
     }
 
     /// Handle recovery actions after partition is resolved
-    async fn handle_partition_recovery_actions(&self, state: &NetworkPartitionState) -> RaftResult<()> {
-        log::info!("Performing partition recovery actions for partition ID: {}", state.partition_id);
+    async fn handle_partition_recovery_actions(
+        &self,
+        state: &NetworkPartitionState,
+    ) -> RaftResult<()> {
+        log::info!(
+            "Performing partition recovery actions for partition ID: {}",
+            state.partition_id
+        );
 
         // In a real implementation, this might involve:
         // - Re-enabling write operations
@@ -1513,7 +1596,11 @@ impl NetworkPartitionDetector {
     }
 
     /// Get partition events within a time range
-    pub async fn get_partition_events_in_range(&self, start: SystemTime, end: SystemTime) -> Vec<NetworkPartitionEvent> {
+    pub async fn get_partition_events_in_range(
+        &self,
+        start: SystemTime,
+        end: SystemTime,
+    ) -> Vec<NetworkPartitionEvent> {
         self.partition_events
             .read()
             .await
@@ -1532,14 +1619,17 @@ impl NetworkPartitionDetector {
     pub async fn get_partition_statistics(&self) -> PartitionStatistics {
         let events = self.partition_events.read().await;
         let total_events = events.len();
-        let total_partitions = events.iter().filter(|e| matches!(e.event_type, PartitionEventType::PartitionDetected)).count();
-        let split_brain_events = events.iter().filter(|e| matches!(e.event_type, PartitionEventType::SplitBrainDetected)).count();
-        
+        let total_partitions = events
+            .iter()
+            .filter(|e| matches!(e.event_type, PartitionEventType::PartitionDetected))
+            .count();
+        let split_brain_events = events
+            .iter()
+            .filter(|e| matches!(e.event_type, PartitionEventType::SplitBrainDetected))
+            .count();
+
         let avg_duration = if !events.is_empty() {
-            let total_duration: Duration = events
-                .iter()
-                .filter_map(|e| e.duration)
-                .sum();
+            let total_duration: Duration = events.iter().filter_map(|e| e.duration).sum();
             total_duration / events.len() as u32
         } else {
             Duration::ZERO
@@ -1607,8 +1697,6 @@ pub struct PartitionStatistics {
     pub current_partition: Option<NetworkPartitionState>,
 }
 
-
-
 /// Simplified cluster health summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterHealthSummary {
@@ -1657,24 +1745,39 @@ mod tests {
     #[test]
     fn test_node_status_determination() {
         let config = HealthMonitorConfig::default();
-        
-        assert_eq!(HealthMonitor::determine_status(0, &config), NodeStatus::Healthy);
-        assert_eq!(HealthMonitor::determine_status(1, &config), NodeStatus::Unreachable);
-        assert_eq!(HealthMonitor::determine_status(3, &config), NodeStatus::Suspected);
-        assert_eq!(HealthMonitor::determine_status(6, &config), NodeStatus::Failed);
+
+        assert_eq!(
+            HealthMonitor::determine_status(0, &config),
+            NodeStatus::Healthy
+        );
+        assert_eq!(
+            HealthMonitor::determine_status(1, &config),
+            NodeStatus::Unreachable
+        );
+        assert_eq!(
+            HealthMonitor::determine_status(3, &config),
+            NodeStatus::Suspected
+        );
+        assert_eq!(
+            HealthMonitor::determine_status(6, &config),
+            NodeStatus::Failed
+        );
     }
 
     #[tokio::test]
     async fn test_node_discovery() {
         let config = Arc::new(ClusterConfiguration::default());
         let discovery = NodeDiscovery::new(config);
-        
+
         let endpoint = NodeEndpoint::new(1, "127.0.0.1".to_string(), 8080);
-        discovery.add_discovered_node(endpoint.clone()).await.unwrap();
-        
+        discovery
+            .add_discovered_node(endpoint.clone())
+            .await
+            .unwrap();
+
         assert!(discovery.is_known_node(1).await);
         assert!(!discovery.is_known_node(2).await);
-        
+
         let known = discovery.get_known_nodes().await;
         assert_eq!(known.len(), 1);
         assert_eq!(known.get(&1), Some(&endpoint));
@@ -1685,9 +1788,9 @@ mod tests {
         let config = Arc::new(ClusterConfiguration::default());
         let discovery = Arc::new(NodeDiscovery::new(config));
         let health_config = HealthMonitorConfig::default();
-        
+
         let monitor = HealthMonitor::new(health_config, 1, discovery);
-        
+
         let cluster_health = monitor.get_cluster_health().await;
         assert_eq!(cluster_health.total_members, 0);
         assert_eq!(cluster_health.healthy_members, 0);
@@ -1699,13 +1802,14 @@ mod tests {
         let discovery = Arc::new(NodeDiscovery::new(config));
         let health_config = HealthMonitorConfig::default();
         let health_monitor = Arc::new(HealthMonitor::new(health_config, 1, discovery.clone()));
-        
+
         let partition_config = PartitionDetectorConfig::default();
-        let detector = NetworkPartitionDetector::new(1, health_monitor, discovery, partition_config);
-        
+        let detector =
+            NetworkPartitionDetector::new(1, health_monitor, discovery, partition_config);
+
         // Test that detector is created successfully
         assert!(!detector.is_cluster_partitioned().await);
-        
+
         // Test partition statistics
         let stats = detector.get_partition_statistics().await;
         assert_eq!(stats.total_events, 0);
@@ -1724,9 +1828,12 @@ mod tests {
             duration: None,
             recovery_timestamp: None,
         };
-        
+
         assert_eq!(event.event_id, 1);
         assert_eq!(event.affected_nodes, vec![2, 3]);
-        assert!(matches!(event.event_type, PartitionEventType::PartitionDetected));
+        assert!(matches!(
+            event.event_type,
+            PartitionEventType::PartitionDetected
+        ));
     }
 }

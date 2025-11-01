@@ -17,7 +17,22 @@
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate protobuf code
-    prost_build::Config::new()
-        .compile_protos(&["proto/binlog.proto"], &["proto/"])?;
-    Ok(())
+    // Check if protoc is available
+    match prost_build::Config::new().compile_protos(&["proto/binlog.proto"], &["proto/"]) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            // If protoc is not found, provide helpful error message
+            let error_msg = e.to_string();
+            if error_msg.contains("protoc") || error_msg.contains("Could not find") {
+                eprintln!("\n⚠️  protoc not found! Please install protoc:");
+                eprintln!(
+                    "   - Windows: Download from https://github.com/protocolbuffers/protobuf/releases"
+                );
+                eprintln!("   - Linux: sudo apt-get install protobuf-compiler");
+                eprintln!("   - macOS: brew install protobuf");
+                eprintln!("   Or set PROTOC environment variable to the protoc binary path\n");
+            }
+            Err(e)
+        }
+    }
 }
