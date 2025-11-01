@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("   - macOS: brew install protobuf");
                 eprintln!("   Or set PROTOC environment variable to the protoc binary path\n");
             }
-            Err(e)
+            Err(Box::new(e))
         }
     }
 }
