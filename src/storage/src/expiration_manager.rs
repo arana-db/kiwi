@@ -59,10 +59,10 @@ impl ExpirationManager {
 
         tokio::spawn(async move {
             let mut cleanup_interval = interval(Duration::from_secs(1)); // Check every second
-            
+
             loop {
                 cleanup_interval.tick().await;
-                
+
                 // Check if cleanup is already running
                 {
                     let mut running = cleanup_running.lock();
@@ -219,21 +219,21 @@ impl ExpirationManager {
                 location: snafu::location!(),
             });
         }
-        
+
         let current_micros = Utc::now().timestamp_micros() as u64;
-        let seconds_micros = (seconds as u64)
-            .checked_mul(1_000_000)
-            .ok_or_else(|| crate::error::Error::InvalidFormat {
+        let seconds_micros = (seconds as u64).checked_mul(1_000_000).ok_or_else(|| {
+            crate::error::Error::InvalidFormat {
                 message: "TTL seconds overflow".to_string(),
                 location: snafu::location!(),
-            })?;
-        
-        current_micros
-            .checked_add(seconds_micros)
-            .ok_or_else(|| crate::error::Error::InvalidFormat {
+            }
+        })?;
+
+        current_micros.checked_add(seconds_micros).ok_or_else(|| {
+            crate::error::Error::InvalidFormat {
                 message: "TTL timestamp overflow".to_string(),
                 location: snafu::location!(),
-            })
+            }
+        })
     }
 
     /// Convert milliseconds to microseconds timestamp
@@ -244,15 +244,15 @@ impl ExpirationManager {
                 location: snafu::location!(),
             });
         }
-        
+
         let current_micros = Utc::now().timestamp_micros() as u64;
-        let milliseconds_micros = (milliseconds as u64)
-            .checked_mul(1_000)
-            .ok_or_else(|| crate::error::Error::InvalidFormat {
+        let milliseconds_micros = (milliseconds as u64).checked_mul(1_000).ok_or_else(|| {
+            crate::error::Error::InvalidFormat {
                 message: "TTL milliseconds overflow".to_string(),
                 location: snafu::location!(),
-            })?;
-        
+            }
+        })?;
+
         current_micros
             .checked_add(milliseconds_micros)
             .ok_or_else(|| crate::error::Error::InvalidFormat {
@@ -270,12 +270,12 @@ impl ExpirationManager {
             });
         }
 
-        let timestamp_micros = (timestamp as u64)
-            .checked_mul(1_000_000)
-            .ok_or_else(|| crate::error::Error::InvalidFormat {
+        let timestamp_micros = (timestamp as u64).checked_mul(1_000_000).ok_or_else(|| {
+            crate::error::Error::InvalidFormat {
                 message: "Unix timestamp overflow".to_string(),
                 location: snafu::location!(),
-            })?;
+            }
+        })?;
 
         Ok(timestamp_micros)
     }
@@ -289,12 +289,12 @@ impl ExpirationManager {
             });
         }
 
-        let timestamp_micros = (timestamp as u64)
-            .checked_mul(1_000)
-            .ok_or_else(|| crate::error::Error::InvalidFormat {
+        let timestamp_micros = (timestamp as u64).checked_mul(1_000).ok_or_else(|| {
+            crate::error::Error::InvalidFormat {
                 message: "Unix timestamp overflow".to_string(),
                 location: snafu::location!(),
-            })?;
+            }
+        })?;
 
         Ok(timestamp_micros)
     }
@@ -343,7 +343,8 @@ mod tests {
         assert_eq!(expire_time, 1640995200_000_000);
 
         let unix_timestamp_ms = 1640995200000; // 2022-01-01 00:00:00 UTC in milliseconds
-        let expire_time = ExpirationManager::unix_milliseconds_to_expire_time(unix_timestamp_ms).unwrap();
+        let expire_time =
+            ExpirationManager::unix_milliseconds_to_expire_time(unix_timestamp_ms).unwrap();
         assert_eq!(expire_time, 1640995200_000_000);
     }
 }

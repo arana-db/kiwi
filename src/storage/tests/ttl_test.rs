@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use storage::{storage::Storage, StorageOptions, unique_test_db_path};
+use storage::{StorageOptions, storage::Storage, unique_test_db_path};
 
 #[tokio::test]
 async fn test_ttl_basic_operations() {
@@ -149,7 +149,11 @@ async fn test_pexpireat_commands() {
     assert!(pttl > 55000 && pttl <= 60000);
 
     // Test PEXPIREAT on non-existent key
-    assert!(!storage.pexpireat(b"non_existent", future_timestamp_ms).unwrap());
+    assert!(
+        !storage
+            .pexpireat(b"non_existent", future_timestamp_ms)
+            .unwrap()
+    );
 
     storage.shutdown().await;
 }
@@ -165,7 +169,12 @@ async fn test_exists_command() {
     assert_eq!(storage.exists(&[]).unwrap(), 0);
 
     // Test EXISTS with non-existent keys
-    assert_eq!(storage.exists(&[b"non_existent1".to_vec(), b"non_existent2".to_vec()]).unwrap(), 0);
+    assert_eq!(
+        storage
+            .exists(&[b"non_existent1".to_vec(), b"non_existent2".to_vec()])
+            .unwrap(),
+        0
+    );
 
     // Set some keys
     storage.set(b"key1", b"value1").unwrap();
@@ -173,13 +182,28 @@ async fn test_exists_command() {
 
     // Test EXISTS with existing keys
     assert_eq!(storage.exists(&[b"key1".to_vec()]).unwrap(), 1);
-    assert_eq!(storage.exists(&[b"key1".to_vec(), b"key2".to_vec()]).unwrap(), 2);
+    assert_eq!(
+        storage
+            .exists(&[b"key1".to_vec(), b"key2".to_vec()])
+            .unwrap(),
+        2
+    );
 
     // Test EXISTS with mix of existing and non-existing keys
-    assert_eq!(storage.exists(&[b"key1".to_vec(), b"non_existent".to_vec(), b"key2".to_vec()]).unwrap(), 2);
+    assert_eq!(
+        storage
+            .exists(&[b"key1".to_vec(), b"non_existent".to_vec(), b"key2".to_vec()])
+            .unwrap(),
+        2
+    );
 
     // Test EXISTS with duplicate keys
-    assert_eq!(storage.exists(&[b"key1".to_vec(), b"key1".to_vec()]).unwrap(), 2);
+    assert_eq!(
+        storage
+            .exists(&[b"key1".to_vec(), b"key1".to_vec()])
+            .unwrap(),
+        2
+    );
 
     storage.shutdown().await;
 }
@@ -270,7 +294,12 @@ async fn test_del_command() {
     assert_eq!(storage.del(&[]).unwrap(), 0);
 
     // Test DEL with non-existent keys
-    assert_eq!(storage.del(&[b"non_existent1".to_vec(), b"non_existent2".to_vec()]).unwrap(), 0);
+    assert_eq!(
+        storage
+            .del(&[b"non_existent1".to_vec(), b"non_existent2".to_vec()])
+            .unwrap(),
+        0
+    );
 
     // Set some keys
     storage.set(b"key1", b"value1").unwrap();
@@ -282,12 +311,25 @@ async fn test_del_command() {
     assert_eq!(storage.exists(&[b"key1".to_vec()]).unwrap(), 0);
 
     // Test DEL with multiple keys
-    assert_eq!(storage.del(&[b"key2".to_vec(), b"key3".to_vec()]).unwrap(), 2);
-    assert_eq!(storage.exists(&[b"key2".to_vec(), b"key3".to_vec()]).unwrap(), 0);
+    assert_eq!(
+        storage.del(&[b"key2".to_vec(), b"key3".to_vec()]).unwrap(),
+        2
+    );
+    assert_eq!(
+        storage
+            .exists(&[b"key2".to_vec(), b"key3".to_vec()])
+            .unwrap(),
+        0
+    );
 
     // Test DEL with mix of existing and non-existing keys
     storage.set(b"key4", b"value4").unwrap();
-    assert_eq!(storage.del(&[b"key4".to_vec(), b"non_existent".to_vec()]).unwrap(), 1);
+    assert_eq!(
+        storage
+            .del(&[b"key4".to_vec(), b"non_existent".to_vec()])
+            .unwrap(),
+        1
+    );
 
     storage.shutdown().await;
 }
@@ -332,14 +374,24 @@ async fn test_flushdb_command() {
     storage.lpush(b"list_key", &[b"item1".to_vec()]).unwrap();
 
     // Verify keys exist
-    assert_eq!(storage.exists(&[b"key1".to_vec(), b"key2".to_vec()]).unwrap(), 2);
+    assert_eq!(
+        storage
+            .exists(&[b"key1".to_vec(), b"key2".to_vec()])
+            .unwrap(),
+        2
+    );
     assert_eq!(storage.llen(b"list_key").unwrap(), 1);
 
     // Test FLUSHDB
     storage.flushdb().unwrap();
 
     // Verify all keys are gone
-    assert_eq!(storage.exists(&[b"key1".to_vec(), b"key2".to_vec()]).unwrap(), 0);
+    assert_eq!(
+        storage
+            .exists(&[b"key1".to_vec(), b"key2".to_vec()])
+            .unwrap(),
+        0
+    );
     assert_eq!(storage.llen(b"list_key").unwrap(), 0);
 
     storage.shutdown().await;
@@ -357,13 +409,23 @@ async fn test_flushall_command() {
     storage.set(b"key2", b"value2").unwrap();
 
     // Verify keys exist
-    assert_eq!(storage.exists(&[b"key1".to_vec(), b"key2".to_vec()]).unwrap(), 2);
+    assert_eq!(
+        storage
+            .exists(&[b"key1".to_vec(), b"key2".to_vec()])
+            .unwrap(),
+        2
+    );
 
     // Test FLUSHALL
     storage.flushall().unwrap();
 
     // Verify all keys are gone
-    assert_eq!(storage.exists(&[b"key1".to_vec(), b"key2".to_vec()]).unwrap(), 0);
+    assert_eq!(
+        storage
+            .exists(&[b"key1".to_vec(), b"key2".to_vec()])
+            .unwrap(),
+        0
+    );
 
     storage.shutdown().await;
 }
@@ -386,7 +448,7 @@ async fn test_randomkey_command() {
     // Test RANDOMKEY with keys present
     let random_key = storage.randomkey().unwrap();
     assert!(random_key.is_some());
-    
+
     // The random key should be one of the keys we set
     let key = random_key.unwrap();
     println!("Random key returned: '{}' (length: {})", key, key.len());
@@ -414,7 +476,7 @@ async fn test_ttl_time_based_scenarios_integration() {
     let value1 = b"short_ttl_value";
     storage.set(key1, value1).unwrap();
     assert!(storage.expire(key1, 60).unwrap());
-    
+
     // Verify TTL is set correctly (should be around 60 seconds)
     let ttl = storage.ttl(key1).unwrap();
     assert!(ttl >= 55 && ttl <= 60);
@@ -424,7 +486,7 @@ async fn test_ttl_time_based_scenarios_integration() {
     let value2 = b"medium_ttl_value";
     storage.set(key2, value2).unwrap();
     assert!(storage.expire(key2, 120).unwrap());
-    
+
     let remaining_ttl = storage.ttl(key2).unwrap();
     assert!(remaining_ttl >= 115 && remaining_ttl <= 120);
     assert_eq!(storage.exists(&[key2.to_vec()]).unwrap(), 1);
@@ -434,7 +496,7 @@ async fn test_ttl_time_based_scenarios_integration() {
     let value3 = b"pttl_value";
     storage.set(key3, value3).unwrap();
     assert!(storage.pexpire(key3, 30000).unwrap()); // 30 seconds
-    
+
     let pttl = storage.pttl(key3).unwrap();
     assert!(pttl >= 25000 && pttl <= 30000);
 
@@ -444,7 +506,7 @@ async fn test_ttl_time_based_scenarios_integration() {
     assert!(storage.expire(key4, 30).unwrap());
     let initial_ttl = storage.ttl(key4).unwrap();
     assert!(initial_ttl >= 25 && initial_ttl <= 30);
-    
+
     // Update TTL to a different value
     assert!(storage.expire(key4, 90).unwrap());
     let updated_ttl = storage.ttl(key4).unwrap();
@@ -487,7 +549,7 @@ async fn test_expiration_accuracy_and_cleanup_integration() {
 
     // Wait a bit and verify TTLs decrease
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    
+
     for (key, expected_ttl) in &keys_and_ttls {
         let actual_ttl = storage.ttl(key).unwrap();
         assert!(actual_ttl >= expected_ttl - 3 && actual_ttl <= expected_ttl - 1);
@@ -516,7 +578,10 @@ async fn test_ttl_with_string_data_type_integration() {
     assert!(storage.expire(key, 2).unwrap());
 
     // Verify string operations work with TTL
-    assert_eq!(storage.get(key).unwrap(), String::from_utf8_lossy(value).to_string());
+    assert_eq!(
+        storage.get(key).unwrap(),
+        String::from_utf8_lossy(value).to_string()
+    );
     assert!(storage.ttl(key).unwrap() > 0);
 
     // Test string operations don't affect TTL
@@ -525,7 +590,7 @@ async fn test_ttl_with_string_data_type_integration() {
 
     // Test that key still exists before expiration
     assert_eq!(storage.exists(&[key.to_vec()]).unwrap(), 1);
-    
+
     // Test TTL decreases over time
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let final_ttl = storage.ttl(key).unwrap();
@@ -545,7 +610,9 @@ async fn test_ttl_with_list_data_type_integration() {
     let key = b"list_ttl_key";
 
     // Create list and set TTL
-    storage.lpush(key, &[b"item1".to_vec(), b"item2".to_vec()]).unwrap();
+    storage
+        .lpush(key, &[b"item1".to_vec(), b"item2".to_vec()])
+        .unwrap();
     assert_eq!(storage.llen(key).unwrap(), 2);
     assert!(storage.expire(key, 2).unwrap());
 
@@ -560,7 +627,7 @@ async fn test_ttl_with_list_data_type_integration() {
 
     // Test that list still exists and TTL is working
     assert_eq!(storage.exists(&[key.to_vec()]).unwrap(), 1);
-    
+
     // Test TTL decreases over time
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let final_ttl = storage.ttl(key).unwrap();
@@ -584,7 +651,7 @@ async fn test_ttl_with_timestamps_integration() {
     // Test EXPIREAT with future timestamp
     let future_timestamp = chrono::Utc::now().timestamp() + 3; // 3 seconds from now
     assert!(storage.expireat(key, future_timestamp).unwrap());
-    
+
     let ttl = storage.ttl(key).unwrap();
     assert!(ttl >= 2 && ttl <= 3);
 
@@ -593,14 +660,14 @@ async fn test_ttl_with_timestamps_integration() {
     storage.set(key2, value).unwrap();
     let future_timestamp_ms = chrono::Utc::now().timestamp_millis() + 2000; // 2 seconds from now
     assert!(storage.pexpireat(key2, future_timestamp_ms).unwrap());
-    
+
     let pttl = storage.pttl(key2).unwrap();
     assert!(pttl >= 1500 && pttl <= 2000);
 
     // Test that keys still exist and TTLs are working
     assert_eq!(storage.exists(&[key.to_vec()]).unwrap(), 1);
     assert_eq!(storage.exists(&[key2.to_vec()]).unwrap(), 1);
-    
+
     // Test TTL decreases over time
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let final_ttl = storage.ttl(key).unwrap();
@@ -687,7 +754,7 @@ async fn test_concurrent_ttl_operations_integration() {
     for i in 0..10 {
         let key = format!("concurrent_key_{}", i);
         storage.set(key.as_bytes(), b"value").unwrap();
-        
+
         // Set different TTLs
         let ttl = (i % 3) + 10; // TTL between 10-12 seconds
         assert!(storage.expire(key.as_bytes(), ttl).unwrap());
@@ -705,7 +772,7 @@ async fn test_concurrent_ttl_operations_integration() {
 
     // Check that all keys still exist and have decreased TTLs
     let mut active_count = 0;
-    
+
     for i in 0..10 {
         let key = format!("concurrent_key_{}", i);
         let ttl = storage.ttl(key.as_bytes()).unwrap();
@@ -735,7 +802,7 @@ async fn test_ttl_edge_cases_integration() {
     // Test setting TTL multiple times
     assert!(storage.expire(key, 10).unwrap());
     let first_ttl = storage.ttl(key).unwrap();
-    
+
     assert!(storage.expire(key, 5).unwrap()); // Update TTL
     let second_ttl = storage.ttl(key).unwrap();
     assert!(second_ttl < first_ttl);

@@ -407,7 +407,11 @@ impl RespEncode for RespEncoder {
                 if d.is_nan() {
                     self.buffer.extend_from_slice(b",nan");
                 } else if d.is_infinite() {
-                    self.buffer.extend_from_slice(if d.is_sign_negative() { b",-inf" } else { b",inf" });
+                    self.buffer.extend_from_slice(if d.is_sign_negative() {
+                        b",-inf"
+                    } else {
+                        b",inf"
+                    });
                 } else {
                     let _ = write!(self.buffer, ",{}", d);
                 }
@@ -426,7 +430,10 @@ impl RespEncode for RespEncoder {
             }
             RespData::VerbatimString { format, data } => {
                 if format.len() != 3 {
-                    panic!("RESP3 VerbatimString format must be exactly 3 bytes, got {}", format.len());
+                    panic!(
+                        "RESP3 VerbatimString format must be exactly 3 bytes, got {}",
+                        format.len()
+                    );
                 }
                 let total_len = format.len() + 1 + data.len(); // format + ':' + data
                 let _ = write!(self.buffer, "={total_len}");
@@ -472,7 +479,8 @@ impl RespEncode for RespEncoder {
 
     fn append_boolean(&mut self, value: bool) -> &mut Self {
         self.buffer.extend_from_slice(b"#");
-        self.buffer.extend_from_slice(if value { b"t" } else { b"f" });
+        self.buffer
+            .extend_from_slice(if value { b"t" } else { b"f" });
         self.append_crlf()
     }
 
@@ -480,7 +488,11 @@ impl RespEncode for RespEncoder {
         if value.is_nan() {
             self.buffer.extend_from_slice(b",nan");
         } else if value.is_infinite() {
-            self.buffer.extend_from_slice(if value.is_sign_negative() { b",-inf" } else { b",inf" });
+            self.buffer.extend_from_slice(if value.is_sign_negative() {
+                b",-inf"
+            } else {
+                b",inf"
+            });
         } else {
             let _ = write!(self.buffer, ",{}", value);
         }
@@ -502,7 +514,10 @@ impl RespEncode for RespEncoder {
 
     fn append_verbatim_string(&mut self, format: &str, data: &[u8]) -> &mut Self {
         if format.len() != 3 {
-            panic!("RESP3 VerbatimString format must be exactly 3 bytes, got {}", format.len());
+            panic!(
+                "RESP3 VerbatimString format must be exactly 3 bytes, got {}",
+                format.len()
+            );
         }
         let total_len = format.len() + 1 + data.len(); // format + ':' + data
         let _ = write!(self.buffer, "={total_len}");
@@ -571,6 +586,7 @@ mod tests {
     #[test]
     fn test_encode_resp3_double() {
         let mut encoder = RespEncoder::new(RespVersion::RESP3);
+        #[allow(clippy::approx_constant)]
         encoder.encode_resp_data(&RespData::Double(3.14159));
         assert_eq!(encoder.get_response(), Bytes::from(",3.14159\r\n"));
     }
@@ -578,15 +594,23 @@ mod tests {
     #[test]
     fn test_encode_resp3_big_number() {
         let mut encoder = RespEncoder::new(RespVersion::RESP3);
-        encoder.encode_resp_data(&RespData::BigNumber(Bytes::from("123456789012345678901234567890")));
-        assert_eq!(encoder.get_response(), Bytes::from("(123456789012345678901234567890\r\n"));
+        encoder.encode_resp_data(&RespData::BigNumber(Bytes::from(
+            "123456789012345678901234567890",
+        )));
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("(123456789012345678901234567890\r\n")
+        );
     }
 
     #[test]
     fn test_encode_resp3_bulk_error() {
         let mut encoder = RespEncoder::new(RespVersion::RESP3);
         encoder.encode_resp_data(&RespData::BulkError(Bytes::from("SYNTAX invalid syntax")));
-        assert_eq!(encoder.get_response(), Bytes::from("!21\r\nSYNTAX invalid syntax\r\n"));
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("!21\r\nSYNTAX invalid syntax\r\n")
+        );
     }
 
     #[test]
@@ -596,17 +620,29 @@ mod tests {
             format: Bytes::from("txt"),
             data: Bytes::from("Some string"),
         });
-        assert_eq!(encoder.get_response(), Bytes::from("=15\r\ntxt:Some string\r\n"));
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("=15\r\ntxt:Some string\r\n")
+        );
     }
 
     #[test]
     fn test_encode_resp3_map() {
         let mut encoder = RespEncoder::new(RespVersion::RESP3);
         encoder.encode_resp_data(&RespData::Map(vec![
-            (RespData::SimpleString(Bytes::from("first")), RespData::Integer(1)),
-            (RespData::SimpleString(Bytes::from("second")), RespData::Integer(2)),
+            (
+                RespData::SimpleString(Bytes::from("first")),
+                RespData::Integer(1),
+            ),
+            (
+                RespData::SimpleString(Bytes::from("second")),
+                RespData::Integer(2),
+            ),
         ]));
-        assert_eq!(encoder.get_response(), Bytes::from("%2\r\n+first\r\n:1\r\n+second\r\n:2\r\n"));
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("%2\r\n+first\r\n:1\r\n+second\r\n:2\r\n")
+        );
     }
 
     #[test]
@@ -617,7 +653,10 @@ mod tests {
             RespData::SimpleString(Bytes::from("apple")),
             RespData::Boolean(true),
         ]));
-        assert_eq!(encoder.get_response(), Bytes::from("~3\r\n+orange\r\n+apple\r\n#t\r\n"));
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("~3\r\n+orange\r\n+apple\r\n#t\r\n")
+        );
     }
 
     #[test]
@@ -627,44 +666,63 @@ mod tests {
             RespData::SimpleString(Bytes::from("pubsub")),
             RespData::SimpleString(Bytes::from("message")),
         ]));
-        assert_eq!(encoder.get_response(), Bytes::from(">2\r\n+pubsub\r\n+message\r\n"));
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from(">2\r\n+pubsub\r\n+message\r\n")
+        );
     }
 
     #[test]
     fn test_resp3_convenience_methods() {
         let mut encoder = RespEncoder::new(RespVersion::RESP3);
-        
+
         encoder.clear().append_null();
         assert_eq!(encoder.get_response(), Bytes::from("_\r\n"));
-        
+
         encoder.clear().append_boolean(true);
         assert_eq!(encoder.get_response(), Bytes::from("#t\r\n"));
-        
+
+        #[allow(clippy::approx_constant)]
         encoder.clear().append_double(2.718);
         assert_eq!(encoder.get_response(), Bytes::from(",2.718\r\n"));
-        
+
         encoder.clear().append_big_number("999999999999999999999");
-        assert_eq!(encoder.get_response(), Bytes::from("(999999999999999999999\r\n"));
-        
-        encoder.clear().append_bulk_error(b"ERR something went wrong");
-        assert_eq!(encoder.get_response(), Bytes::from("!24\r\nERR something went wrong\r\n"));
-        
-        encoder.clear().append_verbatim_string("txt", b"Hello World");
-        assert_eq!(encoder.get_response(), Bytes::from("=15\r\ntxt:Hello World\r\n"));
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("(999999999999999999999\r\n")
+        );
+
+        encoder
+            .clear()
+            .append_bulk_error(b"ERR something went wrong");
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("!24\r\nERR something went wrong\r\n")
+        );
+
+        encoder
+            .clear()
+            .append_verbatim_string("txt", b"Hello World");
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("=15\r\ntxt:Hello World\r\n")
+        );
     }
 
     #[test]
     fn test_backward_compatibility() {
         // Test that RESP2 data still works with RESP3 encoder
         let mut encoder = RespEncoder::new(RespVersion::RESP3);
-        
+
         encoder.encode_resp_data(&RespData::SimpleString(Bytes::from("OK")));
         assert_eq!(encoder.get_response(), Bytes::from("+OK\r\n"));
-        
+
         encoder.clear().encode_resp_data(&RespData::Integer(42));
         assert_eq!(encoder.get_response(), Bytes::from(":42\r\n"));
-        
-        encoder.clear().encode_resp_data(&RespData::BulkString(Some(Bytes::from("hello"))));
+
+        encoder
+            .clear()
+            .encode_resp_data(&RespData::BulkString(Some(Bytes::from("hello"))));
         assert_eq!(encoder.get_response(), Bytes::from("$5\r\nhello\r\n"));
     }
 
@@ -697,11 +755,12 @@ mod tests {
         // Document current behavior: RESP3 types encode regardless of version
         // Future improvement: Add version-aware encoding or fail early
         let mut encoder = RespEncoder::new(RespVersion::RESP2);
-        
+
         // Double
+        #[allow(clippy::approx_constant)]
         encoder.clear().encode_resp_data(&RespData::Double(3.14));
         assert_eq!(encoder.get_response(), Bytes::from(",3.14\r\n"));
-        
+
         // Map
         encoder.clear().encode_resp_data(&RespData::Map(vec![]));
         assert_eq!(encoder.get_response(), Bytes::from("%0\r\n"));

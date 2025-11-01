@@ -24,7 +24,7 @@ use executor::{CmdExecution, CmdExecutor};
 use log::{debug, warn};
 use resp::RespData;
 use storage::storage::Storage;
-use tokio::sync::{mpsc, oneshot, Semaphore};
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio::time::timeout;
 
 /// Configuration for pipeline processing
@@ -155,7 +155,8 @@ impl CommandPipeline {
         };
 
         // Send command to pipeline
-        self.command_tx.send(command)
+        self.command_tx
+            .send(command)
             .map_err(|_| PipelineError::ChannelClosed)?;
 
         // Wait for response with timeout
@@ -268,7 +269,9 @@ impl CommandPipeline {
                 warn!("Failed to acquire semaphore for batch {}", batch_id);
                 // Send errors to all commands in batch
                 for command in batch.commands {
-                    let _ = command.response_tx.send(RespData::Error("ERR server overloaded".into()));
+                    let _ = command
+                        .response_tx
+                        .send(RespData::Error("ERR server overloaded".into()));
                 }
                 return;
             }
@@ -283,7 +286,14 @@ impl CommandPipeline {
             let executor = executor.clone();
 
             let handle = tokio::spawn(async move {
-                let response = Self::execute_command(command.data, command.client, storage, cmd_table, executor).await;
+                let response = Self::execute_command(
+                    command.data,
+                    command.client,
+                    storage,
+                    cmd_table,
+                    executor,
+                )
+                .await;
                 let _ = command.response_tx.send(response);
             });
 
@@ -318,14 +328,17 @@ impl CommandPipeline {
                 client.set_cmd_name(cmd_name.as_ref());
             }
 
-            let argv = params.iter()
-                .map(|p| if let RespData::BulkString(Some(d)) = p { 
-                    d.to_vec() 
-                } else { 
-                    vec![] 
+            let argv = params
+                .iter()
+                .map(|p| {
+                    if let RespData::BulkString(Some(d)) = p {
+                        d.to_vec()
+                    } else {
+                        vec![]
+                    }
                 })
                 .collect::<Vec<Vec<u8>>>();
-            
+
             client.set_argv(&argv);
 
             // Execute command
@@ -353,7 +366,7 @@ impl CommandPipeline {
         PipelineStats {
             available_permits: self.semaphore.available_permits(),
             max_concurrent_pipelines: self.config.max_concurrent_pipelines,
-            // Note: queue_capacity stat is currently misleading because the channel at line 121 
+            // Note: queue_capacity stat is currently misleading because the channel at line 121
             // is unbounded (mpsc::unbounded_channel). This returns command_queue_size from config,
             // but the actual channel has no capacity limit.
             // TODO: Consider using bounded channel (mpsc::channel) and passing config.command_queue_size
@@ -402,13 +415,13 @@ mod tests {
         let batch = CommandBatch::new(1);
         assert!(batch.is_empty());
         assert!(!batch.is_full(10));
-        
+
         // Test batch expiration
         let config = PipelineConfig {
             batch_timeout: Duration::from_millis(1),
             ..Default::default()
         };
-        
+
         sleep(Duration::from_millis(2)).await;
         assert!(batch.is_expired(config.batch_timeout));
     }

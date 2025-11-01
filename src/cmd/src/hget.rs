@@ -22,7 +22,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
-use crate::{impl_cmd_clone_box, impl_cmd_meta, AclCategory, Cmd, CmdFlags, CmdMeta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HGetCmd {
@@ -55,7 +55,7 @@ impl Cmd for HGetCmd {
         let argv = client.argv();
         let key = &argv[1];
         let field = &argv[2];
-        
+
         match storage.hget(key, field) {
             Ok(Some(value)) => {
                 client.set_reply(RespData::BulkString(Some(Bytes::from(value))));
@@ -69,4 +69,3 @@ impl Cmd for HGetCmd {
         }
     }
 }
-

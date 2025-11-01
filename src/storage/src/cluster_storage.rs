@@ -17,9 +17,9 @@
 
 //! Cluster-aware storage layer that integrates with Raft consensus
 
-use std::sync::Arc;
-use log::{info, warn};
 use crate::storage::Storage;
+use log::{info, warn};
+use std::sync::Arc;
 
 /// Cluster-aware storage wrapper that routes operations through Raft consensus
 pub struct ClusterStorage {
@@ -41,47 +41,52 @@ impl ClusterStorage {
             is_leader: std::sync::atomic::AtomicBool::new(false),
         }
     }
-    
+
     /// Get the underlying local storage
     pub fn local_storage(&self) -> &Arc<Storage> {
         &self.local_storage
     }
-    
+
     /// Check if this node is currently the leader
     pub fn is_leader(&self) -> bool {
         self.is_leader.load(std::sync::atomic::Ordering::Relaxed)
     }
-    
+
     /// Update leadership status
     pub fn set_leader_status(&self, is_leader: bool) {
-        self.is_leader.store(is_leader, std::sync::atomic::Ordering::Relaxed);
+        self.is_leader
+            .store(is_leader, std::sync::atomic::Ordering::Relaxed);
         if is_leader {
             info!("Node became leader");
         } else {
             info!("Node is no longer leader");
         }
     }
-    
+
     /// Execute a write operation through Raft consensus
     pub async fn execute_write_operation(&self, _operation: &[u8]) -> Result<Vec<u8>, String> {
         if !self.is_leader() {
             return Err("MOVED - not leader".to_string());
         }
-        
+
         // TODO: Route through Raft consensus
         // For now, execute directly on local storage
         warn!("Write operation executed directly - Raft consensus integration pending");
-        
+
         // This is a placeholder - actual implementation will route through Raft
         Ok(b"OK".to_vec())
     }
-    
+
     /// Execute a read operation (can be local or consensus-based depending on consistency level)
-    pub async fn execute_read_operation(&self, _operation: &[u8], linearizable: bool) -> Result<Vec<u8>, String> {
+    pub async fn execute_read_operation(
+        &self,
+        _operation: &[u8],
+        linearizable: bool,
+    ) -> Result<Vec<u8>, String> {
         if linearizable && !self.is_leader() {
             return Err("MOVED - not leader for linearizable reads".to_string());
         }
-        
+
         // For read operations, we can typically serve from local storage
         // TODO: Implement actual read operation routing
         Ok(b"".to_vec())
@@ -91,7 +96,7 @@ impl ClusterStorage {
 /// Integration helper for backward compatibility
 impl std::ops::Deref for ClusterStorage {
     type Target = Storage;
-    
+
     fn deref(&self) -> &Self::Target {
         self.local_storage.as_ref()
     }
@@ -101,25 +106,25 @@ impl std::ops::Deref for ClusterStorage {
 mod tests {
     use super::*;
     use crate::storage::Storage;
-    
+
     #[test]
     fn test_cluster_storage_creation() {
         let storage = Arc::new(Storage::new(1, 0));
         let raft_node = Arc::new(());
         let cluster_storage = ClusterStorage::new(storage, raft_node);
-        
+
         assert!(!cluster_storage.is_leader());
     }
-    
+
     #[test]
     fn test_leader_status_management() {
         let storage = Arc::new(Storage::new(1, 0));
         let raft_node = Arc::new(());
         let cluster_storage = ClusterStorage::new(storage, raft_node);
-        
+
         cluster_storage.set_leader_status(true);
         assert!(cluster_storage.is_leader());
-        
+
         cluster_storage.set_leader_status(false);
         assert!(!cluster_storage.is_leader());
     }

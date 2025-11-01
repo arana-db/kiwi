@@ -16,10 +16,10 @@
 // limitations under the License.
 
 pub mod builder;
-pub mod executor;
 pub mod cluster_executor;
+pub mod executor;
 
 pub use builder::CmdExecutorBuilder;
+pub use cluster_executor::{ClusterCmdExecution, ClusterCmdExecutor};
 pub use executor::CmdExecution;
 pub use executor::CmdExecutor;
-pub use cluster_executor::{ClusterCmdExecution, ClusterCmdExecutor};

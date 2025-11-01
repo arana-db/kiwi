@@ -20,7 +20,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use client::Client;
 use cmd::table::CmdTable;
-use executor::{CmdExecution, CmdExecutor, ClusterCmdExecution};
+use executor::{ClusterCmdExecution, CmdExecution, CmdExecutor};
 use log::error;
 use resp::encode::RespEncoder;
 use resp::{Parse, RespData, RespEncode, RespParseResult, RespVersion};
@@ -134,16 +134,16 @@ pub async fn process_cluster_connection(
                                     }
                                     let argv = params.iter().map(|p| if let RespData::BulkString(Some(d)) = p { d.to_vec() } else { vec![] }).collect::<Vec<Vec<u8>>>();
                                     client.set_argv(&argv);
-                                    
+
                                     // Handle command with cluster awareness
                                     handle_cluster_command(
-                                        client.clone(), 
-                                        storage.clone(), 
-                                        cmd_table.clone(), 
+                                        client.clone(),
+                                        storage.clone(),
+                                        cmd_table.clone(),
                                         executor.clone()
                                         // raft_compatibility.clone() // Temporarily disabled
                                     ).await;
-                                    
+
                                     // Extract the reply from the connection and send it
                                     let response = client.take_reply();
                                     let mut encoder = RespEncoder::new(RespVersion::RESP2);
@@ -191,7 +191,7 @@ async fn handle_cluster_command(
             storage,
             // raft_compatibility, // Temporarily disabled
         };
-        
+
         // For now, use the regular executor but with cluster awareness
         // TODO: Replace with dedicated ClusterCmdExecutor when fully implemented
         let regular_exec = CmdExecution {

@@ -44,8 +44,8 @@ pub struct BufferConfig {
 impl Default for BufferConfig {
     fn default() -> Self {
         Self {
-            initial_buffer_size: 8192,      // 8KB initial size
-            max_buffer_size: 1024 * 1024,   // 1MB max size
+            initial_buffer_size: 8192,    // 8KB initial size
+            max_buffer_size: 1024 * 1024, // 1MB max size
             max_pool_size: 100,
             min_pool_size: 10,
             cleanup_interval: Duration::from_secs(60),
@@ -140,7 +140,7 @@ impl BufferManager {
 
         manager
     }
-    
+
     /// Create a new BufferManager and wait for initial population
     pub async fn new_with_init(config: BufferConfig) -> Self {
         let manager = Self {
@@ -152,7 +152,7 @@ impl BufferManager {
 
         // Pre-populate pool synchronously
         manager.populate_initial_buffers().await;
-        
+
         // Start cleanup task after population
         manager.start_cleanup_task();
 
@@ -211,7 +211,12 @@ impl BufferManager {
     }
 
     /// Create a zero-copy slice from buffer
-    pub fn create_bytes_slice(&self, buffer: &PooledBuffer, start: usize, len: usize) -> Option<Bytes> {
+    pub fn create_bytes_slice(
+        &self,
+        buffer: &PooledBuffer,
+        start: usize,
+        len: usize,
+    ) -> Option<Bytes> {
         if start + len <= buffer.len() {
             Some(Bytes::copy_from_slice(&buffer.buffer[start..start + len]))
         } else {
@@ -220,9 +225,16 @@ impl BufferManager {
     }
 
     /// Efficiently copy data between buffers
-    pub fn copy_data(&self, src: &PooledBuffer, dst: &mut PooledBuffer, src_start: usize, len: usize) -> bool {
+    pub fn copy_data(
+        &self,
+        src: &PooledBuffer,
+        dst: &mut PooledBuffer,
+        src_start: usize,
+        len: usize,
+    ) -> bool {
         if src_start + len <= src.len() {
-            dst.buffer.extend_from_slice(&src.buffer[src_start..src_start + len]);
+            dst.buffer
+                .extend_from_slice(&src.buffer[src_start..src_start + len]);
             true
         } else {
             false
@@ -233,7 +245,7 @@ impl BufferManager {
     pub async fn stats(&self) -> BufferStats {
         let stats = self.stats.lock().await;
         let pool = self.buffer_pool.lock().await;
-        
+
         BufferStats {
             pool_size: pool.len(),
             pool_hits: stats.pool_hits,
@@ -254,35 +266,39 @@ impl BufferManager {
 
         tokio::spawn(async move {
             let mut cleanup_interval = interval(config.cleanup_interval);
-            
+
             loop {
                 cleanup_interval.tick().await;
-                
+
                 let mut pool_guard = pool.lock().await;
                 let mut stats_guard = stats.lock().await;
-                
+
                 let _original_size = pool_guard.len();
                 let mut cleaned_count = 0;
-                
+
                 // Keep only non-idle buffers, but maintain minimum pool size
                 let mut kept_buffers = VecDeque::new();
-                
+
                 while let Some(buffer) = pool_guard.pop_front() {
-                    if buffer.is_idle(config.max_idle_time) && 
-                       (kept_buffers.len() + pool_guard.len()) > config.min_pool_size {
+                    if buffer.is_idle(config.max_idle_time)
+                        && (kept_buffers.len() + pool_guard.len()) > config.min_pool_size
+                    {
                         cleaned_count += 1;
                         // Buffer will be dropped
                     } else {
                         kept_buffers.push_back(buffer);
                     }
                 }
-                
+
                 *pool_guard = kept_buffers;
                 stats_guard.cleanups_performed += 1;
-                
+
                 if cleaned_count > 0 {
-                    debug!("Buffer cleanup: removed {} idle buffers, {} remaining", 
-                           cleaned_count, pool_guard.len());
+                    debug!(
+                        "Buffer cleanup: removed {} idle buffers, {} remaining",
+                        cleaned_count,
+                        pool_guard.len()
+                    );
                 }
             }
         });
@@ -293,15 +309,18 @@ impl BufferManager {
         let mut pool = self.buffer_pool.lock().await;
         let mut counter = self.buffer_counter.lock().await;
         let mut stats = self.stats.lock().await;
-        
+
         for _ in 0..self.config.min_pool_size {
             *counter += 1;
             let buffer = PooledBuffer::new(self.config.initial_buffer_size, *counter);
             pool.push_back(buffer);
             stats.buffers_created += 1;
         }
-        
-        debug!("Pre-populated buffer pool with {} buffers", self.config.min_pool_size);
+
+        debug!(
+            "Pre-populated buffer pool with {} buffers",
+            self.config.min_pool_size
+        );
     }
 }
 
@@ -355,10 +374,10 @@ impl BufferedReader {
         if let Some(ref mut buffer) = self.current_buffer {
             let available_space = buffer.buffer.capacity() - buffer.buffer.len();
             let bytes_to_copy = std::cmp::min(data.len(), available_space);
-            
+
             buffer.buffer.extend_from_slice(&data[..bytes_to_copy]);
             buffer.touch();
-            
+
             bytes_to_copy
         } else {
             0
@@ -436,17 +455,17 @@ mod tests {
             min_pool_size: 2,
             ..Default::default()
         };
-        
+
         let manager = BufferManager::new(config);
-        
+
         // Get a buffer
         let buffer1 = manager.get_buffer().await;
         assert_eq!(buffer1.capacity(), 1024);
         assert!(buffer1.is_empty());
-        
+
         // Return buffer
         manager.return_buffer(buffer1).await;
-        
+
         // Get another buffer - should reuse
         let buffer2 = manager.get_buffer().await;
         assert_eq!(buffer2.id, 1); // Should be the same buffer
@@ -459,9 +478,9 @@ mod tests {
             min_pool_size: 1,
             ..Default::default()
         };
-        
+
         let manager = BufferManager::new_with_init(config).await;
-        
+
         let stats = manager.stats().await;
         assert!(stats.buffers_created > 0);
     }
@@ -471,16 +490,16 @@ mod tests {
         let config = BufferConfig::default();
         let manager = BufferManager::new(config);
         let mut reader = BufferedReader::new(manager);
-        
+
         // Read some data
         let data = b"Hello, World!";
         let bytes_read = reader.read_data(data).await;
         assert_eq!(bytes_read, data.len());
-        
+
         // Check available data
         let available = reader.available_data().unwrap();
         assert_eq!(available, data);
-        
+
         // Consume some bytes
         reader.consume(5);
         let remaining = reader.available_data().unwrap();
@@ -492,14 +511,14 @@ mod tests {
         let config = BufferConfig::default();
         let manager = BufferManager::new(config);
         let mut buffer = manager.get_buffer().await;
-        
+
         // Add some data
         buffer.buffer.extend_from_slice(b"Hello, World!");
-        
+
         // Create zero-copy slice
         let slice = manager.create_bytes_slice(&buffer, 0, 5).unwrap();
         assert_eq!(slice.as_ref(), b"Hello");
-        
+
         // Original buffer still has all data
         assert_eq!(buffer.buffer.as_ref(), b"Hello, World!");
     }

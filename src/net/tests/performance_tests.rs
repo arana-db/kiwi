@@ -67,7 +67,7 @@ impl NetworkPerformanceTests {
 
         let pool = Arc::new(ConnectionPool::new(config));
         let test_config = PerformanceTestConfig::default();
-        
+
         // Warmup
         Self::warmup_connection_pool(&pool).await;
 
@@ -81,20 +81,23 @@ impl NetworkPerformanceTests {
         for _ in 0..test_config.concurrent_clients {
             let pool_clone = pool.clone();
             let ops_per_client = test_config.operations_per_client;
-            
+
             let handle = tokio::spawn(async move {
                 let mut client_latencies = Vec::new();
                 let mut client_successful = 0;
-                
+
                 for _ in 0..ops_per_client {
                     let op_start = Instant::now();
-                    
+
                     // Simulate getting and returning a connection
-                    match pool_clone.get_connection(|| async {
-                        // Simulate connection creation
-                        tokio::time::sleep(Duration::from_micros(100)).await;
-                        Ok(MockConnection { _id: 1 })
-                    }).await {
+                    match pool_clone
+                        .get_connection(|| async {
+                            // Simulate connection creation
+                            tokio::time::sleep(Duration::from_micros(100)).await;
+                            Ok(MockConnection { _id: 1 })
+                        })
+                        .await
+                    {
                         Ok(conn) => {
                             // Simulate some work
                             tokio::time::sleep(Duration::from_micros(50)).await;
@@ -103,13 +106,13 @@ impl NetworkPerformanceTests {
                         }
                         Err(_) => {}
                     }
-                    
+
                     client_latencies.push(op_start.elapsed());
                 }
-                
+
                 (client_latencies, client_successful)
             });
-            
+
             handles.push(handle);
         }
 
@@ -155,30 +158,32 @@ impl NetworkPerformanceTests {
         for _ in 0..test_config.concurrent_clients {
             let manager_clone = buffer_manager.clone();
             let ops_per_client = test_config.operations_per_client;
-            
+
             let handle = tokio::spawn(async move {
                 let mut client_latencies = Vec::new();
                 let mut client_successful = 0;
-                
+
                 for _ in 0..ops_per_client {
                     let op_start = Instant::now();
-                    
+
                     // Get buffer, use it, return it
                     let mut buffer = manager_clone.get_buffer().await;
-                    
+
                     // Simulate buffer usage
-                    buffer.buffer.extend_from_slice(b"Hello, World! This is test data.");
+                    buffer
+                        .buffer
+                        .extend_from_slice(b"Hello, World! This is test data.");
                     let _ = manager_clone.create_bytes_slice(&buffer, 0, 5);
-                    
+
                     manager_clone.return_buffer(buffer).await;
                     client_successful += 1;
-                    
+
                     client_latencies.push(op_start.elapsed());
                 }
-                
+
                 (client_latencies, client_successful)
             });
-            
+
             handles.push(handle);
         }
 
@@ -220,16 +225,16 @@ impl NetworkPerformanceTests {
             let manager_clone = buffer_manager.clone();
             let ops_per_client = test_config.operations_per_client;
             let data = test_data.clone();
-            
+
             let handle = tokio::spawn(async move {
                 let mut client_latencies = Vec::new();
                 let mut client_successful = 0;
-                
+
                 for _ in 0..ops_per_client {
                     let op_start = Instant::now();
-                    
+
                     let mut reader = BufferedReader::new(manager_clone.clone());
-                    
+
                     // Read data
                     let bytes_read = reader.read_data(&data[..]).await;
                     if bytes_read > 0 {
@@ -241,14 +246,14 @@ impl NetworkPerformanceTests {
                         }
                         client_successful += 1;
                     }
-                    
+
                     reader.reset().await;
                     client_latencies.push(op_start.elapsed());
                 }
-                
+
                 (client_latencies, client_successful)
             });
-            
+
             handles.push(handle);
         }
 
@@ -288,20 +293,20 @@ impl NetworkPerformanceTests {
         for client_id in 0..test_config.concurrent_clients {
             let ops_per_client = test_config.operations_per_client;
             let use_pooling = client_id % 2 == 0; // Alternate between pooling and traditional
-            
+
             let handle = tokio::spawn(async move {
                 let mut client_latencies = Vec::new();
                 let mut client_successful = 0;
-                
+
                 let buffer_manager = if use_pooling {
                     Some(BufferManager::new(BufferConfig::default()))
                 } else {
                     None
                 };
-                
+
                 for _ in 0..ops_per_client {
                     let op_start = Instant::now();
-                    
+
                     if let Some(ref manager) = buffer_manager {
                         // Use buffer pooling
                         let buffer = manager.get_buffer().await;
@@ -313,14 +318,14 @@ impl NetworkPerformanceTests {
                         let _buffer = vec![0u8; 8192];
                         // Buffer will be dropped
                     }
-                    
+
                     client_successful += 1;
                     client_latencies.push(op_start.elapsed());
                 }
-                
+
                 (client_latencies, client_successful, use_pooling)
             });
-            
+
             handles.push(handle);
         }
 
@@ -346,21 +351,21 @@ impl NetworkPerformanceTests {
     /// Run comprehensive network performance benchmark
     pub async fn run_comprehensive_benchmark() -> Vec<PerformanceResults> {
         println!("Running comprehensive network performance benchmark...");
-        
+
         let mut results = Vec::new();
-        
+
         println!("Testing connection pool performance...");
         results.push(Self::test_connection_pool_performance().await);
-        
+
         println!("Testing buffer manager performance...");
         results.push(Self::test_buffer_manager_performance().await);
-        
+
         println!("Testing buffered reader performance...");
         results.push(Self::test_buffered_reader_performance().await);
-        
+
         println!("Testing memory allocation performance...");
         results.push(Self::test_memory_allocation_performance().await);
-        
+
         results
     }
 
@@ -369,13 +374,13 @@ impl NetworkPerformanceTests {
         println!("\n{:=<100}", "");
         println!("{:^100}", "NETWORK PERFORMANCE BENCHMARK RESULTS");
         println!("{:=<100}", "");
-        
+
         println!(
             "{:<30} {:>12} {:>12} {:>12} {:>12} {:>12}",
             "Test Name", "Ops/Sec", "Avg (ms)", "P95 (ms)", "P99 (ms)", "Success %"
         );
         println!("{:-<100}", "");
-        
+
         for result in results {
             println!(
                 "{:<30} {:>12.0} {:>12.2} {:>12.2} {:>12.2} {:>12.1}",
@@ -387,7 +392,7 @@ impl NetworkPerformanceTests {
                 result.success_rate * 100.0
             );
         }
-        
+
         println!("{:=<100}", "");
     }
 
@@ -395,19 +400,20 @@ impl NetworkPerformanceTests {
     async fn warmup_connection_pool(pool: &Arc<ConnectionPool<MockConnection>>) {
         let warmup_ops = 100;
         let mut handles = Vec::new();
-        
+
         for _ in 0..warmup_ops {
             let pool_clone = pool.clone();
             let handle = tokio::spawn(async move {
-                if let Ok(conn) = pool_clone.get_connection(|| async {
-                    Ok(MockConnection { _id: 1 })
-                }).await {
+                if let Ok(conn) = pool_clone
+                    .get_connection(|| async { Ok(MockConnection { _id: 1 }) })
+                    .await
+                {
                     pool_clone.return_connection(conn).await;
                 }
             });
             handles.push(handle);
         }
-        
+
         // Wait for warmup to complete
         for handle in handles {
             let _ = handle.await;
@@ -423,35 +429,39 @@ impl NetworkPerformanceTests {
         total_duration: Duration,
     ) -> PerformanceResults {
         latencies.sort();
-        
+
         let operations_per_second = successful_ops as f64 / total_duration.as_secs_f64();
-        
+
         let average_latency_ms = if !latencies.is_empty() {
-            latencies.iter().map(|d| d.as_secs_f64() * 1000.0).sum::<f64>() / latencies.len() as f64
+            latencies
+                .iter()
+                .map(|d| d.as_secs_f64() * 1000.0)
+                .sum::<f64>()
+                / latencies.len() as f64
         } else {
             0.0
         };
-        
+
         let p95_latency_ms = if !latencies.is_empty() {
             let p95_index = (latencies.len() as f64 * 0.95) as usize;
             latencies[p95_index.min(latencies.len() - 1)].as_secs_f64() * 1000.0
         } else {
             0.0
         };
-        
+
         let p99_latency_ms = if !latencies.is_empty() {
             let p99_index = (latencies.len() as f64 * 0.99) as usize;
             latencies[p99_index.min(latencies.len() - 1)].as_secs_f64() * 1000.0
         } else {
             0.0
         };
-        
+
         let success_rate = if total_ops > 0 {
             successful_ops as f64 / total_ops as f64
         } else {
             0.0
         };
-        
+
         PerformanceResults {
             test_name,
             operations_per_second,
@@ -492,7 +502,7 @@ mod tests {
             Duration::from_millis(4),
             Duration::from_millis(5),
         ];
-        
+
         let results = NetworkPerformanceTests::calculate_performance_results(
             "Test".to_string(),
             latencies,
@@ -500,7 +510,7 @@ mod tests {
             5,
             Duration::from_secs(1),
         );
-        
+
         assert_eq!(results.test_name, "Test");
         assert_eq!(results.operations_per_second, 5.0);
         assert_eq!(results.success_rate, 1.0);

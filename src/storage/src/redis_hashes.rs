@@ -603,23 +603,25 @@ impl Redis {
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
         let base_meta_key = BaseMetaKey::new(key).encode()?;
 
-        let create_new_hash =
-            |batch: &mut WriteBatch, key: &[u8], field_map: &std::collections::HashMap<Vec<u8>, Vec<u8>>| -> Result<()> {
-                let count = field_map.len() as u64;
-                let mut hashes_meta =
-                    HashesMetaValue::new(Bytes::copy_from_slice(&count.to_le_bytes()));
-                hashes_meta.inner.data_type = DataType::Hash;
-                let version = hashes_meta.update_version();
+        let create_new_hash = |batch: &mut WriteBatch,
+                               key: &[u8],
+                               field_map: &std::collections::HashMap<Vec<u8>, Vec<u8>>|
+         -> Result<()> {
+            let count = field_map.len() as u64;
+            let mut hashes_meta =
+                HashesMetaValue::new(Bytes::copy_from_slice(&count.to_le_bytes()));
+            hashes_meta.inner.data_type = DataType::Hash;
+            let version = hashes_meta.update_version();
 
-                batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
+            batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
 
-                for (field, value) in field_map {
-                    let data_key = MemberDataKey::new(key, version, field);
-                    let data_value = BaseDataValue::new(value.clone());
-                    batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
-                }
-                Ok(())
-            };
+            for (field, value) in field_map {
+                let data_key = MemberDataKey::new(key, version, field);
+                let data_value = BaseDataValue::new(value.clone());
+                batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
+            }
+            Ok(())
+        };
 
         match db
             .get_cf_opt(meta_cf, &base_meta_key, &self.read_options)
@@ -715,19 +717,20 @@ impl Redis {
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
         let base_meta_key = BaseMetaKey::new(key).encode()?;
 
-        let create_new_hash = |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: &[u8]| -> Result<()> {
-            let mut hashes_meta =
-                HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
-            hashes_meta.inner.data_type = DataType::Hash;
-            let version = hashes_meta.update_version();
+        let create_new_hash =
+            |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: &[u8]| -> Result<()> {
+                let mut hashes_meta =
+                    HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
+                hashes_meta.inner.data_type = DataType::Hash;
+                let version = hashes_meta.update_version();
 
-            batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
+                batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
 
-            let data_key = MemberDataKey::new(key, version, field);
-            let data_value = BaseDataValue::new(value.to_vec());
-            batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
-            Ok(())
-        };
+                let data_key = MemberDataKey::new(key, version, field);
+                let data_value = BaseDataValue::new(value.to_vec());
+                batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
+                Ok(())
+            };
 
         match db
             .get_cf_opt(meta_cf, &base_meta_key, &self.read_options)
@@ -820,20 +823,21 @@ impl Redis {
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
         let base_meta_key = BaseMetaKey::new(key).encode()?;
 
-        let create_new_hash = |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: i64| -> Result<()> {
-            let mut hashes_meta =
-                HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
-            hashes_meta.inner.data_type = DataType::Hash;
-            let version = hashes_meta.update_version();
+        let create_new_hash =
+            |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: i64| -> Result<()> {
+                let mut hashes_meta =
+                    HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
+                hashes_meta.inner.data_type = DataType::Hash;
+                let version = hashes_meta.update_version();
 
-            batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
+                batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
 
-            let data_key = MemberDataKey::new(key, version, field);
-            let value_str = value.to_string();
-            let data_value = BaseDataValue::new(value_str.into_bytes());
-            batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
-            Ok(())
-        };
+                let data_key = MemberDataKey::new(key, version, field);
+                let value_str = value.to_string();
+                let data_value = BaseDataValue::new(value_str.into_bytes());
+                batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
+                Ok(())
+            };
 
         match db
             .get_cf_opt(meta_cf, &base_meta_key, &self.read_options)
@@ -893,9 +897,10 @@ impl Redis {
                                 .build()
                             })?;
 
-                            let new_val = old_int.checked_add(increment).context(OptionNoneSnafu {
-                                message: "integer overflow",
-                            })?;
+                            let new_val =
+                                old_int.checked_add(increment).context(OptionNoneSnafu {
+                                    message: "integer overflow",
+                                })?;
 
                             let new_val_str = new_val.to_string();
                             let data_value = BaseDataValue::new(new_val_str.into_bytes());
@@ -951,20 +956,21 @@ impl Redis {
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
         let base_meta_key = BaseMetaKey::new(key).encode()?;
 
-        let create_new_hash = |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: f64| -> Result<()> {
-            let mut hashes_meta =
-                HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
-            hashes_meta.inner.data_type = DataType::Hash;
-            let version = hashes_meta.update_version();
+        let create_new_hash =
+            |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: f64| -> Result<()> {
+                let mut hashes_meta =
+                    HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
+                hashes_meta.inner.data_type = DataType::Hash;
+                let version = hashes_meta.update_version();
 
-            batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
+                batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
 
-            let data_key = MemberDataKey::new(key, version, field);
-            let value_str = value.to_string();
-            let data_value = BaseDataValue::new(value_str.into_bytes());
-            batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
-            Ok(())
-        };
+                let data_key = MemberDataKey::new(key, version, field);
+                let value_str = value.to_string();
+                let data_value = BaseDataValue::new(value_str.into_bytes());
+                batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
+                Ok(())
+            };
 
         match db
             .get_cf_opt(meta_cf, &base_meta_key, &self.read_options)

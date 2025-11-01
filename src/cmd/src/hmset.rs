@@ -21,7 +21,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
-use crate::{impl_cmd_clone_box, impl_cmd_meta, AclCategory, Cmd, CmdFlags, CmdMeta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HMSetCmd {
@@ -60,12 +60,12 @@ impl Cmd for HMSetCmd {
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let argv = client.argv();
         let key = &argv[1];
-        
+
         let mut field_values = Vec::new();
         for i in (2..argv.len()).step_by(2) {
             field_values.push((argv[i].clone(), argv[i + 1].clone()));
         }
-        
+
         match storage.hmset(key, &field_values) {
             Ok(_) => {
                 client.set_reply(RespData::SimpleString("OK".into()));
@@ -76,4 +76,3 @@ impl Cmd for HMSetCmd {
         }
     }
 }
-

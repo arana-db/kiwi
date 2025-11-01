@@ -66,7 +66,7 @@ impl Cmd for PttlCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        
+
         match storage.pttl(&key) {
             Ok(ttl) => {
                 client.set_reply(RespData::Integer(ttl));

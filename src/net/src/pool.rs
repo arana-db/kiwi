@@ -91,17 +91,17 @@ impl<T> ActiveConnection<T> {
             _permit: permit,
         }
     }
-    
+
     /// Get a reference to the inner connection
     pub fn inner(&self) -> &T {
         &self.connection.connection
     }
-    
+
     /// Get a mutable reference to the inner connection
     pub fn inner_mut(&mut self) -> &mut T {
         &mut self.connection.connection
     }
-    
+
     /// Get the connection ID
     pub fn id(&self) -> u64 {
         self.connection.id
@@ -126,7 +126,7 @@ where
 {
     pub fn new(config: PoolConfig) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_connections));
-        
+
         Self {
             config,
             available: Arc::new(Mutex::new(VecDeque::new())),
@@ -136,21 +136,27 @@ where
     }
 
     /// Get a connection from the pool or create a new one
-    pub async fn get_connection<F, Fut>(&self, create_fn: F) -> Result<ActiveConnection<T>, PoolError>
+    pub async fn get_connection<F, Fut>(
+        &self,
+        create_fn: F,
+    ) -> Result<ActiveConnection<T>, PoolError>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>,
     {
         // Try to acquire a permit from the semaphore
-        let permit = timeout(self.config.connection_timeout, self.semaphore.clone().acquire_owned())
-            .await
-            .map_err(|_| PoolError::Timeout)?
-            .map_err(|_| PoolError::Closed)?;
+        let permit = timeout(
+            self.config.connection_timeout,
+            self.semaphore.clone().acquire_owned(),
+        )
+        .await
+        .map_err(|_| PoolError::Timeout)?
+        .map_err(|_| PoolError::Closed)?;
 
         // Try to get an existing connection from the pool
         {
             let mut available = self.available.lock().await;
-            
+
             // Remove idle connections
             let _now = Instant::now();
             while let Some(conn) = available.front() {
@@ -170,21 +176,24 @@ where
 
         // Create a new connection
         let connection = create_fn().await.map_err(PoolError::CreateFailed)?;
-        
+
         let mut counter = self.connection_counter.lock().await;
         *counter += 1;
         let id = *counter;
-        
-        Ok(ActiveConnection::new(PooledConnection::new(connection, id), permit))
+
+        Ok(ActiveConnection::new(
+            PooledConnection::new(connection, id),
+            permit,
+        ))
     }
 
     /// Return a connection to the pool
     pub async fn return_connection(&self, active_conn: ActiveConnection<T>) {
         let mut connection = active_conn.connection;
         connection.touch();
-        
+
         let mut available = self.available.lock().await;
-        
+
         // Only return to pool if we haven't exceeded max connections
         if available.len() < self.config.max_connections {
             available.push_back(connection);
@@ -198,7 +207,7 @@ where
         let available = self.available.lock().await;
         let available_count = available.len();
         let total_permits = self.semaphore.available_permits();
-        
+
         PoolStats {
             available_connections: available_count,
             active_connections: self.config.max_connections - total_permits,
@@ -210,23 +219,24 @@ where
     pub async fn cleanup_idle(&self) {
         let mut available = self.available.lock().await;
         let _original_len = available.len();
-        
+
         // Keep only non-idle connections, but maintain minimum
         let mut kept = VecDeque::new();
         let mut removed_count = 0;
-        
+
         while let Some(conn) = available.pop_front() {
-            if conn.is_idle(self.config.idle_timeout) && 
-               (kept.len() + available.len()) > self.config.min_connections {
+            if conn.is_idle(self.config.idle_timeout)
+                && (kept.len() + available.len()) > self.config.min_connections
+            {
                 removed_count += 1;
                 // Connection will be dropped
             } else {
                 kept.push_back(conn);
             }
         }
-        
+
         *available = kept;
-        
+
         if removed_count > 0 {
             log::debug!("Cleaned up {} idle connections from pool", removed_count);
         }
@@ -271,24 +281,26 @@ mod tests {
             idle_timeout: Duration::from_secs(1),
             min_connections: 1,
         };
-        
+
         let pool = ConnectionPool::new(config);
-        
+
         // Get first connection
-        let conn1 = pool.get_connection(|| async {
-            Ok(MockConnection { id: 1 })
-        }).await.unwrap();
-        
+        let conn1 = pool
+            .get_connection(|| async { Ok(MockConnection { id: 1 }) })
+            .await
+            .unwrap();
+
         assert_eq!(conn1.id(), 1);
-        
+
         // Return connection to pool
         pool.return_connection(conn1).await;
-        
+
         // Get connection again - should reuse
-        let conn2 = pool.get_connection(|| async {
-            Ok(MockConnection { id: 2 })
-        }).await.unwrap();
-        
+        let conn2 = pool
+            .get_connection(|| async { Ok(MockConnection { id: 2 }) })
+            .await
+            .unwrap();
+
         // Should reuse the first connection
         assert_eq!(conn2.id(), 1);
     }
@@ -301,27 +313,29 @@ mod tests {
             idle_timeout: Duration::from_millis(50), // Very short for testing
             min_connections: 1,
         };
-        
+
         let pool = ConnectionPool::new(config);
-        
+
         // Create and return a connection
-        let conn = pool.get_connection(|| async {
-            Ok(MockConnection { id: 1 })
-        }).await.unwrap();
-        
+        let conn = pool
+            .get_connection(|| async { Ok(MockConnection { id: 1 }) })
+            .await
+            .unwrap();
+
         pool.return_connection(conn).await;
-        
+
         // Wait for idle timeout
         sleep(Duration::from_millis(100)).await;
-        
+
         // Cleanup idle connections
         pool.cleanup_idle().await;
-        
+
         // Get a new connection - should create new one since old was cleaned up
-        let new_conn = pool.get_connection(|| async {
-            Ok(MockConnection { id: 2 })
-        }).await.unwrap();
-        
+        let new_conn = pool
+            .get_connection(|| async { Ok(MockConnection { id: 2 }) })
+            .await
+            .unwrap();
+
         assert_eq!(new_conn.id(), 2);
     }
 
@@ -333,19 +347,20 @@ mod tests {
             idle_timeout: Duration::from_secs(1),
             min_connections: 1,
         };
-        
+
         let pool = ConnectionPool::new(config);
-        
+
         let initial_stats = pool.stats().await;
         assert_eq!(initial_stats.available_connections, 0);
         assert_eq!(initial_stats.active_connections, 0);
         assert_eq!(initial_stats.max_connections, 3);
-        
+
         // Get a connection
-        let _conn = pool.get_connection(|| async {
-            Ok(MockConnection { id: 1 })
-        }).await.unwrap();
-        
+        let _conn = pool
+            .get_connection(|| async { Ok(MockConnection { id: 1 }) })
+            .await
+            .unwrap();
+
         let active_stats = pool.stats().await;
         assert_eq!(active_stats.active_connections, 1);
     }

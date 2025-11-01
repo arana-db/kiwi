@@ -19,10 +19,10 @@
 
 use std::sync::Arc;
 
+use bytes::Bytes;
 use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
-use bytes::Bytes;
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
@@ -107,7 +107,7 @@ impl Cmd for InfoCmd {
                 info.push_str("lru_clock:1\r\n");
                 info.push_str("executable:/path/to/kiwi-server\r\n");
                 info.push_str("config_file:\r\n");
-                
+
                 if section == "default" {
                     info.push_str("\r\n# Cluster\r\n");
                     info.push_str("cluster_enabled:1\r\n");
@@ -176,7 +176,7 @@ impl Cmd for ConfigCmd {
                 }
 
                 let parameter = String::from_utf8_lossy(&client.argv()[2]).to_lowercase();
-                
+
                 // Return cluster-related configuration
                 match parameter.as_str() {
                     "cluster-enabled" => {

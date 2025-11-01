@@ -21,7 +21,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
-use crate::{impl_cmd_clone_box, impl_cmd_meta, AclCategory, Cmd, CmdFlags, CmdMeta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HStrLenCmd {
@@ -54,7 +54,7 @@ impl Cmd for HStrLenCmd {
         let argv = client.argv();
         let key = &argv[1];
         let field = &argv[2];
-        
+
         match storage.hstrlen(key, field) {
             Ok(len) => {
                 client.set_reply(RespData::Integer(len as i64));
@@ -65,4 +65,3 @@ impl Cmd for HStrLenCmd {
         }
     }
 }
-

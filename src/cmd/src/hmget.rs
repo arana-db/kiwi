@@ -22,7 +22,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
-use crate::{impl_cmd_clone_box, impl_cmd_meta, AclCategory, Cmd, CmdFlags, CmdMeta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HMGetCmd {
@@ -55,7 +55,7 @@ impl Cmd for HMGetCmd {
         let argv = client.argv();
         let key = &argv[1];
         let fields: Vec<Vec<u8>> = argv[2..].to_vec();
-        
+
         match storage.hmget(key, &fields) {
             Ok(values) => {
                 let resp_values: Vec<RespData> = values
@@ -73,4 +73,3 @@ impl Cmd for HMGetCmd {
         }
     }
 }
-

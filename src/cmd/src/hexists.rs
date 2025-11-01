@@ -21,7 +21,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
-use crate::{impl_cmd_clone_box, impl_cmd_meta, AclCategory, Cmd, CmdFlags, CmdMeta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HExistsCmd {
@@ -55,7 +55,7 @@ impl Cmd for HExistsCmd {
         // Note: Parameter count is already validated by the framework via arity check
         let key = &argv[1];
         let field = &argv[2];
-        
+
         match storage.hexists(key, field) {
             Ok(exists) => {
                 client.set_reply(RespData::Integer(if exists { 1 } else { 0 }));
@@ -66,4 +66,3 @@ impl Cmd for HExistsCmd {
         }
     }
 }
-

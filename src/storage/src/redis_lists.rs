@@ -23,7 +23,7 @@ use rocksdb::WriteBatch;
 use snafu::{OptionExt, ResultExt};
 
 use crate::{
-    Result, 
+    Result,
     base_data_value_format::{BaseDataValue, ParsedBaseDataValue},
     base_key_format::BaseMetaKey,
     base_value_format::DataType,
@@ -72,7 +72,7 @@ impl Redis {
 
         // Insert values at the head (left side)
         let current_count = parsed_meta.count();
-        
+
         if current_count == 0 {
             // Empty list - store elements starting from left_index + 1
             for (i, value) in values.iter().rev().enumerate() {
@@ -85,26 +85,30 @@ impl Redis {
 
                 batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
             }
-            
+
             // Update metadata
             parsed_meta.modify_left_index(values.len() as u64);
             parsed_meta.modify_count(values.len() as u64);
         } else {
             // Non-empty list - read existing elements first, then rewrite everything
             let mut existing_elements = Vec::new();
-            
+
             // Read existing elements directly from storage using the old version
             for i in 0..current_count {
                 let storage_index = parsed_meta.left_index() + i + 1;
                 let data_key = ListsDataKey::new(key, current_version, storage_index);
                 let encoded_data_key = data_key.encode()?;
-                
-                if let Some(data_value) = db.get_cf(lists_data_cf, &encoded_data_key).context(RocksSnafu)? {
-                    let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
+
+                if let Some(data_value) = db
+                    .get_cf(lists_data_cf, &encoded_data_key)
+                    .context(RocksSnafu)?
+                {
+                    let parsed_data =
+                        ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
                     existing_elements.push(parsed_data.user_value().to_vec());
                 }
             }
-            
+
             // Clear existing elements using the old version
             for i in 0..current_count {
                 let storage_index = parsed_meta.left_index() + i + 1;
@@ -112,10 +116,10 @@ impl Redis {
                 let encoded_data_key = data_key.encode()?;
                 batch.delete_cf(lists_data_cf, encoded_data_key);
             }
-            
+
             // Update version only when reorganizing the entire list
             let version = parsed_meta.update_version();
-            
+
             // Store new elements at the head (in correct order for lpush)
             for (i, value) in values.iter().rev().enumerate() {
                 let storage_index = parsed_meta.left_index() - values.len() as u64 + i as u64 + 1;
@@ -127,7 +131,7 @@ impl Redis {
 
                 batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
             }
-            
+
             // Store existing elements after the new ones
             for (i, value) in existing_elements.iter().enumerate() {
                 let storage_index = parsed_meta.left_index() + i as u64 + 1;
@@ -139,7 +143,7 @@ impl Redis {
 
                 batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
             }
-            
+
             // Update metadata - adjust left_index to accommodate new elements at head
             parsed_meta.set_left_index(parsed_meta.left_index() - values.len() as u64);
             parsed_meta.set_count(current_count + values.len() as u64);
@@ -197,7 +201,7 @@ impl Redis {
 
         // Insert values at the tail (right side)
         let is_empty_list = parsed_meta.count() == 0;
-        
+
         if is_empty_list {
             // For empty list, store elements starting from left_index + 1
             // so they're accessible via standard lindex calculation
@@ -211,7 +215,7 @@ impl Redis {
 
                 batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
             }
-            
+
             // Update right_index to point to the last element
             parsed_meta.set_right_index(parsed_meta.left_index() + values.len() as u64);
         } else {
@@ -228,11 +232,12 @@ impl Redis {
 
                 batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
             }
-            
+
             // Update right_index to point to the last element
-            parsed_meta.set_right_index(parsed_meta.left_index() + current_count + values.len() as u64);
+            parsed_meta
+                .set_right_index(parsed_meta.left_index() + current_count + values.len() as u64);
         }
-        
+
         parsed_meta.modify_count(values.len() as u64);
 
         batch.put(&meta_key, parsed_meta.value());
@@ -282,7 +287,10 @@ impl Redis {
             let data_key = ListsDataKey::new(key, parsed_meta.version(), current_left_index);
             let encoded_data_key = data_key.encode()?;
 
-            if let Some(data_value) = db.get_cf(lists_data_cf, &encoded_data_key).context(RocksSnafu)? {
+            if let Some(data_value) = db
+                .get_cf(lists_data_cf, &encoded_data_key)
+                .context(RocksSnafu)?
+            {
                 let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
                 result.push(parsed_data.user_value().to_vec());
                 batch.delete_cf(lists_data_cf, encoded_data_key);
@@ -350,7 +358,10 @@ impl Redis {
             let data_key = ListsDataKey::new(key, parsed_meta.version(), current_right_index);
             let encoded_data_key = data_key.encode()?;
 
-            if let Some(data_value) = db.get_cf(lists_data_cf, &encoded_data_key).context(RocksSnafu)? {
+            if let Some(data_value) = db
+                .get_cf(lists_data_cf, &encoded_data_key)
+                .context(RocksSnafu)?
+            {
                 let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
                 result.push(parsed_data.user_value().to_vec());
                 batch.delete_cf(lists_data_cf, encoded_data_key);
@@ -445,7 +456,10 @@ impl Redis {
         let data_key = ListsDataKey::new(key, parsed_meta.version(), storage_index);
         let encoded_data_key = data_key.encode()?;
 
-        match db.get_cf(lists_data_cf, &encoded_data_key).context(RocksSnafu)? {
+        match db
+            .get_cf(lists_data_cf, &encoded_data_key)
+            .context(RocksSnafu)?
+        {
             Some(data_value) => {
                 let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
                 Ok(Some(parsed_data.user_value().to_vec()))
@@ -505,7 +519,10 @@ impl Redis {
             let data_key = ListsDataKey::new(key, parsed_meta.version(), storage_index);
             let encoded_data_key = data_key.encode()?;
 
-            if let Some(data_value) = db.get_cf(lists_data_cf, &encoded_data_key).context(RocksSnafu)? {
+            if let Some(data_value) = db
+                .get_cf(lists_data_cf, &encoded_data_key)
+                .context(RocksSnafu)?
+            {
                 let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
                 result.push(parsed_data.user_value().to_vec());
             }
@@ -538,7 +555,7 @@ impl Redis {
                 return KeyNotFoundSnafu {
                     key: String::from_utf8_lossy(key).to_string(),
                 }
-                .fail()
+                .fail();
             }
         };
 
@@ -699,17 +716,20 @@ impl Redis {
             let storage_index = parsed_meta.left_index() + i + 1;
             let data_key = ListsDataKey::new(key, parsed_meta.version(), storage_index);
             let encoded_data_key = data_key.encode()?;
-            
-            if let Some(data_value) = db.get_cf(lists_data_cf, &encoded_data_key).context(RocksSnafu)? {
+
+            if let Some(data_value) = db
+                .get_cf(lists_data_cf, &encoded_data_key)
+                .context(RocksSnafu)?
+            {
                 let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
                 all_elements.push(parsed_data.user_value().to_vec());
             }
         }
-        
+
         // Filter out the elements to remove
         let mut remaining_elements = Vec::new();
         let mut removals_left = max_removals;
-        
+
         if count >= 0 {
             // Remove from head to tail
             for element in all_elements {
@@ -741,7 +761,7 @@ impl Redis {
                 let encoded_data_key = data_key.encode()?;
                 batch.delete_cf(lists_data_cf, encoded_data_key);
             }
-            
+
             if remaining_elements.is_empty() {
                 // List is now empty
                 batch.delete(&meta_key);
@@ -751,16 +771,17 @@ impl Redis {
                     let storage_index = parsed_meta.left_index() + i as u64 + 1;
                     let data_key = ListsDataKey::new(key, parsed_meta.version(), storage_index);
                     let encoded_data_key = data_key.encode()?;
-                    
+
                     let data_value = BaseDataValue::new(element.clone());
                     let encoded_data_value = data_value.encode();
-                    
+
                     batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
                 }
-                
+
                 // Update count and right_index
                 parsed_meta.set_count(remaining_elements.len() as u64);
-                parsed_meta.set_right_index(parsed_meta.left_index() + remaining_elements.len() as u64);
+                parsed_meta
+                    .set_right_index(parsed_meta.left_index() + remaining_elements.len() as u64);
                 batch.put(&meta_key, parsed_meta.value());
             }
 

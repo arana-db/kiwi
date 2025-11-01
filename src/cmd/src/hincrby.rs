@@ -21,7 +21,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
-use crate::{impl_cmd_clone_box, impl_cmd_meta, AclCategory, Cmd, CmdFlags, CmdMeta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HIncrByCmd {
@@ -55,15 +55,17 @@ impl Cmd for HIncrByCmd {
         let key = &argv[1];
         let field = &argv[2];
         let increment_str = String::from_utf8_lossy(&argv[3]);
-        
+
         let increment: i64 = match increment_str.parse() {
             Ok(n) => n,
             Err(_) => {
-                client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+                client.set_reply(RespData::Error(
+                    "ERR value is not an integer or out of range".into(),
+                ));
                 return;
             }
         };
-        
+
         match storage.hincrby(key, field, increment) {
             Ok(new_value) => {
                 client.set_reply(RespData::Integer(new_value));
@@ -74,4 +76,3 @@ impl Cmd for HIncrByCmd {
         }
     }
 }
-
