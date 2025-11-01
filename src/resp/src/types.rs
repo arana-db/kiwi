@@ -231,7 +231,10 @@ impl RespData {
 
     /// Check if this is a null value
     pub fn is_null(&self) -> bool {
-        matches!(self, RespData::Null | RespData::BulkString(None) | RespData::Array(None))
+        matches!(
+            self,
+            RespData::Null | RespData::BulkString(None) | RespData::Array(None)
+        )
     }
 
     // Convenience constructors for RESP3 types
@@ -285,18 +288,21 @@ mod tests {
         assert_eq!(RespData::boolean(true), RespData::Boolean(true));
         assert_eq!(RespData::boolean(false), RespData::Boolean(false));
         assert_eq!(RespData::double(3.14), RespData::Double(3.14));
-        
+
         let big_num = RespData::big_number("123456789");
         assert_eq!(big_num, RespData::BigNumber(Bytes::from("123456789")));
-        
+
         let bulk_err = RespData::bulk_error("ERROR");
         assert_eq!(bulk_err, RespData::BulkError(Bytes::from("ERROR")));
-        
+
         let verbatim = RespData::verbatim_string("txt", "Hello");
-        assert_eq!(verbatim, RespData::VerbatimString {
-            format: Bytes::from("txt"),
-            data: Bytes::from("Hello"),
-        });
+        assert_eq!(
+            verbatim,
+            RespData::VerbatimString {
+                format: Bytes::from("txt"),
+                data: Bytes::from("Hello"),
+            }
+        );
     }
 
     #[test]
@@ -304,12 +310,22 @@ mod tests {
         assert_eq!(RespData::Null.get_type(), RespType::Null);
         assert_eq!(RespData::Boolean(true).get_type(), RespType::Boolean);
         assert_eq!(RespData::Double(1.0).get_type(), RespType::Double);
-        assert_eq!(RespData::BigNumber(Bytes::from("123")).get_type(), RespType::BigNumber);
-        assert_eq!(RespData::BulkError(Bytes::from("ERR")).get_type(), RespType::BulkError);
-        assert_eq!(RespData::VerbatimString { 
-            format: Bytes::from("txt"), 
-            data: Bytes::from("test") 
-        }.get_type(), RespType::VerbatimString);
+        assert_eq!(
+            RespData::BigNumber(Bytes::from("123")).get_type(),
+            RespType::BigNumber
+        );
+        assert_eq!(
+            RespData::BulkError(Bytes::from("ERR")).get_type(),
+            RespType::BulkError
+        );
+        assert_eq!(
+            RespData::VerbatimString {
+                format: Bytes::from("txt"),
+                data: Bytes::from("test")
+            }
+            .get_type(),
+            RespType::VerbatimString
+        );
         assert_eq!(RespData::Map(vec![]).get_type(), RespType::Map);
         assert_eq!(RespData::Set(vec![]).get_type(), RespType::Set);
         assert_eq!(RespData::Push(vec![]).get_type(), RespType::Push);
@@ -322,46 +338,87 @@ mod tests {
         assert_eq!(RespData::Boolean(false).as_boolean(), Some(false));
         assert_eq!(RespData::Integer(1).as_boolean(), Some(true));
         assert_eq!(RespData::Integer(0).as_boolean(), Some(false));
-        assert_eq!(RespData::SimpleString(Bytes::from("true")).as_boolean(), Some(true));
-        assert_eq!(RespData::SimpleString(Bytes::from("false")).as_boolean(), Some(false));
-        
+        assert_eq!(
+            RespData::SimpleString(Bytes::from("true")).as_boolean(),
+            Some(true)
+        );
+        assert_eq!(
+            RespData::SimpleString(Bytes::from("false")).as_boolean(),
+            Some(false)
+        );
+
         // Test as_double
         assert_eq!(RespData::Double(3.14).as_double(), Some(3.14));
         assert_eq!(RespData::Integer(42).as_double(), Some(42.0));
-        assert_eq!(RespData::SimpleString(Bytes::from("2.5")).as_double(), Some(2.5));
-        
+        assert_eq!(
+            RespData::SimpleString(Bytes::from("2.5")).as_double(),
+            Some(2.5)
+        );
+
         // Test as_integer with RESP3 types
         assert_eq!(RespData::Boolean(true).as_integer(), Some(1));
         assert_eq!(RespData::Boolean(false).as_integer(), Some(0));
         assert_eq!(RespData::Double(3.7).as_integer(), Some(3));
-        assert_eq!(RespData::BigNumber(Bytes::from("999")).as_integer(), Some(999));
+        assert_eq!(
+            RespData::BigNumber(Bytes::from("999")).as_integer(),
+            Some(999)
+        );
     }
 
     #[test]
     fn test_resp3_string_conversions() {
         assert_eq!(RespData::Null.as_string(), None);
-        assert_eq!(RespData::Boolean(true).as_string(), Some("true".to_string()));
-        assert_eq!(RespData::Boolean(false).as_string(), Some("false".to_string()));
+        assert_eq!(
+            RespData::Boolean(true).as_string(),
+            Some("true".to_string())
+        );
+        assert_eq!(
+            RespData::Boolean(false).as_string(),
+            Some("false".to_string())
+        );
         assert_eq!(RespData::Double(3.14).as_string(), Some("3.14".to_string()));
-        assert_eq!(RespData::BigNumber(Bytes::from("123")).as_string(), Some("123".to_string()));
-        assert_eq!(RespData::BulkError(Bytes::from("ERR")).as_string(), Some("ERR".to_string()));
-        assert_eq!(RespData::VerbatimString { 
-            format: Bytes::from("txt"), 
-            data: Bytes::from("hello") 
-        }.as_string(), Some("hello".to_string()));
+        assert_eq!(
+            RespData::BigNumber(Bytes::from("123")).as_string(),
+            Some("123".to_string())
+        );
+        assert_eq!(
+            RespData::BulkError(Bytes::from("ERR")).as_string(),
+            Some("ERR".to_string())
+        );
+        assert_eq!(
+            RespData::VerbatimString {
+                format: Bytes::from("txt"),
+                data: Bytes::from("hello")
+            }
+            .as_string(),
+            Some("hello".to_string())
+        );
     }
 
     #[test]
     fn test_resp3_bytes_conversions() {
         assert_eq!(RespData::Null.as_bytes(), None);
-        assert_eq!(RespData::Boolean(true).as_bytes(), Some(Bytes::from("true")));
+        assert_eq!(
+            RespData::Boolean(true).as_bytes(),
+            Some(Bytes::from("true"))
+        );
         assert_eq!(RespData::Double(2.5).as_bytes(), Some(Bytes::from("2.5")));
-        assert_eq!(RespData::BigNumber(Bytes::from("456")).as_bytes(), Some(Bytes::from("456")));
-        assert_eq!(RespData::BulkError(Bytes::from("ERROR")).as_bytes(), Some(Bytes::from("ERROR")));
-        assert_eq!(RespData::VerbatimString { 
-            format: Bytes::from("txt"), 
-            data: Bytes::from("world") 
-        }.as_bytes(), Some(Bytes::from("world")));
+        assert_eq!(
+            RespData::BigNumber(Bytes::from("456")).as_bytes(),
+            Some(Bytes::from("456"))
+        );
+        assert_eq!(
+            RespData::BulkError(Bytes::from("ERROR")).as_bytes(),
+            Some(Bytes::from("ERROR"))
+        );
+        assert_eq!(
+            RespData::VerbatimString {
+                format: Bytes::from("txt"),
+                data: Bytes::from("world")
+            }
+            .as_bytes(),
+            Some(Bytes::from("world"))
+        );
     }
 
     #[test]
@@ -460,7 +517,10 @@ impl fmt::Debug for RespData {
             RespData::VerbatimString { format, data } => {
                 let format_str = std::str::from_utf8(format).unwrap_or("<invalid>");
                 let data_str = std::str::from_utf8(data).unwrap_or("<invalid>");
-                write!(f, "VerbatimString(format: \"{format_str}\", data: \"{data_str}\")")
+                write!(
+                    f,
+                    "VerbatimString(format: \"{format_str}\", data: \"{data_str}\")"
+                )
             }
             RespData::Map(pairs) => write!(f, "Map({pairs:?})"),
             RespData::Set(items) => write!(f, "Set({items:?})"),

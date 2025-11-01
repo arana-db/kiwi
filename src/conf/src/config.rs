@@ -15,8 +15,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 use snafu::ResultExt;
-use validator::Validate;
 use std::collections::BTreeSet;
+use validator::Validate;
 
 use crate::de_func::{parse_bool_from_string, parse_memory, parse_redis_config};
 use crate::error::Error;
@@ -79,7 +79,10 @@ impl ClusterConfig {
                 return Err("cluster-election-timeout-min must be > 0".to_string());
             }
             if self.election_timeout_min_ms >= self.election_timeout_max_ms {
-                return Err("cluster-election-timeout-min must be < cluster-election-timeout-max".to_string());
+                return Err(
+                    "cluster-election-timeout-min must be < cluster-election-timeout-max"
+                        .to_string(),
+                );
             }
             if self.heartbeat_interval_ms >= self.election_timeout_min_ms {
                 return Err("cluster-heartbeat-interval must be < cluster-election-timeout-min for proper Raft operation".to_string());
@@ -116,7 +119,8 @@ impl ClusterConfig {
         }
 
         // Validate node ID
-        let node_id: u64 = parts[0].parse()
+        let node_id: u64 = parts[0]
+            .parse()
             .map_err(|_| "node_id must be a valid number")?;
         if node_id == 0 {
             return Err("node_id must be >= 1".to_string());
@@ -129,7 +133,8 @@ impl ClusterConfig {
         }
 
         // Validate port
-        let port: u16 = parts[2].parse()
+        let port: u16 = parts[2]
+            .parse()
             .map_err(|_| "port must be a valid number between 1-65535")?;
         if port == 0 {
             return Err("port must be > 0".to_string());
@@ -145,7 +150,8 @@ impl ClusterConfig {
 
     /// Get this node's endpoint from cluster members
     pub fn get_self_endpoint(&self) -> Option<String> {
-        self.cluster_members.iter()
+        self.cluster_members
+            .iter()
             .find(|member| {
                 if let Ok(parts) = self.parse_member(member) {
                     parts.0 == self.node_id
@@ -163,18 +169,17 @@ impl ClusterConfig {
             return Err("Invalid format, expected 'node_id:host:port'".to_string());
         }
 
-        let node_id = parts[0].parse::<u64>()
-            .map_err(|_| "Invalid node_id")?;
+        let node_id = parts[0].parse::<u64>().map_err(|_| "Invalid node_id")?;
         let host = parts[1].to_string();
-        let port = parts[2].parse::<u16>()
-            .map_err(|_| "Invalid port")?;
+        let port = parts[2].parse::<u16>().map_err(|_| "Invalid port")?;
 
         Ok((node_id, host, port))
     }
 
     /// Get all peer endpoints (excluding self)
     pub fn get_peer_endpoints(&self) -> Vec<String> {
-        self.cluster_members.iter()
+        self.cluster_members
+            .iter()
             .filter(|member| {
                 if let Ok(parts) = self.parse_member(member) {
                     parts.0 != self.node_id
@@ -223,7 +228,7 @@ pub struct Config {
     pub log_dir: String,
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
-    
+
     // Cluster configuration
     pub cluster: ClusterConfig,
 }
@@ -258,7 +263,7 @@ impl Default for Config {
             db_instance_num: 3,
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
-            
+
             cluster: ClusterConfig::default(),
         }
     }
@@ -280,8 +285,7 @@ impl Config {
         if !self.cluster.is_node_in_cluster() {
             return Err(format!(
                 "Node ID {} is not found in cluster members. Current members: {:?}",
-                self.cluster.node_id,
-                self.cluster.cluster_members
+                self.cluster.node_id, self.cluster.cluster_members
             ));
         }
 
@@ -294,9 +298,7 @@ impl Config {
 
         // Validate that we have at least one other member for a proper cluster
         if !init_cluster && self.cluster.cluster_members.len() < 2 {
-            return Err(
-                "Cluster requires at least 2 members. Current members: {}".to_string()
-            );
+            return Err("Cluster requires at least 2 members. Current members: {}".to_string());
         }
 
         Ok(())
@@ -346,8 +348,8 @@ impl Config {
                     config.log_dir = value;
                 }
                 "redis-compatible-mode" => {
-                    config.redis_compatible_mode = parse_bool_from_string(&value)
-                        .map_err(|e| Error::InvalidConfig {
+                    config.redis_compatible_mode =
+                        parse_bool_from_string(&value).map_err(|e| Error::InvalidConfig {
                             source: serde_ini::de::Error::Custom(format!(
                                 "Invalid redis-compatible-mode: {}",
                                 e
@@ -356,7 +358,10 @@ impl Config {
                 }
                 "db-instance-num" => {
                     config.db_instance_num = value.parse().map_err(|e| Error::InvalidConfig {
-                        source: serde_ini::de::Error::Custom(format!("Invalid db-instance-num: {}", e)),
+                        source: serde_ini::de::Error::Custom(format!(
+                            "Invalid db-instance-num: {}",
+                            e
+                        )),
                     })?;
                 }
                 "memory" => {
@@ -518,8 +523,8 @@ impl Config {
                 }
                 // Cluster configuration
                 "cluster-enabled" => {
-                    config.cluster.enabled = parse_bool_from_string(&value)
-                        .map_err(|e| Error::InvalidConfig {
+                    config.cluster.enabled =
+                        parse_bool_from_string(&value).map_err(|e| Error::InvalidConfig {
                             source: serde_ini::de::Error::Custom(format!(
                                 "Invalid cluster-enabled: {}",
                                 e
@@ -546,44 +551,49 @@ impl Config {
                     config.cluster.data_dir = value;
                 }
                 "cluster-heartbeat-interval" => {
-                    config.cluster.heartbeat_interval_ms = value.parse().map_err(|e| Error::InvalidConfig {
-                        source: serde_ini::de::Error::Custom(format!(
-                            "Invalid cluster-heartbeat-interval: {}",
-                            e
-                        )),
-                    })?;
+                    config.cluster.heartbeat_interval_ms =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid cluster-heartbeat-interval: {}",
+                                e
+                            )),
+                        })?;
                 }
                 "cluster-election-timeout-min" => {
-                    config.cluster.election_timeout_min_ms = value.parse().map_err(|e| Error::InvalidConfig {
-                        source: serde_ini::de::Error::Custom(format!(
-                            "Invalid cluster-election-timeout-min: {}",
-                            e
-                        )),
-                    })?;
+                    config.cluster.election_timeout_min_ms =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid cluster-election-timeout-min: {}",
+                                e
+                            )),
+                        })?;
                 }
                 "cluster-election-timeout-max" => {
-                    config.cluster.election_timeout_max_ms = value.parse().map_err(|e| Error::InvalidConfig {
-                        source: serde_ini::de::Error::Custom(format!(
-                            "Invalid cluster-election-timeout-max: {}",
-                            e
-                        )),
-                    })?;
+                    config.cluster.election_timeout_max_ms =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid cluster-election-timeout-max: {}",
+                                e
+                            )),
+                        })?;
                 }
                 "cluster-snapshot-threshold" => {
-                    config.cluster.snapshot_threshold = value.parse().map_err(|e| Error::InvalidConfig {
-                        source: serde_ini::de::Error::Custom(format!(
-                            "Invalid cluster-snapshot-threshold: {}",
-                            e
-                        )),
-                    })?;
+                    config.cluster.snapshot_threshold =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid cluster-snapshot-threshold: {}",
+                                e
+                            )),
+                        })?;
                 }
                 "cluster-max-payload-entries" => {
-                    config.cluster.max_payload_entries = value.parse().map_err(|e| Error::InvalidConfig {
-                        source: serde_ini::de::Error::Custom(format!(
-                            "Invalid cluster-max-payload-entries: {}",
-                            e
-                        )),
-                    })?;
+                    config.cluster.max_payload_entries =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid cluster-max-payload-entries: {}",
+                                e
+                            )),
+                        })?;
                 }
                 _ => {
                     // Unknown configuration key, skip it

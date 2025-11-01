@@ -66,7 +66,7 @@ impl Cmd for TtlCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        
+
         match storage.ttl(&key) {
             Ok(ttl) => {
                 client.set_reply(RespData::Integer(ttl));

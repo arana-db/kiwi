@@ -16,23 +16,33 @@
 // limitations under the License.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Generate protobuf code
-    // Check if protoc is available
-    match prost_build::Config::new().compile_protos(&["proto/binlog.proto"], &["proto/"]) {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            // If protoc is not found, provide helpful error message
-            let error_msg = e.to_string();
-            if error_msg.contains("protoc") || error_msg.contains("Could not find") {
-                eprintln!("\n⚠️  protoc not found! Please install protoc:");
-                eprintln!(
-                    "   - Windows: Download from https://github.com/protocolbuffers/protobuf/releases"
-                );
-                eprintln!("   - Linux: sudo apt-get install protobuf-compiler");
-                eprintln!("   - macOS: brew install protobuf");
-                eprintln!("   Or set PROTOC environment variable to the protoc binary path\n");
+    // Check if PROTOC is already set
+    if std::env::var("PROTOC").is_ok() {
+        println!("cargo:warning=Using PROTOC from environment variable");
+    } else {
+        // Try to use vendored protoc (automatically downloaded and used)
+        match protoc_bin_vendored::protoc_bin_path() {
+            Ok(protoc_path) => {
+                std::env::set_var("PROTOC", protoc_path);
+                println!("cargo:warning=Using vendored protoc");
             }
-            Err(Box::new(e))
+            Err(e) => {
+                eprintln!("⚠️  protoc not found! Please install protoc:");
+                eprintln!("     - Windows: Download from https://github.com/protocolbuffers/protobuf/releases");
+                eprintln!("     - Linux: sudo apt-get install protobuf-compiler");
+                eprintln!("     - macOS: brew install protobuf");
+                eprintln!("     Or set PROTOC environment variable to the protoc binary path");
+                eprintln!();
+                eprintln!("Error details: Failed to get vendored protoc path: {}", e);
+                return Err(format!("Could not find `protoc`. If `protoc` is installed, try setting the `PROTOC` environment variable to the path of the `protoc` binary. To install it on Debian, run `apt-get install protobuf-compiler`. It is also available at https://github.com/protocolbuffers/protobuf/releases  For more information: https://docs.rs/prost-build/#sourcing-protoc").into());
+            }
         }
     }
+    
+    // Generate protobuf code
+    prost_build::Config::new()
+        .compile_protos(&["proto/binlog.proto"], &["proto/"])
+        .map_err(|e| {
+            format!("Failed to compile protobuf: {}", e).into()
+        })
 }

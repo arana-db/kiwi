@@ -63,7 +63,7 @@ impl Cmd for TypeCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        
+
         match storage.key_type(&key) {
             Ok(key_type) => {
                 client.set_reply(RespData::SimpleString(key_type.into()));

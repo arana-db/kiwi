@@ -2079,28 +2079,36 @@ impl Redis {
                 let data_type_byte = val[0];
                 match DataType::try_from(data_type_byte) {
                     Ok(DataType::Hash) => {
-                        if let Ok(meta) = crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..]) {
+                        if let Ok(meta) =
+                            crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..])
+                        {
                             if !meta.is_stale() && meta.count() > 0 {
                                 return Ok(DataType::Hash);
                             }
                         }
                     }
                     Ok(DataType::Set) => {
-                        if let Ok(meta) = crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..]) {
+                        if let Ok(meta) =
+                            crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..])
+                        {
                             if !meta.is_stale() && meta.count() > 0 {
                                 return Ok(DataType::Set);
                             }
                         }
                     }
                     Ok(DataType::ZSet) => {
-                        if let Ok(meta) = crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..]) {
+                        if let Ok(meta) =
+                            crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..])
+                        {
                             if !meta.is_stale() && meta.count() > 0 {
                                 return Ok(DataType::ZSet);
                             }
                         }
                     }
                     Ok(DataType::List) => {
-                        if let Ok(meta) = crate::list_meta_value_format::ParsedListsMetaValue::new(&val[..]) {
+                        if let Ok(meta) =
+                            crate::list_meta_value_format::ParsedListsMetaValue::new(&val[..])
+                        {
                             if !meta.is_stale() && meta.count() > 0 {
                                 return Ok(DataType::List);
                             }
@@ -2134,19 +2142,21 @@ impl Redis {
         // Check if key exists in MetaCF (where all metadata is stored)
         let string_key = BaseKey::new(key);
         let meta_key = BaseMetaKey::new(key);
-        
-        let string_existed = db.get_cf_opt(&meta_cf, &string_key.encode()?, &self.read_options)
+
+        let string_existed = db
+            .get_cf_opt(&meta_cf, &string_key.encode()?, &self.read_options)
             .context(RocksSnafu)?
             .is_some();
-        let meta_existed = db.get_cf_opt(&meta_cf, &meta_key.encode()?, &self.read_options)
+        let meta_existed = db
+            .get_cf_opt(&meta_cf, &meta_key.encode()?, &self.read_options)
             .context(RocksSnafu)?
             .is_some();
 
         if string_existed || meta_existed {
             let mut batch = rocksdb::WriteBatch::default();
-            
+
             let encoded = string_key.encode()?;
-            
+
             // Delete from MetaCF
             if string_existed {
                 batch.delete_cf(&meta_cf, &encoded);
@@ -2154,7 +2164,7 @@ impl Redis {
             if meta_existed {
                 batch.delete_cf(&meta_cf, meta_key.encode()?);
             }
-            
+
             // For composite data types, perform prefix scan to delete all related entries
             for cf_index in [
                 ColumnFamilyIndex::HashesDataCF,
@@ -2178,8 +2188,9 @@ impl Redis {
                     }
                 }
             }
-            
-            db.write_opt(batch, &self.write_options).context(RocksSnafu)?;
+
+            db.write_opt(batch, &self.write_options)
+                .context(RocksSnafu)?;
             Ok(true)
         } else {
             Ok(false)
@@ -2201,14 +2212,14 @@ impl Redis {
 
         let mut keys = Vec::new();
         let iter = db.iterator_cf(&meta_cf, rocksdb::IteratorMode::Start);
-        
+
         for item in iter {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
-            
+
             // Decode the key to get the actual user key
             if let Ok(base_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
                 let key_str = String::from_utf8_lossy(base_key.key());
-                
+
                 // Check if key is not expired
                 if let Ok(parsed) = ParsedStringsValue::new(&value_bytes[..]) {
                     if !parsed.is_stale() {
@@ -2218,19 +2229,24 @@ impl Redis {
                         }
                     }
                 }
-            } else if let Ok(meta_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
+            } else if let Ok(meta_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..])
+            {
                 let key_str = String::from_utf8_lossy(meta_key.key());
-                
+
                 // Check if meta key is not expired using appropriate parser
                 if !value_bytes.is_empty() {
-                    let is_valid = if let Ok(meta) = crate::base_meta_value_format::ParsedBaseMetaValue::new(&value_bytes[..]) {
+                    let is_valid = if let Ok(meta) =
+                        crate::base_meta_value_format::ParsedBaseMetaValue::new(&value_bytes[..])
+                    {
                         !meta.is_stale() && meta.count() > 0
-                    } else if let Ok(list_meta) = crate::list_meta_value_format::ParsedListsMetaValue::new(&value_bytes[..]) {
+                    } else if let Ok(list_meta) =
+                        crate::list_meta_value_format::ParsedListsMetaValue::new(&value_bytes[..])
+                    {
                         !list_meta.is_stale() && list_meta.count() > 0
                     } else {
                         false
                     };
-                    
+
                     if is_valid {
                         // Simple pattern matching
                         if pattern == "*" || key_str.contains(pattern) {
@@ -2279,7 +2295,8 @@ impl Redis {
             }
         }
 
-        db.write_opt(batch, &self.write_options).context(RocksSnafu)?;
+        db.write_opt(batch, &self.write_options)
+            .context(RocksSnafu)?;
         Ok(())
     }
 
@@ -2305,7 +2322,7 @@ impl Redis {
         let iter = db.iterator_cf(&meta_cf, rocksdb::IteratorMode::Start);
         for item in iter {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
-            
+
             // Decode the key to get the actual user key
             if let Ok(base_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
                 // Check if the string key is not expired
@@ -2316,17 +2333,22 @@ impl Redis {
                         }
                     }
                 }
-            } else if let Ok(meta_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
+            } else if let Ok(meta_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..])
+            {
                 // Check if meta key is not expired
                 if !value_bytes.is_empty() {
-                    let is_valid = if let Ok(meta) = crate::base_meta_value_format::ParsedBaseMetaValue::new(&value_bytes[..]) {
+                    let is_valid = if let Ok(meta) =
+                        crate::base_meta_value_format::ParsedBaseMetaValue::new(&value_bytes[..])
+                    {
                         !meta.is_stale() && meta.count() > 0
-                    } else if let Ok(list_meta) = crate::list_meta_value_format::ParsedListsMetaValue::new(&value_bytes[..]) {
+                    } else if let Ok(list_meta) =
+                        crate::list_meta_value_format::ParsedListsMetaValue::new(&value_bytes[..])
+                    {
                         !list_meta.is_stale() && list_meta.count() > 0
                     } else {
                         false
                     };
-                    
+
                     if is_valid {
                         return Ok(Some(String::from_utf8_lossy(meta_key.key()).to_string()));
                     }

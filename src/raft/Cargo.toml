@@ -52,6 +52,7 @@ prost-types = "0.12"
 
 [build-dependencies]
 prost-build = "0.12"
+protoc-bin-vendored = "3"
 
 [dev-dependencies]
 tempfile = { workspace = true }
