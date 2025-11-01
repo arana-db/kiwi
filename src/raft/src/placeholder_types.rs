@@ -4,6 +4,8 @@
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
+pub mod tests;
+
 /// Placeholder for RespData from resp module
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RespData {
@@ -76,7 +78,7 @@ impl RespCommand {
 }
 
 /// Placeholder for CommandType from resp module
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CommandType {
     Set,
     Get,

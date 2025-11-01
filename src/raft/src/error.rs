@@ -217,30 +217,4 @@ impl RaftError {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_error_creation() {
-        let config_err = RaftError::configuration("Invalid config");
-        assert!(matches!(config_err, RaftError::Configuration { .. }));
-
-        let state_err = RaftError::state_machine("State error");
-        assert!(matches!(state_err, RaftError::StateMachine { .. }));
-
-        let timeout_err = RaftError::timeout("Operation timeout");
-        assert!(matches!(timeout_err, RaftError::Timeout { .. }));
-    }
-
-    #[test]
-    fn test_error_classification() {
-        let not_leader_err = RaftError::NotLeader { leader_id: Some(1) };
-        assert!(not_leader_err.is_not_leader());
-        assert!(not_leader_err.is_retryable());
-
-        let config_err = RaftError::configuration("test");
-        assert!(!config_err.is_not_leader());
-        assert!(!config_err.is_retryable());
-    }
-}
+pub mod tests;

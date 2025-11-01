@@ -227,29 +227,4 @@ pub struct ClusterHealth {
     pub commit_index: u64,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_request_id_uniqueness() {
-        let id1 = RequestId::new();
-        let id2 = RequestId::new();
-        assert_ne!(id1, id2);
-        assert!(id2.as_u64() > id1.as_u64());
-    }
-
-    #[test]
-    fn test_request_id_serialization() {
-        let id = RequestId::new();
-        let serialized = serde_json::to_string(&id).unwrap();
-        let deserialized: RequestId = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(id, deserialized);
-    }
-
-    #[test]
-    fn test_request_id_display() {
-        let id = RequestId(42);
-        assert_eq!(format!("{}", id), "42");
-    }
-}
+pub mod tests;

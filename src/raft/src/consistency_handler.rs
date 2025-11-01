@@ -18,6 +18,7 @@
 //! Consistency level handling for Raft-based Redis operations
 
 use crate::error::{RaftError, RaftResult};
+use crate::metrics::RaftMetrics;
 use crate::node::{RaftNode, RaftNodeInterface};
 use crate::types::{ConsistencyLevel, NodeId};
 use std::sync::Arc;
