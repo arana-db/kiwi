@@ -526,7 +526,7 @@ impl RedisProtocolCompatibility {
     }
 
     /// Process a Redis command from client connection data (integration with existing command flow)
-    pub async fn process_client_command(&self, client: &Client) -> RaftResult<RespData> {
+    pub async fn process_client_command(&self, _client: &Client) -> RaftResult<RespData> {
         // Convert client command data to RedisCommand format
         // TODO: Implement proper client command extraction when Client type is finalized
         // For now, return an error since Client is a placeholder type
@@ -789,7 +789,7 @@ impl RedisProtocolCompatibility {
     /// Handle CLUSTER INFO command
     async fn handle_cluster_info(&self) -> RaftResult<RespData> {
         let health = self.raft_node.get_cluster_health().await?;
-        let topology = self.topology.read().await;
+        let _topology = self.topology.read().await;
 
         let mut info = String::new();
         info.push_str(&format!(

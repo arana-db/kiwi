@@ -19,7 +19,8 @@
 
 use crate::error::{RaftError, RaftResult};
 use crate::node::{RaftNode, RaftNodeInterface};
-use crate::types::{ConsistencyLevel, NodeId, RaftMetrics};
+use crate::types::{ConsistencyLevel, NodeId};
+use crate::types::RaftMetrics as OpenRaftMetrics;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -305,7 +306,7 @@ impl ConsistencyHandler {
     }
 
     /// Calculate current data staleness based on metrics
-    async fn calculate_staleness(&self, metrics: &RaftMetrics) -> RaftResult<Duration> {
+    async fn calculate_staleness(&self, metrics: &OpenRaftMetrics) -> RaftResult<Duration> {
         // In a full implementation, this would track actual heartbeat timestamps
         // For now, we'll estimate staleness based on commit lag and leadership status
 

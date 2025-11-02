@@ -299,12 +299,13 @@ impl NodeDiscovery {
         use tokio::net::lookup_host;
 
         let address = endpoint.address().to_string();
+        let address_clone = address.clone();
         let resolved: Vec<SocketAddr> = match lookup_host(&address).await {
             Ok(addrs) => addrs.collect(),
             Err(e) => {
-                log::warn!("Failed to resolve address {}: {}", address, e);
+                log::warn!("Failed to resolve address {}: {}", address_clone, e);
                 return Err(RaftError::Network(
-                    NetworkError::ConnectionFailedToAddress { address, source: e },
+                    NetworkError::ConnectionFailedToAddress { address: address_clone, source: e },
                 ));
             }
         };

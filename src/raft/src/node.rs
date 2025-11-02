@@ -120,9 +120,26 @@ impl RaftNode {
             ..Default::default()
         };
 
-        // Wrap storage and state machine in Adaptor for openraft
-        let log_store = openraft::storage::Adaptor::new(storage.clone());
-        let sm = openraft::storage::Adaptor::new(state_machine.clone());
+        // Wrap storage in Adaptor for openraft
+        // Adaptor::new takes a storage that implements openraft::storage::RaftStorage (combined trait)
+        // and returns (log_store_adaptor, state_machine_adaptor) tuple
+        // TODO: Implement openraft::storage::RaftStorage on RaftStorage
+        // For now, create a second storage instance for Adaptor (not ideal but will work)
+        // In the future, we should implement the trait so we can share the same storage instance
+        let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
+        let storage_for_adaptor = Arc::new(RaftStorage::new(storage_path.clone())?);
+        
+        // Note: Adaptor expects the storage to implement RaftStorage trait
+        // Since it doesn't yet, this will fail to compile
+        // We need to implement openraft::storage::RaftStorage trait on RaftStorage
+        // For now, this is a placeholder that shows what needs to be done
+        // TODO: Uncomment once RaftStorage implements openraft::storage::RaftStorage
+        // let (log_store, sm) = openraft::storage::Adaptor::new((*storage_for_adaptor).clone());
+        
+        // Temporary: Return error until trait is implemented
+        return Err(RaftError::Configuration {
+            message: "Storage traits not yet implemented. RaftStorage must implement openraft::storage::RaftStorage<TypeConfig> trait. See TODO in node.rs".to_string(),
+        });
 
         // Create the Raft instance (clone the factory so Raft and RaftNode share the same endpoints)
         let raft = Raft::new(
@@ -133,7 +150,10 @@ impl RaftNode {
             sm,
         )
         .await
-        .map_err(|e| RaftError::Fatal(e))?;
+        .map_err(|e: openraft::error::Fatal<NodeId>| {
+            // Convert Fatal to our RaftError
+            RaftError::Fatal(e)
+        })?;
 
         // Wrap the factory in Arc<RwLock> for the RaftNode
         let network_factory = Arc::new(RwLock::new(network_factory_instance));
@@ -171,7 +191,14 @@ impl RaftNode {
             self.raft
                 .initialize(nodes)
                 .await
-                .map_err(|e| RaftError::Fatal(openraft::error::Fatal::from(e)))?;
+                .map_err(|e: openraft::error::RaftError<NodeId, openraft::error::InitializeError<NodeId, openraft::BasicNode>>| {
+                    // Convert RaftError to our RaftError
+                    // The error might be Fatal or InitializeError
+                    match e {
+                        openraft::error::RaftError::Fatal(fatal) => RaftError::Fatal(fatal),
+                        _ => RaftError::Consensus(e),
+                    }
+                })?;
 
             log::info!(
                 "Initialized new Raft cluster with node {}",
@@ -1103,7 +1130,13 @@ impl RaftNodeInterface for RaftNode {
         self.raft
             .add_learner(node_id, node, true)
             .await
-            .map_err(|e| RaftError::Consensus(e))?;
+            .map_err(|e: openraft::error::RaftError<NodeId, _>| {
+                // Convert openraft error - create a new RaftError with Infallible variant
+                // by wrapping the error in a way that preserves the information
+                // Since we can't directly convert between error variants, we'll use
+                // the consensus error creation helper
+                RaftError::consensus(format!("{}", e))
+            })?;
 
         log::info!("Successfully added learner node {}", node_id);
         Ok(())

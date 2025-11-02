@@ -168,10 +168,8 @@ impl openraft::RaftTypeConfig for TypeConfig {
 
 /// Raft storage type alias - will be defined in storage module
 // pub type RaftStorage = openraft::storage::Adaptor<TypeConfig, crate::storage::RaftStorage>;
-
 /// Raft state machine type alias - will be defined in state_machine module
 // pub type RaftStateMachine = openraft::storage::Adaptor<TypeConfig, crate::state_machine::KiwiStateMachine>;
-
 /// Raft network type alias
 pub type RaftNetwork = crate::network::RaftNetworkClient;
 

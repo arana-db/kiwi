@@ -199,7 +199,7 @@ impl RaftRedisHandler {
                         "Retrying read with alternative consistency: {:?}",
                         alt_consistency
                     );
-                    self.handle_read_command_with_consistency(command, alt_consistency)
+                    Box::pin(self.handle_read_command_with_consistency(command, alt_consistency))
                         .await
                 } else {
                     Err(RaftError::consistency(reason))
@@ -212,7 +212,7 @@ impl RaftRedisHandler {
     /// Route read request based on consistency level and cluster state
     async fn route_read_request(
         &self,
-        command: RedisCommand,
+        _command: RedisCommand,
         consistency: ConsistencyLevel,
     ) -> RaftResult<ReadRoutingDecision> {
         // Validate the consistency request

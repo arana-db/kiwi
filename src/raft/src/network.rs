@@ -322,7 +322,7 @@ pub enum RaftMessage {
 }
 
 /// Message envelope with metadata and authentication
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct MessageEnvelope {
     pub message_id: u64,
     pub from: NodeId,
@@ -595,33 +595,29 @@ impl MessageRouter {
         self.partition_detector.record_contact(envelope.from).await;
 
         // Check if this is a response to a pending request
-        if self.handle_response(&envelope).await? {
+        let (handled, envelope_opt) = self.handle_response(envelope).await?;
+        if handled {
             return Ok(());
         }
+        
+        // Get envelope back if it wasn't handled
+        let envelope = envelope_opt.ok_or_else(|| RaftError::invalid_state("Envelope was consumed unexpectedly"))?;
+
+        // Extract values for routing
+        let target_node = envelope.to;
+        // Priority is determined but not currently used for routing logic
+        let _ = self.get_message_priority(&envelope.message);
 
         // Route to appropriate handler based on message type and priority
-        let priority = self.get_message_priority(&envelope.message);
-        let target_node = envelope.to;
-
         let handlers = self.message_handlers.read().await;
         if let Some(sender) = handlers.get(&target_node) {
-            // For high priority messages, try to send immediately
-            if priority >= MessagePriority::High {
-                sender.send(envelope).map_err(|_| {
-                    RaftError::Network(NetworkError::InvalidResponse {
-                        node_id: target_node,
-                        message: "Handler channel closed".to_string(),
-                    })
-                })?;
-            } else {
-                // For normal/low priority, queue the message
-                sender.send(envelope).map_err(|_| {
-                    RaftError::Network(NetworkError::InvalidResponse {
-                        node_id: target_node,
-                        message: "Handler channel closed".to_string(),
-                    })
-                })?;
-            }
+            // Send the message (envelope is consumed here)
+            sender.send(envelope).map_err(|_| {
+                RaftError::Network(NetworkError::InvalidResponse {
+                    node_id: target_node,
+                    message: "Handler channel closed".to_string(),
+                })
+            })?;
         } else {
             log::warn!("No handler registered for node {}", target_node);
         }
@@ -630,17 +626,19 @@ impl MessageRouter {
     }
 
     /// Handle response messages by matching them to pending requests
-    async fn handle_response(&self, envelope: &MessageEnvelope) -> RaftResult<bool> {
+    /// Returns (handled, envelope) where handled is true if matched, and envelope is returned for reuse
+    async fn handle_response(&self, envelope: MessageEnvelope) -> RaftResult<(bool, Option<MessageEnvelope>)> {
         let mut pending_requests = self.pending_requests.write().await;
 
         // Check if this is a response to a pending request
         if let Some(request) = pending_requests.remove(&envelope.message_id) {
             // Send response to waiting client
-            let _ = request.sender.send(envelope.clone());
-            return Ok(true);
+            // Since RaftMessage can't be cloned, we need to consume the envelope
+            let _ = request.sender.send(envelope);
+            return Ok((true, None));
         }
 
-        Ok(false)
+        Ok((false, Some(envelope)))
     }
 
     /// Get message priority based on message type
@@ -667,7 +665,9 @@ impl MessageRouter {
         timeout: Duration,
     ) -> RaftResult<RaftMessage> {
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let envelope = MessageEnvelope::new(self.node_id, target_node, message.clone());
+        // Get priority before moving message
+        let priority = self.get_message_priority(&message);
+        let envelope = MessageEnvelope::new(self.node_id, target_node, message);
         let message_id = envelope.message_id;
 
         // Store pending request
@@ -679,7 +679,7 @@ impl MessageRouter {
                     message_id,
                     sender,
                     timestamp: Instant::now(),
-                    priority: self.get_message_priority(&message),
+                    priority,
                 },
             );
         }
@@ -1255,7 +1255,11 @@ impl KiwiRaftNetworkFactory {
 impl RaftNetworkFactory<TypeConfig> for KiwiRaftNetworkFactory {
     type Network = RaftNetworkClient;
 
-    async fn new_client(&mut self, target: NodeId, _node: &openraft::BasicNode) -> Self::Network {
+    async fn new_client(
+        &self,
+        target: NodeId,
+        _node: &openraft::BasicNode,
+    ) -> Self::Network {
         RaftNetworkClient::with_source_node(
             self.source_node,
             target,
@@ -1362,7 +1366,11 @@ impl RaftNetworkClient {
         }
 
         // Try HTTP first, fallback to TCP if needed
-        match self.send_http_message(&message).await {
+        // Serialize message first so we can potentially retry with TCP
+        let envelope = MessageEnvelope::new(self.source_node, self.target_node, message);
+        let serialized_envelope = envelope.serialize()?;
+
+        match self.send_http_message_bytes(&serialized_envelope).await {
             Ok(response) => Ok(response),
             Err(_) => {
                 log::debug!(
@@ -1370,7 +1378,7 @@ impl RaftNetworkClient {
                     self.target_node
                 );
                 let connection = self.get_connection().await?;
-                let envelope = MessageEnvelope::new(self.source_node, self.target_node, message);
+                let envelope = MessageEnvelope::deserialize(serialized_envelope)?;
 
                 let response_envelope = connection
                     .send_message_with_retry(envelope, self.max_retries)
@@ -1380,8 +1388,8 @@ impl RaftNetworkClient {
         }
     }
 
-    /// Send message via HTTP with proper serialization and retry logic
-    async fn send_http_message(&self, message: &RaftMessage) -> RaftResult<RaftMessage> {
+    /// Send message via HTTP with proper serialization and retry logic (using serialized bytes)
+    async fn send_http_message_bytes(&self, serialized_envelope: &Bytes) -> RaftResult<RaftMessage> {
         let endpoint = {
             let endpoints = self.endpoints.read().await;
             endpoints
@@ -1415,10 +1423,10 @@ impl RaftNetworkClient {
                 })
             })?;
 
-        // Create message envelope
-        let envelope = MessageEnvelope::new(self.source_node, self.target_node, message.clone());
-
-        // Serialize message
+        // Deserialize envelope to get message for JSON serialization
+        let envelope: MessageEnvelope = MessageEnvelope::deserialize(serialized_envelope.clone())?;
+        
+        // Serialize message as JSON for HTTP
         let serialized_data =
             serde_json::to_vec(&envelope).map_err(|e| RaftError::Serialization(e))?;
 
@@ -1511,7 +1519,7 @@ impl RaftNetworkClient {
 #[async_trait]
 impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
     async fn append_entries(
-        &mut self,
+        &self,
         req: openraft::raft::AppendEntriesRequest<TypeConfig>,
         _option: openraft::network::RPCOption,
     ) -> Result<
@@ -1544,7 +1552,7 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
     }
 
     async fn install_snapshot(
-        &mut self,
+        &self,
         req: openraft::raft::InstallSnapshotRequest<TypeConfig>,
         _option: openraft::network::RPCOption,
     ) -> Result<
@@ -1577,7 +1585,7 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
     }
 
     async fn vote(
-        &mut self,
+        &self,
         req: openraft::raft::VoteRequest<NodeId>,
         _option: openraft::network::RPCOption,
     ) -> Result<
