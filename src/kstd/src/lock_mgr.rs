@@ -458,7 +458,7 @@ mod tests {
                     if let Some(_guard) = ScopeRecordMultiLock::try_new(&mgr, ["p", "q"]) {
                         counter.fetch_add(1, Ordering::SeqCst);
                         thread::sleep(Duration::from_millis(50));
-                        // guard 在离开作用域时才释放
+                        // guard is only released when it leaves the scope
                     }
                 })
             })
