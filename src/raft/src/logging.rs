@@ -1618,7 +1618,7 @@ impl<'a> TimingGuard<'a> {
             &self.operation,
             duration.as_millis() as u64,
             success,
-            self.context,
+            self.context.clone(),
         );
     }
 }

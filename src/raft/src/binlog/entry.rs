@@ -38,7 +38,7 @@ pub enum OperationType {
 
 impl From<i32> for OperationType {
     fn from(op: i32) -> Self {
-        match binlog::OperationType::from_i32(op) {
+        match binlog::OperationType::try_from(op).ok() {
             Some(binlog::OperationType::Unknown) => OperationType::Unknown,
             Some(binlog::OperationType::Put) => OperationType::Put,
             Some(binlog::OperationType::Delete) => OperationType::Delete,
@@ -138,13 +138,16 @@ impl BinlogEntry {
     /// Serialize binlog entry to bytes
     pub fn serialize(&self) -> Result<Vec<u8>, RaftError> {
         let proto = self.to_proto();
-        prost::Message::encode(&proto).map_err(|e| {
+        let mut buf = Vec::new();
+        prost::Message::encode(&proto, &mut buf).map_err(|e| {
             RaftError::state_machine(format!("Failed to serialize binlog entry: {}", e))
-        })
+        })?;
+        Ok(buf)
     }
 
     /// Deserialize binlog entry from bytes
     pub fn deserialize(data: &[u8]) -> Result<Self, RaftError> {
+        use prost::Message;
         let proto = binlog::BinlogEntry::decode(data).map_err(|e| {
             RaftError::state_machine(format!("Failed to deserialize binlog entry: {}", e))
         })?;

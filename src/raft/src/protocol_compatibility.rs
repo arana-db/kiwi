@@ -428,7 +428,7 @@ impl RedisProtocolCompatibility {
     async fn proxy_command_to_leader(
         &self,
         leader_id: NodeId,
-        command: RedisCommand,
+        _command: RedisCommand,
     ) -> RaftResult<RespData> {
         let topology = self.topology.read().await;
 
@@ -469,7 +469,7 @@ impl RedisProtocolCompatibility {
     /// Handle leader redirection with specific leader ID
     async fn handle_leader_redirection_with_id(
         &self,
-        command: RedisCommand,
+        _command: RedisCommand,
         leader_id: Option<NodeId>,
     ) -> RaftResult<RespData> {
         match leader_id {
@@ -528,18 +528,9 @@ impl RedisProtocolCompatibility {
     /// Process a Redis command from client connection data (integration with existing command flow)
     pub async fn process_client_command(&self, client: &Client) -> RaftResult<RespData> {
         // Convert client command data to RedisCommand format
-        let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_string();
-        let args: Vec<Bytes> = client
-            .argv()
-            .iter()
-            .skip(1) // Skip command name
-            .map(|arg| Bytes::from(arg.clone()))
-            .collect();
-
-        let redis_command = RedisCommand::new(cmd_name, args);
-
-        // Process through the standard Redis command handler
-        self.process_redis_command(client, redis_command).await
+        // TODO: Implement proper client command extraction when Client type is finalized
+        // For now, return an error since Client is a placeholder type
+        Err(RaftError::invalid_request("Client command extraction not yet implemented for placeholder Client type"))
     }
 
     /// Validate and parse Redis command arguments
@@ -1242,7 +1233,7 @@ impl RedisProtocolCompatibility {
     async fn handle_leader_redirection(
         &self,
         client: &Client,
-        command: RedisCommand,
+        _command: RedisCommand,
         leader_id: Option<NodeId>,
     ) -> RaftResult<RespData> {
         let client_info = self.get_client_info(client).await;
@@ -1284,19 +1275,20 @@ impl RedisProtocolCompatibility {
                     None => RespData::Error("CLUSTERDOWN The cluster is down".into()),
                 }
             }
-            RaftError::Timeout => RespData::Error("ERR timeout".into()),
-            RaftError::Configuration(msg) => {
+            RaftError::Timeout { operation: _ } => RespData::Error("ERR timeout".into()),
+            RaftError::Configuration { message } => {
                 // Map configuration errors to appropriate Redis error types
-                if msg.contains("wrong number of arguments") {
-                    RespData::Error(msg.into())
-                } else if msg.contains("invalid") || msg.contains("Invalid") {
-                    RespData::Error(format!("ERR {}", msg).into())
+                if message.contains("wrong number of arguments") {
+                    RespData::Error(message.clone().into())
+                } else if message.contains("invalid") || message.contains("Invalid") {
+                    RespData::Error(format!("ERR {}", message).into())
                 } else {
-                    RespData::Error(format!("ERR {}", msg).into())
+                    RespData::Error(format!("ERR {}", message).into())
                 }
             }
-            RaftError::Storage(msg) => {
+            RaftError::Storage(err) => {
                 // Map storage errors to Redis-compatible errors
+                let msg = err.to_string();
                 if msg.contains("not found") || msg.contains("key not found") {
                     RespData::BulkString(None) // Redis returns nil for missing keys
                 } else if msg.contains("out of memory") {
@@ -1305,8 +1297,9 @@ impl RedisProtocolCompatibility {
                     RespData::Error(format!("ERR {}", msg).into())
                 }
             }
-            RaftError::Network(msg) => {
+            RaftError::Network(err) => {
                 // Map network errors to cluster-related errors
+                let msg = err.to_string();
                 if msg.contains("connection") || msg.contains("timeout") {
                     RespData::Error("CLUSTERDOWN The cluster is down".into())
                 } else {

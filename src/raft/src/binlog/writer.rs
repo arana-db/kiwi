@@ -17,7 +17,6 @@
 
 //! Binlog writer implementation
 
-use std::io::Write;
 use std::sync::Arc;
 
 use parking_lot::RwLock;

@@ -288,7 +288,7 @@ impl SegmentLog {
     fn rotate_segment(&self) -> Result<(), RaftError> {
         // Close current segment
         let mut segment_file = self.current_segment_file.write();
-        if let Some(mut file) = segment_file.take() {
+        if let Some(file) = segment_file.take() {
             file.sync_all()
                 .map_err(|e| RaftError::state_machine(format!("Failed to sync segment: {}", e)))?;
             drop(file);

@@ -444,7 +444,7 @@ impl ClusterConfigManager {
             config.endpoints.insert(endpoint.node_id, endpoint);
         }
 
-        let mut manager = Self {
+        let manager = Self {
             config,
             config_path: PathBuf::from("cluster.json"),
         };

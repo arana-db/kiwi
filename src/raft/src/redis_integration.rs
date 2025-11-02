@@ -490,7 +490,7 @@ impl RaftRedisHandler {
     /// Execute a read operation on the local state machine
     async fn execute_local_read(&self, command: RedisCommand) -> RaftResult<RespData> {
         // Get the state machine and execute the read operation
-        let state_machine = self.raft_node.state_machine();
+        let _state_machine = self.raft_node.state_machine();
 
         // For now, we'll create a mock response since the state machine integration
         // is not fully implemented yet. In a complete implementation, this would

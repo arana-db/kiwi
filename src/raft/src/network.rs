@@ -27,7 +27,7 @@ use reqwest::Client as HttpClient;
 use rustls::{Certificate, ClientConfig, PrivateKey};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -204,7 +204,7 @@ impl SecureStream {
         let key = PrivateKey(keys.remove(0));
 
         // Create client config
-        let mut config = ClientConfig::builder()
+        let config = ClientConfig::builder()
             .with_safe_defaults()
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_client_auth_cert(certs, key)
@@ -298,18 +298,18 @@ impl SecureStream {
         match self {
             SecureStream::Plain(stream) => {
                 use tokio::io::AsyncReadExt;
-                stream.read_exact(buf).await
+                stream.read_exact(buf).await.map(|_| ())
             }
             SecureStream::Tls(stream) => {
                 use tokio::io::AsyncReadExt;
-                stream.read_exact(buf).await
+                stream.read_exact(buf).await.map(|_| ())
             }
         }
     }
 }
 
 /// Message types for Raft network communication
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum RaftMessage {
     AppendEntries(openraft::raft::AppendEntriesRequest<TypeConfig>),
     AppendEntriesResponse(openraft::raft::AppendEntriesResponse<NodeId>),
@@ -364,9 +364,9 @@ impl MessageEnvelope {
     }
 
     /// Add authentication to the message
-    pub fn add_authentication(&mut self, auth: &NodeAuth) -> RaftResult<()> {
+    pub fn add_authentication(&mut self, _auth: &NodeAuth) -> RaftResult<()> {
         // Create a temporary envelope without HMAC for authentication
-        let temp_envelope = MessageEnvelope {
+        let _temp_envelope = MessageEnvelope {
             message_id: self.message_id,
             from: self.from,
             to: self.to,
@@ -384,7 +384,7 @@ impl MessageEnvelope {
     }
 
     /// Verify message authentication
-    pub fn verify_authentication(&self, auth: &NodeAuth) -> bool {
+    pub fn verify_authentication(&self, _auth: &NodeAuth) -> bool {
         // For now, skip HMAC verification due to serialization complexity
         true
     }

@@ -1203,10 +1203,10 @@ impl KiwiStateMachine {
             self.applied_index()
         );
 
-        let mut snapshot_data = HashMap::new();
+        let snapshot_data = HashMap::new();
 
         // If we have a storage engine, create a snapshot from it
-        if let Some(storage_engine) = &self.storage_engine {
+        if let Some(_storage_engine) = &self.storage_engine {
             // For now, we'll create a simple snapshot by iterating through all keys
             // In a production system, this would use RocksDB's native snapshot functionality
             // TODO: Implement more efficient snapshot creation using RocksDB snapshots
@@ -1265,7 +1265,7 @@ impl KiwiStateMachine {
         }
 
         // If we have a storage engine, restore the data
-        if let Some(storage_engine) = &self.storage_engine {
+        if let Some(_storage_engine) = &self.storage_engine {
             log::debug!(
                 "Node {} restoring snapshot data to storage engine",
                 self.node_id
@@ -1374,7 +1374,7 @@ impl KiwiStateMachine {
 
     /// Clean up expired transactions (should be called periodically)
     pub async fn cleanup_expired_transactions(&self) -> RaftResult<usize> {
-        let mut active_txns = self.active_transactions.write().await;
+        let active_txns = self.active_transactions.write().await;
         let initial_count = active_txns.len();
 
         // For now, we don't have transaction timeouts implemented

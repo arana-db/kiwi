@@ -120,13 +120,17 @@ impl RaftNode {
             ..Default::default()
         };
 
+        // Wrap storage and state machine in Adaptor for openraft
+        let log_store = openraft::storage::Adaptor::new(storage.clone());
+        let sm = openraft::storage::Adaptor::new(state_machine.clone());
+
         // Create the Raft instance (clone the factory so Raft and RaftNode share the same endpoints)
         let raft = Raft::new(
             cluster_config.node_id,
             Arc::new(raft_config),
             network_factory_instance.clone(),
-            storage.clone(),
-            state_machine.clone(),
+            log_store,
+            sm,
         )
         .await
         .map_err(|e| RaftError::Fatal(e))?;
@@ -167,7 +171,7 @@ impl RaftNode {
             self.raft
                 .initialize(nodes)
                 .await
-                .map_err(|e| RaftError::Fatal(e))?;
+                .map_err(|e| RaftError::Fatal(openraft::error::Fatal::from(e)))?;
 
             log::info!(
                 "Initialized new Raft cluster with node {}",
@@ -1048,7 +1052,7 @@ impl RaftNodeInterface for RaftNode {
 
         // Submit the request to Raft
         match self.raft.client_write(request.clone()).await {
-            Ok(response) => {
+            Ok(_response) => {
                 log::debug!("Client request {} completed successfully", request.id);
                 Ok(ClientResponse {
                     id: request.id,
@@ -1133,7 +1137,7 @@ impl RaftNodeInterface for RaftNode {
         }
 
         // Create membership configuration
-        let membership: openraft::Membership<NodeId, openraft::BasicNode> =
+        let _membership: openraft::Membership<NodeId, openraft::BasicNode> =
             openraft::Membership::new(vec![members.clone()], None);
 
         // Apply membership change

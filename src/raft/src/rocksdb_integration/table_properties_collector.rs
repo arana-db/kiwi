@@ -51,7 +51,7 @@ impl LogIndexTablePropertiesCollector {
     }
 
     /// Add a key-value pair and update min log index
-    pub fn add(&self, key: &[u8], _value: &[u8], sequence: u64) {
+    pub fn add(&self, _key: &[u8], _value: &[u8], sequence: u64) {
         // Try to find log index for this sequence
         if let Some(log_index) = self.sequence_queue.find_log_index(sequence) {
             let mut min_log_index = self.min_log_index.write();

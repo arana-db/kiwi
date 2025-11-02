@@ -160,18 +160,12 @@ async fn main() -> std::io::Result<()> {
 async fn start_server(protocol: &str, addr: &str) -> std::io::Result<()> {
     if let Some(server) = ServerFactory::create_server(protocol, Some(addr.to_string())) {
         server.run().await.map_err(|e| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to start the server on {}: {}. Please check the server configuration and ensure the address is available.", addr, e)
-            )
+            std::io::Error::other(format!("Failed to start the server on {}: {}. Please check the server configuration and ensure the address is available.", addr, e))
         })
     } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "Failed to create server for protocol '{}' on address '{}'",
-                protocol, addr
-            ),
-        ))
+        Err(std::io::Error::other(format!(
+            "Failed to create server for protocol '{}' on address '{}'",
+            protocol, addr
+        )))
     }
 }

@@ -1666,15 +1666,15 @@ impl ConfigChangeManager {
             ConfigChangeType::AddVoter { node_id, .. } => {
                 ConfigChangeType::RemoveNode { node_id: *node_id }
             }
-            ConfigChangeType::RemoveNode { node_id } => {
+            ConfigChangeType::RemoveNode { node_id: _ } => {
                 // Cannot easily rollback node removal without endpoint info
                 return Err(RaftError::configuration(
                     "Cannot rollback node removal without endpoint information",
                 ));
             }
             ConfigChangeType::ReplaceNode {
-                old_node_id,
-                new_node_id,
+                old_node_id: _,
+                new_node_id: _,
                 ..
             } => {
                 // Reverse the replacement
@@ -1682,7 +1682,7 @@ impl ConfigChangeManager {
                     "Node replacement rollback not implemented",
                 ));
             }
-            ConfigChangeType::UpdateEndpoint { node_id, .. } => {
+            ConfigChangeType::UpdateEndpoint { node_id: _, .. } => {
                 // Would need original endpoint info
                 return Err(RaftError::configuration(
                     "Endpoint update rollback not implemented",
@@ -1886,7 +1886,7 @@ impl ConfigChangeManager {
         log::info!("Paused {} conflicting operations", paused_operations.len());
 
         let operation_id = format!("safe_config_change_{}", Uuid::new_v4());
-        let start_time = Utc::now();
+        let _start_time = Utc::now();
 
         // Step 5: Execute change with rollback capability
         let result = match self.execute_atomic_change(&request, &operation_id).await {
@@ -2152,7 +2152,7 @@ impl ConfigChangeManager {
         &self,
         request: &ConfigChangeRequest,
     ) -> RaftResult<Vec<String>> {
-        let mut paused_operations = Vec::new();
+        let paused_operations = Vec::new();
 
         // In a real implementation, this would pause specific types of operations
         // that might conflict with configuration changes, such as:

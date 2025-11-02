@@ -298,20 +298,18 @@ impl NodeDiscovery {
     ) -> RaftResult<Vec<SocketAddr>> {
         use tokio::net::lookup_host;
 
-        let address = endpoint.address();
-        match lookup_host(&address).await {
-            Ok(addrs) => {
-                let resolved: Vec<SocketAddr> = addrs.collect();
-                log::debug!("Resolved {} to {} addresses", address, resolved.len());
-                Ok(resolved)
-            }
+        let address = endpoint.address().to_string();
+        let resolved: Vec<SocketAddr> = match lookup_host(&address).await {
+            Ok(addrs) => addrs.collect(),
             Err(e) => {
                 log::warn!("Failed to resolve address {}: {}", address, e);
-                Err(RaftError::Network(
+                return Err(RaftError::Network(
                     NetworkError::ConnectionFailedToAddress { address, source: e },
-                ))
+                ));
             }
-        }
+        };
+        log::debug!("Resolved {} to {} addresses", address, resolved.len());
+        Ok(resolved)
     }
 
     /// Discover and validate all nodes
@@ -1208,7 +1206,7 @@ impl NetworkPartitionDetector {
         let mut unreachable_nodes = Vec::new();
         let mut failed_nodes = Vec::new();
 
-        for (node_id, endpoint) in &known_nodes {
+        for (node_id, _endpoint) in &known_nodes {
             if *node_id == self.node_id {
                 healthy_nodes.push(*node_id); // Assume self is healthy
                 continue;

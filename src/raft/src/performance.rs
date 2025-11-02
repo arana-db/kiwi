@@ -132,7 +132,7 @@ impl RequestBatcher {
                 tokio::select! {
                     _ = flush_interval.tick() => {
                         // Time-based flush
-                        let mut batch = pending_batch.lock().await;
+                        let batch = pending_batch.lock().await;
                         if !batch.is_empty() {
                             flush_notify.notify_waiters();
                         }
@@ -538,7 +538,7 @@ pub mod read_optimization {
         pub async fn can_serve_read_locally(
             &self,
             consistency_level: ConsistencyLevel,
-            current_log_index: u64,
+            _current_log_index: u64,
         ) -> RaftResult<bool> {
             match consistency_level {
                 ConsistencyLevel::Linearizable => {
@@ -1020,7 +1020,7 @@ pub mod resource_management {
 
             // This is a simplified cleanup - in practice, you'd implement
             // more sophisticated cleanup strategies
-            let current_usage = self.memory_tracker.current_usage();
+            let _current_usage = self.memory_tracker.current_usage();
             let usage_by_category = self.memory_tracker.get_usage_by_category().await;
 
             cleanup_result.memory_freed = 0; // Would implement actual cleanup

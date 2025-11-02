@@ -69,7 +69,9 @@ impl ThreeNodeCluster {
                 "1:127.0.0.1:7380".to_string(),
                 "2:127.0.0.1:7381".to_string(),
                 "3:127.0.0.1:7382".to_string(),
-            ],
+            ]
+            .into_iter()
+            .collect(),
             ..Default::default()
         };
 
@@ -80,7 +82,9 @@ impl ThreeNodeCluster {
                 "1:127.0.0.1:7380".to_string(),
                 "2:127.0.0.1:7381".to_string(),
                 "3:127.0.0.1:7382".to_string(),
-            ],
+            ]
+            .into_iter()
+            .collect(),
             ..Default::default()
         };
 
@@ -91,7 +95,9 @@ impl ThreeNodeCluster {
                 "1:127.0.0.1:7380".to_string(),
                 "2:127.0.0.1:7381".to_string(),
                 "3:127.0.0.1:7382".to_string(),
-            ],
+            ]
+            .into_iter()
+            .collect(),
             ..Default::default()
         };
 
@@ -201,7 +207,7 @@ impl ThreeNodeCluster {
             id: RequestId::new(),
             command: RedisCommand {
                 command: "SET".to_string(),
-                args: vec![Bytes::from(key), Bytes::from(value)],
+                args: vec![Bytes::copy_from_slice(key.as_bytes()), Bytes::copy_from_slice(value.as_bytes())],
             },
             consistency_level: ConsistencyLevel::Linearizable,
         };
@@ -221,7 +227,7 @@ impl ThreeNodeCluster {
             id: RequestId::new(),
             command: RedisCommand {
                 command: "GET".to_string(),
-                args: vec![Bytes::from(key)],
+                args: vec![Bytes::copy_from_slice(key.as_bytes())],
             },
             consistency_level: ConsistencyLevel::Linearizable,
         };
@@ -287,7 +293,7 @@ pub async fn wait_for_follower(
         }
     })
     .await
-    .map_err(|_| RaftError::timeout("Timeout waiting for follower state"))
+    .map_err(|_| RaftError::timeout("Timeout waiting for follower state"))?
 }
 
 /// Verify data consistency across all nodes
@@ -300,8 +306,7 @@ pub async fn verify_data_consistency(
         let mut values = Vec::new();
 
         // Read from all nodes
-        let nodes = vec![&cluster.node1, &cluster.node2, &cluster.node3];
-        for node in nodes {
+        for _node in [&cluster.node1, &cluster.node2, &cluster.node3] {
             if let Ok(Some(value)) = cluster.read(key).await {
                 values.push(String::from_utf8_lossy(&value).to_string());
             }

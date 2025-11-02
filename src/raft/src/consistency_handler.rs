@@ -18,9 +18,8 @@
 //! Consistency level handling for Raft-based Redis operations
 
 use crate::error::{RaftError, RaftResult};
-use crate::metrics::RaftMetrics;
 use crate::node::{RaftNode, RaftNodeInterface};
-use crate::types::{ConsistencyLevel, NodeId};
+use crate::types::{ConsistencyLevel, NodeId, RaftMetrics};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -339,7 +338,7 @@ impl ConsistencyHandler {
     }
 
     /// Check if we can reach a majority of nodes (simplified implementation)
-    async fn can_reach_majority(&self) -> RaftResult<bool> {
+    pub async fn can_reach_majority(&self) -> RaftResult<bool> {
         let membership = self.raft_node.get_membership().await?;
         let total_nodes = membership.len();
         let majority_size = (total_nodes / 2) + 1;
