@@ -24,7 +24,7 @@ use tokio::sync::{Mutex, Notify, RwLock};
 use tokio::time::timeout;
 
 use crate::error::{RaftError, RaftResult};
-use crate::types::{ClientRequest, ClientResponse, NodeId, RequestId};
+use crate::types::{ClientRequest, NodeId, RequestId};
 
 /// Configuration for batching operations
 #[derive(Debug, Clone)]

@@ -21,7 +21,7 @@ use crate::cluster_config::{ClusterConfiguration, NodeEndpoint};
 use crate::error::{NetworkError, RaftError, RaftResult};
 use crate::types::{ClusterHealth, LogIndex, NodeId, Term};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;

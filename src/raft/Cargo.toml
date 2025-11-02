@@ -49,13 +49,13 @@ crc16 = "0.4"
 warp = "0.3"
 prost = "0.12"
 prost-types = "0.12"
+tempfile = { workspace = true }
 
 [build-dependencies]
 prost-build = "0.12"
 protoc-bin-vendored = "3"
 
 [dev-dependencies]
-tempfile = { workspace = true }
 
 # Internal dependencies
 kstd = { workspace = true }

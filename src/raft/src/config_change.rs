@@ -18,14 +18,13 @@
 //! Configuration change operations for Raft cluster
 
 use crate::cluster_config::{ClusterConfiguration, NodeEndpoint};
-use crate::discovery::{HealthMonitor, NodeStatus};
+use crate::discovery::HealthMonitor;
 use crate::error::{RaftError, RaftResult};
 use crate::node::RaftNodeInterface;
 use crate::types::{BasicNode, NodeId};
 use chrono::{DateTime, Utc};
-use openraft::Membership;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};

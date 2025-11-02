@@ -11,17 +11,15 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR ANY KIND, either express or implied.
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 //! Binlog writer implementation
 
 use std::io::Write;
-use std::path::Path;
 use std::sync::Arc;
 
-use bytes::Bytes;
 use parking_lot::RwLock;
 
 use super::entry::BinlogEntry;
@@ -118,5 +116,5 @@ mod tests {
     }
 }
 
-// Import OperationType for tests
+#[cfg(test)]
 use super::entry::OperationType;

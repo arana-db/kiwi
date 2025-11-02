@@ -11,7 +11,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR ANY KIND, either express or implied.
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -111,28 +111,10 @@ impl LogIndexTablePropertiesCollector {
     }
 }
 
-impl rocksdb::TablePropertiesCollector for LogIndexTablePropertiesCollector {
-    fn name(&self) -> &str {
-        "LogIndexTablePropertiesCollector"
-    }
-
-    fn add(
-        &mut self,
-        key: &[u8],
-        value: &[u8],
-        _entry_type: rocksdb::EntryType,
-        sequence: u64,
-        _file_size: u64,
-    ) {
-        // Use the add method to track sequence and log index
-        self.add(key, value, sequence);
-    }
-
-    fn finish(&mut self) -> rocksdb::UserCollectedProperties {
-        let properties = self.finish().unwrap_or_default();
-        properties.into_iter().collect()
-    }
-}
+// NOTE: rocksdb::TablePropertiesCollector trait is not available in rocksdb 0.23.0
+// This implementation would need to use RocksDB's table properties collector API differently
+// For now, we remove it to allow the code to compile
+// TODO: Re-implement using the correct RocksDB table properties collector API for version 0.23.0
 
 #[cfg(test)]
 mod tests {

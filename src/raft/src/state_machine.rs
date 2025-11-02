@@ -21,15 +21,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use async_trait::async_trait;
 use bytes::Bytes;
-use openraft::{EffectiveMembership, SnapshotMeta, StorageError};
-use rocksdb::WriteBatch;
+use openraft::{EffectiveMembership, SnapshotMeta};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
 use crate::error::{RaftError, RaftResult};
-use crate::types::{ClientRequest, ClientResponse, NodeId, RedisCommand, RequestId, TypeConfig};
+use crate::types::{ClientRequest, ClientResponse, NodeId, RedisCommand, TypeConfig};
 
 /// Snapshot data structure for state machine
 #[derive(Debug, Clone, Serialize, Deserialize)]

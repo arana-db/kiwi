@@ -27,7 +27,7 @@ use crate::types::NodeId;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use warp::{Filter, Reply};
+use warp::Filter;
 
 /// Monitoring API configuration
 #[derive(Debug, Clone)]

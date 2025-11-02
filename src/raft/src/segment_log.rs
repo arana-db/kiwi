@@ -11,7 +11,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR ANY KIND, either express or implied.
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -27,18 +27,17 @@
 //!   [checksum(8)][data_length(4)][data]
 
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bytes::Bytes;
 use crc16::State;
 use parking_lot::RwLock;
 
-use crate::binlog::{BinlogEntry, BinlogWriter};
+use crate::binlog::BinlogEntry;
 use crate::error::RaftError;
-use crate::types::{LogIndex, Term};
+use crate::types::LogIndex;
 
 /// Log metadata file name
 const LOG_META_FILE: &str = "log_meta";

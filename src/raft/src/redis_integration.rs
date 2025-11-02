@@ -22,7 +22,7 @@ use crate::error::{RaftError, RaftResult};
 use crate::node::{RaftNode, RaftNodeInterface};
 use crate::placeholder_types::RespData;
 use crate::types::{
-    ClientRequest, ClientResponse, ConsistencyLevel, NodeId, RedisCommand, RequestId,
+    ClientRequest, ConsistencyLevel, NodeId, RedisCommand, RequestId,
 };
 use bytes::Bytes;
 use std::sync::Arc;

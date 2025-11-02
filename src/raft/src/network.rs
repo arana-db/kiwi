@@ -23,9 +23,8 @@ use async_trait::async_trait;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use hmac::{Hmac, Mac};
 use openraft::network::{RaftNetwork as OpenRaftNetwork, RaftNetworkFactory};
-use openraft::{AppData, AppDataResponse};
-use reqwest::{Client as HttpClient, Response};
-use rustls::{Certificate, ClientConfig, PrivateKey, ServerConfig};
+use reqwest::Client as HttpClient;
+use rustls::{Certificate, ClientConfig, PrivateKey};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -33,11 +32,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::timeout as tokio_timeout;
-use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
-use url::Url;
+use tokio_rustls::{TlsConnector, TlsStream};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -1352,7 +1350,7 @@ impl RaftNetworkClient {
     }
 
     /// Send a Raft message and wait for response
-    async fn send_raft_message(&mut self, message: RaftMessage) -> RaftResult<RaftMessage> {
+    async fn send_raft_message(&self, message: RaftMessage) -> RaftResult<RaftMessage> {
         // Check for network partition first
         if self
             .message_router

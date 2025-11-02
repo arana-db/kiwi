@@ -11,7 +11,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR ANY KIND, either express or implied.
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -26,7 +26,6 @@ use parking_lot::RwLock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::error::RaftError;
 use crate::sequence_mapping::SequenceMappingQueue;
 use crate::types::LogIndex;
 
@@ -144,23 +143,10 @@ impl LogIndexEventListener {
     }
 }
 
-impl rocksdb::EventListener for LogIndexEventListener {
-    fn on_flush_completed(&self, _db_name: &str, _cf_name: &str, file_path: &str, file_size: u64) {
-        // Extract sequence number from flush info if available
-        // For now, we'll use a placeholder - in real implementation,
-        // we'd parse this from RocksDB's flush job info
-        let sequence = self.sequence_queue.max_sequence().unwrap_or(0);
-        self.on_flush_complete(sequence, Some(file_size));
-    }
-
-    fn on_memtable_sealed(&self, _db_name: &str, _cf_name: &str, _memtable_id: u64) {
-        // Get sequence from the mapping queue
-        // In a real implementation, we'd get this from RocksDB's memtable info
-        if let Some(sequence) = self.sequence_queue.max_sequence() {
-            self.on_memtable_seal(sequence);
-        }
-    }
-}
+// NOTE: rocksdb::EventListener trait is not available in rocksdb 0.23.0
+// This implementation would need to use RocksDB's event listener API differently
+// For now, we remove it to allow the code to compile
+// TODO: Re-implement using the correct RocksDB event listener API for version 0.23.0
 
 #[cfg(test)]
 mod tests {

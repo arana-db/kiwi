@@ -11,17 +11,12 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR ANY KIND, either express or implied.
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
 //! Binlog reader implementation
 
-use std::io::{Read, Seek};
-use std::path::Path;
-
-use bytes::Bytes;
-use parking_lot::RwLock;
 
 use super::entry::BinlogEntry;
 use crate::error::RaftError;
@@ -128,5 +123,3 @@ mod tests {
     }
 }
 
-// Import OperationType for tests
-use super::entry::OperationType;
