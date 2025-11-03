@@ -199,12 +199,11 @@ impl RaftNode {
             self.raft
                 .initialize(nodes)
                 .await
-                .map_err(|e: openraft::error::RaftError<NodeId, openraft::error::InitializeError<NodeId, openraft::BasicNode>>| {
+                .map_err(|e| {
                     // Convert RaftError to our RaftError
-                    // The error might be Fatal or InitializeError
-                    match e {
-                        openraft::error::RaftError::Fatal(fatal) => RaftError::Fatal(fatal),
-                        _ => RaftError::Consensus(e),
+                    // Create a generic error message since we can't directly convert the error types
+                    RaftError::Configuration {
+                        message: format!("Failed to initialize Raft cluster: {}", e),
                     }
                 })?;
 

@@ -1255,10 +1255,10 @@ impl KiwiRaftNetworkFactory {
 impl RaftNetworkFactory<TypeConfig> for KiwiRaftNetworkFactory {
     type Network = RaftNetworkClient;
 
-    async fn new_client(
-        &self,
+    async fn new_client<'a>(
+        &'a self,
         target: NodeId,
-        _node: &openraft::BasicNode,
+        _node: &'a openraft::BasicNode,
     ) -> Self::Network {
         RaftNetworkClient::with_source_node(
             self.source_node,
@@ -1518,8 +1518,8 @@ impl RaftNetworkClient {
 
 #[async_trait]
 impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
-    async fn append_entries(
-        &self,
+    async fn append_entries<'a>(
+        &'a self,
         req: openraft::raft::AppendEntriesRequest<TypeConfig>,
         _option: openraft::network::RPCOption,
     ) -> Result<
@@ -1551,8 +1551,8 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
         }
     }
 
-    async fn install_snapshot(
-        &self,
+    async fn install_snapshot<'a>(
+        &'a self,
         req: openraft::raft::InstallSnapshotRequest<TypeConfig>,
         _option: openraft::network::RPCOption,
     ) -> Result<
