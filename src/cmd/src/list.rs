@@ -136,6 +136,8 @@ impl LPopCmd {
     }
 }
 
+const MAX_SAFE_POP_COUNT: usize = 1_000_000;
+
 impl Cmd for LPopCmd {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
@@ -152,7 +154,7 @@ impl Cmd for LPopCmd {
         // Parse optional count parameter
         let count = if client.argv().len() > 2 {
             match String::from_utf8_lossy(&client.argv()[2]).parse::<usize>() {
-                Ok(c) if c > 0 => Some(c),
+                Ok(c) if c > 0 && c < MAX_SAFE_POP_COUNT => Some(c),
                 _ => {
                     client.set_reply(RespData::Error(
                         "ERR value is not an integer or out of range".into(),
@@ -247,7 +249,12 @@ impl Cmd for RPopCmd {
                     client.set_reply(RespData::Array(Some(resp_values)));
                 } else {
                     // Return single value for RPOP without count
-                    client.set_reply(RespData::BulkString(Some(values[0].clone().into())));
+                    if values.is_empty() {
+                        client.set_reply(RespData::BulkString(None));
+                        return;
+                    } else {
+                        client.set_reply(RespData::BulkString(Some(values[0].clone().into())));
+                    }
                 }
             }
             Ok(None) => {

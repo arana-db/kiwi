@@ -46,6 +46,11 @@ STORAGE_COMPARISON.md
 # Claude Code configuration
 .claude/
 
+# Claude Spec Workflow configuration
+.spec-workflow/
+
+.cargo/
+
 # Kiro
 # .kiro
 CHECKLIST.md
