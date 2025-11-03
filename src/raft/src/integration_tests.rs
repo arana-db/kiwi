@@ -65,6 +65,7 @@ fn create_test_request(id: u64, command: &str, args: Vec<&str>) -> ClientRequest
 }
 
 /// Helper function to create a test client request with bytes args
+#[allow(dead_code)]
 fn create_test_request_bytes(id: u64, command: &str, args: Vec<Bytes>) -> ClientRequest {
     ClientRequest {
         id: RequestId(id),
@@ -79,6 +80,7 @@ fn create_test_request_bytes(id: u64, command: &str, args: Vec<Bytes>) -> Client
 /// Test cluster for integration testing
 pub struct TestCluster {
     nodes: HashMap<NodeId, TestNode>,
+    #[allow(dead_code)]
     config: TestClusterConfig,
     _temp_dirs: Vec<TempDir>,
 }
@@ -227,6 +229,7 @@ impl TestCluster {
 }
 
 // Mock engine creation for testing
+#[allow(dead_code)]
 fn create_mock_engine(temp_dir: &TempDir) -> RaftResult<RocksdbEngine> {
     use rocksdb::{DB, Options};
     
