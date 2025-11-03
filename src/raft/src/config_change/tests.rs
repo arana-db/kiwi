@@ -36,13 +36,12 @@ mod tests {
         endpoints.insert(3, NodeEndpoint::new(3, "127.0.0.1".to_string(), 7381));
 
         Arc::new(RwLock::new(ClusterConfiguration {
+            node_id: 1,
             enabled: true,
-            bootstrap: crate::cluster_config::BootstrapConfig {
-                node_id: 1,
-                endpoints,
-                data_dir: PathBuf::from("/tmp/raft"),
-            },
-            raft_config: openraft::Config::default(),
+            data_dir: PathBuf::from("/tmp/raft"),
+            endpoints,
+            bootstrap: crate::cluster_config::BootstrapConfig::default(),
+            raft_config: crate::cluster_config::RaftConfiguration::default(),
         }))
     }
 

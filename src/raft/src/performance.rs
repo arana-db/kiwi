@@ -453,6 +453,7 @@ pub mod read_optimization {
         /// Lease duration
         lease_duration: Duration,
         /// Node ID of the leader
+        #[allow(dead_code)]
         leader_id: NodeId,
     }
 
@@ -810,7 +811,7 @@ pub mod resource_management {
         }
 
         /// Allocate memory for a category
-        pub async fn allocate(&self, category: &str, size: usize) -> RaftResult<MemoryAllocation> {
+        pub async fn allocate(&self, category: &str, size: usize) -> RaftResult<MemoryAllocation<'_>> {
             let current = self.current_usage.load(Ordering::Acquire);
 
             if current + size > self.max_usage {
@@ -962,7 +963,7 @@ pub mod resource_management {
             &self,
             category: &str,
             size: usize,
-        ) -> RaftResult<MemoryAllocation> {
+        ) -> RaftResult<MemoryAllocation<'_>> {
             // Check if we're under memory pressure
             if self
                 .memory_tracker
@@ -980,7 +981,7 @@ pub mod resource_management {
         }
 
         /// Acquire operation permit
-        pub async fn acquire_operation_permit(&self) -> RaftResult<tokio::sync::SemaphorePermit> {
+        pub async fn acquire_operation_permit(&self) -> RaftResult<tokio::sync::SemaphorePermit<'_>> {
             match timeout(
                 Duration::from_millis(100),
                 self.operation_semaphore.acquire(),

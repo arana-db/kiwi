@@ -56,6 +56,7 @@ prost-build = "0.12"
 protoc-bin-vendored = "3"
 
 [dev-dependencies]
+rand = "0.8"
 
 # Internal dependencies
 kstd = { workspace = true }

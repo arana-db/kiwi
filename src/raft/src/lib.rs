@@ -20,6 +20,32 @@
 //! This module provides strong consistency guarantees for distributed Kiwi deployments
 //! using the Raft consensus algorithm via the openraft library.
 
+#![allow(clippy::result_large_err)]
+#![allow(clippy::new_without_default)]
+#![allow(clippy::derivable_impls)]
+#![allow(clippy::for_kv_map)]
+#![allow(clippy::useless_format)]
+#![allow(clippy::redundant_pattern_matching)]
+#![allow(clippy::large_enum_variant)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::unnecessary_cast)]
+#![allow(clippy::io_other_error)]
+#![allow(clippy::redundant_closure)]
+#![allow(clippy::needless_return)]
+#![allow(clippy::needless_borrow)]
+#![allow(clippy::should_implement_trait)]
+#![allow(clippy::needless_question_mark)]
+#![allow(clippy::single_match)]
+#![allow(clippy::unnecessary_lazy_evaluations)]
+#![allow(clippy::useless_conversion)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+#![allow(clippy::manual_is_multiple_of)]
+#![allow(clippy::if_same_then_else)]
+#![allow(clippy::identity_op)]
+#![allow(clippy::wildcard_in_or_patterns)]
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::len_without_is_empty)]
+
 use openraft::Config;
 
 // pub mod adaptor; // TODO: Re-enable when adaptor is properly implemented

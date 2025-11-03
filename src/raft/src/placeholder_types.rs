@@ -65,7 +65,7 @@ pub struct RocksdbEngine {
 }
 
 impl RocksdbEngine {
-    pub fn iterator(&self, _mode: rocksdb::IteratorMode) -> rocksdb::DBIterator {
+    pub fn iterator(&self, _mode: rocksdb::IteratorMode) -> rocksdb::DBIterator<'_> {
         // This is a placeholder - will be replaced with actual implementation
         unimplemented!("RocksdbEngine::iterator - placeholder implementation")
     }

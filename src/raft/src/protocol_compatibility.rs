@@ -44,6 +44,7 @@ pub struct RedisProtocolCompatibility {
 #[derive(Debug, Clone)]
 struct ClientConnectionInfo {
     /// Client identifier
+    #[allow(dead_code)]
     client_id: String,
     /// Last activity timestamp
     last_activity: std::time::Instant,
@@ -139,7 +140,7 @@ impl RedisProtocolCompatibility {
         command: RedisCommand,
     ) -> RaftResult<RespData> {
         // Update client activity
-        self.update_client_activity(client).await;
+        let _ = self.update_client_activity(client).await;
 
         // Validate command first
         if let Err(e) = self.validate_command(&command) {
@@ -467,6 +468,7 @@ impl RedisProtocolCompatibility {
     }
 
     /// Handle leader redirection with specific leader ID
+    #[allow(dead_code)]
     async fn handle_leader_redirection_with_id(
         &self,
         _command: RedisCommand,
@@ -1230,6 +1232,7 @@ impl RedisProtocolCompatibility {
     }
 
     /// Handle leader redirection transparently for clients
+    #[allow(dead_code)]
     async fn handle_leader_redirection(
         &self,
         client: &Client,

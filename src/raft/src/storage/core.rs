@@ -41,14 +41,14 @@ const KEY_SNAPSHOT_META: &str = "snapshot_meta";
 /// Raft storage implementation using RocksDB
 pub struct RaftStorage {
     /// RocksDB instance
-    db: Arc<DB>,
+    pub db: Arc<DB>,
     /// Current Raft state (cached for performance)
     state: Arc<RwLock<RaftState>>,
 }
 
 /// Raft persistent state
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct RaftState {
+pub struct RaftState {
     /// Current term
     current_term: Term,
     /// Node voted for in current term
@@ -93,10 +93,10 @@ pub struct StoredSnapshotMeta {
 
 impl RaftStorage {
     /// Helper function to get column family handle
-    fn get_cf_handle(
+    pub fn get_cf_handle(
         &self,
         cf_name: &str,
-    ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily>, RaftError> {
+    ) -> Result<std::sync::Arc<rocksdb::BoundColumnFamily<'_>>, RaftError> {
         self.db.cf_handle(cf_name).ok_or_else(|| {
             RaftError::Storage(StorageError::DataInconsistency {
                 message: format!("Column family {} not found", cf_name),
@@ -264,9 +264,21 @@ impl RaftStorage {
     }
 
     /// Create log entry key for RocksDB
-    fn log_key(index: LogIndex) -> Vec<u8> {
+    pub fn log_key(index: LogIndex) -> Vec<u8> {
         // Use big-endian encoding for proper ordering
         index.to_be_bytes().to_vec()
+    }
+
+    /// Parse log entry key from RocksDB
+    pub fn parse_log_key(key: &[u8]) -> Result<LogIndex, RaftError> {
+        if key.len() != 8 {
+            return Err(RaftError::Storage(StorageError::DataInconsistency {
+                message: format!("Invalid log key length: {}", key.len()),
+            }));
+        }
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(key);
+        Ok(LogIndex::from_be_bytes(bytes))
     }
 
     /// Append log entry

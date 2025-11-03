@@ -19,7 +19,7 @@
 
 use crate::error::{NetworkError, RaftError, RaftResult};
 use crate::types::{NodeId, TypeConfig};
-use async_trait::async_trait;
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use hmac::{Hmac, Mac};
 use openraft::network::{RaftNetwork as OpenRaftNetwork, RaftNetworkFactory};
@@ -505,6 +505,7 @@ struct PendingRequest {
     message_id: u64,
     sender: tokio::sync::oneshot::Sender<MessageEnvelope>,
     timestamp: Instant,
+    #[allow(dead_code)]
     priority: MessagePriority,
 }
 
@@ -983,10 +984,13 @@ impl ConnectionPool {
 #[derive(Debug)]
 pub struct RaftConnection {
     node_id: NodeId,
+    #[allow(dead_code)]
     endpoint: String,
     stream: Option<Arc<tokio::sync::Mutex<SecureStream>>>,
+    #[allow(dead_code)]
     created_at: Instant,
     pub(crate) last_activity: Arc<tokio::sync::Mutex<Instant>>,
+    #[allow(dead_code)]
     tls_config: Option<TlsConfig>,
     node_auth: Option<NodeAuth>,
 }
@@ -1185,7 +1189,7 @@ impl RaftConnection {
 #[derive(Clone)]
 pub struct KiwiRaftNetworkFactory {
     source_node: NodeId,
-    endpoints: Arc<RwLock<HashMap<NodeId, String>>>,
+    pub endpoints: Arc<RwLock<HashMap<NodeId, String>>>,
     connection_pool: Arc<ConnectionPool>,
     message_router: Arc<MessageRouter>,
 }
@@ -1251,22 +1255,20 @@ impl KiwiRaftNetworkFactory {
     }
 }
 
-#[async_trait]
 impl RaftNetworkFactory<TypeConfig> for KiwiRaftNetworkFactory {
     type Network = RaftNetworkClient;
 
-    async fn new_client<'a>(
-        &'a self,
-        target: NodeId,
-        _node: &'a openraft::BasicNode,
-    ) -> Self::Network {
-        RaftNetworkClient::with_source_node(
-            self.source_node,
-            target,
-            self.endpoints.clone(),
-            self.connection_pool.clone(),
-            self.message_router.clone(),
-        )
+    #[allow(refining_impl_trait_reachable)]
+    fn new_client(&mut self, target: NodeId, _node: &openraft::BasicNode) -> std::pin::Pin<Box<dyn std::future::Future<Output = Self::Network> + Send + '_>> {
+        Box::pin(async move {
+            RaftNetworkClient::with_source_node(
+                self.source_node,
+                target,
+                self.endpoints.clone(),
+                self.connection_pool.clone(),
+                self.message_router.clone(),
+            )
+        })
     }
 }
 
@@ -1516,105 +1518,113 @@ impl RaftNetworkClient {
     }
 }
 
-#[async_trait]
 impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
-    async fn append_entries<'a>(
-        &'a self,
+    #[allow(refining_impl_trait_reachable)]
+    fn append_entries(
+        &mut self,
         req: openraft::raft::AppendEntriesRequest<TypeConfig>,
         _option: openraft::network::RPCOption,
-    ) -> Result<
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<
         openraft::raft::AppendEntriesResponse<NodeId>,
         openraft::error::RPCError<NodeId, openraft::BasicNode, openraft::error::RaftError<NodeId>>,
-    > {
+    >> + Send + '_>> {
+        Box::pin(async move {
         log::debug!("Sending append_entries to node {}", self.target_node);
 
-        let message = RaftMessage::AppendEntries(req);
-        match self.send_raft_message(message).await {
-            Ok(RaftMessage::AppendEntriesResponse(response)) => Ok(response),
-            Ok(_) => Err(openraft::error::RPCError::Network(
-                openraft::error::NetworkError::new(&RaftError::Network(
-                    NetworkError::InvalidResponse {
-                        node_id: self.target_node,
-                        message: "Unexpected response type".to_string(),
-                    },
+            let message = RaftMessage::AppendEntries(req);
+            match self.send_raft_message(message).await {
+                Ok(RaftMessage::AppendEntriesResponse(response)) => Ok(response),
+                Ok(_) => Err(openraft::error::RPCError::Network(
+                    openraft::error::NetworkError::new(&RaftError::Network(
+                        NetworkError::InvalidResponse {
+                            node_id: self.target_node,
+                            message: "Unexpected response type".to_string(),
+                        },
+                    )),
                 )),
-            )),
-            Err(e) => {
-                // Handle network partitions gracefully
-                if matches!(e, RaftError::Network(NetworkError::NetworkPartition)) {
-                    log::warn!("Network partition detected with node {}", self.target_node);
+                Err(e) => {
+                    // Handle network partitions gracefully
+                    if matches!(e, RaftError::Network(NetworkError::NetworkPartition)) {
+                        log::warn!("Network partition detected with node {}", self.target_node);
+                    }
+                    Err(openraft::error::RPCError::Network(
+                        openraft::error::NetworkError::new(&e),
+                    ))
                 }
-                Err(openraft::error::RPCError::Network(
-                    openraft::error::NetworkError::new(&e),
-                ))
             }
-        }
+        })
     }
 
-    async fn install_snapshot<'a>(
-        &'a self,
+    #[allow(refining_impl_trait_reachable)]
+    fn install_snapshot(
+        &mut self,
         req: openraft::raft::InstallSnapshotRequest<TypeConfig>,
         _option: openraft::network::RPCOption,
-    ) -> Result<
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<
         openraft::raft::InstallSnapshotResponse<NodeId>,
-        openraft::error::RPCError<NodeId, openraft::BasicNode, openraft::error::RaftError<NodeId>>,
-    > {
+        openraft::error::RPCError<NodeId, openraft::BasicNode, openraft::error::RaftError<NodeId, openraft::error::InstallSnapshotError>>,
+    >> + Send + '_>> {
+        Box::pin(async move {
         log::debug!("Sending install_snapshot to node {}", self.target_node);
 
-        let message = RaftMessage::InstallSnapshot(req);
-        match self.send_raft_message(message).await {
-            Ok(RaftMessage::InstallSnapshotResponse(response)) => Ok(response),
-            Ok(_) => Err(openraft::error::RPCError::Network(
-                openraft::error::NetworkError::new(&RaftError::Network(
-                    NetworkError::InvalidResponse {
-                        node_id: self.target_node,
-                        message: "Unexpected response type".to_string(),
-                    },
+            let message = RaftMessage::InstallSnapshot(req);
+            match self.send_raft_message(message).await {
+                Ok(RaftMessage::InstallSnapshotResponse(response)) => Ok(response),
+                Ok(_) => Err(openraft::error::RPCError::Network(
+                    openraft::error::NetworkError::new(&RaftError::Network(
+                        NetworkError::InvalidResponse {
+                            node_id: self.target_node,
+                            message: "Unexpected response type".to_string(),
+                        },
+                    )),
                 )),
-            )),
-            Err(e) => {
-                // Handle network partitions gracefully
-                if matches!(e, RaftError::Network(NetworkError::NetworkPartition)) {
-                    log::warn!("Network partition detected with node {}", self.target_node);
+                Err(e) => {
+                    // Handle network partitions gracefully
+                    if matches!(e, RaftError::Network(NetworkError::NetworkPartition)) {
+                        log::warn!("Network partition detected with node {}", self.target_node);
+                    }
+                    Err(openraft::error::RPCError::Network(
+                        openraft::error::NetworkError::new(&e),
+                    ))
                 }
-                Err(openraft::error::RPCError::Network(
-                    openraft::error::NetworkError::new(&e),
-                ))
             }
-        }
+        })
     }
 
-    async fn vote(
-        &self,
+    #[allow(refining_impl_trait_reachable)]
+    fn vote(
+        &mut self,
         req: openraft::raft::VoteRequest<NodeId>,
         _option: openraft::network::RPCOption,
-    ) -> Result<
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<
         openraft::raft::VoteResponse<NodeId>,
         openraft::error::RPCError<NodeId, openraft::BasicNode, openraft::error::RaftError<NodeId>>,
-    > {
+    >> + Send + '_>> {
+        Box::pin(async move {
         log::debug!("Sending vote request to node {}", self.target_node);
 
-        let message = RaftMessage::Vote(req);
-        match self.send_raft_message(message).await {
-            Ok(RaftMessage::VoteResponse(response)) => Ok(response),
-            Ok(_) => Err(openraft::error::RPCError::Network(
-                openraft::error::NetworkError::new(&RaftError::Network(
-                    NetworkError::InvalidResponse {
-                        node_id: self.target_node,
-                        message: "Unexpected response type".to_string(),
-                    },
+            let message = RaftMessage::Vote(req);
+            match self.send_raft_message(message).await {
+                Ok(RaftMessage::VoteResponse(response)) => Ok(response),
+                Ok(_) => Err(openraft::error::RPCError::Network(
+                    openraft::error::NetworkError::new(&RaftError::Network(
+                        NetworkError::InvalidResponse {
+                            node_id: self.target_node,
+                            message: "Unexpected response type".to_string(),
+                        },
+                    )),
                 )),
-            )),
-            Err(e) => {
-                // Handle network partitions gracefully
-                if matches!(e, RaftError::Network(NetworkError::NetworkPartition)) {
-                    log::warn!("Network partition detected with node {}", self.target_node);
+                Err(e) => {
+                    // Handle network partitions gracefully
+                    if matches!(e, RaftError::Network(NetworkError::NetworkPartition)) {
+                        log::warn!("Network partition detected with node {}", self.target_node);
+                    }
+                    Err(openraft::error::RPCError::Network(
+                        openraft::error::NetworkError::new(&e),
+                    ))
                 }
-                Err(openraft::error::RPCError::Network(
-                    openraft::error::NetworkError::new(&e),
-                ))
             }
-        }
+        })
     }
 }
 

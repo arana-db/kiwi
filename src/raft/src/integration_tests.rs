@@ -17,16 +17,17 @@
 
 //! Integration tests for Raft cluster functionality
 
-use crate::engine::RocksdbEngine;
+use engine::RocksdbEngine;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::{sleep, timeout};
+use rand::seq::SliceRandom;
+use rand::Rng;
 
 use crate::error::RaftResult;
-use crate::network::RaftNetwork;
-use crate::node::RaftNode;
+use crate::network::{RaftNetworkClient, KiwiRaftNetworkFactory};
 use crate::state_machine::KiwiStateMachine;
 use crate::storage::RaftStorage;
 use crate::types::{
@@ -66,6 +67,18 @@ fn create_test_request(id: u64, command: &str, args: Vec<&str>) -> ClientRequest
     }
 }
 
+/// Helper function to create a test client request with bytes args
+fn create_test_request_bytes(id: u64, command: &str, args: Vec<Bytes>) -> ClientRequest {
+    ClientRequest {
+        id: RequestId(id),
+        command: RedisCommand {
+            command: command.to_string(),
+            args,
+        },
+        consistency_level: ConsistencyLevel::Linearizable,
+    }
+}
+
 /// Test cluster for integration testing
 pub struct TestCluster {
     nodes: HashMap<NodeId, TestNode>,
@@ -79,7 +92,7 @@ pub struct TestNode {
     pub endpoint: String,
     pub storage: Arc<RaftStorage>,
     pub state_machine: Arc<KiwiStateMachine>,
-    pub network: Arc<RaftNetwork>,
+    pub network: KiwiRaftNetworkFactory,
     // Note: RaftNode would be added when implemented in task 5
 }
 
@@ -102,19 +115,18 @@ impl TestCluster {
             // Create storage
             let storage = Arc::new(RaftStorage::new(temp_dir.path())?);
 
-            // Create state machine (using a mock engine for testing)
-            let engine = Arc::new(create_mock_engine(&temp_dir)?);
-            let state_machine = Arc::new(KiwiStateMachine::new(engine, node_id));
+            // Create state machine
+            let state_machine = Arc::new(KiwiStateMachine::new(node_id));
 
-            // Create network
-            let network = Arc::new(RaftNetwork::new(node_id));
+            // Create network factory
+            let network_factory = KiwiRaftNetworkFactory::new(node_id);
 
             let test_node = TestNode {
                 node_id,
                 endpoint: endpoint.clone(),
                 storage,
                 state_machine,
-                network,
+                network: network_factory.clone(),
             };
 
             nodes.insert(node_id, test_node);
@@ -122,12 +134,10 @@ impl TestCluster {
         }
 
         // Configure network endpoints for all nodes
-        for node in nodes.values_mut() {
+        for node in nodes.values() {
             for other_node in nodes.values() {
                 if node.node_id != other_node.node_id {
-                    Arc::get_mut(&mut node.network)
-                        .unwrap()
-                        .add_endpoint(other_node.node_id, other_node.endpoint.clone());
+                    node.network.add_endpoint(other_node.node_id, other_node.endpoint.clone()).await;
                 }
             }
         }
@@ -153,14 +163,9 @@ impl TestCluster {
     pub async fn isolate_node(&mut self, node_id: NodeId) -> RaftResult<()> {
         // In a real implementation, this would disable network communication
         // For now, we'll simulate by clearing the node's network endpoints
-        if let Some(node) = self.nodes.get_mut(&node_id) {
-            if let Some(network) = Arc::get_mut(&mut node.network) {
-                network.endpoints.clear();
-            } else {
-                return Err(crate::error::RaftError::state_machine(
-                    "Network instance is shared; cannot isolate node safely",
-                ));
-            }
+        if let Some(node) = self.nodes.get(&node_id) {
+            let mut endpoints = node.network.endpoints.write().await;
+            endpoints.clear();
         }
         Ok(())
     }
@@ -168,17 +173,11 @@ impl TestCluster {
     /// Restore network connectivity for a node
     pub async fn restore_node(&mut self, node_id: NodeId) -> RaftResult<()> {
         // Restore network endpoints
-        if let Some(node) = self.nodes.get_mut(&node_id) {
-            if let Some(network) = Arc::get_mut(&mut node.network) {
-                for other_node in self.nodes.values() {
-                    if node.node_id != other_node.node_id {
-                        network.add_endpoint(other_node.node_id, other_node.endpoint.clone());
-                    }
+        if let Some(node) = self.nodes.get(&node_id) {
+            for other_node in self.nodes.values() {
+                if node.node_id != other_node.node_id {
+                    node.network.add_endpoint(other_node.node_id, other_node.endpoint.clone()).await;
                 }
-            } else {
-                return Err(crate::error::RaftError::state_machine(
-                    "Network instance is shared; cannot restore endpoints safely",
-                ));
             }
         }
         Ok(())
@@ -232,9 +231,16 @@ impl TestCluster {
 
 // Mock engine creation for testing
 fn create_mock_engine(temp_dir: &TempDir) -> RaftResult<RocksdbEngine> {
-    RocksdbEngine::new(temp_dir.path()).map_err(|e| {
-        crate::error::RaftError::state_machine(format!("Failed to create engine: {}", e))
-    })
+    use rocksdb::{DB, Options};
+    
+    let mut opts = Options::default();
+    opts.create_if_missing(true);
+    
+    let db = DB::open(&opts, temp_dir.path()).map_err(|e| {
+        crate::error::RaftError::state_machine(format!("Failed to create DB: {}", e))
+    })?;
+    
+    Ok(RocksdbEngine::new(db))
 }
 
 #[cfg(test)]
@@ -279,11 +285,12 @@ mod integration_tests {
         // Test that all nodes can process requests
         for node_id in cluster.node_ids() {
             let request = ClientRequest {
-                id: node_id,
+                id: RequestId(node_id),
                 command: RedisCommand {
                     command: "PING".to_string(),
                     args: vec![],
                 },
+                consistency_level: ConsistencyLevel::Linearizable,
             };
 
             let response = cluster.send_request(node_id, request).await.unwrap();
@@ -322,11 +329,12 @@ mod integration_tests {
 
         // Remaining nodes should still be able to process requests
         let request = ClientRequest {
-            id: 1,
+            id: RequestId(1),
             command: RedisCommand {
                 command: "SET".to_string(),
-                args: vec!["key_after_failure".to_string(), "value".to_string()],
+                args: vec!["key_after_failure".to_string().into(), "value".to_string().into()],
             },
+            consistency_level: ConsistencyLevel::Linearizable,
         };
 
         let response = cluster.send_request(1, request).await.unwrap();
@@ -337,11 +345,12 @@ mod integration_tests {
 
         // Node 2 should be able to process requests again
         let request2 = ClientRequest {
-            id: 2,
+            id: RequestId(2),
             command: RedisCommand {
                 command: "PING".to_string(),
                 args: vec![],
             },
+            consistency_level: ConsistencyLevel::Linearizable,
         };
 
         let response2 = cluster.send_request(2, request2).await.unwrap();
@@ -357,11 +366,12 @@ mod integration_tests {
 
         // Test SET command
         let set_request = ClientRequest {
-            id: 1,
+            id: RequestId(1),
             command: RedisCommand {
                 command: "SET".to_string(),
-                args: vec!["redis_key".to_string(), "redis_value".to_string()],
+                args: vec!["redis_key".to_string().into(), "redis_value".to_string().into()],
             },
+            consistency_level: ConsistencyLevel::Linearizable,
         };
 
         let set_response = cluster.send_request(node_id, set_request).await.unwrap();
@@ -369,11 +379,12 @@ mod integration_tests {
 
         // Test GET command
         let get_request = ClientRequest {
-            id: 2,
+            id: RequestId(2),
             command: RedisCommand {
                 command: "GET".to_string(),
-                args: vec!["redis_key".to_string()],
+                args: vec!["redis_key".to_string().into()],
             },
+            consistency_level: ConsistencyLevel::Linearizable,
         };
 
         let get_response = cluster.send_request(node_id, get_request).await.unwrap();
@@ -385,11 +396,12 @@ mod integration_tests {
 
         // Test DEL command
         let del_request = ClientRequest {
-            id: 3,
+            id: RequestId(3),
             command: RedisCommand {
                 command: "DEL".to_string(),
-                args: vec!["redis_key".to_string()],
+                args: vec!["redis_key".to_string().into()],
             },
+            consistency_level: ConsistencyLevel::Linearizable,
         };
 
         let del_response = cluster.send_request(node_id, del_request).await.unwrap();
@@ -398,11 +410,12 @@ mod integration_tests {
 
         // Verify key is deleted
         let get_request2 = ClientRequest {
-            id: 4,
+            id: RequestId(4),
             command: RedisCommand {
                 command: "GET".to_string(),
-                args: vec!["redis_key".to_string()],
+                args: vec!["redis_key".to_string().into()],
             },
+            consistency_level: ConsistencyLevel::Linearizable,
         };
 
         let get_response2 = cluster.send_request(node_id, get_request2).await.unwrap();
@@ -423,11 +436,12 @@ mod integration_tests {
             let handle = tokio::spawn(async move {
                 let node_id = (i % 3) + 1; // Distribute across nodes 1, 2, 3
                 let request = ClientRequest {
-                    id: i,
+                    id: RequestId(i),
                     command: RedisCommand {
                         command: "SET".to_string(),
-                        args: vec![format!("concurrent_key_{}", i), format!("value_{}", i)],
+                        args: vec![format!("concurrent_key_{}", i).into(), format!("value_{}", i).into()],
                     },
+                    consistency_level: ConsistencyLevel::Linearizable,
                 };
 
                 cluster_clone.send_request(node_id, request).await
@@ -455,14 +469,15 @@ mod integration_tests {
         // Test that all nodes in large cluster can process requests
         for node_id in cluster.node_ids() {
             let request = ClientRequest {
-                id: node_id,
+                id: RequestId(node_id),
                 command: RedisCommand {
                     command: "SET".to_string(),
                     args: vec![
-                        format!("large_cluster_key_{}", node_id),
-                        "value".to_string(),
+                        format!("large_cluster_key_{}", node_id).into(),
+                        "value".to_string().into(),
                     ],
                 },
+                consistency_level: ConsistencyLevel::Linearizable,
             };
 
             let response = cluster.send_request(node_id, request).await.unwrap();
@@ -499,11 +514,12 @@ mod integration_tests {
         // Remaining nodes should still function
         for node_id in [3, 4, 5] {
             let request = ClientRequest {
-                id: node_id,
+                id: RequestId(node_id),
                 command: RedisCommand {
                     command: "PING".to_string(),
                     args: vec![],
                 },
+                consistency_level: ConsistencyLevel::Linearizable,
             };
 
             let response = cluster.send_request(node_id, request).await.unwrap();
@@ -517,11 +533,12 @@ mod integration_tests {
         // All nodes should work again
         for node_id in cluster.node_ids() {
             let request = ClientRequest {
-                id: node_id + 100,
+                id: RequestId(node_id + 100),
                 command: RedisCommand {
                     command: "PING".to_string(),
                     args: vec![],
                 },
+                consistency_level: ConsistencyLevel::Linearizable,
             };
 
             let response = cluster.send_request(node_id, request).await.unwrap();
@@ -735,35 +752,39 @@ pub mod chaos_tests {
 
             match operation_type {
                 0 => ClientRequest {
-                    id,
+                    id: RequestId(id),
                     command: RedisCommand {
                         command: "SET".to_string(),
                         args: vec![
-                            format!("chaos_key_{}", rng.gen_range(0..100)),
-                            format!("value_{}", id),
+                            format!("chaos_key_{}", rng.gen_range(0..100)).into(),
+                            format!("value_{}", id).into(),
                         ],
                     },
+                    consistency_level: ConsistencyLevel::Linearizable,
                 },
                 1 => ClientRequest {
-                    id,
+                    id: RequestId(id),
                     command: RedisCommand {
                         command: "GET".to_string(),
-                        args: vec![format!("chaos_key_{}", rng.gen_range(0..100))],
+                        args: vec![format!("chaos_key_{}", rng.gen_range(0..100)).into()],
                     },
+                    consistency_level: ConsistencyLevel::Linearizable,
                 },
                 2 => ClientRequest {
-                    id,
+                    id: RequestId(id),
                     command: RedisCommand {
                         command: "DEL".to_string(),
-                        args: vec![format!("chaos_key_{}", rng.gen_range(0..100))],
+                        args: vec![format!("chaos_key_{}", rng.gen_range(0..100)).into()],
                     },
+                    consistency_level: ConsistencyLevel::Linearizable,
                 },
                 _ => ClientRequest {
-                    id,
+                    id: RequestId(id),
                     command: RedisCommand {
                         command: "PING".to_string(),
                         args: vec![],
                     },
+                    consistency_level: ConsistencyLevel::Linearizable,
                 },
             }
         }
@@ -1038,42 +1059,46 @@ pub mod chaos_tests {
 
             // SET key1 = value1
             let set1 = ClientRequest {
-                id: 1,
+                id: RequestId(1),
                 command: RedisCommand {
                     command: "SET".to_string(),
-                    args: vec!["key1".to_string(), "value1".to_string()],
+                    args: vec!["key1".to_string().into(), "value1".to_string().into()],
                 },
+                consistency_level: ConsistencyLevel::Linearizable,
             };
             cluster.send_request(node_id, set1).await.unwrap();
 
             // GET key1 should return value1
             let get1 = ClientRequest {
-                id: 2,
+                id: RequestId(2),
                 command: RedisCommand {
                     command: "GET".to_string(),
-                    args: vec!["key1".to_string()],
+                    args: vec!["key1".to_string().into()],
                 },
+                consistency_level: ConsistencyLevel::Linearizable,
             };
             let response = cluster.send_request(node_id, get1).await.unwrap();
             assert_eq!(response.result.unwrap(), bytes::Bytes::from("value1"));
 
             // SET key1 = value2
             let set2 = ClientRequest {
-                id: 3,
+                id: RequestId(3),
                 command: RedisCommand {
                     command: "SET".to_string(),
-                    args: vec!["key1".to_string(), "value2".to_string()],
+                    args: vec!["key1".to_string().into(), "value2".to_string().into()],
                 },
+                consistency_level: ConsistencyLevel::Linearizable,
             };
             cluster.send_request(node_id, set2).await.unwrap();
 
             // GET key1 should return value2
             let get2 = ClientRequest {
-                id: 4,
+                id: RequestId(4),
                 command: RedisCommand {
                     command: "GET".to_string(),
-                    args: vec!["key1".to_string()],
+                    args: vec!["key1".to_string().into()],
                 },
+                consistency_level: ConsistencyLevel::Linearizable,
             };
             let response2 = cluster.send_request(node_id, get2).await.unwrap();
             assert_eq!(response2.result.unwrap(), bytes::Bytes::from("value2"));

@@ -210,7 +210,7 @@ mod tests {
         let segment_log = Arc::new(SegmentLog::new(temp_dir.path(), None).unwrap());
 
         let manager =
-            ReplicationModeManager::new(segment_log, ReplicationMode::MasterSlave).unwrap();
+            ReplicationModeManager::new::<&std::path::Path>(segment_log, ReplicationMode::MasterSlave).unwrap();
 
         assert!(manager.is_master_slave());
         assert!(!manager.is_raft());
@@ -227,7 +227,7 @@ mod tests {
         let segment_log = Arc::new(SegmentLog::new(temp_dir.path(), None).unwrap());
 
         let manager =
-            ReplicationModeManager::new(segment_log, ReplicationMode::MasterSlave).unwrap();
+            ReplicationModeManager::new::<&std::path::Path>(segment_log, ReplicationMode::MasterSlave).unwrap();
 
         let log_index1 = manager
             .write_binlog(
@@ -257,7 +257,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let segment_log = Arc::new(SegmentLog::new(temp_dir.path(), None).unwrap());
 
-        let manager = ReplicationModeManager::new(segment_log, ReplicationMode::Raft).unwrap();
+        let manager = ReplicationModeManager::new::<&std::path::Path>(segment_log, ReplicationMode::Raft).unwrap();
 
         manager
             .write_binlog(

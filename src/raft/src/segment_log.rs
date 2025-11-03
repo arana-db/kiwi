@@ -112,6 +112,7 @@ impl SegmentHeader {
     }
 
     /// Deserialize header from bytes
+    #[allow(dead_code)]
     fn deserialize(data: &[u8]) -> Result<Self, RaftError> {
         if data.len() < LOG_HEADER_SIZE {
             return Err(RaftError::state_machine("Invalid segment header"));
@@ -136,6 +137,7 @@ impl SegmentHeader {
     }
 
     /// Verify checksum for data
+    #[allow(dead_code)]
     fn verify(&self, data: &[u8]) -> bool {
         let calculated = State::<crc16::XMODEM>::calculate(data);
         calculated == self.checksum

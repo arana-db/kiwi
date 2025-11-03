@@ -2521,6 +2521,7 @@ dependencies = [
  "prost-build",
  "prost-types",
  "protoc-bin-vendored",
+ "rand 0.8.5",
  "reqwest",
  "resp",
  "rocksdb",

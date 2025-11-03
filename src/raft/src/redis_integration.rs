@@ -41,6 +41,7 @@ enum ReadRoutingDecision {
         alternative: Option<ConsistencyLevel>,
     },
     /// Request timed out
+    #[allow(dead_code)]
     Timeout { reason: String },
 }
 
@@ -467,6 +468,7 @@ impl RaftRedisHandler {
     }
 
     /// Handle linearizable reads with leader confirmation
+    #[allow(dead_code)]
     async fn handle_linearizable_read(&self, command: RedisCommand) -> RaftResult<RespData> {
         // Verify we're still the leader before executing
         if !self.raft_node.is_leader().await {
@@ -481,6 +483,7 @@ impl RaftRedisHandler {
     }
 
     /// Handle eventual consistency reads from local state
+    #[allow(dead_code)]
     async fn handle_eventual_read(&self, command: RedisCommand) -> RaftResult<RespData> {
         // For eventual reads, we can serve from local state
         // The consistency handler has already verified staleness requirements
@@ -801,8 +804,8 @@ mod read_routing_tests {
     #[test]
     fn test_slot_calculation() {
         // Create a test handler (this would need proper mocking in real tests)
-        let command1 = RedisCommand::new("GET".to_string(), vec![b"key1".to_vec()]);
-        let command2 = RedisCommand::new("GET".to_string(), vec![b"key2".to_vec()]);
+        let command1 = RedisCommand::new("GET".to_string(), vec![b"key1".to_vec().into()]);
+        let command2 = RedisCommand::new("GET".to_string(), vec![b"key2".to_vec().into()]);
         let command_no_args = RedisCommand::new("PING".to_string(), vec![]);
 
         // Test that different keys produce different slots (simplified hash)
@@ -816,7 +819,7 @@ mod read_routing_tests {
         assert_eq!(slot_no_args, 0);
 
         // Keys with same content should produce same slot
-        let command1_dup = RedisCommand::new("GET".to_string(), vec![b"key1".to_vec()]);
+        let command1_dup = RedisCommand::new("GET".to_string(), vec![b"key1".to_vec().into()]);
         let slot1_dup = calculate_test_slot(&command1_dup);
         assert_eq!(slot1, slot1_dup);
     }
@@ -826,8 +829,8 @@ mod read_routing_tests {
         // Test commands that can be optimized for local reads
         let ping_cmd = RedisCommand::new("PING".to_string(), vec![]);
         let info_cmd = RedisCommand::new("INFO".to_string(), vec![]);
-        let scan_cmd = RedisCommand::new("SCAN".to_string(), vec![b"0".to_vec()]);
-        let get_cmd = RedisCommand::new("GET".to_string(), vec![b"key".to_vec()]);
+        let scan_cmd = RedisCommand::new("SCAN".to_string(), vec![b"0".to_vec().into()]);
+        let get_cmd = RedisCommand::new("GET".to_string(), vec![b"key".to_vec().into()]);
 
         assert!(can_optimize_read_locally_test(&ping_cmd));
         assert!(can_optimize_read_locally_test(&info_cmd));

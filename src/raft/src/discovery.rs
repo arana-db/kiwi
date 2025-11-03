@@ -128,6 +128,7 @@ impl Default for HealthMonitorConfig {
 /// Node discovery service for finding cluster members
 #[derive(Debug)]
 pub struct NodeDiscovery {
+    #[allow(dead_code)]
     config: Arc<ClusterConfiguration>,
     known_nodes: Arc<RwLock<HashMap<NodeId, NodeEndpoint>>>,
 }
@@ -1661,6 +1662,7 @@ impl Clone for NetworkPartitionDetector {
 /// Analysis result of network partition topology
 #[derive(Debug, Clone)]
 struct PartitionAnalysis {
+    #[allow(dead_code)]
     total_nodes: usize,
     healthy_nodes: Vec<NodeId>,
     unreachable_nodes: Vec<NodeId>,

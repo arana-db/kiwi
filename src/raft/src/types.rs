@@ -36,7 +36,7 @@ pub type LogId = openraft::LogId<NodeId>;
 
 /// Request identifier for client operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct RequestId(u64);
+pub struct RequestId(pub u64);
 
 impl RequestId {
     /// Create a new unique request ID

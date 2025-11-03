@@ -1387,7 +1387,7 @@ impl PerformanceLogger {
     }
 
     /// Start a timing measurement
-    pub fn start_timing(&self, operation: &str) -> TimingGuard {
+    pub fn start_timing(&self, operation: &str) -> TimingGuard<'_> {
         TimingGuard::new(self, operation.to_string())
     }
 
@@ -1699,7 +1699,7 @@ mod tests {
     #[test]
     fn test_log_buffer_limit() {
         let mut logger = RaftLogger::new(1);
-        logger.max_buffer_size = 3; // Set small limit for testing
+        logger.config.max_buffer_size = 3; // Set small limit for testing
 
         // Add more logs than the limit
         for i in 0..5 {
