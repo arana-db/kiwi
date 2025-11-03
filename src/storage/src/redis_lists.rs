@@ -35,17 +35,37 @@ use crate::{
 };
 
 impl Redis {
-    /// Insert all the specified values at the head of the list stored at key
-    pub fn lpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
-        if values.is_empty() {
-            return Ok(0);
-        }
-
-        let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
+    /// Core implementation for pushing values to a list
+    /// position: true for left (head), false for right (tail)
+    /// allow_create: if true, creates new list when key doesn't exist
+    fn push_core(
+        &self,
+        key: &[u8],
+        values: &[Vec<u8>],
+        position: bool,
+        allow_create: bool,
+    ) -> Result<Option<i64>> {
+          let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
         let lists_data_cf = &cfs[0];
 
         let base_meta_key = BaseMetaKey::new(key);
         let meta_key = base_meta_key.encode()?;
+
+        if values.is_empty() {
+            // For empty values array, check if key exists
+            // If key exists, return current count; if not, return 0
+            return match db.get(&meta_key).context(RocksSnafu)? {
+                Some(meta_value) => {
+                    let parsed_meta = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
+                    if parsed_meta.is_valid() {
+                        Ok(Some(parsed_meta.count() as i64))
+                    } else {
+                        Ok(Some(0))
+                    }
+                }
+                None => Ok(Some(0)),
+            };
+        }
 
         // Get existing metadata
         let mut parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
@@ -58,135 +78,9 @@ impl Redis {
                 parsed
             }
             None => {
-                // Create new metadata
-                let meta_value = ListsMetaValue::new(0u64.to_le_bytes().to_vec());
-                let encoded = meta_value.encode();
-                let mut parsed = ParsedListsMetaValue::new(encoded)?;
-                parsed.initial_meta_value();
-                parsed
-            }
-        };
-
-        let mut batch = WriteBatch::default();
-        let current_version = parsed_meta.version(); // Get current version
-
-        // Insert values at the head (left side)
-        let current_count = parsed_meta.count();
-
-        if current_count == 0 {
-            // Empty list - store elements starting from left_index + 1
-            for (i, value) in values.iter().rev().enumerate() {
-                let storage_index = parsed_meta.left_index() - values.len() as u64 + i as u64 + 1;
-                let data_key = ListsDataKey::new(key, current_version, storage_index);
-                let encoded_data_key = data_key.encode()?;
-
-                let data_value = BaseDataValue::new(value.clone());
-                let encoded_data_value = data_value.encode();
-
-                batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
-            }
-
-            // Update metadata
-            parsed_meta.modify_left_index(values.len() as u64);
-            parsed_meta.modify_count(values.len() as u64);
-        } else {
-            // Non-empty list - read existing elements first, then rewrite everything
-            let mut existing_elements = Vec::new();
-
-            // Read existing elements directly from storage using the old version
-            for i in 0..current_count {
-                let storage_index = parsed_meta.left_index() + i + 1;
-                let data_key = ListsDataKey::new(key, current_version, storage_index);
-                let encoded_data_key = data_key.encode()?;
-
-                if let Some(data_value) = db
-                    .get_cf(lists_data_cf, &encoded_data_key)
-                    .context(RocksSnafu)?
-                {
-                    let parsed_data =
-                        ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
-                    existing_elements.push(parsed_data.user_value().to_vec());
+                if !allow_create {
+                    return Ok(None); // Key doesn't exist and creation not allowed
                 }
-            }
-
-            // Clear existing elements using the old version
-            for i in 0..current_count {
-                let storage_index = parsed_meta.left_index() + i + 1;
-                let data_key = ListsDataKey::new(key, current_version, storage_index);
-                let encoded_data_key = data_key.encode()?;
-                batch.delete_cf(lists_data_cf, encoded_data_key);
-            }
-
-            // Update version only when reorganizing the entire list
-            let version = parsed_meta.update_version();
-
-            // Store new elements at the head (in correct order for lpush)
-            for (i, value) in values.iter().rev().enumerate() {
-                let storage_index = parsed_meta.left_index() - values.len() as u64 + i as u64 + 1;
-                let data_key = ListsDataKey::new(key, version, storage_index);
-                let encoded_data_key = data_key.encode()?;
-
-                let data_value = BaseDataValue::new(value.clone());
-                let encoded_data_value = data_value.encode();
-
-                batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
-            }
-
-            // Store existing elements after the new ones
-            for (i, value) in existing_elements.iter().enumerate() {
-                let storage_index = parsed_meta.left_index() + i as u64 + 1;
-                let data_key = ListsDataKey::new(key, version, storage_index);
-                let encoded_data_key = data_key.encode()?;
-
-                let data_value = BaseDataValue::new(value.clone());
-                let encoded_data_value = data_value.encode();
-
-                batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
-            }
-
-            // Update metadata - adjust left_index to accommodate new elements at head
-            parsed_meta.set_left_index(parsed_meta.left_index() - values.len() as u64);
-            parsed_meta.set_count(current_count + values.len() as u64);
-            // Update right_index to reflect the new end position
-            parsed_meta.set_right_index(parsed_meta.left_index() + parsed_meta.count());
-        }
-
-        batch.put(&meta_key, parsed_meta.value());
-        db.write(batch).context(RocksSnafu)?;
-
-        // Update statistics
-        self.update_specific_key_statistics(
-            DataType::List,
-            &String::from_utf8_lossy(key),
-            values.len() as u64,
-        )?;
-
-        Ok(parsed_meta.count() as i64)
-    }
-
-    /// Insert all the specified values at the tail of the list stored at key
-    pub fn rpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
-        if values.is_empty() {
-            return Ok(0);
-        }
-
-        let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
-        let lists_data_cf = &cfs[0];
-
-        let base_meta_key = BaseMetaKey::new(key);
-        let meta_key = base_meta_key.encode()?;
-
-        // Get existing metadata
-        let mut parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
-            Some(meta_value) => {
-                let mut parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
-                if !parsed.is_valid() {
-                    // Initialize if invalid/expired
-                    parsed.initial_meta_value();
-                }
-                parsed
-            }
-            None => {
                 // Create new metadata
                 let meta_value = ListsMetaValue::new(0u64.to_le_bytes().to_vec());
                 let encoded = meta_value.encode();
@@ -198,47 +92,131 @@ impl Redis {
 
         let mut batch = WriteBatch::default();
         let current_version = parsed_meta.version();
+        let current_count = parsed_meta.count();
 
-        // Insert values at the tail (right side)
-        let is_empty_list = parsed_meta.count() == 0;
+        if position {
+            // Left (head) push
+            if current_count == 0 {
+                // Empty list - store elements starting from left_index + 1
+                for (i, value) in values.iter().rev().enumerate() {
+                    let storage_index =
+                        parsed_meta.left_index() - values.len() as u64 + i as u64 + 1;
+                    let data_key = ListsDataKey::new(key, current_version, storage_index);
+                    let encoded_data_key = data_key.encode()?;
 
-        if is_empty_list {
-            // For empty list, store elements starting from left_index + 1
-            // so they're accessible via standard lindex calculation
-            for (i, value) in values.iter().enumerate() {
-                let storage_index = parsed_meta.left_index() + i as u64 + 1;
-                let data_key = ListsDataKey::new(key, current_version, storage_index);
-                let encoded_data_key = data_key.encode()?;
+                    let data_value = BaseDataValue::new(value.clone());
+                    let encoded_data_value = data_value.encode();
 
-                let data_value = BaseDataValue::new(value.clone());
-                let encoded_data_value = data_value.encode();
+                    batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                }
 
-                batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                // Update metadata
+                parsed_meta.modify_left_index(values.len() as u64);
+                parsed_meta.modify_count(values.len() as u64);
+            } else {
+                // Non-empty list - read existing elements first, then rewrite everything
+                let mut existing_elements = Vec::new();
+
+                // Read existing elements directly from storage using the old version
+                for i in 0..current_count {
+                    let storage_index = parsed_meta.left_index() + i + 1;
+                    let data_key = ListsDataKey::new(key, current_version, storage_index);
+                    let encoded_data_key = data_key.encode()?;
+
+                    if let Some(data_value) = db
+                        .get_cf(lists_data_cf, &encoded_data_key)
+                        .context(RocksSnafu)?
+                    {
+                        let parsed_data =
+                            ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
+                        existing_elements.push(parsed_data.user_value().to_vec());
+                    }
+                }
+
+                // Clear existing elements using the old version
+                for i in 0..current_count {
+                    let storage_index = parsed_meta.left_index() + i + 1;
+                    let data_key = ListsDataKey::new(key, current_version, storage_index);
+                    let encoded_data_key = data_key.encode()?;
+                    batch.delete_cf(lists_data_cf, encoded_data_key);
+                }
+
+                // Update version only when reorganizing the entire list
+                let version = parsed_meta.update_version();
+
+                // Store new elements at the head (in correct order for lpush)
+                for (i, value) in values.iter().rev().enumerate() {
+                    let storage_index =
+                        parsed_meta.left_index() - values.len() as u64 + i as u64 + 1;
+                    let data_key = ListsDataKey::new(key, version, storage_index);
+                    let encoded_data_key = data_key.encode()?;
+
+                    let data_value = BaseDataValue::new(value.clone());
+                    let encoded_data_value = data_value.encode();
+
+                    batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                }
+
+                // Store existing elements after the new ones
+                for (i, value) in existing_elements.iter().enumerate() {
+                    let storage_index = parsed_meta.left_index() + i as u64 + 1;
+                    let data_key = ListsDataKey::new(key, version, storage_index);
+                    let encoded_data_key = data_key.encode()?;
+
+                    let data_value = BaseDataValue::new(value.clone());
+                    let encoded_data_value = data_value.encode();
+
+                    batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                }
+
+                // Update metadata - adjust left_index to accommodate new elements at head
+                parsed_meta.set_left_index(parsed_meta.left_index() - values.len() as u64);
+                parsed_meta.set_count(current_count + values.len() as u64);
+                // Update right_index to reflect the new end position
+                parsed_meta.set_right_index(parsed_meta.left_index() + parsed_meta.count());
             }
-
-            // Update right_index to point to the last element
-            parsed_meta.set_right_index(parsed_meta.left_index() + values.len() as u64);
         } else {
-            // For non-empty list, append to the right contiguously
-            // Elements should be stored at left_index + count + 1, left_index + count + 2, etc.
-            let current_count = parsed_meta.count();
-            for (i, value) in values.iter().enumerate() {
-                let storage_index = parsed_meta.left_index() + current_count + i as u64 + 1;
-                let data_key = ListsDataKey::new(key, current_version, storage_index);
-                let encoded_data_key = data_key.encode()?;
+            // Right (tail) push
+            let is_empty_list = current_count == 0;
 
-                let data_value = BaseDataValue::new(value.clone());
-                let encoded_data_value = data_value.encode();
+            if is_empty_list {
+                // For empty list, store elements starting from left_index + 1
+                // so they're accessible via standard lindex calculation
+                for (i, value) in values.iter().enumerate() {
+                    let storage_index = parsed_meta.left_index() + i as u64 + 1;
+                    let data_key = ListsDataKey::new(key, current_version, storage_index);
+                    let encoded_data_key = data_key.encode()?;
 
-                batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                    let data_value = BaseDataValue::new(value.clone());
+                    let encoded_data_value = data_value.encode();
+
+                    batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                }
+
+                // Update right_index to point to the last element
+                parsed_meta.set_right_index(parsed_meta.left_index() + values.len() as u64);
+            } else {
+                // For non-empty list, append to the right contiguously
+                // Elements should be stored at left_index + count + 1, left_index + count + 2, etc.
+                for (i, value) in values.iter().enumerate() {
+                    let storage_index = parsed_meta.left_index() + current_count + i as u64 + 1;
+                    let data_key = ListsDataKey::new(key, current_version, storage_index);
+                    let encoded_data_key = data_key.encode()?;
+
+                    let data_value = BaseDataValue::new(value.clone());
+                    let encoded_data_value = data_value.encode();
+
+                    batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                }
+
+                // Update right_index to point to the last element
+                parsed_meta.set_right_index(
+                    parsed_meta.left_index() + current_count + values.len() as u64,
+                );
             }
 
-            // Update right_index to point to the last element
-            parsed_meta
-                .set_right_index(parsed_meta.left_index() + current_count + values.len() as u64);
+            parsed_meta.modify_count(values.len() as u64);
         }
-
-        parsed_meta.modify_count(values.len() as u64);
 
         batch.put(&meta_key, parsed_meta.value());
         db.write(batch).context(RocksSnafu)?;
@@ -250,7 +228,39 @@ impl Redis {
             values.len() as u64,
         )?;
 
-        Ok(parsed_meta.count() as i64)
+        Ok(Some(parsed_meta.count() as i64))
+    }
+
+    /// Insert all the specified values at the head of the list stored at key
+    pub fn lpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
+        match self.push_core(key, values, true, true)? {
+            Some(count) => Ok(count),
+            None => unreachable!("lpush always creates list when key doesn't exist"),
+        }
+    }
+
+    /// Insert all the specified values at the tail of the list stored at key
+    pub fn rpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
+        match self.push_core(key, values, false, true)? {
+            Some(count) => Ok(count),
+            None => unreachable!("rpush always creates list when key doesn't exist"),
+        }
+    }
+
+    /// Insert all the specified values at the head of the list stored at key only if key exists
+    pub fn lpushx(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
+        match self.push_core(key, values, true, false)? {
+            Some(count) => Ok(count),
+            None => Ok(0), // Key doesn't exist, return 0 per Redis protocol
+        }
+    }
+
+    /// Insert all the specified values at the tail of the list stored at key only if key exists
+    pub fn rpushx(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
+        match self.push_core(key, values, false, false)? {
+            Some(count) => Ok(count),
+            None => Ok(0), // Key doesn't exist, return 0 per Redis protocol
+        }
     }
 
     /// Removes and returns the first element of the list stored at key
@@ -301,12 +311,8 @@ impl Redis {
         parsed_meta.set_left_index(parsed_meta.left_index() + pop_count as u64);
         parsed_meta.set_count(parsed_meta.count() - pop_count as u64);
 
-        if parsed_meta.count() == 0 {
-            // Delete the key if list is empty
-            batch.delete(&meta_key);
-        } else {
-            batch.put(&meta_key, parsed_meta.value());
-        }
+        // Always preserve the metadata for empty lists to allow lpushx/rpushx operations
+        batch.put(&meta_key, parsed_meta.value());
 
         db.write(batch).context(RocksSnafu)?;
 
@@ -372,12 +378,8 @@ impl Redis {
         parsed_meta.set_right_index(parsed_meta.right_index() - pop_count as u64);
         parsed_meta.set_count(parsed_meta.count() - pop_count as u64);
 
-        if parsed_meta.count() == 0 {
-            // Delete the key if list is empty
-            batch.delete(&meta_key);
-        } else {
-            batch.put(&meta_key, parsed_meta.value());
-        }
+        // Always preserve the metadata for empty lists to allow lpushx/rpushx operations
+        batch.put(&meta_key, parsed_meta.value());
 
         db.write(batch).context(RocksSnafu)?;
 
