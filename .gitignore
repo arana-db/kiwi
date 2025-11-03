@@ -49,6 +49,9 @@ STORAGE_COMPARISON.md
 # Claude Spec Workflow configuration
 .spec-workflow/
 
+# Serana AI configuration
+.serena/
+
 .cargo/
 
 # Kiro
