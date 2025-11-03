@@ -624,6 +624,96 @@ impl Cmd for LRemCmd {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct LPushxCmd {
+    meta: CmdMeta,
+}
+
+impl LPushxCmd {
+    pub fn new() -> Self {
+        Self {
+            meta: CmdMeta {
+                name: "lpushx".to_string(),
+                arity: 3, // LPUSHX key value
+                flags: CmdFlags::WRITE,
+                acl_category: AclCategory::LIST | AclCategory::WRITE,
+                ..Default::default()
+            },
+        }
+    }
+}
+
+impl Cmd for LPushxCmd {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
+
+    fn do_initial(&self, client: &Client) -> bool {
+        let key = client.argv()[1].clone();
+        client.set_key(&key);
+        true
+    }
+
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
+        let key = client.key();
+        let value = client.argv()[2].clone();
+
+        // LPUSHX implemented - wrap single value in vector
+        match storage.lpushx(&key, &[value]) {
+            Ok(length) => {
+                client.set_reply(RespData::Integer(length));
+            }
+            Err(e) => {
+                client.set_reply(RespData::Error(format!("ERR {e}").into()));
+            }
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct RPushxCmd {
+    meta: CmdMeta,
+}
+
+impl RPushxCmd {
+    pub fn new() -> Self {
+        Self {
+            meta: CmdMeta {
+                name: "rpushx".to_string(),
+                arity: 3, // RPUSHX key value
+                flags: CmdFlags::WRITE,
+                acl_category: AclCategory::LIST | AclCategory::WRITE,
+                ..Default::default()
+            },
+        }
+    }
+}
+
+impl Cmd for RPushxCmd {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
+
+    fn do_initial(&self, client: &Client) -> bool {
+        let key = client.argv()[1].clone();
+        client.set_key(&key);
+        true
+    }
+
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
+        let key = client.key();
+        let value = client.argv()[2].clone();
+
+        // RPUSHX implemented - wrap single value in vector
+        match storage.rpushx(&key, &[value]) {
+            Ok(length) => {
+                client.set_reply(RespData::Integer(length));
+            }
+            Err(e) => {
+                client.set_reply(RespData::Error(format!("ERR {e}").into()));
+            }
+        }
+    }
+}
+
 // Tests are covered by the comprehensive storage layer tests in src/storage/tests/redis_list_test.rs
 // The command layer is a thin wrapper around the storage operations
 #[cfg(test)]

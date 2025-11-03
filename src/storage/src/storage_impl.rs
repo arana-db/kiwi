@@ -368,10 +368,22 @@ impl Storage {
         self.insts[instance_id].lpush(key, values)
     }
 
+    pub fn lpushx(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].lpushx(key, values)
+    }
+
     pub fn rpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].rpush(key, values)
+    }
+
+    pub fn rpushx(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].rpushx(key, values)
     }
 
     pub fn lpop(&self, key: &[u8], count: Option<usize>) -> Result<Option<Vec<Vec<u8>>>> {
