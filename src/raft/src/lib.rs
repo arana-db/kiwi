@@ -22,6 +22,7 @@
 
 use openraft::Config;
 
+pub mod adaptor;
 pub mod binlog;
 pub mod cluster_config;
 pub mod cluster_tests;
@@ -51,6 +52,7 @@ pub mod storage;
 pub mod types;
 
 // Re-export commonly used types
+pub use adaptor::{create_raft_storage, create_raft_storage_with_engine, KiwiRaftStorage};
 pub use error::RaftError;
 pub use node::{RaftNode, RaftNodeInterface};
 pub use state_machine::KiwiStateMachine;
