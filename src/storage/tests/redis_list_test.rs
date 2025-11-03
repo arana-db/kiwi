@@ -436,4 +436,244 @@ mod redis_list_test {
         let result = redis.lset(key, 0, b"value".to_vec());
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn test_lpushx() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Test lpushx on non-existent list - should return 0 and not create list
+        let result = redis
+            .lpushx(key, &[b"value1".to_vec()])
+            .expect("lpushx should succeed");
+        assert_eq!(result, 0);
+
+        let len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(len, 0);
+
+        // Create list first with rpush
+        redis
+            .rpush(key, &[b"initial".to_vec()])
+            .expect("rpush should succeed");
+
+        // Test lpushx on existing list - should work
+        let result = redis
+            .lpushx(key, &[b"value1".to_vec()])
+            .expect("lpushx should succeed");
+        assert_eq!(result, 2);
+
+        let len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(len, 2);
+
+        // Verify order - lpushx adds to head
+        let result = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], b"value1"); // lpushx value should be at head
+        assert_eq!(result[1], b"initial"); // original value should be second
+    }
+
+    #[tokio::test]
+    async fn test_lpushx_multiple_values() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Create list first
+        redis
+            .rpush(key, &[b"original".to_vec()])
+            .expect("rpush should succeed");
+
+        // Test lpushx with multiple values
+        let values = vec![b"value1".to_vec(), b"value2".to_vec(), b"value3".to_vec()];
+        let result = redis.lpushx(key, &values).expect("lpushx should succeed");
+        assert_eq!(result, 4); // original + 3 new values
+
+        // Verify order: value3, value2, value1, original (reversed due to lpush)
+        let result = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], b"value3"); // Last lpushx value should be at head
+        assert_eq!(result[1], b"value2");
+        assert_eq!(result[2], b"value1");
+        assert_eq!(result[3], b"original");
+    }
+
+    #[tokio::test]
+    async fn test_rpushx() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Test rpushx on non-existent list - should return 0 and not create list
+        let result = redis
+            .rpushx(key, &[b"value1".to_vec()])
+            .expect("rpushx should succeed");
+        assert_eq!(result, 0);
+
+        let len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(len, 0);
+
+        // Create list first with lpush
+        redis
+            .lpush(key, &[b"initial".to_vec()])
+            .expect("lpush should succeed");
+
+        // Test rpushx on existing list - should work
+        let result = redis
+            .rpushx(key, &[b"value1".to_vec()])
+            .expect("rpushx should succeed");
+        assert_eq!(result, 2);
+
+        let len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(len, 2);
+
+        // Verify order - rpushx adds to tail
+        let result = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], b"initial"); // original value should be first
+        assert_eq!(result[1], b"value1"); // rpushx value should be at tail
+    }
+
+    #[tokio::test]
+    async fn test_rpushx_multiple_values() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Create list first
+        redis
+            .lpush(key, &[b"original".to_vec()])
+            .expect("lpush should succeed");
+
+        // Test rpushx with multiple values
+        let values = vec![b"value1".to_vec(), b"value2".to_vec(), b"value3".to_vec()];
+        let result = redis.rpushx(key, &values).expect("rpushx should succeed");
+        assert_eq!(result, 4); // original + 3 new values
+
+        // Verify order: original, value1, value2, value3 (preserved order for rpush)
+        let result = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(result.len(), 4);
+        assert_eq!(result[0], b"original");
+        assert_eq!(result[1], b"value1");
+        assert_eq!(result[2], b"value2");
+        assert_eq!(result[3], b"value3");
+    }
+
+    #[tokio::test]
+    async fn test_lpushx_rpushx_mixed_operations() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Start with a basic list
+        redis
+            .lpush(key, &[b"middle".to_vec()])
+            .expect("lpush should succeed");
+
+        // Add elements to both ends using pushx
+        redis
+            .rpushx(key, &[b"tail1".to_vec(), b"tail2".to_vec()])
+            .expect("rpushx should succeed");
+        redis
+            .lpushx(key, &[b"head1".to_vec()])
+            .expect("lpushx should succeed");
+        redis
+            .rpushx(key, &[b"tail3".to_vec()])
+            .expect("rpushx should succeed");
+
+        let len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(len, 5);
+
+        // Verify final order: head1, middle, tail1, tail2, tail3
+        let result = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0], b"head1");
+        assert_eq!(result[1], b"middle");
+        assert_eq!(result[2], b"tail1");
+        assert_eq!(result[3], b"tail2");
+        assert_eq!(result[4], b"tail3");
+    }
+
+    #[tokio::test]
+    async fn test_lpushx_on_empty_list() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Create an empty list and delete its contents (empty list case)
+        redis
+            .rpush(key, &[b"temp".to_vec()])
+            .expect("rpush should succeed");
+        redis.lpop(key, None).expect("lpop should succeed"); // List is now empty but exists
+
+        // Verify list is empty but exists
+        let len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(len, 0);
+
+        // Test lpushx on empty list - should work (list exists, even if empty)
+        let result = redis
+            .lpushx(key, &[b"new_value".to_vec()])
+            .expect("lpushx should succeed");
+        assert_eq!(result, 1);
+
+        let len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(len, 1);
+
+        let result = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], b"new_value");
+    }
+
+    #[tokio::test]
+    async fn test_rpushx_on_empty_list() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Create an empty list and delete its contents (empty list case)
+        redis
+            .rpush(key, &[b"temp".to_vec()])
+            .expect("rpush should succeed");
+        redis.lpop(key, None).expect("lpop should succeed"); // List is now empty but exists
+
+        // Verify list is empty but exists
+        let len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(len, 0);
+
+        // Test rpushx on empty list - should work (list exists, even if empty)
+        let result = redis
+            .rpushx(key, &[b"new_value".to_vec()])
+            .expect("rpushx should succeed");
+        assert_eq!(result, 1);
+
+        let len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(len, 1);
+
+        let result = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], b"new_value");
+    }
+
+    #[tokio::test]
+    async fn test_lpushx_rpushx_edge_cases() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Test with empty values array - should return 0 for non-existent list
+        let result = redis.lpushx(key, &[]).expect("lpushx should succeed");
+        assert_eq!(result, 0);
+
+        let result = redis.rpushx(key, &[]).expect("rpushx should succeed");
+        assert_eq!(result, 0);
+
+        // List still shouldn't exist
+        let len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(len, 0);
+
+        // Create list
+        redis
+            .rpush(key, &[b"initial".to_vec()])
+            .expect("rpush should succeed");
+
+        // Test with empty values on existing list - should not change length
+        let original_len = redis.llen(key).expect("llen should succeed");
+        let result = redis.lpushx(key, &[]).expect("lpushx should succeed");
+        assert_eq!(result, original_len);
+
+        let len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(len, original_len);
+    }
 }
