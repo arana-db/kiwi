@@ -82,13 +82,13 @@ impl RaftNode {
 
         // Create storage layer
         let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
-        let storage = Arc::new(RaftStorage::new(storage_path)?);
+        let _storage = Arc::new(RaftStorage::new(storage_path)?);
 
         // Create state machine
-        let state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
+        let _state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
 
         // Create network factory
-        let mut network_factory_instance = KiwiRaftNetworkFactory::new(cluster_config.node_id);
+        let network_factory_instance = KiwiRaftNetworkFactory::new(cluster_config.node_id);
 
         // Parse cluster members and build endpoints
         let mut endpoints = HashMap::new();
@@ -109,7 +109,7 @@ impl RaftNode {
         }
 
         // Create Raft configuration
-        let raft_config = RaftConfig {
+        let _raft_config = RaftConfig {
             heartbeat_interval: cluster_config.heartbeat_interval_ms,
             election_timeout_min: cluster_config.election_timeout_min_ms,
             election_timeout_max: cluster_config.election_timeout_max_ms,
@@ -127,7 +127,7 @@ impl RaftNode {
         // For now, create a second storage instance for Adaptor (not ideal but will work)
         // In the future, we should implement the trait so we can share the same storage instance
         let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
-        let storage_for_adaptor = Arc::new(RaftStorage::new(storage_path.clone())?);
+        let _storage_for_adaptor = Arc::new(RaftStorage::new(storage_path.clone())?);
         
         // Note: Adaptor expects the storage to implement RaftStorage trait
         // Since it doesn't yet, this will fail to compile
@@ -137,36 +137,44 @@ impl RaftNode {
         // let (log_store, sm) = openraft::storage::Adaptor::new((*storage_for_adaptor).clone());
         
         // Temporary: Return error until trait is implemented
+        // Create the Raft storage components using simple storage
+        // For now, return an error until we implement proper openraft integration
         return Err(RaftError::Configuration {
-            message: "Storage traits not yet implemented. RaftStorage must implement openraft::storage::RaftStorage<TypeConfig> trait. See TODO in node.rs".to_string(),
+            message: "Raft node creation is not yet complete. The openraft integration needs proper storage implementation. This is a work in progress - the core storage and state machine are implemented but need correct openraft trait integration.".to_string(),
         });
 
-        // Create the Raft instance (clone the factory so Raft and RaftNode share the same endpoints)
-        let raft = Raft::new(
-            cluster_config.node_id,
-            Arc::new(raft_config),
-            network_factory_instance.clone(),
-            log_store,
-            sm,
-        )
-        .await
-        .map_err(|e: openraft::error::Fatal<NodeId>| {
-            // Convert Fatal to our RaftError
-            RaftError::Fatal(e)
-        })?;
+        // TODO: Uncomment when openraft integration is complete
+        // let (log_storage, state_machine_instance) = crate::create_simple_raft_storage(cluster_config.node_id, &cluster_config.data_dir)
+        //     .map_err(|e| RaftError::Configuration {
+        //         message: format!("Failed to create Raft storage: {}", e),
+        //     })?;
 
-        // Wrap the factory in Arc<RwLock> for the RaftNode
-        let network_factory = Arc::new(RwLock::new(network_factory_instance));
+        // // Create the Raft instance (clone the factory so Raft and RaftNode share the same endpoints)
+        // let raft = Raft::new(
+        //     cluster_config.node_id,
+        //     Arc::new(raft_config),
+        //     network_factory_instance.clone(),
+        //     log_storage,
+        //     state_machine_instance.clone(),
+        // )
+        // .await
+        // .map_err(|e: openraft::error::Fatal<NodeId>| {
+        //     // Convert Fatal to our RaftError
+        //     RaftError::Fatal(e)
+        // })?;
 
-        Ok(Self {
-            raft: Arc::new(raft),
-            network_factory,
-            storage,
-            state_machine,
-            config: cluster_config,
-            endpoints: Arc::new(RwLock::new(endpoints)),
-            started: Arc::new(RwLock::new(false)),
-        })
+        // // Wrap the factory in Arc<RwLock> for the RaftNode
+        // let network_factory = Arc::new(RwLock::new(network_factory_instance));
+
+        // Ok(Self {
+        //     raft: Arc::new(raft),
+        //     network_factory,
+        //     storage,
+        //     state_machine: Arc::new(state_machine_instance),
+        //     config: cluster_config,
+        //     endpoints: Arc::new(RwLock::new(endpoints)),
+        //     started: Arc::new(RwLock::new(false)),
+        // })
     }
 
     /// Start the Raft node (simplified for server integration)

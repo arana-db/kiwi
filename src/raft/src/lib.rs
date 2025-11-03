@@ -22,7 +22,7 @@
 
 use openraft::Config;
 
-pub mod adaptor;
+// pub mod adaptor; // TODO: Re-enable when adaptor is properly implemented
 pub mod binlog;
 pub mod cluster_config;
 pub mod cluster_tests;
@@ -46,18 +46,21 @@ pub mod rocksdb_integration;
 pub mod segment_log;
 pub mod sequence_mapping;
 pub mod serialization;
+pub mod simple_storage;
 pub mod snapshot;
 pub mod state_machine;
 pub mod storage;
 pub mod types;
 
 // Re-export commonly used types
-pub use adaptor::{create_raft_storage, create_raft_storage_with_engine, KiwiRaftStorage};
 pub use error::RaftError;
 pub use node::{RaftNode, RaftNodeInterface};
 pub use state_machine::KiwiStateMachine;
 pub use storage::RaftStorage;
 pub use types::*;
+
+// Re-export simple storage functions
+pub use simple_storage::{create_simple_raft_storage, create_simple_raft_storage_with_engine};
 
 /// Create default Raft configuration
 pub fn default_raft_config() -> Config {

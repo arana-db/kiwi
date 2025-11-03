@@ -17,12 +17,9 @@
 
 //! Storage module for Raft implementation
 
-pub mod raft_log_storage;
+pub mod core;
 
-pub use raft_log_storage::*;
-
-// Re-export from parent storage module
-pub use crate::storage::{RaftStorage, StoredLogEntry, StoredSnapshotMeta};
+pub use core::*;
 
 #[cfg(test)]
 pub mod tests;

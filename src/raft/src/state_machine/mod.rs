@@ -17,9 +17,9 @@
 
 //! State machine module for Raft implementation
 
-pub mod raft_state_machine;
+pub mod core;
 
-pub use raft_state_machine::*;
+pub use core::*;
 
 #[cfg(test)]
 pub mod tests;
