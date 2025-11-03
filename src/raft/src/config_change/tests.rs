@@ -21,7 +21,7 @@
 mod tests {
     use super::super::*;
     use crate::cluster_config::{ClusterConfiguration, NodeEndpoint};
-    use std::collections::HashMap;
+
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::RwLock;

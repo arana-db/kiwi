@@ -23,11 +23,11 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rocksdb::IteratorMode;
+// use rocksdb::IteratorMode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::error::{RaftError, RaftResult};
+use crate::error::{/* RaftError, */ RaftResult};
 use crate::types::{LogIndex, NodeId};
 // use engine::{RocksdbEngine, Engine};
 

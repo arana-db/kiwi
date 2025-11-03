@@ -101,7 +101,7 @@ pub fn default_raft_config() -> Config {
 }
 
 #[cfg(test)]
-mod tests {
+mod unit_tests {
     use super::*;
 
     #[test]

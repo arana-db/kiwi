@@ -278,6 +278,76 @@ impl RespData {
     }
 }
 
+impl fmt::Debug for RespData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RespData::SimpleString(bytes) => {
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    write!(f, "SimpleString(\"{s}\")")
+                } else {
+                    write!(f, "SimpleString({bytes:?})")
+                }
+            }
+            RespData::Error(bytes) => {
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    write!(f, "Error(\"{s}\")")
+                } else {
+                    write!(f, "Error({bytes:?})")
+                }
+            }
+            RespData::Integer(num) => write!(f, "Integer({num})"),
+            RespData::BulkString(Some(bytes)) => {
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    write!(f, "BulkString(\"{s}\")")
+                } else {
+                    write!(f, "BulkString({bytes:?})")
+                }
+            }
+            RespData::BulkString(None) => write!(f, "BulkString(nil)"),
+            RespData::Array(Some(array)) => write!(f, "Array({array:?})"),
+            RespData::Array(None) => write!(f, "Array(nil)"),
+            RespData::Inline(parts) => {
+                write!(f, "Inline(")?;
+                let parts_str: Vec<_> = parts
+                    .iter()
+                    .filter_map(|b| std::str::from_utf8(b).ok())
+                    .collect();
+                write!(f, "{parts_str:?}")?;
+                write!(f, ")")
+            }
+            // RESP3 types
+            RespData::Null => write!(f, "Null"),
+            RespData::Boolean(b) => write!(f, "Boolean({b})"),
+            RespData::Double(d) => write!(f, "Double({d})"),
+            RespData::BigNumber(bytes) => {
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    write!(f, "BigNumber(\"{s}\")")
+                } else {
+                    write!(f, "BigNumber({bytes:?})")
+                }
+            }
+            RespData::BulkError(bytes) => {
+                if let Ok(s) = std::str::from_utf8(bytes) {
+                    write!(f, "BulkError(\"{s}\")")
+                } else {
+                    write!(f, "BulkError({bytes:?})")
+                }
+            }
+            RespData::VerbatimString { format, data } => {
+                let format_str = std::str::from_utf8(format).unwrap_or("<invalid>");
+                let data_str = std::str::from_utf8(data).unwrap_or("<invalid>");
+                write!(
+                    f,
+                    "VerbatimString(format: \"{format_str}\", data: \"{data_str}\")"
+                )
+            }
+            RespData::Map(pairs) => write!(f, "Map({pairs:?})"),
+            RespData::Set(items) => write!(f, "Set({items:?})"),
+            RespData::Push(items) => write!(f, "Push({items:?})"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,7 +357,7 @@ mod tests {
         assert_eq!(RespData::null(), RespData::Null);
         assert_eq!(RespData::boolean(true), RespData::Boolean(true));
         assert_eq!(RespData::boolean(false), RespData::Boolean(false));
-        assert_eq!(RespData::double(3.14), RespData::Double(3.14));
+        assert_eq!(RespData::double(std::f64::consts::PI), RespData::Double(std::f64::consts::PI));
 
         let big_num = RespData::big_number("123456789");
         assert_eq!(big_num, RespData::BigNumber(Bytes::from("123456789")));
@@ -348,7 +418,7 @@ mod tests {
         );
 
         // Test as_double
-        assert_eq!(RespData::Double(3.14).as_double(), Some(3.14));
+        assert_eq!(RespData::Double(std::f64::consts::PI).as_double(), Some(std::f64::consts::PI));
         assert_eq!(RespData::Integer(42).as_double(), Some(42.0));
         assert_eq!(
             RespData::SimpleString(Bytes::from("2.5")).as_double(),
@@ -376,7 +446,7 @@ mod tests {
             RespData::Boolean(false).as_string(),
             Some("false".to_string())
         );
-        assert_eq!(RespData::Double(3.14).as_string(), Some("3.14".to_string()));
+        assert_eq!(RespData::Double(std::f64::consts::PI).as_string(), Some(std::f64::consts::PI.to_string()));
         assert_eq!(
             RespData::BigNumber(Bytes::from("123")).as_string(),
             Some("123".to_string())
@@ -456,75 +526,5 @@ mod tests {
         assert_eq!(RespType::from_prefix(b'~'), Some(RespType::Set));
         assert_eq!(RespType::from_prefix(b'>'), Some(RespType::Push));
         assert_eq!(RespType::from_prefix(b'@'), None); // Invalid prefix
-    }
-}
-
-impl fmt::Debug for RespData {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            RespData::SimpleString(bytes) => {
-                if let Ok(s) = std::str::from_utf8(bytes) {
-                    write!(f, "SimpleString(\"{s}\")")
-                } else {
-                    write!(f, "SimpleString({bytes:?})")
-                }
-            }
-            RespData::Error(bytes) => {
-                if let Ok(s) = std::str::from_utf8(bytes) {
-                    write!(f, "Error(\"{s}\")")
-                } else {
-                    write!(f, "Error({bytes:?})")
-                }
-            }
-            RespData::Integer(num) => write!(f, "Integer({num})"),
-            RespData::BulkString(Some(bytes)) => {
-                if let Ok(s) = std::str::from_utf8(bytes) {
-                    write!(f, "BulkString(\"{s}\")")
-                } else {
-                    write!(f, "BulkString({bytes:?})")
-                }
-            }
-            RespData::BulkString(None) => write!(f, "BulkString(nil)"),
-            RespData::Array(Some(array)) => write!(f, "Array({array:?})"),
-            RespData::Array(None) => write!(f, "Array(nil)"),
-            RespData::Inline(parts) => {
-                write!(f, "Inline(")?;
-                let parts_str: Vec<_> = parts
-                    .iter()
-                    .filter_map(|b| std::str::from_utf8(b).ok())
-                    .collect();
-                write!(f, "{parts_str:?}")?;
-                write!(f, ")")
-            }
-            // RESP3 types
-            RespData::Null => write!(f, "Null"),
-            RespData::Boolean(b) => write!(f, "Boolean({b})"),
-            RespData::Double(d) => write!(f, "Double({d})"),
-            RespData::BigNumber(bytes) => {
-                if let Ok(s) = std::str::from_utf8(bytes) {
-                    write!(f, "BigNumber(\"{s}\")")
-                } else {
-                    write!(f, "BigNumber({bytes:?})")
-                }
-            }
-            RespData::BulkError(bytes) => {
-                if let Ok(s) = std::str::from_utf8(bytes) {
-                    write!(f, "BulkError(\"{s}\")")
-                } else {
-                    write!(f, "BulkError({bytes:?})")
-                }
-            }
-            RespData::VerbatimString { format, data } => {
-                let format_str = std::str::from_utf8(format).unwrap_or("<invalid>");
-                let data_str = std::str::from_utf8(data).unwrap_or("<invalid>");
-                write!(
-                    f,
-                    "VerbatimString(format: \"{format_str}\", data: \"{data_str}\")"
-                )
-            }
-            RespData::Map(pairs) => write!(f, "Map({pairs:?})"),
-            RespData::Set(items) => write!(f, "Set({items:?})"),
-            RespData::Push(items) => write!(f, "Push({items:?})"),
-        }
     }
 }

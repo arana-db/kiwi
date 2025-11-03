@@ -23,11 +23,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::time::{sleep, timeout};
-use rand::seq::SliceRandom;
-use rand::Rng;
-
 use crate::error::RaftResult;
-use crate::network::{RaftNetworkClient, KiwiRaftNetworkFactory};
+use crate::network::KiwiRaftNetworkFactory;
 use crate::state_machine::KiwiStateMachine;
 use crate::storage::RaftStorage;
 use crate::types::{
@@ -294,7 +291,7 @@ mod integration_tests {
             };
 
             let response = cluster.send_request(node_id, request).await.unwrap();
-            assert_eq!(response.id, node_id);
+            assert_eq!(response.id, RequestId(node_id));
             assert!(response.result.is_ok());
         }
     }
@@ -309,14 +306,14 @@ mod integration_tests {
 
         // Verify node 1's network is isolated
         let node1 = cluster.get_node(1).unwrap();
-        assert!(node1.network.endpoints.is_empty());
+        assert!(node1.network.endpoints.read().await.is_empty());
 
         // Restore node 1
         cluster.restore_node(1).await.unwrap();
 
         // Verify node 1's network is restored
         let node1 = cluster.get_node(1).unwrap();
-        assert_eq!(node1.network.endpoints.len(), 2); // Connected to nodes 2 and 3
+        assert_eq!(node1.network.endpoints.read().await.len(), 2); // Connected to nodes 2 and 3
     }
 
     #[tokio::test]
@@ -495,7 +492,7 @@ mod integration_tests {
         assert!(result.is_ok());
 
         // Test consensus with very short timeout (might timeout)
-        let result = cluster.wait_for_consensus(1).await;
+        let _result = cluster.wait_for_consensus(1).await;
         // This might succeed or timeout depending on timing
     }
 
@@ -906,7 +903,7 @@ pub mod chaos_tests {
                     if let Some(expected_value) = latest_set_value {
                         if get_val != &expected_value {
                             return Err(crate::error::RaftError::consistency(format!(
-                                "Linearizability violation: GET {} returned '{}' but expected '{}'",
+                                "Linearizability violation: GET {:?} returned '{:?}' but expected '{:?}'",
                                 get_key, get_val, expected_value
                             )));
                         }

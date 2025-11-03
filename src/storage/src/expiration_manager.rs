@@ -316,7 +316,7 @@ mod tests {
 
         assert!(manager.has_expiration("test_key"));
         let ttl = manager.get_ttl_seconds("test_key").unwrap();
-        assert!(ttl >= 4 && ttl <= 5); // Should be around 5 seconds
+        assert!((4..=5).contains(&ttl)); // Should be around 5 seconds
 
         // Test removing expiration
         assert!(manager.remove_expiration("test_key"));
@@ -340,11 +340,11 @@ mod tests {
         // Test Unix timestamp conversions
         let unix_timestamp = 1640995200; // 2022-01-01 00:00:00 UTC
         let expire_time = ExpirationManager::unix_seconds_to_expire_time(unix_timestamp).unwrap();
-        assert_eq!(expire_time, 1640995200_000_000);
+        assert_eq!(expire_time, 1_640_995_200_000_000);
 
         let unix_timestamp_ms = 1640995200000; // 2022-01-01 00:00:00 UTC in milliseconds
         let expire_time =
             ExpirationManager::unix_milliseconds_to_expire_time(unix_timestamp_ms).unwrap();
-        assert_eq!(expire_time, 1640995200_000_000);
+        assert_eq!(expire_time, 1_640_995_200_000_000);
     }
 }

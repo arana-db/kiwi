@@ -1721,7 +1721,7 @@ pub struct ReplicationLagSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, Ipv4Addr};
+
 
     #[test]
     fn test_health_check_result() {

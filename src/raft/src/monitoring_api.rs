@@ -511,8 +511,7 @@ mod tests {
     use super::*;
     use crate::health_monitor::{ClusterHealthMonitor, HealthMonitorConfig};
     use crate::metrics::MetricsCollector;
-    use std::time::Duration;
-    use tokio::time::timeout;
+
 
     #[tokio::test]
     async fn test_api_response_creation() {

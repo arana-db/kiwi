@@ -6,17 +6,18 @@
 
 ```text
 tests/
-├── README.md           # 本文件
-├── python/             # Python 集成测试
-│   ├── test_mset.py    # MSET 命令测试
-│   └── ...             # 其他 Python 测试
-├── integration/        # 集成测试文档和脚本
-│   ├── test_mset.md    # MSET 测试指南
-│   └── ...             # 其他集成测试文档
-├── tcl/                # Redis 官方 TCL 测试用例（待添加）
-│   └── ...             # Redis 官方测试套件
-└── go/                 # Go 语言测试用例（待添加）
-    └── ...             # Go 测试文件
+├── README.md                # 本文件
+├── fix_client_requests.py   # 历史修复脚本（已完成任务）
+├── python/                  # Python 集成测试
+│   ├── test_mset.py         # MSET 命令测试
+│   └── ...                  # 其他 Python 测试
+├── integration/             # 集成测试文档和脚本
+│   ├── test_mset.md         # MSET 测试指南
+│   └── ...                  # 其他集成测试文档
+├── tcl/                     # Redis 官方 TCL 测试用例（待添加）
+│   └── ...                  # Redis 官方测试套件
+└── go/                      # Go 语言测试用例（待添加）
+    └── ...                  # Go 测试文件
 ```
 
 ## 🧪 测试类型
@@ -185,6 +186,26 @@ cargo tarpaulin --out Html
 # 查看报告
 open tarpaulin-report.html
 ```
+
+## 🛠️ 历史工具脚本
+
+### fix_client_requests.py
+
+这是一个历史修复脚本，用于自动修复 `src/raft/src/integration_tests.rs` 文件中的 `ClientRequest` 构造。
+
+**功能**：
+- 自动为 `ClientRequest` 结构体添加缺失的 `consistency_level` 字段
+- 将数字 ID 包装为 `RequestId` 类型
+
+**状态**：✅ 已完成任务，所有 `ClientRequest` 构造都已修复
+
+**使用方法**（仅供参考，无需再次运行）：
+```bash
+cd tests/
+python fix_client_requests.py
+```
+
+**注意**：此脚本已完成其历史使命，保留在此处仅供参考和文档记录。
 
 ## 🔗 相关资源
 

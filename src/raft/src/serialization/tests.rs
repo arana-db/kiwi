@@ -20,7 +20,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::placeholder_types::{CommandType, RespData};
+    use crate::placeholder_types::RespData;
     use crate::types::{ClientRequest, ClientResponse, ConsistencyLevel, RedisCommand, RequestId};
     use bytes::Bytes;
 
