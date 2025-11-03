@@ -62,4 +62,4 @@ help:
 	@echo "  lint          - Lint the code"
 	@echo "  help          - Show this help message"
 
-.PHONY: build run test clean fmt lint help
+.PHONY: build release run test clean fmt lint help
