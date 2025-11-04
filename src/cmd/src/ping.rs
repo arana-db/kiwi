@@ -15,6 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use bytes::Bytes;
 use std::sync::Arc;
 
 use client::Client;
@@ -34,9 +35,9 @@ impl PingCmd {
         Self {
             meta: CmdMeta {
                 name: "ping".to_string(),
-                arity: 1,
+                arity: -1,
                 flags: CmdFlags::READONLY | CmdFlags::FAST,
-                acl_category: AclCategory::KEYSPACE | AclCategory::READ,
+                acl_category: AclCategory::FAST | AclCategory::CONNECTION,
                 ..Default::default()
             },
         }
@@ -52,6 +53,15 @@ impl Cmd for PingCmd {
     }
 
     fn do_cmd(&self, client: &Client, _storage: Arc<Storage>) {
-        client.set_reply(RespData::SimpleString("PONG".into()));
+        if client.argv().len() == 1 {
+            client.set_reply(RespData::SimpleString("PONG".into()));
+        } else if client.argv().len() == 2 {
+            let arg = client.argv()[1].clone();
+            client.set_reply(RespData::BulkString(Some(Bytes::from(arg))));
+        } else {
+            client.set_reply(RespData::Error(
+                "ERR wrong number of arguments for 'ping' command".into(),
+            ));
+        }
     }
 }
