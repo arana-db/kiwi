@@ -86,6 +86,7 @@ pub mod sunionstore;
 pub mod table;
 pub mod ttl;
 pub mod type_cmd;
+mod ping;
 
 use std::collections::HashMap;
 use std::sync::Arc;
