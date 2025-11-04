@@ -61,10 +61,10 @@ impl Cmd for ExistsCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let argv = client.argv();
-        
+
         // Skip command name, collect all key arguments
         let keys: Vec<Vec<u8>> = argv[1..].to_vec();
-        
+
         if keys.is_empty() {
             client.set_reply(RespData::Integer(0));
             return;

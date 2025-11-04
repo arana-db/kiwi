@@ -63,8 +63,14 @@ impl ProtocolNegotiator {
             let s = std::str::from_utf8(first)
                 .map_err(|_| RespError::InvalidData("Invalid protocol version".to_string()))?;
             match s {
-                "2" => { args_iter.next(); Some(RespVersion::RESP2) }
-                "3" => { args_iter.next(); Some(RespVersion::RESP3) }
+                "2" => {
+                    args_iter.next();
+                    Some(RespVersion::RESP2)
+                }
+                "3" => {
+                    args_iter.next();
+                    Some(RespVersion::RESP3)
+                }
                 _ => None, // Not a version; proceed to parse AUTH/SETNAME
             }
         } else {
@@ -92,7 +98,8 @@ impl ProtocolNegotiator {
                         RespError::InvalidData("AUTH requires password".to_string())
                     })?;
                     // TODO: Implement authentication logic
-                    self.client_capabilities.insert("auth".to_string(), "enabled".to_string());
+                    self.client_capabilities
+                        .insert("auth".to_string(), "enabled".to_string());
                 }
                 "SETNAME" => {
                     // SETNAME clientname
@@ -101,10 +108,14 @@ impl ProtocolNegotiator {
                     })?;
                     let client_name_str = std::str::from_utf8(client_name)
                         .map_err(|_| RespError::InvalidData("Invalid client name".to_string()))?;
-                    self.client_capabilities.insert("client_name".to_string(), client_name_str.to_string());
+                    self.client_capabilities
+                        .insert("client_name".to_string(), client_name_str.to_string());
                 }
                 _ => {
-                    return Err(RespError::InvalidData(format!("Unknown HELLO argument: {}", arg_str)));
+                    return Err(RespError::InvalidData(format!(
+                        "Unknown HELLO argument: {}",
+                        arg_str
+                    )));
                 }
             }
         }
@@ -234,11 +245,11 @@ impl ProtocolNegotiator {
                 RespData::Array(Some(converted_items))
             }
             // RESP2 compatible types - return as-is
-            RespData::SimpleString(_) |
-            RespData::Error(_) |
-            RespData::Integer(_) |
-            RespData::BulkString(_) |
-            RespData::Inline(_) => data.clone(),
+            RespData::SimpleString(_)
+            | RespData::Error(_)
+            | RespData::Integer(_)
+            | RespData::BulkString(_)
+            | RespData::Inline(_) => data.clone(),
             RespData::Array(Some(items)) => {
                 // Recursively convert array items
                 let converted_items: Vec<_> = items.iter().map(Self::convert_to_resp2).collect();
@@ -257,15 +268,11 @@ mod tests {
     #[test]
     fn test_hello_command_resp2() {
         let mut negotiator = ProtocolNegotiator::new();
-        let command = RespCommand::new(
-            CommandType::Hello,
-            vec![Bytes::from("2")],
-            false,
-        );
+        let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("2")], false);
 
         let response = negotiator.handle_hello(&command).unwrap();
         assert_eq!(negotiator.current_version(), RespVersion::RESP2);
-        
+
         if let RespData::Array(Some(items)) = response {
             assert!(items.len() >= 12); // At least the basic server info
         } else {
@@ -276,15 +283,11 @@ mod tests {
     #[test]
     fn test_hello_command_resp3() {
         let mut negotiator = ProtocolNegotiator::new();
-        let command = RespCommand::new(
-            CommandType::Hello,
-            vec![Bytes::from("3")],
-            false,
-        );
+        let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
 
         let response = negotiator.handle_hello(&command).unwrap();
         assert_eq!(negotiator.current_version(), RespVersion::RESP3);
-        
+
         if let RespData::Map(pairs) = response {
             assert!(pairs.len() >= 6); // At least the basic server info
         } else {
@@ -295,18 +298,14 @@ mod tests {
     #[test]
     fn test_feature_support() {
         let mut negotiator = ProtocolNegotiator::new();
-        
+
         // RESP2 doesn't support RESP3 features
         assert!(!negotiator.supports_feature("maps"));
-        
+
         // Switch to RESP3
-        let command = RespCommand::new(
-            CommandType::Hello,
-            vec![Bytes::from("3")],
-            false,
-        );
+        let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
         negotiator.handle_hello(&command).unwrap();
-        
+
         // RESP3 supports new features
         assert!(negotiator.supports_feature("maps"));
         assert!(negotiator.supports_feature("sets"));
@@ -316,16 +315,22 @@ mod tests {
     #[test]
     fn test_resp3_to_resp2_conversion() {
         let _negotiator = ProtocolNegotiator::new();
-        
+
         // Test boolean conversion
         let bool_data = RespData::Boolean(true);
         let converted = ProtocolNegotiator::convert_to_resp2(&bool_data);
         assert_eq!(converted, RespData::Integer(1));
-        
+
         // Test map conversion
         let map_data = RespData::Map(vec![
-            (RespData::BulkString(Some(Bytes::from("key1"))), RespData::BulkString(Some(Bytes::from("value1")))),
-            (RespData::BulkString(Some(Bytes::from("key2"))), RespData::Integer(42)),
+            (
+                RespData::BulkString(Some(Bytes::from("key1"))),
+                RespData::BulkString(Some(Bytes::from("value1"))),
+            ),
+            (
+                RespData::BulkString(Some(Bytes::from("key2"))),
+                RespData::Integer(42),
+            ),
         ]);
         let converted = ProtocolNegotiator::convert_to_resp2(&map_data);
         if let RespData::Array(Some(items)) = converted {

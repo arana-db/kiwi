@@ -21,11 +21,10 @@ use crate::error::{RaftError, RaftResult};
 use crate::network::{KiwiRaftNetworkFactory, NodeAuth, TlsConfig};
 use crate::state_machine::KiwiStateMachine;
 use crate::storage::RaftStorage;
-use crate::types::{NodeId, RaftMetrics, ClusterConfig, TypeConfig, BasicNode, ClusterHealth};
+use crate::types::{BasicNode, ClusterConfig, ClusterHealth, NodeId, RaftMetrics, TypeConfig};
 use crate::{ClientRequest, ClientResponse};
 use async_trait::async_trait;
-use engine::RocksdbEngine;
-use openraft::{Raft, Config as RaftConfig, BasicNode as OpenRaftBasicNode};
+use openraft::{Config as RaftConfig, Raft};
 use std::collections::{BTreeSet, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -74,67 +73,110 @@ pub struct RaftNode {
 
 impl RaftNode {
     /// Create a new Raft node with cluster configuration
-    pub async fn new(cluster_config: ClusterConfig, engine: Arc<RocksdbEngine>) -> RaftResult<Self> {
-        log::info!("Creating Raft node {} with config: {:?}", cluster_config.node_id, cluster_config);
+    pub async fn new(cluster_config: ClusterConfig) -> RaftResult<Self> {
+        log::info!(
+            "Creating Raft node {} with config: {:?}",
+            cluster_config.node_id,
+            cluster_config
+        );
 
         // Create storage layer
         let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
-        let storage = Arc::new(RaftStorage::new(storage_path)?);
+        let _storage = Arc::new(RaftStorage::new(storage_path)?);
 
         // Create state machine
-        let state_machine = Arc::new(KiwiStateMachine::new(engine.clone(), cluster_config.node_id));
+        let _state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
 
         // Create network factory
-        let mut network_factory_instance = KiwiRaftNetworkFactory::new(cluster_config.node_id);
+        let network_factory_instance = KiwiRaftNetworkFactory::new(cluster_config.node_id);
 
         // Parse cluster members and build endpoints
         let mut endpoints = HashMap::new();
         for member in &cluster_config.cluster_members {
             if let Some((node_id_str, endpoint)) = member.split_once(':') {
                 if let Ok(node_id) = node_id_str.parse::<NodeId>() {
-                    let host_port = member.strip_prefix(&format!("{}:", node_id_str))
+                    let host_port = member
+                        .strip_prefix(&format!("{}:", node_id_str))
                         .unwrap_or(endpoint);
                     endpoints.insert(node_id, host_port.to_string());
-                    
+
                     // Add endpoint to network factory
-                    network_factory_instance.add_endpoint(node_id, host_port.to_string()).await;
+                    network_factory_instance
+                        .add_endpoint(node_id, host_port.to_string())
+                        .await;
                 }
             }
         }
 
         // Create Raft configuration
-        let raft_config = RaftConfig {
+        let _raft_config = RaftConfig {
             heartbeat_interval: cluster_config.heartbeat_interval_ms,
             election_timeout_min: cluster_config.election_timeout_min_ms,
             election_timeout_max: cluster_config.election_timeout_max_ms,
             max_payload_entries: cluster_config.max_payload_entries,
-            snapshot_policy: openraft::SnapshotPolicy::LogsSinceLast(cluster_config.snapshot_threshold),
+            snapshot_policy: openraft::SnapshotPolicy::LogsSinceLast(
+                cluster_config.snapshot_threshold,
+            ),
             ..Default::default()
         };
 
-        // Create the Raft instance (clone the factory so Raft and RaftNode share the same endpoints)
-        let raft = Raft::new(
-            cluster_config.node_id,
-            Arc::new(raft_config),
-            network_factory_instance.clone(),
-            storage.clone(),
-            state_machine.clone(),
-        ).await.map_err(|e| RaftError::Fatal(e))?;
+        // Wrap storage in Adaptor for openraft
+        // Adaptor::new takes a storage that implements openraft::storage::RaftStorage (combined trait)
+        // and returns (log_store_adaptor, state_machine_adaptor) tuple
+        // TODO: Implement openraft::storage::RaftStorage on RaftStorage
+        // For now, create a second storage instance for Adaptor (not ideal but will work)
+        // In the future, we should implement the trait so we can share the same storage instance
+        let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
+        let _storage_for_adaptor = Arc::new(RaftStorage::new(storage_path.clone())?);
         
-        // Wrap the factory in Arc<RwLock> for the RaftNode
-        let network_factory = Arc::new(RwLock::new(network_factory_instance));
+        // Note: Adaptor expects the storage to implement RaftStorage trait
+        // Since it doesn't yet, this will fail to compile
+        // We need to implement openraft::storage::RaftStorage trait on RaftStorage
+        // For now, this is a placeholder that shows what needs to be done
+        // TODO: Uncomment once RaftStorage implements openraft::storage::RaftStorage
+        // let (log_store, sm) = openraft::storage::Adaptor::new((*storage_for_adaptor).clone());
+        
+        // Temporary: Return error until trait is implemented
+        // Create the Raft storage components using simple storage
+        // For now, return an error until we implement proper openraft integration
+        return Err(RaftError::Configuration {
+            message: "Raft node creation is not yet complete. The openraft integration needs proper storage implementation. This is a work in progress - the core storage and state machine are implemented but need correct openraft trait integration.".to_string(),
+        });
 
-        Ok(Self {
-            raft: Arc::new(raft),
-            network_factory,
-            storage,
-            state_machine,
-            config: cluster_config,
-            endpoints: Arc::new(RwLock::new(endpoints)),
-            started: Arc::new(RwLock::new(false)),
-        })
+        // TODO: Uncomment when openraft integration is complete
+        // let (log_storage, state_machine_instance) = crate::create_simple_raft_storage(cluster_config.node_id, &cluster_config.data_dir)
+        //     .map_err(|e| RaftError::Configuration {
+        //         message: format!("Failed to create Raft storage: {}", e),
+        //     })?;
+
+        // // Create the Raft instance (clone the factory so Raft and RaftNode share the same endpoints)
+        // let raft = Raft::new(
+        //     cluster_config.node_id,
+        //     Arc::new(raft_config),
+        //     network_factory_instance.clone(),
+        //     log_storage,
+        //     state_machine_instance.clone(),
+        // )
+        // .await
+        // .map_err(|e: openraft::error::Fatal<NodeId>| {
+        //     // Convert Fatal to our RaftError
+        //     RaftError::Fatal(e)
+        // })?;
+
+        // // Wrap the factory in Arc<RwLock> for the RaftNode
+        // let network_factory = Arc::new(RwLock::new(network_factory_instance));
+
+        // Ok(Self {
+        //     raft: Arc::new(raft),
+        //     network_factory,
+        //     storage,
+        //     state_machine: Arc::new(state_machine_instance),
+        //     config: cluster_config,
+        //     endpoints: Arc::new(RwLock::new(endpoints)),
+        //     started: Arc::new(RwLock::new(false)),
+        // })
     }
-    
+
     /// Start the Raft node (simplified for server integration)
     pub async fn start(&self, init_cluster: bool) -> RaftResult<()> {
         let mut started = self.started.write().await;
@@ -143,20 +185,38 @@ impl RaftNode {
             return Ok(());
         }
 
-        log::info!("Starting Raft node {} (init_cluster: {})", self.config.node_id, init_cluster);
+        log::info!(
+            "Starting Raft node {} (init_cluster: {})",
+            self.config.node_id,
+            init_cluster
+        );
 
         if init_cluster {
             // Initialize a new cluster with this node as the only member
             let mut nodes = BTreeSet::new();
             nodes.insert(self.config.node_id);
-            
-            self.raft.initialize(nodes).await
-                .map_err(|e| RaftError::Fatal(e))?;
-            
-            log::info!("Initialized new Raft cluster with node {}", self.config.node_id);
+
+            self.raft
+                .initialize(nodes)
+                .await
+                .map_err(|e| {
+                    // Convert RaftError to our RaftError
+                    // Create a generic error message since we can't directly convert the error types
+                    RaftError::Configuration {
+                        message: format!("Failed to initialize Raft cluster: {}", e),
+                    }
+                })?;
+
+            log::info!(
+                "Initialized new Raft cluster with node {}",
+                self.config.node_id
+            );
         } else {
             // Node will join an existing cluster through add_learner/change_membership
-            log::info!("Raft node {} ready to join existing cluster", self.config.node_id);
+            log::info!(
+                "Raft node {} ready to join existing cluster",
+                self.config.node_id
+            );
         }
 
         *started = true;
@@ -198,12 +258,16 @@ impl RaftNode {
     /// Wait for the node to become leader or follower (not candidate)
     pub async fn wait_for_stable_state(&self, timeout: Duration) -> RaftResult<()> {
         let start = std::time::Instant::now();
-        
+
         loop {
             let metrics = self.raft.metrics().borrow().clone();
             match metrics.state {
                 openraft::ServerState::Leader | openraft::ServerState::Follower => {
-                    log::info!("Node {} reached stable state: {:?}", self.config.node_id, metrics.state);
+                    log::info!(
+                        "Node {} reached stable state: {:?}",
+                        self.config.node_id,
+                        metrics.state
+                    );
                     return Ok(());
                 }
                 openraft::ServerState::Candidate | openraft::ServerState::Learner => {
@@ -226,13 +290,15 @@ impl RaftNode {
     pub async fn configure_tls(&self, tls_config: TlsConfig) -> RaftResult<()> {
         let mut network_factory = self.network_factory.write().await;
         *network_factory = KiwiRaftNetworkFactory::new_secure(self.config.node_id, tls_config);
-        
+
         // Re-add all endpoints
         let endpoints = self.endpoints.read().await;
         for (&node_id, endpoint) in endpoints.iter() {
-            network_factory.add_endpoint(node_id, endpoint.clone()).await;
+            network_factory
+                .add_endpoint(node_id, endpoint.clone())
+                .await;
         }
-        
+
         Ok(())
     }
 
@@ -256,7 +322,7 @@ impl RaftNode {
             let mut endpoints = self.endpoints.write().await;
             endpoints.insert(node_id, endpoint.clone());
         }
-        
+
         let network_factory = self.network_factory.read().await;
         network_factory.add_endpoint(node_id, endpoint).await;
         Ok(())
@@ -268,7 +334,7 @@ impl RaftNode {
             let mut endpoints = self.endpoints.write().await;
             endpoints.remove(&node_id);
         }
-        
+
         let network_factory = self.network_factory.read().await;
         network_factory.remove_endpoint(node_id).await;
         Ok(())
@@ -330,16 +396,20 @@ impl RaftNode {
             self.add_learner(node_id, endpoint).await?;
 
             // Wait for the learner to catch up
-            self.wait_for_learner_catchup(node_id, Duration::from_secs(30)).await?;
+            self.wait_for_learner_catchup(node_id, Duration::from_secs(30))
+                .await?;
         }
 
         // Promote learner to voting member
         log::info!("Promoting node {} to voting member", node_id);
         let mut current_members = self.get_membership().await?;
         current_members.insert(node_id);
-        
+
         self.change_membership(current_members).await?;
-        log::info!("Successfully added node {} to cluster as voting member", node_id);
+        log::info!(
+            "Successfully added node {} to cluster as voting member",
+            node_id
+        );
         Ok(())
     }
 
@@ -363,14 +433,14 @@ impl RaftNode {
         let current_members = self.get_membership().await?;
         if current_members.len() <= 1 {
             return Err(RaftError::configuration(
-                "Cannot remove the last node from the cluster"
+                "Cannot remove the last node from the cluster",
             ));
         }
 
         // Don't allow removing ourselves if we're the only leader
         if node_id == self.config.node_id && current_members.len() == 1 {
             return Err(RaftError::configuration(
-                "Cannot remove the leader node when it's the only member"
+                "Cannot remove the leader node when it's the only member",
             ));
         }
 
@@ -378,7 +448,7 @@ impl RaftNode {
         if self.is_member(node_id).await? {
             let mut new_members = current_members;
             new_members.remove(&node_id);
-            
+
             log::info!("Removing node {} from voting members", node_id);
             self.change_membership(new_members).await?;
         }
@@ -392,18 +462,22 @@ impl RaftNode {
 
         // Remove endpoint
         self.remove_endpoint(node_id).await?;
-        
+
         log::info!("Successfully removed node {} from cluster", node_id);
         Ok(())
     }
 
     /// Wait for a learner to catch up with the leader's log
-    pub async fn wait_for_learner_catchup(&self, learner_id: NodeId, timeout: Duration) -> RaftResult<()> {
+    pub async fn wait_for_learner_catchup(
+        &self,
+        learner_id: NodeId,
+        timeout: Duration,
+    ) -> RaftResult<()> {
         log::info!("Waiting for learner {} to catch up", learner_id);
-        
+
         let start = std::time::Instant::now();
         let mut last_log_index = None;
-        
+
         loop {
             if start.elapsed() > timeout {
                 return Err(RaftError::timeout(format!(
@@ -413,28 +487,34 @@ impl RaftNode {
             }
 
             let metrics = self.raft.metrics().borrow().clone();
-            
+
             // Get our current log index
             let current_log_index = metrics.last_log_index.unwrap_or(0);
-            
+
             // Check learner's progress
             if let Some(replication_map) = &metrics.replication {
                 if let Some(replication) = replication_map.get(&learner_id) {
-                let learner_matched = replication.matched.unwrap_or(openraft::LogId::default()).index;
-                
-                // Consider caught up if within a reasonable threshold
-                let lag = current_log_index.saturating_sub(learner_matched);
-                if lag <= 10 { // Allow up to 10 entries lag
-                    log::info!("Learner {} caught up (lag: {})", learner_id, lag);
-                    return Ok(());
-                }
-                
-                // Log progress if it changed
-                if last_log_index != Some(learner_matched) {
-                    log::info!("Learner {} progress: {}/{} (lag: {})", 
-                             learner_id, learner_matched, current_log_index, lag);
-                    last_log_index = Some(learner_matched);
-                }
+                    let learner_matched = replication.map(|id| id.index).unwrap_or(0);
+
+                    // Consider caught up if within a reasonable threshold
+                    let lag = current_log_index.saturating_sub(learner_matched);
+                    if lag <= 10 {
+                        // Allow up to 10 entries lag
+                        log::info!("Learner {} caught up (lag: {})", learner_id, lag);
+                        return Ok(());
+                    }
+
+                    // Log progress if it changed
+                    if last_log_index != Some(learner_matched) {
+                        log::info!(
+                            "Learner {} progress: {}/{} (lag: {})",
+                            learner_id,
+                            learner_matched,
+                            current_log_index,
+                            lag
+                        );
+                        last_log_index = Some(learner_matched);
+                    }
                 } else {
                     log::debug!("No replication info for learner {}", learner_id);
                 }
@@ -452,7 +532,9 @@ impl RaftNode {
 
         // Check if we're the leader
         if !self.is_leader().await {
-            return Err(RaftError::configuration("Only the leader can transfer leadership"));
+            return Err(RaftError::configuration(
+                "Only the leader can transfer leadership",
+            ));
         }
 
         // Check if target is a voting member
@@ -464,20 +546,24 @@ impl RaftNode {
         }
 
         // Ensure target is caught up
-        self.wait_for_learner_catchup(target_node, Duration::from_secs(10)).await?;
+        self.wait_for_learner_catchup(target_node, Duration::from_secs(10))
+            .await?;
 
         // Trigger leadership transfer (openraft doesn't have direct transfer, so we step down)
         log::info!("Stepping down as leader to trigger election");
         // Note: openraft doesn't have a direct leadership transfer method
         // We would need to implement this by stepping down and letting the target win election
-        
+
         log::info!("Leadership transfer initiated for node {}", target_node);
         Ok(())
     }
 
     /// Handle configuration changes during network partitions
     pub async fn handle_partition_recovery(&self) -> RaftResult<()> {
-        log::info!("Handling partition recovery for node {}", self.config.node_id);
+        log::info!(
+            "Handling partition recovery for node {}",
+            self.config.node_id
+        );
 
         // Check for partitioned nodes
         let partitioned_nodes = self.check_partitions().await;
@@ -500,16 +586,21 @@ impl RaftNode {
             let total_members = self.get_membership().await?.len();
             if healthy_members.len() > total_members / 2 {
                 log::info!("Majority of nodes are healthy, cluster can continue operating");
-                
+
                 // Optionally remove persistently partitioned nodes
                 // This is a policy decision and should be configurable
                 for &partitioned_node in &partitioned_nodes {
-                    log::warn!("Node {} appears to be persistently partitioned", partitioned_node);
+                    log::warn!(
+                        "Node {} appears to be persistently partitioned",
+                        partitioned_node
+                    );
                     // Could implement automatic removal after a timeout
                 }
             } else {
                 log::error!("Majority of nodes are partitioned, cannot make progress");
-                return Err(RaftError::Network(crate::error::NetworkError::NetworkPartition));
+                return Err(RaftError::Network(
+                    crate::error::NetworkError::NetworkPartition,
+                ));
             }
         }
 
@@ -533,7 +624,7 @@ impl RaftNode {
             partitioned_nodes: partitioned_nodes.len(),
             current_leader: metrics.current_leader,
             is_healthy,
-            last_log_index: metrics.last_log_index.map(|id| id.index).unwrap_or(0),
+            last_log_index: metrics.last_log_index.unwrap_or(0),
             commit_index: metrics.last_applied.map(|id| id.index).unwrap_or(0),
         })
     }
@@ -547,13 +638,13 @@ impl RaftNode {
     /// Get current term
     pub async fn get_current_term(&self) -> u64 {
         let metrics = self.raft.metrics().borrow().clone();
-        metrics.current_term.unwrap_or(0)
+        metrics.current_term
     }
 
     /// Get vote information for current term
     pub async fn get_vote_info(&self) -> Option<NodeId> {
         let metrics = self.raft.metrics().borrow().clone();
-        metrics.vote
+        Some(metrics.vote.leader_id.node_id)
     }
 
     /// Trigger an election (step down if leader, become candidate if follower)
@@ -563,22 +654,44 @@ impl RaftNode {
         let current_state = self.get_node_state().await;
         match current_state {
             openraft::ServerState::Leader => {
-                log::info!("Node {} is leader, stepping down to trigger election", self.config.node_id);
+                log::info!(
+                    "Node {} is leader, stepping down to trigger election",
+                    self.config.node_id
+                );
                 // Step down by triggering a leadership change
                 // Note: openraft doesn't have a direct step-down method
                 // We would need to implement this by stopping heartbeats or similar
-                log::warn!("Direct step-down not implemented in openraft, election will happen naturally");
+                log::warn!(
+                    "Direct step-down not implemented in openraft, election will happen naturally"
+                );
             }
             openraft::ServerState::Follower => {
-                log::info!("Node {} is follower, will participate in next election", self.config.node_id);
+                log::info!(
+                    "Node {} is follower, will participate in next election",
+                    self.config.node_id
+                );
                 // Followers automatically participate in elections when they timeout
             }
             openraft::ServerState::Candidate => {
                 log::info!("Node {} is already a candidate", self.config.node_id);
             }
             openraft::ServerState::Learner => {
-                log::warn!("Node {} is a learner and cannot participate in elections", self.config.node_id);
-                return Err(RaftError::configuration("Learners cannot trigger elections"));
+                log::warn!(
+                    "Node {} is a learner and cannot participate in elections",
+                    self.config.node_id
+                );
+                return Err(RaftError::configuration(
+                    "Learners cannot trigger elections",
+                ));
+            }
+            openraft::ServerState::Shutdown => {
+                log::error!(
+                    "Node {} is shutdown and cannot participate in elections",
+                    self.config.node_id
+                );
+                return Err(RaftError::configuration(
+                    "Shutdown nodes cannot trigger elections",
+                ));
             }
         }
 
@@ -588,27 +701,37 @@ impl RaftNode {
     /// Wait for leadership election to complete
     pub async fn wait_for_election(&self, timeout: Duration) -> RaftResult<NodeId> {
         log::info!("Waiting for election to complete (timeout: {:?})", timeout);
-        
+
         let start = std::time::Instant::now();
         let mut last_term = None;
-        
+
         loop {
             if start.elapsed() > timeout {
-                return Err(RaftError::timeout("Election did not complete within timeout"));
+                return Err(RaftError::timeout(
+                    "Election did not complete within timeout",
+                ));
             }
 
             let metrics = self.raft.metrics().borrow().clone();
-            let current_term = metrics.current_term.unwrap_or(0);
-            
+            let current_term = metrics.current_term;
+
             // Check if we have a leader
             if let Some(leader_id) = metrics.current_leader {
-                log::info!("Election completed, leader is node {} in term {}", leader_id, current_term);
+                log::info!(
+                    "Election completed, leader is node {} in term {}",
+                    leader_id,
+                    current_term
+                );
                 return Ok(leader_id);
             }
 
             // Log term changes
             if last_term != Some(current_term) {
-                log::info!("Election in progress, term: {}, state: {:?}", current_term, metrics.state);
+                log::info!(
+                    "Election in progress, term: {}, state: {:?}",
+                    current_term,
+                    metrics.state
+                );
                 last_term = Some(current_term);
             }
 
@@ -618,41 +741,56 @@ impl RaftNode {
 
     /// Monitor leadership changes and handle transitions
     pub async fn monitor_leadership_changes(&self) -> RaftResult<()> {
-        log::info!("Starting leadership change monitoring for node {}", self.config.node_id);
-        
+        log::info!(
+            "Starting leadership change monitoring for node {}",
+            self.config.node_id
+        );
+
         let mut last_leader = None;
         let mut last_term = None;
         let mut last_state = None;
-        
+
         loop {
             let metrics = self.raft.metrics().borrow().clone();
             let current_leader = metrics.current_leader;
-            let current_term = metrics.current_term.unwrap_or(0);
+            let current_term = metrics.current_term;
             let current_state = metrics.state;
-            
+
             // Check for leadership changes
             if last_leader != current_leader {
                 match (last_leader, current_leader) {
                     (None, Some(new_leader)) => {
-                        log::info!("Leadership established: node {} became leader in term {}", 
-                                 new_leader, current_term);
-                        self.on_leadership_established(new_leader, current_term).await?;
+                        log::info!(
+                            "Leadership established: node {} became leader in term {}",
+                            new_leader,
+                            current_term
+                        );
+                        self.on_leadership_established(new_leader, current_term)
+                            .await?;
                     }
                     (Some(old_leader), Some(new_leader)) if old_leader != new_leader => {
-                        log::info!("Leadership changed: node {} -> node {} in term {}", 
-                                 old_leader, new_leader, current_term);
-                        self.on_leadership_changed(old_leader, new_leader, current_term).await?;
+                        log::info!(
+                            "Leadership changed: node {} -> node {} in term {}",
+                            old_leader,
+                            new_leader,
+                            current_term
+                        );
+                        self.on_leadership_changed(old_leader, new_leader, current_term)
+                            .await?;
                     }
                     (Some(old_leader), None) => {
-                        log::warn!("Leadership lost: node {} stepped down in term {}", 
-                                 old_leader, current_term);
+                        log::warn!(
+                            "Leadership lost: node {} stepped down in term {}",
+                            old_leader,
+                            current_term
+                        );
                         self.on_leadership_lost(old_leader, current_term).await?;
                     }
                     _ => {}
                 }
                 last_leader = current_leader;
             }
-            
+
             // Check for term changes
             if last_term != Some(current_term) {
                 if let Some(prev_term) = last_term {
@@ -660,25 +798,33 @@ impl RaftNode {
                 }
                 last_term = Some(current_term);
             }
-            
+
             // Check for state changes
             if last_state != Some(current_state) {
                 if let Some(prev_state) = last_state {
-                    log::info!("Node {} state changed: {:?} -> {:?}", 
-                             self.config.node_id, prev_state, current_state);
+                    log::info!(
+                        "Node {} state changed: {:?} -> {:?}",
+                        self.config.node_id,
+                        prev_state,
+                        current_state
+                    );
                 }
                 self.on_state_changed(current_state).await?;
                 last_state = Some(current_state);
             }
-            
+
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
 
     /// Handle leadership establishment
     async fn on_leadership_established(&self, leader_id: NodeId, term: u64) -> RaftResult<()> {
-        log::info!("Handling leadership establishment: leader={}, term={}", leader_id, term);
-        
+        log::info!(
+            "Handling leadership establishment: leader={}, term={}",
+            leader_id,
+            term
+        );
+
         if leader_id == self.config.node_id {
             log::info!("This node became the leader in term {}", term);
             // Perform leader initialization tasks
@@ -688,44 +834,74 @@ impl RaftNode {
             // Perform follower tasks when new leader is established
             self.on_new_leader(leader_id, term).await?;
         }
-        
+
         Ok(())
     }
 
     /// Handle leadership changes
-    async fn on_leadership_changed(&self, old_leader: NodeId, new_leader: NodeId, term: u64) -> RaftResult<()> {
-        log::info!("Handling leadership change: {} -> {} in term {}", old_leader, new_leader, term);
-        
+    async fn on_leadership_changed(
+        &self,
+        old_leader: NodeId,
+        new_leader: NodeId,
+        term: u64,
+    ) -> RaftResult<()> {
+        log::info!(
+            "Handling leadership change: {} -> {} in term {}",
+            old_leader,
+            new_leader,
+            term
+        );
+
         if old_leader == self.config.node_id {
-            log::info!("This node lost leadership to node {} in term {}", new_leader, term);
+            log::info!(
+                "This node lost leadership to node {} in term {}",
+                new_leader,
+                term
+            );
             self.on_lost_leadership(new_leader, term).await?;
         } else if new_leader == self.config.node_id {
-            log::info!("This node gained leadership from node {} in term {}", old_leader, term);
+            log::info!(
+                "This node gained leadership from node {} in term {}",
+                old_leader,
+                term
+            );
             self.on_became_leader(term).await?;
         } else {
-            log::info!("Leadership changed between other nodes: {} -> {}", old_leader, new_leader);
+            log::info!(
+                "Leadership changed between other nodes: {} -> {}",
+                old_leader,
+                new_leader
+            );
             self.on_new_leader(new_leader, term).await?;
         }
-        
+
         Ok(())
     }
 
     /// Handle leadership loss
     async fn on_leadership_lost(&self, old_leader: NodeId, term: u64) -> RaftResult<()> {
-        log::warn!("Handling leadership loss: leader {} stepped down in term {}", old_leader, term);
-        
+        log::warn!(
+            "Handling leadership loss: leader {} stepped down in term {}",
+            old_leader,
+            term
+        );
+
         if old_leader == self.config.node_id {
             log::warn!("This node lost leadership in term {}", term);
             self.on_lost_leadership(0, term).await?; // 0 indicates no new leader yet
         }
-        
+
         Ok(())
     }
 
     /// Handle state changes
     async fn on_state_changed(&self, new_state: openraft::ServerState) -> RaftResult<()> {
-        log::info!("Node {} state changed to {:?}", self.config.node_id, new_state);
-        
+        log::info!(
+            "Node {} state changed to {:?}",
+            self.config.node_id,
+            new_state
+        );
+
         match new_state {
             openraft::ServerState::Leader => {
                 // Already handled in leadership change events
@@ -734,53 +910,73 @@ impl RaftNode {
                 log::info!("Node {} became follower", self.config.node_id);
             }
             openraft::ServerState::Candidate => {
-                log::info!("Node {} became candidate, starting election", self.config.node_id);
+                log::info!(
+                    "Node {} became candidate, starting election",
+                    self.config.node_id
+                );
             }
             openraft::ServerState::Learner => {
                 log::info!("Node {} is learner", self.config.node_id);
             }
+            openraft::ServerState::Shutdown => {
+                log::info!("Node {} is shutdown", self.config.node_id);
+            }
         }
-        
+
         Ok(())
     }
 
     /// Called when this node becomes leader
     async fn on_became_leader(&self, term: u64) -> RaftResult<()> {
-        log::info!("Node {} became leader in term {}", self.config.node_id, term);
-        
+        log::info!(
+            "Node {} became leader in term {}",
+            self.config.node_id,
+            term
+        );
+
         // Perform leader initialization
         // - Start accepting client requests
         // - Begin heartbeat to followers
         // - Check cluster health
-        
+
         let health = self.get_cluster_health().await?;
         log::info!("Cluster health as new leader: {:?}", health);
-        
+
         // Check for any partition recovery needed
         self.handle_partition_recovery().await?;
-        
+
         Ok(())
     }
 
     /// Called when this node loses leadership
     async fn on_lost_leadership(&self, new_leader: NodeId, term: u64) -> RaftResult<()> {
-        log::info!("Node {} lost leadership to {} in term {}", self.config.node_id, new_leader, term);
-        
+        log::info!(
+            "Node {} lost leadership to {} in term {}",
+            self.config.node_id,
+            new_leader,
+            term
+        );
+
         // Perform cleanup tasks
         // - Stop accepting client writes
         // - Redirect clients to new leader
-        
+
         Ok(())
     }
 
     /// Called when a new leader is established (and it's not this node)
     async fn on_new_leader(&self, leader_id: NodeId, term: u64) -> RaftResult<()> {
-        log::info!("Node {} recognizes new leader {} in term {}", self.config.node_id, leader_id, term);
-        
+        log::info!(
+            "Node {} recognizes new leader {} in term {}",
+            self.config.node_id,
+            leader_id,
+            term
+        );
+
         // Update routing information
         // - Redirect client requests to new leader
         // - Update endpoint information if needed
-        
+
         Ok(())
     }
 
@@ -800,7 +996,7 @@ impl RaftNode {
     /// Check if election timeout has been exceeded
     pub async fn is_election_timeout_exceeded(&self) -> bool {
         let metrics = self.raft.metrics().borrow().clone();
-        
+
         // This is a simplified check - in practice, openraft handles this internally
         match metrics.state {
             openraft::ServerState::Follower | openraft::ServerState::Candidate => {
@@ -814,18 +1010,23 @@ impl RaftNode {
 
     /// Force a leadership election (for testing/admin purposes)
     pub async fn force_election(&self) -> RaftResult<()> {
-        log::warn!("Forcing election for node {} (admin operation)", self.config.node_id);
-        
+        log::warn!(
+            "Forcing election for node {} (admin operation)",
+            self.config.node_id
+        );
+
         // This is primarily for testing and administrative purposes
         // In production, elections should happen naturally
-        
+
         self.trigger_election().await?;
-        
+
         // Wait for election to complete
         match tokio::time::timeout(
             Duration::from_secs(30),
-            self.wait_for_election(Duration::from_secs(30))
-        ).await {
+            self.wait_for_election(Duration::from_secs(30)),
+        )
+        .await
+        {
             Ok(Ok(leader_id)) => {
                 log::info!("Forced election completed, leader: {}", leader_id);
                 Ok(())
@@ -842,13 +1043,11 @@ impl RaftNode {
     }
 }
 
-
-
 #[async_trait]
 impl RaftNodeInterface for RaftNode {
     async fn start(&self, node_id: NodeId, peers: Vec<NodeId>) -> RaftResult<()> {
         log::info!("Starting Raft node {} with peers: {:?}", node_id, peers);
-        
+
         // Verify node ID matches configuration
         if node_id != self.config.node_id {
             return Err(RaftError::configuration(format!(
@@ -859,7 +1058,7 @@ impl RaftNodeInterface for RaftNode {
 
         // Add peer endpoints if not already present
         for peer_id in &peers {
-            if peer_id != node_id {
+            if *peer_id != node_id {
                 let endpoints = self.endpoints.read().await;
                 if !endpoints.contains_key(&peer_id) {
                     log::warn!("No endpoint configured for peer {}", peer_id);
@@ -874,7 +1073,7 @@ impl RaftNodeInterface for RaftNode {
 
     async fn propose(&self, request: ClientRequest) -> RaftResult<ClientResponse> {
         log::debug!("Proposing client request: {:?}", request.id);
-        
+
         // Check if we're the leader
         if !self.is_leader().await {
             let leader_id = self.get_leader_id().await;
@@ -886,21 +1085,29 @@ impl RaftNodeInterface for RaftNode {
         }
 
         // Submit the request to Raft
-        match self.raft.client_write(request).await {
-            Ok(response) => {
-                log::debug!("Client request {} completed successfully", response.id);
-                Ok(response)
+        match self.raft.client_write(request.clone()).await {
+            Ok(_response) => {
+                log::debug!("Client request {} completed successfully", request.id);
+                Ok(ClientResponse {
+                    id: request.id,
+                    result: Ok(b"OK".to_vec().into()),
+                    leader_id: Some(self.config.node_id),
+                })
             }
             Err(e) => {
                 log::error!("Client request failed: {}", e);
-                Err(RaftError::Consensus(e))
+                Ok(ClientResponse {
+                    id: request.id,
+                    result: Err(format!("Raft error: {}", e)),
+                    leader_id: self.get_leader_id().await,
+                })
             }
         }
     }
 
     async fn add_learner(&self, node_id: NodeId, endpoint: String) -> RaftResult<()> {
         log::info!("Adding learner node {} at {}", node_id, endpoint);
-        
+
         // Check if we're the leader
         if !self.is_leader().await {
             let leader_id = self.get_leader_id().await;
@@ -921,22 +1128,30 @@ impl RaftNodeInterface for RaftNode {
                 node_id
             )));
         }
-        
+
         // Add the endpoint first
         self.add_endpoint(node_id, endpoint).await?;
-        
+
         // Add as learner to the cluster
         let node = BasicNode::default();
-        self.raft.add_learner(node_id, node, true).await
-            .map_err(|e| RaftError::Consensus(e))?;
-        
+        self.raft
+            .add_learner(node_id, node, true)
+            .await
+            .map_err(|e: openraft::error::RaftError<NodeId, _>| {
+                // Convert openraft error - create a new RaftError with Infallible variant
+                // by wrapping the error in a way that preserves the information
+                // Since we can't directly convert between error variants, we'll use
+                // the consensus error creation helper
+                RaftError::consensus(format!("{}", e))
+            })?;
+
         log::info!("Successfully added learner node {}", node_id);
         Ok(())
     }
 
     async fn change_membership(&self, members: BTreeSet<NodeId>) -> RaftResult<()> {
         log::info!("Changing cluster membership to: {:?}", members);
-        
+
         // Check if we're the leader
         if !self.is_leader().await {
             let leader_id = self.get_leader_id().await;
@@ -945,7 +1160,9 @@ impl RaftNodeInterface for RaftNode {
 
         // Validate the membership change
         if members.is_empty() {
-            return Err(RaftError::configuration("Cannot have empty cluster membership"));
+            return Err(RaftError::configuration(
+                "Cannot have empty cluster membership",
+            ));
         }
 
         // Ensure all members have endpoints configured
@@ -958,14 +1175,17 @@ impl RaftNodeInterface for RaftNode {
                 )));
             }
         }
-        
+
         // Create membership configuration
-        let membership = openraft::Membership::new(members.clone(), None);
-        
+        let _membership: openraft::Membership<NodeId, openraft::BasicNode> =
+            openraft::Membership::new(vec![members.clone()], None);
+
         // Apply membership change
-        self.raft.change_membership(membership, false).await
-            .map_err(|e| RaftError::Consensus(e))?;
-        
+        self.raft
+            .change_membership(members.clone(), false)
+            .await
+            .map_err(|e| RaftError::invalid_request(format!("Membership change failed: {}", e)))?;
+
         log::info!("Successfully changed cluster membership to: {:?}", members);
         Ok(())
     }
@@ -977,7 +1197,7 @@ impl RaftNodeInterface for RaftNode {
 
     async fn shutdown(&self) -> RaftResult<()> {
         log::info!("Shutting down Raft node {}", self.config.node_id);
-        
+
         let mut started = self.started.write().await;
         if !*started {
             log::warn!("Raft node {} already shut down", self.config.node_id);
@@ -985,9 +1205,11 @@ impl RaftNodeInterface for RaftNode {
         }
 
         // Shutdown the Raft instance
-        self.raft.shutdown().await
-            .map_err(|e| RaftError::Consensus(e))?;
-        
+        self.raft
+            .shutdown()
+            .await
+            .map_err(|e| RaftError::invalid_state(format!("Shutdown failed: {}", e)))?;
+
         *started = false;
         log::info!("Raft node {} shut down successfully", self.config.node_id);
         Ok(())

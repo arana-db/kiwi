@@ -219,12 +219,10 @@ impl RespParse {
         let (input, _) = char('#')(input)?;
         let mut map_parser = map_res(
             terminated(recognize(char('t').or(char('f'))), line_ending),
-            |s: &[u8]| {
-                match s {
-                    b"t" => Ok(true),
-                    b"f" => Ok(false),
-                    _ => Err(()),
-                }
+            |s: &[u8]| match s {
+                b"t" => Ok(true),
+                b"f" => Ok(false),
+                _ => Err(()),
             },
         );
         let (input, value) = map_parser.parse(input)?;
@@ -279,14 +277,11 @@ impl RespParse {
 
     fn parse_verbatim_string(input: &[u8]) -> IResult<&[u8], RespData> {
         let (input, _) = char('=')(input)?;
-        let mut map_parser = map_res(
-            terminated(recognize(digit1), line_ending),
-            |s: &[u8]| {
-                str::from_utf8(s)
-                    .map_err(|_| ())
-                    .and_then(|s| s.parse::<i64>().map_err(|_| ()))
-            },
-        );
+        let mut map_parser = map_res(terminated(recognize(digit1), line_ending), |s: &[u8]| {
+            str::from_utf8(s)
+                .map_err(|_| ())
+                .and_then(|s| s.parse::<i64>().map_err(|_| ()))
+        });
         let (input, len) = map_parser.parse(input)?;
 
         if len < 4 {
@@ -298,7 +293,7 @@ impl RespParse {
 
         let mut ter_parser = terminated(take(len as usize), line_ending);
         let (input, data) = ter_parser.parse(input)?;
-        
+
         if data.len() < 4 {
             return Err(nom::Err::Error(nom::error::Error::new(
                 input,
@@ -316,8 +311,14 @@ impl RespParse {
 
         let format = Bytes::copy_from_slice(&data[0..3]);
         let content = Bytes::copy_from_slice(&data[4..]);
-        
-        Ok((input, RespData::VerbatimString { format, data: content }))
+
+        Ok((
+            input,
+            RespData::VerbatimString {
+                format,
+                data: content,
+            },
+        ))
     }
 
     fn parse_map(input: &[u8]) -> IResult<&[u8], RespData> {
@@ -697,8 +698,8 @@ mod tests {
     #[test]
     fn test_parse_resp3_double() {
         let mut parser = RespParse::new(RespVersion::RESP3);
-        let res = parser.parse(Bytes::from(",3.14159\r\n"));
-        assert_eq!(res, RespParseResult::Complete(RespData::Double(3.14159)));
+        let res = parser.parse(Bytes::from(format!(",{}\r\n", std::f64::consts::PI)));
+        assert_eq!(res, RespParseResult::Complete(RespData::Double(std::f64::consts::PI)));
     }
 
     #[test]
@@ -721,7 +722,9 @@ mod tests {
         let res = parser.parse(Bytes::from("(123456789012345678901234567890\r\n"));
         assert_eq!(
             res,
-            RespParseResult::Complete(RespData::BigNumber(Bytes::from("123456789012345678901234567890")))
+            RespParseResult::Complete(RespData::BigNumber(Bytes::from(
+                "123456789012345678901234567890"
+            )))
         );
     }
 
@@ -755,8 +758,14 @@ mod tests {
         assert_eq!(
             res,
             RespParseResult::Complete(RespData::Map(vec![
-                (RespData::SimpleString(Bytes::from("first")), RespData::Integer(1)),
-                (RespData::SimpleString(Bytes::from("second")), RespData::Integer(2)),
+                (
+                    RespData::SimpleString(Bytes::from("first")),
+                    RespData::Integer(1)
+                ),
+                (
+                    RespData::SimpleString(Bytes::from("second")),
+                    RespData::Integer(2)
+                ),
             ]))
         );
     }
@@ -792,7 +801,7 @@ mod tests {
     fn test_auto_detect_resp3() {
         let mut parser = RespParse::new(RespVersion::RESP2);
         assert_eq!(parser.version(), RespVersion::RESP2);
-        
+
         // Parse RESP3 data should auto-detect and switch
         let res = parser.parse(Bytes::from("_\r\n"));
         assert_eq!(res, RespParseResult::Complete(RespData::Null));

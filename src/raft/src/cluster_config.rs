@@ -18,11 +18,11 @@
 //! Cluster configuration system for Raft consensus
 
 use crate::error::{RaftError, RaftResult};
-use crate::types::{NodeId, ClusterConfig};
+use crate::types::{ClusterConfig, NodeId};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
@@ -92,10 +92,10 @@ impl FromStr for NodeEndpoint {
         let (host, port_str) = rest.rsplit_once(':').ok_or_else(|| {
             RaftError::configuration(format!("Invalid host:port format '{}'", rest))
         })?;
-        
-        let port = port_str.parse::<u16>().map_err(|e| {
-            RaftError::configuration(format!("Invalid port '{}': {}", port_str, e))
-        })?;
+
+        let port = port_str
+            .parse::<u16>()
+            .map_err(|e| RaftError::configuration(format!("Invalid port '{}': {}", port_str, e)))?;
 
         Ok(NodeEndpoint::new(node_id, host.to_string(), port))
     }
@@ -197,7 +197,10 @@ impl ClusterConfigManager {
     /// Load configuration from file
     pub fn load(&mut self) -> RaftResult<()> {
         if !self.config_path.exists() {
-            log::info!("Configuration file {:?} does not exist, using defaults", self.config_path);
+            log::info!(
+                "Configuration file {:?} does not exist, using defaults",
+                self.config_path
+            );
             return Ok(());
         }
 
@@ -232,9 +235,8 @@ impl ClusterConfigManager {
             })?;
         }
 
-        let content = serde_json::to_string_pretty(&self.config).map_err(|e| {
-            RaftError::configuration(format!("Failed to serialize config: {}", e))
-        })?;
+        let content = serde_json::to_string_pretty(&self.config)
+            .map_err(|e| RaftError::configuration(format!("Failed to serialize config: {}", e)))?;
 
         fs::write(&self.config_path, content).map_err(|e| {
             RaftError::configuration(format!(
@@ -273,15 +275,19 @@ impl ClusterConfigManager {
         }
 
         // Validate Raft configuration
-        if self.config.raft_config.election_timeout_min >= self.config.raft_config.election_timeout_max {
+        if self.config.raft_config.election_timeout_min
+            >= self.config.raft_config.election_timeout_max
+        {
             return Err(RaftError::configuration(
-                "Election timeout min must be less than max"
+                "Election timeout min must be less than max",
             ));
         }
 
-        if self.config.raft_config.heartbeat_interval >= self.config.raft_config.election_timeout_min {
+        if self.config.raft_config.heartbeat_interval
+            >= self.config.raft_config.election_timeout_min
+        {
             return Err(RaftError::configuration(
-                "Heartbeat interval must be less than election timeout min"
+                "Heartbeat interval must be less than election timeout min",
             ));
         }
 
@@ -326,7 +332,7 @@ impl ClusterConfigManager {
     pub fn add_endpoint(&mut self, endpoint: NodeEndpoint) -> RaftResult<()> {
         // Validate the endpoint
         endpoint.socket_addr()?;
-        
+
         self.config.endpoints.insert(endpoint.node_id, endpoint);
         Ok(())
     }
@@ -376,13 +382,13 @@ impl ClusterConfigManager {
     pub fn set_raft_config(&mut self, raft_config: RaftConfiguration) -> RaftResult<()> {
         if raft_config.election_timeout_min >= raft_config.election_timeout_max {
             return Err(RaftError::configuration(
-                "Election timeout min must be less than max"
+                "Election timeout min must be less than max",
             ));
         }
 
         if raft_config.heartbeat_interval >= raft_config.election_timeout_min {
             return Err(RaftError::configuration(
-                "Heartbeat interval must be less than election timeout min"
+                "Heartbeat interval must be less than election timeout min",
             ));
         }
 
@@ -392,7 +398,9 @@ impl ClusterConfigManager {
 
     /// Convert to legacy ClusterConfig format for compatibility
     pub fn to_legacy_config(&self) -> ClusterConfig {
-        let cluster_members: BTreeSet<String> = self.config.endpoints
+        let cluster_members: BTreeSet<String> = self
+            .config
+            .endpoints
             .values()
             .map(|endpoint| endpoint.to_string())
             .collect();
@@ -403,8 +411,10 @@ impl ClusterConfigManager {
             cluster_members,
             data_dir: self.config.data_dir.to_string_lossy().to_string(),
             heartbeat_interval_ms: self.config.raft_config.heartbeat_interval.as_millis() as u64,
-            election_timeout_min_ms: self.config.raft_config.election_timeout_min.as_millis() as u64,
-            election_timeout_max_ms: self.config.raft_config.election_timeout_max.as_millis() as u64,
+            election_timeout_min_ms: self.config.raft_config.election_timeout_min.as_millis()
+                as u64,
+            election_timeout_max_ms: self.config.raft_config.election_timeout_max.as_millis()
+                as u64,
             snapshot_threshold: self.config.raft_config.snapshot_threshold,
             max_payload_entries: self.config.raft_config.max_payload_entries,
         }
@@ -434,7 +444,7 @@ impl ClusterConfigManager {
             config.endpoints.insert(endpoint.node_id, endpoint);
         }
 
-        let mut manager = Self {
+        let manager = Self {
             config,
             config_path: PathBuf::from("cluster.json"),
         };
@@ -444,7 +454,11 @@ impl ClusterConfigManager {
     }
 
     /// Initialize cluster configuration for bootstrap
-    pub fn init_bootstrap(&mut self, node_id: NodeId, initial_members: Vec<NodeEndpoint>) -> RaftResult<()> {
+    pub fn init_bootstrap(
+        &mut self,
+        node_id: NodeId,
+        initial_members: Vec<NodeEndpoint>,
+    ) -> RaftResult<()> {
         self.set_node_id(node_id)?;
         self.set_enabled(true);
 
@@ -469,14 +483,21 @@ impl ClusterConfigManager {
 
     /// Check if this node should bootstrap the cluster
     pub fn should_bootstrap(&self) -> bool {
-        self.config.enabled && 
-        self.config.bootstrap.initial_members.len() >= self.config.bootstrap.bootstrap_expect &&
-        self.config.bootstrap.initial_members.iter().any(|ep| ep.node_id == self.config.node_id)
+        self.config.enabled
+            && self.config.bootstrap.initial_members.len() >= self.config.bootstrap.bootstrap_expect
+            && self
+                .config
+                .bootstrap
+                .initial_members
+                .iter()
+                .any(|ep| ep.node_id == self.config.node_id)
     }
 
     /// Get bootstrap peers (excluding self)
     pub fn get_bootstrap_peers(&self) -> Vec<NodeEndpoint> {
-        self.config.bootstrap.initial_members
+        self.config
+            .bootstrap
+            .initial_members
             .iter()
             .filter(|ep| ep.node_id != self.config.node_id)
             .cloned()
@@ -493,7 +514,7 @@ mod tests {
     fn test_node_endpoint_parsing() {
         let endpoint_str = "1:127.0.0.1:8080";
         let endpoint = NodeEndpoint::from_str(endpoint_str).unwrap();
-        
+
         assert_eq!(endpoint.node_id, 1);
         assert_eq!(endpoint.host, "127.0.0.1");
         assert_eq!(endpoint.port, 8080);
@@ -509,7 +530,7 @@ mod tests {
     #[test]
     fn test_cluster_config_validation() {
         let mut manager = ClusterConfigManager::new(PathBuf::from("test.json"));
-        
+
         // Valid configuration should pass
         manager.config.node_id = 1;
         manager.config.enabled = true;
@@ -524,21 +545,21 @@ mod tests {
     fn test_config_save_load() {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("cluster.json");
-        
+
         let mut manager = ClusterConfigManager::new(config_path.clone());
         manager.config.node_id = 42;
         manager.config.enabled = true;
-        
+
         let endpoint = NodeEndpoint::new(1, "127.0.0.1".to_string(), 8080);
         manager.add_endpoint(endpoint.clone()).unwrap();
-        
+
         // Save configuration
         manager.save().unwrap();
-        
+
         // Load configuration
         let mut manager2 = ClusterConfigManager::new(config_path);
         manager2.load().unwrap();
-        
+
         assert_eq!(manager2.config.node_id, 42);
         assert_eq!(manager2.config.enabled, true);
         assert_eq!(manager2.get_endpoint(1), Some(&endpoint));
@@ -549,7 +570,12 @@ mod tests {
         let legacy = ClusterConfig {
             enabled: true,
             node_id: 1,
-            cluster_members: vec!["1:127.0.0.1:8080".to_string(), "2:127.0.0.1:8081".to_string()].into_iter().collect(),
+            cluster_members: vec![
+                "1:127.0.0.1:8080".to_string(),
+                "2:127.0.0.1:8081".to_string(),
+            ]
+            .into_iter()
+            .collect(),
             data_dir: "/tmp/raft".to_string(),
             heartbeat_interval_ms: 1000,
             election_timeout_min_ms: 3000,
@@ -571,7 +597,7 @@ mod tests {
     #[test]
     fn test_bootstrap_configuration() {
         let mut manager = ClusterConfigManager::new(PathBuf::from("test.json"));
-        
+
         let endpoints = vec![
             NodeEndpoint::new(1, "127.0.0.1".to_string(), 8080),
             NodeEndpoint::new(2, "127.0.0.1".to_string(), 8081),
@@ -579,13 +605,13 @@ mod tests {
         ];
 
         manager.init_bootstrap(1, endpoints.clone()).unwrap();
-        
+
         assert_eq!(manager.config.node_id, 1);
         assert!(manager.config.enabled);
         assert_eq!(manager.config.endpoints.len(), 3);
         assert_eq!(manager.config.bootstrap.initial_members.len(), 3);
         assert!(manager.should_bootstrap());
-        
+
         let peers = manager.get_bootstrap_peers();
         assert_eq!(peers.len(), 2);
         assert!(!peers.iter().any(|ep| ep.node_id == 1));

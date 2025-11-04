@@ -22,7 +22,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
-use crate::{impl_cmd_clone_box, impl_cmd_meta, AclCategory, Cmd, CmdFlags, CmdMeta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HIncrByFloatCmd {
@@ -56,7 +56,7 @@ impl Cmd for HIncrByFloatCmd {
         let key = &argv[1];
         let field = &argv[2];
         let increment_str = String::from_utf8_lossy(&argv[3]);
-        
+
         let increment: f64 = match increment_str.parse() {
             Ok(n) => n,
             Err(_) => {
@@ -64,10 +64,12 @@ impl Cmd for HIncrByFloatCmd {
                 return;
             }
         };
-        
+
         match storage.hincrbyfloat(key, field, increment) {
             Ok(new_value) => {
-                client.set_reply(RespData::BulkString(Some(Bytes::from(new_value.to_string()))));
+                client.set_reply(RespData::BulkString(Some(Bytes::from(
+                    new_value.to_string(),
+                ))));
             }
             Err(e) => {
                 client.set_reply(RespData::Error(format!("ERR {}", e).into()));
@@ -75,4 +77,3 @@ impl Cmd for HIncrByFloatCmd {
         }
     }
 }
-

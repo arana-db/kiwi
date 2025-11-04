@@ -77,9 +77,7 @@ impl Cmd for PexpireCmd {
         };
 
         if milliseconds < 0 {
-            client.set_reply(RespData::Error(
-                "ERR invalid expire time in pexpire".into(),
-            ));
+            client.set_reply(RespData::Error("ERR invalid expire time in pexpire".into()));
             return;
         }
 
