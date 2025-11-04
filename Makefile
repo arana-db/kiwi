@@ -27,6 +27,10 @@ build:
 	@echo "Building project..."
 	@cargo build
 
+release:
+	@echo "Building project optimized...."
+	@cargo build --release
+
 run:
 	@echo "Running project..."
 	@cargo run --bin server
@@ -50,6 +54,7 @@ lint:
 help:
 	@echo "Available commands:"
 	@echo "  build         - Build the project"
+	@echo "  release       - Build the project with optimization"
 	@echo "  run           - Run the project"
 	@echo "  test          - Run tests"
 	@echo "  clean         - Clean the project"
@@ -57,4 +62,4 @@ help:
 	@echo "  lint          - Lint the code"
 	@echo "  help          - Show this help message"
 
-.PHONY: build run test clean fmt lint help
+.PHONY: build release run test clean fmt lint help
