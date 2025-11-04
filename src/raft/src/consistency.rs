@@ -27,7 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::error::{/* RaftError, */ RaftResult};
+use crate::error::{RaftError, RaftResult};
 use crate::types::{LogIndex, NodeId};
 // use engine::{RocksdbEngine, Engine};
 
@@ -78,6 +78,8 @@ impl Default for ConsistencyMetadata {
 pub struct ConsistencyChecker {
     /// Database engine for state verification
     // engine: Arc<RocksdbEngine>,
+    #[allow(dead_code)]
+    engine: Option<()>, // Placeholder until engine integration is complete
     /// Consistency metadata
     metadata: Arc<RwLock<ConsistencyMetadata>>,
     /// Node ID for logging purposes
@@ -88,7 +90,7 @@ impl ConsistencyChecker {
     /// Create a new consistency checker
     pub fn new(/* engine: Arc<RocksdbEngine>, */ node_id: NodeId) -> Self {
         Self {
-            // engine,
+            engine: None, // Placeholder until engine integration is complete
             metadata: Arc::new(RwLock::new(ConsistencyMetadata::default())),
             node_id,
         }
@@ -145,7 +147,9 @@ impl ConsistencyChecker {
     /// Perform deep consistency check by verifying data integrity
     pub async fn deep_consistency_check(&self) -> RaftResult<ConsistencyStatus> {
         // Temporarily disabled due to engine dependency issue
-        Ok(ConsistencyStatus::Consistent)
+        Err(RaftError::state_machine(
+            "Deep consistency check unavailable without storage engine integration".to_string(),
+        ))
         /*
         // Check for data corruption by iterating through all keys
         let iter = self.engine.iterator(IteratorMode::Start);
@@ -279,8 +283,8 @@ impl ConsistencyChecker {
 
     /// Get the current applied index from the state machine
     async fn get_applied_index(&self) -> RaftResult<LogIndex> {
-        // Temporarily return 0 due to engine dependency issue
-        Ok(0)
+        // Temporarily disabled due to engine dependency issue
+        Err(RaftError::state_machine("Applied index unavailable without engine"))
         /*
         // In a real implementation, this would read from a special metadata key
         // For now, we'll use a simple approach
@@ -305,8 +309,8 @@ impl ConsistencyChecker {
 
     /// Set the applied index in the state machine
     async fn set_applied_index(&self, _index: LogIndex) -> RaftResult<()> {
-        // Temporarily do nothing due to engine dependency issue
-        Ok(())
+        // Temporarily disabled due to engine dependency issue
+        Err(RaftError::state_machine("Applied index updates unavailable without engine"))
         /*
         const APPLIED_INDEX_KEY: &[u8] = b"__raft_applied_index__";
 
@@ -383,14 +387,15 @@ impl ConsistencyMonitor {
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
-    use engine::RocksdbEngine;
-    use rocksdb::{DB, Options};
-    use tempfile::TempDir;
+    // use engine::RocksdbEngine;
+    // use rocksdb::{DB, Options};
+    // use tempfile::TempDir;
 
+    // Temporarily disabled until engine integration is complete
+    /*
     fn create_test_engine() -> (TempDir, Arc<RocksdbEngine>) {
         let temp_dir = TempDir::new().unwrap();
         let mut opts = Options::default();
@@ -399,75 +404,31 @@ mod tests {
         let engine = Arc::new(RocksdbEngine::new(db));
         (temp_dir, engine)
     }
+    */
 
     #[tokio::test]
-    async fn test_consistency_check_consistent() {
-        let (_temp_dir, engine) = create_test_engine();
-        let checker = ConsistencyChecker::new(engine, 1);
+    async fn test_consistency_check_error_without_engine() {
+        let checker = ConsistencyChecker::new(1);
 
-        // Set applied index to 5
-        checker.set_applied_index(5).await.unwrap();
-
-        // Check consistency with expected index 5
-        let status = checker.verify_consistency(5).await.unwrap();
-        assert_eq!(status, ConsistencyStatus::Consistent);
+        // Should return error since engine is not available
+        let result = checker.verify_consistency(5).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Applied index unavailable"));
     }
 
     #[tokio::test]
-    async fn test_consistency_check_behind() {
-        let (_temp_dir, engine) = create_test_engine();
-        let checker = ConsistencyChecker::new(engine, 1);
+    async fn test_deep_consistency_check_error_without_engine() {
+        let checker = ConsistencyChecker::new(1);
 
-        // Set applied index to 3
-        checker.set_applied_index(3).await.unwrap();
-
-        // Check consistency with expected index 5
-        let status = checker.verify_consistency(5).await.unwrap();
-        assert_eq!(
-            status,
-            ConsistencyStatus::Behind {
-                expected_index: 5,
-                actual_index: 3,
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn test_consistency_check_ahead() {
-        let (_temp_dir, engine) = create_test_engine();
-        let checker = ConsistencyChecker::new(engine, 1);
-
-        // Set applied index to 7
-        checker.set_applied_index(7).await.unwrap();
-
-        // Check consistency with expected index 5
-        let status = checker.verify_consistency(5).await.unwrap();
-        assert_eq!(
-            status,
-            ConsistencyStatus::Ahead {
-                expected_index: 5,
-                actual_index: 7,
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn test_deep_consistency_check() {
-        let (_temp_dir, engine) = create_test_engine();
-        let checker = ConsistencyChecker::new(engine.clone(), 1);
-
-        // Add some test data
-        engine.put(b"key1", b"value1").unwrap();
-        engine.put(b"key2", b"value2").unwrap();
-
-        let status = checker.deep_consistency_check().await.unwrap();
-        assert_eq!(status, ConsistencyStatus::Consistent);
+        // Should return error since engine is not available
+        let result = checker.deep_consistency_check().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Deep consistency check unavailable"));
     }
 
     #[tokio::test]
     async fn test_recovery_strategy() {
-        let (_temp_dir, engine) = create_test_engine();
-        let checker = ConsistencyChecker::new(engine, 1);
+        let checker = ConsistencyChecker::new(1);
 
         let consistent = ConsistencyStatus::Consistent;
         let behind = ConsistencyStatus::Behind {
@@ -502,8 +463,111 @@ mod tests {
 
     #[tokio::test]
     async fn test_metadata_tracking() {
+        let checker = ConsistencyChecker::new(1);
+
+        // Initial metadata should be default
+        let metadata = checker.get_metadata().await;
+        assert_eq!(metadata.violation_count, 0);
+
+        // Reset violation count should work
+        checker.reset_violation_count().await;
+        let metadata = checker.get_metadata().await;
+        assert_eq!(metadata.violation_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_needs_recovery() {
+        let checker = ConsistencyChecker::new(1);
+
+        let consistent = ConsistencyStatus::Consistent;
+        let behind = ConsistencyStatus::Behind {
+            expected_index: 5,
+            actual_index: 3,
+        };
+        let ahead = ConsistencyStatus::Ahead {
+            expected_index: 3,
+            actual_index: 5,
+        };
+        let corrupted = ConsistencyStatus::Corrupted {
+            reason: "test".to_string(),
+        };
+
+        assert!(!checker.needs_recovery(&consistent));
+        assert!(checker.needs_recovery(&behind));
+        assert!(checker.needs_recovery(&ahead));
+        assert!(checker.needs_recovery(&corrupted));
+    }
+
+    // Tests that would work with engine integration (currently disabled)
+    /*
+    #[tokio::test]
+    async fn test_consistency_check_consistent() {
         let (_temp_dir, engine) = create_test_engine();
-        let checker = ConsistencyChecker::new(engine, 1);
+        let checker = ConsistencyChecker::new(1);
+
+        // Set applied index to 5
+        checker.set_applied_index(5).await.unwrap();
+
+        // Check consistency with expected index 5
+        let status = checker.verify_consistency(5).await.unwrap();
+        assert_eq!(status, ConsistencyStatus::Consistent);
+    }
+
+    #[tokio::test]
+    async fn test_consistency_check_behind() {
+        let (_temp_dir, engine) = create_test_engine();
+        let checker = ConsistencyChecker::new(1);
+
+        // Set applied index to 3
+        checker.set_applied_index(3).await.unwrap();
+
+        // Check consistency with expected index 5
+        let status = checker.verify_consistency(5).await.unwrap();
+        assert_eq!(
+            status,
+            ConsistencyStatus::Behind {
+                expected_index: 5,
+                actual_index: 3,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_consistency_check_ahead() {
+        let (_temp_dir, engine) = create_test_engine();
+        let checker = ConsistencyChecker::new(1);
+
+        // Set applied index to 7
+        checker.set_applied_index(7).await.unwrap();
+
+        // Check consistency with expected index 5
+        let status = checker.verify_consistency(5).await.unwrap();
+        assert_eq!(
+            status,
+            ConsistencyStatus::Ahead {
+                expected_index: 5,
+                actual_index: 7,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_deep_consistency_check() {
+        let (_temp_dir, engine) = create_test_engine();
+        let checker = ConsistencyChecker::new(1);
+
+        // Add some test data
+        engine.put(b"key1", b"value1").unwrap();
+        engine.put(b"key2", b"value2").unwrap();
+
+        let status = checker.deep_consistency_check().await.unwrap();
+        assert_eq!(status, ConsistencyStatus::Consistent);
+    }
+
+    #[tokio::test]
+    async fn test_metadata_tracking_with_violations() {
+        let (_temp_dir, engine) = create_test_engine();
+        let checker = ConsistencyChecker::new(1);
 
         // Initial metadata should be default
         let metadata = checker.get_metadata().await;
@@ -522,5 +586,5 @@ mod tests {
         let metadata = checker.get_metadata().await;
         assert_eq!(metadata.violation_count, 0);
     }
+    */
 }
-*/

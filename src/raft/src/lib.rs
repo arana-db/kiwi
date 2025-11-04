@@ -51,6 +51,7 @@ use openraft::Config;
 // pub mod adaptor; // TODO: Re-enable when adaptor is properly implemented
 pub mod binlog;
 pub mod cluster_config;
+#[cfg(test)]
 pub mod cluster_tests;
 pub mod config_change;
 pub mod consistency;

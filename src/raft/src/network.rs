@@ -364,29 +364,57 @@ impl MessageEnvelope {
     }
 
     /// Add authentication to the message
-    pub fn add_authentication(&mut self, _auth: &NodeAuth) -> RaftResult<()> {
-        // Create a temporary envelope without HMAC for authentication
-        let _temp_envelope = MessageEnvelope {
-            message_id: self.message_id,
-            from: self.from,
-            to: self.to,
-            message: RaftMessage::Heartbeat {
-                from: self.from,
-                term: 0,
-            }, // Placeholder
-            timestamp: self.timestamp,
-            hmac: None,
-        };
+    pub fn add_authentication(&mut self, auth: &NodeAuth) -> RaftResult<()> {
+        // Create serializable data without HMAC for authentication
+        let data_for_hmac = format!(
+            "{}:{}:{}:{}:{}",
+            self.message_id,
+            self.from,
+            self.to,
+            self.timestamp,
+            // Use a simplified message representation for HMAC
+            match &self.message {
+                RaftMessage::AppendEntries(_) => "AppendEntries",
+                RaftMessage::AppendEntriesResponse(_) => "AppendEntriesResponse",
+                RaftMessage::Vote(_) => "Vote",
+                RaftMessage::VoteResponse(_) => "VoteResponse",
+                RaftMessage::InstallSnapshot(_) => "InstallSnapshot",
+                RaftMessage::InstallSnapshotResponse(_) => "InstallSnapshotResponse",
+                RaftMessage::Heartbeat { from, term } => &format!("Heartbeat:{}:{}", from, term),
+                RaftMessage::HeartbeatResponse { from, success } => &format!("HeartbeatResponse:{}:{}", from, success),
+            }
+        );
 
-        // For now, skip HMAC generation due to serialization complexity
-        self.hmac = None;
+        self.hmac = Some(auth.generate_hmac(data_for_hmac.as_bytes())?);
         Ok(())
     }
 
     /// Verify message authentication
-    pub fn verify_authentication(&self, _auth: &NodeAuth) -> bool {
-        // For now, skip HMAC verification due to serialization complexity
-        true
+    pub fn verify_authentication(&self, auth: &NodeAuth) -> bool {
+        if let Some(ref expected_hmac) = self.hmac {
+            // Recreate the same data format used for HMAC generation
+            let data_for_hmac = format!(
+                "{}:{}:{}:{}:{}",
+                self.message_id,
+                self.from,
+                self.to,
+                self.timestamp,
+                match &self.message {
+                    RaftMessage::AppendEntries(_) => "AppendEntries",
+                    RaftMessage::AppendEntriesResponse(_) => "AppendEntriesResponse",
+                    RaftMessage::Vote(_) => "Vote",
+                    RaftMessage::VoteResponse(_) => "VoteResponse",
+                    RaftMessage::InstallSnapshot(_) => "InstallSnapshot",
+                    RaftMessage::InstallSnapshotResponse(_) => "InstallSnapshotResponse",
+                    RaftMessage::Heartbeat { from, term } => &format!("Heartbeat:{}:{}", from, term),
+                    RaftMessage::HeartbeatResponse { from, success } => &format!("HeartbeatResponse:{}:{}", from, success),
+                }
+            );
+
+            auth.verify_hmac(data_for_hmac.as_bytes(), expected_hmac)
+        } else {
+            false
+        }
     }
 
     /// Serialize the message envelope to bytes
@@ -805,21 +833,34 @@ impl ConnectionPool {
         let mut nodes_to_remove = Vec::new();
 
         for (node_id, node_connections) in connections_guard.iter_mut() {
-            // Remove unhealthy connections
-            node_connections.retain(|conn| {
-                tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current().block_on(conn.is_healthy())
-                })
+            // Collect health statuses asynchronously
+            let health_checks: Vec<_> = node_connections
+                .iter()
+                .map(|conn| conn.is_healthy())
+                .collect();
+            let health_results = futures::future::join_all(health_checks).await;
+            
+            // Remove unhealthy connections based on results
+            let mut i = 0;
+            node_connections.retain(|_| {
+                let keep = health_results[i];
+                i += 1;
+                keep
             });
 
             // Remove connections that have been idle too long
             let now = Instant::now();
-            node_connections.retain(|conn| {
-                let last_activity = tokio::task::block_in_place(|| {
-                    tokio::runtime::Handle::current()
-                        .block_on(async { *conn.last_activity.lock().await })
-                });
-                now.duration_since(last_activity) <= max_idle_time
+            let activity_checks: Vec<_> = node_connections
+                .iter()
+                .map(|conn| async { *conn.last_activity.lock().await })
+                .collect();
+            let activity_times = futures::future::join_all(activity_checks).await;
+            
+            let mut i = 0;
+            node_connections.retain(|_| {
+                let keep = now.duration_since(activity_times[i]) <= max_idle_time;
+                i += 1;
+                keep
             });
 
             if node_connections.is_empty() {

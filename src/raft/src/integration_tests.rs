@@ -21,6 +21,7 @@ use engine::RocksdbEngine;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(test)]
 use tempfile::TempDir;
 use tokio::time::{sleep, timeout};
 use crate::error::RaftResult;

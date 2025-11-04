@@ -21,6 +21,7 @@
 //! along with debugging tools for cluster state inspection.
 
 use crate::types::{LogIndex, NodeId, Term};
+use chrono;
 use log::{debug, error, info, trace, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -1594,6 +1595,7 @@ pub struct TimingGuard<'a> {
     operation: String,
     start_time: SystemTime,
     context: HashMap<String, String>,
+    completed: bool,
 }
 
 impl<'a> TimingGuard<'a> {
@@ -1603,6 +1605,7 @@ impl<'a> TimingGuard<'a> {
             operation,
             start_time: SystemTime::now(),
             context: HashMap::new(),
+            completed: false,
         }
     }
 
@@ -1612,26 +1615,33 @@ impl<'a> TimingGuard<'a> {
     }
 
     /// Complete the timing with success status
-    pub fn complete(self, success: bool) {
+    pub fn complete(mut self, success: bool) {
         let duration = self.start_time.elapsed().unwrap_or_default();
+        let context = std::mem::take(&mut self.context);
         self.logger.record_operation(
             &self.operation,
             duration.as_millis() as u64,
             success,
-            self.context.clone(),
+            context,
         );
+        self.completed = true;
     }
 }
 
 impl<'a> Drop for TimingGuard<'a> {
     fn drop(&mut self) {
+        if self.completed {
+            return;
+        }
         let duration = self.start_time.elapsed().unwrap_or_default();
+        let context = std::mem::take(&mut self.context);
         self.logger.record_operation(
             &self.operation,
             duration.as_millis() as u64,
             true, // Default to success if not explicitly completed
-            self.context.clone(),
+            context,
         );
+        self.completed = true;
     }
 }
 
