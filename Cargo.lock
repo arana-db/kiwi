@@ -851,6 +851,7 @@ dependencies = [
  "log",
  "num_cpus",
  "resp",
+ "runtime",
  "storage",
  "tokio",
  "tokio-util",
@@ -1991,6 +1992,7 @@ dependencies = [
  "log",
  "parking_lot",
  "resp",
+ "runtime",
  "snafu",
  "storage",
  "thiserror 1.0.69",
@@ -2783,11 +2785,14 @@ dependencies = [
 name = "runtime"
 version = "0.1.0"
 dependencies = [
+ "bytes",
+ "chrono",
  "log",
  "num_cpus",
  "resp",
  "serde",
  "serde_json",
+ "snafu",
  "storage",
  "thiserror 1.0.69",
  "tokio",
@@ -3033,6 +3038,8 @@ dependencies = [
  "env_logger",
  "log",
  "net",
+ "runtime",
+ "storage",
  "tokio",
 ]
 

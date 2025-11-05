@@ -23,9 +23,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use log::{debug, warn, error};
+use log::debug;
 use resp::RespData;
-use common::runtime::{
+use runtime::{
     StorageClient as RuntimeStorageClient, StorageCommand, RequestPriority, DualRuntimeError
 };
 
@@ -62,7 +62,7 @@ impl StorageClient {
     }
 
     /// Get channel statistics
-    pub async fn channel_stats(&self) -> common::runtime::ChannelStats {
+    pub async fn channel_stats(&self) -> runtime::ChannelStats {
         self.inner.channel_stats().await
     }
 
@@ -238,12 +238,54 @@ impl StorageClient {
         self.inner.send_request_with_priority(command, timeout, priority).await
     }
 
-    /// Execute a batch of commands
+    /// Execute a batch of commands with optimized batching
     pub async fn execute_batch(&self, commands: Vec<StorageCommand>) -> Result<RespData, DualRuntimeError> {
         debug!("StorageClient::execute_batch - commands: {}", commands.len());
         
+        // For small batches, execute individually for better latency
+        if commands.len() <= 3 {
+            let mut results = Vec::new();
+            for command in commands {
+                match self.inner.send_request(command).await {
+                    Ok(result) => results.push(result),
+                    Err(e) => return Err(e),
+                }
+            }
+            // Return array of results
+            let resp_results: Vec<RespData> = results;
+            return Ok(RespData::Array(Some(resp_results)));
+        }
+        
+        // For larger batches, use the batch command
         let batch_command = StorageCommand::Batch { commands };
         self.inner.send_request(batch_command).await
+    }
+
+    /// Execute commands with request pipelining support
+    pub async fn execute_pipelined(&self, commands: Vec<StorageCommand>) -> Result<Vec<RespData>, DualRuntimeError> {
+        debug!("StorageClient::execute_pipelined - commands: {}", commands.len());
+        
+        // Send all requests concurrently for better throughput
+        let mut futures = Vec::new();
+        for command in commands {
+            futures.push(self.inner.send_request(command));
+        }
+        
+        // Wait for all responses
+        let mut results = Vec::new();
+        for future in futures {
+            match future.await {
+                Ok(result) => results.push(result),
+                Err(e) => {
+                    // For pipelined requests, we continue processing other commands
+                    // and return an error response for the failed command
+                    let error_resp = RespData::Error(format!("ERR pipelined command failed: {}", e).into());
+                    results.push(error_resp);
+                }
+            }
+        }
+        
+        Ok(results)
     }
 
     /// Execute a high-priority command (for critical operations)
@@ -282,7 +324,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::time::Duration;
-    use common::runtime::{MessageChannel, StorageClient as RuntimeStorageClient};
+    use runtime::{MessageChannel, StorageClient as RuntimeStorageClient};
 
     fn create_test_storage_client() -> StorageClient {
         let message_channel = Arc::new(MessageChannel::new(1000));

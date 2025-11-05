@@ -24,6 +24,7 @@ use tokio::task::JoinHandle;
 use log::{info, error, debug};
 
 use crate::{RuntimeConfig, DualRuntimeError};
+use crate::error_logging::{ErrorLogger, RuntimeContext};
 
 /// Health status of a runtime
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +67,7 @@ pub struct RuntimeManager {
     shutdown_notify: Arc<Notify>,
     health_check_handle: Option<JoinHandle<()>>,
     _task_counter: Arc<AtomicU64>,
+    error_logger: Option<Arc<ErrorLogger>>,
 }
 
 impl RuntimeManager {
@@ -99,6 +101,7 @@ impl RuntimeManager {
             shutdown_notify: Arc::new(Notify::new()),
             health_check_handle: None,
             _task_counter: Arc::new(AtomicU64::new(0)),
+            error_logger: crate::error_logging::get_global_error_logger(),
         })
     }
     
@@ -136,6 +139,16 @@ impl RuntimeManager {
             }
             Err(e) => {
                 error!("Failed to create network runtime: {}", e);
+                
+                // Log the error
+                if let Some(ref logger) = self.error_logger {
+                    let logger = Arc::clone(logger);
+                    let error = e.clone();
+                    tokio::spawn(async move {
+                        logger.log_simple_error(error, RuntimeContext::Main).await;
+                    });
+                }
+                
                 *self.state.write().await = LifecycleState::Failed(format!("Network runtime creation failed: {}", e));
                 return Err(e);
             }
@@ -149,6 +162,16 @@ impl RuntimeManager {
             }
             Err(e) => {
                 error!("Failed to create storage runtime: {}", e);
+                
+                // Log the error
+                if let Some(ref logger) = self.error_logger {
+                    let logger = Arc::clone(logger);
+                    let error = e.clone();
+                    tokio::spawn(async move {
+                        logger.log_simple_error(error, RuntimeContext::Main).await;
+                    });
+                }
+                
                 *self.state.write().await = LifecycleState::Failed(format!("Storage runtime creation failed: {}", e));
                 return Err(e);
             }

@@ -21,12 +21,15 @@
 //! for passing storage requests between the network and storage runtimes.
 
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use snafu::Location;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use uuid::Uuid;
+
+use crate::error_logging::{ErrorLogger, RuntimeContext, CorrelationId};
 
 use resp::RespData;
 use storage::error::Error as StorageError;
@@ -426,7 +429,13 @@ impl MessageChannel {
 
     /// Get the current number of pending requests in the channel
     pub fn pending_requests(&self) -> usize {
-        self.request_sender.capacity() - self.request_sender.max_capacity()
+        let capacity = self.request_sender.capacity();
+        let max_capacity = self.request_sender.max_capacity();
+        if max_capacity > capacity {
+            max_capacity - capacity
+        } else {
+            0
+        }
     }
 
     /// Check if the channel is experiencing backpressure
@@ -490,6 +499,274 @@ impl MessageChannel {
     }
 }
 
+/// Request queue for managing requests during storage unavailability
+#[derive(Debug)]
+pub struct RequestQueue {
+    /// Queued requests waiting for storage to become available
+    queue: VecDeque<QueuedRequest>,
+    /// Maximum number of requests to queue
+    max_size: usize,
+    /// Total time requests can stay in queue
+    max_queue_time: Duration,
+}
+
+/// A request that has been queued due to storage unavailability
+#[derive(Debug)]
+pub struct QueuedRequest {
+    /// The storage request
+    pub request: StorageRequest,
+    /// When the request was queued
+    pub queued_at: Instant,
+    /// Number of retry attempts made
+    pub retry_attempts: usize,
+}
+
+/// Recovery manager for handling storage unavailability and degraded performance
+#[derive(Debug)]
+pub struct RecoveryManager {
+    /// Current recovery state
+    state: RecoveryState,
+    /// Last successful operation timestamp
+    last_success: Option<Instant>,
+    /// Number of consecutive failures
+    consecutive_failures: usize,
+    /// Recovery detection configuration
+    recovery_config: RecoveryConfig,
+}
+
+/// Recovery state of the storage system
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecoveryState {
+    /// Normal operation
+    Healthy,
+    /// Degraded performance but still functional
+    Degraded,
+    /// Storage unavailable, using fallback mechanisms
+    Unavailable,
+    /// Attempting to recover from failure
+    Recovering,
+}
+
+/// Configuration for recovery detection and management
+#[derive(Debug, Clone)]
+pub struct RecoveryConfig {
+    /// Number of failures before considering storage unavailable
+    failure_threshold: usize,
+    /// Time to wait before attempting recovery
+    recovery_delay: Duration,
+    /// Number of successful operations needed to consider recovery complete
+    success_threshold: usize,
+    /// Maximum time to wait for recovery
+    max_recovery_time: Duration,
+}
+
+impl Default for RecoveryConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: 5,
+            recovery_delay: Duration::from_secs(10),
+            success_threshold: 3,
+            max_recovery_time: Duration::from_secs(300), // 5 minutes
+        }
+    }
+}
+
+impl RequestQueue {
+    /// Create a new request queue
+    pub fn new(max_size: usize, max_queue_time: Duration) -> Self {
+        Self {
+            queue: VecDeque::new(),
+            max_size,
+            max_queue_time,
+        }
+    }
+
+    /// Add a request to the queue
+    pub fn enqueue(&mut self, request: StorageRequest, retry_attempts: usize) -> Result<(), crate::error::DualRuntimeError> {
+        // Remove expired requests first
+        self.remove_expired();
+
+        if self.queue.len() >= self.max_size {
+            return Err(crate::error::DualRuntimeError::Channel(
+                "Request queue is full".to_string()
+            ));
+        }
+
+        let queued_request = QueuedRequest {
+            request,
+            queued_at: Instant::now(),
+            retry_attempts,
+        };
+
+        self.queue.push_back(queued_request);
+        Ok(())
+    }
+
+    /// Remove and return the next request from the queue
+    pub fn dequeue(&mut self) -> Option<QueuedRequest> {
+        self.remove_expired();
+        self.queue.pop_front()
+    }
+
+    /// Get the current queue size
+    pub fn len(&self) -> usize {
+        self.queue.len()
+    }
+
+    /// Check if the queue is empty
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
+    }
+
+    /// Remove expired requests from the queue
+    fn remove_expired(&mut self) {
+        let now = Instant::now();
+        self.queue.retain(|req| now.duration_since(req.queued_at) < self.max_queue_time);
+    }
+
+    /// Get statistics about the queue
+    pub fn stats(&self) -> QueueStats {
+        let now = Instant::now();
+        let mut oldest_age = Duration::ZERO;
+        let mut total_age = Duration::ZERO;
+
+        for req in &self.queue {
+            let age = now.duration_since(req.queued_at);
+            total_age += age;
+            if age > oldest_age {
+                oldest_age = age;
+            }
+        }
+
+        let avg_age = if self.queue.is_empty() {
+            Duration::ZERO
+        } else {
+            total_age / self.queue.len() as u32
+        };
+
+        QueueStats {
+            current_size: self.queue.len(),
+            max_size: self.max_size,
+            oldest_request_age: oldest_age,
+            average_request_age: avg_age,
+        }
+    }
+}
+
+/// Statistics about the request queue
+#[derive(Debug, Clone)]
+pub struct QueueStats {
+    pub current_size: usize,
+    pub max_size: usize,
+    pub oldest_request_age: Duration,
+    pub average_request_age: Duration,
+}
+
+impl RecoveryManager {
+    /// Create a new recovery manager
+    pub fn new(config: RecoveryConfig) -> Self {
+        Self {
+            state: RecoveryState::Healthy,
+            last_success: None,
+            consecutive_failures: 0,
+            recovery_config: config,
+        }
+    }
+
+    /// Record a successful operation
+    pub fn record_success(&mut self) {
+        self.last_success = Some(Instant::now());
+        
+        match self.state {
+            RecoveryState::Recovering => {
+                // Check if we have enough successes to consider recovery complete
+                if self.consecutive_failures == 0 {
+                    self.state = RecoveryState::Healthy;
+                }
+            }
+            RecoveryState::Degraded | RecoveryState::Unavailable => {
+                // Start recovery process
+                self.state = RecoveryState::Recovering;
+                self.consecutive_failures = 0;
+            }
+            _ => {
+                self.consecutive_failures = 0;
+            }
+        }
+    }
+
+    /// Record a failed operation
+    pub fn record_failure(&mut self) {
+        self.consecutive_failures += 1;
+
+        match self.state {
+            RecoveryState::Healthy => {
+                if self.consecutive_failures >= self.recovery_config.failure_threshold / 2 {
+                    self.state = RecoveryState::Degraded;
+                }
+            }
+            RecoveryState::Degraded => {
+                if self.consecutive_failures >= self.recovery_config.failure_threshold {
+                    self.state = RecoveryState::Unavailable;
+                }
+            }
+            RecoveryState::Recovering => {
+                // Recovery failed, go back to unavailable
+                self.state = RecoveryState::Unavailable;
+            }
+            _ => {}
+        }
+    }
+
+    /// Check if recovery should be attempted
+    pub fn should_attempt_recovery(&self) -> bool {
+        match self.state {
+            RecoveryState::Unavailable => {
+                if let Some(last_success) = self.last_success {
+                    last_success.elapsed() >= self.recovery_config.recovery_delay
+                } else {
+                    true // No previous success, try recovery immediately
+                }
+            }
+            _ => false,
+        }
+    }
+
+    /// Get the current recovery state
+    pub fn state(&self) -> &RecoveryState {
+        &self.state
+    }
+
+    /// Check if the system is in a degraded state
+    pub fn is_degraded(&self) -> bool {
+        matches!(self.state, RecoveryState::Degraded | RecoveryState::Unavailable)
+    }
+
+    /// Check if storage is available for requests
+    pub fn is_available(&self) -> bool {
+        !matches!(self.state, RecoveryState::Unavailable)
+    }
+
+    /// Get recovery statistics
+    pub fn stats(&self) -> RecoveryStats {
+        RecoveryStats {
+            state: self.state.clone(),
+            consecutive_failures: self.consecutive_failures,
+            last_success: self.last_success,
+            time_since_last_success: self.last_success.map(|t| t.elapsed()),
+        }
+    }
+}
+
+/// Statistics about the recovery manager
+#[derive(Debug, Clone)]
+pub struct RecoveryStats {
+    pub state: RecoveryState,
+    pub consecutive_failures: usize,
+    pub last_success: Option<Instant>,
+    pub time_since_last_success: Option<Duration>,
+}
+
 /// Storage client for sending requests from network runtime to storage runtime
 pub struct StorageClient {
     /// Channel for sending storage requests
@@ -502,6 +779,12 @@ pub struct StorageClient {
     retry_config: RetryConfig,
     /// Circuit breaker for handling repeated failures
     circuit_breaker: Arc<Mutex<CircuitBreaker>>,
+    /// Request queue for managing requests during storage unavailability
+    request_queue: Arc<Mutex<RequestQueue>>,
+    /// Recovery manager for handling storage failures
+    recovery_manager: Arc<Mutex<RecoveryManager>>,
+    /// Error logger for comprehensive error tracking
+    error_logger: Option<Arc<ErrorLogger>>,
 }
 
 impl StorageClient {
@@ -522,6 +805,48 @@ impl StorageClient {
             default_timeout,
             retry_config,
             circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, Duration::from_secs(30)))),
+            request_queue: Arc::new(Mutex::new(RequestQueue::new(1000, Duration::from_secs(60)))),
+            recovery_manager: Arc::new(Mutex::new(RecoveryManager::new(RecoveryConfig::default()))),
+            error_logger: crate::error_logging::get_global_error_logger(),
+        }
+    }
+
+    /// Create a new storage client with full configuration
+    pub fn with_full_config(
+        message_channel: Arc<MessageChannel>,
+        default_timeout: Duration,
+        retry_config: RetryConfig,
+        recovery_config: RecoveryConfig,
+        queue_size: usize,
+        queue_timeout: Duration,
+    ) -> Self {
+        Self {
+            message_channel,
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            default_timeout,
+            retry_config,
+            circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, Duration::from_secs(30)))),
+            request_queue: Arc::new(Mutex::new(RequestQueue::new(queue_size, queue_timeout))),
+            recovery_manager: Arc::new(Mutex::new(RecoveryManager::new(recovery_config))),
+            error_logger: crate::error_logging::get_global_error_logger(),
+        }
+    }
+
+    /// Create a new storage client with error logger
+    pub fn with_error_logger(
+        message_channel: Arc<MessageChannel>,
+        default_timeout: Duration,
+        error_logger: Arc<ErrorLogger>,
+    ) -> Self {
+        Self {
+            message_channel,
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            default_timeout,
+            retry_config: RetryConfig::default(),
+            circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, Duration::from_secs(30)))),
+            request_queue: Arc::new(Mutex::new(RequestQueue::new(1000, Duration::from_secs(60)))),
+            recovery_manager: Arc::new(Mutex::new(RecoveryManager::new(RecoveryConfig::default()))),
+            error_logger: Some(error_logger),
         }
     }
 
@@ -549,13 +874,32 @@ impl StorageClient {
         let start_time = Instant::now();
         let mut last_error = None;
 
+        // Check recovery state and handle accordingly
+        let recovery_state = {
+            let recovery_manager = self.recovery_manager.lock().await;
+            recovery_manager.state().clone()
+        };
+
+        match recovery_state {
+            RecoveryState::Unavailable => {
+                // Storage is unavailable, try fallback mechanisms
+                return self.handle_storage_unavailable(command, timeout, priority).await;
+            }
+            RecoveryState::Degraded => {
+                // Storage is degraded, use more conservative approach
+                return self.handle_degraded_storage(command, timeout, priority).await;
+            }
+            _ => {
+                // Normal operation or recovering
+            }
+        }
+
         // Check circuit breaker
         {
             let mut circuit_breaker = self.circuit_breaker.lock().await;
             if !circuit_breaker.should_allow_request() {
-                return Err(crate::error::DualRuntimeError::Channel(
-                    "Circuit breaker is open - too many failures".to_string()
-                ));
+                // Circuit breaker is open, queue the request if possible
+                return self.queue_request_for_later(command, timeout, priority).await;
             }
         }
 
@@ -569,13 +913,56 @@ impl StorageClient {
 
             match self.try_send_request(command.clone(), remaining_timeout, priority).await {
                 Ok(data) => {
-                    // Success - record in circuit breaker and return
-                    let mut circuit_breaker = self.circuit_breaker.lock().await;
-                    circuit_breaker.record_success();
+                    // Success - record in circuit breaker and recovery manager
+                    {
+                        let mut circuit_breaker = self.circuit_breaker.lock().await;
+                        circuit_breaker.record_success();
+                    }
+                    {
+                        let mut recovery_manager = self.recovery_manager.lock().await;
+                        recovery_manager.record_success();
+                    }
+                    
+                    // Process any queued requests on success
+                    tokio::spawn({
+                        let client = self.clone();
+                        async move {
+                            client.process_queued_requests().await;
+                        }
+                    });
+                    
                     return Ok(data);
                 }
                 Err(err) => {
+                    // Log the error with correlation
+                    if let Some(ref logger) = self.error_logger {
+                        let correlation_id = CorrelationId::new();
+                        let mut context = HashMap::new();
+                        context.insert("attempt".to_string(), attempt.to_string());
+                        context.insert("remaining_timeout".to_string(), remaining_timeout.as_millis().to_string());
+                        
+                        tokio::spawn({
+                            let logger = Arc::clone(logger);
+                            let error = err.clone();
+                            async move {
+                                logger.log_error(
+                                    error,
+                                    RuntimeContext::Network,
+                                    Some(correlation_id),
+                                    None,
+                                    context,
+                                ).await;
+                            }
+                        });
+                    }
+                    
                     last_error = Some(err);
+                    
+                    // Record failure in recovery manager
+                    {
+                        let mut recovery_manager = self.recovery_manager.lock().await;
+                        recovery_manager.record_failure();
+                    }
                     
                     // Don't retry on certain errors
                     if let Some(ref error) = last_error {
@@ -668,7 +1055,7 @@ impl StorageClient {
                     Ok(Ok(response)) => {
                         match response.result {
                             Ok(data) => Ok(data),
-                            Err(storage_err) => Err(crate::error::DualRuntimeError::Storage(storage_err)),
+                            Err(storage_err) => Err(crate::error::DualRuntimeError::from_storage_error(storage_err)),
                         }
                     }
                     Ok(Err(_)) => {
@@ -745,6 +1132,275 @@ impl StorageClient {
     /// Get channel statistics
     pub async fn channel_stats(&self) -> ChannelStats {
         self.message_channel.stats().await
+    }
+
+    /// Handle requests when storage is unavailable
+    async fn handle_storage_unavailable(
+        &self,
+        command: StorageCommand,
+        timeout: Duration,
+        priority: RequestPriority,
+    ) -> Result<RespData, crate::error::DualRuntimeError> {
+        // Check if recovery should be attempted
+        let should_recover = {
+            let recovery_manager = self.recovery_manager.lock().await;
+            recovery_manager.should_attempt_recovery()
+        };
+
+        if should_recover {
+            // Try a single recovery attempt
+            match self.try_recovery_request(command.clone(), timeout, priority).await {
+                Ok(data) => {
+                    // Recovery successful
+                    let mut recovery_manager = self.recovery_manager.lock().await;
+                    recovery_manager.record_success();
+                    return Ok(data);
+                }
+                Err(_) => {
+                    // Recovery failed, continue with fallback
+                }
+            }
+        }
+
+        // Queue the request for later processing
+        self.queue_request_for_later(command, timeout, priority).await
+    }
+
+    /// Handle requests when storage is in degraded state
+    async fn handle_degraded_storage(
+        &self,
+        command: StorageCommand,
+        timeout: Duration,
+        priority: RequestPriority,
+    ) -> Result<RespData, crate::error::DualRuntimeError> {
+        // Use more conservative timeout and retry settings for degraded storage
+        let degraded_timeout = timeout.min(Duration::from_secs(10));
+        let degraded_retries = self.retry_config.max_retries.min(2);
+
+        for attempt in 0..=degraded_retries {
+            match self.try_send_request(command.clone(), degraded_timeout, priority).await {
+                Ok(data) => {
+                    // Success in degraded mode
+                    let mut recovery_manager = self.recovery_manager.lock().await;
+                    recovery_manager.record_success();
+                    return Ok(data);
+                }
+                Err(err) => {
+                    // Record failure
+                    let mut recovery_manager = self.recovery_manager.lock().await;
+                    recovery_manager.record_failure();
+
+                    if attempt < degraded_retries {
+                        // Wait longer between retries in degraded mode
+                        let delay = self.calculate_retry_delay(attempt) * 2;
+                        tokio::time::sleep(delay).await;
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+
+        Err(crate::error::DualRuntimeError::Channel(
+            "Request failed in degraded storage mode".to_string()
+        ))
+    }
+
+    /// Queue a request for later processing when storage is unavailable
+    async fn queue_request_for_later(
+        &self,
+        command: StorageCommand,
+        timeout: Duration,
+        priority: RequestPriority,
+    ) -> Result<RespData, crate::error::DualRuntimeError> {
+        let request_id = RequestId::new();
+        let (response_sender, _response_receiver) = oneshot::channel();
+
+        let request = StorageRequest {
+            id: request_id,
+            command: command.clone(),
+            response_channel: response_sender,
+            timeout,
+            timestamp: Instant::now(),
+            priority,
+        };
+
+        // Try to queue the request
+        {
+            let mut queue = self.request_queue.lock().await;
+            queue.enqueue(request, 0)?;
+        }
+
+        // For high-priority requests, return an immediate error instead of queuing
+        if matches!(priority, RequestPriority::Critical | RequestPriority::High) {
+            return Err(crate::error::DualRuntimeError::Channel(
+                "Storage unavailable and high-priority requests cannot be queued".to_string()
+            ));
+        }
+
+        // Return a fallback response for queued requests
+        match self.get_fallback_response(&command).await {
+            Some(fallback) => Ok(fallback),
+            None => Err(crate::error::DualRuntimeError::Channel(
+                "Storage unavailable and no fallback available".to_string()
+            )),
+        }
+    }
+
+    /// Try a single recovery request to test if storage is available
+    async fn try_recovery_request(
+        &self,
+        command: StorageCommand,
+        timeout: Duration,
+        priority: RequestPriority,
+    ) -> Result<RespData, crate::error::DualRuntimeError> {
+        // Use a shorter timeout for recovery attempts
+        let recovery_timeout = timeout.min(Duration::from_secs(5));
+        self.try_send_request(command, recovery_timeout, priority).await
+    }
+
+    /// Process queued requests when storage becomes available
+    async fn process_queued_requests(&self) {
+        let mut processed = 0;
+        let max_batch_size = 10; // Process up to 10 requests at a time
+
+        while processed < max_batch_size {
+            let queued_request = {
+                let mut queue = self.request_queue.lock().await;
+                queue.dequeue()
+            };
+
+            match queued_request {
+                Some(queued) => {
+                    // Try to process the queued request
+                    let remaining_timeout = queued.request.timeout
+                        .saturating_sub(queued.queued_at.elapsed());
+
+                    if remaining_timeout > Duration::from_millis(100) {
+                        let result = self.try_send_request(
+                            queued.request.command,
+                            remaining_timeout,
+                            queued.request.priority,
+                        ).await;
+
+                        // Send the result back through the original response channel
+                        let response = match result {
+                            Ok(data) => StorageResponse {
+                                id: queued.request.id,
+                                result: Ok(data),
+                                execution_time: queued.queued_at.elapsed(),
+                                storage_stats: StorageStats::default(),
+                            },
+                            Err(err) => StorageResponse {
+                                id: queued.request.id,
+                                result: Err(storage::error::Error::Io {
+                                error: std::io::Error::new(
+                                    std::io::ErrorKind::Other, 
+                                    err.to_string()
+                                ),
+                                location: snafu::Location::new(file!(), line!(), column!()),
+                            }),
+                                execution_time: queued.queued_at.elapsed(),
+                                storage_stats: StorageStats::default(),
+                            },
+                        };
+
+                        let _ = queued.request.response_channel.send(response);
+                        processed += 1;
+                    } else {
+                        // Request has expired, send timeout error
+                        let response = StorageResponse {
+                            id: queued.request.id,
+                            result: Err(storage::error::Error::Io {
+                                error: std::io::Error::new(
+                                    std::io::ErrorKind::TimedOut, 
+                                    "Request timeout while queued"
+                                ),
+                                location: snafu::Location::new(file!(), line!(), column!()),
+                            }),
+                            execution_time: queued.queued_at.elapsed(),
+                            storage_stats: StorageStats::default(),
+                        };
+                        let _ = queued.request.response_channel.send(response);
+                    }
+                }
+                None => break, // No more queued requests
+            }
+        }
+    }
+
+    /// Get a fallback response for certain commands when storage is unavailable
+    async fn get_fallback_response(&self, command: &StorageCommand) -> Option<resp::RespData> {
+        match command {
+            StorageCommand::Get { .. } => {
+                // Return null for GET operations when storage is unavailable
+                Some(resp::RespData::Null)
+            }
+            StorageCommand::Exists { keys: _ } => {
+                // Return 0 for EXISTS operations
+                Some(resp::RespData::Integer(0))
+            }
+            StorageCommand::MGet { keys } => {
+                // Return array of nulls for MGET operations
+                let nulls: Vec<resp::RespData> = keys.iter().map(|_| resp::RespData::Null).collect();
+                Some(resp::RespData::Array(Some(nulls)))
+            }
+            _ => {
+                // No fallback available for write operations
+                None
+            }
+        }
+    }
+
+    /// Get recovery statistics
+    pub async fn recovery_stats(&self) -> RecoveryStats {
+        let recovery_manager = self.recovery_manager.lock().await;
+        recovery_manager.stats()
+    }
+
+    /// Get queue statistics
+    pub async fn queue_stats(&self) -> QueueStats {
+        let queue = self.request_queue.lock().await;
+        queue.stats()
+    }
+
+    /// Check if storage is currently available
+    pub async fn is_storage_available(&self) -> bool {
+        let recovery_manager = self.recovery_manager.lock().await;
+        recovery_manager.is_available()
+    }
+
+    /// Force a recovery attempt
+    pub async fn force_recovery(&self) -> Result<(), crate::error::DualRuntimeError> {
+        // Try a simple ping command to test storage availability
+        let ping_command = StorageCommand::Get { key: b"__health_check__".to_vec() };
+        
+        match self.try_recovery_request(ping_command, Duration::from_secs(5), RequestPriority::High).await {
+            Ok(_) => {
+                let mut recovery_manager = self.recovery_manager.lock().await;
+                recovery_manager.record_success();
+                Ok(())
+            }
+            Err(err) => {
+                let mut recovery_manager = self.recovery_manager.lock().await;
+                recovery_manager.record_failure();
+                Err(err)
+            }
+        }
+    }
+
+    /// Clone the storage client (for use in async tasks)
+    pub fn clone(&self) -> Self {
+        Self {
+            message_channel: Arc::clone(&self.message_channel),
+            pending_requests: Arc::clone(&self.pending_requests),
+            default_timeout: self.default_timeout,
+            retry_config: self.retry_config.clone(),
+            circuit_breaker: Arc::clone(&self.circuit_breaker),
+            request_queue: Arc::clone(&self.request_queue),
+            recovery_manager: Arc::clone(&self.recovery_manager),
+            error_logger: self.error_logger.as_ref().map(Arc::clone),
+        }
     }
 }
 

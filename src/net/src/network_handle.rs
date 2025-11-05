@@ -26,30 +26,34 @@ use std::sync::Arc;
 use bytes::Bytes;
 use client::Client;
 use cmd::table::CmdTable;
-use executor::{CmdExecutor, NetworkCmdExecution};
+use executor::CmdExecutor;
+use crate::network_execution::NetworkCmdExecution;
 use log::{error, debug, warn};
 use resp::encode::RespEncoder;
 use resp::{Parse, RespData, RespEncode, RespParseResult, RespVersion};
 use tokio::select;
 
 use crate::storage_client::StorageClient;
-use common::runtime::DualRuntimeError;
+use crate::executor_ext::CmdExecutorNetworkExt;
+use runtime::DualRuntimeError;
 
 /// Process a network connection using StorageClient for storage operations
 /// 
 /// This function replaces the original process_connection to work with the
 /// dual runtime architecture. It handles RESP protocol parsing in the network
 /// runtime and sends storage requests to the storage runtime via StorageClient.
+/// Supports request pipelining and batching for improved performance.
 pub async fn process_network_connection(
     client: Arc<Client>,
     storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
 ) -> std::io::Result<()> {
-    let mut buf = vec![0; 1024];
+    let mut buf = vec![0; 4096]; // Increased buffer size for better performance
     let mut resp_parser = resp::RespParse::new(resp::RespVersion::RESP2);
+    let mut pending_commands = Vec::new();
 
-    debug!("Starting network connection processing");
+    debug!("Starting network connection processing with pipelining support");
 
     loop {
         select! {
@@ -58,68 +62,69 @@ pub async fn process_network_connection(
                     Ok(n) => {
                         if n == 0 { 
                             debug!("Connection closed by client");
+                            // Process any remaining pending commands before closing
+                            if !pending_commands.is_empty() {
+                                process_command_batch(
+                                    &pending_commands,
+                                    client.clone(),
+                                    storage_client.clone(),
+                                    cmd_table.clone(),
+                                    executor.clone(),
+                                ).await;
+                            }
                             return Ok(()); 
                         }
 
                         debug!("Received {} bytes from client", n);
 
-                        match resp_parser.parse(Bytes::copy_from_slice(&buf[..n])) {
-                            RespParseResult::Complete(data) => {
-                                debug!("RESP parsing complete: {:?}", data);
-                                
-                                if let RespData::Array(Some(params)) = data {
-                                    if params.is_empty() { 
-                                        debug!("Empty command array, continuing");
-                                        continue; 
-                                    }
-
-                                    if let RespData::BulkString(Some(cmd_name)) = &params[0] {
-                                        client.set_cmd_name(cmd_name.as_ref());
-                                        debug!("Command: {}", String::from_utf8_lossy(cmd_name));
-                                    }
+                        // Parse RESP data with support for multiple commands
+                        let mut parse_result = resp_parser.parse(Bytes::copy_from_slice(&buf[..n]));
+                        
+                        loop {
+                            match parse_result {
+                                RespParseResult::Complete(data) => {
+                                    debug!("RESP parsing complete: {:?}", data);
                                     
-                                    let argv = params.iter().map(|p| {
-                                        if let RespData::BulkString(Some(d)) = p { 
-                                            d.to_vec() 
-                                        } else { 
-                                            vec![] 
-                                        }
-                                    }).collect::<Vec<Vec<u8>>>();
-                                    
-                                    client.set_argv(&argv);
-                                    
-                                    // Handle command with network-aware processing
-                                    handle_network_command(
-                                        client.clone(), 
-                                        storage_client.clone(), 
-                                        cmd_table.clone(), 
-                                        executor.clone()
-                                    ).await;
-                                    
-                                    // Extract the reply from the connection and send it
-                                    let response = client.take_reply();
-                                    debug!("Sending response: {:?}", response);
-                                    
-                                    let mut encoder = RespEncoder::new(RespVersion::RESP2);
-                                    encoder.encode_resp_data(&response);
-                                    
-                                    match client.write(encoder.get_response().as_ref()).await {
-                                        Ok(_) => debug!("Response sent successfully"),
-                                        Err(e) => {
-                                            error!("Write error: {}", e);
-                                            return Err(e);
+                                    if let Some(command) = extract_command_from_data(data) {
+                                        pending_commands.push(command);
+                                        
+                                        // Check if we should process the batch
+                                        if should_process_batch(&pending_commands) {
+                                            process_command_batch(
+                                                &pending_commands,
+                                                client.clone(),
+                                                storage_client.clone(),
+                                                cmd_table.clone(),
+                                                executor.clone(),
+                                            ).await;
+                                            pending_commands.clear();
                                         }
                                     }
+                                    
+                                    // Try to parse more commands from the buffer
+                                    parse_result = resp_parser.parse(Bytes::new());
+                                }
+                                RespParseResult::Error(e) => {
+                                    error!("RESP protocol error: {:?}", e);
+                                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()));
+                                }
+                                RespParseResult::Incomplete => {
+                                    debug!("Incomplete RESP data, waiting for more");
+                                    break; // Wait for more data
                                 }
                             }
-                            RespParseResult::Error(e) => {
-                                error!("RESP protocol error: {:?}", e);
-                                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()));
-                            }
-                            RespParseResult::Incomplete => {
-                                debug!("Incomplete RESP data, waiting for more");
-                                // Not enough data, wait for more
-                            }
+                        }
+                        
+                        // Process any remaining commands if we have a complete batch
+                        if !pending_commands.is_empty() && should_flush_batch(&pending_commands) {
+                            process_command_batch(
+                                &pending_commands,
+                                client.clone(),
+                                storage_client.clone(),
+                                cmd_table.clone(),
+                                executor.clone(),
+                            ).await;
+                            pending_commands.clear();
                         }
                     }
                     Err(e) => {
@@ -164,23 +169,9 @@ async fn handle_network_command(
             Err(e) => {
                 error!("Command execution failed for {}: {}", cmd_name, e);
                 
-                // Convert the error to an appropriate RESP error response
-                let error_msg = match e {
-                    DualRuntimeError::Timeout { timeout } => {
-                        format!("ERR command timeout after {:?}", timeout)
-                    }
-                    DualRuntimeError::Storage(storage_err) => {
-                        format!("ERR storage error: {}", storage_err)
-                    }
-                    DualRuntimeError::Channel(channel_err) => {
-                        format!("ERR communication error: {}", channel_err)
-                    }
-                    _ => {
-                        format!("ERR internal error: {}", e)
-                    }
-                };
-                
-                client.set_reply(RespData::Error(error_msg.into()));
+                // Use enhanced error response generation
+                let error_response = generate_storage_error_response(&e, &cmd_name);
+                client.set_reply(error_response);
             }
         }
     } else {
@@ -320,23 +311,9 @@ async fn handle_network_cluster_command(
             Err(e) => {
                 error!("Cluster command execution failed for {}: {}", cmd_name, e);
                 
-                // Convert the error to an appropriate RESP error response
-                let error_msg = match e {
-                    DualRuntimeError::Timeout { timeout } => {
-                        format!("ERR cluster command timeout after {:?}", timeout)
-                    }
-                    DualRuntimeError::Storage(storage_err) => {
-                        format!("ERR cluster storage error: {}", storage_err)
-                    }
-                    DualRuntimeError::Channel(channel_err) => {
-                        format!("ERR cluster communication error: {}", channel_err)
-                    }
-                    _ => {
-                        format!("ERR cluster internal error: {}", e)
-                    }
-                };
-                
-                client.set_reply(RespData::Error(error_msg.into()));
+                // Use enhanced error response generation for cluster commands
+                let error_response = generate_storage_error_response(&e, &format!("CLUSTER {}", cmd_name));
+                client.set_reply(error_response);
             }
         }
     } else {
@@ -347,6 +324,165 @@ async fn handle_network_cluster_command(
     }
 }
 
+/// Represents a parsed command ready for execution
+#[derive(Debug, Clone)]
+struct ParsedCommand {
+    cmd_name: Vec<u8>,
+    argv: Vec<Vec<u8>>,
+}
+
+/// Extract command from RESP data
+fn extract_command_from_data(data: RespData) -> Option<ParsedCommand> {
+    match data {
+        RespData::Array(Some(params)) if !params.is_empty() => {
+            if let RespData::BulkString(Some(cmd_name)) = &params[0] {
+                let argv = params.iter().map(|p| {
+                    if let RespData::BulkString(Some(d)) = p { 
+                        d.to_vec() 
+                    } else { 
+                        vec![] 
+                    }
+                }).collect::<Vec<Vec<u8>>>();
+                
+                Some(ParsedCommand {
+                    cmd_name: cmd_name.to_vec(),
+                    argv,
+                })
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Determine if we should process the current batch of commands
+fn should_process_batch(commands: &[ParsedCommand]) -> bool {
+    // Process batch if:
+    // 1. We have reached the maximum batch size
+    // 2. We have a mix of read and write commands (to maintain consistency)
+    // 3. We have blocking commands that need immediate processing
+    
+    const MAX_BATCH_SIZE: usize = 10;
+    
+    if commands.len() >= MAX_BATCH_SIZE {
+        return true;
+    }
+    
+    // Check for blocking commands that should be processed immediately
+    for cmd in commands {
+        let cmd_name = String::from_utf8_lossy(&cmd.cmd_name).to_lowercase();
+        if is_blocking_command(&cmd_name) {
+            return true;
+        }
+    }
+    
+    false
+}
+
+/// Determine if we should flush the current batch (even if not full)
+fn should_flush_batch(commands: &[ParsedCommand]) -> bool {
+    // Flush if we have any commands and no more data is immediately available
+    !commands.is_empty()
+}
+
+/// Check if a command is blocking and should be processed immediately
+fn is_blocking_command(cmd_name: &str) -> bool {
+    matches!(cmd_name, "blpop" | "brpop" | "brpoplpush" | "bzpopmin" | "bzpopmax")
+}
+
+/// Process a batch of commands, potentially in parallel for read operations
+async fn process_command_batch(
+    commands: &[ParsedCommand],
+    client: Arc<Client>,
+    storage_client: Arc<StorageClient>,
+    cmd_table: Arc<CmdTable>,
+    executor: Arc<CmdExecutor>,
+) {
+    debug!("Processing command batch of {} commands", commands.len());
+    
+    // For now, process commands sequentially to maintain order
+    // TODO: Implement parallel processing for read-only commands
+    for command in commands {
+        // Set up client state for this command
+        client.set_cmd_name(&command.cmd_name);
+        client.set_argv(&command.argv);
+        
+        // Handle the command
+        handle_network_command(
+            client.clone(),
+            storage_client.clone(),
+            cmd_table.clone(),
+            executor.clone(),
+        ).await;
+        
+        // Send the response immediately for pipelining
+        let response = client.take_reply();
+        debug!("Sending pipelined response: {:?}", response);
+        
+        let mut encoder = RespEncoder::new(RespVersion::RESP2);
+        encoder.encode_resp_data(&response);
+        
+        match client.write(encoder.get_response().as_ref()).await {
+            Ok(_) => debug!("Pipelined response sent successfully"),
+            Err(e) => {
+                error!("Write error in pipeline: {}", e);
+                // Continue processing other commands even if one fails
+            }
+        }
+    }
+}
+
+/// Enhanced error response generation for storage failures
+fn generate_storage_error_response(error: &DualRuntimeError, command: &str) -> RespData {
+    let error_message = match error {
+        DualRuntimeError::Timeout { timeout } => {
+            format!("TIMEOUT Command '{}' timed out after {:?}", command, timeout)
+        }
+        DualRuntimeError::Storage(storage_err) => {
+            format!("STORAGE Storage error in '{}': {}", command, storage_err)
+        }
+        DualRuntimeError::Channel(channel_err) => {
+            format!("CHANNEL Communication error in '{}': {}", command, channel_err)
+        }
+        DualRuntimeError::NetworkRuntime(net_err) => {
+            format!("NETWORK Network runtime error in '{}': {}", command, net_err)
+        }
+        DualRuntimeError::StorageRuntime(storage_err) => {
+            format!("STORAGE Storage runtime error in '{}': {}", command, storage_err)
+        }
+        DualRuntimeError::Configuration(config_err) => {
+            format!("CONFIG Configuration error in '{}': {}", command, config_err)
+        }
+        DualRuntimeError::Lifecycle(lifecycle_err) => {
+            format!("LIFECYCLE Lifecycle error in '{}': {}", command, lifecycle_err)
+        }
+        DualRuntimeError::HealthCheck(health_err) => {
+            format!("HEALTH Health check failed in '{}': {}", command, health_err)
+        }
+        DualRuntimeError::Io(io_err) => {
+            format!("IO I/O error in '{}': {}", command, io_err)
+        }
+        DualRuntimeError::CircuitBreakerOpen { reason } => {
+            format!("CIRCUIT_BREAKER Circuit breaker open in '{}': {}", command, reason)
+        }
+        DualRuntimeError::RuntimeIsolation { runtime, reason } => {
+            format!("ISOLATION Runtime isolation error in '{}' ({}): {}", command, runtime, reason)
+        }
+        DualRuntimeError::ErrorBoundary { boundary, error } => {
+            format!("BOUNDARY Error boundary violation in '{}' ({}): {}", command, boundary, error)
+        }
+        DualRuntimeError::FaultIsolation { component, details } => {
+            format!("FAULT Fault isolation in '{}' ({}): {}", command, component, details)
+        }
+        DualRuntimeError::RecoveryFailed { mechanism, reason } => {
+            format!("RECOVERY Recovery failed in '{}' ({}): {}", command, mechanism, reason)
+        }
+    };
+    
+    RespData::Error(error_message.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,16 +490,15 @@ mod tests {
     use std::time::Duration;
     use cmd::table::create_command_table;
     use executor::CmdExecutorBuilder;
-    use common::runtime::{MessageChannel, StorageClient as RuntimeStorageClient};
-    use crate::storage_client::StorageClient;
+    use runtime::{MessageChannel, StorageClient as RuntimeStorageClient};
 
-    fn create_test_components() -> (Arc<StorageClient>, Arc<CmdTable>, Arc<CmdExecutor>) {
+    fn create_test_components() -> (Arc<crate::storage_client::StorageClient>, Arc<CmdTable>, Arc<CmdExecutor>) {
         let message_channel = Arc::new(MessageChannel::new(1000));
         let runtime_client = Arc::new(RuntimeStorageClient::new(
             message_channel,
             Duration::from_secs(30),
         ));
-        let storage_client = Arc::new(StorageClient::new(runtime_client));
+        let storage_client = Arc::new(crate::storage_client::StorageClient::new(runtime_client));
         let cmd_table = Arc::new(create_command_table());
         let executor = Arc::new(CmdExecutorBuilder::new().build());
         

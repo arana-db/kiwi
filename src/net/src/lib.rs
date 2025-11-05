@@ -15,11 +15,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub mod async_resp_parser;
 pub mod buffer;
+pub mod executor_ext;
 pub mod handle;
+pub mod network_execution;
+pub mod network_handle;
+pub mod network_server;
 pub mod optimized_handler;
 pub mod pipeline;
 pub mod pool;
+pub mod storage_client;
 pub mod tcp;
 
 // TODO: delete this module
@@ -32,6 +38,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::tcp::{ClusterTcpServer, TcpServer};
+use crate::network_server::NetworkServer;
+use crate::storage_client::StorageClient;
+use runtime::{RuntimeManager, MessageChannel, StorageClient as RuntimeStorageClient};
+use cmd::table::create_command_table;
+use executor::CmdExecutorBuilder;
 
 #[async_trait]
 pub trait ServerTrait: Send + Sync + 'static {
@@ -41,7 +52,29 @@ pub trait ServerTrait: Send + Sync + 'static {
 pub struct ServerFactory;
 
 impl ServerFactory {
-    pub fn create_server(protocol: &str, addr: Option<String>) -> Option<Box<dyn ServerTrait>> {
+    /// Create a server with dual runtime architecture support
+    pub fn create_server(protocol: &str, addr: Option<String>, runtime_manager: &RuntimeManager) -> Option<Box<dyn ServerTrait>> {
+        match protocol.to_lowercase().as_str() {
+            "tcp" => {
+                // Create NetworkServer with dual runtime architecture
+                match Self::create_network_server(addr, runtime_manager) {
+                    Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
+                    Err(e) => {
+                        log::error!("Failed to create NetworkServer: {}", e);
+                        None
+                    }
+                }
+            }
+            #[cfg(unix)]
+            "unix" => Some(Box::new(unix::UnixServer::new(addr))),
+            #[cfg(not(unix))]
+            "unix" => None,
+            _ => None,
+        }
+    }
+
+    /// Create a legacy server without dual runtime architecture (for backward compatibility)
+    pub fn create_legacy_server(protocol: &str, addr: Option<String>) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
             "tcp" => TcpServer::new(addr)
                 .ok()
@@ -52,6 +85,26 @@ impl ServerFactory {
             "unix" => None,
             _ => None,
         }
+    }
+
+    /// Create a NetworkServer with dual runtime architecture
+    fn create_network_server(addr: Option<String>, runtime_manager: &RuntimeManager) -> Result<NetworkServer, Box<dyn std::error::Error>> {
+        // Create message channel for communication between runtimes
+        let message_channel = Arc::new(MessageChannel::new(runtime_manager.config().channel_buffer_size));
+        
+        // Create storage client for network-to-storage communication
+        let runtime_storage_client = Arc::new(RuntimeStorageClient::new(
+            message_channel.clone(),
+            runtime_manager.config().request_timeout,
+        ));
+        let storage_client = Arc::new(StorageClient::new(runtime_storage_client));
+        
+        // Create command table and executor
+        let cmd_table = Arc::new(create_command_table());
+        let executor = Arc::new(CmdExecutorBuilder::new().build());
+        
+        // Create NetworkServer
+        NetworkServer::new(addr, storage_client, cmd_table, executor)
     }
 
     pub fn create_cluster_server(

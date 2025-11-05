@@ -18,6 +18,9 @@ num_cpus = { workspace = true }
 uuid = { workspace = true }
 resp = { workspace = true }
 storage = { workspace = true }
+bytes = { workspace = true }
+snafu = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

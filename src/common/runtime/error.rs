@@ -19,7 +19,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 /// Errors that can occur in the dual runtime architecture
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum DualRuntimeError {
     #[error("Network runtime error: {0}")]
     NetworkRuntime(String),
@@ -43,10 +43,25 @@ pub enum DualRuntimeError {
     HealthCheck(String),
     
     #[error("Storage operation failed: {0}")]
-    Storage(#[from] storage::error::Error),
+    Storage(String),
     
     #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(String),
+    
+    #[error("Circuit breaker is open: {reason}")]
+    CircuitBreakerOpen { reason: String },
+    
+    #[error("Runtime isolation failure: {runtime} - {reason}")]
+    RuntimeIsolation { runtime: String, reason: String },
+    
+    #[error("Error boundary triggered: {boundary} - {error}")]
+    ErrorBoundary { boundary: String, error: String },
+    
+    #[error("Fault isolation activated: {component} - {details}")]
+    FaultIsolation { component: String, details: String },
+    
+    #[error("Recovery mechanism failed: {mechanism} - {reason}")]
+    RecoveryFailed { mechanism: String, reason: String },
 }
 
 impl DualRuntimeError {
@@ -84,4 +99,114 @@ impl DualRuntimeError {
     pub fn health_check<S: Into<String>>(msg: S) -> Self {
         Self::HealthCheck(msg.into())
     }
+    
+    /// Create a circuit breaker error
+    pub fn circuit_breaker_open<S: Into<String>>(reason: S) -> Self {
+        Self::CircuitBreakerOpen { reason: reason.into() }
+    }
+    
+    /// Create a runtime isolation error
+    pub fn runtime_isolation<S: Into<String>>(runtime: S, reason: S) -> Self {
+        Self::RuntimeIsolation { 
+            runtime: runtime.into(), 
+            reason: reason.into() 
+        }
+    }
+    
+    /// Create an error boundary error
+    pub fn error_boundary<S: Into<String>>(boundary: S, error: S) -> Self {
+        Self::ErrorBoundary { 
+            boundary: boundary.into(), 
+            error: error.into() 
+        }
+    }
+    
+    /// Create a fault isolation error
+    pub fn fault_isolation<S: Into<String>>(component: S, details: S) -> Self {
+        Self::FaultIsolation { 
+            component: component.into(), 
+            details: details.into() 
+        }
+    }
+    
+    /// Create a recovery failed error
+    pub fn recovery_failed<S: Into<String>>(mechanism: S, reason: S) -> Self {
+        Self::RecoveryFailed { 
+            mechanism: mechanism.into(), 
+            reason: reason.into() 
+        }
+    }
+
+    /// Create a storage error from storage::error::Error
+    pub fn from_storage_error(err: storage::error::Error) -> Self {
+        Self::Storage(err.to_string())
+    }
+
+    /// Create an IO error from std::io::Error
+    pub fn from_io_error(err: std::io::Error) -> Self {
+        Self::Io(err.to_string())
+    }
+    
+    /// Check if this error indicates a recoverable condition
+    pub fn is_recoverable(&self) -> bool {
+        match self {
+            Self::NetworkRuntime(_) => true,
+            Self::StorageRuntime(_) => true,
+            Self::Channel(_) => true,
+            Self::Timeout { .. } => true,
+            Self::CircuitBreakerOpen { .. } => true,
+            Self::RuntimeIsolation { .. } => true,
+            Self::ErrorBoundary { .. } => true,
+            Self::FaultIsolation { .. } => true,
+            Self::Configuration(_) => false,
+            Self::Lifecycle(_) => false,
+            Self::HealthCheck(_) => true,
+            Self::Storage(_) => false, // Storage errors are typically not recoverable
+            Self::Io(_) => true,
+            Self::RecoveryFailed { .. } => false,
+        }
+    }
+    
+    /// Check if this error should trigger circuit breaker
+    pub fn should_trigger_circuit_breaker(&self) -> bool {
+        match self {
+            Self::NetworkRuntime(_) => true,
+            Self::StorageRuntime(_) => true,
+            Self::Channel(_) => true,
+            Self::Timeout { .. } => true,
+            Self::RuntimeIsolation { .. } => true,
+            Self::ErrorBoundary { .. } => true,
+            Self::FaultIsolation { .. } => true,
+            _ => false,
+        }
+    }
+    
+    /// Get the severity level of this error
+    pub fn severity(&self) -> ErrorSeverity {
+        match self {
+            Self::Configuration(_) => ErrorSeverity::Critical,
+            Self::Lifecycle(_) => ErrorSeverity::Critical,
+            Self::RecoveryFailed { .. } => ErrorSeverity::Critical,
+            Self::Storage(_) => ErrorSeverity::High,
+            Self::RuntimeIsolation { .. } => ErrorSeverity::High,
+            Self::ErrorBoundary { .. } => ErrorSeverity::High,
+            Self::FaultIsolation { .. } => ErrorSeverity::Medium,
+            Self::CircuitBreakerOpen { .. } => ErrorSeverity::Medium,
+            Self::NetworkRuntime(_) => ErrorSeverity::Medium,
+            Self::StorageRuntime(_) => ErrorSeverity::Medium,
+            Self::Channel(_) => ErrorSeverity::Medium,
+            Self::Timeout { .. } => ErrorSeverity::Low,
+            Self::HealthCheck(_) => ErrorSeverity::Low,
+            Self::Io(_) => ErrorSeverity::Low,
+        }
+    }
+}
+
+/// Error severity levels for monitoring and alerting
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+pub enum ErrorSeverity {
+    Low = 1,
+    Medium = 2,
+    High = 3,
+    Critical = 4,
 }

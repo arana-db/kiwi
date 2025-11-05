@@ -27,6 +27,8 @@ use resp::{Parse, RespData, RespEncode, RespParseResult, RespVersion};
 use storage::storage::Storage;
 use tokio::select;
 
+use crate::storage_client::StorageClient;
+
 pub async fn process_connection(
     client: Arc<Client>,
     storage: Arc<Storage>,
@@ -205,4 +207,43 @@ async fn handle_cluster_command(
         let err_msg = format!("ERR unknown command `{cmd_name}`");
         client.set_reply(RespData::Error(err_msg.into()));
     }
+}
+/// Process connection using StorageClient for dual runtime architecture
+/// 
+/// This function provides an updated version of process_connection that works
+/// with StorageClient instead of direct Storage access, enabling dual runtime
+/// architecture while maintaining compatibility with existing server code.
+pub async fn process_connection_with_storage_client(
+    client: Arc<Client>,
+    storage_client: Arc<StorageClient>,
+    cmd_table: Arc<CmdTable>,
+    executor: Arc<CmdExecutor>,
+) -> std::io::Result<()> {
+    // Delegate to the network-aware connection handler
+    crate::network_handle::process_network_connection(
+        client,
+        storage_client,
+        cmd_table,
+        executor,
+    ).await
+}
+
+/// Process cluster connection using StorageClient for dual runtime architecture
+/// 
+/// This function provides an updated version of process_cluster_connection that works
+/// with StorageClient instead of direct Storage access, enabling dual runtime
+/// architecture while maintaining compatibility with existing server code.
+pub async fn process_cluster_connection_with_storage_client(
+    client: Arc<Client>,
+    storage_client: Arc<StorageClient>,
+    cmd_table: Arc<CmdTable>,
+    executor: Arc<CmdExecutor>,
+) -> std::io::Result<()> {
+    // Delegate to the network-aware cluster connection handler
+    crate::network_handle::process_network_cluster_connection(
+        client,
+        storage_client,
+        cmd_table,
+        executor,
+    ).await
 }

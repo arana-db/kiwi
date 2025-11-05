@@ -23,8 +23,8 @@ use async_trait::async_trait;
 use client::Client;
 use cmd::table::CmdTable;
 use executor::CmdExecutor;
-use log::{info, warn, error};
-use tokio::net::{TcpListener, TcpStream};
+use log::{info, warn};
+use tokio::net::TcpListener;
 use tokio::time::interval;
 
 use crate::ServerTrait;
@@ -217,15 +217,16 @@ mod tests {
     use std::time::Duration;
     use cmd::table::create_command_table;
     use executor::CmdExecutorBuilder;
-    use common::runtime::{MessageChannel, StorageClient};
+    use runtime::{MessageChannel, StorageClient as RuntimeStorageClient};
 
     #[tokio::test]
     async fn test_network_server_creation() {
         let message_channel = Arc::new(MessageChannel::new(1000));
-        let storage_client = Arc::new(StorageClient::new(
+        let runtime_client = Arc::new(RuntimeStorageClient::new(
             message_channel,
             Duration::from_secs(30),
         ));
+        let storage_client = Arc::new(crate::storage_client::StorageClient::new(runtime_client));
         let cmd_table = Arc::new(create_command_table());
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
@@ -245,10 +246,11 @@ mod tests {
     #[tokio::test]
     async fn test_network_server_with_custom_pool_config() {
         let message_channel = Arc::new(MessageChannel::new(1000));
-        let storage_client = Arc::new(StorageClient::new(
+        let runtime_client = Arc::new(RuntimeStorageClient::new(
             message_channel,
             Duration::from_secs(30),
         ));
+        let storage_client = Arc::new(crate::storage_client::StorageClient::new(runtime_client));
         let cmd_table = Arc::new(create_command_table());
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
@@ -277,10 +279,11 @@ mod tests {
     #[tokio::test]
     async fn test_network_server_default_address() {
         let message_channel = Arc::new(MessageChannel::new(1000));
-        let storage_client = Arc::new(StorageClient::new(
+        let runtime_client = Arc::new(RuntimeStorageClient::new(
             message_channel,
             Duration::from_secs(30),
         ));
+        let storage_client = Arc::new(crate::storage_client::StorageClient::new(runtime_client));
         let cmd_table = Arc::new(create_command_table());
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
