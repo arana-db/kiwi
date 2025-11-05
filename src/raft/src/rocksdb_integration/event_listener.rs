@@ -166,15 +166,74 @@ mod tests {
         // Test memtable seal
         listener.on_memtable_seal(250);
 
-        // Should have tracked the log index
-        let min_log_index = listener.current_memtable_min_log_index.read();
-        assert!(min_log_index.is_some());
+        // Should have tracked the log index (sequence 250 should map to log index 20)
+        {
+            let min_log_index = listener.current_memtable_min_log_index.read();
+            assert!(min_log_index.is_some());
+            assert_eq!(*min_log_index, Some(20));
+        }
 
         // Test flush complete
         listener.on_flush_complete(350, Some(1024));
 
         // Memtable tracking should be reset
-        let min_log_index = listener.current_memtable_min_log_index.read();
-        assert!(min_log_index.is_none());
+        {
+            let min_log_index = listener.current_memtable_min_log_index.read();
+            assert!(min_log_index.is_none());
+        }
+    }
+
+    #[test]
+    fn test_event_listener_with_callbacks() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        
+        let queue = Arc::new(SequenceMappingQueue::new(100));
+        queue.add_mapping(100, 10).unwrap();
+        queue.add_mapping(200, 20).unwrap();
+
+        let mut listener = LogIndexEventListener::new(queue.clone());
+
+        // Set up callbacks to track events
+        let seal_called = Arc::new(AtomicBool::new(false));
+        let flush_called = Arc::new(AtomicBool::new(false));
+
+        let seal_called_clone = seal_called.clone();
+        listener.set_on_memtable_seal(Arc::new(move |_seq, _log_idx| {
+            seal_called_clone.store(true, Ordering::SeqCst);
+        }));
+
+        let flush_called_clone = flush_called.clone();
+        listener.set_on_flush_complete(Arc::new(move |_seq, _log_idx| {
+            flush_called_clone.store(true, Ordering::SeqCst);
+        }));
+
+        // Trigger events
+        listener.on_memtable_seal(150);
+        listener.on_flush_complete(250, Some(1024));
+
+        // Verify callbacks were called
+        assert!(seal_called.load(Ordering::SeqCst));
+        assert!(flush_called.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_memtable_seal_count() {
+        let queue = Arc::new(SequenceMappingQueue::new(100));
+        let listener = LogIndexEventListener::new(queue);
+
+        // Initial count should be 0
+        assert_eq!(listener.get_memtable_seal_count(), 0);
+
+        // Trigger some seals
+        listener.on_memtable_seal(100);
+        listener.on_memtable_seal(200);
+        listener.on_memtable_seal(300);
+
+        // Count should be incremented
+        assert_eq!(listener.get_memtable_seal_count(), 3);
+
+        // Reset count
+        listener.reset_memtable_seal_count();
+        assert_eq!(listener.get_memtable_seal_count(), 0);
     }
 }

@@ -24,7 +24,7 @@
 //!   log_inprogress_0001001: open segment
 //!
 //! Header format:
-//!   [checksum(8)][data_length(4)][data]
+//!   [checksum(2)][data_length(4)][data]
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
@@ -48,8 +48,8 @@ const LOG_SEGMENT_PREFIX: &str = "log_";
 /// Segment file name prefix for in-progress segments
 const LOG_INPROGRESS_PREFIX: &str = "log_inprogress_";
 
-/// Header size: checksum(8) + data_length(4)
-const LOG_HEADER_SIZE: usize = 12;
+/// Header size: checksum(2) + data_length(4)
+const LOG_HEADER_SIZE: usize = 6;
 
 /// Maximum segment size (default: 1GB)
 const DEFAULT_SEGMENT_SIZE: u64 = 1024 * 1024 * 1024;
