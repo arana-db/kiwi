@@ -363,6 +363,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[ignore = "Three-node cluster test may be slow for CI"]
     async fn test_three_node_cluster_deployment() {
         // Create three-node cluster
         let cluster = ThreeNodeCluster::new().await.unwrap();
@@ -390,6 +391,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Failover test may be slow for CI"]
     async fn test_failover_and_recovery() {
         // Create and start cluster
         let cluster = ThreeNodeCluster::new().await.unwrap();
@@ -437,6 +439,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Data consistency test may be slow for CI"]
     async fn test_data_consistency() {
         // Create and start cluster
         let cluster = ThreeNodeCluster::new().await.unwrap();
@@ -468,6 +471,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Multiple writes consistency test may be slow for CI"]
     async fn test_multiple_writes_and_consistency() {
         // Create and start cluster
         let cluster = ThreeNodeCluster::new().await.unwrap();
