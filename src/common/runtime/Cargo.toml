@@ -1,0 +1,23 @@
+[package]
+name = "runtime"
+version.workspace = true
+description = "Dual runtime architecture for Kiwi database"
+edition.workspace = true
+
+[lib]
+name = "runtime"
+path = "lib.rs"
+
+[dependencies]
+tokio = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+num_cpus = { workspace = true }
+uuid = { workspace = true }
+resp = { workspace = true }
+storage = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
