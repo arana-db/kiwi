@@ -18,8 +18,8 @@
 //! Raft state machine implementation
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
 use openraft::EffectiveMembership;

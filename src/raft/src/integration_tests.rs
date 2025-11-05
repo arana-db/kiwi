@@ -17,13 +17,6 @@
 
 //! Integration tests for Raft cluster functionality
 
-use engine::RocksdbEngine;
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
-#[cfg(test)]
-use tempfile::TempDir;
-use tokio::time::{sleep, timeout};
 use crate::error::RaftResult;
 use crate::network::KiwiRaftNetworkFactory;
 use crate::state_machine::KiwiStateMachine;
@@ -32,6 +25,13 @@ use crate::types::{
     ClientRequest, ClientResponse, ConsistencyLevel, NodeId, RedisCommand, RequestId,
 };
 use bytes::Bytes;
+use engine::RocksdbEngine;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+#[cfg(test)]
+use tempfile::TempDir;
+use tokio::time::{sleep, timeout};
 
 /// Test cluster configuration
 #[derive(Debug, Clone)]
@@ -137,7 +137,9 @@ impl TestCluster {
         for node in nodes.values() {
             for other_node in nodes.values() {
                 if node.node_id != other_node.node_id {
-                    node.network.add_endpoint(other_node.node_id, other_node.endpoint.clone()).await;
+                    node.network
+                        .add_endpoint(other_node.node_id, other_node.endpoint.clone())
+                        .await;
                 }
             }
         }
@@ -176,7 +178,9 @@ impl TestCluster {
         if let Some(node) = self.nodes.get(&node_id) {
             for other_node in self.nodes.values() {
                 if node.node_id != other_node.node_id {
-                    node.network.add_endpoint(other_node.node_id, other_node.endpoint.clone()).await;
+                    node.network
+                        .add_endpoint(other_node.node_id, other_node.endpoint.clone())
+                        .await;
                 }
             }
         }
@@ -233,14 +237,14 @@ impl TestCluster {
 #[allow(dead_code)]
 fn create_mock_engine(temp_dir: &TempDir) -> RaftResult<RocksdbEngine> {
     use rocksdb::{DB, Options};
-    
+
     let mut opts = Options::default();
     opts.create_if_missing(true);
-    
+
     let db = DB::open(&opts, temp_dir.path()).map_err(|e| {
         crate::error::RaftError::state_machine(format!("Failed to create DB: {}", e))
     })?;
-    
+
     Ok(RocksdbEngine::new(db))
 }
 
@@ -333,7 +337,10 @@ mod integration_tests {
             id: RequestId(1),
             command: RedisCommand {
                 command: "SET".to_string(),
-                args: vec!["key_after_failure".to_string().into(), "value".to_string().into()],
+                args: vec![
+                    "key_after_failure".to_string().into(),
+                    "value".to_string().into(),
+                ],
             },
             consistency_level: ConsistencyLevel::Linearizable,
         };
@@ -370,7 +377,10 @@ mod integration_tests {
             id: RequestId(1),
             command: RedisCommand {
                 command: "SET".to_string(),
-                args: vec!["redis_key".to_string().into(), "redis_value".to_string().into()],
+                args: vec![
+                    "redis_key".to_string().into(),
+                    "redis_value".to_string().into(),
+                ],
             },
             consistency_level: ConsistencyLevel::Linearizable,
         };
@@ -440,7 +450,10 @@ mod integration_tests {
                     id: RequestId(i),
                     command: RedisCommand {
                         command: "SET".to_string(),
-                        args: vec![format!("concurrent_key_{}", i).into(), format!("value_{}", i).into()],
+                        args: vec![
+                            format!("concurrent_key_{}", i).into(),
+                            format!("value_{}", i).into(),
+                        ],
                     },
                     consistency_level: ConsistencyLevel::Linearizable,
                 };

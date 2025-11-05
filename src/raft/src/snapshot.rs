@@ -25,7 +25,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use rocksdb::{checkpoint::Checkpoint, DB, IteratorMode, Options};
+use rocksdb::{DB, IteratorMode, Options, checkpoint::Checkpoint};
 
 use crate::error::RaftError;
 use crate::types::LogIndex;

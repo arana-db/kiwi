@@ -19,8 +19,8 @@
 
 use crate::error::{RaftError, RaftResult};
 use crate::node::{RaftNode, RaftNodeInterface};
-use crate::types::{ConsistencyLevel, NodeId};
 use crate::types::RaftMetrics as OpenRaftMetrics;
+use crate::types::{ConsistencyLevel, NodeId};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

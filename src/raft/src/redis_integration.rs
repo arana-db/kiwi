@@ -21,9 +21,7 @@ use crate::consistency_handler::{ConsistencyConfig, ConsistencyHandler};
 use crate::error::{RaftError, RaftResult};
 use crate::node::{RaftNode, RaftNodeInterface};
 use crate::placeholder_types::RespData;
-use crate::types::{
-    ClientRequest, ConsistencyLevel, NodeId, RedisCommand, RequestId,
-};
+use crate::types::{ClientRequest, ConsistencyLevel, NodeId, RedisCommand, RequestId};
 use bytes::Bytes;
 use std::sync::Arc;
 use std::time::Duration;

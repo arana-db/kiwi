@@ -284,7 +284,9 @@ impl ConsistencyChecker {
     /// Get the current applied index from the state machine
     async fn get_applied_index(&self) -> RaftResult<LogIndex> {
         // Temporarily disabled due to engine dependency issue
-        Err(RaftError::state_machine("Applied index unavailable without engine"))
+        Err(RaftError::state_machine(
+            "Applied index unavailable without engine",
+        ))
         /*
         // In a real implementation, this would read from a special metadata key
         // For now, we'll use a simple approach
@@ -310,7 +312,9 @@ impl ConsistencyChecker {
     /// Set the applied index in the state machine
     async fn set_applied_index(&self, _index: LogIndex) -> RaftResult<()> {
         // Temporarily disabled due to engine dependency issue
-        Err(RaftError::state_machine("Applied index updates unavailable without engine"))
+        Err(RaftError::state_machine(
+            "Applied index updates unavailable without engine",
+        ))
         /*
         const APPLIED_INDEX_KEY: &[u8] = b"__raft_applied_index__";
 
@@ -413,7 +417,12 @@ mod tests {
         // Should return error since engine is not available
         let result = checker.verify_consistency(5).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Applied index unavailable"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Applied index unavailable")
+        );
     }
 
     #[tokio::test]
@@ -423,7 +432,12 @@ mod tests {
         // Should return error since engine is not available
         let result = checker.deep_consistency_check().await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Deep consistency check unavailable"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Deep consistency check unavailable")
+        );
     }
 
     #[tokio::test]

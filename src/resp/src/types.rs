@@ -357,7 +357,10 @@ mod tests {
         assert_eq!(RespData::null(), RespData::Null);
         assert_eq!(RespData::boolean(true), RespData::Boolean(true));
         assert_eq!(RespData::boolean(false), RespData::Boolean(false));
-        assert_eq!(RespData::double(std::f64::consts::PI), RespData::Double(std::f64::consts::PI));
+        assert_eq!(
+            RespData::double(std::f64::consts::PI),
+            RespData::Double(std::f64::consts::PI)
+        );
 
         let big_num = RespData::big_number("123456789");
         assert_eq!(big_num, RespData::BigNumber(Bytes::from("123456789")));
@@ -418,7 +421,10 @@ mod tests {
         );
 
         // Test as_double
-        assert_eq!(RespData::Double(std::f64::consts::PI).as_double(), Some(std::f64::consts::PI));
+        assert_eq!(
+            RespData::Double(std::f64::consts::PI).as_double(),
+            Some(std::f64::consts::PI)
+        );
         assert_eq!(RespData::Integer(42).as_double(), Some(42.0));
         assert_eq!(
             RespData::SimpleString(Bytes::from("2.5")).as_double(),
@@ -446,7 +452,10 @@ mod tests {
             RespData::Boolean(false).as_string(),
             Some("false".to_string())
         );
-        assert_eq!(RespData::Double(std::f64::consts::PI).as_string(), Some(std::f64::consts::PI.to_string()));
+        assert_eq!(
+            RespData::Double(std::f64::consts::PI).as_string(),
+            Some(std::f64::consts::PI.to_string())
+        );
         assert_eq!(
             RespData::BigNumber(Bytes::from("123")).as_string(),
             Some("123".to_string())

@@ -207,7 +207,10 @@ impl ThreeNodeCluster {
             id: RequestId::new(),
             command: RedisCommand {
                 command: "SET".to_string(),
-                args: vec![Bytes::copy_from_slice(key.as_bytes()), Bytes::copy_from_slice(value.as_bytes())],
+                args: vec![
+                    Bytes::copy_from_slice(key.as_bytes()),
+                    Bytes::copy_from_slice(value.as_bytes()),
+                ],
             },
             consistency_level: ConsistencyLevel::Linearizable,
         };

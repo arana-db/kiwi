@@ -381,7 +381,8 @@ impl MessageEnvelope {
                 RaftMessage::InstallSnapshot(_) => "InstallSnapshot",
                 RaftMessage::InstallSnapshotResponse(_) => "InstallSnapshotResponse",
                 RaftMessage::Heartbeat { from, term } => &format!("Heartbeat:{}:{}", from, term),
-                RaftMessage::HeartbeatResponse { from, success } => &format!("HeartbeatResponse:{}:{}", from, success),
+                RaftMessage::HeartbeatResponse { from, success } =>
+                    &format!("HeartbeatResponse:{}:{}", from, success),
             }
         );
 
@@ -406,8 +407,10 @@ impl MessageEnvelope {
                     RaftMessage::VoteResponse(_) => "VoteResponse",
                     RaftMessage::InstallSnapshot(_) => "InstallSnapshot",
                     RaftMessage::InstallSnapshotResponse(_) => "InstallSnapshotResponse",
-                    RaftMessage::Heartbeat { from, term } => &format!("Heartbeat:{}:{}", from, term),
-                    RaftMessage::HeartbeatResponse { from, success } => &format!("HeartbeatResponse:{}:{}", from, success),
+                    RaftMessage::Heartbeat { from, term } =>
+                        &format!("Heartbeat:{}:{}", from, term),
+                    RaftMessage::HeartbeatResponse { from, success } =>
+                        &format!("HeartbeatResponse:{}:{}", from, success),
                 }
             );
 
@@ -628,9 +631,10 @@ impl MessageRouter {
         if handled {
             return Ok(());
         }
-        
+
         // Get envelope back if it wasn't handled
-        let envelope = envelope_opt.ok_or_else(|| RaftError::invalid_state("Envelope was consumed unexpectedly"))?;
+        let envelope = envelope_opt
+            .ok_or_else(|| RaftError::invalid_state("Envelope was consumed unexpectedly"))?;
 
         // Extract values for routing
         let target_node = envelope.to;
@@ -656,7 +660,10 @@ impl MessageRouter {
 
     /// Handle response messages by matching them to pending requests
     /// Returns (handled, envelope) where handled is true if matched, and envelope is returned for reuse
-    async fn handle_response(&self, envelope: MessageEnvelope) -> RaftResult<(bool, Option<MessageEnvelope>)> {
+    async fn handle_response(
+        &self,
+        envelope: MessageEnvelope,
+    ) -> RaftResult<(bool, Option<MessageEnvelope>)> {
         let mut pending_requests = self.pending_requests.write().await;
 
         // Check if this is a response to a pending request
@@ -839,7 +846,7 @@ impl ConnectionPool {
                 .map(|conn| conn.is_healthy())
                 .collect();
             let health_results = futures::future::join_all(health_checks).await;
-            
+
             // Remove unhealthy connections based on results
             let mut i = 0;
             node_connections.retain(|_| {
@@ -855,7 +862,7 @@ impl ConnectionPool {
                 .map(|conn| async { *conn.last_activity.lock().await })
                 .collect();
             let activity_times = futures::future::join_all(activity_checks).await;
-            
+
             let mut i = 0;
             node_connections.retain(|_| {
                 let keep = now.duration_since(activity_times[i]) <= max_idle_time;
@@ -1300,7 +1307,11 @@ impl RaftNetworkFactory<TypeConfig> for KiwiRaftNetworkFactory {
     type Network = RaftNetworkClient;
 
     #[allow(refining_impl_trait_reachable)]
-    fn new_client(&mut self, target: NodeId, _node: &openraft::BasicNode) -> std::pin::Pin<Box<dyn std::future::Future<Output = Self::Network> + Send + '_>> {
+    fn new_client(
+        &mut self,
+        target: NodeId,
+        _node: &openraft::BasicNode,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Self::Network> + Send + '_>> {
         Box::pin(async move {
             RaftNetworkClient::with_source_node(
                 self.source_node,
@@ -1432,7 +1443,10 @@ impl RaftNetworkClient {
     }
 
     /// Send message via HTTP with proper serialization and retry logic (using serialized bytes)
-    async fn send_http_message_bytes(&self, serialized_envelope: &Bytes) -> RaftResult<RaftMessage> {
+    async fn send_http_message_bytes(
+        &self,
+        serialized_envelope: &Bytes,
+    ) -> RaftResult<RaftMessage> {
         let endpoint = {
             let endpoints = self.endpoints.read().await;
             endpoints
@@ -1468,7 +1482,7 @@ impl RaftNetworkClient {
 
         // Deserialize envelope to get message for JSON serialization
         let envelope: MessageEnvelope = MessageEnvelope::deserialize(serialized_envelope.clone())?;
-        
+
         // Serialize message as JSON for HTTP
         let serialized_data =
             serde_json::to_vec(&envelope).map_err(|e| RaftError::Serialization(e))?;
@@ -1565,12 +1579,23 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
         &mut self,
         req: openraft::raft::AppendEntriesRequest<TypeConfig>,
         _option: openraft::network::RPCOption,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<
-        openraft::raft::AppendEntriesResponse<NodeId>,
-        openraft::error::RPCError<NodeId, openraft::BasicNode, openraft::error::RaftError<NodeId>>,
-    >> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        openraft::raft::AppendEntriesResponse<NodeId>,
+                        openraft::error::RPCError<
+                            NodeId,
+                            openraft::BasicNode,
+                            openraft::error::RaftError<NodeId>,
+                        >,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
         Box::pin(async move {
-        log::debug!("Sending append_entries to node {}", self.target_node);
+            log::debug!("Sending append_entries to node {}", self.target_node);
 
             let message = RaftMessage::AppendEntries(req);
             match self.send_raft_message(message).await {
@@ -1601,12 +1626,26 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
         &mut self,
         req: openraft::raft::InstallSnapshotRequest<TypeConfig>,
         _option: openraft::network::RPCOption,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<
-        openraft::raft::InstallSnapshotResponse<NodeId>,
-        openraft::error::RPCError<NodeId, openraft::BasicNode, openraft::error::RaftError<NodeId, openraft::error::InstallSnapshotError>>,
-    >> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        openraft::raft::InstallSnapshotResponse<NodeId>,
+                        openraft::error::RPCError<
+                            NodeId,
+                            openraft::BasicNode,
+                            openraft::error::RaftError<
+                                NodeId,
+                                openraft::error::InstallSnapshotError,
+                            >,
+                        >,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
         Box::pin(async move {
-        log::debug!("Sending install_snapshot to node {}", self.target_node);
+            log::debug!("Sending install_snapshot to node {}", self.target_node);
 
             let message = RaftMessage::InstallSnapshot(req);
             match self.send_raft_message(message).await {
@@ -1637,12 +1676,23 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
         &mut self,
         req: openraft::raft::VoteRequest<NodeId>,
         _option: openraft::network::RPCOption,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<
-        openraft::raft::VoteResponse<NodeId>,
-        openraft::error::RPCError<NodeId, openraft::BasicNode, openraft::error::RaftError<NodeId>>,
-    >> + Send + '_>> {
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<
+                        openraft::raft::VoteResponse<NodeId>,
+                        openraft::error::RPCError<
+                            NodeId,
+                            openraft::BasicNode,
+                            openraft::error::RaftError<NodeId>,
+                        >,
+                    >,
+                > + Send
+                + '_,
+        >,
+    > {
         Box::pin(async move {
-        log::debug!("Sending vote request to node {}", self.target_node);
+            log::debug!("Sending vote request to node {}", self.target_node);
 
             let message = RaftMessage::Vote(req);
             match self.send_raft_message(message).await {

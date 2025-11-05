@@ -61,7 +61,7 @@ mod tests {
     fn test_create_simple_storage() {
         let temp_dir = TempDir::new().unwrap();
         let (log_storage, state_machine) = create_simple_raft_storage(1, temp_dir.path()).unwrap();
-        
+
         // Basic smoke test
         assert_eq!(state_machine.node_id, 1);
         drop(log_storage);

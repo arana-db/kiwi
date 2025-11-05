@@ -128,14 +128,14 @@ impl RaftNode {
         // In the future, we should implement the trait so we can share the same storage instance
         let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
         let _storage_for_adaptor = Arc::new(RaftStorage::new(storage_path.clone())?);
-        
+
         // Note: Adaptor expects the storage to implement RaftStorage trait
         // Since it doesn't yet, this will fail to compile
         // We need to implement openraft::storage::RaftStorage trait on RaftStorage
         // For now, this is a placeholder that shows what needs to be done
         // TODO: Uncomment once RaftStorage implements openraft::storage::RaftStorage
         // let (log_store, sm) = openraft::storage::Adaptor::new((*storage_for_adaptor).clone());
-        
+
         // Temporary: Return error until trait is implemented
         // Create the Raft storage components using simple storage
         // For now, return an error until we implement proper openraft integration
@@ -196,16 +196,13 @@ impl RaftNode {
             let mut nodes = BTreeSet::new();
             nodes.insert(self.config.node_id);
 
-            self.raft
-                .initialize(nodes)
-                .await
-                .map_err(|e| {
-                    // Convert RaftError to our RaftError
-                    // Create a generic error message since we can't directly convert the error types
-                    RaftError::Configuration {
-                        message: format!("Failed to initialize Raft cluster: {}", e),
-                    }
-                })?;
+            self.raft.initialize(nodes).await.map_err(|e| {
+                // Convert RaftError to our RaftError
+                // Create a generic error message since we can't directly convert the error types
+                RaftError::Configuration {
+                    message: format!("Failed to initialize Raft cluster: {}", e),
+                }
+            })?;
 
             log::info!(
                 "Initialized new Raft cluster with node {}",
@@ -1134,16 +1131,15 @@ impl RaftNodeInterface for RaftNode {
 
         // Add as learner to the cluster
         let node = BasicNode::default();
-        self.raft
-            .add_learner(node_id, node, true)
-            .await
-            .map_err(|e: openraft::error::RaftError<NodeId, _>| {
+        self.raft.add_learner(node_id, node, true).await.map_err(
+            |e: openraft::error::RaftError<NodeId, _>| {
                 // Convert openraft error - create a new RaftError with Infallible variant
                 // by wrapping the error in a way that preserves the information
                 // Since we can't directly convert between error variants, we'll use
                 // the consensus error creation helper
                 RaftError::consensus(format!("{}", e))
-            })?;
+            },
+        )?;
 
         log::info!("Successfully added learner node {}", node_id);
         Ok(())

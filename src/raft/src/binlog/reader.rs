@@ -17,7 +17,6 @@
 
 //! Binlog reader implementation
 
-
 use super::entry::BinlogEntry;
 use crate::error::RaftError;
 
@@ -91,7 +90,10 @@ mod tests {
 
     #[test]
     fn test_binlog_reader() {
-        let entry = BinlogEntry::new(crate::binlog::OperationType::Put, Bytes::from("SET key value"));
+        let entry = BinlogEntry::new(
+            crate::binlog::OperationType::Put,
+            Bytes::from("SET key value"),
+        );
         let serialized = entry.serialize().unwrap();
 
         // For testing, we'll create a length-prefixed format
@@ -122,4 +124,3 @@ mod tests {
         assert_eq!(entry.data, read_entry.data);
     }
 }
-

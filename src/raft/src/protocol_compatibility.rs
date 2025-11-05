@@ -532,7 +532,9 @@ impl RedisProtocolCompatibility {
         // Convert client command data to RedisCommand format
         // TODO: Implement proper client command extraction when Client type is finalized
         // For now, return an error since Client is a placeholder type
-        Err(RaftError::invalid_request("Client command extraction not yet implemented for placeholder Client type"))
+        Err(RaftError::invalid_request(
+            "Client command extraction not yet implemented for placeholder Client type",
+        ))
     }
 
     /// Validate and parse Redis command arguments

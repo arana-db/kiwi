@@ -306,7 +306,10 @@ impl NodeDiscovery {
             Err(e) => {
                 log::warn!("Failed to resolve address {}: {}", address_clone, e);
                 return Err(RaftError::Network(
-                    NetworkError::ConnectionFailedToAddress { address: address_clone, source: e },
+                    NetworkError::ConnectionFailedToAddress {
+                        address: address_clone,
+                        source: e,
+                    },
                 ));
             }
         };
@@ -1721,7 +1724,6 @@ pub struct ReplicationLagSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn test_health_check_result() {

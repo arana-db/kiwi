@@ -699,7 +699,10 @@ mod tests {
     fn test_parse_resp3_double() {
         let mut parser = RespParse::new(RespVersion::RESP3);
         let res = parser.parse(Bytes::from(format!(",{}\r\n", std::f64::consts::PI)));
-        assert_eq!(res, RespParseResult::Complete(RespData::Double(std::f64::consts::PI)));
+        assert_eq!(
+            res,
+            RespParseResult::Complete(RespData::Double(std::f64::consts::PI))
+        );
     }
 
     #[test]

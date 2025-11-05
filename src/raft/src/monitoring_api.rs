@@ -512,7 +512,6 @@ mod tests {
     use crate::health_monitor::{ClusterHealthMonitor, HealthMonitorConfig};
     use crate::metrics::MetricsCollector;
 
-
     #[tokio::test]
     async fn test_api_response_creation() {
         let success_response = ApiResponse::success("test data");

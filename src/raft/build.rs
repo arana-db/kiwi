@@ -28,7 +28,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => {
                 eprintln!("⚠️  protoc not found! Please install protoc:");
-                eprintln!("     - Windows: Download from https://github.com/protocolbuffers/protobuf/releases");
+                eprintln!(
+                    "     - Windows: Download from https://github.com/protocolbuffers/protobuf/releases"
+                );
                 eprintln!("     - Linux: sudo apt-get install protobuf-compiler");
                 eprintln!("     - macOS: brew install protobuf");
                 eprintln!("     Or set PROTOC environment variable to the protoc binary path");
@@ -38,11 +40,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    
+
     // Generate protobuf code
     prost_build::Config::new()
         .compile_protos(&["proto/binlog.proto"], &["proto/"])
-        .map_err(|e| {
-            format!("Failed to compile protobuf: {}", e).into()
-        })
+        .map_err(|e| format!("Failed to compile protobuf: {}", e).into())
 }
