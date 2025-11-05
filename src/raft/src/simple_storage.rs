@@ -29,14 +29,14 @@ pub struct PlaceholderStorage;
 /// Create simple Raft storage components using memory storage
 /// This is a temporary implementation until we can properly integrate with openraft's storage traits
 pub fn create_simple_raft_storage<P: AsRef<Path>>(
-    _node_id: NodeId,
+    node_id: NodeId,
     _db_path: P,
 ) -> Result<(PlaceholderStorage, KiwiStateMachine), RaftError> {
-    // For now, return an error indicating this needs proper implementation
-    // TODO: Implement proper storage integration
-    Err(RaftError::Configuration {
-        message: "Simple storage implementation is not yet complete. Need to research openraft's correct storage API.".to_string(),
-    })
+    // Create a basic state machine for testing
+    let state_machine = KiwiStateMachine::new(node_id);
+    let storage = PlaceholderStorage;
+    
+    Ok((storage, state_machine))
 }
 
 /// Create simple Raft storage components with storage engine

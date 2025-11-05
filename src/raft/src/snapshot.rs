@@ -84,31 +84,8 @@ impl SnapshotManager {
         snapshot_id: &str,
         last_log_index: LogIndex,
     ) -> Result<SnapshotMeta, RaftError> {
-        let snapshot_dir = self.snapshot_base_dir.join(snapshot_id);
-
-        // Create checkpoint directory
-        std::fs::create_dir_all(&snapshot_dir).map_err(|e| {
-            RaftError::state_machine(format!("Failed to create snapshot dir: {}", e))
-        })?;
-
-        // Create RocksDB checkpoint
-        let checkpoint = Checkpoint::new(&*self.db)
-            .map_err(|e| RaftError::state_machine(format!("Failed to create checkpoint: {}", e)))?;
-
-        checkpoint
-            .create_checkpoint(&snapshot_dir)
-            .map_err(|e| RaftError::state_machine(format!("Failed to create checkpoint: {}", e)))?;
-
-        // Calculate snapshot size (approximate, checkpoints use hard links)
-        let size_bytes = Self::calculate_directory_size(&snapshot_dir)?;
-
-        Ok(SnapshotMeta {
-            snapshot_id: snapshot_id.to_string(),
-            last_log_index,
-            snapshot_dir,
-            method: SnapshotMethod::Checkpoint,
-            size_bytes,
-        })
+        // Delegate to the overwrite version with overwrite=false
+        self.create_checkpoint_snapshot_with_overwrite(snapshot_id, last_log_index, false)
     }
 
     /// Create a snapshot by copying SST files
@@ -118,6 +95,13 @@ impl SnapshotManager {
         last_log_index: LogIndex,
     ) -> Result<SnapshotMeta, RaftError> {
         let snapshot_dir = self.snapshot_base_dir.join(snapshot_id);
+
+        // Return error if snapshot already exists to prevent accidental data loss
+        if snapshot_dir.exists() {
+            return Err(RaftError::state_machine(
+                format!("Snapshot '{}' already exists", snapshot_id)
+            ));
+        }
 
         // For SST file method, we would:
         // 1. Get the current database directory
@@ -153,6 +137,13 @@ impl SnapshotManager {
         last_log_index: LogIndex,
     ) -> Result<SnapshotMeta, RaftError> {
         let snapshot_dir = self.snapshot_base_dir.join(snapshot_id);
+
+        // Return error if snapshot already exists to prevent accidental data loss
+        if snapshot_dir.exists() {
+            return Err(RaftError::state_machine(
+                format!("Snapshot '{}' already exists", snapshot_id)
+            ));
+        }
 
         std::fs::create_dir_all(&snapshot_dir).map_err(|e| {
             RaftError::state_machine(format!("Failed to create snapshot dir: {}", e))
@@ -311,6 +302,62 @@ impl SnapshotManager {
         Ok(snapshots)
     }
 
+    /// Create a snapshot using checkpoint with overwrite option
+    pub fn create_checkpoint_snapshot_with_overwrite(
+        &self,
+        snapshot_id: &str,
+        last_log_index: LogIndex,
+        overwrite: bool,
+    ) -> Result<SnapshotMeta, RaftError> {
+        let snapshot_dir = self.snapshot_base_dir.join(snapshot_id);
+
+        // Check if snapshot exists and handle based on overwrite flag
+        if snapshot_dir.exists() && !overwrite {
+            return Err(RaftError::state_machine(
+                format!("Snapshot '{}' already exists", snapshot_id)
+            ));
+        }
+
+        let temp_dir = self.snapshot_base_dir.join(format!("{}.tmp", snapshot_id));
+
+        // Clean up any existing temporary directory
+        if temp_dir.exists() {
+            std::fs::remove_dir_all(&temp_dir).map_err(|e| {
+                RaftError::state_machine(format!("Failed to remove temp dir: {}", e))
+            })?;
+        }
+
+        // Create RocksDB checkpoint in temporary directory first
+        let checkpoint = Checkpoint::new(&*self.db)
+            .map_err(|e| RaftError::state_machine(format!("Failed to create checkpoint: {}", e)))?;
+
+        checkpoint
+            .create_checkpoint(&temp_dir)
+            .map_err(|e| RaftError::state_machine(format!("Failed to create checkpoint: {}", e)))?;
+
+        // Atomically replace old snapshot if it exists
+        if snapshot_dir.exists() {
+            std::fs::remove_dir_all(&snapshot_dir).map_err(|e| {
+                RaftError::state_machine(format!("Failed to remove existing snapshot: {}", e))
+            })?;
+        }
+
+        std::fs::rename(&temp_dir, &snapshot_dir).map_err(|e| {
+            RaftError::state_machine(format!("Failed to rename snapshot: {}", e))
+        })?;
+
+        // Calculate snapshot size (approximate, checkpoints use hard links)
+        let size_bytes = Self::calculate_directory_size(&snapshot_dir)?;
+
+        Ok(SnapshotMeta {
+            snapshot_id: snapshot_id.to_string(),
+            last_log_index,
+            snapshot_dir,
+            method: SnapshotMethod::Checkpoint,
+            size_bytes,
+        })
+    }
+
     /// Delete a snapshot
     pub fn delete_snapshot(&self, snapshot_id: &str) -> Result<(), RaftError> {
         let snapshot_dir = self.snapshot_base_dir.join(snapshot_id);
@@ -353,9 +400,21 @@ mod tests {
         assert_eq!(meta.last_log_index, 100);
         assert_eq!(meta.method, SnapshotMethod::Checkpoint);
 
+        // Test that creating the same snapshot again fails
+        let result = manager.create_checkpoint_snapshot("test1", 101);
+        assert!(result.is_err());
+
+        // Test overwrite functionality
+        let meta_overwrite = manager.create_checkpoint_snapshot_with_overwrite("test1", 101, true).unwrap();
+        assert_eq!(meta_overwrite.last_log_index, 101);
+
         // Test iterator snapshot
         let meta2 = manager.create_iterator_snapshot("test2", 200).unwrap();
         assert_eq!(meta2.snapshot_id, "test2");
         assert_eq!(meta2.method, SnapshotMethod::Iterator);
+
+        // Test that creating the same iterator snapshot again fails
+        let result2 = manager.create_iterator_snapshot("test2", 201);
+        assert!(result2.is_err());
     }
 }

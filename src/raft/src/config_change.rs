@@ -2046,15 +2046,17 @@ impl ConfigChangeManager {
 
     /// Verify cluster stability before configuration changes
     async fn verify_cluster_stability(&self) -> RaftResult<()> {
-        if let Some(raft_node) = &self.raft_node {
-            let metrics = raft_node.get_metrics().await?;
+        let raft_node = self.raft_node.as_ref().ok_or_else(|| {
+            RaftError::configuration("No Raft node available for cluster stability verification")
+        })?;
+        let metrics = raft_node.get_metrics().await?;
 
-            // Check leadership stability
-            if !matches!(metrics.state, openraft::ServerState::Leader) {
-                return Err(RaftError::configuration(
-                    "Node is not the leader, cannot perform configuration changes",
-                ));
-            }
+        // Check leadership stability
+        if !matches!(metrics.state, openraft::ServerState::Leader) {
+            return Err(RaftError::configuration(
+                "Node is not the leader, cannot perform configuration changes",
+            ));
+        }
 
             // Check if leadership is recent and stable
             // This would require additional metrics in a real implementation
@@ -2088,7 +2090,6 @@ impl ConfigChangeManager {
                     )));
                 }
             }
-        }
 
         Ok(())
     }
