@@ -18,10 +18,10 @@
 use bytes::BytesMut;
 use chrono::Utc;
 use once_cell::sync::OnceCell;
-use std::sync::Arc;
+use std::{mem::ManuallyDrop, sync::Arc};
 
 use rocksdb::{
-    CompactionDecision, DB, DEFAULT_COLUMN_FAMILY_NAME, ReadOptions,
+    CompactionDecision, DB, DEFAULT_COLUMN_FAMILY_NAME, ReadOptions, Snapshot,
     compaction_filter::CompactionFilter, compaction_filter_factory::CompactionFilterFactory,
 };
 
@@ -48,7 +48,9 @@ enum MetaLookup {
 
 pub struct DataCompactionFilter {
     db: Option<Arc<DB>>,
-    read_opts: ReadOptions,
+    /// Snapshot and read options captured at filter creation time to provide
+    /// a consistent view of metadata during compaction.
+    snapshot_ctx: Option<SnapshotContext>,
     data_type: DataType,
     cur_key: BytesMut,
     meta_not_found: bool,
@@ -58,19 +60,11 @@ pub struct DataCompactionFilter {
 
 impl DataCompactionFilter {
     pub fn new(db: Option<Arc<DB>>, data_type: DataType) -> Self {
-        let read_opts = db
-            .as_ref()
-            .map(|db| {
-                let snapshot = db.snapshot();
-                let mut opts = ReadOptions::default();
-                opts.set_snapshot(&snapshot);
-                opts
-            })
-            .unwrap_or_default();
+        let snapshot_ctx = db.as_ref().map(|db| SnapshotContext::new(Arc::clone(db)));
 
         Self {
             db,
-            read_opts,
+            snapshot_ctx,
             data_type,
             cur_key: BytesMut::new(),
             meta_not_found: false,
@@ -82,7 +76,7 @@ impl DataCompactionFilter {
     /// build meta key from data key
     ///
     /// ## data_key format
-    /// ```
+    /// ```text
     /// | reserve1 | encoded_key | version | Data / index | reserve2 |   
     /// |    8B    |     N B     |   8B    |       8B     |   16B    |
     /// ```
@@ -97,7 +91,7 @@ impl DataCompactionFilter {
     /// - User key: `"mykey"` → Encoded: `"mykey\x00\x00"`
     /// - User key: `"test\x00key"` → Encoded: `"test\x00\x01key\x00\x00"`
     /// ## meta_key format
-    /// ```
+    /// ```text
     /// | reserve1 | encoded_key | reserve2 |
     /// |    8B    |     N B     |   16B    |
     /// ```
@@ -168,14 +162,15 @@ impl DataCompactionFilter {
             self.cur_meta_version = 0;
             self.cur_meta_etime = 0;
 
-            let Some(db) = &self.db else {
+            let (Some(db), Some(snapshot_ctx)) = (self.db.as_ref(), self.snapshot_ctx.as_ref())
+            else {
                 return MetaLookup::Unavailable;
             };
             let Some(cf) = db.cf_handle(DEFAULT_COLUMN_FAMILY_NAME) else {
                 return MetaLookup::Unavailable;
             };
 
-            match db.get_cf_opt(&cf, meta_key, &self.read_opts) {
+            match db.get_cf_opt(&cf, meta_key, snapshot_ctx.read_opts()) {
                 Ok(Some(v)) => {
                     if let Some((ver, etime)) = self.parse_meta_value(&v) {
                         self.cur_meta_version = ver;
@@ -210,7 +205,6 @@ impl CompactionFilter for DataCompactionFilter {
     }
 
     fn filter(&mut self, _level: u32, key: &[u8], _value: &[u8]) -> CompactionDecision {
-        // TODO : check logic here
         let Some(meta_key) = Self::build_meta_key(key) else {
             return CompactionDecision::Keep;
         };
@@ -230,6 +224,42 @@ impl CompactionFilter for DataCompactionFilter {
                 }
             }
         }
+    }
+}
+
+struct SnapshotContext {
+    /// Keeps the underlying DB alive for the lifetime of the snapshot.
+    _db: Arc<DB>,
+    snapshot: ManuallyDrop<Snapshot<'static>>,
+    read_opts: ReadOptions,
+}
+
+impl SnapshotContext {
+    fn new(db: Arc<DB>) -> Self {
+        let snapshot = db.snapshot();
+        // SAFETY: `snapshot` is tied to the lifetime of `db`. We hold an `Arc<DB>` inside the
+        // context to guarantee `db` stays alive until after the snapshot is explicitly dropped.
+        let snapshot = unsafe { std::mem::transmute::<Snapshot<'_>, Snapshot<'static>>(snapshot) };
+        let mut read_opts = ReadOptions::default();
+        read_opts.set_snapshot(&snapshot);
+        Self {
+            _db: db,
+            snapshot: ManuallyDrop::new(snapshot),
+            read_opts,
+        }
+    }
+
+    fn read_opts(&self) -> &ReadOptions {
+        &self.read_opts
+    }
+}
+
+impl Drop for SnapshotContext {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.snapshot);
+        }
+        // `Arc<DB>` and `ReadOptions` are dropped automatically afterwards.
     }
 }
 
@@ -257,5 +287,275 @@ impl CompactionFilterFactory for DataCompactionFilterFactory {
 
     fn name(&self) -> &std::ffi::CStr {
         DATA_FILTER_FACTORY_NAME
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::base_key_format::BaseKey;
+    use crate::base_meta_value_format::BaseMetaValue;
+    use crate::list_meta_value_format::ListsMetaValue;
+    use crate::storage_define::SUFFIX_RESERVE_LENGTH;
+    use crate::unique_test_db_path;
+    use bytes::BufMut;
+    use rocksdb::{
+        ColumnFamilyDescriptor, Options, compaction_filter_factory::CompactionFilterContext,
+    };
+
+    fn setup_db_for_filter_test(path: &std::path::Path) -> (Arc<OnceCell<Arc<DB>>>, Arc<DB>) {
+        let mut db_opts = Options::default();
+        db_opts.create_if_missing(true);
+        db_opts.create_missing_column_families(true);
+
+        let meta_cf = ColumnFamilyDescriptor::new(DEFAULT_COLUMN_FAMILY_NAME, Options::default());
+        let data_cf = ColumnFamilyDescriptor::new("hash_data_cf", Options::default());
+
+        let db = DB::open_cf_descriptors(&db_opts, path, vec![meta_cf, data_cf]).unwrap();
+        let db = Arc::new(db);
+
+        let db_cell = Arc::new(OnceCell::new());
+        db_cell.set(Arc::clone(&db)).unwrap();
+
+        (db_cell, db)
+    }
+
+    /// Helper to create a generic data key for testing purposes.
+    fn encode_data_key(key: &[u8], version: u64) -> Vec<u8> {
+        let base_key = BaseKey::new(key);
+        let mut encoded = base_key.encode().unwrap();
+        // remove suffix
+        encoded.truncate(encoded.len() - SUFFIX_RESERVE_LENGTH);
+        // append version
+        encoded.put_u64_le(version);
+        // re-append suffix
+        encoded.resize(encoded.len() + SUFFIX_RESERVE_LENGTH, 0);
+        encoded.to_vec()
+    }
+
+    fn put_meta(db: &Arc<DB>, user_key: &[u8], data_type: DataType, version: u64, etime: u64) {
+        let meta_key = BaseKey::new(user_key).encode().unwrap();
+        match data_type {
+            DataType::List => {
+                let mut meta_value =
+                    ListsMetaValue::new(bytes::Bytes::copy_from_slice(&1u64.to_le_bytes()));
+                meta_value.set_version(version);
+                meta_value.set_etime(etime);
+                db.put(&meta_key, &meta_value.encode()).unwrap();
+            }
+            DataType::Hash | DataType::Set | DataType::ZSet => {
+                let mut meta_value =
+                    BaseMetaValue::new(bytes::Bytes::copy_from_slice(&1u64.to_le_bytes()));
+                meta_value.inner.data_type = data_type;
+                meta_value.set_version(version);
+                meta_value.set_etime(etime);
+                db.put(&meta_key, &meta_value.encode()).unwrap();
+            }
+            _ => panic!("unsupported data type for meta: {data_type:?}"),
+        }
+    }
+
+    #[test]
+    fn test_removes_data_if_meta_is_missing() {
+        let path = unique_test_db_path();
+        let (db_cell, _db) = setup_db_for_filter_test(&path);
+
+        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        let data_key = encode_data_key(b"mykey", 1);
+
+        let decision = filter.filter(0, &data_key, b"");
+        assert!(matches!(decision, CompactionDecision::Remove));
+    }
+
+    #[test]
+    fn test_keeps_data_if_meta_is_valid_for_hash() {
+        let path = unique_test_db_path();
+        let (db_cell, db) = setup_db_for_filter_test(&path);
+
+        put_meta(&db, b"mykey", DataType::Hash, 1, 0);
+
+        // Allow some time for the snapshot to see the write
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        let data_key = encode_data_key(b"mykey", 1); // data version matches meta version
+
+        let decision = filter.filter(0, &data_key, b"");
+        assert!(matches!(decision, CompactionDecision::Keep));
+    }
+
+    #[test]
+    fn test_keeps_data_if_meta_is_valid_for_set() {
+        let path = unique_test_db_path();
+        let (db_cell, db) = setup_db_for_filter_test(&path);
+
+        put_meta(&db, b"set_key", DataType::Set, 1, 0);
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Set);
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        let data_key = encode_data_key(b"set_key", 1);
+        let decision = filter.filter(0, &data_key, b"");
+
+        assert!(matches!(decision, CompactionDecision::Keep));
+    }
+
+    #[test]
+    fn test_keeps_data_if_meta_is_valid_for_zset() {
+        let path = unique_test_db_path();
+        let (db_cell, db) = setup_db_for_filter_test(&path);
+
+        put_meta(&db, b"zset_key", DataType::ZSet, 1, 0);
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::ZSet);
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        let data_key = encode_data_key(b"zset_key", 1);
+        let decision = filter.filter(0, &data_key, b"");
+
+        assert!(matches!(decision, CompactionDecision::Keep));
+    }
+
+    #[test]
+    fn test_keeps_data_if_meta_is_valid_for_list() {
+        let path = unique_test_db_path();
+        let (db_cell, db) = setup_db_for_filter_test(&path);
+
+        put_meta(&db, b"list_key", DataType::List, 1, 0);
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::List);
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        let data_key = encode_data_key(b"list_key", 1);
+        let decision = filter.filter(0, &data_key, b"");
+
+        assert!(matches!(decision, CompactionDecision::Keep));
+    }
+
+    #[test]
+    fn test_removes_data_if_meta_is_expired() {
+        let path = unique_test_db_path();
+        let (db_cell, db) = setup_db_for_filter_test(&path);
+
+        let past_time = Utc::now().timestamp_micros() as u64 - 1000;
+        let meta_key = BaseKey::new(b"mykey").encode().unwrap();
+        let mut meta_value = BaseMetaValue::new(bytes::Bytes::copy_from_slice(&1u64.to_le_bytes()));
+        meta_value.inner.data_type = DataType::Hash;
+        meta_value.set_version(1);
+        meta_value.set_etime(past_time); // expired
+        db.put(&meta_key, &meta_value.encode()).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        let data_key = encode_data_key(b"mykey", 1);
+
+        let decision = filter.filter(0, &data_key, b"");
+        assert!(matches!(decision, CompactionDecision::Remove));
+    }
+
+    #[test]
+    fn test_removes_data_if_version_is_older() {
+        let path = unique_test_db_path();
+        let (db_cell, db) = setup_db_for_filter_test(&path);
+
+        let meta_key = BaseKey::new(b"mykey").encode().unwrap();
+        let mut meta_value = BaseMetaValue::new(bytes::Bytes::copy_from_slice(&1u64.to_le_bytes()));
+        meta_value.inner.data_type = DataType::Hash;
+        meta_value.set_version(2); // meta version is 2
+        meta_value.set_etime(0);
+        db.put(&meta_key, &meta_value.encode()).unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        let data_key = encode_data_key(b"mykey", 1); // data version is 1 (older)
+
+        let decision = filter.filter(0, &data_key, b"");
+        assert!(matches!(decision, CompactionDecision::Remove));
+    }
+
+    #[test]
+    fn test_removes_data_if_type_mismatches() {
+        let path = unique_test_db_path();
+        let (db_cell, db) = setup_db_for_filter_test(&path);
+
+        put_meta(&db, b"mykey", DataType::List, 1, 0);
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Filter is for Hashes
+        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        let data_key = encode_data_key(b"mykey", 1);
+
+        let decision = filter.filter(0, &data_key, b"");
+        assert!(matches!(decision, CompactionDecision::Remove));
+    }
+
+    #[test]
+    fn test_keeps_data_if_key_is_malformed() {
+        let path = unique_test_db_path();
+        let (db_cell, _) = setup_db_for_filter_test(&path);
+
+        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        // This key is too short to have a valid meta key derived from it
+        let malformed_key = b"short";
+
+        let decision = filter.filter(0, malformed_key, b"");
+        assert!(matches!(decision, CompactionDecision::Keep));
     }
 }

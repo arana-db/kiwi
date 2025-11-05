@@ -64,6 +64,18 @@ impl ColumnFamilyIndex {
             ColumnFamilyIndex::ZsetsScoreCF => "zset_score_cf",
         }
     }
+
+    pub fn data_type(&self) -> Option<DataType> {
+        match self {
+            ColumnFamilyIndex::HashesDataCF => Some(DataType::Hash),
+            ColumnFamilyIndex::SetsDataCF => Some(DataType::Set),
+            ColumnFamilyIndex::ListsDataCF => Some(DataType::List),
+            ColumnFamilyIndex::ZsetsDataCF | ColumnFamilyIndex::ZsetsScoreCF => {
+                Some(DataType::ZSet)
+            }
+            ColumnFamilyIndex::MetaCF => None,
+        }
+    }
 }
 
 #[repr(C, align(64))]
@@ -170,7 +182,7 @@ impl Redis {
 
         self.handles = CF_CONFIGS
             .iter()
-            .filter(|(name, _, _)| engine.cf_handle(*name).is_some())
+            .filter(|(name, _, _)| engine.cf_handle(name).is_some())
             .map(|(name, _, _)| name.to_string())
             .collect();
         self.db = Some(Box::new(engine));
@@ -219,32 +231,27 @@ impl Redis {
             table_opts.set_block_cache(&cache);
         }
 
+        // Set table factory
         cf_opts.set_block_based_table_factory(&table_opts);
 
         // Set compaction filter factory
-        match cf_name {
-            name if name == ColumnFamilyIndex::MetaCF.name() => {
-                cf_opts.set_compaction_filter_factory(MetaCompactionFilterFactory::default());
-            }
-            name if name == ColumnFamilyIndex::HashesDataCF.name()
-                || name == ColumnFamilyIndex::SetsDataCF.name()
-                || name == ColumnFamilyIndex::ListsDataCF.name()
-                || name == ColumnFamilyIndex::ZsetsDataCF.name()
-                || name == ColumnFamilyIndex::ZsetsScoreCF.name() =>
+        if cf_name == ColumnFamilyIndex::MetaCF.name() {
+            cf_opts.set_compaction_filter_factory(MetaCompactionFilterFactory);
+        } else if let Some(db_once_cell) = db_once_cell {
+            if let Some(data_type) = [
+                ColumnFamilyIndex::HashesDataCF,
+                ColumnFamilyIndex::SetsDataCF,
+                ColumnFamilyIndex::ListsDataCF,
+                ColumnFamilyIndex::ZsetsDataCF,
+                ColumnFamilyIndex::ZsetsScoreCF,
+            ]
+            .iter()
+            .find(|cf| cf.name() == cf_name)
+            .and_then(|cf| cf.data_type())
             {
-                if let Some(db_once_cell) = db_once_cell {
-                    let data_type = match name {
-                        name if name == ColumnFamilyIndex::HashesDataCF.name() => DataType::Hash,
-                        name if name == ColumnFamilyIndex::SetsDataCF.name() => DataType::Set,
-                        name if name == ColumnFamilyIndex::ListsDataCF.name() => DataType::List,
-                        _ => DataType::ZSet, // ZsetsDataCF and ZsetsScoreCF
-                    };
-                    let factory =
-                        DataCompactionFilterFactory::new(Arc::clone(db_once_cell), data_type);
-                    cf_opts.set_compaction_filter_factory(factory);
-                }
+                let factory = DataCompactionFilterFactory::new(Arc::clone(db_once_cell), data_type);
+                cf_opts.set_compaction_filter_factory(factory);
             }
-            _ => {}
         }
 
         ColumnFamilyDescriptor::new(cf_name, cf_opts)
