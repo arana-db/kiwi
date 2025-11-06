@@ -20,6 +20,7 @@
 //! This module provides extensions to CmdExecutor to support network-aware
 //! command execution with StorageClient for async storage operations.
 
+use std::future::Future;
 use std::time::Duration;
 
 use executor::CmdExecutor;
@@ -32,7 +33,7 @@ use crate::network_execution::NetworkCmdExecution;
 /// Extension trait for CmdExecutor to support network operations
 pub trait CmdExecutorNetworkExt {
     /// Execute a network command using StorageClient for dual runtime architecture
-    async fn execute_network(&self, exec: NetworkCmdExecution) -> Result<(), DualRuntimeError>;
+    fn execute_network(&self, exec: NetworkCmdExecution) -> impl Future<Output = Result<(), DualRuntimeError>> + Send;
 }
 
 impl CmdExecutorNetworkExt for CmdExecutor {
