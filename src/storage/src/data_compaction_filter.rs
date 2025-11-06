@@ -18,11 +18,11 @@
 use bytes::BytesMut;
 use chrono::Utc;
 use once_cell::sync::OnceCell;
-use std::{mem::ManuallyDrop, sync::Arc};
+use std::sync::Arc;
 
 use rocksdb::{
-    CompactionDecision, DB, DEFAULT_COLUMN_FAMILY_NAME, ReadOptions, Snapshot,
-    compaction_filter::CompactionFilter, compaction_filter_factory::CompactionFilterFactory,
+    CompactionDecision, DB, DEFAULT_COLUMN_FAMILY_NAME, compaction_filter::CompactionFilter,
+    compaction_filter_factory::CompactionFilterFactory,
 };
 
 use crate::{
@@ -48,9 +48,6 @@ enum MetaLookup {
 
 pub struct DataCompactionFilter {
     db: Option<Arc<DB>>,
-    /// Snapshot and read options captured at filter creation time to provide
-    /// a consistent view of metadata during compaction.
-    snapshot_ctx: Option<SnapshotContext>,
     data_type: DataType,
     cur_key: BytesMut,
     meta_not_found: bool,
@@ -60,11 +57,8 @@ pub struct DataCompactionFilter {
 
 impl DataCompactionFilter {
     pub fn new(db: Option<Arc<DB>>, data_type: DataType) -> Self {
-        let snapshot_ctx = db.as_ref().map(|db| SnapshotContext::new(Arc::clone(db)));
-
         Self {
             db,
-            snapshot_ctx,
             data_type,
             cur_key: BytesMut::new(),
             meta_not_found: false,
@@ -162,15 +156,14 @@ impl DataCompactionFilter {
             self.cur_meta_version = 0;
             self.cur_meta_etime = 0;
 
-            let (Some(db), Some(snapshot_ctx)) = (self.db.as_ref(), self.snapshot_ctx.as_ref())
-            else {
+            let Some(db) = self.db.as_ref() else {
                 return MetaLookup::Unavailable;
             };
             let Some(cf) = db.cf_handle(DEFAULT_COLUMN_FAMILY_NAME) else {
                 return MetaLookup::Unavailable;
             };
 
-            match db.get_cf_opt(&cf, meta_key, snapshot_ctx.read_opts()) {
+            match db.get_cf(&cf, meta_key) {
                 Ok(Some(v)) => {
                     if let Some((ver, etime)) = self.parse_meta_value(&v) {
                         self.cur_meta_version = ver;
@@ -224,42 +217,6 @@ impl CompactionFilter for DataCompactionFilter {
                 }
             }
         }
-    }
-}
-
-struct SnapshotContext {
-    /// Keeps the underlying DB alive for the lifetime of the snapshot.
-    _db: Arc<DB>,
-    snapshot: ManuallyDrop<Snapshot<'static>>,
-    read_opts: ReadOptions,
-}
-
-impl SnapshotContext {
-    fn new(db: Arc<DB>) -> Self {
-        let snapshot = db.snapshot();
-        // SAFETY: `snapshot` is tied to the lifetime of `db`. We hold an `Arc<DB>` inside the
-        // context to guarantee `db` stays alive until after the snapshot is explicitly dropped.
-        let snapshot = unsafe { std::mem::transmute::<Snapshot<'_>, Snapshot<'static>>(snapshot) };
-        let mut read_opts = ReadOptions::default();
-        read_opts.set_snapshot(&snapshot);
-        Self {
-            _db: db,
-            snapshot: ManuallyDrop::new(snapshot),
-            read_opts,
-        }
-    }
-
-    fn read_opts(&self) -> &ReadOptions {
-        &self.read_opts
-    }
-}
-
-impl Drop for SnapshotContext {
-    fn drop(&mut self) {
-        unsafe {
-            ManuallyDrop::drop(&mut self.snapshot);
-        }
-        // `Arc<DB>` and `ReadOptions` are dropped automatically afterwards.
     }
 }
 
