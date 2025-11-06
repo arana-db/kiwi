@@ -19,9 +19,11 @@
 
 use std::sync::Arc;
 
+use bytes::Bytes;
 use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
+use storage::BeforeOrAfter;
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta};
 use crate::{impl_cmd_clone_box, impl_cmd_meta};
@@ -717,8 +719,6 @@ impl Cmd for RPushxCmd {
 #[derive(Clone, Default)]
 pub struct LInsertCmd {
     meta: CmdMeta,
-    source: String,
-    destination: String,
 }
 
 impl LInsertCmd {
@@ -731,8 +731,6 @@ impl LInsertCmd {
                 acl_category: AclCategory::LIST | AclCategory::WRITE,
                 ..Default::default()
             },
-            source: String::new(),
-            destination: String::new(),
         }
     }
 }
@@ -744,7 +742,7 @@ impl Cmd for LInsertCmd {
     fn do_initial(&self, client: &Client) -> bool {
         // Validate BEFORE|AFTER parameter
         let position = &client.argv()[2];
-        if !position.eq_ignore_ascii_case("BEFORE") && !position.eq_ignore_ascii_case("AFTER") {
+        if !position.eq_ignore_ascii_case(b"BEFORE") && !position.eq_ignore_ascii_case(b"AFTER") {
             return false;
         }
 
@@ -759,10 +757,10 @@ impl Cmd for LInsertCmd {
         let pivot = client.argv()[3].clone();
         let value = client.argv()[4].clone();
 
-        let before_or_after = if position.eq_ignore_ascii_case("BEFORE") {
-            crate::storage_impl::BeforeOrAfter::Before
+        let before_or_after = if position.eq_ignore_ascii_case(b"BEFORE") {
+            BeforeOrAfter::Before
         } else {
-            crate::storage_impl::BeforeOrAfter::After
+            BeforeOrAfter::After
         };
 
         match storage.linsert(&key, before_or_after, &pivot, &value) {
@@ -801,7 +799,7 @@ impl Cmd for RPoplpushCmd {
 
     fn do_initial(&self, client: &Client) -> bool {
         let source_key = client.argv()[1].clone();
-        let dest_key = client.argv()[2].clone();
+        let _dest_key = client.argv()[2].clone();
 
         // Set source key for initial validation
         client.set_key(&source_key);
@@ -814,13 +812,13 @@ impl Cmd for RPoplpushCmd {
 
         match storage.rpoplpush(&source_key, &destination_key) {
             Ok(Some(value)) => {
-                client.set_reply(RespData::BulkString(value));
+                client.set_reply(RespData::BulkString(Some(Bytes::from(value))));
                 // Set destination key for blocking operations
                 client.set_key(&destination_key);
             }
             Ok(None) => {
                 // Source list was empty or didn't exist
-                client.set_reply(RespData::NullBulkString);
+                client.set_reply(RespData::BulkString(None));
             }
             Err(e) => {
                 client.set_reply(RespData::Error(format!("ERR {e}").into()));

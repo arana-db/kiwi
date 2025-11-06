@@ -60,4 +60,5 @@ pub use options::StorageOptions;
 pub use redis::{ColumnFamilyIndex, Redis};
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
+pub use storage_impl::BeforeOrAfter;
 pub use util::unique_test_db_path;

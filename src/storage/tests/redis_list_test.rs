@@ -22,7 +22,7 @@ mod redis_list_test {
     use std::sync::Arc;
 
     use kstd::lock_mgr::LockMgr;
-    use storage::{BgTaskHandler, Redis, StorageOptions, unique_test_db_path};
+    use storage::{BgTaskHandler, BeforeOrAfter, Redis, StorageOptions, unique_test_db_path};
 
     fn create_test_redis() -> Redis {
         let test_db_path = unique_test_db_path();
@@ -689,7 +689,7 @@ mod redis_list_test {
 
         // Insert 'x' before 'b': should become [a, x, b, c]
         let result = redis
-            .linsert(key, crate::storage_impl::BeforeOrAfter::Before, b"b", b"x")
+            .linsert(key, BeforeOrAfter::Before, b"b", b"x")
             .expect("linsert should succeed");
         assert_eq!(result, 4);
 
@@ -710,7 +710,7 @@ mod redis_list_test {
 
         // Insert 'y' after 'b': should become [a, b, y, c]
         let result = redis
-            .linsert(key, crate::storage_impl::BeforeOrAfter::After, b"b", b"y")
+            .linsert(key, BeforeOrAfter::After, b"b", b"y")
             .expect("linsert should succeed");
         assert_eq!(result, 4);
 
@@ -731,7 +731,7 @@ mod redis_list_test {
 
         // Try to insert before non-existent pivot 'z'
         let result = redis
-            .linsert(key, crate::storage_impl::BeforeOrAfter::Before, b"z", b"x")
+            .linsert(key, BeforeOrAfter::Before, b"z", b"x")
             .expect("linsert should succeed");
         assert_eq!(result, -1);
 
@@ -747,7 +747,7 @@ mod redis_list_test {
 
         // Try to insert into non-existent list
         let result = redis
-            .linsert(key, crate::storage_impl::BeforeOrAfter::Before, b"pivot", b"value")
+            .linsert(key, BeforeOrAfter::Before, b"pivot", b"value")
             .expect_err("linsert should fail");
         assert!(result.to_string().contains("Key not found"));
     }

@@ -456,9 +456,9 @@ impl Storage {
         // For simplicity, we'll use the source instance for both operations
         // In a production environment, you might need to handle cross-instance operations
         if source_instance_id != dest_instance_id {
-            return Err(Error::InvalidArgument {
+            return InvalidArgumentSnafu {
                 message: "Cross-slot RPOPLPUSH operations are not supported".to_string(),
-            });
+            }.fail();
         }
 
         self.insts[source_instance_id].rpoplpush(source_key, destination_key)
