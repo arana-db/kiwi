@@ -76,11 +76,11 @@ proc ping_server {host port} {
             return $retval
         }
         fconfigure $fd -translation binary
+        # Because bu still supports inline command, it can only send PING commands using the RESP protocol
         set cmd "*1\r\n\$4\r\nPING\r\n"
         puts $fd "${cmd}"
         flush $fd
         set reply [gets $fd]
-        puts "ping_server reply=${reply}\n"
         if {[string range $reply 0 0] eq {+} ||
             [string range $reply 0 0] eq {-}} {
             set retval 1
@@ -204,7 +204,7 @@ proc start_server {options {code undefined}} {
     }
 
     # write new configuration to temporary file
-    set config_file [tmpfile redis.conf]
+    set config_file [tmpfile kiwi.conf]
     set fp [open $config_file w+]
     foreach directive [dict keys $config] {
         set value [dict get $config $directive]

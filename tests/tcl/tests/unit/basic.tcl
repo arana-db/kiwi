@@ -54,7 +54,6 @@ puts "Basic string tests!!!!!!!!!!!!!!!!!!!!"
 #        r dbsize
 #    } {0}
 
-    # TODO bug will repaired in issue: https://github.com/OpenAtomFoundation/kiwi/issues/424
     # test {Very big payload in GET/SET} {
     #     set buf [string repeat "abcd" 1000000]
     #     r set foo $buf
@@ -132,7 +131,6 @@ puts "Basic string tests!!!!!!!!!!!!!!!!!!!!"
         r incrby novar 17179869184
     } {34359738368}
 
-# TODO 待讨论是否要兼容
 #    test {INCR fails against key with spaces (left)} {
 #        r set novar "    11"
 #        catch {r incr novar} err
@@ -151,7 +149,6 @@ puts "Basic string tests!!!!!!!!!!!!!!!!!!!!"
         format $err
     } {ERR*}
 
-# TODO wait util kiwi compatibled redis error code specification, ref issue: https://github.com/OpenAtomFoundation/kiwi/issues/382
 #    test {INCR fails against a key holding a list} {
 #        r rpush mylist 1
 #        catch {r incr mylist} err
@@ -208,7 +205,6 @@ puts "Basic string tests!!!!!!!!!!!!!!!!!!!!"
         format $err
     } {ERR*valid*}
 
-# TODO wait util kiwi compatibled redis error code specification, ref issue: https://github.com/OpenAtomFoundation/kiwi/issues/382
 #    test {INCRBYFLOAT fails against a key holding a list} {
 #        r del mylist
 #        set err {}
@@ -258,7 +254,6 @@ puts "Basic string tests!!!!!!!!!!!!!!!!!!!!"
         # active expiry and dbAdd() but currently the only way to test that
         # SETNX expires a key when it should have been.
 
-        # TODO change 1000 to 9999
         for {set x 0} {$x < 1000} {incr x} {
             r setex key-$x 3600 value
         }

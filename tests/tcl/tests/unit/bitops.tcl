@@ -156,7 +156,6 @@ start_server {tags {"bitops"}} {
     foreach op {and or xor} {
         test "BITOP $op fuzzing" {
             for {set i 0} {$i < 10} {incr i} {
-                # TODO replaced by r flushall
                 r flushdb
                 set vec {}
                 set veckeys {}

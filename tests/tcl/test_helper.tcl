@@ -58,7 +58,7 @@ set ::all_tests {
 regsub -all {#.*?\n} $::all_tests {} ::all_tests
 
 # executable path
-set ::SERVER "../../target/release/server"
+set ::SERVER "../../target/release/kiwi"
 set ::SERVER_NAME "kiwi-server"
 
 # Index to the next test to run in the ::all_tests list.
@@ -352,7 +352,6 @@ proc signal_idle_client fd {
 # The the_end function gets called when all the test units were already
 # executed, so the test finished.
 proc the_end {} {
-    # TODO: print the status, exit with the rigth exit code.
     # delete the db file used for testing
     file delete -force db
 
