@@ -25,7 +25,6 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use snafu::Location;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use uuid::Uuid;
 
@@ -555,8 +554,10 @@ pub struct RecoveryConfig {
     /// Time to wait before attempting recovery
     recovery_delay: Duration,
     /// Number of successful operations needed to consider recovery complete
+    #[allow(dead_code)]
     success_threshold: usize,
     /// Maximum time to wait for recovery
+    #[allow(dead_code)]
     max_recovery_time: Duration,
 }
 

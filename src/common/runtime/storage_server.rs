@@ -18,7 +18,7 @@
 //! Storage server for dedicated storage processing in the storage runtime
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use tokio::sync::mpsc;
 use log::{debug, error, info, warn};
@@ -29,7 +29,7 @@ use resp::RespData;
 
 use crate::message::{StorageRequest, StorageResponse, StorageCommand, StorageStats, RequestPriority};
 use crate::error::DualRuntimeError;
-use crate::metrics::{StorageMetricsTracker, MetricsCollector};
+use crate::metrics::StorageMetricsTracker;
 
 /// Storage server that processes storage requests in the dedicated storage runtime
 pub struct StorageServer {
@@ -644,6 +644,7 @@ impl BatchProcessor {
     }
 
     /// Classify storage command by operation type for batching
+    #[allow(dead_code)]
     fn classify_operation(command: &StorageCommand) -> BatchOperationType {
         match command {
             StorageCommand::Get { .. } | 
@@ -963,7 +964,7 @@ impl BackgroundTaskManager {
                             if let Err(e) = storage.compact_all(false).await {
                                 warn!("Failed to trigger background compaction: {}", e);
                             } else {
-                                let compaction_duration = compaction_start.elapsed();
+                                let _compaction_duration = compaction_start.elapsed();
                                 
                                 // Update statistics
                                 let mut stats_guard = stats.lock().await;
@@ -1487,8 +1488,7 @@ mod util {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use tokio::sync::mpsc;
+
 
     #[test]
     fn test_storage_server_config_default() {

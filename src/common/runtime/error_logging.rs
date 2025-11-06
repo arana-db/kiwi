@@ -503,6 +503,7 @@ pub fn init_global_error_logger(config: ErrorLoggingConfig) {
 
 /// Get the global error logger instance
 pub fn get_global_error_logger() -> Option<Arc<ErrorLogger>> {
+    #[allow(static_mut_refs)]
     unsafe { GLOBAL_ERROR_LOGGER.as_ref().cloned() }
 }
 
@@ -528,7 +529,7 @@ macro_rules! log_dual_runtime_error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+
 
     #[test]
     fn test_correlation_id_creation() {

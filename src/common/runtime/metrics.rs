@@ -20,17 +20,17 @@
 //! This module provides comprehensive metrics collection for monitoring
 //! runtime performance, channel communication, and storage operations.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use log::{debug, info, warn};
+use log::{debug, info};
 use serde_json::json;
 
-use crate::message::{ChannelStats, RequestPriority};
+
 use crate::error::DualRuntimeError;
 
 /// Comprehensive runtime metrics for monitoring and observability
@@ -1254,7 +1254,7 @@ impl HealthMonitor {
         let network_health = self.network_health.read().unwrap().clone();
         let storage_health = self.storage_health.read().unwrap().clone();
         let channel_health = self.channel_health.read().unwrap().clone();
-        let last_check = self.last_health_check.read().unwrap().clone();
+        let _last_check = self.last_health_check.read().unwrap().clone();
         
         // Determine overall system health
         let overall_health = self.calculate_overall_health(&network_health, &storage_health, &channel_health);
@@ -1342,7 +1342,7 @@ impl HealthMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::{sleep, Duration};
+    use tokio::time::Duration;
 
     #[tokio::test]
     async fn test_metrics_collector_creation() {
