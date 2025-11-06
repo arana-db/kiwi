@@ -88,6 +88,10 @@ pub fn unique_test_db_path() -> std::path::PathBuf {
         .unwrap()
         .as_nanos();
     let pid = std::process::id();
+    let thread_id = std::thread::current().id();
 
-    std::env::temp_dir().join(format!("kiwi-test-db-{}-{}", pid, timestamp))
+    std::env::temp_dir().join(format!(
+        "kiwi-test-db-{}-{:?}-{}",
+        pid, thread_id, timestamp
+    ))
 }
