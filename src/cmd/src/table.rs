@@ -104,6 +104,10 @@ pub fn create_command_table() -> CmdTable {
         crate::list::LSetCmd,
         crate::list::LTrimCmd,
         crate::list::LRemCmd,
+        crate::list::LPushxCmd,
+        crate::list::RPushxCmd,
+        crate::list::LInsertCmd,
+        crate::list::RPoplpushCmd,
         // Admin commands
         crate::admin::InfoCmd,
         crate::admin::ConfigCmd,

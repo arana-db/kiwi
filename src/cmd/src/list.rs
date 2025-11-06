@@ -714,6 +714,121 @@ impl Cmd for RPushxCmd {
     }
 }
 
+#[derive(Clone, Default)]
+pub struct LInsertCmd {
+    meta: CmdMeta,
+    source: String,
+    destination: String,
+}
+
+impl LInsertCmd {
+    pub fn new() -> Self {
+        Self {
+            meta: CmdMeta {
+                name: "linsert".to_string(),
+                arity: 5, // LINSERT key BEFORE|AFTER pivot value
+                flags: CmdFlags::WRITE,
+                acl_category: AclCategory::LIST | AclCategory::WRITE,
+                ..Default::default()
+            },
+            source: String::new(),
+            destination: String::new(),
+        }
+    }
+}
+
+impl Cmd for LInsertCmd {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
+
+    fn do_initial(&self, client: &Client) -> bool {
+        // Validate BEFORE|AFTER parameter
+        let position = &client.argv()[2];
+        if !position.eq_ignore_ascii_case("BEFORE") && !position.eq_ignore_ascii_case("AFTER") {
+            return false;
+        }
+
+        let key = client.argv()[1].clone();
+        client.set_key(&key);
+        true
+    }
+
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
+        let key = client.key();
+        let position = &client.argv()[2];
+        let pivot = client.argv()[3].clone();
+        let value = client.argv()[4].clone();
+
+        let before_or_after = if position.eq_ignore_ascii_case("BEFORE") {
+            crate::storage_impl::BeforeOrAfter::Before
+        } else {
+            crate::storage_impl::BeforeOrAfter::After
+        };
+
+        match storage.linsert(&key, before_or_after, &pivot, &value) {
+            Ok(length) => {
+                client.set_reply(RespData::Integer(length));
+            }
+            Err(e) => {
+                client.set_reply(RespData::Error(format!("ERR {e}").into()));
+            }
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct RPoplpushCmd {
+    meta: CmdMeta,
+}
+
+impl RPoplpushCmd {
+    pub fn new() -> Self {
+        Self {
+            meta: CmdMeta {
+                name: "rpoplpush".to_string(),
+                arity: 3, // RPOPLPUSH source destination
+                flags: CmdFlags::WRITE,
+                acl_category: AclCategory::LIST | AclCategory::WRITE,
+                ..Default::default()
+            },
+        }
+    }
+}
+
+impl Cmd for RPoplpushCmd {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
+
+    fn do_initial(&self, client: &Client) -> bool {
+        let source_key = client.argv()[1].clone();
+        let dest_key = client.argv()[2].clone();
+
+        // Set source key for initial validation
+        client.set_key(&source_key);
+        true
+    }
+
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
+        let source_key = client.argv()[1].clone();
+        let destination_key = client.argv()[2].clone();
+
+        match storage.rpoplpush(&source_key, &destination_key) {
+            Ok(Some(value)) => {
+                client.set_reply(RespData::BulkString(value));
+                // Set destination key for blocking operations
+                client.set_key(&destination_key);
+            }
+            Ok(None) => {
+                // Source list was empty or didn't exist
+                client.set_reply(RespData::NullBulkString);
+            }
+            Err(e) => {
+                client.set_reply(RespData::Error(format!("ERR {e}").into()));
+            }
+        }
+    }
+}
+
 // Tests are covered by the comprehensive storage layer tests in src/storage/tests/redis_list_test.rs
 // The command layer is a thin wrapper around the storage operations
 #[cfg(test)]

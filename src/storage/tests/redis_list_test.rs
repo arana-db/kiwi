@@ -676,4 +676,191 @@ mod redis_list_test {
         let len = redis.llen(key).expect("llen should succeed");
         assert_eq!(len, original_len);
     }
+
+    #[tokio::test]
+    async fn test_linsert_before_pivot() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Create initial list: [a, b, c]
+        redis
+            .rpush(key, &[b"a".to_vec(), b"b".to_vec(), b"c".to_vec()])
+            .expect("rpush should succeed");
+
+        // Insert 'x' before 'b': should become [a, x, b, c]
+        let result = redis
+            .linsert(key, crate::storage_impl::BeforeOrAfter::Before, b"b", b"x")
+            .expect("linsert should succeed");
+        assert_eq!(result, 4);
+
+        // Verify the list content
+        let range = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(range, vec![b"a".to_vec(), b"x".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn test_linsert_after_pivot() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Create initial list: [a, b, c]
+        redis
+            .rpush(key, &[b"a".to_vec(), b"b".to_vec(), b"c".to_vec()])
+            .expect("rpush should succeed");
+
+        // Insert 'y' after 'b': should become [a, b, y, c]
+        let result = redis
+            .linsert(key, crate::storage_impl::BeforeOrAfter::After, b"b", b"y")
+            .expect("linsert should succeed");
+        assert_eq!(result, 4);
+
+        // Verify the list content
+        let range = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(range, vec![b"a".to_vec(), b"b".to_vec(), b"y".to_vec(), b"c".to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn test_linsert_pivot_not_found() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Create initial list: [a, b, c]
+        redis
+            .rpush(key, &[b"a".to_vec(), b"b".to_vec(), b"c".to_vec()])
+            .expect("rpush should succeed");
+
+        // Try to insert before non-existent pivot 'z'
+        let result = redis
+            .linsert(key, crate::storage_impl::BeforeOrAfter::Before, b"z", b"x")
+            .expect("linsert should succeed");
+        assert_eq!(result, -1);
+
+        // Verify list is unchanged
+        let range = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(range, vec![b"a".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn test_linsert_nonexistent_list() {
+        let redis = create_test_redis();
+        let key = b"nonexistent_list";
+
+        // Try to insert into non-existent list
+        let result = redis
+            .linsert(key, crate::storage_impl::BeforeOrAfter::Before, b"pivot", b"value")
+            .expect_err("linsert should fail");
+        assert!(result.to_string().contains("Key not found"));
+    }
+
+    #[tokio::test]
+    async fn test_rpoplpush_same_list() {
+        let redis = create_test_redis();
+        let key = b"test_list";
+
+        // Create initial list: [a, b, c]
+        redis
+            .rpush(key, &[b"a".to_vec(), b"b".to_vec(), b"c".to_vec()])
+            .expect("rpush should succeed");
+
+        // RPOPLPUSH from same list: 'c' should be moved to front
+        let result = redis.rpoplpush(key, key).expect("rpoplpush should succeed");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), b"c");
+
+        // Verify the list content: should become [c, a, b]
+        let range = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(range, vec![b"c".to_vec(), b"a".to_vec(), b"b".to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn test_rpoplpush_different_lists() {
+        let redis = create_test_redis();
+        let source_key = b"source_list";
+        let dest_key = b"dest_list";
+
+        // Create source list: [a, b, c]
+        redis
+            .rpush(source_key, &[b"a".to_vec(), b"b".to_vec(), b"c".to_vec()])
+            .expect("rpush should succeed");
+
+        // Create destination list: [x, y]
+        redis
+            .rpush(dest_key, &[b"x".to_vec(), b"y".to_vec()])
+            .expect("rpush should succeed");
+
+        // RPOPLPUSH from source to destination
+        let result = redis.rpoplpush(source_key, dest_key).expect("rpoplpush should succeed");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), b"c");
+
+        // Verify source list: should become [a, b]
+        let source_range = redis.lrange(source_key, 0, -1).expect("lrange should succeed");
+        assert_eq!(source_range, vec![b"a".to_vec(), b"b".to_vec()]);
+
+        // Verify destination list: should become [c, x, y]
+        let dest_range = redis.lrange(dest_key, 0, -1).expect("lrange should succeed");
+        assert_eq!(dest_range, vec![b"c".to_vec(), b"x".to_vec(), b"y".to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn test_rpoplpush_empty_source() {
+        let redis = create_test_redis();
+        let source_key = b"empty_source";
+        let dest_key = b"dest_list";
+
+        // Create destination list: [x, y]
+        redis
+            .rpush(dest_key, &[b"x".to_vec(), b"y".to_vec()])
+            .expect("rpush should succeed");
+
+        // Try RPOPLPUSH from empty source
+        let result = redis.rpoplpush(source_key, dest_key).expect("rpoplpush should succeed");
+        assert!(result.is_none());
+
+        // Verify destination list is unchanged
+        let dest_range = redis.lrange(dest_key, 0, -1).expect("lrange should succeed");
+        assert_eq!(dest_range, vec![b"x".to_vec(), b"y".to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn test_rpoplpush_nonexistent_destination() {
+        let redis = create_test_redis();
+        let source_key = b"source_list";
+        let dest_key = b"nonexistent_dest";
+
+        // Create source list: [a, b]
+        redis
+            .rpush(source_key, &[b"a".to_vec(), b"b".to_vec()])
+            .expect("rpush should succeed");
+
+        // RPOPLPUSH to non-existent destination (should create it)
+        let result = redis.rpoplpush(source_key, dest_key).expect("rpoplpush should succeed");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), b"b");
+
+        // Verify source list: should become [a]
+        let source_range = redis.lrange(source_key, 0, -1).expect("lrange should succeed");
+        assert_eq!(source_range, vec![b"a".to_vec()]);
+
+        // Verify destination list: should become [b]
+        let dest_range = redis.lrange(dest_key, 0, -1).expect("lrange should succeed");
+        assert_eq!(dest_range, vec![b"b".to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn test_rpoplpush_both_nonexistent() {
+        let redis = create_test_redis();
+        let source_key = b"nonexistent_source";
+        let dest_key = b"nonexistent_dest";
+
+        // Try RPOPLPUSH with both lists non-existent
+        let result = redis.rpoplpush(source_key, dest_key).expect("rpoplpush should succeed");
+        assert!(result.is_none());
+
+        // Verify neither list was created
+        let source_len = redis.llen(source_key).expect("llen should succeed");
+        assert_eq!(source_len, 0);
+        let dest_len = redis.llen(dest_key).expect("llen should succeed");
+        assert_eq!(dest_len, 0);
+    }
 }

@@ -32,6 +32,7 @@ use crate::{
     list_meta_value_format::{ListsMetaValue, ParsedListsMetaValue},
     lists_data_key_format::ListsDataKey,
     redis::{ColumnFamilyIndex, Redis},
+    storage_impl::BeforeOrAfter,
 };
 
 impl Redis {
@@ -798,5 +799,139 @@ impl Redis {
         }
 
         Ok(removed_count)
+    }
+
+    /// Insert value in the list stored at key either before or after the reference value pivot
+    pub fn linsert(&self, key: &[u8], before_or_after: BeforeOrAfter, pivot: &[u8], value: &[u8]) -> Result<i64> {
+        let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
+        let lists_data_cf = &cfs[0];
+
+        let base_meta_key = BaseMetaKey::new(key);
+        let meta_key = base_meta_key.encode()?;
+
+        // Get existing metadata
+        let mut parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
+            Some(meta_value) => {
+                let parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
+                if !parsed.is_valid() {
+                    return KeyNotFoundSnafu {
+                        key: String::from_utf8_lossy(key).to_string(),
+                    }
+                    .fail();
+                }
+                parsed
+            }
+            None => {
+                return KeyNotFoundSnafu {
+                    key: String::from_utf8_lossy(key).to_string(),
+                }
+                .fail();
+            }
+        };
+
+        if parsed_meta.count() == 0 {
+            return KeyNotFoundSnafu {
+                key: String::from_utf8_lossy(key).to_string(),
+            }
+            .fail();
+        }
+
+        // Read all elements to find the pivot
+        let mut all_elements = Vec::new();
+        let mut pivot_index = None;
+
+        for i in 0..parsed_meta.count() {
+            let storage_index = parsed_meta.left_index() + i + 1;
+            let data_key = ListsDataKey::new(key, parsed_meta.version(), storage_index);
+            let encoded_data_key = data_key.encode()?;
+
+            if let Some(data_value) = db
+                .get_cf(lists_data_cf, &encoded_data_key)
+                .context(RocksSnafu)?
+            {
+                let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
+                let element = parsed_data.user_value().to_vec();
+
+                // Check if this element matches the pivot
+                if element == pivot {
+                    pivot_index = Some(i as usize);
+                }
+
+                all_elements.push(element);
+            }
+        }
+
+        // If pivot not found, return -1 per Redis protocol
+        if pivot_index.is_none() {
+            return Ok(-1);
+        }
+
+        let insert_position = match before_or_after {
+            BeforeOrAfter::Before => pivot_index.unwrap(),
+            BeforeOrAfter::After => pivot_index.unwrap() + 1,
+        };
+
+        // Insert the new value at the calculated position
+        all_elements.insert(insert_position, value.to_vec());
+
+        // Clear existing elements
+        let mut batch = WriteBatch::default();
+        for i in 0..parsed_meta.count() {
+            let storage_index = parsed_meta.left_index() + i + 1;
+            let data_key = ListsDataKey::new(key, parsed_meta.version(), storage_index);
+            let encoded_data_key = data_key.encode()?;
+            batch.delete_cf(lists_data_cf, encoded_data_key);
+        }
+
+        // Update version for consistency
+        let new_version = parsed_meta.update_version();
+
+        // Write all elements back
+        for (i, element) in all_elements.iter().enumerate() {
+            let storage_index = parsed_meta.left_index() + i as u64 + 1;
+            let data_key = ListsDataKey::new(key, new_version, storage_index);
+            let encoded_data_key = data_key.encode()?;
+
+            let data_value = BaseDataValue::new(element.clone());
+            let encoded_data_value = data_value.encode();
+
+            batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+        }
+
+        // Update metadata
+        parsed_meta.set_count(all_elements.len() as u64);
+        parsed_meta.set_right_index(parsed_meta.left_index() + all_elements.len() as u64);
+        batch.put(&meta_key, parsed_meta.value());
+
+        db.write(batch).context(RocksSnafu)?;
+
+        // Update statistics
+        self.update_specific_key_statistics(
+            DataType::List,
+            &String::from_utf8_lossy(key),
+            1,
+        )?;
+
+        Ok(all_elements.len() as i64)
+    }
+
+    /// Atomically returns and removes the last element (tail) of the list stored at source,
+    /// and pushes it to the first element (head) of the list stored at destination
+    pub fn rpoplpush(&self, source_key: &[u8], destination_key: &[u8]) -> Result<Option<Vec<u8>>> {
+        // First, pop from source list
+        let popped_value = match self.rpop(source_key, None)? {
+            Some(values) => {
+                if values.is_empty() {
+                    return Ok(None);
+                }
+                values[0].clone()
+            }
+            None => return Ok(None),
+        };
+
+        // Then, push to destination list
+        self.lpush(destination_key, &[popped_value.clone()])?;
+
+        Ok(Some(popped_value))
     }
 }
