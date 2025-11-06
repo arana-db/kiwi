@@ -19,9 +19,9 @@ use clap::Parser;
 use conf::config::Config;
 use log::{error, info, warn};
 use net::ServerFactory;
-use runtime::{RuntimeManager, RuntimeConfig, DualRuntimeError, MessageChannel, StorageServer};
-use storage::storage::Storage;
+use runtime::{DualRuntimeError, MessageChannel, RuntimeConfig, RuntimeManager, StorageServer};
 use std::sync::Arc;
+use storage::storage::Storage;
 // use raft::{RaftNode, ClusterConfig}; // TODO: Re-enable when Raft module is fixed
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
@@ -65,22 +65,35 @@ fn main() -> std::io::Result<()> {
 
     // Create runtime configuration based on system capabilities
     let runtime_config = RuntimeConfig::default();
-    info!("Creating RuntimeManager with {} network threads and {} storage threads", 
-          runtime_config.network_threads, runtime_config.storage_threads);
+    info!(
+        "Creating RuntimeManager with {} network threads and {} storage threads",
+        runtime_config.network_threads, runtime_config.storage_threads
+    );
 
     // Create and start RuntimeManager
-    let mut runtime_manager = RuntimeManager::new(runtime_config)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create RuntimeManager: {}", e)))?;
+    let mut runtime_manager = RuntimeManager::new(runtime_config).map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to create RuntimeManager: {}", e),
+        )
+    })?;
 
     // Start the RuntimeManager first
     // We need to use a basic runtime to start the RuntimeManager
-    let basic_rt = tokio::runtime::Runtime::new()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to create basic runtime: {}", e)))?;
-    
+    let basic_rt = tokio::runtime::Runtime::new().map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to create basic runtime: {}", e),
+        )
+    })?;
+
     basic_rt.block_on(async {
         if let Err(e) = runtime_manager.start().await {
             error!("Failed to start RuntimeManager: {}", e);
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to start RuntimeManager: {}", e)));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to start RuntimeManager: {}", e),
+            ));
         }
         Ok(())
     })?;
@@ -88,15 +101,21 @@ fn main() -> std::io::Result<()> {
     info!("RuntimeManager started successfully");
 
     // Get runtime handles after starting
-    let network_handle = runtime_manager.network_handle()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to get network handle: {}", e)))?;
-    let storage_handle = runtime_manager.storage_handle()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to get storage handle: {}", e)))?;
+    let network_handle = runtime_manager.network_handle().map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to get network handle: {}", e),
+        )
+    })?;
+    let storage_handle = runtime_manager.storage_handle().map_err(|e| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed to get storage handle: {}", e),
+        )
+    })?;
 
     // Initialize storage server in storage runtime
-    let storage_server_result = storage_handle.spawn(async {
-        initialize_storage_server().await
-    });
+    let storage_server_result = storage_handle.spawn(async { initialize_storage_server().await });
 
     // Use the network runtime to run the main server logic
     let result = network_handle.block_on(async {
@@ -105,11 +124,17 @@ fn main() -> std::io::Result<()> {
             Ok(Ok(_)) => info!("Storage server initialized successfully"),
             Ok(Err(e)) => {
                 error!("Failed to initialize storage server: {}", e);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Failed to initialize storage server: {}", e)));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Failed to initialize storage server: {}", e),
+                ));
             }
             Err(e) => {
                 error!("Storage server initialization task failed: {}", e);
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Storage server initialization task failed: {}", e)));
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Storage server initialization task failed: {}", e),
+                ));
             }
         }
 
@@ -216,29 +241,36 @@ fn main() -> std::io::Result<()> {
 /// Initialize the storage server in the storage runtime
 async fn initialize_storage_server() -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
-    
+
     // Create storage instance
     let storage = Arc::new(Storage::new(1, 0)); // Single instance, db_id 0
-    
+
     // Create message channel for communication
     let mut message_channel = MessageChannel::new(10000); // Use default buffer size
-    let request_receiver = message_channel.take_request_receiver()
+    let request_receiver = message_channel
+        .take_request_receiver()
         .ok_or_else(|| DualRuntimeError::channel("Failed to get request receiver".to_string()))?;
-    
+
     // Create and start storage server
     let storage_server = StorageServer::new(storage, request_receiver);
-    
+
     info!("Storage server created, starting processing...");
-    
+
     // Start the storage server (this will run indefinitely)
     storage_server.run().await?;
-    
+
     Ok(())
 }
 
 /// Start the server with proper error handling
-async fn start_server(protocol: &str, addr: &str, runtime_manager: &mut RuntimeManager) -> std::io::Result<()> {
-    if let Some(server) = ServerFactory::create_server(protocol, Some(addr.to_string()), runtime_manager) {
+async fn start_server(
+    protocol: &str,
+    addr: &str,
+    runtime_manager: &mut RuntimeManager,
+) -> std::io::Result<()> {
+    if let Some(server) =
+        ServerFactory::create_server(protocol, Some(addr.to_string()), runtime_manager)
+    {
         server.run().await.map_err(|e| {
             std::io::Error::other(format!("Failed to start the server on {}: {}. Please check the server configuration and ensure the address is available.", addr, e))
         })

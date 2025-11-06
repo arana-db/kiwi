@@ -37,12 +37,12 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::tcp::{ClusterTcpServer, TcpServer};
 use crate::network_server::NetworkServer;
 use crate::storage_client::StorageClient;
-use runtime::{RuntimeManager, MessageChannel, StorageClient as RuntimeStorageClient};
+use crate::tcp::{ClusterTcpServer, TcpServer};
 use cmd::table::create_command_table;
 use executor::CmdExecutorBuilder;
+use runtime::{MessageChannel, RuntimeManager, StorageClient as RuntimeStorageClient};
 
 #[async_trait]
 pub trait ServerTrait: Send + Sync + 'static {
@@ -53,7 +53,11 @@ pub struct ServerFactory;
 
 impl ServerFactory {
     /// Create a server with dual runtime architecture support
-    pub fn create_server(protocol: &str, addr: Option<String>, runtime_manager: &RuntimeManager) -> Option<Box<dyn ServerTrait>> {
+    pub fn create_server(
+        protocol: &str,
+        addr: Option<String>,
+        runtime_manager: &RuntimeManager,
+    ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
             "tcp" => {
                 // Create NetworkServer with dual runtime architecture
@@ -74,7 +78,10 @@ impl ServerFactory {
     }
 
     /// Create a legacy server without dual runtime architecture (for backward compatibility)
-    pub fn create_legacy_server(protocol: &str, addr: Option<String>) -> Option<Box<dyn ServerTrait>> {
+    pub fn create_legacy_server(
+        protocol: &str,
+        addr: Option<String>,
+    ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
             "tcp" => TcpServer::new(addr)
                 .ok()
@@ -88,21 +95,26 @@ impl ServerFactory {
     }
 
     /// Create a NetworkServer with dual runtime architecture
-    fn create_network_server(addr: Option<String>, runtime_manager: &RuntimeManager) -> Result<NetworkServer, Box<dyn std::error::Error>> {
+    fn create_network_server(
+        addr: Option<String>,
+        runtime_manager: &RuntimeManager,
+    ) -> Result<NetworkServer, Box<dyn std::error::Error>> {
         // Create message channel for communication between runtimes
-        let message_channel = Arc::new(MessageChannel::new(runtime_manager.config().channel_buffer_size));
-        
+        let message_channel = Arc::new(MessageChannel::new(
+            runtime_manager.config().channel_buffer_size,
+        ));
+
         // Create storage client for network-to-storage communication
         let runtime_storage_client = Arc::new(RuntimeStorageClient::new(
             message_channel.clone(),
             runtime_manager.config().request_timeout,
         ));
         let storage_client = Arc::new(StorageClient::new(runtime_storage_client));
-        
+
         // Create command table and executor
         let cmd_table = Arc::new(create_command_table());
         let executor = Arc::new(CmdExecutorBuilder::new().build());
-        
+
         // Create NetworkServer
         NetworkServer::new(addr, storage_client, cmd_table, executor)
     }

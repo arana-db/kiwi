@@ -209,7 +209,7 @@ async fn handle_cluster_command(
     }
 }
 /// Process connection using StorageClient for dual runtime architecture
-/// 
+///
 /// This function provides an updated version of process_connection that works
 /// with StorageClient instead of direct Storage access, enabling dual runtime
 /// architecture while maintaining compatibility with existing server code.
@@ -220,16 +220,12 @@ pub async fn process_connection_with_storage_client(
     executor: Arc<CmdExecutor>,
 ) -> std::io::Result<()> {
     // Delegate to the network-aware connection handler
-    crate::network_handle::process_network_connection(
-        client,
-        storage_client,
-        cmd_table,
-        executor,
-    ).await
+    crate::network_handle::process_network_connection(client, storage_client, cmd_table, executor)
+        .await
 }
 
 /// Process cluster connection using StorageClient for dual runtime architecture
-/// 
+///
 /// This function provides an updated version of process_cluster_connection that works
 /// with StorageClient instead of direct Storage access, enabling dual runtime
 /// architecture while maintaining compatibility with existing server code.
@@ -245,5 +241,6 @@ pub async fn process_cluster_connection_with_storage_client(
         storage_client,
         cmd_table,
         executor,
-    ).await
+    )
+    .await
 }

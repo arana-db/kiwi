@@ -108,7 +108,7 @@ mod unix_impl {
                             // ).await {
                             //     error!("Connection processing failed: {e:?}");
                             // }
-                            
+
                             if let Err(e) =
                                 process_connection(client, storage, cmd_table, executor).await
                             {

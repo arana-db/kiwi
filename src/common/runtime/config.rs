@@ -15,8 +15,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Configuration for the dual runtime architecture
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,7 +38,7 @@ pub struct RuntimeConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         let cpu_count = num_cpus::get();
-        
+
         Self {
             // Network runtime: Use fewer threads, optimized for I/O
             network_threads: cpu_count.min(4).max(1),
@@ -74,37 +74,37 @@ impl RuntimeConfig {
             batch_size,
             batch_timeout,
         };
-        
+
         config.validate()?;
         Ok(config)
     }
-    
+
     /// Validate the configuration parameters
     pub fn validate(&self) -> Result<(), String> {
         if self.network_threads == 0 {
             return Err("network_threads must be greater than 0".to_string());
         }
-        
+
         if self.storage_threads == 0 {
             return Err("storage_threads must be greater than 0".to_string());
         }
-        
+
         if self.channel_buffer_size == 0 {
             return Err("channel_buffer_size must be greater than 0".to_string());
         }
-        
+
         if self.request_timeout.is_zero() {
             return Err("request_timeout must be greater than 0".to_string());
         }
-        
+
         if self.batch_size == 0 {
             return Err("batch_size must be greater than 0".to_string());
         }
-        
+
         if self.batch_timeout.is_zero() {
             return Err("batch_timeout must be greater than 0".to_string());
         }
-        
+
         // Warn if configuration seems suboptimal
         let cpu_count = num_cpus::get();
         if self.network_threads + self.storage_threads > cpu_count * 2 {
@@ -114,14 +114,14 @@ impl RuntimeConfig {
                 cpu_count
             );
         }
-        
+
         Ok(())
     }
-    
+
     /// Create a configuration optimized for high throughput
     pub fn high_throughput() -> Self {
         let cpu_count = num_cpus::get();
-        
+
         Self {
             network_threads: cpu_count.min(6).max(2),
             storage_threads: cpu_count.min(12).max(4),
@@ -131,11 +131,11 @@ impl RuntimeConfig {
             batch_timeout: Duration::from_millis(5),
         }
     }
-    
+
     /// Create a configuration optimized for low latency
     pub fn low_latency() -> Self {
         let cpu_count = num_cpus::get();
-        
+
         Self {
             network_threads: cpu_count.min(8).max(2),
             storage_threads: cpu_count.min(6).max(2),
@@ -150,41 +150,69 @@ impl RuntimeConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_default_config_is_valid() {
         let config = RuntimeConfig::default();
         assert!(config.validate().is_ok());
     }
-    
+
     #[test]
     fn test_config_validation() {
         // Test invalid network_threads
-        let result = RuntimeConfig::new(0, 2, 1000, Duration::from_secs(30), 100, Duration::from_millis(10));
+        let result = RuntimeConfig::new(
+            0,
+            2,
+            1000,
+            Duration::from_secs(30),
+            100,
+            Duration::from_millis(10),
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("network_threads"));
-        
+
         // Test invalid storage_threads
-        let result = RuntimeConfig::new(2, 0, 1000, Duration::from_secs(30), 100, Duration::from_millis(10));
+        let result = RuntimeConfig::new(
+            2,
+            0,
+            1000,
+            Duration::from_secs(30),
+            100,
+            Duration::from_millis(10),
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("storage_threads"));
-        
+
         // Test invalid channel_buffer_size
-        let result = RuntimeConfig::new(2, 2, 0, Duration::from_secs(30), 100, Duration::from_millis(10));
+        let result = RuntimeConfig::new(
+            2,
+            2,
+            0,
+            Duration::from_secs(30),
+            100,
+            Duration::from_millis(10),
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("channel_buffer_size"));
-        
+
         // Test valid configuration
-        let result = RuntimeConfig::new(2, 4, 1000, Duration::from_secs(30), 100, Duration::from_millis(10));
+        let result = RuntimeConfig::new(
+            2,
+            4,
+            1000,
+            Duration::from_secs(30),
+            100,
+            Duration::from_millis(10),
+        );
         assert!(result.is_ok());
     }
-    
+
     #[test]
     fn test_preset_configurations() {
         let high_throughput = RuntimeConfig::high_throughput();
         assert!(high_throughput.validate().is_ok());
         assert!(high_throughput.batch_size > RuntimeConfig::default().batch_size);
-        
+
         let low_latency = RuntimeConfig::low_latency();
         assert!(low_latency.validate().is_ok());
         assert!(low_latency.batch_timeout < RuntimeConfig::default().batch_timeout);

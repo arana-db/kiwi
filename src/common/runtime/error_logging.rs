@@ -16,17 +16,17 @@
 // limitations under the License.
 
 //! Comprehensive error logging and correlation system for dual runtime architecture
-//! 
+//!
 //! This module provides structured logging, error categorization, and correlation
 //! across runtime boundaries for monitoring and alerting integration.
 
+use log::{debug, error, info, warn};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
-use log::{error, warn, info, debug};
 
 use crate::error::{DualRuntimeError, ErrorSeverity};
 use crate::message::RequestId;
@@ -245,7 +245,8 @@ impl ErrorLogger {
         // Update correlation tracking
         {
             let mut correlations = self.correlations.lock().await;
-            correlations.entry(correlation_id.clone())
+            correlations
+                .entry(correlation_id.clone())
                 .or_insert_with(Vec::new)
                 .push(event_id);
         }
@@ -266,7 +267,7 @@ impl ErrorLogger {
         {
             let mut timeline = self.error_timeline.lock().await;
             timeline.push((timestamp, severity));
-            
+
             // Clean up old entries (keep only last hour)
             let cutoff = timestamp - Duration::from_secs(3600);
             timeline.retain(|(ts, _)| *ts > cutoff);
@@ -281,7 +282,8 @@ impl ErrorLogger {
         error: DualRuntimeError,
         runtime_context: RuntimeContext,
     ) -> CorrelationId {
-        self.log_error(error, runtime_context, None, None, HashMap::new()).await
+        self.log_error(error, runtime_context, None, None, HashMap::new())
+            .await
     }
 
     /// Log an error associated with a specific request
@@ -294,8 +296,15 @@ impl ErrorLogger {
     ) -> CorrelationId {
         let mut context = HashMap::new();
         context.insert("request_id".to_string(), request_id.to_string());
-        
-        self.log_error(error, runtime_context, correlation_id, Some(request_id), context).await
+
+        self.log_error(
+            error,
+            runtime_context,
+            correlation_id,
+            Some(request_id),
+            context,
+        )
+        .await
     }
 
     /// Log a correlated error (part of an error chain)
@@ -308,42 +317,48 @@ impl ErrorLogger {
     ) -> CorrelationId {
         let mut context = HashMap::new();
         context.insert("parent_event_id".to_string(), parent_event_id.to_string());
-        
-        self.log_error(error, runtime_context, Some(correlation_id), None, context).await
+
+        self.log_error(error, runtime_context, Some(correlation_id), None, context)
+            .await
     }
 
     /// Get current error metrics
     pub async fn get_metrics(&self) -> ErrorMetrics {
         let mut metrics = self.metrics.read().await.clone();
-        
+
         // Update error rates
         metrics.error_rates = self.calculate_error_rates().await;
-        
+
         metrics
     }
 
     /// Get errors by correlation ID
     pub async fn get_correlated_errors(&self, correlation_id: &CorrelationId) -> Vec<Uuid> {
         let correlations = self.correlations.lock().await;
-        correlations.get(correlation_id).cloned().unwrap_or_default()
+        correlations
+            .get(correlation_id)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Clear old error data (for memory management)
     pub async fn cleanup_old_data(&self, max_age: Duration) {
         let cutoff = SystemTime::now() - max_age;
-        
+
         // Clean up metrics
         {
             let mut metrics = self.metrics.write().await;
-            metrics.recent_errors.retain(|event| event.timestamp > cutoff);
+            metrics
+                .recent_errors
+                .retain(|event| event.timestamp > cutoff);
         }
-        
+
         // Clean up timeline
         {
             let mut timeline = self.error_timeline.lock().await;
             timeline.retain(|(ts, _)| *ts > cutoff);
         }
-        
+
         // Note: We don't clean up correlations as they might be needed for debugging
     }
 
@@ -377,25 +392,37 @@ impl ErrorLogger {
     fn capture_stack_trace(&self) -> String {
         // In a real implementation, you might use backtrace crate
         // For now, we'll return a placeholder
-        format!("Stack trace captured at {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC"))
+        format!(
+            "Stack trace captured at {}",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        )
     }
 
     /// Update error metrics
     async fn update_metrics(&self, event: &ErrorEvent) {
         let mut metrics = self.metrics.write().await;
-        
+
         // Update category counts
-        *metrics.errors_by_category.entry(event.category.clone()).or_insert(0) += 1;
-        
+        *metrics
+            .errors_by_category
+            .entry(event.category.clone())
+            .or_insert(0) += 1;
+
         // Update severity counts
-        *metrics.errors_by_severity.entry(event.severity).or_insert(0) += 1;
-        
+        *metrics
+            .errors_by_severity
+            .entry(event.severity)
+            .or_insert(0) += 1;
+
         // Update runtime context counts
-        *metrics.errors_by_runtime.entry(event.runtime_context.clone()).or_insert(0) += 1;
-        
+        *metrics
+            .errors_by_runtime
+            .entry(event.runtime_context.clone())
+            .or_insert(0) += 1;
+
         // Add to recent errors
         metrics.recent_errors.push(event.clone());
-        
+
         // Trim recent errors if needed
         if metrics.recent_errors.len() > self.config.max_recent_errors {
             metrics.recent_errors.remove(0);
@@ -405,7 +432,10 @@ impl ErrorLogger {
     /// Perform structured JSON logging
     async fn log_structured(&self, event: &ErrorEvent) {
         let json_event = serde_json::to_string(event).unwrap_or_else(|_| {
-            format!("{{\"error\": \"Failed to serialize error event\", \"event_id\": \"{}\"}}", event.event_id)
+            format!(
+                "{{\"error\": \"Failed to serialize error event\", \"event_id\": \"{}\"}}",
+                event.event_id
+            )
         });
 
         match event.severity {
@@ -421,8 +451,11 @@ impl ErrorLogger {
         let context_str = if event.context.is_empty() {
             String::new()
         } else {
-            format!(" [{}]", 
-                event.context.iter()
+            format!(
+                " [{}]",
+                event
+                    .context
+                    .iter()
                     .map(|(k, v)| format!("{}={}", k, v))
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -457,23 +490,20 @@ impl ErrorLogger {
     async fn calculate_error_rates(&self) -> ErrorRates {
         let timeline = self.error_timeline.lock().await;
         let now = SystemTime::now();
-        
+
         let last_minute = now - Duration::from_secs(60);
         let last_5_minutes = now - Duration::from_secs(300);
         let last_hour = now - Duration::from_secs(3600);
-        
-        let errors_last_minute = timeline.iter()
-            .filter(|(ts, _)| *ts > last_minute)
-            .count() as f64;
-            
-        let errors_last_5_minutes = timeline.iter()
+
+        let errors_last_minute = timeline.iter().filter(|(ts, _)| *ts > last_minute).count() as f64;
+
+        let errors_last_5_minutes = timeline
+            .iter()
             .filter(|(ts, _)| *ts > last_5_minutes)
             .count() as f64;
-            
-        let errors_last_hour = timeline.iter()
-            .filter(|(ts, _)| *ts > last_hour)
-            .count() as f64;
-        
+
+        let errors_last_hour = timeline.iter().filter(|(ts, _)| *ts > last_hour).count() as f64;
+
         ErrorRates {
             last_minute: errors_last_minute,
             last_5_minutes: errors_last_5_minutes / 5.0,
@@ -494,17 +524,17 @@ static INIT: std::sync::Once = std::sync::Once::new();
 
 /// Initialize the global error logger
 pub fn init_global_error_logger(config: ErrorLoggingConfig) {
-    INIT.call_once(|| {
-        unsafe {
-            GLOBAL_ERROR_LOGGER = Some(Arc::new(ErrorLogger::with_config(config)));
-        }
+    INIT.call_once(|| unsafe {
+        GLOBAL_ERROR_LOGGER = Some(Arc::new(ErrorLogger::with_config(config)));
     });
 }
 
 /// Get the global error logger instance
 pub fn get_global_error_logger() -> Option<Arc<ErrorLogger>> {
     #[allow(static_mut_refs)]
-    unsafe { GLOBAL_ERROR_LOGGER.as_ref().cloned() }
+    unsafe {
+        GLOBAL_ERROR_LOGGER.as_ref().cloned()
+    }
 }
 
 /// Convenience macro for logging errors with the global logger
@@ -520,7 +550,15 @@ macro_rules! log_dual_runtime_error {
     ($error:expr, $runtime:expr, $correlation_id:expr) => {
         if let Some(logger) = $crate::runtime::error_logging::get_global_error_logger() {
             tokio::spawn(async move {
-                logger.log_error($error, $runtime, Some($correlation_id), None, std::collections::HashMap::new()).await;
+                logger
+                    .log_error(
+                        $error,
+                        $runtime,
+                        Some($correlation_id),
+                        None,
+                        std::collections::HashMap::new(),
+                    )
+                    .await;
             });
         }
     };
@@ -530,12 +568,11 @@ macro_rules! log_dual_runtime_error {
 mod tests {
     use super::*;
 
-
     #[test]
     fn test_correlation_id_creation() {
         let id1 = CorrelationId::new();
         let id2 = CorrelationId::new();
-        
+
         assert_ne!(id1, id2);
         assert_ne!(id1.inner(), id2.inner());
     }
@@ -543,28 +580,42 @@ mod tests {
     #[test]
     fn test_error_categorization() {
         let logger = ErrorLogger::new();
-        
+
         let network_error = DualRuntimeError::network_runtime("test");
-        assert_eq!(logger.categorize_error(&network_error), ErrorCategory::Network);
-        
+        assert_eq!(
+            logger.categorize_error(&network_error),
+            ErrorCategory::Network
+        );
+
         let storage_error = DualRuntimeError::storage_runtime("test");
-        assert_eq!(logger.categorize_error(&storage_error), ErrorCategory::Storage);
-        
+        assert_eq!(
+            logger.categorize_error(&storage_error),
+            ErrorCategory::Storage
+        );
+
         let channel_error = DualRuntimeError::channel("test");
-        assert_eq!(logger.categorize_error(&channel_error), ErrorCategory::Communication);
+        assert_eq!(
+            logger.categorize_error(&channel_error),
+            ErrorCategory::Communication
+        );
     }
 
     #[tokio::test]
     async fn test_error_logging() {
         let logger = ErrorLogger::new();
         let error = DualRuntimeError::network_runtime("test error");
-        
-        let correlation_id = logger.log_simple_error(error, RuntimeContext::Network).await;
-        
+
+        let correlation_id = logger
+            .log_simple_error(error, RuntimeContext::Network)
+            .await;
+
         let metrics = logger.get_metrics().await;
-        assert_eq!(metrics.errors_by_category.get(&ErrorCategory::Network), Some(&1));
+        assert_eq!(
+            metrics.errors_by_category.get(&ErrorCategory::Network),
+            Some(&1)
+        );
         assert_eq!(metrics.recent_errors.len(), 1);
-        
+
         let correlated_errors = logger.get_correlated_errors(&correlation_id).await;
         assert_eq!(correlated_errors.len(), 1);
     }
@@ -573,13 +624,29 @@ mod tests {
     async fn test_error_correlation() {
         let logger = ErrorLogger::new();
         let correlation_id = CorrelationId::new();
-        
+
         let error1 = DualRuntimeError::network_runtime("first error");
         let error2 = DualRuntimeError::storage_runtime("second error");
-        
-        logger.log_error(error1, RuntimeContext::Network, Some(correlation_id.clone()), None, HashMap::new()).await;
-        logger.log_error(error2, RuntimeContext::Storage, Some(correlation_id.clone()), None, HashMap::new()).await;
-        
+
+        logger
+            .log_error(
+                error1,
+                RuntimeContext::Network,
+                Some(correlation_id.clone()),
+                None,
+                HashMap::new(),
+            )
+            .await;
+        logger
+            .log_error(
+                error2,
+                RuntimeContext::Storage,
+                Some(correlation_id.clone()),
+                None,
+                HashMap::new(),
+            )
+            .await;
+
         let correlated_errors = logger.get_correlated_errors(&correlation_id).await;
         assert_eq!(correlated_errors.len(), 2);
     }
@@ -588,9 +655,9 @@ mod tests {
     async fn test_metrics_export() {
         let logger = ErrorLogger::new();
         let error = DualRuntimeError::configuration("test config error");
-        
+
         logger.log_simple_error(error, RuntimeContext::Main).await;
-        
+
         let exported = logger.export_metrics().await;
         assert!(exported.is_object());
     }

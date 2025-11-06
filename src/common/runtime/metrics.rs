@@ -20,16 +20,14 @@
 //! This module provides comprehensive metrics collection for monitoring
 //! runtime performance, channel communication, and storage operations.
 
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
 use log::{debug, info};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-
+use tokio::sync::Mutex;
 
 use crate::error::DualRuntimeError;
 
@@ -357,29 +355,32 @@ impl MetricsCollector {
 
     /// Start the metrics collection background task
     pub async fn start_collection(&self) -> Result<(), DualRuntimeError> {
-        info!("Starting metrics collection with interval: {:?}", self.config.collection_interval);
-        
+        info!(
+            "Starting metrics collection with interval: {:?}",
+            self.config.collection_interval
+        );
+
         let network_tracker = Arc::clone(&self.network_tracker);
         let storage_tracker = Arc::clone(&self.storage_tracker);
         let channel_tracker = Arc::clone(&self.channel_tracker);
         let health_monitor = Arc::clone(&self.health_monitor);
         let last_metrics = Arc::clone(&self.last_metrics);
         let collection_interval = self.config.collection_interval;
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(collection_interval);
-            
+
             loop {
                 interval.tick().await;
-                
+
                 debug!("Collecting runtime metrics");
-                
+
                 // Collect metrics from all trackers
                 let network_metrics = network_tracker.get_metrics().await;
                 let storage_metrics = storage_tracker.get_metrics().await;
                 let channel_metrics = channel_tracker.get_metrics().await;
                 let health_status = health_monitor.get_health_status().await;
-                
+
                 let runtime_metrics = RuntimeMetrics {
                     network_metrics,
                     storage_metrics,
@@ -390,25 +391,29 @@ impl MetricsCollector {
                         .unwrap()
                         .as_secs(),
                 };
-                
+
                 // Store the latest metrics
                 *last_metrics.write().unwrap() = Some(runtime_metrics.clone());
-                
+
                 // Log key metrics periodically
                 if let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) {
-                    if elapsed.as_secs() % 60 == 0 { // Log every minute
+                    if elapsed.as_secs() % 60 == 0 {
+                        // Log every minute
                         info!(
                             "Runtime Metrics - Network RPS: {:.2}, Storage OPS: {:.2}, Channel Util: {:.1}%, Health: {:?}",
                             runtime_metrics.network_metrics.requests_per_second,
                             runtime_metrics.storage_metrics.operations_per_second,
-                            runtime_metrics.channel_metrics.buffer_metrics.buffer_utilization_percent,
+                            runtime_metrics
+                                .channel_metrics
+                                .buffer_metrics
+                                .buffer_utilization_percent,
                             runtime_metrics.health_status.overall_health
                         );
                     }
                 }
             }
         });
-        
+
         Ok(())
     }
 
@@ -440,12 +445,12 @@ impl MetricsCollector {
     /// Reset all metrics
     pub async fn reset_metrics(&self) {
         info!("Resetting all runtime metrics");
-        
+
         self.network_tracker.reset().await;
         self.storage_tracker.reset().await;
         self.channel_tracker.reset().await;
         self.health_monitor.reset().await;
-        
+
         *self.last_metrics.write().unwrap() = None;
     }
 }
@@ -610,31 +615,35 @@ impl LatencySamples {
     fn add_sample(&mut self, latency_ms: u64, max_samples: usize) {
         self.samples.push(latency_ms);
         self.total_samples += 1;
-        
+
         // Keep only the most recent samples
         if self.samples.len() > max_samples {
             self.samples.remove(0);
         }
     }
-    
+
     fn calculate_percentiles(&self) -> (f64, f64, f64) {
         if self.samples.is_empty() {
             return (0.0, 0.0, 0.0);
         }
-        
+
         let mut sorted_samples = self.samples.clone();
         sorted_samples.sort_unstable();
-        
+
         let avg = sorted_samples.iter().sum::<u64>() as f64 / sorted_samples.len() as f64;
-        
+
         let p95_idx = ((sorted_samples.len() as f64) * 0.95) as usize;
         let p99_idx = ((sorted_samples.len() as f64) * 0.99) as usize;
-        
-        let p95 = sorted_samples.get(p95_idx.min(sorted_samples.len() - 1))
-            .copied().unwrap_or(0) as f64;
-        let p99 = sorted_samples.get(p99_idx.min(sorted_samples.len() - 1))
-            .copied().unwrap_or(0) as f64;
-        
+
+        let p95 = sorted_samples
+            .get(p95_idx.min(sorted_samples.len() - 1))
+            .copied()
+            .unwrap_or(0) as f64;
+        let p99 = sorted_samples
+            .get(p99_idx.min(sorted_samples.len() - 1))
+            .copied()
+            .unwrap_or(0) as f64;
+
         (avg, p95, p99)
     }
 }
@@ -656,89 +665,92 @@ impl NetworkMetricsTracker {
             sample_window_size,
         }
     }
-    
+
     /// Record a new network connection
     pub fn record_connection_established(&self) {
         self.active_connections.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     /// Record a network connection closed
     pub fn record_connection_closed(&self) {
         self.active_connections.fetch_sub(1, Ordering::Relaxed);
     }
-    
+
     /// Record a successful request
     pub async fn record_request_success(&self, processing_time: Duration) {
         let mut stats = self.request_stats.lock().await;
         stats.total_requests += 1;
-        
+
         let mut samples = self.latency_samples.lock().await;
         samples.add_sample(processing_time.as_millis() as u64, self.sample_window_size);
     }
-    
+
     /// Record a failed request
     pub async fn record_request_failure(&self, processing_time: Duration) {
         let mut stats = self.request_stats.lock().await;
         stats.total_requests += 1;
         stats.failed_requests += 1;
-        
+
         let mut samples = self.latency_samples.lock().await;
         samples.add_sample(processing_time.as_millis() as u64, self.sample_window_size);
     }
-    
+
     /// Record bytes received
     pub async fn record_bytes_received(&self, bytes: u64) {
         let mut stats = self.io_stats.lock().await;
         stats.bytes_received += bytes;
     }
-    
+
     /// Record bytes sent
     pub async fn record_bytes_sent(&self, bytes: u64) {
         let mut stats = self.io_stats.lock().await;
         stats.bytes_sent += bytes;
     }
-    
+
     /// Get current network metrics
     pub async fn get_metrics(&self) -> NetworkRuntimeMetrics {
         let active_connections = self.active_connections.load(Ordering::Relaxed);
         let request_stats = self.request_stats.lock().await;
         let io_stats = self.io_stats.lock().await;
         let samples = self.latency_samples.lock().await;
-        
-        let elapsed = request_stats.start_time
+
+        let elapsed = request_stats
+            .start_time
             .map(|start| start.elapsed())
             .unwrap_or(Duration::from_secs(1));
-        
+
         let requests_per_second = if elapsed.as_secs() > 0 {
             request_stats.total_requests as f64 / elapsed.as_secs() as f64
         } else {
             0.0
         };
-        
+
         let error_rate_percent = if request_stats.total_requests > 0 {
             (request_stats.failed_requests as f64 / request_stats.total_requests as f64) * 100.0
         } else {
             0.0
         };
-        
-        let (avg_request_time, p95_request_time, p99_request_time) = samples.calculate_percentiles();
-        
-        let io_elapsed = io_stats.start_time
+
+        let (avg_request_time, p95_request_time, p99_request_time) =
+            samples.calculate_percentiles();
+
+        let io_elapsed = io_stats
+            .start_time
             .map(|start| start.elapsed())
             .unwrap_or(Duration::from_secs(1));
-        
+
         let bytes_per_second_received = if io_elapsed.as_secs() > 0 {
             io_stats.bytes_received as f64 / io_elapsed.as_secs() as f64
         } else {
             0.0
         };
-        
+
         let bytes_per_second_sent = if io_elapsed.as_secs() > 0 {
             io_stats.bytes_sent as f64 / io_elapsed.as_secs() as f64
         } else {
             0.0
         };
-        
+
         NetworkRuntimeMetrics {
             active_connections,
             total_requests: request_stats.total_requests,
@@ -756,23 +768,23 @@ impl NetworkMetricsTracker {
             },
         }
     }
-    
+
     /// Reset network metrics
     pub async fn reset(&self) {
         self.active_connections.store(0, Ordering::Relaxed);
-        
+
         let mut request_stats = self.request_stats.lock().await;
         *request_stats = RequestStats {
             start_time: Some(Instant::now()),
             ..Default::default()
         };
-        
+
         let mut io_stats = self.io_stats.lock().await;
         *io_stats = IOStats {
             start_time: Some(Instant::now()),
             ..Default::default()
         };
-        
+
         let mut samples = self.latency_samples.lock().await;
         *samples = LatencySamples::default();
     }
@@ -793,35 +805,35 @@ impl StorageMetricsTracker {
             sample_window_size,
         }
     }
-    
+
     /// Record a storage operation started
     pub fn record_operation_started(&self) {
         self.pending_requests.fetch_add(1, Ordering::Relaxed);
     }
-    
+
     /// Record a successful storage operation
     pub async fn record_operation_success(&self, execution_time: Duration) {
         self.pending_requests.fetch_sub(1, Ordering::Relaxed);
-        
+
         let mut stats = self.operation_stats.lock().await;
         stats.total_operations += 1;
-        
+
         let mut samples = self.latency_samples.lock().await;
         samples.add_sample(execution_time.as_millis() as u64, self.sample_window_size);
     }
-    
+
     /// Record a failed storage operation
     pub async fn record_operation_failure(&self, execution_time: Duration) {
         self.pending_requests.fetch_sub(1, Ordering::Relaxed);
-        
+
         let mut stats = self.operation_stats.lock().await;
         stats.total_operations += 1;
         stats.failed_operations += 1;
-        
+
         let mut samples = self.latency_samples.lock().await;
         samples.add_sample(execution_time.as_millis() as u64, self.sample_window_size);
     }
-    
+
     /// Update RocksDB metrics
     pub async fn update_rocksdb_metrics(
         &self,
@@ -842,39 +854,40 @@ impl StorageMetricsTracker {
         metrics.cache_hit_rate_percent = cache_hit_rate_percent;
         metrics.bloom_filter_useful_percent = bloom_filter_useful_percent;
     }
-    
+
     /// Record compaction event
     pub async fn record_compaction_started(&self) {
         let mut metrics = self.rocksdb_metrics.lock().await;
         metrics.compaction_stats.compactions_pending += 1;
     }
-    
+
     /// Record compaction completed
     pub async fn record_compaction_completed(&self, bytes_compacted: u64, duration: Duration) {
         let mut metrics = self.rocksdb_metrics.lock().await;
-        metrics.compaction_stats.compactions_pending = 
-            metrics.compaction_stats.compactions_pending.saturating_sub(1);
+        metrics.compaction_stats.compactions_pending = metrics
+            .compaction_stats
+            .compactions_pending
+            .saturating_sub(1);
         metrics.compaction_stats.compactions_completed += 1;
         metrics.compaction_stats.bytes_compacted += bytes_compacted;
         metrics.compaction_stats.total_compaction_time_ms += duration.as_millis() as u64;
     }
-    
+
     /// Record flush event
     pub async fn record_flush_started(&self) {
         let mut metrics = self.rocksdb_metrics.lock().await;
         metrics.flush_stats.flushes_pending += 1;
     }
-    
+
     /// Record flush completed
     pub async fn record_flush_completed(&self, bytes_flushed: u64, duration: Duration) {
         let mut metrics = self.rocksdb_metrics.lock().await;
-        metrics.flush_stats.flushes_pending = 
-            metrics.flush_stats.flushes_pending.saturating_sub(1);
+        metrics.flush_stats.flushes_pending = metrics.flush_stats.flushes_pending.saturating_sub(1);
         metrics.flush_stats.flushes_completed += 1;
         metrics.flush_stats.bytes_flushed += bytes_flushed;
         metrics.flush_stats.total_flush_time_ms += duration.as_millis() as u64;
     }
-    
+
     /// Record batch processing
     pub async fn record_batch_processed(&self, batch_size: usize, processing_time: Duration) {
         let mut metrics = self.batch_metrics.lock().await;
@@ -882,13 +895,13 @@ impl StorageMetricsTracker {
         metrics.total_operations_in_batches += batch_size as u64;
         metrics.total_batch_time_ms += processing_time.as_millis() as u64;
     }
-    
+
     /// Record backpressure event
     pub async fn record_backpressure_event(&self) {
         let mut metrics = self.batch_metrics.lock().await;
         metrics.backpressure_events += 1;
     }
-    
+
     /// Get current storage metrics
     pub async fn get_metrics(&self) -> StorageRuntimeMetrics {
         let pending_requests = self.pending_requests.load(Ordering::Relaxed);
@@ -896,53 +909,55 @@ impl StorageMetricsTracker {
         let rocksdb_metrics = self.rocksdb_metrics.lock().await;
         let batch_metrics = self.batch_metrics.lock().await;
         let samples = self.latency_samples.lock().await;
-        
-        let elapsed = operation_stats.start_time
+
+        let elapsed = operation_stats
+            .start_time
             .map(|start| start.elapsed())
             .unwrap_or(Duration::from_secs(1));
-        
+
         let operations_per_second = if elapsed.as_secs() > 0 {
             operation_stats.total_operations as f64 / elapsed.as_secs() as f64
         } else {
             0.0
         };
-        
-        let (avg_execution_time, p95_execution_time, p99_execution_time) = samples.calculate_percentiles();
-        
+
+        let (avg_execution_time, p95_execution_time, p99_execution_time) =
+            samples.calculate_percentiles();
+
         // Calculate RocksDB metrics
         let avg_compaction_time = if rocksdb_metrics.compaction_stats.compactions_completed > 0 {
-            rocksdb_metrics.compaction_stats.total_compaction_time_ms as f64 
+            rocksdb_metrics.compaction_stats.total_compaction_time_ms as f64
                 / rocksdb_metrics.compaction_stats.compactions_completed as f64
         } else {
             0.0
         };
-        
+
         let avg_flush_time = if rocksdb_metrics.flush_stats.flushes_completed > 0 {
-            rocksdb_metrics.flush_stats.total_flush_time_ms as f64 
+            rocksdb_metrics.flush_stats.total_flush_time_ms as f64
                 / rocksdb_metrics.flush_stats.flushes_completed as f64
         } else {
             0.0
         };
-        
+
         // Calculate batch metrics
         let avg_batch_size = if batch_metrics.total_batches > 0 {
             batch_metrics.total_operations_in_batches as f64 / batch_metrics.total_batches as f64
         } else {
             0.0
         };
-        
+
         let avg_batch_time = if batch_metrics.total_batches > 0 {
             batch_metrics.total_batch_time_ms as f64 / batch_metrics.total_batches as f64
         } else {
             0.0
         };
-        
+
         let batch_efficiency = if batch_metrics.total_batches > 0 {
             batch_metrics.total_operations_in_batches as f64 / batch_metrics.total_batches as f64
         } else {
             0.0
         };
-        
+
         StorageRuntimeMetrics {
             pending_requests,
             total_operations: operation_stats.total_operations,
@@ -981,23 +996,23 @@ impl StorageMetricsTracker {
             },
         }
     }
-    
+
     /// Reset storage metrics
     pub async fn reset(&self) {
         self.pending_requests.store(0, Ordering::Relaxed);
-        
+
         let mut operation_stats = self.operation_stats.lock().await;
         *operation_stats = OperationStats {
             start_time: Some(Instant::now()),
             ..Default::default()
         };
-        
+
         let mut rocksdb_metrics = self.rocksdb_metrics.lock().await;
         *rocksdb_metrics = RocksDBMetricsData::default();
-        
+
         let mut batch_metrics = self.batch_metrics.lock().await;
         *batch_metrics = BatchMetricsData::default();
-        
+
         let mut samples = self.latency_samples.lock().await;
         *samples = LatencySamples::default();
     }
@@ -1018,81 +1033,81 @@ impl ChannelMetricsTracker {
             sample_window_size,
         }
     }
-    
+
     /// Record a message sent
     pub async fn record_message_sent(&self, message_size_bytes: u64) {
         let mut stats = self.message_stats.lock().await;
         stats.messages_sent += 1;
         stats.total_message_size_bytes += message_size_bytes;
     }
-    
+
     /// Record a message received
     pub async fn record_message_received(&self, processing_time: Duration) {
         let mut stats = self.message_stats.lock().await;
         stats.messages_received += 1;
         stats.total_processing_time_ms += processing_time.as_millis() as u64;
     }
-    
+
     /// Update buffer utilization
     pub async fn update_buffer_utilization(&self, utilization_percent: f64) {
         let mut metrics = self.buffer_metrics.lock().await;
         metrics.current_utilization_percent = utilization_percent;
         metrics.max_utilization_percent = metrics.max_utilization_percent.max(utilization_percent);
     }
-    
+
     /// Record buffer full event
     pub async fn record_buffer_full_event(&self) {
         let mut metrics = self.buffer_metrics.lock().await;
         metrics.buffer_full_events += 1;
     }
-    
+
     /// Record backpressure activation
     pub async fn record_backpressure_activation(&self, duration: Duration) {
         let mut metrics = self.buffer_metrics.lock().await;
         metrics.backpressure_activations += 1;
         metrics.total_backpressure_time_ms += duration.as_millis() as u64;
     }
-    
+
     /// Record request/response correlation
     pub async fn record_correlation(&self, correlation_time: Duration) {
         let mut metrics = self.correlation_metrics.lock().await;
         metrics.total_correlations += 1;
-        
+
         let mut samples = self.correlation_samples.lock().await;
         samples.add_sample(correlation_time.as_millis() as u64, self.sample_window_size);
     }
-    
+
     /// Record orphaned request (no response received)
     pub async fn record_orphaned_request(&self) {
         let mut metrics = self.correlation_metrics.lock().await;
         metrics.orphaned_requests += 1;
     }
-    
+
     /// Record timeout event
     pub async fn record_timeout(&self, timeout_duration: Duration) {
         let mut stats = self.timeout_stats.lock().await;
         stats.total_timeouts += 1;
         stats.total_timeout_duration_ms += timeout_duration.as_millis() as u64;
     }
-    
+
     /// Record channel error
     pub async fn record_channel_error(&self) {
         let mut stats = self.timeout_stats.lock().await;
         stats.channel_errors += 1;
     }
-    
+
     /// Record send failure
     pub async fn record_send_failure(&self) {
         let mut stats = self.timeout_stats.lock().await;
         stats.send_failures += 1;
     }
-    
+
     /// Record receive failure
     pub async fn record_receive_failure(&self) {
         let mut stats = self.timeout_stats.lock().await;
         stats.receive_failures += 1;
     }
-    
+
     /// Get current channel metrics
     pub async fn get_metrics(&self) -> ChannelMetrics {
         let message_stats = self.message_stats.lock().await;
@@ -1100,50 +1115,54 @@ impl ChannelMetricsTracker {
         let correlation_metrics = self.correlation_metrics.lock().await;
         let timeout_stats = self.timeout_stats.lock().await;
         let correlation_samples = self.correlation_samples.lock().await;
-        
-        let elapsed = message_stats.start_time
+
+        let elapsed = message_stats
+            .start_time
             .map(|start| start.elapsed())
             .unwrap_or(Duration::from_secs(1));
-        
+
         let messages_per_second = if elapsed.as_secs() > 0 {
-            (message_stats.messages_sent + message_stats.messages_received) as f64 / elapsed.as_secs() as f64
+            (message_stats.messages_sent + message_stats.messages_received) as f64
+                / elapsed.as_secs() as f64
         } else {
             0.0
         };
-        
+
         let avg_message_size = if message_stats.messages_sent > 0 {
             message_stats.total_message_size_bytes as f64 / message_stats.messages_sent as f64
         } else {
             0.0
         };
-        
+
         let avg_processing_latency = if message_stats.messages_received > 0 {
             message_stats.total_processing_time_ms as f64 / message_stats.messages_received as f64
         } else {
             0.0
         };
-        
+
         let avg_backpressure_time = if buffer_metrics.backpressure_activations > 0 {
-            buffer_metrics.total_backpressure_time_ms as f64 / buffer_metrics.backpressure_activations as f64
+            buffer_metrics.total_backpressure_time_ms as f64
+                / buffer_metrics.backpressure_activations as f64
         } else {
             0.0
         };
-        
-        let (avg_correlation_time, p95_correlation_time, p99_correlation_time) = 
+
+        let (avg_correlation_time, p95_correlation_time, p99_correlation_time) =
             correlation_samples.calculate_percentiles();
-        
+
         let timeout_rate_percent = if correlation_metrics.total_correlations > 0 {
-            (timeout_stats.total_timeouts as f64 / correlation_metrics.total_correlations as f64) * 100.0
+            (timeout_stats.total_timeouts as f64 / correlation_metrics.total_correlations as f64)
+                * 100.0
         } else {
             0.0
         };
-        
+
         let avg_timeout_duration = if timeout_stats.total_timeouts > 0 {
             timeout_stats.total_timeout_duration_ms as f64 / timeout_stats.total_timeouts as f64
         } else {
             0.0
         };
-        
+
         ChannelMetrics {
             message_stats: MessageStats {
                 messages_sent: message_stats.messages_sent,
@@ -1176,7 +1195,7 @@ impl ChannelMetricsTracker {
             },
         }
     }
-    
+
     /// Reset channel metrics
     pub async fn reset(&self) {
         let mut message_stats = self.message_stats.lock().await;
@@ -1184,16 +1203,16 @@ impl ChannelMetricsTracker {
             start_time: Some(Instant::now()),
             ..Default::default()
         };
-        
+
         let mut buffer_metrics = self.buffer_metrics.lock().await;
         *buffer_metrics = BufferMetricsData::default();
-        
+
         let mut correlation_metrics = self.correlation_metrics.lock().await;
         *correlation_metrics = CorrelationMetricsData::default();
-        
+
         let mut timeout_stats = self.timeout_stats.lock().await;
         *timeout_stats = TimeoutStatsData::default();
-        
+
         let mut correlation_samples = self.correlation_samples.lock().await;
         *correlation_samples = LatencySamples::default();
     }
@@ -1209,7 +1228,7 @@ impl HealthMonitor {
             last_health_check: Arc::new(RwLock::new(Instant::now())),
         }
     }
-    
+
     /// Update network runtime health
     pub fn update_network_health(&self, health: RuntimeHealth) {
         if let Ok(mut current_health) = self.network_health.write() {
@@ -1217,7 +1236,7 @@ impl HealthMonitor {
         }
         self.update_last_health_check();
     }
-    
+
     /// Update storage runtime health
     pub fn update_storage_health(&self, health: RuntimeHealth) {
         if let Ok(mut current_health) = self.storage_health.write() {
@@ -1225,7 +1244,7 @@ impl HealthMonitor {
         }
         self.update_last_health_check();
     }
-    
+
     /// Update channel health
     pub fn update_channel_health(&self, health: ChannelHealth) {
         if let Ok(mut current_health) = self.channel_health.write() {
@@ -1233,32 +1252,35 @@ impl HealthMonitor {
         }
         self.update_last_health_check();
     }
-    
+
     /// Update channel health based on buffer utilization
     pub fn update_channel_health_from_utilization(&self, utilization_percent: f64) {
         let health = if utilization_percent >= 90.0 {
-            ChannelHealth::Unhealthy { 
-                reason: format!("Buffer utilization too high: {:.1}%", utilization_percent) 
+            ChannelHealth::Unhealthy {
+                reason: format!("Buffer utilization too high: {:.1}%", utilization_percent),
             }
         } else if utilization_percent >= 80.0 {
-            ChannelHealth::Backpressure { utilization_percent }
+            ChannelHealth::Backpressure {
+                utilization_percent,
+            }
         } else {
             ChannelHealth::Healthy
         };
-        
+
         self.update_channel_health(health);
     }
-    
+
     /// Get current health status
     pub async fn get_health_status(&self) -> HealthStatus {
         let network_health = self.network_health.read().unwrap().clone();
         let storage_health = self.storage_health.read().unwrap().clone();
         let channel_health = self.channel_health.read().unwrap().clone();
         let _last_check = self.last_health_check.read().unwrap().clone();
-        
+
         // Determine overall system health
-        let overall_health = self.calculate_overall_health(&network_health, &storage_health, &channel_health);
-        
+        let overall_health =
+            self.calculate_overall_health(&network_health, &storage_health, &channel_health);
+
         HealthStatus {
             network_runtime_health: network_health,
             storage_runtime_health: storage_health,
@@ -1270,7 +1292,7 @@ impl HealthMonitor {
                 .as_secs(),
         }
     }
-    
+
     /// Calculate overall system health based on component health
     fn calculate_overall_health(
         &self,
@@ -1280,7 +1302,7 @@ impl HealthMonitor {
     ) -> SystemHealth {
         let mut degraded_components = Vec::new();
         let mut unhealthy_components = Vec::new();
-        
+
         // Check network health
         match network_health {
             RuntimeHealth::Degraded { reason } => {
@@ -1291,7 +1313,7 @@ impl HealthMonitor {
             }
             RuntimeHealth::Healthy => {}
         }
-        
+
         // Check storage health
         match storage_health {
             RuntimeHealth::Degraded { reason } => {
@@ -1302,35 +1324,42 @@ impl HealthMonitor {
             }
             RuntimeHealth::Healthy => {}
         }
-        
+
         // Check channel health
         match channel_health {
-            ChannelHealth::Backpressure { utilization_percent } => {
-                degraded_components.push(format!("Channel: Backpressure {:.1}%", utilization_percent));
+            ChannelHealth::Backpressure {
+                utilization_percent,
+            } => {
+                degraded_components
+                    .push(format!("Channel: Backpressure {:.1}%", utilization_percent));
             }
             ChannelHealth::Unhealthy { reason } => {
                 unhealthy_components.push(format!("Channel: {}", reason));
             }
             ChannelHealth::Healthy => {}
         }
-        
+
         // Determine overall health
         if !unhealthy_components.is_empty() {
-            SystemHealth::Unhealthy { unhealthy_components }
+            SystemHealth::Unhealthy {
+                unhealthy_components,
+            }
         } else if !degraded_components.is_empty() {
-            SystemHealth::Degraded { degraded_components }
+            SystemHealth::Degraded {
+                degraded_components,
+            }
         } else {
             SystemHealth::Healthy
         }
     }
-    
+
     /// Update last health check timestamp
     fn update_last_health_check(&self) {
         if let Ok(mut last_check) = self.last_health_check.write() {
             *last_check = Instant::now();
         }
     }
-    
+
     /// Reset health monitor
     pub async fn reset(&self) {
         self.update_network_health(RuntimeHealth::Healthy);
@@ -1353,14 +1382,18 @@ mod tests {
     #[tokio::test]
     async fn test_network_metrics_tracking() {
         let tracker = NetworkMetricsTracker::new(100);
-        
+
         tracker.record_connection_established();
         tracker.record_connection_established();
-        tracker.record_request_success(Duration::from_millis(10)).await;
-        tracker.record_request_failure(Duration::from_millis(20)).await;
+        tracker
+            .record_request_success(Duration::from_millis(10))
+            .await;
+        tracker
+            .record_request_failure(Duration::from_millis(20))
+            .await;
         tracker.record_bytes_sent(1024).await;
         tracker.record_bytes_received(2048).await;
-        
+
         let metrics = tracker.get_metrics().await;
         assert_eq!(metrics.active_connections, 2);
         assert_eq!(metrics.total_requests, 2);
@@ -1373,13 +1406,19 @@ mod tests {
     #[tokio::test]
     async fn test_storage_metrics_tracking() {
         let tracker = StorageMetricsTracker::new(100);
-        
+
         tracker.record_operation_started();
-        tracker.record_operation_success(Duration::from_millis(5)).await;
-        tracker.record_operation_failure(Duration::from_millis(15)).await;
-        tracker.record_batch_processed(10, Duration::from_millis(50)).await;
+        tracker
+            .record_operation_success(Duration::from_millis(5))
+            .await;
+        tracker
+            .record_operation_failure(Duration::from_millis(15))
+            .await;
+        tracker
+            .record_batch_processed(10, Duration::from_millis(50))
+            .await;
         tracker.record_backpressure_event().await;
-        
+
         let metrics = tracker.get_metrics().await;
         assert_eq!(metrics.total_operations, 2);
         assert_eq!(metrics.failed_operations, 1);
@@ -1390,13 +1429,15 @@ mod tests {
     #[tokio::test]
     async fn test_channel_metrics_tracking() {
         let tracker = ChannelMetricsTracker::new(100);
-        
+
         tracker.record_message_sent(256).await;
-        tracker.record_message_received(Duration::from_millis(2)).await;
+        tracker
+            .record_message_received(Duration::from_millis(2))
+            .await;
         tracker.update_buffer_utilization(75.0).await;
         tracker.record_correlation(Duration::from_millis(10)).await;
         tracker.record_timeout(Duration::from_millis(1000)).await;
-        
+
         let metrics = tracker.get_metrics().await;
         assert_eq!(metrics.message_stats.messages_sent, 1);
         assert_eq!(metrics.message_stats.messages_received, 1);
@@ -1408,37 +1449,43 @@ mod tests {
     #[tokio::test]
     async fn test_health_monitor() {
         let monitor = HealthMonitor::new();
-        
+
         // Initially healthy
         let status = monitor.get_health_status().await;
         assert!(matches!(status.overall_health, SystemHealth::Healthy));
-        
+
         // Update to degraded
-        monitor.update_network_health(RuntimeHealth::Degraded { 
-            reason: "High latency".to_string() 
+        monitor.update_network_health(RuntimeHealth::Degraded {
+            reason: "High latency".to_string(),
         });
-        
+
         let status = monitor.get_health_status().await;
-        assert!(matches!(status.overall_health, SystemHealth::Degraded { .. }));
-        
+        assert!(matches!(
+            status.overall_health,
+            SystemHealth::Degraded { .. }
+        ));
+
         // Update to unhealthy
-        monitor.update_storage_health(RuntimeHealth::Unhealthy { 
-            reason: "Database connection lost".to_string() 
+        monitor.update_storage_health(RuntimeHealth::Unhealthy {
+            reason: "Database connection lost".to_string(),
         });
-        
+
         let status = monitor.get_health_status().await;
-        assert!(matches!(status.overall_health, SystemHealth::Unhealthy { .. }));
+        assert!(matches!(
+            status.overall_health,
+            SystemHealth::Unhealthy { .. }
+        ));
     }
 
     #[tokio::test]
     async fn test_latency_samples_percentiles() {
         let mut samples = LatencySamples::default();
-        
+
         // Add some sample latencies
         for i in 1..=100 {
             samples.add_sample(i, 1000);
         }
-        
+
         let (avg, p95, p99) = samples.calculate_percentiles();
         assert!(avg > 0.0);
         assert!(p95 >= avg);
@@ -1556,29 +1603,31 @@ impl HealthCheckEndpoints {
     /// Start the health check HTTP server
     pub async fn start_server(&self) -> Result<(), DualRuntimeError> {
         info!("Starting health check server on port {}", self.config.port);
-        
+
         // Note: This is a simplified implementation. In a real scenario, you would use
         // a proper HTTP server like axum, warp, or hyper
-        
+
         let metrics_collector = Arc::clone(&self.metrics_collector);
         let config = self.config.clone();
-        
+
         tokio::spawn(async move {
             // Simulate HTTP server - in real implementation, use proper HTTP framework
             let mut interval = tokio::time::interval(Duration::from_secs(1));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Simulate health check requests
                 let _health_response = Self::handle_health_check(&metrics_collector, &config).await;
-                let _readiness_response = Self::handle_readiness_check(&metrics_collector, &config).await;
-                let _liveness_response = Self::handle_liveness_check(&metrics_collector, &config).await;
-                
+                let _readiness_response =
+                    Self::handle_readiness_check(&metrics_collector, &config).await;
+                let _liveness_response =
+                    Self::handle_liveness_check(&metrics_collector, &config).await;
+
                 // In real implementation, these would be HTTP endpoint handlers
             }
         });
-        
+
         Ok(())
     }
 
@@ -1593,17 +1642,17 @@ impl HealthCheckEndpoints {
             .as_secs();
 
         let metrics = metrics_collector.get_metrics();
-        
+
         let (overall_status, components) = if let Some(metrics) = metrics {
             let component_health = Self::evaluate_component_health(&metrics, &config.thresholds);
             let overall_status = Self::determine_overall_status(&component_health);
-            
+
             let components = if config.enable_detailed_info {
                 Some(component_health)
             } else {
                 None
             };
-            
+
             (overall_status, components)
         } else {
             ("unhealthy".to_string(), None)
@@ -1623,20 +1672,21 @@ impl HealthCheckEndpoints {
         config: &HealthCheckConfig,
     ) -> HealthCheckResponse {
         let mut response = Self::handle_health_check(metrics_collector, config).await;
-        
+
         // Readiness check is more strict - system must be fully operational
         if let Some(metrics) = metrics_collector.get_metrics() {
             // Check if system is ready to serve requests
-            let is_ready = metrics.network_metrics.active_connections > 0 ||
-                          metrics.storage_metrics.pending_requests < config.thresholds.max_pending_requests;
-            
+            let is_ready = metrics.network_metrics.active_connections > 0
+                || metrics.storage_metrics.pending_requests
+                    < config.thresholds.max_pending_requests;
+
             if !is_ready {
                 response.status = "not_ready".to_string();
             }
         } else {
             response.status = "not_ready".to_string();
         }
-        
+
         response
     }
 
@@ -1666,13 +1716,16 @@ impl HealthCheckEndpoints {
     }
 
     /// Evaluate health of individual components
-    fn evaluate_component_health(metrics: &RuntimeMetrics, thresholds: &HealthThresholds) -> ComponentHealth {
+    fn evaluate_component_health(
+        metrics: &RuntimeMetrics,
+        thresholds: &HealthThresholds,
+    ) -> ComponentHealth {
         // Evaluate network runtime health
         let network_status = Self::evaluate_network_health(&metrics.network_metrics, thresholds);
-        
+
         // Evaluate storage runtime health
         let storage_status = Self::evaluate_storage_health(&metrics.storage_metrics, thresholds);
-        
+
         // Evaluate channel health
         let channel_status = Self::evaluate_channel_health(&metrics.channel_metrics, thresholds);
 
@@ -1684,15 +1737,24 @@ impl HealthCheckEndpoints {
     }
 
     /// Evaluate network runtime health
-    fn evaluate_network_health(metrics: &NetworkRuntimeMetrics, thresholds: &HealthThresholds) -> ComponentStatus {
+    fn evaluate_network_health(
+        metrics: &NetworkRuntimeMetrics,
+        thresholds: &HealthThresholds,
+    ) -> ComponentStatus {
         let mut issues = Vec::new();
-        
+
         if metrics.error_rate_percent > thresholds.max_error_rate_percent {
-            issues.push(format!("High error rate: {:.1}%", metrics.error_rate_percent));
+            issues.push(format!(
+                "High error rate: {:.1}%",
+                metrics.error_rate_percent
+            ));
         }
-        
+
         if metrics.avg_request_time_ms > thresholds.max_response_time_ms {
-            issues.push(format!("High response time: {:.1}ms", metrics.avg_request_time_ms));
+            issues.push(format!(
+                "High response time: {:.1}ms",
+                metrics.avg_request_time_ms
+            ));
         }
 
         let status = if issues.is_empty() {
@@ -1722,15 +1784,24 @@ impl HealthCheckEndpoints {
     }
 
     /// Evaluate storage runtime health
-    fn evaluate_storage_health(metrics: &StorageRuntimeMetrics, thresholds: &HealthThresholds) -> ComponentStatus {
+    fn evaluate_storage_health(
+        metrics: &StorageRuntimeMetrics,
+        thresholds: &HealthThresholds,
+    ) -> ComponentStatus {
         let mut issues = Vec::new();
-        
+
         if metrics.pending_requests > thresholds.max_pending_requests {
-            issues.push(format!("High pending requests: {}", metrics.pending_requests));
+            issues.push(format!(
+                "High pending requests: {}",
+                metrics.pending_requests
+            ));
         }
-        
+
         if metrics.avg_execution_time_ms > thresholds.max_response_time_ms {
-            issues.push(format!("High execution time: {:.1}ms", metrics.avg_execution_time_ms));
+            issues.push(format!(
+                "High execution time: {:.1}ms",
+                metrics.avg_execution_time_ms
+            ));
         }
 
         if metrics.rocksdb_metrics.write_stall_active {
@@ -1765,15 +1836,26 @@ impl HealthCheckEndpoints {
     }
 
     /// Evaluate channel health
-    fn evaluate_channel_health(metrics: &ChannelMetrics, thresholds: &HealthThresholds) -> ComponentStatus {
+    fn evaluate_channel_health(
+        metrics: &ChannelMetrics,
+        thresholds: &HealthThresholds,
+    ) -> ComponentStatus {
         let mut issues = Vec::new();
-        
-        if metrics.buffer_metrics.buffer_utilization_percent > thresholds.max_buffer_utilization_percent {
-            issues.push(format!("High buffer utilization: {:.1}%", metrics.buffer_metrics.buffer_utilization_percent));
+
+        if metrics.buffer_metrics.buffer_utilization_percent
+            > thresholds.max_buffer_utilization_percent
+        {
+            issues.push(format!(
+                "High buffer utilization: {:.1}%",
+                metrics.buffer_metrics.buffer_utilization_percent
+            ));
         }
-        
+
         if metrics.timeout_stats.timeout_rate_percent > thresholds.max_error_rate_percent {
-            issues.push(format!("High timeout rate: {:.1}%", metrics.timeout_stats.timeout_rate_percent));
+            issues.push(format!(
+                "High timeout rate: {:.1}%",
+                metrics.timeout_stats.timeout_rate_percent
+            ));
         }
 
         let status = if issues.is_empty() {
@@ -1838,7 +1920,7 @@ mod health_tests {
     async fn test_health_check_endpoints_creation() {
         let metrics_collector = Arc::new(MetricsCollector::with_defaults());
         let health_endpoints = HealthCheckEndpoints::with_defaults(metrics_collector);
-        
+
         assert_eq!(health_endpoints.config().port, 8080);
         assert!(health_endpoints.config().enable_detailed_info);
     }
@@ -1847,9 +1929,9 @@ mod health_tests {
     async fn test_health_check_response() {
         let metrics_collector = Arc::new(MetricsCollector::with_defaults());
         let config = HealthCheckConfig::default();
-        
+
         let response = HealthCheckEndpoints::handle_health_check(&metrics_collector, &config).await;
-        
+
         assert_eq!(response.status, "unhealthy"); // No metrics available initially
         assert_eq!(response.version, "1.0.0");
     }
@@ -1858,9 +1940,10 @@ mod health_tests {
     async fn test_readiness_check() {
         let metrics_collector = Arc::new(MetricsCollector::with_defaults());
         let config = HealthCheckConfig::default();
-        
-        let response = HealthCheckEndpoints::handle_readiness_check(&metrics_collector, &config).await;
-        
+
+        let response =
+            HealthCheckEndpoints::handle_readiness_check(&metrics_collector, &config).await;
+
         assert_eq!(response.status, "not_ready"); // No metrics available initially
     }
 
@@ -1868,16 +1951,17 @@ mod health_tests {
     async fn test_liveness_check() {
         let metrics_collector = Arc::new(MetricsCollector::with_defaults());
         let config = HealthCheckConfig::default();
-        
-        let response = HealthCheckEndpoints::handle_liveness_check(&metrics_collector, &config).await;
-        
+
+        let response =
+            HealthCheckEndpoints::handle_liveness_check(&metrics_collector, &config).await;
+
         assert_eq!(response.status, "dead"); // No metrics available initially
     }
 
     #[test]
     fn test_health_thresholds_default() {
         let thresholds = HealthThresholds::default();
-        
+
         assert_eq!(thresholds.max_error_rate_percent, 5.0);
         assert_eq!(thresholds.max_response_time_ms, 1000.0);
         assert_eq!(thresholds.max_buffer_utilization_percent, 80.0);

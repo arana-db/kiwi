@@ -16,7 +16,7 @@
 // limitations under the License.
 
 //! Executor extensions for network operations
-//! 
+//!
 //! This module provides extensions to CmdExecutor to support network-aware
 //! command execution with StorageClient for async storage operations.
 
@@ -33,7 +33,10 @@ use crate::network_execution::NetworkCmdExecution;
 /// Extension trait for CmdExecutor to support network operations
 pub trait CmdExecutorNetworkExt {
     /// Execute a network command using StorageClient for dual runtime architecture
-    fn execute_network(&self, exec: NetworkCmdExecution) -> impl Future<Output = Result<(), DualRuntimeError>> + Send;
+    fn execute_network(
+        &self,
+        exec: NetworkCmdExecution,
+    ) -> impl Future<Output = Result<(), DualRuntimeError>> + Send;
 }
 
 impl CmdExecutorNetworkExt for CmdExecutor {
@@ -44,10 +47,7 @@ impl CmdExecutorNetworkExt for CmdExecutor {
         // Check argument count first
         let argv = exec.client.argv();
         if !exec.cmd.check_arg(argv.len()) {
-            let error_msg = format!(
-                "ERR wrong number of arguments for '{}' command",
-                cmd_name
-            );
+            let error_msg = format!("ERR wrong number of arguments for '{}' command", cmd_name);
             exec.client.set_reply(RespData::Error(error_msg.into()));
             return Ok(());
         }
@@ -101,7 +101,10 @@ impl CmdExecutorNetworkExt for CmdExecutor {
             }
             _ => {
                 // For unsupported commands, return an error
-                let error_msg = format!("ERR command '{}' not supported in dual runtime mode", cmd_name);
+                let error_msg = format!(
+                    "ERR command '{}' not supported in dual runtime mode",
+                    cmd_name
+                );
                 warn!("Unsupported network command: {}", cmd_name);
                 exec.client.set_reply(RespData::Error(error_msg.into()));
             }
@@ -192,11 +195,15 @@ async fn execute_expire_command(exec: &NetworkCmdExecution) -> Result<(), DualRu
     let key = &exec.client.argv()[1];
     let argv2 = exec.client.argv()[2].clone();
     let seconds_str = String::from_utf8_lossy(&argv2);
-    
+
     match seconds_str.parse::<u64>() {
         Ok(seconds) => {
             let ttl = Duration::from_secs(seconds);
-            debug!("Executing EXPIRE for key: {:?}, ttl: {:?}", String::from_utf8_lossy(key), ttl);
+            debug!(
+                "Executing EXPIRE for key: {:?}, ttl: {:?}",
+                String::from_utf8_lossy(key),
+                ttl
+            );
 
             match exec.storage_client.expire(key, ttl).await {
                 Ok(response) => {
@@ -210,7 +217,9 @@ async fn execute_expire_command(exec: &NetworkCmdExecution) -> Result<(), DualRu
             }
         }
         Err(_) => {
-            exec.client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+            exec.client.set_reply(RespData::Error(
+                "ERR value is not an integer or out of range".into(),
+            ));
         }
     }
     Ok(())
@@ -257,10 +266,14 @@ async fn execute_incrby_command(exec: &NetworkCmdExecution) -> Result<(), DualRu
     let key = &exec.client.argv()[1];
     let argv2 = exec.client.argv()[2].clone();
     let increment_str = String::from_utf8_lossy(&argv2);
-    
+
     match increment_str.parse::<i64>() {
         Ok(increment) => {
-            debug!("Executing INCRBY for key: {:?}, increment: {}", String::from_utf8_lossy(key), increment);
+            debug!(
+                "Executing INCRBY for key: {:?}, increment: {}",
+                String::from_utf8_lossy(key),
+                increment
+            );
 
             match exec.storage_client.incr_by(key, increment).await {
                 Ok(response) => {
@@ -274,7 +287,9 @@ async fn execute_incrby_command(exec: &NetworkCmdExecution) -> Result<(), DualRu
             }
         }
         Err(_) => {
-            exec.client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+            exec.client.set_reply(RespData::Error(
+                "ERR value is not an integer or out of range".into(),
+            ));
         }
     }
     Ok(())
@@ -303,10 +318,14 @@ async fn execute_decrby_command(exec: &NetworkCmdExecution) -> Result<(), DualRu
     let key = &exec.client.argv()[1];
     let argv2 = exec.client.argv()[2].clone();
     let decrement_str = String::from_utf8_lossy(&argv2);
-    
+
     match decrement_str.parse::<i64>() {
         Ok(decrement) => {
-            debug!("Executing DECRBY for key: {:?}, decrement: {}", String::from_utf8_lossy(key), decrement);
+            debug!(
+                "Executing DECRBY for key: {:?}, decrement: {}",
+                String::from_utf8_lossy(key),
+                decrement
+            );
 
             match exec.storage_client.decr_by(key, decrement).await {
                 Ok(response) => {
@@ -320,7 +339,9 @@ async fn execute_decrby_command(exec: &NetworkCmdExecution) -> Result<(), DualRu
             }
         }
         Err(_) => {
-            exec.client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+            exec.client.set_reply(RespData::Error(
+                "ERR value is not an integer or out of range".into(),
+            ));
         }
     }
     Ok(())
@@ -347,10 +368,12 @@ async fn execute_mget_command(exec: &NetworkCmdExecution) -> Result<(), DualRunt
 /// Execute MSET command asynchronously
 async fn execute_mset_command(exec: &NetworkCmdExecution) -> Result<(), DualRuntimeError> {
     let argv = exec.client.argv();
-    
+
     // MSET requires an even number of arguments (key-value pairs)
     if argv.len() < 3 || (argv.len() - 1) % 2 != 0 {
-        exec.client.set_reply(RespData::Error("ERR wrong number of arguments for 'mset' command".into()));
+        exec.client.set_reply(RespData::Error(
+            "ERR wrong number of arguments for 'mset' command".into(),
+        ));
         return Ok(());
     }
 
@@ -377,12 +400,13 @@ async fn execute_mset_command(exec: &NetworkCmdExecution) -> Result<(), DualRunt
 /// Execute PING command asynchronously (doesn't require storage)
 async fn execute_ping_command(exec: &NetworkCmdExecution) -> Result<(), DualRuntimeError> {
     debug!("Executing PING command");
-    
+
     if exec.client.argv().len() == 1 {
         exec.client.set_reply(RespData::SimpleString("PONG".into()));
     } else if exec.client.argv().len() == 2 {
         let arg = exec.client.argv()[1].clone();
-        exec.client.set_reply(RespData::BulkString(Some(arg.into())));
+        exec.client
+            .set_reply(RespData::BulkString(Some(arg.into())));
     } else {
         exec.client.set_reply(RespData::Error(
             "ERR wrong number of arguments for 'ping' command".into(),

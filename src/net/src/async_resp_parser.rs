@@ -16,7 +16,7 @@
 // limitations under the License.
 
 //! Async RESP parser for dual runtime architecture
-//! 
+//!
 //! This module provides an enhanced RESP parser that supports async storage
 //! operations, request pipelining, and improved error handling.
 
@@ -24,7 +24,7 @@ use std::collections::VecDeque;
 
 use bytes::{Bytes, BytesMut};
 use log::{debug, warn};
-use resp::{Parse, RespData, RespParseResult, RespVersion, RespParse};
+use resp::{Parse, RespData, RespParse, RespParseResult, RespVersion};
 
 /// Enhanced RESP parser for async storage operations
 pub struct AsyncRespParser {
@@ -66,24 +66,24 @@ impl AsyncRespParser {
     /// Parse incoming data and return available commands
     pub fn parse_data(&mut self, data: Bytes) -> Result<Vec<RespData>, String> {
         let mut commands = Vec::new();
-        
+
         // Add new data to buffer
         self.buffer.extend_from_slice(&data);
-        
+
         // Parse as many complete commands as possible
         loop {
             let parse_result = self.parser.parse(self.buffer.split().freeze());
-            
+
             match parse_result {
                 RespParseResult::Complete(command_data) => {
                     debug!("Parsed complete command: {:?}", command_data);
                     commands.push(command_data);
-                    
+
                     // Enable pipelining mode if we have multiple commands
                     if commands.len() > 1 {
                         self.pipelining_mode = true;
                     }
-                    
+
                     // Prevent excessive buffering
                     if commands.len() >= self.max_pipeline_commands {
                         warn!("Maximum pipeline commands reached, processing batch");
@@ -99,7 +99,7 @@ impl AsyncRespParser {
                 }
             }
         }
-        
+
         Ok(commands)
     }
 
@@ -161,7 +161,7 @@ impl CommandBatch {
     pub fn new(commands: Vec<RespData>) -> Self {
         let parallel_safe = Self::check_parallel_safety(&commands);
         let priority = Self::determine_priority(&commands);
-        
+
         Self {
             commands,
             parallel_safe,
@@ -179,7 +179,7 @@ impl CommandBatch {
     /// Determine the priority of the batch based on commands
     fn determine_priority(commands: &[RespData]) -> BatchPriority {
         let mut max_priority = BatchPriority::Normal;
-        
+
         for command in commands {
             if let RespData::Array(Some(params)) = command {
                 if let Some(RespData::BulkString(Some(cmd_name))) = params.first() {
@@ -194,14 +194,14 @@ impl CommandBatch {
                         // Normal priority for everything else
                         _ => BatchPriority::Normal,
                     };
-                    
+
                     if cmd_priority > max_priority {
                         max_priority = cmd_priority;
                     }
                 }
             }
         }
-        
+
         max_priority
     }
 
@@ -231,10 +231,8 @@ mod tests {
 
     #[test]
     fn test_command_batch_priority() {
-        let ping_cmd = RespData::Array(Some(vec![
-            RespData::BulkString(Some(Bytes::from("PING"))),
-        ]));
-        
+        let ping_cmd = RespData::Array(Some(vec![RespData::BulkString(Some(Bytes::from("PING")))]));
+
         let batch = CommandBatch::new(vec![ping_cmd]);
         assert_eq!(batch.priority, BatchPriority::High);
         assert_eq!(batch.len(), 1);
@@ -247,7 +245,7 @@ mod tests {
             RespData::BulkString(Some(Bytes::from("GET"))),
             RespData::BulkString(Some(Bytes::from("key1"))),
         ]));
-        
+
         let batch = CommandBatch::new(vec![get_cmd]);
         assert!(batch.parallel_safe); // Single command is parallel safe
     }

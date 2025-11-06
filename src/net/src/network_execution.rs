@@ -16,7 +16,7 @@
 // limitations under the License.
 
 //! Network command execution for dual runtime architecture
-//! 
+//!
 //! This module provides network-aware command execution that uses StorageClient
 //! instead of direct storage access, enabling communication between network
 //! and storage runtimes.
@@ -26,11 +26,10 @@ use std::sync::Arc;
 use client::Client;
 use cmd::Cmd;
 
-
 use crate::storage_client::StorageClient;
 
 /// Network command execution context for dual runtime architecture
-/// 
+///
 /// This struct contains the necessary components for executing commands
 /// in the network runtime while communicating with the storage runtime
 /// through StorageClient.
@@ -45,11 +44,7 @@ pub struct NetworkCmdExecution {
 
 impl NetworkCmdExecution {
     /// Create a new NetworkCmdExecution
-    pub fn new(
-        cmd: Arc<dyn Cmd>,
-        client: Arc<Client>,
-        storage_client: Arc<StorageClient>,
-    ) -> Self {
+    pub fn new(cmd: Arc<dyn Cmd>, client: Arc<Client>, storage_client: Arc<StorageClient>) -> Self {
         Self {
             cmd,
             client,

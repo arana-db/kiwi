@@ -29,8 +29,8 @@ use tokio::time::interval;
 
 use crate::ServerTrait;
 use crate::pool::{ConnectionPool, PoolConfig};
-use crate::tcp::TcpStreamWrapper;
 use crate::storage_client::StorageClient;
+use crate::tcp::TcpStreamWrapper;
 
 /// Default pool configuration for network server connection pooling
 fn default_network_pool_config() -> PoolConfig {
@@ -50,7 +50,7 @@ pub struct NetworkResources {
 }
 
 /// NetworkServer replaces TcpServer with dual runtime architecture support
-/// 
+///
 /// This server handles network I/O operations in a dedicated runtime and
 /// communicates with storage operations through a StorageClient.
 pub struct NetworkServer {
@@ -75,7 +75,7 @@ impl NetworkServer {
         executor: Arc<CmdExecutor>,
     ) -> Result<Self, Box<dyn Error>> {
         let pool_config = default_network_pool_config();
-        
+
         Ok(Self {
             addr: addr.unwrap_or("127.0.0.1:7379".to_string()),
             storage_client: storage_client.clone(),
@@ -200,7 +200,10 @@ impl ServerTrait for NetworkServer {
                 .await;
 
                 if let Err(e) = result {
-                    warn!("Network connection processing error for {}: {}", client_addr, e);
+                    warn!(
+                        "Network connection processing error for {}: {}",
+                        client_addr, e
+                    );
                 }
 
                 // Return resources to pool
@@ -213,11 +216,11 @@ impl ServerTrait for NetworkServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use std::time::Duration;
     use cmd::table::create_command_table;
     use executor::CmdExecutorBuilder;
     use runtime::{MessageChannel, StorageClient as RuntimeStorageClient};
+    use std::sync::Arc;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn test_network_server_creation() {
@@ -271,7 +274,7 @@ mod tests {
 
         assert!(server.is_ok());
         let server = server.unwrap();
-        
+
         let stats = server.pool_stats().await;
         assert_eq!(stats.max_connections, 500);
     }
@@ -287,12 +290,7 @@ mod tests {
         let cmd_table = Arc::new(create_command_table());
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
-        let server = NetworkServer::new(
-            None,
-            storage_client,
-            cmd_table,
-            executor,
-        );
+        let server = NetworkServer::new(None, storage_client, cmd_table, executor);
 
         assert!(server.is_ok());
         let server = server.unwrap();

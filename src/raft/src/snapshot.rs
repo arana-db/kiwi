@@ -98,9 +98,10 @@ impl SnapshotManager {
 
         // Return error if snapshot already exists to prevent accidental data loss
         if snapshot_dir.exists() {
-            return Err(RaftError::state_machine(
-                format!("Snapshot '{}' already exists", snapshot_id)
-            ));
+            return Err(RaftError::state_machine(format!(
+                "Snapshot '{}' already exists",
+                snapshot_id
+            )));
         }
 
         // For SST file method, we would:
@@ -140,9 +141,10 @@ impl SnapshotManager {
 
         // Return error if snapshot already exists to prevent accidental data loss
         if snapshot_dir.exists() {
-            return Err(RaftError::state_machine(
-                format!("Snapshot '{}' already exists", snapshot_id)
-            ));
+            return Err(RaftError::state_machine(format!(
+                "Snapshot '{}' already exists",
+                snapshot_id
+            )));
         }
 
         std::fs::create_dir_all(&snapshot_dir).map_err(|e| {
@@ -313,9 +315,10 @@ impl SnapshotManager {
 
         // Check if snapshot exists and handle based on overwrite flag
         if snapshot_dir.exists() && !overwrite {
-            return Err(RaftError::state_machine(
-                format!("Snapshot '{}' already exists", snapshot_id)
-            ));
+            return Err(RaftError::state_machine(format!(
+                "Snapshot '{}' already exists",
+                snapshot_id
+            )));
         }
 
         let temp_dir = self.snapshot_base_dir.join(format!("{}.tmp", snapshot_id));
@@ -342,9 +345,8 @@ impl SnapshotManager {
             })?;
         }
 
-        std::fs::rename(&temp_dir, &snapshot_dir).map_err(|e| {
-            RaftError::state_machine(format!("Failed to rename snapshot: {}", e))
-        })?;
+        std::fs::rename(&temp_dir, &snapshot_dir)
+            .map_err(|e| RaftError::state_machine(format!("Failed to rename snapshot: {}", e)))?;
 
         // Calculate snapshot size (approximate, checkpoints use hard links)
         let size_bytes = Self::calculate_directory_size(&snapshot_dir)?;
@@ -405,7 +407,9 @@ mod tests {
         assert!(result.is_err());
 
         // Test overwrite functionality
-        let meta_overwrite = manager.create_checkpoint_snapshot_with_overwrite("test1", 101, true).unwrap();
+        let meta_overwrite = manager
+            .create_checkpoint_snapshot_with_overwrite("test1", 101, true)
+            .unwrap();
         assert_eq!(meta_overwrite.last_log_index, 101);
 
         // Test iterator snapshot

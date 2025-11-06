@@ -20,15 +20,17 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use tokio::sync::mpsc;
 use log::{debug, error, info, warn};
+use tokio::sync::mpsc;
 
-use storage::storage::Storage;
-use storage::error::{SystemSnafu, InvalidFormatSnafu};
 use resp::RespData;
+use storage::error::{InvalidFormatSnafu, SystemSnafu};
+use storage::storage::Storage;
 
-use crate::message::{StorageRequest, StorageResponse, StorageCommand, StorageStats, RequestPriority};
 use crate::error::DualRuntimeError;
+use crate::message::{
+    RequestPriority, StorageCommand, StorageRequest, StorageResponse, StorageStats,
+};
 use crate::metrics::StorageMetricsTracker;
 
 /// Storage server that processes storage requests in the dedicated storage runtime
@@ -76,10 +78,7 @@ impl Default for StorageServerConfig {
 
 impl StorageServer {
     /// Create a new storage server with the given storage instance and request receiver
-    pub fn new(
-        storage: Arc<Storage>,
-        request_receiver: mpsc::Receiver<StorageRequest>,
-    ) -> Self {
+    pub fn new(storage: Arc<Storage>, request_receiver: mpsc::Receiver<StorageRequest>) -> Self {
         Self::with_config(storage, request_receiver, StorageServerConfig::default())
     }
 
@@ -89,7 +88,8 @@ impl StorageServer {
         request_receiver: mpsc::Receiver<StorageRequest>,
         metrics_tracker: Arc<StorageMetricsTracker>,
     ) -> Self {
-        let mut server = Self::with_config(storage, request_receiver, StorageServerConfig::default());
+        let mut server =
+            Self::with_config(storage, request_receiver, StorageServerConfig::default());
         server.metrics_tracker = Some(metrics_tracker);
         server
     }
@@ -101,7 +101,10 @@ impl StorageServer {
         config: StorageServerConfig,
     ) -> Self {
         let batch_processor = if config.enable_batching {
-            Some(BatchProcessor::new(config.max_batch_size, config.batch_timeout_ms))
+            Some(BatchProcessor::new(
+                config.max_batch_size,
+                config.batch_timeout_ms,
+            ))
         } else {
             None
         };
@@ -126,7 +129,9 @@ impl StorageServer {
     pub async fn run(mut self) -> Result<(), DualRuntimeError> {
         info!("Starting storage server with config: {:?}", self.config);
 
-        let request_receiver = self.request_receiver.take()
+        let request_receiver = self
+            .request_receiver
+            .take()
             .ok_or_else(|| DualRuntimeError::storage_runtime("Request receiver already taken"))?;
 
         // Start background task manager if enabled
@@ -153,7 +158,9 @@ impl StorageServer {
     ) -> Result<(), DualRuntimeError> {
         info!("Storage server running with batching enabled");
 
-        let mut batch_processor = self.batch_processor.as_ref()
+        let mut batch_processor = self
+            .batch_processor
+            .as_ref()
             .ok_or_else(|| DualRuntimeError::storage_runtime("Batch processor not initialized"))?
             .clone();
 
@@ -164,7 +171,7 @@ impl StorageServer {
                     match request {
                         Some(request) => {
                             debug!("Received storage request: {:?}", request.id);
-                            
+
                             // Add request to batch processor
                             if let Err(e) = batch_processor.add_request(request).await {
                                 error!("Failed to add request to batch processor: {}", e);
@@ -176,7 +183,7 @@ impl StorageServer {
                         }
                     }
                 }
-                
+
                 // Process batched requests
                 batch = batch_processor.get_next_batch() => {
                     if !batch.is_empty() {
@@ -199,7 +206,7 @@ impl StorageServer {
 
         while let Some(request) = request_receiver.recv().await {
             debug!("Received storage request: {:?}", request.id);
-            
+
             // Process request immediately
             tokio::spawn({
                 let storage = Arc::clone(&self.storage);
@@ -218,12 +225,12 @@ impl StorageServer {
     async fn process_request_batch(&self, batch: Vec<StorageRequest>) {
         let batch_size = batch.len();
         let batch_start_time = Instant::now();
-        
+
         debug!("Processing batch of {} requests", batch_size);
 
         // Process requests in parallel within the batch
         let mut handles = Vec::new();
-        
+
         for request in batch {
             let storage = Arc::clone(&self.storage);
             let metrics_tracker = self.metrics_tracker.clone();
@@ -246,20 +253,26 @@ impl StorageServer {
             // TODO: Fix type annotation issue
             // tracker.record_batch_processed(batch_size, batch_processing_time).await;
         }
-        
-        debug!("Completed batch of {} requests in {:?}", batch_size, batch_processing_time);
+
+        debug!(
+            "Completed batch of {} requests in {:?}",
+            batch_size, batch_processing_time
+        );
     }
 
     /// Process a single storage request
     async fn process_single_request(
-        storage: Arc<Storage>, 
+        storage: Arc<Storage>,
         request: StorageRequest,
         metrics_tracker: Option<Arc<StorageMetricsTracker>>,
     ) {
         let start_time = Instant::now();
         let request_id = request.id;
-        
-        debug!("Processing storage request {} with command: {:?}", request_id, request.command);
+
+        debug!(
+            "Processing storage request {} with command: {:?}",
+            request_id, request.command
+        );
 
         // Record operation started
         if let Some(ref _tracker) = metrics_tracker {
@@ -269,9 +282,12 @@ impl StorageServer {
 
         // Route the request based on command type
         let result = Self::execute_storage_command(&storage, &request.command).await;
-        
+
         let execution_time = start_time.elapsed();
-        debug!("Storage request {} completed in {:?}", request_id, execution_time);
+        debug!(
+            "Storage request {} completed in {:?}",
+            request_id, execution_time
+        );
 
         // Record operation completed
         if let Some(ref _tracker) = metrics_tracker {
@@ -279,11 +295,11 @@ impl StorageServer {
                 Ok(_) => {
                     // TODO: Fix type annotation issue
                     // tracker.record_operation_success(execution_time).await
-                },
+                }
                 Err(_) => {
                     // TODO: Fix type annotation issue
                     // tracker.record_operation_failure(execution_time).await
-                },
+                }
             }
         }
 
@@ -299,14 +315,20 @@ impl StorageServer {
 
         // Send response back to network runtime
         if let Err(_) = request.response_channel.send(response) {
-            warn!("Failed to send response for request {}: receiver dropped", request_id);
+            warn!(
+                "Failed to send response for request {}: receiver dropped",
+                request_id
+            );
         }
     }
 
     /// Calculate storage statistics based on the command and result
-    fn calculate_storage_stats(command: &StorageCommand, result: &Result<resp::RespData, storage::error::Error>) -> StorageStats {
+    fn calculate_storage_stats(
+        command: &StorageCommand,
+        result: &Result<resp::RespData, storage::error::Error>,
+    ) -> StorageStats {
         let mut stats = StorageStats::default();
-        
+
         match command {
             StorageCommand::Get { key } => {
                 stats.keys_read = 1;
@@ -317,10 +339,10 @@ impl StorageServer {
             }
             StorageCommand::Set { key, value, .. } => {
                 stats.keys_written = if result.is_ok() { 1 } else { 0 };
-                stats.bytes_written = if result.is_ok() { 
-                    (key.len() + value.len()) as u64 
-                } else { 
-                    0 
+                stats.bytes_written = if result.is_ok() {
+                    (key.len() + value.len()) as u64
+                } else {
+                    0
                 };
             }
             StorageCommand::Del { keys } => {
@@ -345,24 +367,31 @@ impl StorageServer {
                 }
             }
             StorageCommand::MSet { pairs } => {
-                stats.keys_written = if result.is_ok() { pairs.len() as u64 } else { 0 };
+                stats.keys_written = if result.is_ok() {
+                    pairs.len() as u64
+                } else {
+                    0
+                };
                 stats.bytes_written = if result.is_ok() {
                     pairs.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>() as u64
                 } else {
                     0
                 };
             }
-            StorageCommand::Incr { key } | 
-            StorageCommand::Decr { key } |
-            StorageCommand::IncrBy { key, .. } |
-            StorageCommand::DecrBy { key, .. } => {
+            StorageCommand::Incr { key }
+            | StorageCommand::Decr { key }
+            | StorageCommand::IncrBy { key, .. }
+            | StorageCommand::DecrBy { key, .. } => {
                 stats.keys_read = 1;
                 stats.keys_written = if result.is_ok() { 1 } else { 0 };
                 stats.bytes_read = key.len() as u64;
-                stats.bytes_written = if result.is_ok() { key.len() as u64 + 8 } else { 0 }; // Approximate integer size
+                stats.bytes_written = if result.is_ok() {
+                    key.len() as u64 + 8
+                } else {
+                    0
+                }; // Approximate integer size
             }
-            StorageCommand::Expire { key, .. } |
-            StorageCommand::Ttl { key } => {
+            StorageCommand::Expire { key, .. } | StorageCommand::Ttl { key } => {
                 stats.keys_read = 1;
                 stats.bytes_read = key.len() as u64;
             }
@@ -378,11 +407,11 @@ impl StorageServer {
                 }
             }
         }
-        
+
         // TODO: Implement cache hit detection and compaction level tracking
         stats.cache_hit = false;
         stats.compaction_level = None;
-        
+
         stats
     }
 
@@ -392,42 +421,26 @@ impl StorageServer {
         command: &StorageCommand,
     ) -> Result<RespData, storage::error::Error> {
         match command {
-            StorageCommand::Get { key } => {
-                Self::handle_get_command(storage, key).await
-            }
+            StorageCommand::Get { key } => Self::handle_get_command(storage, key).await,
             StorageCommand::Set { key, value, ttl } => {
                 Self::handle_set_command(storage, key, value, ttl.as_ref()).await
             }
-            StorageCommand::Del { keys } => {
-                Self::handle_del_command(storage, keys).await
-            }
-            StorageCommand::Exists { keys } => {
-                Self::handle_exists_command(storage, keys).await
-            }
+            StorageCommand::Del { keys } => Self::handle_del_command(storage, keys).await,
+            StorageCommand::Exists { keys } => Self::handle_exists_command(storage, keys).await,
             StorageCommand::Expire { key, ttl } => {
                 Self::handle_expire_command(storage, key, ttl).await
             }
-            StorageCommand::Ttl { key } => {
-                Self::handle_ttl_command(storage, key).await
-            }
-            StorageCommand::Incr { key } => {
-                Self::handle_incr_command(storage, key).await
-            }
+            StorageCommand::Ttl { key } => Self::handle_ttl_command(storage, key).await,
+            StorageCommand::Incr { key } => Self::handle_incr_command(storage, key).await,
             StorageCommand::IncrBy { key, increment } => {
                 Self::handle_incrby_command(storage, key, *increment).await
             }
-            StorageCommand::Decr { key } => {
-                Self::handle_decr_command(storage, key).await
-            }
+            StorageCommand::Decr { key } => Self::handle_decr_command(storage, key).await,
             StorageCommand::DecrBy { key, decrement } => {
                 Self::handle_decrby_command(storage, key, *decrement).await
             }
-            StorageCommand::MSet { pairs } => {
-                Self::handle_mset_command(storage, pairs).await
-            }
-            StorageCommand::MGet { keys } => {
-                Self::handle_mget_command(storage, keys).await
-            }
+            StorageCommand::MSet { pairs } => Self::handle_mset_command(storage, pairs).await,
+            StorageCommand::MGet { keys } => Self::handle_mget_command(storage, keys).await,
             StorageCommand::Batch { commands } => {
                 Self::handle_batch_command(storage, commands).await
             }
@@ -514,17 +527,17 @@ impl BatchProcessor {
     /// Add a request to the batch
     pub async fn add_request(&mut self, request: StorageRequest) -> Result<(), DualRuntimeError> {
         let mut state = self.pending_requests.lock().await;
-        
+
         // Add to main request list
         state.requests.push(request);
-        
+
         Ok(())
     }
 
     /// Get the next batch of requests to process
     pub async fn get_next_batch(&mut self) -> Vec<StorageRequest> {
         let timeout = tokio::time::Duration::from_millis(self.batch_timeout_ms);
-        
+
         tokio::select! {
             _ = tokio::time::sleep(timeout) => {
                 // Timeout reached, return whatever we have
@@ -540,7 +553,7 @@ impl BatchProcessor {
     /// Extract batch when timeout is reached
     async fn extract_batch_by_timeout(&self) -> Vec<StorageRequest> {
         let mut state = self.pending_requests.lock().await;
-        
+
         if state.requests.is_empty() {
             return Vec::new();
         }
@@ -549,7 +562,7 @@ impl BatchProcessor {
         let batch = std::mem::take(&mut state.requests);
         state.grouped_requests.clear();
         state.last_batch_time = Instant::now();
-        
+
         debug!("Extracted batch of {} requests due to timeout", batch.len());
         batch
     }
@@ -557,7 +570,7 @@ impl BatchProcessor {
     /// Extract optimized batch based on configuration
     async fn extract_optimized_batch(&self) -> Vec<StorageRequest> {
         let mut state = self.pending_requests.lock().await;
-        
+
         if state.requests.is_empty() {
             return Vec::new();
         }
@@ -581,18 +594,19 @@ impl BatchProcessor {
     fn extract_priority_batch(&self, state: &mut BatchState) -> Vec<StorageRequest> {
         // Sort by priority (highest first) and timestamp (oldest first for same priority)
         state.requests.sort_by(|a, b| {
-            b.priority.cmp(&a.priority)
+            b.priority
+                .cmp(&a.priority)
                 .then_with(|| a.timestamp.cmp(&b.timestamp))
         });
 
         let batch_size = self.max_batch_size.min(state.requests.len());
         let batch = state.requests.drain(0..batch_size).collect();
-        
+
         // Update grouped requests
         if self.config.enable_operation_grouping {
             self.rebuild_grouped_requests(state);
         }
-        
+
         batch
     }
 
@@ -616,7 +630,9 @@ impl BatchProcessor {
             }
 
             if let Some(group) = state.grouped_requests.get_mut(op_type) {
-                let take_count = remaining_capacity.min(group.len()).min(self.config.max_group_size);
+                let take_count = remaining_capacity
+                    .min(group.len())
+                    .min(self.config.max_group_size);
                 if take_count > 0 {
                     let group_batch: Vec<_> = group.drain(0..take_count).collect();
                     remaining_capacity -= group_batch.len();
@@ -626,9 +642,9 @@ impl BatchProcessor {
         }
 
         // Remove processed requests from main list
-        state.requests.retain(|req| {
-            !batch.iter().any(|batch_req| batch_req.id == req.id)
-        });
+        state
+            .requests
+            .retain(|req| !batch.iter().any(|batch_req| batch_req.id == req.id));
 
         // Clean up empty groups
         state.grouped_requests.retain(|_, group| !group.is_empty());
@@ -647,22 +663,23 @@ impl BatchProcessor {
     #[allow(dead_code)]
     fn classify_operation(command: &StorageCommand) -> BatchOperationType {
         match command {
-            StorageCommand::Get { .. } | 
-            StorageCommand::Exists { .. } | 
-            StorageCommand::MGet { .. } => BatchOperationType::Read,
-            
-            StorageCommand::Set { .. } | 
-            StorageCommand::Del { .. } | 
-            StorageCommand::MSet { .. } => BatchOperationType::Write,
-            
-            StorageCommand::Incr { .. } | 
-            StorageCommand::IncrBy { .. } | 
-            StorageCommand::Decr { .. } | 
-            StorageCommand::DecrBy { .. } => BatchOperationType::Numeric,
-            
-            StorageCommand::Expire { .. } | 
-            StorageCommand::Ttl { .. } => BatchOperationType::Expire,
-            
+            StorageCommand::Get { .. }
+            | StorageCommand::Exists { .. }
+            | StorageCommand::MGet { .. } => BatchOperationType::Read,
+
+            StorageCommand::Set { .. }
+            | StorageCommand::Del { .. }
+            | StorageCommand::MSet { .. } => BatchOperationType::Write,
+
+            StorageCommand::Incr { .. }
+            | StorageCommand::IncrBy { .. }
+            | StorageCommand::Decr { .. }
+            | StorageCommand::DecrBy { .. } => BatchOperationType::Numeric,
+
+            StorageCommand::Expire { .. } | StorageCommand::Ttl { .. } => {
+                BatchOperationType::Expire
+            }
+
             StorageCommand::Batch { .. } => BatchOperationType::Mixed,
         }
     }
@@ -672,19 +689,21 @@ impl BatchProcessor {
         loop {
             {
                 let state = self.pending_requests.lock().await;
-                
+
                 // Check if we have enough requests
                 if state.requests.len() >= self.max_batch_size {
                     break;
                 }
-                
+
                 // Check if we have a good batch composition
-                if self.config.enable_operation_grouping && state.requests.len() >= self.config.min_batch_size {
+                if self.config.enable_operation_grouping
+                    && state.requests.len() >= self.config.min_batch_size
+                {
                     if self.has_efficient_batch_composition(&state) {
                         break;
                     }
                 }
-                
+
                 // Check if we have high priority requests that should be processed quickly
                 if self.config.enable_priority_batching {
                     if self.has_high_priority_requests(&state) {
@@ -692,7 +711,7 @@ impl BatchProcessor {
                     }
                 }
             }
-            
+
             tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         }
     }
@@ -710,13 +729,16 @@ impl BatchProcessor {
 
     /// Check if there are high priority requests that should be processed quickly
     fn has_high_priority_requests(&self, state: &BatchState) -> bool {
-        state.requests.iter().any(|req| req.priority >= RequestPriority::High)
+        state
+            .requests
+            .iter()
+            .any(|req| req.priority >= RequestPriority::High)
     }
 
     /// Get current batch statistics
     pub async fn get_batch_stats(&self) -> BatchStats {
         let state = self.pending_requests.lock().await;
-        
+
         BatchStats {
             pending_requests: state.requests.len(),
             grouped_operations: state.grouped_requests.len(),
@@ -832,7 +854,7 @@ impl BackgroundTaskManager {
 
     /// Create a new background task manager with metrics tracking
     pub fn with_metrics(
-        storage: Arc<Storage>, 
+        storage: Arc<Storage>,
         config: BackgroundTaskConfig,
         metrics_tracker: Arc<StorageMetricsTracker>,
     ) -> Self {
@@ -847,7 +869,10 @@ impl BackgroundTaskManager {
 
     /// Run the background task manager
     pub async fn run(self) -> Result<(), DualRuntimeError> {
-        info!("Starting background task manager with config: {:?}", self.config);
+        info!(
+            "Starting background task manager with config: {:?}",
+            self.config
+        );
 
         let mut handles = Vec::new();
 
@@ -860,7 +885,8 @@ impl BackgroundTaskManager {
                 let shutdown = Arc::clone(&self.shutdown_signal);
                 let metrics_tracker = self.metrics_tracker.clone();
                 tokio::spawn(async move {
-                    Self::monitor_compaction(storage, config, stats, shutdown, metrics_tracker).await;
+                    Self::monitor_compaction(storage, config, stats, shutdown, metrics_tracker)
+                        .await;
                 })
             };
             handles.push(("compaction", handle));
@@ -890,7 +916,8 @@ impl BackgroundTaskManager {
                 let shutdown = Arc::clone(&self.shutdown_signal);
                 let metrics_tracker = self.metrics_tracker.clone();
                 tokio::spawn(async move {
-                    Self::collect_statistics(storage, config, stats, shutdown, metrics_tracker).await;
+                    Self::collect_statistics(storage, config, stats, shutdown, metrics_tracker)
+                        .await;
                 })
             };
             handles.push(("statistics", handle));
@@ -936,40 +963,42 @@ impl BackgroundTaskManager {
         shutdown: Arc<tokio::sync::Notify>,
         metrics_tracker: Option<Arc<StorageMetricsTracker>>,
     ) {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(config.compaction_check_interval));
-        
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
+            config.compaction_check_interval,
+        ));
+
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     debug!("Monitoring compaction status");
-                    
+
                     // Update last check time
                     {
                         let mut stats_guard = stats.lock().await;
                         stats_guard.last_compaction_check = Some(Instant::now());
                     }
-                    
+
                     // Check if compaction is needed
                     if let Ok(needs_compaction) = Self::check_compaction_needed(&storage, config.compaction_trigger_threshold).await {
                         if needs_compaction {
                             info!("Triggering background compaction");
-                            
+
                             // Record compaction started
                             if let Some(ref _tracker) = metrics_tracker {
                                 // TODO: Fix type annotation issue
                                 // tracker.record_compaction_started().await;
                             }
-                            
+
                             let compaction_start = Instant::now();
                             if let Err(e) = storage.compact_all(false).await {
                                 warn!("Failed to trigger background compaction: {}", e);
                             } else {
                                 let _compaction_duration = compaction_start.elapsed();
-                                
+
                                 // Update statistics
                                 let mut stats_guard = stats.lock().await;
                                 stats_guard.compactions_triggered += 1;
-                                
+
                                 // Record compaction completed
                                 if let Some(ref _tracker) = metrics_tracker {
                                     // TODO: Fix type annotation issue
@@ -995,35 +1024,37 @@ impl BackgroundTaskManager {
         shutdown: Arc<tokio::sync::Notify>,
         metrics_tracker: Option<Arc<StorageMetricsTracker>>,
     ) {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(config.flush_check_interval));
-        
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
+            config.flush_check_interval,
+        ));
+
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     debug!("Monitoring flush status");
-                    
+
                     // Update last check time
                     {
                         let mut stats_guard = stats.lock().await;
                         stats_guard.last_flush_check = Some(Instant::now());
                     }
-                    
+
                     // Check flush status for each storage instance
                     for (i, instance) in storage.insts.iter().enumerate() {
                         if let Ok(flush_pending) = Self::check_flush_status(instance).await {
                             if flush_pending {
                                 debug!("Flush pending detected on storage instance {}", i);
-                                
+
                                 // Record flush started
                                 if let Some(ref _tracker) = metrics_tracker {
                                     // TODO: Fix type annotation issue
                                     // tracker.record_flush_started().await;
                                 }
-                                
+
                                 // Update statistics
                                 let mut stats_guard = stats.lock().await;
                                 stats_guard.flushes_detected += 1;
-                                
+
                                 // Record flush completed (simulated)
                                 if let Some(ref _tracker) = metrics_tracker {
                                     // TODO: Fix type annotation issue
@@ -1049,16 +1080,18 @@ impl BackgroundTaskManager {
         shutdown: Arc<tokio::sync::Notify>,
         metrics_tracker: Option<Arc<StorageMetricsTracker>>,
     ) {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(config.stats_collection_interval));
-        
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
+            config.stats_collection_interval,
+        ));
+
         loop {
             tokio::select! {
                 _ = interval.tick() => {
                     debug!("Collecting storage statistics");
-                    
+
                     // Collect RocksDB statistics
                     let rocksdb_stats = Self::collect_rocksdb_stats(&storage).await;
-                    
+
                     // Update statistics
                     {
                         let mut stats_guard = stats.lock().await;
@@ -1066,7 +1099,7 @@ impl BackgroundTaskManager {
                         stats_guard.stats_collections += 1;
                         stats_guard.rocksdb_stats = rocksdb_stats.clone();
                     }
-                    
+
                     // Update metrics tracker if available
                     if let Some(ref _tracker) = metrics_tracker {
                         // TODO: Fix type annotation issue
@@ -1080,7 +1113,7 @@ impl BackgroundTaskManager {
                         //     0.0, // TODO: Implement bloom filter effectiveness calculation
                         // ).await;
                     }
-                    
+
                     // Log key metrics
                     let stats_guard = stats.lock().await;
                     info!(
@@ -1101,7 +1134,10 @@ impl BackgroundTaskManager {
     }
 
     /// Check if compaction is needed based on various metrics
-    async fn check_compaction_needed(storage: &Arc<Storage>, threshold: usize) -> Result<bool, DualRuntimeError> {
+    async fn check_compaction_needed(
+        storage: &Arc<Storage>,
+        threshold: usize,
+    ) -> Result<bool, DualRuntimeError> {
         // Check each storage instance
         for instance in &storage.insts {
             // Get number of SST files (placeholder - would use actual RocksDB property)
@@ -1110,7 +1146,7 @@ impl BackgroundTaskManager {
                     return Ok(true);
                 }
             }
-            
+
             // Check for write stalls
             if let Ok(write_stall) = instance.get_property("rocksdb.actual-delayed-write-rate") {
                 if write_stall > 0 {
@@ -1118,7 +1154,7 @@ impl BackgroundTaskManager {
                 }
             }
         }
-        
+
         Ok(false)
     }
 
@@ -1134,40 +1170,40 @@ impl BackgroundTaskManager {
     /// Collect comprehensive RocksDB statistics
     async fn collect_rocksdb_stats(storage: &Arc<Storage>) -> RocksDbStats {
         let mut stats = RocksDbStats::default();
-        
+
         // Aggregate statistics from all storage instances
         for instance in &storage.insts {
             // Collect various RocksDB properties
             if let Ok(keys) = instance.get_property("rocksdb.estimate-num-keys") {
                 stats.total_keys += keys;
             }
-            
+
             if let Ok(size) = instance.get_property("rocksdb.total-sst-files-size") {
                 stats.total_size_bytes += size;
             }
-            
+
             if let Ok(sst_files) = instance.get_property("rocksdb.num-files-at-level0") {
                 stats.sst_file_count += sst_files;
             }
-            
+
             if let Ok(memtables) = instance.get_property("rocksdb.num-immutable-mem-table") {
                 stats.memtable_count += memtables;
             }
-            
+
             // Check compaction status
             if let Ok(compaction) = instance.get_property("rocksdb.compaction-pending") {
                 if compaction > 0 {
                     stats.compaction_pending = true;
                 }
             }
-            
+
             // Check flush status
             if let Ok(flush) = instance.get_property("rocksdb.mem-table-flush-pending") {
                 if flush > 0 {
                     stats.flush_pending = true;
                 }
             }
-            
+
             // Check write stall status
             if let Ok(stall) = instance.get_property("rocksdb.actual-delayed-write-rate") {
                 if stall > 0 {
@@ -1175,7 +1211,7 @@ impl BackgroundTaskManager {
                 }
             }
         }
-        
+
         stats
     }
 }
@@ -1190,7 +1226,7 @@ impl StorageServer {
         // Route to appropriate storage instance based on key
         let slot_id = util::key_to_slot_id(key);
         let instance_id = storage.slot_indexer.get_instance_id(slot_id);
-        
+
         if let Some(instance) = storage.insts.get(instance_id) {
             match instance.get(key) {
                 Ok(value) => Ok(RespData::BulkString(Some(value.into_bytes().into()))),
@@ -1200,7 +1236,8 @@ impl StorageServer {
         } else {
             SystemSnafu {
                 message: format!("Storage instance {} not found", instance_id),
-            }.fail()
+            }
+            .fail()
         }
     }
 
@@ -1213,7 +1250,7 @@ impl StorageServer {
     ) -> Result<RespData, storage::error::Error> {
         let slot_id = util::key_to_slot_id(key);
         let instance_id = storage.slot_indexer.get_instance_id(slot_id);
-        
+
         if let Some(instance) = storage.insts.get(instance_id) {
             match ttl {
                 Some(duration) => {
@@ -1228,7 +1265,8 @@ impl StorageServer {
         } else {
             SystemSnafu {
                 message: format!("Storage instance {} not found", instance_id),
-            }.fail()
+            }
+            .fail()
         }
     }
 
@@ -1238,20 +1276,20 @@ impl StorageServer {
         keys: &[Vec<u8>],
     ) -> Result<RespData, storage::error::Error> {
         let mut total_deleted = 0i64;
-        
+
         for key in keys {
             let slot_id = util::key_to_slot_id(key);
             let instance_id = storage.slot_indexer.get_instance_id(slot_id);
-            
+
             if let Some(instance) = storage.insts.get(instance_id) {
                 match instance.del_key(key) {
                     Ok(true) => total_deleted += 1,
-                    Ok(false) => {}, // Key didn't exist
+                    Ok(false) => {} // Key didn't exist
                     Err(e) => return Err(e),
                 }
             }
         }
-        
+
         Ok(RespData::Integer(total_deleted))
     }
 
@@ -1261,21 +1299,21 @@ impl StorageServer {
         keys: &[Vec<u8>],
     ) -> Result<RespData, storage::error::Error> {
         let mut count = 0i64;
-        
+
         for key in keys {
             let slot_id = util::key_to_slot_id(key);
             let instance_id = storage.slot_indexer.get_instance_id(slot_id);
-            
+
             if let Some(instance) = storage.insts.get(instance_id) {
                 // Check if key exists by trying to get its type
                 match instance.get_key_type(key) {
                     Ok(_) => count += 1,
-                    Err(storage::error::Error::KeyNotFound { .. }) => {}, // Key doesn't exist
+                    Err(storage::error::Error::KeyNotFound { .. }) => {} // Key doesn't exist
                     Err(e) => return Err(e),
                 }
             }
         }
-        
+
         Ok(RespData::Integer(count))
     }
 
@@ -1287,7 +1325,7 @@ impl StorageServer {
     ) -> Result<RespData, storage::error::Error> {
         let slot_id = util::key_to_slot_id(key);
         let instance_id = storage.slot_indexer.get_instance_id(slot_id);
-        
+
         if let Some(instance) = storage.insts.get(instance_id) {
             // Check if key exists first
             match instance.get_key_type(key) {
@@ -1307,7 +1345,8 @@ impl StorageServer {
         } else {
             SystemSnafu {
                 message: format!("Storage instance {} not found", instance_id),
-            }.fail()
+            }
+            .fail()
         }
     }
 
@@ -1318,7 +1357,7 @@ impl StorageServer {
     ) -> Result<RespData, storage::error::Error> {
         let slot_id = util::key_to_slot_id(key);
         let instance_id = storage.slot_indexer.get_instance_id(slot_id);
-        
+
         if let Some(instance) = storage.insts.get(instance_id) {
             // Check if key exists
             match instance.get_key_type(key) {
@@ -1336,7 +1375,8 @@ impl StorageServer {
         } else {
             SystemSnafu {
                 message: format!("Storage instance {} not found", instance_id),
-            }.fail()
+            }
+            .fail()
         }
     }
 
@@ -1356,35 +1396,41 @@ impl StorageServer {
     ) -> Result<RespData, storage::error::Error> {
         let slot_id = util::key_to_slot_id(key);
         let instance_id = storage.slot_indexer.get_instance_id(slot_id);
-        
+
         if let Some(instance) = storage.insts.get(instance_id) {
             // Get current value
             let current_value = match instance.get(key) {
                 Ok(value) => {
                     // Parse as integer
-                    value.parse::<i64>().map_err(|_| InvalidFormatSnafu {
-                        message: "value is not an integer or out of range".to_string(),
-                    }.build())?
+                    value.parse::<i64>().map_err(|_| {
+                        InvalidFormatSnafu {
+                            message: "value is not an integer or out of range".to_string(),
+                        }
+                        .build()
+                    })?
                 }
                 Err(storage::error::Error::KeyNotFound { .. }) => 0, // Key doesn't exist, start from 0
                 Err(e) => return Err(e),
             };
-            
+
             // Calculate new value
-            let new_value = current_value.checked_add(increment)
-                .ok_or_else(|| InvalidFormatSnafu {
+            let new_value = current_value.checked_add(increment).ok_or_else(|| {
+                InvalidFormatSnafu {
                     message: "increment or decrement would overflow".to_string(),
-                }.build())?;
-            
+                }
+                .build()
+            })?;
+
             // Set new value
             let new_value_str = new_value.to_string();
             instance.set(key, new_value_str.as_bytes())?;
-            
+
             Ok(RespData::Integer(new_value))
         } else {
             SystemSnafu {
                 message: format!("Storage instance {} not found", instance_id),
-            }.fail()
+            }
+            .fail()
         }
     }
 
@@ -1415,16 +1461,17 @@ impl StorageServer {
         for (key, value) in pairs {
             let slot_id = util::key_to_slot_id(key);
             let instance_id = storage.slot_indexer.get_instance_id(slot_id);
-            
+
             if let Some(instance) = storage.insts.get(instance_id) {
                 instance.set(key, value)?;
             } else {
                 return SystemSnafu {
                     message: format!("Storage instance {} not found", instance_id),
-                }.fail();
+                }
+                .fail();
             }
         }
-        
+
         Ok(RespData::SimpleString("OK".to_string().into()))
     }
 
@@ -1434,24 +1481,27 @@ impl StorageServer {
         keys: &[Vec<u8>],
     ) -> Result<RespData, storage::error::Error> {
         let mut results = Vec::with_capacity(keys.len());
-        
+
         for key in keys {
             let slot_id = util::key_to_slot_id(key);
             let instance_id = storage.slot_indexer.get_instance_id(slot_id);
-            
+
             if let Some(instance) = storage.insts.get(instance_id) {
                 match instance.get(key) {
-                    Ok(value) => results.push(RespData::BulkString(Some(value.into_bytes().into()))),
+                    Ok(value) => {
+                        results.push(RespData::BulkString(Some(value.into_bytes().into())))
+                    }
                     Err(storage::error::Error::KeyNotFound { .. }) => results.push(RespData::Null),
                     Err(e) => return Err(e),
                 }
             } else {
                 return SystemSnafu {
                     message: format!("Storage instance {} not found", instance_id),
-                }.fail();
+                }
+                .fail();
             }
         }
-        
+
         Ok(RespData::Array(Some(results)))
     }
 
@@ -1461,13 +1511,13 @@ impl StorageServer {
         commands: &[StorageCommand],
     ) -> Result<RespData, storage::error::Error> {
         let mut results = Vec::with_capacity(commands.len());
-        
+
         // Execute each command in the batch
         for command in commands {
             let result = Box::pin(Self::execute_storage_command(storage, command)).await?;
             results.push(result);
         }
-        
+
         Ok(RespData::Array(Some(results)))
     }
 }
@@ -1489,11 +1539,10 @@ mod util {
 mod tests {
     use super::*;
 
-
     #[test]
     fn test_storage_server_config_default() {
         let config = StorageServerConfig::default();
-        
+
         assert_eq!(config.max_batch_size, 100);
         assert_eq!(config.batch_timeout_ms, 10);
         assert_eq!(config.worker_count, 4);
@@ -1504,7 +1553,7 @@ mod tests {
     #[test]
     fn test_batch_processor_creation() {
         let processor = BatchProcessor::new(50, 20);
-        
+
         assert_eq!(processor.max_batch_size, 50);
         assert_eq!(processor.batch_timeout_ms, 20);
     }
@@ -1513,13 +1562,13 @@ mod tests {
     fn test_key_to_slot_id() {
         let key1 = b"test_key_1";
         let key2 = b"test_key_2";
-        
+
         let slot1 = util::key_to_slot_id(key1);
         let slot2 = util::key_to_slot_id(key2);
-        
+
         // Same key should always produce same slot
         assert_eq!(slot1, util::key_to_slot_id(key1));
-        
+
         // Different keys should produce different slots (most of the time)
         // Note: Hash collisions are possible but unlikely for test keys
         assert!(slot1 < 16384);

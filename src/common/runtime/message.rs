@@ -16,19 +16,19 @@
 // limitations under the License.
 
 //! Message channel communication system for dual runtime architecture
-//! 
+//!
 //! This module provides the data structures and communication mechanisms
 //! for passing storage requests between the network and storage runtimes.
 
-use std::time::{Duration, Instant};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use uuid::Uuid;
 
-use crate::error_logging::{ErrorLogger, RuntimeContext, CorrelationId};
+use crate::error_logging::{CorrelationId, ErrorLogger, RuntimeContext};
 
 use resp::RespData;
 use storage::error::Error as StorageError;
@@ -65,62 +65,35 @@ impl std::fmt::Display for RequestId {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageCommand {
     /// Get a value by key
-    Get { 
-        key: Vec<u8> 
-    },
+    Get { key: Vec<u8> },
     /// Set a key-value pair with optional TTL
-    Set { 
-        key: Vec<u8>, 
-        value: Vec<u8>, 
-        ttl: Option<Duration> 
+    Set {
+        key: Vec<u8>,
+        value: Vec<u8>,
+        ttl: Option<Duration>,
     },
     /// Delete one or more keys
-    Del { 
-        keys: Vec<Vec<u8>> 
-    },
+    Del { keys: Vec<Vec<u8>> },
     /// Check if keys exist
-    Exists { 
-        keys: Vec<Vec<u8>> 
-    },
+    Exists { keys: Vec<Vec<u8>> },
     /// Set expiration time for a key
-    Expire { 
-        key: Vec<u8>, 
-        ttl: Duration 
-    },
+    Expire { key: Vec<u8>, ttl: Duration },
     /// Get time to live for a key
-    Ttl { 
-        key: Vec<u8> 
-    },
+    Ttl { key: Vec<u8> },
     /// Increment a numeric value
-    Incr { 
-        key: Vec<u8> 
-    },
+    Incr { key: Vec<u8> },
     /// Increment by a specific amount
-    IncrBy { 
-        key: Vec<u8>, 
-        increment: i64 
-    },
+    IncrBy { key: Vec<u8>, increment: i64 },
     /// Decrement a numeric value
-    Decr { 
-        key: Vec<u8> 
-    },
+    Decr { key: Vec<u8> },
     /// Decrement by a specific amount
-    DecrBy { 
-        key: Vec<u8>, 
-        decrement: i64 
-    },
+    DecrBy { key: Vec<u8>, decrement: i64 },
     /// Multiple set operations
-    MSet { 
-        pairs: Vec<(Vec<u8>, Vec<u8>)> 
-    },
+    MSet { pairs: Vec<(Vec<u8>, Vec<u8>)> },
     /// Multiple get operations
-    MGet { 
-        keys: Vec<Vec<u8>> 
-    },
+    MGet { keys: Vec<Vec<u8>> },
     /// Batch multiple commands together
-    Batch { 
-        commands: Vec<StorageCommand> 
-    },
+    Batch { commands: Vec<StorageCommand> },
 }
 
 /// Statistics about storage operations for monitoring
@@ -299,8 +272,8 @@ pub struct CircuitBreaker {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CircuitBreakerState {
-    Closed,  // Normal operation
-    Open,    // Failing fast
+    Closed,   // Normal operation
+    Open,     // Failing fast
     HalfOpen, // Testing if service has recovered
 }
 
@@ -388,9 +361,12 @@ impl MessageChannel {
     }
 
     /// Create a new message channel with custom backpressure configuration
-    pub fn with_backpressure_config(buffer_size: usize, backpressure_config: BackpressureConfig) -> Self {
+    pub fn with_backpressure_config(
+        buffer_size: usize,
+        backpressure_config: BackpressureConfig,
+    ) -> Self {
         let (request_sender, request_receiver) = mpsc::channel(buffer_size);
-        
+
         Self {
             request_sender,
             request_receiver: Some(request_receiver),
@@ -439,7 +415,8 @@ impl MessageChannel {
 
     /// Check if the channel is experiencing backpressure
     pub fn has_backpressure(&self) -> bool {
-        let threshold = (self.buffer_size * self.backpressure_config.threshold_percent as usize) / 100;
+        let threshold =
+            (self.buffer_size * self.backpressure_config.threshold_percent as usize) / 100;
         self.pending_requests() >= threshold
     }
 
@@ -454,7 +431,7 @@ impl MessageChannel {
         stats.requests_sent += 1;
         stats.pending_requests += 1;
         stats.max_pending_requests = stats.max_pending_requests.max(stats.pending_requests);
-        
+
         if self.has_backpressure() {
             stats.backpressure_events += 1;
         }
@@ -471,7 +448,7 @@ impl MessageChannel {
         let mut stats = self.stats.lock().await;
         stats.responses_sent += 1;
         stats.pending_requests = stats.pending_requests.saturating_sub(1);
-        
+
         // Update average processing time using exponential moving average
         if stats.avg_processing_time.is_zero() {
             stats.avg_processing_time = processing_time;
@@ -583,13 +560,17 @@ impl RequestQueue {
     }
 
     /// Add a request to the queue
-    pub fn enqueue(&mut self, request: StorageRequest, retry_attempts: usize) -> Result<(), crate::error::DualRuntimeError> {
+    pub fn enqueue(
+        &mut self,
+        request: StorageRequest,
+        retry_attempts: usize,
+    ) -> Result<(), crate::error::DualRuntimeError> {
         // Remove expired requests first
         self.remove_expired();
 
         if self.queue.len() >= self.max_size {
             return Err(crate::error::DualRuntimeError::Channel(
-                "Request queue is full".to_string()
+                "Request queue is full".to_string(),
             ));
         }
 
@@ -622,7 +603,8 @@ impl RequestQueue {
     /// Remove expired requests from the queue
     fn remove_expired(&mut self) {
         let now = Instant::now();
-        self.queue.retain(|req| now.duration_since(req.queued_at) < self.max_queue_time);
+        self.queue
+            .retain(|req| now.duration_since(req.queued_at) < self.max_queue_time);
     }
 
     /// Get statistics about the queue
@@ -677,7 +659,7 @@ impl RecoveryManager {
     /// Record a successful operation
     pub fn record_success(&mut self) {
         self.last_success = Some(Instant::now());
-        
+
         match self.state {
             RecoveryState::Recovering => {
                 // Check if we have enough successes to consider recovery complete
@@ -740,7 +722,10 @@ impl RecoveryManager {
 
     /// Check if the system is in a degraded state
     pub fn is_degraded(&self) -> bool {
-        matches!(self.state, RecoveryState::Degraded | RecoveryState::Unavailable)
+        matches!(
+            self.state,
+            RecoveryState::Degraded | RecoveryState::Unavailable
+        )
     }
 
     /// Check if storage is available for requests
@@ -796,7 +781,7 @@ impl StorageClient {
 
     /// Create a new storage client with custom retry configuration
     pub fn with_retry_config(
-        message_channel: Arc<MessageChannel>, 
+        message_channel: Arc<MessageChannel>,
         default_timeout: Duration,
         retry_config: RetryConfig,
     ) -> Self {
@@ -852,17 +837,22 @@ impl StorageClient {
     }
 
     /// Send a storage request and wait for the response
-    pub async fn send_request(&self, command: StorageCommand) -> Result<RespData, crate::error::DualRuntimeError> {
-        self.send_request_with_timeout(command, self.default_timeout).await
+    pub async fn send_request(
+        &self,
+        command: StorageCommand,
+    ) -> Result<RespData, crate::error::DualRuntimeError> {
+        self.send_request_with_timeout(command, self.default_timeout)
+            .await
     }
 
     /// Send a storage request with a custom timeout
     pub async fn send_request_with_timeout(
-        &self, 
-        command: StorageCommand, 
-        timeout: Duration
+        &self,
+        command: StorageCommand,
+        timeout: Duration,
     ) -> Result<RespData, crate::error::DualRuntimeError> {
-        self.send_request_with_priority(command, timeout, RequestPriority::Normal).await
+        self.send_request_with_priority(command, timeout, RequestPriority::Normal)
+            .await
     }
 
     /// Send a storage request with custom timeout and priority
@@ -884,11 +874,15 @@ impl StorageClient {
         match recovery_state {
             RecoveryState::Unavailable => {
                 // Storage is unavailable, try fallback mechanisms
-                return self.handle_storage_unavailable(command, timeout, priority).await;
+                return self
+                    .handle_storage_unavailable(command, timeout, priority)
+                    .await;
             }
             RecoveryState::Degraded => {
                 // Storage is degraded, use more conservative approach
-                return self.handle_degraded_storage(command, timeout, priority).await;
+                return self
+                    .handle_degraded_storage(command, timeout, priority)
+                    .await;
             }
             _ => {
                 // Normal operation or recovering
@@ -900,7 +894,9 @@ impl StorageClient {
             let mut circuit_breaker = self.circuit_breaker.lock().await;
             if !circuit_breaker.should_allow_request() {
                 // Circuit breaker is open, queue the request if possible
-                return self.queue_request_for_later(command, timeout, priority).await;
+                return self
+                    .queue_request_for_later(command, timeout, priority)
+                    .await;
             }
         }
 
@@ -912,7 +908,10 @@ impl StorageClient {
             }
             let remaining_timeout = timeout - elapsed;
 
-            match self.try_send_request(command.clone(), remaining_timeout, priority).await {
+            match self
+                .try_send_request(command.clone(), remaining_timeout, priority)
+                .await
+            {
                 Ok(data) => {
                     // Success - record in circuit breaker and recovery manager
                     {
@@ -923,7 +922,7 @@ impl StorageClient {
                         let mut recovery_manager = self.recovery_manager.lock().await;
                         recovery_manager.record_success();
                     }
-                    
+
                     // Process any queued requests on success
                     tokio::spawn({
                         let client = self.clone();
@@ -931,7 +930,7 @@ impl StorageClient {
                             client.process_queued_requests().await;
                         }
                     });
-                    
+
                     return Ok(data);
                 }
                 Err(err) => {
@@ -940,31 +939,36 @@ impl StorageClient {
                         let correlation_id = CorrelationId::new();
                         let mut context = HashMap::new();
                         context.insert("attempt".to_string(), attempt.to_string());
-                        context.insert("remaining_timeout".to_string(), remaining_timeout.as_millis().to_string());
-                        
+                        context.insert(
+                            "remaining_timeout".to_string(),
+                            remaining_timeout.as_millis().to_string(),
+                        );
+
                         tokio::spawn({
                             let logger = Arc::clone(logger);
                             let error = err.clone();
                             async move {
-                                logger.log_error(
-                                    error,
-                                    RuntimeContext::Network,
-                                    Some(correlation_id),
-                                    None,
-                                    context,
-                                ).await;
+                                logger
+                                    .log_error(
+                                        error,
+                                        RuntimeContext::Network,
+                                        Some(correlation_id),
+                                        None,
+                                        context,
+                                    )
+                                    .await;
                             }
                         });
                     }
-                    
+
                     last_error = Some(err);
-                    
+
                     // Record failure in recovery manager
                     {
                         let mut recovery_manager = self.recovery_manager.lock().await;
                         recovery_manager.record_failure();
                     }
-                    
+
                     // Don't retry on certain errors
                     if let Some(ref error) = last_error {
                         match error {
@@ -996,7 +1000,7 @@ impl StorageClient {
         // Return the last error
         Err(last_error.unwrap_or_else(|| {
             crate::error::DualRuntimeError::Channel(
-                "Request failed after all retry attempts".to_string()
+                "Request failed after all retry attempts".to_string(),
             )
         }))
     }
@@ -1031,8 +1035,9 @@ impl StorageClient {
             // Apply backpressure handling
             tokio::time::timeout(
                 self.message_channel.backpressure_config.max_wait_time,
-                self.message_channel.request_sender.send(request)
-            ).await
+                self.message_channel.request_sender.send(request),
+            )
+            .await
         } else {
             // Send immediately
             Ok(self.message_channel.request_sender.send(request).await)
@@ -1046,23 +1051,24 @@ impl StorageClient {
                 // Wait for response with timeout
                 let response_receiver = {
                     let mut pending = self.pending_requests.lock().await;
-                    pending.remove(&request_id)
-                        .ok_or_else(|| crate::error::DualRuntimeError::Channel(
-                            "Response receiver not found".to_string()
-                        ))?
+                    pending.remove(&request_id).ok_or_else(|| {
+                        crate::error::DualRuntimeError::Channel(
+                            "Response receiver not found".to_string(),
+                        )
+                    })?
                 };
 
                 match tokio::time::timeout(timeout, response_receiver).await {
-                    Ok(Ok(response)) => {
-                        match response.result {
-                            Ok(data) => Ok(data),
-                            Err(storage_err) => Err(crate::error::DualRuntimeError::from_storage_error(storage_err)),
-                        }
-                    }
+                    Ok(Ok(response)) => match response.result {
+                        Ok(data) => Ok(data),
+                        Err(storage_err) => Err(
+                            crate::error::DualRuntimeError::from_storage_error(storage_err),
+                        ),
+                    },
                     Ok(Err(_)) => {
                         // Response channel was closed
                         Err(crate::error::DualRuntimeError::Channel(
-                            "Response channel closed".to_string()
+                            "Response channel closed".to_string(),
                         ))
                     }
                     Err(_) => {
@@ -1079,7 +1085,7 @@ impl StorageClient {
                 let mut pending = self.pending_requests.lock().await;
                 pending.remove(&request_id);
                 Err(crate::error::DualRuntimeError::Channel(
-                    "Failed to send request to storage runtime".to_string()
+                    "Failed to send request to storage runtime".to_string(),
                 ))
             }
             Err(_) => {
@@ -1089,7 +1095,7 @@ impl StorageClient {
                 let mut pending = self.pending_requests.lock().await;
                 pending.remove(&request_id);
                 Err(crate::error::DualRuntimeError::Channel(
-                    "Request send timeout due to backpressure".to_string()
+                    "Request send timeout due to backpressure".to_string(),
                 ))
             }
         }
@@ -1107,12 +1113,12 @@ impl StorageClient {
         if self.retry_config.jitter {
             use std::collections::hash_map::DefaultHasher;
             use std::hash::{Hash, Hasher};
-            
+
             let mut hasher = DefaultHasher::new();
             std::thread::current().id().hash(&mut hasher);
             Instant::now().hash(&mut hasher);
             let jitter_factor = (hasher.finish() % 100) as f64 / 100.0; // 0.0 to 0.99
-            
+
             let jitter_ms = (delay.as_millis() as f64 * jitter_factor * 0.1) as u64; // Up to 10% jitter
             delay += Duration::from_millis(jitter_ms);
         }
@@ -1150,7 +1156,10 @@ impl StorageClient {
 
         if should_recover {
             // Try a single recovery attempt
-            match self.try_recovery_request(command.clone(), timeout, priority).await {
+            match self
+                .try_recovery_request(command.clone(), timeout, priority)
+                .await
+            {
                 Ok(data) => {
                     // Recovery successful
                     let mut recovery_manager = self.recovery_manager.lock().await;
@@ -1164,7 +1173,8 @@ impl StorageClient {
         }
 
         // Queue the request for later processing
-        self.queue_request_for_later(command, timeout, priority).await
+        self.queue_request_for_later(command, timeout, priority)
+            .await
     }
 
     /// Handle requests when storage is in degraded state
@@ -1179,7 +1189,10 @@ impl StorageClient {
         let degraded_retries = self.retry_config.max_retries.min(2);
 
         for attempt in 0..=degraded_retries {
-            match self.try_send_request(command.clone(), degraded_timeout, priority).await {
+            match self
+                .try_send_request(command.clone(), degraded_timeout, priority)
+                .await
+            {
                 Ok(data) => {
                     // Success in degraded mode
                     let mut recovery_manager = self.recovery_manager.lock().await;
@@ -1203,7 +1216,7 @@ impl StorageClient {
         }
 
         Err(crate::error::DualRuntimeError::Channel(
-            "Request failed in degraded storage mode".to_string()
+            "Request failed in degraded storage mode".to_string(),
         ))
     }
 
@@ -1235,7 +1248,7 @@ impl StorageClient {
         // For high-priority requests, return an immediate error instead of queuing
         if matches!(priority, RequestPriority::Critical | RequestPriority::High) {
             return Err(crate::error::DualRuntimeError::Channel(
-                "Storage unavailable and high-priority requests cannot be queued".to_string()
+                "Storage unavailable and high-priority requests cannot be queued".to_string(),
             ));
         }
 
@@ -1243,7 +1256,7 @@ impl StorageClient {
         match self.get_fallback_response(&command).await {
             Some(fallback) => Ok(fallback),
             None => Err(crate::error::DualRuntimeError::Channel(
-                "Storage unavailable and no fallback available".to_string()
+                "Storage unavailable and no fallback available".to_string(),
             )),
         }
     }
@@ -1257,7 +1270,8 @@ impl StorageClient {
     ) -> Result<RespData, crate::error::DualRuntimeError> {
         // Use a shorter timeout for recovery attempts
         let recovery_timeout = timeout.min(Duration::from_secs(5));
-        self.try_send_request(command, recovery_timeout, priority).await
+        self.try_send_request(command, recovery_timeout, priority)
+            .await
     }
 
     /// Process queued requests when storage becomes available
@@ -1274,15 +1288,19 @@ impl StorageClient {
             match queued_request {
                 Some(queued) => {
                     // Try to process the queued request
-                    let remaining_timeout = queued.request.timeout
+                    let remaining_timeout = queued
+                        .request
+                        .timeout
                         .saturating_sub(queued.queued_at.elapsed());
 
                     if remaining_timeout > Duration::from_millis(100) {
-                        let result = self.try_send_request(
-                            queued.request.command,
-                            remaining_timeout,
-                            queued.request.priority,
-                        ).await;
+                        let result = self
+                            .try_send_request(
+                                queued.request.command,
+                                remaining_timeout,
+                                queued.request.priority,
+                            )
+                            .await;
 
                         // Send the result back through the original response channel
                         let response = match result {
@@ -1295,12 +1313,12 @@ impl StorageClient {
                             Err(err) => StorageResponse {
                                 id: queued.request.id,
                                 result: Err(storage::error::Error::Io {
-                                error: std::io::Error::new(
-                                    std::io::ErrorKind::Other, 
-                                    err.to_string()
-                                ),
-                                location: snafu::Location::new(file!(), line!(), column!()),
-                            }),
+                                    error: std::io::Error::new(
+                                        std::io::ErrorKind::Other,
+                                        err.to_string(),
+                                    ),
+                                    location: snafu::Location::new(file!(), line!(), column!()),
+                                }),
                                 execution_time: queued.queued_at.elapsed(),
                                 storage_stats: StorageStats::default(),
                             },
@@ -1314,8 +1332,8 @@ impl StorageClient {
                             id: queued.request.id,
                             result: Err(storage::error::Error::Io {
                                 error: std::io::Error::new(
-                                    std::io::ErrorKind::TimedOut, 
-                                    "Request timeout while queued"
+                                    std::io::ErrorKind::TimedOut,
+                                    "Request timeout while queued",
                                 ),
                                 location: snafu::Location::new(file!(), line!(), column!()),
                             }),
@@ -1343,7 +1361,8 @@ impl StorageClient {
             }
             StorageCommand::MGet { keys } => {
                 // Return array of nulls for MGET operations
-                let nulls: Vec<resp::RespData> = keys.iter().map(|_| resp::RespData::Null).collect();
+                let nulls: Vec<resp::RespData> =
+                    keys.iter().map(|_| resp::RespData::Null).collect();
                 Some(resp::RespData::Array(Some(nulls)))
             }
             _ => {
@@ -1374,9 +1393,14 @@ impl StorageClient {
     /// Force a recovery attempt
     pub async fn force_recovery(&self) -> Result<(), crate::error::DualRuntimeError> {
         // Try a simple ping command to test storage availability
-        let ping_command = StorageCommand::Get { key: b"__health_check__".to_vec() };
-        
-        match self.try_recovery_request(ping_command, Duration::from_secs(5), RequestPriority::High).await {
+        let ping_command = StorageCommand::Get {
+            key: b"__health_check__".to_vec(),
+        };
+
+        match self
+            .try_recovery_request(ping_command, Duration::from_secs(5), RequestPriority::High)
+            .await
+        {
             Ok(_) => {
                 let mut recovery_manager = self.recovery_manager.lock().await;
                 recovery_manager.record_success();
@@ -1413,7 +1437,7 @@ mod tests {
     fn test_request_id_creation() {
         let id1 = RequestId::new();
         let id2 = RequestId::new();
-        
+
         assert_ne!(id1, id2);
         assert_ne!(id1.inner(), id2.inner());
     }
@@ -1423,7 +1447,7 @@ mod tests {
         let id = RequestId::new();
         let display_str = format!("{}", id);
         let uuid_str = format!("{}", id.inner());
-        
+
         assert_eq!(display_str, uuid_str);
     }
 
@@ -1437,7 +1461,7 @@ mod tests {
     #[test]
     fn test_storage_stats_default() {
         let stats = StorageStats::default();
-        
+
         assert_eq!(stats.keys_read, 0);
         assert_eq!(stats.keys_written, 0);
         assert_eq!(stats.keys_deleted, 0);
@@ -1450,7 +1474,7 @@ mod tests {
     #[tokio::test]
     async fn test_message_channel_creation() {
         let channel = MessageChannel::new(1000);
-        
+
         assert_eq!(channel.buffer_size(), 1000);
         assert!(channel.is_healthy());
         assert!(!channel.has_backpressure());
@@ -1464,10 +1488,13 @@ mod tests {
             drop_oldest_on_full: true,
         };
         let channel = MessageChannel::with_backpressure_config(100, config.clone());
-        
+
         assert_eq!(channel.buffer_size(), 100);
         assert_eq!(channel.backpressure_config().threshold_percent, 90);
-        assert_eq!(channel.backpressure_config().max_wait_time, Duration::from_millis(200));
+        assert_eq!(
+            channel.backpressure_config().max_wait_time,
+            Duration::from_millis(200)
+        );
         assert!(channel.backpressure_config().drop_oldest_on_full);
     }
 
@@ -1475,7 +1502,7 @@ mod tests {
     async fn test_message_channel_stats() {
         let channel = MessageChannel::new(100);
         let stats = channel.stats().await;
-        
+
         assert_eq!(stats.requests_sent, 0);
         assert_eq!(stats.requests_received, 0);
         assert_eq!(stats.responses_sent, 0);
@@ -1487,12 +1514,14 @@ mod tests {
     #[tokio::test]
     async fn test_channel_statistics_recording() {
         let channel = MessageChannel::new(100);
-        
+
         // Record some operations
         channel.record_request_sent().await;
         channel.record_request_received().await;
-        channel.record_response_sent(Duration::from_millis(10)).await;
-        
+        channel
+            .record_response_sent(Duration::from_millis(10))
+            .await;
+
         let stats = channel.stats().await;
         assert_eq!(stats.requests_sent, 1);
         assert_eq!(stats.requests_received, 1);
@@ -1508,11 +1537,11 @@ mod tests {
             value: b"test_value".to_vec(),
             ttl: Some(Duration::from_secs(60)),
         };
-        
+
         // Test that the command can be serialized and deserialized
         let serialized = serde_json::to_string(&cmd).unwrap();
         let deserialized: StorageCommand = serde_json::from_str(&serialized).unwrap();
-        
+
         match deserialized {
             StorageCommand::Set { key, value, ttl } => {
                 assert_eq!(key, b"test_key");
@@ -1527,7 +1556,7 @@ mod tests {
     async fn test_storage_client_creation() {
         let channel = Arc::new(MessageChannel::new(100));
         let client = StorageClient::new(channel.clone(), Duration::from_secs(30));
-        
+
         assert!(client.is_healthy());
         assert_eq!(client.pending_request_count().await, 0);
     }
@@ -1535,7 +1564,7 @@ mod tests {
     #[tokio::test]
     async fn test_backpressure_config_default() {
         let config = BackpressureConfig::default();
-        
+
         assert_eq!(config.threshold_percent, 80);
         assert_eq!(config.max_wait_time, Duration::from_millis(100));
         assert!(!config.drop_oldest_on_full);
@@ -1544,7 +1573,7 @@ mod tests {
     #[test]
     fn test_retry_config_default() {
         let config = RetryConfig::default();
-        
+
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.base_delay, Duration::from_millis(10));
         assert_eq!(config.max_delay, Duration::from_secs(1));
@@ -1555,21 +1584,21 @@ mod tests {
     #[test]
     fn test_circuit_breaker() {
         let mut circuit_breaker = CircuitBreaker::new(3, Duration::from_secs(10));
-        
+
         // Initially closed
         assert!(circuit_breaker.should_allow_request());
-        
+
         // Record failures
         circuit_breaker.record_failure();
         assert!(circuit_breaker.should_allow_request());
-        
+
         circuit_breaker.record_failure();
         assert!(circuit_breaker.should_allow_request());
-        
+
         circuit_breaker.record_failure();
         // Should now be open
         assert!(!circuit_breaker.should_allow_request());
-        
+
         // Record success should close it
         circuit_breaker.record_success();
         assert!(circuit_breaker.should_allow_request());
@@ -1586,11 +1615,11 @@ mod tests {
             jitter: false,
         };
         let client = StorageClient::with_retry_config(
-            channel.clone(), 
-            Duration::from_secs(30), 
-            retry_config
+            channel.clone(),
+            Duration::from_secs(30),
+            retry_config,
         );
-        
+
         assert!(client.is_healthy());
         assert_eq!(client.pending_request_count().await, 0);
     }

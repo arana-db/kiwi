@@ -23,43 +23,43 @@ use thiserror::Error;
 pub enum DualRuntimeError {
     #[error("Network runtime error: {0}")]
     NetworkRuntime(String),
-    
+
     #[error("Storage runtime error: {0}")]
     StorageRuntime(String),
-    
+
     #[error("Channel communication error: {0}")]
     Channel(String),
-    
+
     #[error("Request timeout after {timeout:?}")]
     Timeout { timeout: Duration },
-    
+
     #[error("Runtime configuration error: {0}")]
     Configuration(String),
-    
+
     #[error("Runtime lifecycle error: {0}")]
     Lifecycle(String),
-    
+
     #[error("Runtime health check failed: {0}")]
     HealthCheck(String),
-    
+
     #[error("Storage operation failed: {0}")]
     Storage(String),
-    
+
     #[error("IO error: {0}")]
     Io(String),
-    
+
     #[error("Circuit breaker is open: {reason}")]
     CircuitBreakerOpen { reason: String },
-    
+
     #[error("Runtime isolation failure: {runtime} - {reason}")]
     RuntimeIsolation { runtime: String, reason: String },
-    
+
     #[error("Error boundary triggered: {boundary} - {error}")]
     ErrorBoundary { boundary: String, error: String },
-    
+
     #[error("Fault isolation activated: {component} - {details}")]
     FaultIsolation { component: String, details: String },
-    
+
     #[error("Recovery mechanism failed: {mechanism} - {reason}")]
     RecoveryFailed { mechanism: String, reason: String },
 }
@@ -69,71 +69,73 @@ impl DualRuntimeError {
     pub fn network_runtime<S: Into<String>>(msg: S) -> Self {
         Self::NetworkRuntime(msg.into())
     }
-    
+
     /// Create a storage runtime error
     pub fn storage_runtime<S: Into<String>>(msg: S) -> Self {
         Self::StorageRuntime(msg.into())
     }
-    
+
     /// Create a channel communication error
     pub fn channel<S: Into<String>>(msg: S) -> Self {
         Self::Channel(msg.into())
     }
-    
+
     /// Create a timeout error
     pub fn timeout(timeout: Duration) -> Self {
         Self::Timeout { timeout }
     }
-    
+
     /// Create a configuration error
     pub fn configuration<S: Into<String>>(msg: S) -> Self {
         Self::Configuration(msg.into())
     }
-    
+
     /// Create a lifecycle error
     pub fn lifecycle<S: Into<String>>(msg: S) -> Self {
         Self::Lifecycle(msg.into())
     }
-    
+
     /// Create a health check error
     pub fn health_check<S: Into<String>>(msg: S) -> Self {
         Self::HealthCheck(msg.into())
     }
-    
+
     /// Create a circuit breaker error
     pub fn circuit_breaker_open<S: Into<String>>(reason: S) -> Self {
-        Self::CircuitBreakerOpen { reason: reason.into() }
+        Self::CircuitBreakerOpen {
+            reason: reason.into(),
+        }
     }
-    
+
     /// Create a runtime isolation error
     pub fn runtime_isolation<S: Into<String>>(runtime: S, reason: S) -> Self {
-        Self::RuntimeIsolation { 
-            runtime: runtime.into(), 
-            reason: reason.into() 
+        Self::RuntimeIsolation {
+            runtime: runtime.into(),
+            reason: reason.into(),
         }
     }
-    
+
     /// Create an error boundary error
     pub fn error_boundary<S: Into<String>>(boundary: S, error: S) -> Self {
-        Self::ErrorBoundary { 
-            boundary: boundary.into(), 
-            error: error.into() 
+        Self::ErrorBoundary {
+            boundary: boundary.into(),
+            error: error.into(),
         }
     }
-    
+
     /// Create a fault isolation error
     pub fn fault_isolation<S: Into<String>>(component: S, details: S) -> Self {
-        Self::FaultIsolation { 
-            component: component.into(), 
-            details: details.into() 
+        Self::FaultIsolation {
+            component: component.into(),
+            details: details.into(),
         }
     }
-    
+
     /// Create a recovery failed error
     pub fn recovery_failed<S: Into<String>>(mechanism: S, reason: S) -> Self {
-        Self::RecoveryFailed { 
-            mechanism: mechanism.into(), 
-            reason: reason.into() 
+        Self::RecoveryFailed {
+            mechanism: mechanism.into(),
+            reason: reason.into(),
         }
     }
 
@@ -146,7 +148,7 @@ impl DualRuntimeError {
     pub fn from_io_error(err: std::io::Error) -> Self {
         Self::Io(err.to_string())
     }
-    
+
     /// Check if this error indicates a recoverable condition
     pub fn is_recoverable(&self) -> bool {
         match self {
@@ -166,7 +168,7 @@ impl DualRuntimeError {
             Self::RecoveryFailed { .. } => false,
         }
     }
-    
+
     /// Check if this error should trigger circuit breaker
     pub fn should_trigger_circuit_breaker(&self) -> bool {
         match self {
@@ -180,7 +182,7 @@ impl DualRuntimeError {
             _ => false,
         }
     }
-    
+
     /// Get the severity level of this error
     pub fn severity(&self) -> ErrorSeverity {
         match self {
@@ -203,7 +205,9 @@ impl DualRuntimeError {
 }
 
 /// Error severity levels for monitoring and alerting
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum ErrorSeverity {
     Low = 1,
     Medium = 2,

@@ -320,7 +320,7 @@ impl ServerTrait for TcpServer {
                 //     pooled_resources.inner().cmd_table.clone(),
                 //     pooled_resources.inner().executor.clone(),
                 // ).await;
-                
+
                 let result = process_connection(
                     client,
                     pooled_resources.inner().storage.clone(),
