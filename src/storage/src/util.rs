@@ -81,8 +81,13 @@ pub fn delete_dir<P: AsRef<Path>>(dirname: P) -> io::Result<()> {
 }
 
 pub fn unique_test_db_path() -> std::path::PathBuf {
-    tempfile::tempdir()
-        .expect("Failed to create temp dir")
-        .path()
-        .join("kiwi-test-db")
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let pid = std::process::id();
+
+    std::env::temp_dir().join(format!("kiwi-test-db-{}-{}", pid, timestamp))
 }
