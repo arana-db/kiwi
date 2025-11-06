@@ -454,7 +454,11 @@ impl Storage {
     pub fn rpoplpush(&self, source_key: &[u8], destination_key: &[u8]) -> Result<Option<Vec<u8>>> {
         let source_slot_id = key_to_slot_id(source_key);
         let dest_slot_id = key_to_slot_id(destination_key);
-        if source_slot_id != dest_slot_id {
+        let dest_instance_id = self.slot_indexer.get_instance_id(dest_slot_id);
+
+        // For simplicity, we'll use the source instance for both operations
+        // In a production environment, you might need to handle cross-instance operations
+        if source_instance_id != dest_instance_id {
             return InvalidArgumentSnafu {
                 message: "Cross-slot RPOPLPUSH operations are not supported".to_string(),
             }
