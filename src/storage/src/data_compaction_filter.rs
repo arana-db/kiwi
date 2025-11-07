@@ -122,9 +122,8 @@ impl DataCompactionFilter {
         let encoded = &key[PREFIX_RESERVE_LENGTH..];
         let encoded_len = seek_userkey_delim(encoded);
         let version_offset = PREFIX_RESERVE_LENGTH + encoded_len;
-        Some(decode_fixed::<u64>(
-            &key[version_offset..version_offset + VERSION_LENGTH],
-        ))
+        let version_raw = key.get(version_offset..version_offset + VERSION_LENGTH)?;
+        Some(decode_fixed::<u64>(version_raw))
     }
 
     fn parse_meta_value(&self, value: &[u8]) -> Option<(u64, u64)> {

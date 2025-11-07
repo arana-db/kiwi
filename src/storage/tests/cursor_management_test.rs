@@ -42,9 +42,6 @@ mod cursor_management_test {
         assert_eq!(start_key, "test_key_001");
 
         drop(storage);
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
     }
 
     #[tokio::test]
@@ -61,9 +58,6 @@ mod cursor_management_test {
         assert!(matches!(err, Error::KeyNotFound { .. }));
 
         drop(storage);
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
     }
 
     #[tokio::test]
@@ -95,9 +89,6 @@ mod cursor_management_test {
         }
 
         drop(storage);
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
     }
 
     #[tokio::test]
@@ -124,8 +115,5 @@ mod cursor_management_test {
         assert!(matches!(err, Error::KeyNotFound { .. }));
 
         drop(storage);
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
     }
 }
