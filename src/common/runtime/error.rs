@@ -169,14 +169,14 @@ impl DualRuntimeError {
             // RocksDB errors need inspection - some are recoverable
             StorageError::Rocks { error, .. } => {
                 let msg = error.to_string().to_lowercase();
-                // Recoverable RocksDB errors
-                msg.contains("busy")
-                    || msg.contains("locked")
-                    || msg.contains("timeout")
-                    || msg.contains("write buffer")
-                    || msg.contains("compaction")
-                    // Non-recoverable if corruption detected
-                    && !msg.contains("corrupt")
+                // Recoverable RocksDB errors unless corruption is reported
+                (
+                    msg.contains("busy")
+                        || msg.contains("locked")
+                        || msg.contains("timeout")
+                        || msg.contains("write buffer")
+                        || msg.contains("compaction")
+                ) && !msg.contains("corrupt")
             }
             
             // Unknown errors - default to non-recoverable for safety

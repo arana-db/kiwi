@@ -424,7 +424,6 @@ mod configuration_tests {
     fn test_runtime_config_default() {
         let config = RuntimeConfig::default();
         
-        // Network threads should be clamped between 1 and 4 based on CPU count
         let cpu_count = num_cpus::get();
         assert_eq!(config.network_threads, cpu_count.clamp(1, 4));
         assert_eq!(config.storage_threads, cpu_count.clamp(2, 8));
