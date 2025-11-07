@@ -87,12 +87,27 @@ impl HealthMonitor {
     }
 
     /// Updates the health status of a component
+    /// 
+    /// If the component is not registered, it will be auto-registered with the provided status.
+    /// The response_time is reset to zero since this is a manual update, not a measured check.
     pub async fn update_health(&self, component: &str, status: HealthStatus, message: Option<String>) -> Result<(), RuntimeError> {
         let mut checks = self.checks.write().await;
         if let Some(check) = checks.get_mut(component) {
             check.status = status;
             check.last_check = Instant::now();
             check.message = message;
+            // Reset response_time to zero for manual updates (not measured checks)
+            check.response_time = Duration::from_millis(0);
+        } else {
+            // Auto-register component if not found (consistent with perform_health_check)
+            let health_check = HealthCheck {
+                component: component.to_string(),
+                status,
+                last_check: Instant::now(),
+                message,
+                response_time: Duration::from_millis(0),
+            };
+            checks.insert(component.to_string(), health_check);
         }
         Ok(())
     }

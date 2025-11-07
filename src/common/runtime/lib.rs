@@ -31,6 +31,12 @@ pub mod storage_server;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod additional_unit_tests;
+
+#[cfg(test)]
+mod stress_tests;
+
 pub use config::RuntimeConfig;
 pub use error::DualRuntimeError;
 pub use error_logging::{

@@ -21,6 +21,7 @@
 //! command execution with StorageClient for async storage operations.
 
 use std::future::Future;
+use std::pin::Pin;
 use std::time::Duration;
 
 use executor::CmdExecutor;
@@ -36,11 +37,15 @@ pub trait CmdExecutorNetworkExt {
     fn execute_network(
         &self,
         exec: NetworkCmdExecution,
-    ) -> impl Future<Output = Result<(), DualRuntimeError>> + Send;
+    ) -> Pin<Box<dyn Future<Output = Result<(), DualRuntimeError>> + Send + '_>>;
 }
 
 impl CmdExecutorNetworkExt for CmdExecutor {
-    async fn execute_network(&self, exec: NetworkCmdExecution) -> Result<(), DualRuntimeError> {
+    fn execute_network(
+        &self,
+        exec: NetworkCmdExecution,
+    ) -> Pin<Box<dyn Future<Output = Result<(), DualRuntimeError>> + Send + '_>> {
+        Box::pin(async move {
         let cmd_name = String::from_utf8_lossy(&exec.client.cmd_name()).to_lowercase();
         debug!("Executing network command: {}", cmd_name);
 
@@ -111,6 +116,7 @@ impl CmdExecutorNetworkExt for CmdExecutor {
         }
 
         Ok(())
+        })
     }
 }
 

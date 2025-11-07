@@ -90,6 +90,7 @@ impl MemoryPressureSimulator {
 }
 
 /// Network partition simulator
+#[derive(Clone, Debug)]
 struct NetworkPartitionSimulator {
     is_partitioned: Arc<AtomicBool>,
     partition_duration: Duration,
