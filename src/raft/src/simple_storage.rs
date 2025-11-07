@@ -35,7 +35,7 @@ pub fn create_simple_raft_storage<P: AsRef<Path>>(
     // Create a basic state machine for testing
     let state_machine = KiwiStateMachine::new(node_id);
     let storage = PlaceholderStorage;
-    
+
     Ok((storage, state_machine))
 }
 

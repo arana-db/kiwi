@@ -59,6 +59,7 @@ pub mod msetnx;
 pub mod persist;
 pub mod pexpire;
 pub mod pexpireat;
+mod ping;
 pub mod psetex;
 pub mod pttl;
 pub mod randomkey;
@@ -86,7 +87,6 @@ pub mod sunionstore;
 pub mod table;
 pub mod ttl;
 pub mod type_cmd;
-mod ping;
 
 use std::collections::HashMap;
 use std::sync::Arc;
