@@ -48,7 +48,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -90,7 +90,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
     #[test]
@@ -98,7 +98,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -119,7 +119,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -128,7 +128,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -157,7 +157,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -166,7 +166,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -204,7 +204,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -213,7 +213,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -240,7 +240,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -249,7 +249,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -287,7 +287,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -296,7 +296,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -338,7 +338,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -347,7 +347,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -380,7 +380,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -389,7 +389,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -430,7 +430,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -439,7 +439,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -473,7 +473,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -482,7 +482,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -514,7 +514,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -523,7 +523,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -558,7 +558,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -567,7 +567,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -608,7 +608,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -617,7 +617,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -649,7 +649,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -658,7 +658,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -689,7 +689,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -698,7 +698,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -727,7 +727,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -736,7 +736,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -771,7 +771,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -780,7 +780,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -826,7 +826,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -835,7 +835,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -869,7 +869,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -878,7 +878,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -907,7 +907,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -916,7 +916,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -951,7 +951,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -960,7 +960,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -1008,7 +1008,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -1017,7 +1017,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -1055,7 +1055,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -1064,7 +1064,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -1085,7 +1085,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 
@@ -1094,7 +1094,7 @@ mod redis_set_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
@@ -1127,7 +1127,7 @@ mod redis_set_test {
         drop(redis);
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(test_db_path);
         }
     }
 }

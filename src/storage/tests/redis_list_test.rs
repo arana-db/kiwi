@@ -28,7 +28,7 @@ mod redis_list_test {
         let test_db_path = unique_test_db_path();
 
         if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
+            let _ = std::fs::remove_dir_all(&test_db_path);
         }
 
         let storage_options = Arc::new(StorageOptions::default());
