@@ -24,7 +24,7 @@ use tokio::sync::{Notify, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::error_logging::{ErrorLogger, RuntimeContext};
-use crate::{DualRuntimeError, RuntimeConfig};
+use crate::{DualRuntimeError, RuntimeConfig, MessageChannel, StorageClient};
 
 /// Health status of a runtime
 #[derive(Debug, Clone, PartialEq)]
@@ -68,6 +68,11 @@ pub struct RuntimeManager {
     health_check_handle: Option<JoinHandle<()>>,
     _task_counter: Arc<AtomicU64>,
     error_logger: Option<Arc<ErrorLogger>>,
+    /// Message channel for communication between network and storage runtimes
+    /// The receiver is extracted during start() and passed to storage server
+    message_channel: Option<MessageChannel>,
+    /// Storage client for network runtime to send requests to storage runtime
+    storage_client: Option<Arc<StorageClient>>,
 }
 
 impl RuntimeManager {
@@ -77,6 +82,10 @@ impl RuntimeManager {
         config.validate().map_err(DualRuntimeError::configuration)?;
 
         info!("Creating RuntimeManager with config: {:?}", config);
+
+        // Create message channel for communication between runtimes
+        // We'll extract the receiver during start() and pass it to storage server
+        let message_channel = MessageChannel::new(config.channel_buffer_size);
 
         Ok(Self {
             config,
@@ -102,6 +111,8 @@ impl RuntimeManager {
             health_check_handle: None,
             _task_counter: Arc::new(AtomicU64::new(0)),
             error_logger: crate::error_logging::get_global_error_logger(),
+            message_channel: Some(message_channel),
+            storage_client: None,
         })
     }
 
@@ -194,6 +205,11 @@ impl RuntimeManager {
         self.network_runtime = Some(network_runtime);
         self.storage_runtime = Some(storage_runtime);
         self.start_time = Some(Instant::now());
+
+        // Note: The message channel and storage client will be initialized
+        // when the storage server is started. The receiver must be extracted
+        // before creating the storage client.
+        info!("Runtimes created. Storage server initialization required to complete setup.");
 
         // Start health monitoring
         self.start_health_monitoring().await;
@@ -377,6 +393,62 @@ impl RuntimeManager {
     /// Get the current configuration
     pub fn config(&self) -> &RuntimeConfig {
         &self.config
+    }
+
+    /// Get the storage client for sending requests from network to storage runtime
+    /// This should only be called after the RuntimeManager has been started
+    pub fn storage_client(&self) -> Result<Arc<StorageClient>, DualRuntimeError> {
+        self.storage_client
+            .as_ref()
+            .map(Arc::clone)
+            .ok_or_else(|| {
+                DualRuntimeError::lifecycle(
+                    "Storage client not initialized. RuntimeManager must be started first."
+                        .to_string(),
+                )
+            })
+    }
+
+    /// Initialize storage components by extracting the receiver and creating the storage client
+    /// This must be called before the storage server is started and before the storage client is used
+    /// Returns the receiver that should be passed to the storage server
+    pub fn initialize_storage_components(
+        &mut self,
+    ) -> Result<tokio::sync::mpsc::Receiver<crate::message::StorageRequest>, DualRuntimeError> {
+        // Extract the message channel
+        let mut channel = self.message_channel.take().ok_or_else(|| {
+            DualRuntimeError::lifecycle(
+                "Message channel already consumed or not initialized".to_string(),
+            )
+        })?;
+
+        // Extract the receiver for the storage server
+        let receiver = channel.take_request_receiver().ok_or_else(|| {
+            DualRuntimeError::channel("Failed to extract request receiver".to_string())
+        })?;
+
+        // Wrap the channel (now without receiver) in Arc for the storage client
+        let message_channel_arc = Arc::new(channel);
+
+        // Create the storage client
+        let storage_client = if let Some(ref logger) = self.error_logger {
+            Arc::new(StorageClient::with_error_logger(
+                Arc::clone(&message_channel_arc),
+                self.config.request_timeout,
+                Arc::clone(logger),
+            ))
+        } else {
+            Arc::new(StorageClient::new(
+                Arc::clone(&message_channel_arc),
+                self.config.request_timeout,
+            ))
+        };
+
+        self.storage_client = Some(storage_client);
+
+        info!("Storage components initialized: client created, receiver extracted");
+
+        Ok(receiver)
     }
 
     /// Create the network runtime with optimized settings for I/O operations

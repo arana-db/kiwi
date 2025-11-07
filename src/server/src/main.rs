@@ -19,7 +19,7 @@ use clap::Parser;
 use conf::config::Config;
 use log::{error, info, warn};
 use net::ServerFactory;
-use runtime::{DualRuntimeError, MessageChannel, RuntimeConfig, RuntimeManager, StorageServer};
+use runtime::{DualRuntimeError, RuntimeConfig, RuntimeManager, StorageServer};
 use std::sync::Arc;
 use storage::storage::Storage;
 // use raft::{RaftNode, ClusterConfig}; // TODO: Re-enable when Raft module is fixed
@@ -109,8 +109,21 @@ fn main() -> std::io::Result<()> {
         )
     })?;
 
+    // Initialize storage components and get the receiver for the storage server
+    let storage_receiver = runtime_manager
+        .initialize_storage_components()
+        .map_err(|e| {
+            std::io::Error::other(
+                format!("Failed to initialize storage components: {}", e),
+            )
+        })?;
+
+    info!("Storage components initialized, starting storage server...");
+
     // Initialize storage server in storage runtime
-    let storage_server_result = storage_handle.spawn(async { initialize_storage_server().await });
+    let storage_server_result = storage_handle.spawn(async move {
+        initialize_storage_server(storage_receiver).await
+    });
 
     // Use the network runtime to run the main server logic
     let result = network_handle.block_on(async {
@@ -232,19 +245,15 @@ fn main() -> std::io::Result<()> {
 }
 
 /// Initialize the storage server in the storage runtime
-async fn initialize_storage_server() -> Result<(), DualRuntimeError> {
+async fn initialize_storage_server(
+    request_receiver: tokio::sync::mpsc::Receiver<runtime::StorageRequest>,
+) -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
 
     // Create storage instance
     let storage = Arc::new(Storage::new(1, 0)); // Single instance, db_id 0
 
-    // Create message channel for communication
-    let mut message_channel = MessageChannel::new(10000); // Use default buffer size
-    let request_receiver = message_channel
-        .take_request_receiver()
-        .ok_or_else(|| DualRuntimeError::channel("Failed to get request receiver".to_string()))?;
-
-    // Create and start storage server
+    // Create and start storage server with the receiver
     let storage_server = StorageServer::new(storage, request_receiver);
 
     info!("Storage server created, starting processing...");
