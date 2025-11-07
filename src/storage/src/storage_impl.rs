@@ -441,10 +441,10 @@ impl Storage {
 
         if let Some(expiration_manager) = &self.expiration_manager {
             match expiration_manager.get_ttl_seconds(&key_str) {
-                Some(-2) => Ok(-2), // Key expired (treat as doesn't exist)
-                Some(-1) => Ok(-1), // Key exists but has no expiration
+                Some(-2) => Ok(-2),   // Key expired (treat as doesn't exist)
+                Some(-1) => Ok(-1),   // Key exists but has no expiration
                 Some(ttl) => Ok(ttl), // Positive TTL value
-                None => Ok(-1), // Shouldn't happen with new API, key has no expiration
+                None => Ok(-1),       // Shouldn't happen with new API, key has no expiration
             }
         } else {
             Ok(-1) // No expiration manager, key has no expiration
@@ -468,10 +468,10 @@ impl Storage {
 
         if let Some(expiration_manager) = &self.expiration_manager {
             match expiration_manager.get_ttl_milliseconds(&key_str) {
-                Some(-2) => Ok(-2), // Key expired (treat as doesn't exist)
-                Some(-1) => Ok(-1), // Key exists but has no expiration
+                Some(-2) => Ok(-2),   // Key expired (treat as doesn't exist)
+                Some(-1) => Ok(-1),   // Key exists but has no expiration
                 Some(ttl) => Ok(ttl), // Positive TTL value
-                None => Ok(-1), // Shouldn't happen with new API, key has no expiration
+                None => Ok(-1),       // Shouldn't happen with new API, key has no expiration
             }
         } else {
             Ok(-1) // No expiration manager, key has no expiration
@@ -498,7 +498,8 @@ impl Storage {
         }
 
         if let Some(expiration_manager) = &self.expiration_manager {
-            let expire_time = crate::expiration_manager::ExpirationManager::seconds_to_expire_time(seconds)?;
+            let expire_time =
+                crate::expiration_manager::ExpirationManager::seconds_to_expire_time(seconds)?;
             expiration_manager.set_expiration(&key_str, expire_time);
             Ok(true)
         } else {
@@ -526,7 +527,10 @@ impl Storage {
         }
 
         if let Some(expiration_manager) = &self.expiration_manager {
-            let expire_time = crate::expiration_manager::ExpirationManager::milliseconds_to_expire_time(milliseconds)?;
+            let expire_time =
+                crate::expiration_manager::ExpirationManager::milliseconds_to_expire_time(
+                    milliseconds,
+                )?;
             expiration_manager.set_expiration(&key_str, expire_time);
             Ok(true)
         } else {
@@ -550,7 +554,10 @@ impl Storage {
         }
 
         if let Some(expiration_manager) = &self.expiration_manager {
-            let expire_time = crate::expiration_manager::ExpirationManager::unix_seconds_to_expire_time(timestamp)?;
+            let expire_time =
+                crate::expiration_manager::ExpirationManager::unix_seconds_to_expire_time(
+                    timestamp,
+                )?;
             expiration_manager.set_expiration(&key_str, expire_time);
             Ok(true)
         } else {
@@ -574,7 +581,10 @@ impl Storage {
         }
 
         if let Some(expiration_manager) = &self.expiration_manager {
-            let expire_time = crate::expiration_manager::ExpirationManager::unix_milliseconds_to_expire_time(timestamp)?;
+            let expire_time =
+                crate::expiration_manager::ExpirationManager::unix_milliseconds_to_expire_time(
+                    timestamp,
+                )?;
             expiration_manager.set_expiration(&key_str, expire_time);
             Ok(true)
         } else {
@@ -634,7 +644,9 @@ impl Storage {
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
 
         match self.insts[instance_id].get_key_type(key) {
-            Ok(data_type) => Ok(crate::base_value_format::data_type_to_string(data_type).to_string()),
+            Ok(data_type) => {
+                Ok(crate::base_value_format::data_type_to_string(data_type).to_string())
+            }
             Err(_) => Ok("none".to_string()), // Key doesn't exist
         }
     }
@@ -903,5 +915,4 @@ impl Storage {
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].sscan(key, cursor, pattern, count)
     }
-
 }

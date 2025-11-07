@@ -123,6 +123,8 @@ pub fn create_command_table() -> CmdTable {
         crate::sscan::SscanCmd,
         crate::sunion::SunionCmd,
         crate::sunionstore::SunionstoreCmd,
+        // connection commands
+        crate::ping::PingCmd,
         // TODO: add more commands...
     );
 

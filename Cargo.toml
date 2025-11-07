@@ -11,8 +11,8 @@ members = [
 	"src/conf",
 	"src/cmd",
 	"src/executor",
-	"src/client"
-	# "src/raft" # Temporarily disabled due to compilation errors
+	"src/client",
+	"src/raft"
 ]
 
 [workspace.package]

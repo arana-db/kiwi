@@ -63,7 +63,7 @@ impl Cmd for PersistCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        
+
         match storage.persist(&key) {
             Ok(success) => {
                 client.set_reply(RespData::Integer(if success { 1 } else { 0 }));

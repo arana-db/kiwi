@@ -24,10 +24,9 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use resp::command::{RespCommand, CommandType, Command};
-use resp::types::RespData;
 use crate::error::{RaftError, RaftResult};
-use crate::types::{RedisCommand, ClientRequest, ClientResponse, RequestId, ConsistencyLevel};
+use crate::placeholder_types::{CommandType, RespCommand, RespData};
+use crate::types::{ClientRequest, ClientResponse, ConsistencyLevel, RedisCommand, RequestId};
 
 /// Serialization format for Redis commands in Raft log entries
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,23 +52,21 @@ impl CommandSerializer {
         };
 
         bincode::serialize(&serialized_cmd)
-            .map_err(|e| RaftError::Serialization(serde_json::Error::custom(e.to_string())))
+            .map_err(|e| RaftError::invalid_request(format!("Serialization failed: {}", e)))
     }
 
     /// Deserialize bytes to RespCommand using bincode
     pub fn deserialize_resp_command(data: &[u8]) -> RaftResult<RespCommand> {
         let serialized_cmd: SerializedCommand = bincode::deserialize(data)
-            .map_err(|e| RaftError::Serialization(serde_json::Error::custom(e.to_string())))?;
+            .map_err(|e| RaftError::invalid_request(format!("Deserialization failed: {}", e)))?;
 
-        let command_type = CommandType::from_str(&serialized_cmd.command)
-            .map_err(|_| RaftError::invalid_request(format!("Invalid command: {}", serialized_cmd.command)))?;
+        let command_type = CommandType::from_str(&serialized_cmd.command).map_err(|_| {
+            RaftError::invalid_request(format!("Invalid command: {}", serialized_cmd.command))
+        })?;
 
-        let args = serialized_cmd.args
-            .into_iter()
-            .map(Bytes::from)
-            .collect();
+        let args = serialized_cmd.args.into_iter().map(Bytes::from).collect();
 
-        Ok(RespCommand::new(command_type, args, false))
+        Ok(RespCommand::new(command_type, args))
     }
 
     /// Serialize a RedisCommand to bytes
@@ -81,18 +78,15 @@ impl CommandSerializer {
         };
 
         bincode::serialize(&serialized_cmd)
-            .map_err(|e| RaftError::Serialization(serde_json::Error::custom(e.to_string())))
+            .map_err(|e| RaftError::invalid_request(format!("Serialization failed: {}", e)))
     }
 
     /// Deserialize bytes to RedisCommand
     pub fn deserialize_redis_command(data: &[u8]) -> RaftResult<RedisCommand> {
         let serialized_cmd: SerializedCommand = bincode::deserialize(data)
-            .map_err(|e| RaftError::Serialization(serde_json::Error::custom(e.to_string())))?;
+            .map_err(|e| RaftError::invalid_request(format!("Deserialization failed: {}", e)))?;
 
-        let args = serialized_cmd.args
-            .into_iter()
-            .map(Bytes::from)
-            .collect();
+        let args = serialized_cmd.args.into_iter().map(Bytes::from).collect();
 
         Ok(RedisCommand::new(serialized_cmd.command, args))
     }
@@ -100,17 +94,19 @@ impl CommandSerializer {
     /// Convert RespData to RedisCommand for Raft processing
     pub fn resp_data_to_redis_command(data: &RespData) -> RaftResult<RedisCommand> {
         match data {
-            RespData::Array(Some(array)) if !array.is_empty() => {
-                let command_name = array[0].as_string().ok_or_else(|| {
-                    RaftError::invalid_request("Command name must be a string")
-                })?;
+            RespData::Array(Some(ref array)) if !array.is_empty() => {
+                let command_name = array[0]
+                    .as_string()
+                    .ok_or_else(|| RaftError::invalid_request("Command name must be a string"))?;
 
                 let args = array
                     .iter()
                     .skip(1)
                     .map(|data| {
                         data.as_bytes().ok_or_else(|| {
-                            RaftError::invalid_request("Command argument must be convertible to bytes")
+                            RaftError::invalid_request(
+                                "Command argument must be convertible to bytes",
+                            )
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -118,9 +114,7 @@ impl CommandSerializer {
                 Ok(RedisCommand::new(command_name, args))
             }
             RespData::Inline(parts) if !parts.is_empty() => {
-                let command_name = std::str::from_utf8(&parts[0])
-                    .map_err(|_| RaftError::invalid_request("Command name must be valid UTF-8"))?
-                    .to_string();
+                let command_name = parts[0].clone();
 
                 let args = parts.iter().skip(1).cloned().map(Bytes::from).collect();
 
@@ -133,7 +127,7 @@ impl CommandSerializer {
     /// Convert RedisCommand to RespData for response
     pub fn redis_command_to_resp_data(cmd: &RedisCommand) -> RespData {
         let mut parts = vec![RespData::BulkString(Some(cmd.command.clone().into()))];
-        
+
         for arg in &cmd.args {
             parts.push(RespData::BulkString(Some(arg.clone())));
         }
@@ -144,7 +138,7 @@ impl CommandSerializer {
     /// Create a ClientRequest from RespData with default consistency level
     pub fn create_client_request(data: &RespData) -> RaftResult<ClientRequest> {
         let redis_command = Self::resp_data_to_redis_command(data)?;
-        
+
         Ok(ClientRequest {
             id: RequestId::new(),
             command: redis_command,
@@ -158,7 +152,7 @@ impl CommandSerializer {
         consistency: ConsistencyLevel,
     ) -> RaftResult<ClientRequest> {
         let redis_command = Self::resp_data_to_redis_command(data)?;
-        
+
         Ok(ClientRequest {
             id: RequestId::new(),
             command: redis_command,
@@ -168,26 +162,22 @@ impl CommandSerializer {
 
     /// Serialize ClientRequest for network transmission
     pub fn serialize_client_request(request: &ClientRequest) -> RaftResult<Vec<u8>> {
-        serde_json::to_vec(request)
-            .map_err(RaftError::Serialization)
+        serde_json::to_vec(request).map_err(RaftError::Serialization)
     }
 
     /// Deserialize ClientRequest from network data
     pub fn deserialize_client_request(data: &[u8]) -> RaftResult<ClientRequest> {
-        serde_json::from_slice(data)
-            .map_err(RaftError::Serialization)
+        serde_json::from_slice(data).map_err(RaftError::Serialization)
     }
 
     /// Serialize ClientResponse for network transmission
     pub fn serialize_client_response(response: &ClientResponse) -> RaftResult<Vec<u8>> {
-        serde_json::to_vec(response)
-            .map_err(RaftError::Serialization)
+        serde_json::to_vec(response).map_err(RaftError::Serialization)
     }
 
     /// Deserialize ClientResponse from network data
     pub fn deserialize_client_response(data: &[u8]) -> RaftResult<ClientResponse> {
-        serde_json::from_slice(data)
-            .map_err(RaftError::Serialization)
+        serde_json::from_slice(data).map_err(RaftError::Serialization)
     }
 
     /// Estimate serialized size of a command (for batching optimization)
@@ -199,14 +189,44 @@ impl CommandSerializer {
 
     /// Check if command is read-only (for optimization purposes)
     pub fn is_read_only_command(cmd: &RedisCommand) -> bool {
-        matches!(cmd.command.to_uppercase().as_str(), 
-            "GET" | "MGET" | "EXISTS" | "TTL" | "PTTL" | "TYPE" | 
-            "STRLEN" | "GETRANGE" | "GETBIT" | "LLEN" | "LINDEX" | 
-            "LRANGE" | "SCARD" | "SISMEMBER" | "SMEMBERS" | "SRANDMEMBER" |
-            "ZCARD" | "ZCOUNT" | "ZRANGE" | "ZRANGEBYSCORE" | "ZRANK" |
-            "ZREVRANGE" | "ZREVRANGEBYSCORE" | "ZREVRANK" | "ZSCORE" |
-            "HGET" | "HMGET" | "HGETALL" | "HEXISTS" | "HKEYS" | "HVALS" |
-            "HLEN" | "HSTRLEN" | "PING" | "ECHO" | "INFO"
+        matches!(
+            cmd.command.to_uppercase().as_str(),
+            "GET"
+                | "MGET"
+                | "EXISTS"
+                | "TTL"
+                | "PTTL"
+                | "TYPE"
+                | "STRLEN"
+                | "GETRANGE"
+                | "GETBIT"
+                | "LLEN"
+                | "LINDEX"
+                | "LRANGE"
+                | "SCARD"
+                | "SISMEMBER"
+                | "SMEMBERS"
+                | "SRANDMEMBER"
+                | "ZCARD"
+                | "ZCOUNT"
+                | "ZRANGE"
+                | "ZRANGEBYSCORE"
+                | "ZRANK"
+                | "ZREVRANGE"
+                | "ZREVRANGEBYSCORE"
+                | "ZREVRANK"
+                | "ZSCORE"
+                | "HGET"
+                | "HMGET"
+                | "HGETALL"
+                | "HEXISTS"
+                | "HKEYS"
+                | "HVALS"
+                | "HLEN"
+                | "HSTRLEN"
+                | "PING"
+                | "ECHO"
+                | "INFO"
         )
     }
 
@@ -216,106 +236,4 @@ impl CommandSerializer {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use resp::command::CommandType;
-
-    #[test]
-    fn test_serialize_deserialize_resp_command() {
-        let original_cmd = RespCommand::new(
-            CommandType::Set,
-            vec![Bytes::from("key"), Bytes::from("value")],
-            false,
-        );
-
-        let serialized = CommandSerializer::serialize_resp_command(&original_cmd).unwrap();
-        let deserialized = CommandSerializer::deserialize_resp_command(&serialized).unwrap();
-
-        assert_eq!(original_cmd.command_type, deserialized.command_type);
-        assert_eq!(original_cmd.args, deserialized.args);
-    }
-
-    #[test]
-    fn test_serialize_deserialize_redis_command() {
-        let original_cmd = RedisCommand::new(
-            "SET".to_string(),
-            vec![Bytes::from("key"), Bytes::from("value")],
-        );
-
-        let serialized = CommandSerializer::serialize_redis_command(&original_cmd).unwrap();
-        let deserialized = CommandSerializer::deserialize_redis_command(&serialized).unwrap();
-
-        assert_eq!(original_cmd.command, deserialized.command);
-        assert_eq!(original_cmd.args, deserialized.args);
-    }
-
-    #[test]
-    fn test_resp_data_to_redis_command() {
-        let resp_data = RespData::Array(Some(vec![
-            RespData::BulkString(Some(Bytes::from("SET"))),
-            RespData::BulkString(Some(Bytes::from("key"))),
-            RespData::BulkString(Some(Bytes::from("value"))),
-        ]));
-
-        let redis_cmd = CommandSerializer::resp_data_to_redis_command(&resp_data).unwrap();
-        
-        assert_eq!(redis_cmd.command, "SET");
-        assert_eq!(redis_cmd.args.len(), 2);
-        assert_eq!(redis_cmd.args[0], Bytes::from("key"));
-        assert_eq!(redis_cmd.args[1], Bytes::from("value"));
-    }
-
-    #[test]
-    fn test_create_client_request() {
-        let resp_data = RespData::Array(Some(vec![
-            RespData::BulkString(Some(Bytes::from("GET"))),
-            RespData::BulkString(Some(Bytes::from("key"))),
-        ]));
-
-        let request = CommandSerializer::create_client_request(&resp_data).unwrap();
-        
-        assert_eq!(request.command.command, "GET");
-        assert_eq!(request.command.args.len(), 1);
-        assert_eq!(request.consistency_level, ConsistencyLevel::Linearizable);
-    }
-
-    #[test]
-    fn test_command_classification() {
-        let read_cmd = RedisCommand::new("GET".to_string(), vec![Bytes::from("key")]);
-        let write_cmd = RedisCommand::new("SET".to_string(), vec![Bytes::from("key"), Bytes::from("value")]);
-
-        assert!(CommandSerializer::is_read_only_command(&read_cmd));
-        assert!(!CommandSerializer::is_read_only_command(&write_cmd));
-        assert!(!CommandSerializer::is_write_command(&read_cmd));
-        assert!(CommandSerializer::is_write_command(&write_cmd));
-    }
-
-    #[test]
-    fn test_estimate_command_size() {
-        let cmd = RedisCommand::new(
-            "SET".to_string(),
-            vec![Bytes::from("key"), Bytes::from("value")],
-        );
-
-        let size = CommandSerializer::estimate_command_size(&cmd);
-        assert!(size > 0);
-        assert!(size >= cmd.command.len() + cmd.args.iter().map(|a| a.len()).sum::<usize>());
-    }
-
-    #[test]
-    fn test_client_request_serialization() {
-        let request = ClientRequest {
-            id: RequestId::new(),
-            command: RedisCommand::new("PING".to_string(), vec![]),
-            consistency_level: ConsistencyLevel::Eventual,
-        };
-
-        let serialized = CommandSerializer::serialize_client_request(&request).unwrap();
-        let deserialized = CommandSerializer::deserialize_client_request(&serialized).unwrap();
-
-        assert_eq!(request.id, deserialized.id);
-        assert_eq!(request.command.command, deserialized.command.command);
-        assert_eq!(request.consistency_level, deserialized.consistency_level);
-    }
-}
+pub mod tests;

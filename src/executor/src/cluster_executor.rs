@@ -102,9 +102,9 @@ impl ClusterCmdExecutor {
             Err(async_channel::SendError(work)) => {
                 // Executor has been closed; set error response
                 log::error!("Failed to send work to worker; cluster executor is closed");
-                work.exec.client.set_reply(RespData::Error(
-                    "ERR cluster executor is closed".into()
-                ));
+                work.exec
+                    .client
+                    .set_reply(RespData::Error("ERR cluster executor is closed".into()));
             }
         }
     }
@@ -122,12 +122,12 @@ impl ClusterCmdExecutor {
 
     async fn do_execute_once(work: ClusterCmdExecutionWork) {
         let exec = work.exec;
-        
+
         // Convert client command to RedisCommand format (temporarily disabled)
         // let cmd_name = String::from_utf8_lossy(&exec.client.cmd_name()).to_string();
         // let args: Vec<Vec<u8>> = exec.client.argv().iter().skip(1).cloned().collect();
         // let redis_command = RedisCommand::new(cmd_name.clone(), args);
-        
+
         // Process command through Raft-aware Redis protocol compatibility layer
         // Temporarily disabled - using basic execution instead
         // Execute the command directly (no raft consensus for now)
@@ -140,15 +140,48 @@ impl ClusterCmdExecutor {
     /// Determine if a command is a write operation that requires Raft consensus
     #[allow(dead_code)]
     fn is_write_command(cmd_name: &str) -> bool {
-        matches!(cmd_name, 
-            "set" | "del" | "expire" | "expireat" | "persist" | "rename" | "renamenx" |
-            "lpush" | "rpush" | "lpop" | "rpop" | "lset" | "lrem" | "ltrim" |
-            "sadd" | "srem" | "spop" | "smove" |
-            "zadd" | "zrem" | "zincrby" | "zremrangebyrank" | "zremrangebyscore" |
-            "hset" | "hdel" | "hincrby" | "hincrbyfloat" |
-            "incr" | "decr" | "incrby" | "decrby" | "incrbyfloat" |
-            "append" | "setrange" | "setex" | "setnx" | "mset" | "msetnx" |
-            "flushdb" | "flushall"
+        matches!(
+            cmd_name,
+            "set"
+                | "del"
+                | "expire"
+                | "expireat"
+                | "persist"
+                | "rename"
+                | "renamenx"
+                | "lpush"
+                | "rpush"
+                | "lpop"
+                | "rpop"
+                | "lset"
+                | "lrem"
+                | "ltrim"
+                | "sadd"
+                | "srem"
+                | "spop"
+                | "smove"
+                | "zadd"
+                | "zrem"
+                | "zincrby"
+                | "zremrangebyrank"
+                | "zremrangebyscore"
+                | "hset"
+                | "hdel"
+                | "hincrby"
+                | "hincrbyfloat"
+                | "incr"
+                | "decr"
+                | "incrby"
+                | "decrby"
+                | "incrbyfloat"
+                | "append"
+                | "setrange"
+                | "setex"
+                | "setnx"
+                | "mset"
+                | "msetnx"
+                | "flushdb"
+                | "flushall"
         )
     }
 

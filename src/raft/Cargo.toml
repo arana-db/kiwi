@@ -43,14 +43,26 @@ rustls-pemfile = "1.0"
 sha2 = "0.10"
 hmac = "0.12"
 uuid = { version = "1.0", features = ["v4"] }
+reqwest = { version = "0.11", features = ["json"] }
+url = "2.4"
+crc16 = "0.4"
+warp = "0.3"
+prost = "0.12"
+prost-types = "0.12"
+futures = "0.3"
+
+[build-dependencies]
+prost-build = "0.12"
+protoc-bin-vendored = "3"
 
 [dev-dependencies]
 tempfile = { workspace = true }
+rand = "0.8"
 
 # Internal dependencies
-kstd = { path = "../kstd" }
-storage = { path = "../storage" }
-engine = { path = "../engine" }
-resp = { path = "../resp" }
-cmd = { path = "../cmd" }
-client = { path = "../client" }
+kstd = { workspace = true }
+storage = { workspace = true }
+engine = { workspace = true }
+resp = { workspace = true }
+cmd = { workspace = true }
+client = { workspace = true }

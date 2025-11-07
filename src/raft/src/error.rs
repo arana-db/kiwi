@@ -58,6 +58,15 @@ pub enum RaftError {
 
     #[error("Invalid request: {message}")]
     InvalidRequest { message: String },
+
+    #[error("Invalid state: {message}")]
+    InvalidState { message: String },
+
+    #[error("Resource exhausted: {message}")]
+    ResourceExhausted { message: String },
+
+    #[error("Not found: {message}")]
+    NotFound { message: String },
 }
 
 /// Network-related errors
@@ -151,6 +160,32 @@ impl RaftError {
         }
     }
 
+    /// Create an invalid state error
+    pub fn invalid_state<S: Into<String>>(message: S) -> Self {
+        Self::InvalidState {
+            message: message.into(),
+        }
+    }
+
+    /// Create a resource exhausted error
+    pub fn resource_exhausted<S: Into<String>>(message: S) -> Self {
+        Self::ResourceExhausted {
+            message: message.into(),
+        }
+    }
+
+    /// Create a not found error
+    pub fn not_found<S: Into<String>>(message: S) -> Self {
+        Self::NotFound {
+            message: message.into(),
+        }
+    }
+
+    /// Create a not leader error
+    pub fn not_leader<S: Into<String>>(_message: S) -> Self {
+        Self::NotLeader { leader_id: None }
+    }
+
     /// Check if this error indicates the node is not the leader
     pub fn is_not_leader(&self) -> bool {
         matches!(self, RaftError::NotLeader { .. })
@@ -163,32 +198,21 @@ impl RaftError {
             RaftError::Network(_) | RaftError::Timeout { .. } | RaftError::NotLeader { .. }
         )
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_error_creation() {
-        let config_err = RaftError::configuration("Invalid config");
-        assert!(matches!(config_err, RaftError::Configuration { .. }));
-
-        let state_err = RaftError::state_machine("State error");
-        assert!(matches!(state_err, RaftError::StateMachine { .. }));
-
-        let timeout_err = RaftError::timeout("Operation timeout");
-        assert!(matches!(timeout_err, RaftError::Timeout { .. }));
+    /// Create a serialization error
+    pub fn serialization<S: Into<String>>(message: S) -> Self {
+        Self::InvalidRequest {
+            message: format!("Serialization error: {}", message.into()),
+        }
     }
 
-    #[test]
-    fn test_error_classification() {
-        let not_leader_err = RaftError::NotLeader { leader_id: Some(1) };
-        assert!(not_leader_err.is_not_leader());
-        assert!(not_leader_err.is_retryable());
-
-        let config_err = RaftError::configuration("test");
-        assert!(!config_err.is_not_leader());
-        assert!(!config_err.is_retryable());
+    /// Create a consensus error
+    pub fn consensus<S: Into<String>>(message: S) -> Self {
+        // Create a generic consensus error - in practice this would be more specific
+        Self::InvalidRequest {
+            message: format!("Consensus error: {}", message.into()),
+        }
     }
 }
+
+pub mod tests;

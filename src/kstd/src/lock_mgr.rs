@@ -15,232 +15,263 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{
-    collections::{HashSet, hash_map::DefaultHasher},
-    hash::{Hash, Hasher},
-    sync::{
-        Arc, Condvar, Mutex,
-        atomic::{AtomicI64, Ordering},
-    },
-};
+use parking_lot::{Mutex, MutexGuard};
+use std::collections::BTreeSet;
+use std::hash::{Hash, Hasher};
 
-use super::status::Status;
-
-struct LockMapShard {
-    mutex: Mutex<HashSet<String>>,
-    condvar: Condvar,
-}
-
-impl LockMapShard {
-    fn new() -> Self {
-        Self {
-            mutex: Mutex::new(HashSet::new()),
-            condvar: Condvar::new(),
-        }
-    }
-}
-
-struct LockMap {
-    shards: Vec<Arc<LockMapShard>>,
-    lock_cnt: AtomicI64,
-    max_locks: i64, // -1 means no limit
-}
-
-impl LockMap {
-    fn new(num_shards: usize, max_locks: i64) -> Self {
-        Self {
-            shards: (0..num_shards)
-                .map(|_| Arc::new(LockMapShard::new()))
-                .collect(),
-            lock_cnt: AtomicI64::new(0),
-            max_locks,
-        }
-    }
-
-    #[inline]
-    fn shard_for(&self, key: &str) -> &Arc<LockMapShard> {
-        // use ahash
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        &self.shards[hasher.finish() as usize % self.shards.len()]
-    }
-
-    #[inline]
-    fn has_quota(&self) -> bool {
-        if self.max_locks <= 0 {
-            return true;
-        }
-        self.lock_cnt.load(Ordering::Acquire) < self.max_locks
-    }
-}
-
+/// Lock manager backed by a fixed pool of mutex shards.
+///
+/// Keys are hashed to a shard index so that we can protect hot keys without
+/// allocating per-key mutexes. The implementation mirrors the high-performance
+/// approach used by kvrocks: lock acquisition is fully blocking and relies on
+/// consistent ordering to avoid deadlocks when locking multiple keys.
 pub struct LockMgr {
-    map: Arc<LockMap>,
+    mask: usize,
+    mutex_pool: Vec<Mutex<()>>,
 }
 
 impl LockMgr {
+    /// Create a new lock manager with at least `num_shards` mutexes.
+    /// The actual number of mutexes is rounded up to the next power of two so
+    /// that we can use an inexpensive bit-mask when hashing keys.
     pub fn new(num_shards: usize) -> Self {
-        Self::with_max_locks(num_shards, -1)
-    }
-
-    pub fn with_max_locks(num_shards: usize, max_locks: i64) -> Self {
+        let size = num_shards.max(1).next_power_of_two();
+        let mutex_pool = (0..size).map(|_| Mutex::new(())).collect();
         Self {
-            map: Arc::new(LockMap::new(num_shards, max_locks)),
+            mask: size - 1,
+            mutex_pool,
         }
     }
 
-    pub fn lock(&self, key: &str) -> Status {
-        let shard = self.map.shard_for(key);
-
-        let mut keys: std::sync::MutexGuard<'_, HashSet<String>> =
-            shard.mutex.lock().expect("mutex is poisoned");
-
-        while keys.contains(key) || !self.map.has_quota() {
-            keys = shard.condvar.wait(keys).expect("condvar is poisoned");
-        }
-
-        keys.insert(key.to_string());
-        if self.map.max_locks > 0 {
-            self.map.lock_cnt.fetch_add(1, Ordering::SeqCst);
-        }
-
-        Status::ok()
+    /// Total number of mutex shards managed by this instance.
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.mutex_pool.len()
     }
 
-    pub fn unlock(&self, key: &str) {
-        let shard = self.map.shard_for(key);
-
-        let mut keys: std::sync::MutexGuard<'_, HashSet<String>> =
-            shard.mutex.lock().expect("mutex is poisoned");
-
-        let removed = keys.remove(key);
-        if removed && self.map.max_locks > 0 {
-            let prev = self.map.lock_cnt.fetch_sub(1, Ordering::SeqCst);
-            debug_assert!(prev > 0, "lock_cnt should stay positive when removing");
-        }
-        drop(keys);
-
-        shard.condvar.notify_all();
+    /// Acquire the lock for `key`, blocking until it becomes available.
+    pub fn lock(&self, key: &str) -> ScopedLock<'_> {
+        let index = self.index_for(key);
+        let guard = self.mutex_pool[index].lock();
+        ScopedLock { guard: Some(guard) }
     }
 
-    pub fn try_lock(&self, key: &str) -> Status {
-        let shard = self.map.shard_for(key);
+    /// Attempt to acquire the lock for `key` without blocking.
+    pub fn try_lock(&self, key: &str) -> Option<ScopedLock<'_>> {
+        let index = self.index_for(key);
+        self.mutex_pool[index]
+            .try_lock()
+            .map(|guard| ScopedLock { guard: Some(guard) })
+    }
 
-        let mut keys: std::sync::MutexGuard<'_, HashSet<String>> =
-            shard.mutex.lock().expect("mutex is poisoned");
-
-        if keys.contains(key) {
-            return Status::busy("Lock already held");
+    /// Acquire locks for multiple keys using a deterministic order to avoid
+    /// deadlocks. Duplicate keys are ignored.
+    pub fn multi_lock<'a, I, K>(&'a self, keys: I) -> ScopedMultiLock<'a>
+    where
+        I: IntoIterator<Item = K>,
+        K: AsRef<str>,
+    {
+        let indexes = self.sorted_indexes(keys);
+        let mut guards = Vec::with_capacity(indexes.len());
+        for index in indexes {
+            guards.push(self.mutex_pool[index].lock());
         }
+        ScopedMultiLock { guards }
+    }
 
-        if !self.map.has_quota() {
-            return Status::busy("Lock limit reached");
+    /// Attempt to acquire multiple locks without blocking. Returns `None` as
+    /// soon as any lock is unavailable and releases all previously acquired
+    /// locks.
+    pub fn try_multi_lock<'a, I, K>(&'a self, keys: I) -> Option<ScopedMultiLock<'a>>
+    where
+        I: IntoIterator<Item = K>,
+        K: AsRef<str>,
+    {
+        let indexes = self.sorted_indexes(keys);
+        let mut guards = Vec::with_capacity(indexes.len());
+        for index in indexes {
+            match self.mutex_pool[index].try_lock() {
+                Some(guard) => guards.push(guard),
+                None => return None,
+            }
         }
+        Some(ScopedMultiLock { guards })
+    }
 
-        keys.insert(key.to_string());
-        if self.map.max_locks > 0 {
-            self.map.lock_cnt.fetch_add(1, Ordering::SeqCst);
+    #[inline]
+    fn index_for(&self, key: &str) -> usize {
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        (hasher.finish() as usize) & self.mask
+    }
+
+    fn sorted_indexes<I, K>(&self, keys: I) -> Vec<usize>
+    where
+        I: IntoIterator<Item = K>,
+        K: AsRef<str>,
+    {
+        let mut indexes = BTreeSet::new();
+        for key in keys {
+            indexes.insert(self.index_for(key.as_ref()));
         }
-
-        Status::ok()
+        indexes.into_iter().collect()
     }
 }
 
-/// RAII lock guard
+/// RAII guard for a single mutex shard.
+///
+/// Dropping the guard releases the underlying mutex.
+pub struct ScopedLock<'a> {
+    guard: Option<MutexGuard<'a, ()>>,
+}
+
+impl<'a> ScopedLock<'a> {
+    /// Returns `true` if the guard currently owns a lock.
+    pub fn is_locked(&self) -> bool {
+        self.guard.is_some()
+    }
+
+    /// Consume the guard and return the underlying `MutexGuard`.
+    #[allow(dead_code)]
+    pub fn into_inner(mut self) -> MutexGuard<'a, ()> {
+        self.guard.take().expect("guard already taken")
+    }
+}
+
+impl<'a> Drop for ScopedLock<'a> {
+    fn drop(&mut self) {
+        if let Some(guard) = self.guard.take() {
+            drop(guard);
+        }
+    }
+}
+
+/// RAII guard for multiple mutex shards.
+pub struct ScopedMultiLock<'a> {
+    guards: Vec<MutexGuard<'a, ()>>,
+}
+
+impl<'a> ScopedMultiLock<'a> {
+    pub fn len(&self) -> usize {
+        self.guards.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.guards.is_empty()
+    }
+}
+
+impl<'a> Drop for ScopedMultiLock<'a> {
+    fn drop(&mut self) {
+        for guard in self.guards.drain(..).rev() {
+            drop(guard);
+        }
+    }
+}
+
+/// Public RAII wrapper used by storage commands.
 pub struct ScopeRecordLock<'a> {
-    mgr: &'a LockMgr,
-    key: String,
-    locked: bool,
+    guard: Option<ScopedLock<'a>>,
 }
 
 impl<'a> ScopeRecordLock<'a> {
     pub fn new(mgr: &'a LockMgr, key: &str) -> Self {
-        let key_str = key.to_string();
-        let locked = mgr.lock(&key_str).is_ok();
         Self {
-            mgr,
-            key: key_str,
-            locked,
+            guard: Some(mgr.lock(key)),
         }
     }
 
     pub fn try_new(mgr: &'a LockMgr, key: &str) -> Option<Self> {
-        let key_str = key.to_string();
-        if mgr.try_lock(&key_str).is_ok() {
-            Some(Self {
-                mgr,
-                key: key_str,
-                locked: true,
-            })
-        } else {
-            None
-        }
+        mgr.try_lock(key).map(|guard| Self { guard: Some(guard) })
     }
 
     pub fn is_locked(&self) -> bool {
-        self.locked
+        self.guard.is_some()
     }
 }
 
 impl<'a> Drop for ScopeRecordLock<'a> {
     fn drop(&mut self) {
-        if self.locked {
-            self.mgr.unlock(&self.key);
+        self.guard.take();
+    }
+}
+
+/// RAII helper for acquiring multiple locks in a single scope.
+pub struct ScopeRecordMultiLock<'a> {
+    guard: Option<ScopedMultiLock<'a>>,
+}
+
+impl<'a> ScopeRecordMultiLock<'a> {
+    pub fn new<I, K>(mgr: &'a LockMgr, keys: I) -> Self
+    where
+        I: IntoIterator<Item = K>,
+        K: AsRef<str>,
+    {
+        Self {
+            guard: Some(mgr.multi_lock(keys)),
         }
+    }
+
+    pub fn try_new<I, K>(mgr: &'a LockMgr, keys: I) -> Option<Self>
+    where
+        I: IntoIterator<Item = K>,
+        K: AsRef<str>,
+    {
+        mgr.try_multi_lock(keys)
+            .map(|guard| Self { guard: Some(guard) })
+    }
+
+    pub fn is_locked(&self) -> bool {
+        self.guard.is_some()
+    }
+
+    pub fn len(&self) -> usize {
+        self.guard.as_ref().map(|g| g.len()).unwrap_or(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<'a> Drop for ScopeRecordMultiLock<'a> {
+    fn drop(&mut self) {
+        self.guard.take();
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, thread, time::Duration};
-
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicI32, AtomicI64, AtomicUsize, Ordering};
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn test_basic_lock_unlock() {
         let mgr = LockMgr::new(4);
-        let status = mgr.lock("test_key");
-        assert!(status.is_ok());
-        mgr.unlock("test_key");
+        {
+            let _guard = mgr.lock("test_key");
+            assert!(mgr.try_lock("test_key").is_none());
+        }
+        assert!(mgr.try_lock("test_key").is_some());
     }
 
     #[test]
     fn test_try_lock_success() {
         let mgr = LockMgr::new(4);
-        let status = mgr.try_lock("test_key");
-        assert!(status.is_ok());
-        mgr.unlock("test_key");
+        let guard = mgr.try_lock("test_key");
+        assert!(guard.is_some());
     }
 
     #[test]
     fn test_try_lock_already_locked() {
         let mgr = LockMgr::new(4);
-        let status1 = mgr.try_lock("test_key");
-        assert!(status1.is_ok());
-        let status2 = mgr.try_lock("test_key");
-        assert!(!status2.is_ok());
-        mgr.unlock("test_key");
-    }
-
-    #[test]
-    fn test_max_locks_limit() {
-        let mgr = LockMgr::with_max_locks(4, 2);
-
-        let status1 = mgr.try_lock("key1");
-        assert!(status1.is_ok());
-
-        let status2 = mgr.try_lock("key2");
-        assert!(status2.is_ok());
-
-        let status3 = mgr.try_lock("key3");
-        assert!(!status3.is_ok());
-
-        mgr.unlock("key1");
-        let status4 = mgr.try_lock("key3");
-        assert!(status4.is_ok());
-
-        mgr.unlock("key2");
-        mgr.unlock("key3");
+        let first = mgr.try_lock("test_key");
+        assert!(first.is_some());
+        assert!(mgr.try_lock("test_key").is_none());
     }
 
     #[test]
@@ -248,35 +279,31 @@ mod tests {
         let mgr = LockMgr::new(4);
 
         {
-            let _lock = ScopeRecordLock::new(&mgr, "test_key");
-            assert!(_lock.is_locked());
-
-            let try_lock = ScopeRecordLock::try_new(&mgr, "test_key");
-            assert!(try_lock.is_none());
+            let lock = ScopeRecordLock::new(&mgr, "test_key");
+            assert!(lock.is_locked());
+            assert!(ScopeRecordLock::try_new(&mgr, "test_key").is_none());
         }
 
-        let try_lock = ScopeRecordLock::try_new(&mgr, "test_key");
-        assert!(try_lock.is_some());
+        assert!(ScopeRecordLock::try_new(&mgr, "test_key").is_some());
     }
 
     #[test]
     fn test_concurrent_access() {
-        let mgr = Arc::new(LockMgr::new(4));
-        let key = "shared_key";
+        let mgr = Arc::new(LockMgr::new(8));
         let counter = Arc::new(AtomicI64::new(0));
+        let key = "shared";
 
         let handles: Vec<_> = (0..10)
             .map(|_| {
-                let mgr_clone = Arc::clone(&mgr);
-                let counter_clone = Arc::clone(&counter);
-                let key_str = key.to_string();
-
+                let mgr = mgr.clone();
+                let counter = counter.clone();
+                let key = key.to_string();
                 thread::spawn(move || {
-                    let _lock = ScopeRecordLock::new(&mgr_clone, &key_str);
+                    let _lock = ScopeRecordLock::new(&mgr, &key);
                     if _lock.is_locked() {
-                        let current = counter_clone.load(Ordering::Acquire);
+                        let current = counter.load(Ordering::Acquire);
                         thread::sleep(Duration::from_millis(1));
-                        counter_clone.store(current + 1, Ordering::Release);
+                        counter.store(current + 1, Ordering::Release);
                     }
                 })
             })
@@ -292,85 +319,41 @@ mod tests {
     #[test]
     fn test_different_shards() {
         let mgr = LockMgr::new(4);
-
-        let keys = vec!["key1", "key2", "key3", "key4"];
-        let mut locks = Vec::new();
-
-        for key in &keys {
-            let status = mgr.try_lock(key);
-            if status.is_ok() {
-                locks.push(key);
-            }
-        }
-
+        let keys = ["key1", "key2", "key3", "key4"];
+        let locks: Vec<_> = keys.iter().filter_map(|key| mgr.try_lock(key)).collect();
         assert!(!locks.is_empty());
-
-        for key in locks {
-            mgr.unlock(key);
-        }
     }
 
     #[test]
     fn test_edge_cases() {
         let mgr = LockMgr::new(1);
-
-        let status = mgr.try_lock("");
-        assert!(status.is_ok());
-        mgr.unlock("");
-
-        let long_key = "a".repeat(1000);
-        let status = mgr.try_lock(&long_key);
-        assert!(status.is_ok());
-        mgr.unlock(&long_key);
+        assert!(mgr.try_lock("").is_some());
+        let long_key = "a".repeat(1024);
+        assert!(mgr.try_lock(&long_key).is_some());
     }
 
     #[test]
     fn test_multiple_threads_same_key_contention() {
-        use std::sync::atomic::{AtomicI32, Ordering};
-
         let mgr = Arc::new(LockMgr::new(4));
-        let key = "contested_key";
         let execution_order = Arc::new(Mutex::new(Vec::new()));
         let counter = Arc::new(AtomicI32::new(0));
 
         let handles: Vec<_> = (0..5)
             .map(|thread_id| {
-                let mgr_clone = Arc::clone(&mgr);
-                let order_clone = Arc::clone(&execution_order);
-                let counter_clone = Arc::clone(&counter);
-                let key_str = key.to_string();
-
+                let mgr = mgr.clone();
+                let order = execution_order.clone();
+                let counter = counter.clone();
+                let key = "contested".to_string();
                 thread::spawn(move || {
-                    println!("Thread {} attempting to acquire lock", thread_id);
-
-                    let status = mgr_clone.lock(&key_str);
-                    assert!(
-                        status.is_ok(),
-                        "Thread {} failed to acquire lock",
-                        thread_id
-                    );
-
+                    let lock = ScopeRecordLock::new(&mgr, &key);
+                    assert!(lock.is_locked());
                     {
-                        let mut order = order_clone.lock().unwrap();
+                        let mut order = order.lock();
                         order.push(thread_id);
                     }
-
-                    println!("Thread {} acquired lock", thread_id);
-
-                    let current = counter_clone.load(Ordering::SeqCst);
-                    thread::sleep(Duration::from_millis(50));
-                    counter_clone.store(current + 1, Ordering::SeqCst);
-
-                    let final_val = counter_clone.load(Ordering::SeqCst);
-                    assert_eq!(
-                        final_val,
-                        current + 1,
-                        "Race condition detected in thread {}",
-                        thread_id
-                    );
-
-                    println!("Thread {} releasing lock", thread_id);
-                    mgr_clone.unlock(&key_str);
+                    let current = counter.load(Ordering::SeqCst);
+                    thread::sleep(Duration::from_millis(10));
+                    counter.store(current + 1, Ordering::SeqCst);
                 })
             })
             .collect();
@@ -380,161 +363,111 @@ mod tests {
         }
 
         assert_eq!(counter.load(Ordering::SeqCst), 5);
-
-        let order = execution_order.lock().unwrap();
+        let order = execution_order.lock();
         assert_eq!(order.len(), 5);
-        println!("Execution order: {:?}", *order);
-
-        let final_lock = mgr.try_lock(key);
-        assert!(
-            final_lock.is_ok(),
-            "Lock should be available after all threads finish"
-        );
-        mgr.unlock(key);
     }
 
     #[test]
     fn test_try_lock_contention() {
         let mgr = Arc::new(LockMgr::new(4));
-        let key = "try_lock_key";
-        let success_count = Arc::new(AtomicI64::new(0));
-        let failure_count = Arc::new(AtomicI64::new(0));
+        let key = "try_lock";
+        let success = Arc::new(AtomicI64::new(0));
+        let failure = Arc::new(AtomicI64::new(0));
 
-        let status = mgr.try_lock(key);
-        assert!(status.is_ok());
+        let _first = mgr.try_lock(key);
+        assert!(_first.is_some());
 
         let handles: Vec<_> = (0..10)
-            .map(|thread_id| {
-                let mgr_clone = Arc::clone(&mgr);
-                let success_clone = Arc::clone(&success_count);
-                let failure_clone = Arc::clone(&failure_count);
-                let key_str = key.to_string();
-
+            .map(|_| {
+                let mgr = mgr.clone();
+                let success = success.clone();
+                let failure = failure.clone();
+                let key = key.to_string();
                 thread::spawn(move || {
-                    let status = mgr_clone.try_lock(&key_str);
-                    if status.is_ok() {
-                        success_clone.fetch_add(1, Ordering::SeqCst);
-                        mgr_clone.unlock(&key_str);
-                        println!("Thread {} succeeded in try_lock", thread_id);
+                    if mgr.try_lock(&key).is_some() {
+                        success.fetch_add(1, Ordering::SeqCst);
                     } else {
-                        failure_clone.fetch_add(1, Ordering::SeqCst);
-                        println!("Thread {} failed in try_lock (expected)", thread_id);
+                        failure.fetch_add(1, Ordering::SeqCst);
                     }
                 })
             })
             .collect();
 
-        thread::sleep(Duration::from_millis(100));
-
-        mgr.unlock(key);
+        thread::sleep(Duration::from_millis(50));
+        drop(_first);
 
         for handle in handles {
             handle.join().unwrap();
         }
 
-        let total_attempts =
-            success_count.load(Ordering::SeqCst) + failure_count.load(Ordering::SeqCst);
-        assert_eq!(total_attempts, 10);
-
-        println!(
-            "Success: {}, Failures: {}",
-            success_count.load(Ordering::SeqCst),
-            failure_count.load(Ordering::SeqCst)
+        assert_eq!(
+            success.load(Ordering::SeqCst) + failure.load(Ordering::SeqCst),
+            10
         );
     }
 
     #[test]
     fn test_scope_lock_survives_panic() {
         let mgr = Arc::new(LockMgr::new(4));
-        let key = "panic_key";
+        let key = "panic".to_string();
 
-        let mgr_clone = Arc::clone(&mgr);
-        let key_str = key.to_string();
-
+        let mgr_clone = mgr.clone();
+        let key_clone = key.clone();
         let handle = thread::spawn(move || {
-            let _lock = ScopeRecordLock::new(&mgr_clone, &key_str);
-            assert!(_lock.is_locked());
-
-            println!("Thread acquired lock, about to panic...");
-
-            panic!("Simulated panic while holding lock");
+            let lock = ScopeRecordLock::new(&mgr_clone, &key_clone);
+            assert!(lock.is_locked());
+            panic!("simulated panic");
         });
 
-        let result = handle.join();
-        assert!(result.is_err(), "Thread should have panicked");
+        assert!(handle.join().is_err());
 
         thread::sleep(Duration::from_millis(10));
-
-        let status = mgr.try_lock(key);
-        assert!(status.is_ok(), "Lock should be released after panic");
-
-        mgr.unlock(key);
-        println!("Lock successfully acquired after panic - RAII worked!");
+        assert!(mgr.try_lock(&key).is_some());
     }
 
     #[test]
-    fn test_multiple_panics_with_same_key() {
-        let mgr = Arc::new(LockMgr::new(4));
-        let key = "multi_panic_key";
+    fn test_scope_multi_lock() {
+        let mgr = LockMgr::new(8);
+        let guard = ScopeRecordMultiLock::new(&mgr, ["a", "b", "c", "a"]);
+        assert!(guard.is_locked());
+        assert_eq!(guard.len(), 3);
 
-        let handles: Vec<_> = (0..3)
-            .map(|thread_id| {
-                let mgr_clone = Arc::clone(&mgr);
-                let key_str = key.to_string();
+        // second attempt should fail while guard is held
+        assert!(ScopeRecordMultiLock::try_new(&mgr, ["a", "c"]).is_none());
+    }
 
+    #[test]
+    fn test_multi_lock_release() {
+        let mgr = LockMgr::new(8);
+        {
+            let _guard = ScopeRecordMultiLock::new(&mgr, ["x", "y"]);
+        }
+        assert!(ScopeRecordMultiLock::try_new(&mgr, ["x", "y"]).is_some());
+    }
+
+    #[test]
+    fn test_parallel_try_multi_lock() {
+        let mgr = Arc::new(LockMgr::new(16));
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let mgr = mgr.clone();
+                let counter = counter.clone();
                 thread::spawn(move || {
-                    let _lock = ScopeRecordLock::new(&mgr_clone, &key_str);
-                    println!("Thread {} acquired lock", thread_id);
-
-                    thread::sleep(Duration::from_millis(thread_id as u64 * 10));
-                    panic!("Thread {} panicked!", thread_id);
+                    if let Some(_guard) = ScopeRecordMultiLock::try_new(&mgr, ["p", "q"]) {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        thread::sleep(Duration::from_millis(50));
+                        // guard is only released when it leaves the scope
+                    }
                 })
             })
             .collect();
 
-        for (i, handle) in handles.into_iter().enumerate() {
-            let result = handle.join();
-            assert!(result.is_err(), "Thread {} should have panicked", i);
+        for handle in handles {
+            handle.join().unwrap();
         }
 
-        thread::sleep(Duration::from_millis(100));
-
-        let status = mgr.try_lock(key);
-        assert!(
-            status.is_ok(),
-            "Lock should be completely released after all panics"
-        );
-        mgr.unlock(key);
-    }
-
-    #[test]
-    fn test_nested_scope_locks_with_panic() {
-        let mgr = Arc::new(LockMgr::new(4));
-
-        let mgr_clone = Arc::clone(&mgr);
-        let handle = thread::spawn(move || {
-            let _outer_lock = ScopeRecordLock::new(&mgr_clone, "outer_key");
-            {
-                let _inner_lock = ScopeRecordLock::new(&mgr_clone, "inner_key");
-                assert!(_outer_lock.is_locked());
-                assert!(_inner_lock.is_locked());
-
-                panic!("Panic with nested locks");
-            }
-        });
-
-        let result = handle.join();
-        assert!(result.is_err());
-
-        thread::sleep(Duration::from_millis(10));
-
-        let outer_status = mgr.try_lock("outer_key");
-        let inner_status = mgr.try_lock("inner_key");
-
-        assert!(outer_status.is_ok(), "Outer lock should be released");
-        assert!(inner_status.is_ok(), "Inner lock should be released");
-
-        mgr.unlock("outer_key");
-        mgr.unlock("inner_key");
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
 }

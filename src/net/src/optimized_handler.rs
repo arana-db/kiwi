@@ -99,7 +99,8 @@ impl OptimizedConnectionHandler {
         let result = if self.config.enable_pipelining {
             self.process_with_pipeline(client, &pooled_resources).await
         } else {
-            self.process_without_pipeline(client, &pooled_resources).await
+            self.process_without_pipeline(client, &pooled_resources)
+                .await
         };
 
         // Return resources to pool
@@ -109,30 +110,34 @@ impl OptimizedConnectionHandler {
     }
 
     /// Get resources from pool or create new ones
-    async fn get_pooled_resources(&self) -> Result<crate::pool::ActiveConnection<ConnectionResources>, crate::pool::PoolError> {
+    async fn get_pooled_resources(
+        &self,
+    ) -> Result<crate::pool::ActiveConnection<ConnectionResources>, crate::pool::PoolError> {
         let storage = Arc::new(Storage::new(1, 0)); // This should come from config
         let cmd_table = Arc::new(cmd::table::create_command_table());
         let executor = Arc::new(executor::CmdExecutorBuilder::new().build());
 
-        self.resource_pool.get_connection(|| async {
-            let pipeline = if self.config.enable_pipelining {
-                Some(Arc::new(CommandPipeline::new(
-                    self.config.pipeline_config.clone(),
-                    storage.clone(),
-                    cmd_table.clone(),
-                    executor.clone(),
-                )))
-            } else {
-                None
-            };
+        self.resource_pool
+            .get_connection(|| async {
+                let pipeline = if self.config.enable_pipelining {
+                    Some(Arc::new(CommandPipeline::new(
+                        self.config.pipeline_config.clone(),
+                        storage.clone(),
+                        cmd_table.clone(),
+                        executor.clone(),
+                    )))
+                } else {
+                    None
+                };
 
-            Ok(ConnectionResources {
-                storage,
-                cmd_table,
-                executor,
-                pipeline,
+                Ok(ConnectionResources {
+                    storage,
+                    cmd_table,
+                    executor,
+                    pipeline,
+                })
             })
-        }).await
+            .await
     }
 
     /// Process connection with pipeline optimization
@@ -141,7 +146,10 @@ impl OptimizedConnectionHandler {
         client: Arc<Client>,
         resources: &crate::pool::ActiveConnection<ConnectionResources>,
     ) -> std::io::Result<()> {
-        let pipeline = resources.inner().pipeline.as_ref()
+        let pipeline = resources
+            .inner()
+            .pipeline
+            .as_ref()
             .ok_or_else(|| std::io::Error::other("Pipeline not available"))?;
 
         let _buffered_reader = BufferedReader::new(self.buffer_manager.clone());
@@ -159,11 +167,11 @@ impl OptimizedConnectionHandler {
                 result = client.read(read_buffer.buffer.as_mut()) => {
                     match result {
                         Ok(n) => {
-                            if n == 0 { 
+                            if n == 0 {
                                 if self.config.enable_buffer_pooling {
                                     self.buffer_manager.return_buffer(read_buffer).await;
                                 }
-                                return Ok(()); 
+                                return Ok(());
                             }
 
                             // Process data with pipeline
@@ -241,11 +249,11 @@ impl OptimizedConnectionHandler {
                 result = client.read(read_buffer.buffer.as_mut()) => {
                     match result {
                         Ok(n) => {
-                            if n == 0 { 
+                            if n == 0 {
                                 if self.config.enable_buffer_pooling {
                                     self.buffer_manager.return_buffer(read_buffer).await;
                                 }
-                                return Ok(()); 
+                                return Ok(());
                             }
 
                             match resp_parser.parse(Bytes::copy_from_slice(&read_buffer.buffer[..n])) {
@@ -258,7 +266,7 @@ impl OptimizedConnectionHandler {
                                         }
                                         let argv = params.iter().map(|p| if let RespData::BulkString(Some(d)) = p { d.to_vec() } else { vec![] }).collect::<Vec<Vec<u8>>>();
                                         client.set_argv(&argv);
-                                        
+
                                         // Execute command directly
                                         self.handle_command_direct(
                                             client.clone(),
@@ -266,7 +274,7 @@ impl OptimizedConnectionHandler {
                                             resources.inner().cmd_table.clone(),
                                             resources.inner().executor.clone(),
                                         ).await;
-                                        
+
                                         // Send response
                                         let response = client.take_reply();
                                         let mut encoder = RespEncoder::new(RespVersion::RESP2);

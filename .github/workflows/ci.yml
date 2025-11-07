@@ -53,6 +53,28 @@ jobs:
           toolchain: nightly-2025-08-20
           components: rustfmt, clippy
 
+      - name: Install protoc (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install protoc (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install protobuf
+
+      - name: Install protoc (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          $protocVersion = "27.1"
+          $protocZip = "protoc-$protocVersion-win64.zip"
+          $protocUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/$protocZip"
+          $protocPath = "$env:RUNNER_TEMP\protoc"
+          Invoke-WebRequest -Uri $protocUrl -OutFile "$env:RUNNER_TEMP\$protocZip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\$protocZip" -DestinationPath $protocPath
+          echo "$protocPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
       - run: make lint
 
   build-and-test:
@@ -72,6 +94,28 @@ jobs:
         with:
           toolchain: nightly-2025-08-20
           components: rustfmt, clippy
+
+      - name: Install protoc (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install protoc (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install protobuf
+
+      - name: Install protoc (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          $protocVersion = "27.1"
+          $protocZip = "protoc-$protocVersion-win64.zip"
+          $protocUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/$protocZip"
+          $protocPath = "$env:RUNNER_TEMP\protoc"
+          Invoke-WebRequest -Uri $protocUrl -OutFile "$env:RUNNER_TEMP\$protocZip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\$protocZip" -DestinationPath $protocPath
+          echo "$protocPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build
         run: make build

@@ -21,7 +21,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
-use crate::{impl_cmd_clone_box, impl_cmd_meta, AclCategory, Cmd, CmdFlags, CmdMeta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HDelCmd {
@@ -54,7 +54,7 @@ impl Cmd for HDelCmd {
         let argv = client.argv();
         let key = &argv[1];
         let fields: Vec<Vec<u8>> = argv[2..].to_vec();
-        
+
         match storage.hdel(key, &fields) {
             Ok(count) => {
                 client.set_reply(RespData::Integer(count as i64));
@@ -65,4 +65,3 @@ impl Cmd for HDelCmd {
         }
     }
 }
-

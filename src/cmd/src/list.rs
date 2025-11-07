@@ -148,13 +148,15 @@ impl Cmd for LPopCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        
+
         // Parse optional count parameter
         let count = if client.argv().len() > 2 {
             match String::from_utf8_lossy(&client.argv()[2]).parse::<usize>() {
                 Ok(c) if c > 0 => Some(c),
                 _ => {
-                    client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+                    client.set_reply(RespData::Error(
+                        "ERR value is not an integer or out of range".into(),
+                    ));
                     return;
                 }
             }
@@ -218,13 +220,15 @@ impl Cmd for RPopCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        
+
         // Parse optional count parameter
         let count = if client.argv().len() > 2 {
             match String::from_utf8_lossy(&client.argv()[2]).parse::<usize>() {
                 Ok(c) if c > 0 => Some(c),
                 _ => {
-                    client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+                    client.set_reply(RespData::Error(
+                        "ERR value is not an integer or out of range".into(),
+                    ));
                     return;
                 }
             }
@@ -332,12 +336,14 @@ impl Cmd for LIndexCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        
+
         // Parse index parameter
         let index = match String::from_utf8_lossy(&client.argv()[2]).parse::<i64>() {
             Ok(idx) => idx,
             Err(_) => {
-                client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+                client.set_reply(RespData::Error(
+                    "ERR value is not an integer or out of range".into(),
+                ));
                 return;
             }
         };
@@ -388,12 +394,14 @@ impl Cmd for LRangeCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        
+
         // Parse start and stop parameters
         let start = match String::from_utf8_lossy(&client.argv()[2]).parse::<i64>() {
             Ok(s) => s,
             Err(_) => {
-                client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+                client.set_reply(RespData::Error(
+                    "ERR value is not an integer or out of range".into(),
+                ));
                 return;
             }
         };
@@ -401,7 +409,9 @@ impl Cmd for LRangeCmd {
         let stop = match String::from_utf8_lossy(&client.argv()[3]).parse::<i64>() {
             Ok(s) => s,
             Err(_) => {
-                client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+                client.set_reply(RespData::Error(
+                    "ERR value is not an integer or out of range".into(),
+                ));
                 return;
             }
         };
@@ -453,12 +463,14 @@ impl Cmd for LSetCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        
+
         // Parse index parameter
         let index = match String::from_utf8_lossy(&client.argv()[2]).parse::<i64>() {
             Ok(idx) => idx,
             Err(_) => {
-                client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+                client.set_reply(RespData::Error(
+                    "ERR value is not an integer or out of range".into(),
+                ));
                 return;
             }
         };
@@ -515,12 +527,14 @@ impl Cmd for LTrimCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        
+
         // Parse start and stop parameters
         let start = match String::from_utf8_lossy(&client.argv()[2]).parse::<i64>() {
             Ok(s) => s,
             Err(_) => {
-                client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+                client.set_reply(RespData::Error(
+                    "ERR value is not an integer or out of range".into(),
+                ));
                 return;
             }
         };
@@ -528,7 +542,9 @@ impl Cmd for LTrimCmd {
         let stop = match String::from_utf8_lossy(&client.argv()[3]).parse::<i64>() {
             Ok(s) => s,
             Err(_) => {
-                client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+                client.set_reply(RespData::Error(
+                    "ERR value is not an integer or out of range".into(),
+                ));
                 return;
             }
         };
@@ -576,12 +592,14 @@ impl Cmd for LRemCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        
+
         // Parse count parameter
         let count = match String::from_utf8_lossy(&client.argv()[2]).parse::<i64>() {
             Ok(c) => c,
             Err(_) => {
-                client.set_reply(RespData::Error("ERR value is not an integer or out of range".into()));
+                client.set_reply(RespData::Error(
+                    "ERR value is not an integer or out of range".into(),
+                ));
                 return;
             }
         };

@@ -25,15 +25,15 @@ use client::{Client, StreamTrait};
 use cmd::table::{CmdTable, create_command_table};
 use executor::{CmdExecutor, CmdExecutorBuilder};
 use log::{info, warn};
+use storage::ClusterStorage;
 use storage::options::StorageOptions;
 use storage::storage::Storage;
-use storage::ClusterStorage;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::interval;
 
 use crate::ServerTrait;
-use crate::handle::{process_connection, process_cluster_connection};
+use crate::handle::{process_cluster_connection, process_connection};
 use crate::pool::{ConnectionPool, PoolConfig};
 
 /// Default pool configuration for connection pooling
@@ -53,17 +53,19 @@ async fn start_pool_cleanup_task<R: Send + Sync + 'static>(
 ) {
     tokio::spawn(async move {
         let mut cleanup_interval = interval(Duration::from_secs(60)); // Cleanup every minute
-        
+
         loop {
             cleanup_interval.tick().await;
             pool.cleanup_idle().await;
-            
+
             let stats = pool.stats().await;
             if stats.active_connections > 0 || stats.available_connections > 0 {
                 info!(
                     "{} - Active: {}, Available: {}, Max: {}",
-                    log_prefix, stats.active_connections, 
-                    stats.available_connections, stats.max_connections
+                    log_prefix,
+                    stats.active_connections,
+                    stats.available_connections,
+                    stats.max_connections
                 );
             }
         }
@@ -121,7 +123,8 @@ impl TcpServer {
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
         // Open storage and handle errors gracefully
-        storage.open(storage_options, db_path)
+        storage
+            .open(storage_options, db_path)
             .map_err(|e| Box::new(e) as Box<dyn Error>)?;
 
         // Configure connection pool
@@ -157,9 +160,12 @@ pub struct ClusterTcpServer {
 
 impl ClusterTcpServer {
     // TODO: Use RaftNodeInterface trait bound instead of generic Arc<dyn Send + Sync>
-    // The raft_node parameter should be constrained to Arc<dyn RaftNodeInterface> 
+    // The raft_node parameter should be constrained to Arc<dyn RaftNodeInterface>
     // but this requires adding raft as a dependency to the net module
-    pub fn new(addr: Option<String>, raft_node: Arc<dyn Send + Sync>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(
+        addr: Option<String>,
+        raft_node: Arc<dyn Send + Sync>,
+    ) -> Result<Self, Box<dyn Error>> {
         // TODO: Get storage options from config
         let storage_options = Arc::new(StorageOptions::default());
         let db_path = PathBuf::from("./db");
@@ -167,7 +173,8 @@ impl ClusterTcpServer {
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
         // Open storage and handle errors gracefully
-        storage.open(storage_options, db_path)
+        storage
+            .open(storage_options, db_path)
             .map_err(|e| Box::new(e) as Box<dyn Error>)?;
 
         // Configure connection pool
@@ -214,16 +221,22 @@ impl ServerTrait for ClusterTcpServer {
 
             tokio::spawn(async move {
                 // Get or create resources from the pool
-                let pooled_resources = match pool.get_connection(|| async {
-                    Ok(ClusterConnectionResources {
-                        cluster_storage: cluster_storage.clone(),
-                        cmd_table: cmd_table.clone(),
-                        executor: executor.clone(),
+                let pooled_resources = match pool
+                    .get_connection(|| async {
+                        Ok(ClusterConnectionResources {
+                            cluster_storage: cluster_storage.clone(),
+                            cmd_table: cmd_table.clone(),
+                            executor: executor.clone(),
+                        })
                     })
-                }).await {
+                    .await
+                {
                     Ok(resources) => resources,
                     Err(e) => {
-                        warn!("Failed to get cluster resources from pool for {}: {}", addr, e);
+                        warn!(
+                            "Failed to get cluster resources from pool for {}: {}",
+                            addr, e
+                        );
                         return;
                     }
                 };
@@ -235,11 +248,16 @@ impl ServerTrait for ClusterTcpServer {
                 // Process the connection with cluster awareness
                 let result = process_cluster_connection(
                     client,
-                    pooled_resources.inner().cluster_storage.local_storage().clone(),
+                    pooled_resources
+                        .inner()
+                        .cluster_storage
+                        .local_storage()
+                        .clone(),
                     pooled_resources.inner().cmd_table.clone(),
                     pooled_resources.inner().executor.clone(),
                     // raft_node, // Temporarily disabled
-                ).await;
+                )
+                .await;
 
                 if let Err(e) = result {
                     warn!("Cluster connection processing error for {}: {}", addr, e);
@@ -272,13 +290,16 @@ impl ServerTrait for TcpServer {
 
             tokio::spawn(async move {
                 // Get or create resources from the pool
-                let pooled_resources = match pool.get_connection(|| async {
-                    Ok(ConnectionResources {
-                        storage: storage.clone(),
-                        cmd_table: cmd_table.clone(),
-                        executor: executor.clone(),
+                let pooled_resources = match pool
+                    .get_connection(|| async {
+                        Ok(ConnectionResources {
+                            storage: storage.clone(),
+                            cmd_table: cmd_table.clone(),
+                            executor: executor.clone(),
+                        })
                     })
-                }).await {
+                    .await
+                {
                     Ok(resources) => resources,
                     Err(e) => {
                         warn!("Failed to get resources from pool for {}: {}", addr, e);
@@ -296,7 +317,8 @@ impl ServerTrait for TcpServer {
                     pooled_resources.inner().storage.clone(),
                     pooled_resources.inner().cmd_table.clone(),
                     pooled_resources.inner().executor.clone(),
-                ).await;
+                )
+                .await;
 
                 if let Err(e) = result {
                     warn!("Connection processing error for {}: {}", addr, e);

@@ -21,7 +21,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
-use crate::{impl_cmd_clone_box, impl_cmd_meta, AclCategory, Cmd, CmdFlags, CmdMeta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HSetCmd {
@@ -60,12 +60,12 @@ impl Cmd for HSetCmd {
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let argv = client.argv();
         let key = &argv[1];
-        
+
         let mut total_added = 0;
         for i in (2..argv.len()).step_by(2) {
             let field = &argv[i];
             let value = &argv[i + 1];
-            
+
             match storage.hset(key, field, value) {
                 Ok(added) => {
                     total_added += added;
@@ -76,8 +76,7 @@ impl Cmd for HSetCmd {
                 }
             }
         }
-        
+
         client.set_reply(RespData::Integer(total_added as i64));
     }
 }
-

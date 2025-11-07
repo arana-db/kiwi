@@ -22,7 +22,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
-use crate::{impl_cmd_clone_box, impl_cmd_meta, AclCategory, Cmd, CmdFlags, CmdMeta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HValsCmd {
@@ -54,7 +54,7 @@ impl Cmd for HValsCmd {
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let argv = client.argv();
         let key = &argv[1];
-        
+
         match storage.hvals(key) {
             Ok(values) => {
                 let resp_values: Vec<RespData> = values
@@ -69,4 +69,3 @@ impl Cmd for HValsCmd {
         }
     }
 }
-

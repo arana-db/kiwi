@@ -22,7 +22,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
-use crate::{impl_cmd_clone_box, impl_cmd_meta, AclCategory, Cmd, CmdFlags, CmdMeta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HGetAllCmd {
@@ -54,7 +54,7 @@ impl Cmd for HGetAllCmd {
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let argv = client.argv();
         let key = &argv[1];
-        
+
         match storage.hgetall(key) {
             Ok(field_values) => {
                 let mut resp_data = Vec::new();
@@ -70,4 +70,3 @@ impl Cmd for HGetAllCmd {
         }
     }
 }
-

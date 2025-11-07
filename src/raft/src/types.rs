@@ -17,10 +17,10 @@
 
 //! Core type definitions for Raft consensus implementation
 
-use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::collections::BTreeSet;
 use bytes::Bytes;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
+use std::fmt;
 
 /// Node identifier type
 pub type NodeId = u64;
@@ -36,7 +36,7 @@ pub type LogId = openraft::LogId<NodeId>;
 
 /// Request identifier for client operations
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct RequestId(u64);
+pub struct RequestId(pub u64);
 
 impl RequestId {
     /// Create a new unique request ID
@@ -95,17 +95,23 @@ impl RedisCommand {
     pub fn new(command: String, args: Vec<Bytes>) -> Self {
         Self { command, args }
     }
-    
+
     /// Create from string arguments
     pub fn from_strings(command: String, args: Vec<String>) -> Self {
         let byte_args = args.into_iter().map(|s| Bytes::from(s)).collect();
-        Self { command, args: byte_args }
+        Self {
+            command,
+            args: byte_args,
+        }
     }
-    
+
     /// Create from byte vector arguments
     pub fn from_bytes(command: String, args: Vec<Vec<u8>>) -> Self {
         let byte_args = args.into_iter().map(|v| Bytes::from(v)).collect();
-        Self { command, args: byte_args }
+        Self {
+            command,
+            args: byte_args,
+        }
     }
 }
 
@@ -134,7 +140,7 @@ impl ClientResponse {
             leader_id,
         }
     }
-    
+
     /// Create an error response
     pub fn error(id: RequestId, error: String, leader_id: Option<NodeId>) -> Self {
         Self {
@@ -160,12 +166,10 @@ impl openraft::RaftTypeConfig for TypeConfig {
     type Responder = openraft::impls::OneshotResponder<TypeConfig>;
 }
 
-/// Raft storage type alias
-pub type RaftStorage = openraft::storage::Adaptor<TypeConfig, crate::storage::RaftStorage>;
-
-/// Raft state machine type alias  
-pub type RaftStateMachine = openraft::storage::Adaptor<TypeConfig, crate::state_machine::KiwiStateMachine>;
-
+/// Raft storage type alias - will be defined in storage module
+// pub type RaftStorage = openraft::storage::Adaptor<TypeConfig, crate::storage::RaftStorage>;
+/// Raft state machine type alias - will be defined in state_machine module
+// pub type RaftStateMachine = openraft::storage::Adaptor<TypeConfig, crate::state_machine::KiwiStateMachine>;
 /// Raft network type alias
 pub type RaftNetwork = crate::network::RaftNetworkClient;
 
@@ -227,29 +231,4 @@ pub struct ClusterHealth {
     pub commit_index: u64,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_request_id_uniqueness() {
-        let id1 = RequestId::new();
-        let id2 = RequestId::new();
-        assert_ne!(id1, id2);
-        assert!(id2.as_u64() > id1.as_u64());
-    }
-
-    #[test]
-    fn test_request_id_serialization() {
-        let id = RequestId::new();
-        let serialized = serde_json::to_string(&id).unwrap();
-        let deserialized: RequestId = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(id, deserialized);
-    }
-
-    #[test]
-    fn test_request_id_display() {
-        let id = RequestId(42);
-        assert_eq!(format!("{}", id), "42");
-    }
-}
+pub mod tests;
