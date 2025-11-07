@@ -253,7 +253,6 @@ impl Cmd for RPopCmd {
                     // Return single value for RPOP without count
                     if values.is_empty() {
                         client.set_reply(RespData::BulkString(None));
-                        return;
                     } else {
                         client.set_reply(RespData::BulkString(Some(values[0].clone().into())));
                     }
