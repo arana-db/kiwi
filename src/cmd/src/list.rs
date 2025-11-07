@@ -656,7 +656,7 @@ impl Cmd for LPushxCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        let values = client.argv()[2..].clone();
+        let values = client.argv()[2..].to_vec();
 
         // LPUSHX implemented - wrap single value in vector
         match storage.lpushx(&key, &values) {
@@ -701,7 +701,7 @@ impl Cmd for RPushxCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        let values = client.argv()[2..].clone();
+        let values = client.argv()[2..].to_vec();
 
         // RPUSHX implemented - wrap single value in vector
         match storage.rpushx(&key, &values) {
