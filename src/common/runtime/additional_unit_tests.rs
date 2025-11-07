@@ -24,11 +24,8 @@
 //! - Request/response serialization and correlation
 //! - Configuration validation and defaults
 
-use std::sync::Arc;
-use std::time::{Duration, Instant};
-use std::collections::HashMap;
+use std::time::Duration;
 
-use tokio::sync::oneshot;
 use serde_json;
 
 // Import the dual runtime components
@@ -40,6 +37,7 @@ use crate::{
 use crate::manager::LifecycleState;
 
 /// Test configuration for unit tests
+#[allow(dead_code)]
 struct TestConfig {
     pub buffer_size: usize,
     pub timeout: Duration,
@@ -47,6 +45,7 @@ struct TestConfig {
     pub storage_threads: usize,
 }
 
+#[allow(dead_code)]
 impl Default for TestConfig {
     fn default() -> Self {
         Self {
@@ -69,6 +68,7 @@ fn create_test_runtime_config() -> RuntimeConfig {
 }
 
 /// Helper function to create a test MessageChannel
+#[allow(dead_code)]
 fn create_test_message_channel() -> MessageChannel {
     MessageChannel::new(100)
 }
@@ -98,8 +98,11 @@ mod runtime_manager_tests {
         
         assert!(!manager.is_running().await);
         assert_eq!(manager.state().await, LifecycleState::Created);
-        assert_eq!(manager.config().network_threads, 4);
-        assert_eq!(manager.config().storage_threads, 4);
+        
+        // Network threads should be clamped between 1 and 4 based on CPU count
+        let cpu_count = num_cpus::get();
+        assert_eq!(manager.config().network_threads, cpu_count.clamp(1, 4));
+        assert_eq!(manager.config().storage_threads, cpu_count.clamp(2, 8));
     }
 
     #[tokio::test]
@@ -421,8 +424,10 @@ mod configuration_tests {
     fn test_runtime_config_default() {
         let config = RuntimeConfig::default();
         
-        assert_eq!(config.network_threads, 4);
-        assert_eq!(config.storage_threads, 4);
+        // Network threads should be clamped between 1 and 4 based on CPU count
+        let cpu_count = num_cpus::get();
+        assert_eq!(config.network_threads, cpu_count.clamp(1, 4));
+        assert_eq!(config.storage_threads, cpu_count.clamp(2, 8));
         assert_eq!(config.channel_buffer_size, 10000);
         assert_eq!(config.request_timeout, Duration::from_secs(30));
     }
@@ -510,6 +515,7 @@ mod integration_helpers {
     use super::*;
 
     /// Helper to create a minimal test environment
+    #[allow(dead_code)]
     pub async fn create_test_environment() -> RuntimeManager {
         let mut manager = RuntimeManager::with_defaults().unwrap();
         manager.start().await.unwrap();
@@ -517,6 +523,7 @@ mod integration_helpers {
     }
 
     /// Helper to clean up test environment
+    #[allow(dead_code)]
     pub async fn cleanup_test_environment(mut manager: RuntimeManager) {
         let _ = manager.stop().await;
     }

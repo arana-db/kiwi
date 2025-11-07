@@ -27,21 +27,20 @@
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-use std::collections::HashMap;
+use std::time::Duration;
 
-use tokio::sync::{mpsc, oneshot, Barrier, Semaphore};
-use tokio::time::{timeout, sleep};
+use tokio::sync::Barrier;
+use tokio::time::sleep;
 use rand::Rng;
 
 // Import the dual runtime components
 use crate::{
     RuntimeManager, RuntimeConfig, MessageChannel, StorageCommand, 
-    RequestId, RequestPriority, DualRuntimeError, ManagerRuntimeHealth as RuntimeHealth,
+    DualRuntimeError, ManagerRuntimeHealth as RuntimeHealth,
 };
-use crate::manager::LifecycleState;
 
 /// Configuration for stress tests
+#[allow(dead_code)]
 struct StressTestConfig {
     pub duration: Duration,
     pub concurrent_operations: usize,
@@ -50,6 +49,7 @@ struct StressTestConfig {
     pub recovery_timeout: Duration,
 }
 
+#[allow(dead_code)]
 impl Default for StressTestConfig {
     fn default() -> Self {
         Self {
@@ -116,11 +116,13 @@ impl NetworkPartitionSimulator {
 }
 
 /// Chaos testing framework
+#[allow(dead_code)]
 struct ChaosTestFramework {
     failure_rate: f64,
     rng: rand::rngs::ThreadRng,
 }
 
+#[allow(dead_code)]
 impl ChaosTestFramework {
     fn new(failure_rate: f64) -> Self {
         Self {
@@ -143,6 +145,7 @@ impl ChaosTestFramework {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum ChaosFailureType {
     RuntimePanic,
@@ -190,8 +193,8 @@ mod memory_pressure_tests {
                 };
                 
                 match client.send_request(command).await {
-                    Ok(_) => success_count.fetch_add(1, Ordering::SeqCst),
-                    Err(_) => error_count.fetch_add(1, Ordering::SeqCst),
+                    Ok(_) => { success_count.fetch_add(1, Ordering::SeqCst); },
+                    Err(_) => { error_count.fetch_add(1, Ordering::SeqCst); },
                 };
             });
             
@@ -266,13 +269,13 @@ mod memory_pressure_tests {
         }
         
         // Collect results
-        let mut success_count = 0;
+        let mut _success_count = 0;
         let mut timeout_count = 0;
         let mut channel_error_count = 0;
         
         for handle in handles {
             match handle.await.unwrap() {
-                Ok(_) => success_count += 1,
+                Ok(_) => _success_count += 1,
                 Err(DualRuntimeError::Timeout { .. }) => timeout_count += 1,
                 Err(DualRuntimeError::Channel(_)) => channel_error_count += 1,
                 Err(_) => {}, // Other errors
