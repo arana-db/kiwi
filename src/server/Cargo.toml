@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 net.workspace = true
+runtime.workspace = true
+storage.workspace = true
 tokio.workspace = true
 env_logger.workspace = true
 log.workspace = true

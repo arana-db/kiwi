@@ -312,6 +312,15 @@ impl ServerTrait for TcpServer {
                 let client = Arc::new(Client::new(Box::new(stream)));
 
                 // Process the connection
+                // TODO: Update to use StorageClient for dual runtime architecture
+                // For dual runtime, use process_connection_with_storage_client instead:
+                // let result = process_connection_with_storage_client(
+                //     client,
+                //     storage_client.clone(), // StorageClient instead of Storage
+                //     pooled_resources.inner().cmd_table.clone(),
+                //     pooled_resources.inner().executor.clone(),
+                // ).await;
+
                 let result = process_connection(
                     client,
                     pooled_resources.inner().storage.clone(),

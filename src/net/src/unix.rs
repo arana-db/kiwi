@@ -101,6 +101,14 @@ mod unix_impl {
                         let cmd_table = self.cmd_table.clone();
                         let executor = self.executor.clone();
                         tokio::spawn(async move {
+                            // TODO: Update to use StorageClient for dual runtime architecture
+                            // For dual runtime, use process_connection_with_storage_client instead:
+                            // if let Err(e) = process_connection_with_storage_client(
+                            //     client, storage_client, cmd_table, executor
+                            // ).await {
+                            //     error!("Connection processing failed: {e:?}");
+                            // }
+
                             if let Err(e) =
                                 process_connection(client, storage, cmd_table, executor).await
                             {

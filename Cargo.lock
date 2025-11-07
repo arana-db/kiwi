@@ -851,6 +851,7 @@ dependencies = [
  "log",
  "num_cpus",
  "resp",
+ "runtime",
  "storage",
  "tokio",
  "tokio-util",
@@ -1991,6 +1992,7 @@ dependencies = [
  "log",
  "parking_lot",
  "resp",
+ "runtime",
  "snafu",
  "storage",
  "thiserror 1.0.69",
@@ -2780,6 +2782,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "chrono",
+ "log",
+ "num_cpus",
+ "rand 0.8.5",
+ "resp",
+ "serde",
+ "serde_json",
+ "snafu",
+ "storage",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "uuid",
+]
+
+[[package]]
 name = "rust_decimal"
 version = "1.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3017,6 +3039,8 @@ dependencies = [
  "env_logger",
  "log",
  "net",
+ "runtime",
+ "storage",
  "tokio",
 ]
 
@@ -3398,6 +3422,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-stream"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eca58d7bba4a75707817a2c44174253f9236b2d5fbd055602e9d5c07c139a047"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-test"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2468baabc3311435b55dd935f702f42cd1b8abb7e754fb7dfb16bd36aa88f9f7"
+dependencies = [
+ "async-stream",
+ "bytes",
+ "futures-core",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "tokio-tungstenite"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3673,6 +3721,7 @@ checksum = "2f87b8aa10b915a06587d0dec516c282ff295b475d94abf425d62b57710070a2"
 dependencies = [
  "getrandom 0.3.3",
  "js-sys",
+ "serde",
  "wasm-bindgen",
 ]
 

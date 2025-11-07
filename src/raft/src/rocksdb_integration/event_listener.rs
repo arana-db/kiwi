@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn test_event_listener_with_callbacks() {
         use std::sync::atomic::{AtomicBool, Ordering};
-        
+
         let queue = Arc::new(SequenceMappingQueue::new(100));
         queue.add_mapping(100, 10).unwrap();
         queue.add_mapping(200, 20).unwrap();
