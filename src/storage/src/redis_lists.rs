@@ -34,6 +34,7 @@ use crate::{
     redis::{ColumnFamilyIndex, Redis},
     storage_impl::BeforeOrAfter,
 };
+use kstd::lock_mgr::ScopeRecordLock;
 
 impl Redis {
     /// Core implementation for pushing values to a list
@@ -46,6 +47,10 @@ impl Redis {
         position: bool,
         allow_create: bool,
     ) -> Result<Option<i64>> {
+        // Acquire key lock to prevent concurrent modifications
+        let key_str = String::from_utf8_lossy(key);
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
         let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
         let lists_data_cf = &cfs[0];
 
@@ -267,6 +272,10 @@ impl Redis {
 
     /// Removes and returns the first element of the list stored at key
     pub fn lpop(&self, key: &[u8], count: Option<usize>) -> Result<Option<Vec<Vec<u8>>>> {
+        // Acquire key lock to prevent concurrent modifications
+        let key_str = String::from_utf8_lossy(key);
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
         let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
         let lists_data_cf = &cfs[0];
 
@@ -332,8 +341,75 @@ impl Redis {
         }
     }
 
+    /// Internal version of rpop without locking (used by rpoplpush)
+    fn rpop_internal(&self, key: &[u8], count: Option<usize>) -> Result<Option<Vec<Vec<u8>>>> {
+        let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
+        let lists_data_cf = &cfs[0];
+
+        let base_meta_key = BaseMetaKey::new(key);
+        let meta_key = base_meta_key.encode()?;
+
+        // Get existing metadata
+        let mut parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
+            Some(meta_value) => {
+                let parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
+                if !parsed.is_valid() {
+                    return Ok(None);
+                }
+                parsed
+            }
+            None => return Ok(None),
+        };
+
+        if parsed_meta.count() == 0 {
+            return Ok(None);
+        }
+
+        let pop_count = count.unwrap_or(1).min(parsed_meta.count() as usize);
+        let mut result = Vec::with_capacity(pop_count);
+        let mut batch = WriteBatch::default();
+
+        // Pop elements from the right (tail)
+        for i in 0..pop_count {
+            let current_right_index = parsed_meta.right_index() - i as u64;
+            let data_key = ListsDataKey::new(key, parsed_meta.version(), current_right_index);
+            let encoded_data_key = data_key.encode()?;
+
+            if let Some(data_value) = db
+                .get_cf(lists_data_cf, &encoded_data_key)
+                .context(RocksSnafu)?
+            {
+                let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
+                result.push(parsed_data.user_value().to_vec());
+                batch.delete_cf(lists_data_cf, encoded_data_key);
+            }
+        }
+
+        // Update metadata
+        parsed_meta.set_right_index(parsed_meta.right_index() - pop_count as u64);
+        parsed_meta.set_count(parsed_meta.count() - pop_count as u64);
+
+        // Always preserve the metadata for empty lists to allow lpushx/rpushx operations
+        batch.put(&meta_key, parsed_meta.value());
+
+        db.write(batch).context(RocksSnafu)?;
+
+        // Update statistics
+        self.update_specific_key_statistics(
+            DataType::List,
+            &String::from_utf8_lossy(key),
+            pop_count as u64,
+        )?;
+
+        Ok(Some(result))
+    }
+
     /// Removes and returns the last element of the list stored at key
     pub fn rpop(&self, key: &[u8], count: Option<usize>) -> Result<Option<Vec<Vec<u8>>>> {
+        // Acquire key lock to prevent concurrent modifications
+        let key_str = String::from_utf8_lossy(key);
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
         let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
         let lists_data_cf = &cfs[0];
 
@@ -537,6 +613,10 @@ impl Redis {
 
     /// Sets the list element at index to value
     pub fn lset(&self, key: &[u8], index: i64, value: Vec<u8>) -> Result<()> {
+        // Acquire key lock to prevent concurrent modifications
+        let key_str = String::from_utf8_lossy(key);
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
         let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
         let lists_data_cf = &cfs[0];
 
@@ -603,6 +683,10 @@ impl Redis {
 
     /// Trims the list to the specified range
     pub fn ltrim(&self, key: &[u8], start: i64, stop: i64) -> Result<()> {
+        // Acquire key lock to prevent concurrent modifications
+        let key_str = String::from_utf8_lossy(key);
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
         let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
         let lists_data_cf = &cfs[0];
 
@@ -685,6 +769,10 @@ impl Redis {
 
     /// Removes the first count occurrences of elements equal to value from the list
     pub fn lrem(&self, key: &[u8], count: i64, value: &[u8]) -> Result<i64> {
+        // Acquire key lock to prevent concurrent modifications
+        let key_str = String::from_utf8_lossy(key);
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
         let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
         let lists_data_cf = &cfs[0];
 
@@ -810,6 +898,10 @@ impl Redis {
         pivot: &[u8],
         value: &[u8],
     ) -> Result<i64> {
+        // Acquire key lock to prevent concurrent modifications
+        let key_str = String::from_utf8_lossy(key);
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+
         let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
         let lists_data_cf = &cfs[0];
 
@@ -921,8 +1013,25 @@ impl Redis {
     /// Atomically returns and removes the last element (tail) of the list stored at source,
     /// and pushes it to the first element (head) of the list stored at destination
     pub fn rpoplpush(&self, source_key: &[u8], destination_key: &[u8]) -> Result<Option<Vec<u8>>> {
-        // First, pop from source list
-        let popped_value = match self.rpop(source_key, None)? {
+        // Acquire locks for both keys to ensure atomicity
+        // Sort keys to prevent deadlocks
+        let source_str = String::from_utf8_lossy(source_key);
+        let dest_str = String::from_utf8_lossy(destination_key);
+
+        // Acquire locks for both keys to ensure atomicity
+        // Sort keys to prevent deadlocks
+        let _lock1;
+        let _lock2;
+        if source_str < dest_str {
+            _lock1 = ScopeRecordLock::new(self.lock_mgr.as_ref(), &source_str);
+            _lock2 = ScopeRecordLock::new(self.lock_mgr.as_ref(), &dest_str);
+        } else {
+            _lock1 = ScopeRecordLock::new(self.lock_mgr.as_ref(), &dest_str);
+            _lock2 = ScopeRecordLock::new(self.lock_mgr.as_ref(), &source_str);
+        }
+
+        // First, pop from source list using internal logic
+        let popped_value = match self.rpop_internal(source_key, None)? {
             Some(values) => {
                 if values.is_empty() {
                     return Ok(None);
@@ -932,8 +1041,11 @@ impl Redis {
             None => return Ok(None),
         };
 
-        // Then, push to destination list
-        self.lpush(destination_key, std::slice::from_ref(&popped_value))?;
+        // Then, push to destination list using internal method to avoid double locking
+        match self.push_core(destination_key, std::slice::from_ref(&popped_value), true, true)? {
+            Some(_) => {},
+            None => unreachable!("Destination list creation should always succeed"),
+        }
 
         Ok(Some(popped_value))
     }

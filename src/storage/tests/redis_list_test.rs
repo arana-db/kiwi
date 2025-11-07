@@ -863,4 +863,277 @@ mod redis_list_test {
         let dest_len = redis.llen(dest_key).expect("llen should succeed");
         assert_eq!(dest_len, 0);
     }
+
+    #[tokio::test]
+    async fn test_concurrent_lpush() {
+        use std::sync::Arc;
+        use std::thread;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let redis = Arc::new(create_test_redis());
+        let key = b"concurrent_list";
+        let num_threads = 10;
+        let operations_per_thread = 100;
+
+        // Counter to track total successful operations
+        let total_ops = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = vec![];
+
+        for thread_id in 0..num_threads {
+            let redis_clone = redis.clone();
+            let key = key.to_vec();
+            let total_ops_clone = total_ops.clone();
+
+            let handle = thread::spawn(move || {
+                for i in 0..operations_per_thread {
+                    let value = format!("thread_{}_value_{}", thread_id, i).into_bytes();
+                    match redis_clone.lpush(&key, &[value]) {
+                        Ok(_) => total_ops_clone.fetch_add(1, Ordering::Relaxed),
+                        Err(e) => {
+                            eprintln!("Thread {} operation {} failed: {:?}", thread_id, i, e);
+                            0
+                        }
+                    };
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify all operations completed successfully
+        let final_count = total_ops.load(Ordering::Relaxed);
+        assert_eq!(final_count, num_threads * operations_per_thread);
+
+        // Verify final list length
+        let list_len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(list_len, final_count as i64);
+
+        // Verify list contents are unique and all present
+        let list_content = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(list_content.len(), final_count);
+
+        // Convert to strings for easier verification
+        let mut content_strings: Vec<String> = list_content.iter()
+            .map(|v| String::from_utf8_lossy(v).to_string())
+            .collect();
+        content_strings.sort(); // Sort to make verification deterministic
+
+        // Verify we have all expected values
+        for thread_id in 0..num_threads {
+            for i in 0..operations_per_thread {
+                let expected_value = format!("thread_{}_value_{}", thread_id, i);
+                assert!(content_strings.contains(&expected_value),
+                    "Missing value: {}", expected_value);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_lpushx_rpushx() {
+        use std::sync::Arc;
+        use std::thread;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let redis = Arc::new(create_test_redis());
+        let key = b"concurrent_list_pushx";
+        let num_threads = 8;
+
+        // Initialize the list first
+        redis.lpush(key, &[b"initial".to_vec()]).expect("initial lpush should succeed");
+
+        let successful_lpushx = Arc::new(AtomicUsize::new(0));
+        let mut handles = vec![];
+
+        // Half threads use LPUSHX, half use RPUSHX
+        for thread_id in 0..num_threads {
+            let redis_clone = redis.clone();
+            let key = key.to_vec();
+            let successful_lpushx_clone = successful_lpushx.clone();
+
+            let handle = thread::spawn(move || {
+                for i in 0..10 {
+                    let value = format!("thread_{}_value_{}", thread_id, i).into_bytes();
+
+                    if thread_id % 2 == 0 {
+                        // Use LPUSHX
+                        match redis_clone.lpushx(&key, &[value.clone()]) {
+                            Ok(len) if len > 0 => successful_lpushx_clone.fetch_add(1, Ordering::Relaxed),
+                            Ok(_) => 0, // List doesn't exist (shouldn't happen in this test)
+                            Err(_) => 0,
+                        };
+                    } else {
+                        // Use RPUSHX
+                        match redis_clone.rpushx(&key, &[value.clone()]) {
+                            Ok(len) if len > 0 => successful_lpushx_clone.fetch_add(1, Ordering::Relaxed),
+                            Ok(_) => 0, // List doesn't exist (shouldn't happen in this test)
+                            Err(_) => 0,
+                        };
+                    }
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify all operations were successful
+        let total_successful = successful_lpushx.load(Ordering::Relaxed);
+        assert_eq!(total_successful, num_threads * 10);
+
+        // Verify final list length (1 initial + all operations)
+        let list_len = redis.llen(key).expect("llen should succeed");
+        assert_eq!(list_len, (total_successful + 1) as i64);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_rpoplpush() {
+        use std::sync::Arc;
+        use std::thread;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let redis = Arc::new(create_test_redis());
+        let source_key = b"concurrent_source";
+        let dest_key = b"concurrent_dest";
+        let num_threads = 5;
+        let items_per_thread = 20;
+
+        // Pre-populate source list with known items
+        let mut expected_items = vec![];
+        for i in 0..(num_threads * items_per_thread) {
+            let item = format!("item_{}", i);
+            expected_items.push(item.clone());
+            redis.rpush(source_key, &[item.into_bytes()]).expect("initial rpush should succeed");
+        }
+
+        let moved_items = Arc::new(AtomicUsize::new(0));
+        let mut handles = vec![];
+
+        for thread_id in 0..num_threads {
+            let redis_clone = redis.clone();
+            let source_key = source_key.to_vec();
+            let dest_key = dest_key.to_vec();
+            let moved_items_clone = moved_items.clone();
+
+            let handle = thread::spawn(move || {
+                let mut local_moved = 0;
+                for _ in 0..items_per_thread {
+                    match redis_clone.rpoplpush(&source_key, &dest_key) {
+                        Ok(Some(_value)) => {
+                            local_moved += 1;
+                        }
+                        Ok(None) => {
+                            // Source list empty, stop trying
+                            break;
+                        }
+                        Err(e) => {
+                            eprintln!("Thread {} rpoplpush failed: {:?}", thread_id, e);
+                            break;
+                        }
+                    }
+                }
+                moved_items_clone.fetch_add(local_moved, Ordering::Relaxed);
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify all items were moved
+        let total_moved = moved_items.load(Ordering::Relaxed);
+        assert_eq!(total_moved, num_threads * items_per_thread);
+
+        // Verify source list is empty
+        let source_len = redis.llen(source_key).expect("llen should succeed");
+        assert_eq!(source_len, 0);
+
+        // Verify destination list has all items
+        let dest_len = redis.llen(dest_key).expect("llen should succeed");
+        assert_eq!(dest_len, total_moved as i64);
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_linsert() {
+        use std::sync::Arc;
+        use std::thread;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let redis = Arc::new(create_test_redis());
+        let key = b"concurrent_linsert_list";
+        let num_threads = 6;
+        let inserts_per_thread = 10;
+
+        // Create initial list with some pivot elements
+        redis.lpush(key, &[b"pivot_start".to_vec()]).expect("initial lpush failed");
+        redis.lpush(key, &[b"pivot_end".to_vec()]).expect("initial lpush failed");
+
+        let successful_inserts = Arc::new(AtomicUsize::new(0));
+        let mut handles = vec![];
+
+        for thread_id in 0..num_threads {
+            let redis_clone = redis.clone();
+            let key = key.to_vec();
+            let successful_inserts_clone = successful_inserts.clone();
+
+            let handle = thread::spawn(move || {
+                let mut local_success = 0;
+                for i in 0..inserts_per_thread {
+                    let value = format!("thread_{}_value_{}", thread_id, i).into_bytes();
+
+                    // Alternate between inserting before and after pivot_start
+                    let before_or_after = if thread_id % 2 == 0 {
+                        BeforeOrAfter::Before
+                    } else {
+                        BeforeOrAfter::After
+                    };
+
+                    match redis_clone.linsert(&key, before_or_after, b"pivot_start", &value) {
+                        Ok(len) if len > 0 => {
+                            local_success += 1;
+                        }
+                        Ok(_) => {
+                            // Pivot not found or list doesn't exist
+                        }
+                        Err(e) => {
+                            eprintln!("Thread {} linsert failed: {:?}", thread_id, e);
+                        }
+                    }
+                }
+                successful_inserts_clone.fetch_add(local_success, Ordering::Relaxed);
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify final list contains initial elements plus inserted ones
+        let list_len = redis.llen(key).expect("llen should succeed");
+        let successful_count = successful_inserts.load(Ordering::Relaxed);
+        assert_eq!(list_len, (2 + successful_count) as i64);
+
+        // Verify list content
+        let list_content = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert_eq!(list_content.len(), list_len as usize);
+
+        // Check that pivot elements are still there
+        let content_strings: Vec<String> = list_content.iter()
+            .map(|v| String::from_utf8_lossy(v).to_string())
+            .collect();
+
+        assert!(content_strings.contains(&"pivot_start".to_string()));
+        assert!(content_strings.contains(&"pivot_end".to_string()));
+    }
 }
