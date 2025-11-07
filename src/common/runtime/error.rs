@@ -171,16 +171,7 @@ impl DualRuntimeError {
 
     /// Check if this error should trigger circuit breaker
     pub fn should_trigger_circuit_breaker(&self) -> bool {
-        match self {
-            Self::NetworkRuntime(_) => true,
-            Self::StorageRuntime(_) => true,
-            Self::Channel(_) => true,
-            Self::Timeout { .. } => true,
-            Self::RuntimeIsolation { .. } => true,
-            Self::ErrorBoundary { .. } => true,
-            Self::FaultIsolation { .. } => true,
-            _ => false,
-        }
+        matches!(self, Self::NetworkRuntime(_) | Self::StorageRuntime(_) | Self::Channel(_) | Self::Timeout { .. } | Self::RuntimeIsolation { .. } | Self::ErrorBoundary { .. } | Self::FaultIsolation { .. })
     }
 
     /// Get the severity level of this error

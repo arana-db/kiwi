@@ -35,6 +35,12 @@ use crate::message::RequestId;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CorrelationId(Uuid);
 
+impl Default for CorrelationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CorrelationId {
     /// Create a new correlation ID
     pub fn new() -> Self {
@@ -210,7 +216,7 @@ impl ErrorLogger {
         request_id: Option<RequestId>,
         context: HashMap<String, String>,
     ) -> CorrelationId {
-        let correlation_id = correlation_id.unwrap_or_else(CorrelationId::new);
+        let correlation_id = correlation_id.unwrap_or_default();
         let event_id = Uuid::new_v4();
         let timestamp = SystemTime::now();
         let severity = error.severity();

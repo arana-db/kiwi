@@ -632,8 +632,9 @@ impl LatencySamples {
 
         let avg = sorted_samples.iter().sum::<u64>() as f64 / sorted_samples.len() as f64;
 
-        let p95_idx = ((sorted_samples.len() as f64) * 0.95) as usize;
-        let p99_idx = ((sorted_samples.len() as f64) * 0.99) as usize;
+        // Use the standard percentile formula: index = (n - 1) * percentile
+        let p95_idx = ((sorted_samples.len() - 1) as f64 * 0.95).round() as usize;
+        let p99_idx = ((sorted_samples.len() - 1) as f64 * 0.99).round() as usize;
 
         let p95 = sorted_samples
             .get(p95_idx.min(sorted_samples.len() - 1))
@@ -1218,6 +1219,12 @@ impl ChannelMetricsTracker {
     }
 }
 
+impl Default for HealthMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // HealthMonitor implementation
 impl HealthMonitor {
     pub fn new() -> Self {
@@ -1275,7 +1282,7 @@ impl HealthMonitor {
         let network_health = self.network_health.read().unwrap().clone();
         let storage_health = self.storage_health.read().unwrap().clone();
         let channel_health = self.channel_health.read().unwrap().clone();
-        let _last_check = self.last_health_check.read().unwrap().clone();
+        let _last_check = *self.last_health_check.read().unwrap();
 
         // Determine overall system health
         let overall_health =
@@ -1886,11 +1893,9 @@ impl HealthCheckEndpoints {
 
     /// Determine overall system status from component health
     fn determine_overall_status(components: &ComponentHealth) -> String {
-        let statuses = vec![
-            &components.network_runtime.status,
+        let statuses = [&components.network_runtime.status,
             &components.storage_runtime.status,
-            &components.channel.status,
-        ];
+            &components.channel.status];
 
         if statuses.iter().any(|s| *s == "unhealthy") {
             "unhealthy".to_string()

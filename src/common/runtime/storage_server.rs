@@ -314,7 +314,7 @@ impl StorageServer {
         };
 
         // Send response back to network runtime
-        if let Err(_) = request.response_channel.send(response) {
+        if request.response_channel.send(response).is_err() {
             warn!(
                 "Failed to send response for request {}: receiver dropped",
                 request_id
@@ -698,18 +698,15 @@ impl BatchProcessor {
                 // Check if we have a good batch composition
                 if self.config.enable_operation_grouping
                     && state.requests.len() >= self.config.min_batch_size
-                {
-                    if self.has_efficient_batch_composition(&state) {
+                    && self.has_efficient_batch_composition(&state) {
                         break;
                     }
-                }
 
                 // Check if we have high priority requests that should be processed quickly
-                if self.config.enable_priority_batching {
-                    if self.has_high_priority_requests(&state) {
+                if self.config.enable_priority_batching
+                    && self.has_high_priority_requests(&state) {
                         break;
                     }
-                }
             }
 
             tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
@@ -719,7 +716,7 @@ impl BatchProcessor {
     /// Check if current batch has efficient composition for processing
     fn has_efficient_batch_composition(&self, state: &BatchState) -> bool {
         // Check if we have a good number of similar operations
-        for (_, group) in &state.grouped_requests {
+        for group in state.grouped_requests.values() {
             if group.len() >= self.config.min_batch_size {
                 return true;
             }

@@ -97,7 +97,7 @@ pub enum StorageCommand {
 }
 
 /// Statistics about storage operations for monitoring
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StorageStats {
     /// Number of keys read during the operation
     pub keys_read: u64,
@@ -115,19 +115,7 @@ pub struct StorageStats {
     pub compaction_level: Option<u32>,
 }
 
-impl Default for StorageStats {
-    fn default() -> Self {
-        Self {
-            keys_read: 0,
-            keys_written: 0,
-            keys_deleted: 0,
-            bytes_read: 0,
-            bytes_written: 0,
-            cache_hit: false,
-            compaction_level: None,
-        }
-    }
-}
+
 
 /// Request sent from network runtime to storage runtime
 #[derive(Debug)]
@@ -147,11 +135,12 @@ pub struct StorageRequest {
 }
 
 /// Priority levels for storage request processing
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum RequestPriority {
     /// Low priority requests (background operations)
     Low = 0,
     /// Normal priority requests (regular client operations)
+    #[default]
     Normal = 1,
     /// High priority requests (critical operations)
     High = 2,
@@ -159,11 +148,7 @@ pub enum RequestPriority {
     Critical = 3,
 }
 
-impl Default for RequestPriority {
-    fn default() -> Self {
-        RequestPriority::Normal
-    }
-}
+
 
 /// Response sent from storage runtime back to network runtime
 #[derive(Debug)]
@@ -406,11 +391,7 @@ impl MessageChannel {
     pub fn pending_requests(&self) -> usize {
         let capacity = self.request_sender.capacity();
         let max_capacity = self.request_sender.max_capacity();
-        if max_capacity > capacity {
-            max_capacity - capacity
-        } else {
-            0
-        }
+        max_capacity.saturating_sub(capacity)
     }
 
     /// Check if the channel is experiencing backpressure
@@ -754,6 +735,7 @@ pub struct RecoveryStats {
 }
 
 /// Storage client for sending requests from network runtime to storage runtime
+#[derive(Clone)]
 pub struct StorageClient {
     /// Channel for sending storage requests
     message_channel: Arc<MessageChannel>,
@@ -970,16 +952,9 @@ impl StorageClient {
                     }
 
                     // Don't retry on certain errors
-                    if let Some(ref error) = last_error {
-                        match error {
-                            crate::error::DualRuntimeError::Storage(_) => {
-                                // Storage errors are not retryable
-                                break;
-                            }
-                            _ => {
-                                // Other errors might be retryable
-                            }
-                        }
+                    if let Some(crate::error::DualRuntimeError::Storage(_)) = last_error {
+                        // Storage errors are not retryable
+                        break;
                     }
 
                     // If this is not the last attempt, wait before retrying
@@ -1313,8 +1288,7 @@ impl StorageClient {
                             Err(err) => StorageResponse {
                                 id: queued.request.id,
                                 result: Err(storage::error::Error::Io {
-                                    error: std::io::Error::new(
-                                        std::io::ErrorKind::Other,
+                                    error: std::io::Error::other(
                                         err.to_string(),
                                     ),
                                     location: snafu::Location::new(file!(), line!(), column!()),
@@ -1414,19 +1388,7 @@ impl StorageClient {
         }
     }
 
-    /// Clone the storage client (for use in async tasks)
-    pub fn clone(&self) -> Self {
-        Self {
-            message_channel: Arc::clone(&self.message_channel),
-            pending_requests: Arc::clone(&self.pending_requests),
-            default_timeout: self.default_timeout,
-            retry_config: self.retry_config.clone(),
-            circuit_breaker: Arc::clone(&self.circuit_breaker),
-            request_queue: Arc::clone(&self.request_queue),
-            recovery_manager: Arc::clone(&self.recovery_manager),
-            error_logger: self.error_logger.as_ref().map(Arc::clone),
-        }
-    }
+
 }
 
 #[cfg(test)]

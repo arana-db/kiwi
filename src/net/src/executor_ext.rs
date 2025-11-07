@@ -156,7 +156,7 @@ async fn execute_set_command(exec: &NetworkCmdExecution) -> Result<(), DualRunti
 
 /// Execute DEL command asynchronously
 async fn execute_del_command(exec: &NetworkCmdExecution) -> Result<(), DualRuntimeError> {
-    let keys: Vec<Vec<u8>> = exec.client.argv()[1..].iter().map(|k| k.to_vec()).collect();
+    let keys: Vec<Vec<u8>> = exec.client.argv()[1..].to_vec();
     debug!("Executing DEL for {} keys", keys.len());
 
     match exec.storage_client.del(&keys).await {
@@ -174,7 +174,7 @@ async fn execute_del_command(exec: &NetworkCmdExecution) -> Result<(), DualRunti
 
 /// Execute EXISTS command asynchronously
 async fn execute_exists_command(exec: &NetworkCmdExecution) -> Result<(), DualRuntimeError> {
-    let keys: Vec<Vec<u8>> = exec.client.argv()[1..].iter().map(|k| k.to_vec()).collect();
+    let keys: Vec<Vec<u8>> = exec.client.argv()[1..].to_vec();
     debug!("Executing EXISTS for {} keys", keys.len());
 
     match exec.storage_client.exists(&keys).await {
@@ -349,7 +349,7 @@ async fn execute_decrby_command(exec: &NetworkCmdExecution) -> Result<(), DualRu
 
 /// Execute MGET command asynchronously
 async fn execute_mget_command(exec: &NetworkCmdExecution) -> Result<(), DualRuntimeError> {
-    let keys: Vec<Vec<u8>> = exec.client.argv()[1..].iter().map(|k| k.to_vec()).collect();
+    let keys: Vec<Vec<u8>> = exec.client.argv()[1..].to_vec();
     debug!("Executing MGET for {} keys", keys.len());
 
     match exec.storage_client.mget(&keys).await {
@@ -370,7 +370,7 @@ async fn execute_mset_command(exec: &NetworkCmdExecution) -> Result<(), DualRunt
     let argv = exec.client.argv();
 
     // MSET requires an even number of arguments (key-value pairs)
-    if argv.len() < 3 || (argv.len() - 1) % 2 != 0 {
+    if argv.len() < 3 || !(argv.len() - 1).is_multiple_of(2) {
         exec.client.set_reply(RespData::Error(
             "ERR wrong number of arguments for 'mset' command".into(),
         ));
@@ -379,7 +379,7 @@ async fn execute_mset_command(exec: &NetworkCmdExecution) -> Result<(), DualRunt
 
     let mut pairs = Vec::new();
     for i in (1..argv.len()).step_by(2) {
-        pairs.push((argv[i].to_vec(), argv[i + 1].to_vec()));
+        pairs.push((argv[i].clone(), argv[i + 1].clone()));
     }
 
     debug!("Executing MSET for {} pairs", pairs.len());

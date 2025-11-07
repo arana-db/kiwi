@@ -72,8 +72,7 @@ fn main() -> std::io::Result<()> {
 
     // Create and start RuntimeManager
     let mut runtime_manager = RuntimeManager::new(runtime_config).map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
+        std::io::Error::other(
             format!("Failed to create RuntimeManager: {}", e),
         )
     })?;
@@ -81,8 +80,7 @@ fn main() -> std::io::Result<()> {
     // Start the RuntimeManager first
     // We need to use a basic runtime to start the RuntimeManager
     let basic_rt = tokio::runtime::Runtime::new().map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
+        std::io::Error::other(
             format!("Failed to create basic runtime: {}", e),
         )
     })?;
@@ -90,8 +88,7 @@ fn main() -> std::io::Result<()> {
     basic_rt.block_on(async {
         if let Err(e) = runtime_manager.start().await {
             error!("Failed to start RuntimeManager: {}", e);
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            return Err(std::io::Error::other(
                 format!("Failed to start RuntimeManager: {}", e),
             ));
         }
@@ -102,14 +99,12 @@ fn main() -> std::io::Result<()> {
 
     // Get runtime handles after starting
     let network_handle = runtime_manager.network_handle().map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
+        std::io::Error::other(
             format!("Failed to get network handle: {}", e),
         )
     })?;
     let storage_handle = runtime_manager.storage_handle().map_err(|e| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
+        std::io::Error::other(
             format!("Failed to get storage handle: {}", e),
         )
     })?;
@@ -124,15 +119,13 @@ fn main() -> std::io::Result<()> {
             Ok(Ok(_)) => info!("Storage server initialized successfully"),
             Ok(Err(e)) => {
                 error!("Failed to initialize storage server: {}", e);
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                return Err(std::io::Error::other(
                     format!("Failed to initialize storage server: {}", e),
                 ));
             }
             Err(e) => {
                 error!("Storage server initialization task failed: {}", e);
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                return Err(std::io::Error::other(
                     format!("Storage server initialization task failed: {}", e),
                 ));
             }

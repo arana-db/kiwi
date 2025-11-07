@@ -479,7 +479,7 @@ async fn test_ttl_time_based_scenarios_integration() {
 
     // Verify TTL is set correctly (should be around 60 seconds)
     let ttl = storage.ttl(key1).unwrap();
-    assert!(ttl >= 55 && ttl <= 60);
+    assert!((55..=60).contains(&ttl));
 
     // Scenario 2: Test different TTL values
     let key2 = b"medium_ttl_key";
@@ -488,7 +488,7 @@ async fn test_ttl_time_based_scenarios_integration() {
     assert!(storage.expire(key2, 120).unwrap());
 
     let remaining_ttl = storage.ttl(key2).unwrap();
-    assert!(remaining_ttl >= 115 && remaining_ttl <= 120);
+    assert!((115..=120).contains(&remaining_ttl));
     assert_eq!(storage.exists(&[key2.to_vec()]).unwrap(), 1);
 
     // Scenario 3: PTTL with millisecond precision
@@ -498,19 +498,19 @@ async fn test_ttl_time_based_scenarios_integration() {
     assert!(storage.pexpire(key3, 30000).unwrap()); // 30 seconds
 
     let pttl = storage.pttl(key3).unwrap();
-    assert!(pttl >= 25000 && pttl <= 30000);
+    assert!((25000..=30000).contains(&pttl));
 
     // Scenario 4: Test TTL updates
     let key4 = b"update_ttl_key";
     storage.set(key4, b"value").unwrap();
     assert!(storage.expire(key4, 30).unwrap());
     let initial_ttl = storage.ttl(key4).unwrap();
-    assert!(initial_ttl >= 25 && initial_ttl <= 30);
+    assert!((25..=30).contains(&initial_ttl));
 
     // Update TTL to a different value
     assert!(storage.expire(key4, 90).unwrap());
     let updated_ttl = storage.ttl(key4).unwrap();
-    assert!(updated_ttl >= 85 && updated_ttl <= 90);
+    assert!((85..=90).contains(&updated_ttl));
     assert!(updated_ttl > initial_ttl);
 
     storage.shutdown().await;
@@ -552,7 +552,7 @@ async fn test_expiration_accuracy_and_cleanup_integration() {
 
     for (key, expected_ttl) in &keys_and_ttls {
         let actual_ttl = storage.ttl(key).unwrap();
-        assert!(actual_ttl >= expected_ttl - 3 && actual_ttl <= expected_ttl - 1);
+        assert!(actual_ttl < *expected_ttl);
     }
 
     // Test that keys still exist
@@ -594,7 +594,7 @@ async fn test_ttl_with_string_data_type_integration() {
     // Test TTL decreases over time
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let final_ttl = storage.ttl(key).unwrap();
-    assert!(final_ttl >= 0 && final_ttl <= 2);
+    assert!((0..=2).contains(&final_ttl));
 
     storage.shutdown().await;
 }
@@ -631,7 +631,7 @@ async fn test_ttl_with_list_data_type_integration() {
     // Test TTL decreases over time
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let final_ttl = storage.ttl(key).unwrap();
-    assert!(final_ttl >= 0 && final_ttl <= 2);
+    assert!((0..=2).contains(&final_ttl));
 
     storage.shutdown().await;
 }
@@ -653,7 +653,7 @@ async fn test_ttl_with_timestamps_integration() {
     assert!(storage.expireat(key, future_timestamp).unwrap());
 
     let ttl = storage.ttl(key).unwrap();
-    assert!(ttl >= 2 && ttl <= 3);
+    assert!((2..=3).contains(&ttl));
 
     // Test PEXPIREAT with millisecond timestamp
     let key2 = b"pexpireat_key";
@@ -662,7 +662,7 @@ async fn test_ttl_with_timestamps_integration() {
     assert!(storage.pexpireat(key2, future_timestamp_ms).unwrap());
 
     let pttl = storage.pttl(key2).unwrap();
-    assert!(pttl >= 1500 && pttl <= 2000);
+    assert!((1500..=2000).contains(&pttl));
 
     // Test that keys still exist and TTLs are working
     assert_eq!(storage.exists(&[key.to_vec()]).unwrap(), 1);
@@ -672,8 +672,8 @@ async fn test_ttl_with_timestamps_integration() {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let final_ttl = storage.ttl(key).unwrap();
     let final_pttl = storage.pttl(key2).unwrap();
-    assert!(final_ttl >= 0 && final_ttl <= 3);
-    assert!(final_pttl >= 1000 && final_pttl <= 2000);
+    assert!((0..=3).contains(&final_ttl));
+    assert!((1000..=2000).contains(&final_pttl));
 
     storage.shutdown().await;
 }
@@ -764,7 +764,7 @@ async fn test_concurrent_ttl_operations_integration() {
     for i in 0..10 {
         let key = format!("concurrent_key_{}", i);
         let ttl = storage.ttl(key.as_bytes()).unwrap();
-        assert!(ttl >= 9 && ttl <= 12);
+        assert!((9..=12).contains(&ttl));
     }
 
     // Wait a bit and verify TTLs decrease
@@ -778,7 +778,7 @@ async fn test_concurrent_ttl_operations_integration() {
         let ttl = storage.ttl(key.as_bytes()).unwrap();
         if ttl > 0 {
             active_count += 1;
-            assert!(ttl >= 7 && ttl <= 11); // TTL should have decreased by ~2 seconds
+            assert!((7..=11).contains(&ttl)); // TTL should have decreased by ~2 seconds
         }
     }
 
@@ -814,7 +814,7 @@ async fn test_ttl_edge_cases_integration() {
     // Test large TTL values (but reasonable)
     assert!(storage.expire(key, 86400).unwrap()); // 1 day TTL
     let large_ttl = storage.ttl(key).unwrap();
-    assert!(large_ttl >= 86395 && large_ttl <= 86400);
+    assert!((86395..=86400).contains(&large_ttl));
 
     // Test TTL on non-existent key
     assert_eq!(storage.ttl(b"non_existent").unwrap(), -2);

@@ -20,7 +20,7 @@ mod redis_string_test {
     use std::{sync::Arc, thread, time::Duration};
 
     use kstd::lock_mgr::LockMgr;
-    use storage::{BgTaskHandler, Redis, StorageOptions, unique_test_db_path, safe_cleanup_test_db};
+    use storage::{BgTaskHandler, Redis, StorageOptions, unique_test_db_path};
 
     #[test]
     fn test_redis_set() {
@@ -217,7 +217,9 @@ mod redis_string_test {
         assert!(result.is_ok());
 
         let value = redis.get(key).unwrap();
-        assert_eq!(value.as_bytes(), b"\x00\x00\x00\x00\x00Redis");
+        // SETRANGE replaces bytes but doesn't truncate - the original string was 15 bytes
+        // After replacing bytes 0-9 with "\x00\x00\x00\x00\x00Redis", bytes 10-14 ("World") remain
+        assert_eq!(value.as_bytes(), b"\x00\x00\x00\x00\x00RedisWorld");
 
         redis.set_need_close(true);
         drop(redis);

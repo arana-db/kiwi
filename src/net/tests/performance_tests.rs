@@ -30,6 +30,7 @@ pub struct PerformanceResults {
     pub p95_latency_ms: f64,
     pub p99_latency_ms: f64,
     pub total_operations: usize,
+    #[allow(dead_code)]
     pub total_duration_ms: u64,
     pub success_rate: f64,
 }
@@ -39,6 +40,7 @@ pub struct PerformanceResults {
 pub struct PerformanceTestConfig {
     pub concurrent_clients: usize,
     pub operations_per_client: usize,
+    #[allow(dead_code)]
     pub warmup_duration: Duration,
 }
 
@@ -224,7 +226,7 @@ impl NetworkPerformanceTests {
         for _ in 0..test_config.concurrent_clients {
             let manager_clone = buffer_manager.clone();
             let ops_per_client = test_config.operations_per_client;
-            let data = test_data.clone();
+            let data = *test_data;
 
             let handle = tokio::spawn(async move {
                 let mut client_latencies = Vec::new();
@@ -484,6 +486,8 @@ struct MockConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
 
     #[tokio::test]
     async fn test_performance_test_config() {

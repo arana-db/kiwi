@@ -17,8 +17,7 @@
 
 //! Unit tests for dual runtime architecture core components
 
-use num_cpus;
-use serde_json;
+
 use std::time::Duration;
 
 // Import the dual runtime components
@@ -30,6 +29,7 @@ use crate::message::{
 };
 
 /// Test configuration for unit tests
+#[allow(dead_code)]
 struct TestConfig {
     pub buffer_size: usize,
     pub timeout: Duration,
@@ -62,6 +62,7 @@ fn create_test_runtime_config() -> RuntimeConfig {
 }
 
 /// Helper function to create a test MessageChannel
+#[allow(dead_code)]
 fn create_test_message_channel() -> MessageChannel {
     MessageChannel::new(100)
 }
@@ -88,8 +89,8 @@ mod runtime_manager_tests {
         assert_eq!(manager.state().await, LifecycleState::Created);
         // Default config uses CPU-based calculation
         let cpu_count = num_cpus::get();
-        assert_eq!(manager.config().network_threads, cpu_count.min(4).max(1));
-        assert_eq!(manager.config().storage_threads, cpu_count.min(8).max(2));
+        assert_eq!(manager.config().network_threads, cpu_count.clamp(1, 4));
+        assert_eq!(manager.config().storage_threads, cpu_count.clamp(2, 8));
     }
 
     #[tokio::test]
@@ -456,8 +457,8 @@ mod configuration_tests {
 
         // Default config uses CPU-based calculation
         let cpu_count = num_cpus::get();
-        assert_eq!(config.network_threads, cpu_count.min(4).max(1));
-        assert_eq!(config.storage_threads, cpu_count.min(8).max(2));
+        assert_eq!(config.network_threads, cpu_count.clamp(1, 4));
+        assert_eq!(config.storage_threads, cpu_count.clamp(2, 8));
         assert_eq!(config.channel_buffer_size, 10000);
         assert_eq!(config.request_timeout, Duration::from_secs(30));
     }
@@ -541,6 +542,7 @@ mod integration_helpers {
     use super::*;
 
     /// Helper to create a minimal test environment
+    #[allow(dead_code)]
     pub async fn create_test_environment() -> RuntimeManager {
         let mut manager = RuntimeManager::with_defaults().unwrap();
         manager.start().await.unwrap();
@@ -548,6 +550,7 @@ mod integration_helpers {
     }
 
     /// Helper to clean up test environment
+    #[allow(dead_code)]
     pub async fn cleanup_test_environment(mut manager: RuntimeManager) {
         let _ = manager.stop().await;
     }
@@ -566,6 +569,7 @@ mod integration_tests {
     use crate::{StorageClient, StorageRequest};
 
     // Integration test configuration
+    #[allow(dead_code)]
     struct IntegrationTestConfig {
         pub network_threads: usize,
         pub storage_threads: usize,
@@ -765,12 +769,12 @@ mod integration_tests {
         }
 
         // Some requests should fail due to backpressure or timeout
-        let mut success_count = 0;
+        let mut _success_count = 0;
         let mut error_count = 0;
 
         for handle in handles {
             match handle.await.unwrap() {
-                Ok(_) => success_count += 1,
+                Ok(_) => _success_count += 1,
                 Err(_) => error_count += 1,
             }
         }

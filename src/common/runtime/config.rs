@@ -41,9 +41,9 @@ impl Default for RuntimeConfig {
 
         Self {
             // Network runtime: Use fewer threads, optimized for I/O
-            network_threads: cpu_count.min(4).max(1),
+            network_threads: cpu_count.clamp(1, 4),
             // Storage runtime: Use more threads for RocksDB operations
-            storage_threads: cpu_count.min(8).max(2),
+            storage_threads: cpu_count.clamp(2, 8),
             // Channel buffer size: Allow for high throughput
             channel_buffer_size: 10000,
             // Request timeout: 30 seconds default
@@ -123,8 +123,8 @@ impl RuntimeConfig {
         let cpu_count = num_cpus::get();
 
         Self {
-            network_threads: cpu_count.min(6).max(2),
-            storage_threads: cpu_count.min(12).max(4),
+            network_threads: cpu_count.clamp(2, 6),
+            storage_threads: cpu_count.clamp(4, 12),
             channel_buffer_size: 50000,
             request_timeout: Duration::from_secs(60),
             batch_size: 500,
@@ -137,8 +137,8 @@ impl RuntimeConfig {
         let cpu_count = num_cpus::get();
 
         Self {
-            network_threads: cpu_count.min(8).max(2),
-            storage_threads: cpu_count.min(6).max(2),
+            network_threads: cpu_count.clamp(2, 8),
+            storage_threads: cpu_count.clamp(2, 6),
             channel_buffer_size: 5000,
             request_timeout: Duration::from_secs(10),
             batch_size: 10,
