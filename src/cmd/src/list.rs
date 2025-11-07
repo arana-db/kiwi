@@ -635,7 +635,7 @@ impl LPushxCmd {
         Self {
             meta: CmdMeta {
                 name: "lpushx".to_string(),
-                arity: 3, // LPUSHX key value
+                arity: -3, // LPUSHX key value
                 flags: CmdFlags::WRITE,
                 acl_category: AclCategory::LIST | AclCategory::WRITE,
                 ..Default::default()
@@ -656,10 +656,10 @@ impl Cmd for LPushxCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        let value = client.argv()[2].clone();
+        let values = client.argv()[2..].clone();
 
         // LPUSHX implemented - wrap single value in vector
-        match storage.lpushx(&key, &[value]) {
+        match storage.lpushx(&key, &values) {
             Ok(length) => {
                 client.set_reply(RespData::Integer(length));
             }
@@ -680,7 +680,7 @@ impl RPushxCmd {
         Self {
             meta: CmdMeta {
                 name: "rpushx".to_string(),
-                arity: 3, // RPUSHX key value
+                arity: -3, // RPUSHX key value
                 flags: CmdFlags::WRITE,
                 acl_category: AclCategory::LIST | AclCategory::WRITE,
                 ..Default::default()
@@ -701,10 +701,10 @@ impl Cmd for RPushxCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
-        let value = client.argv()[2].clone();
+        let values = client.argv()[2..].clone();
 
         // RPUSHX implemented - wrap single value in vector
-        match storage.rpushx(&key, &[value]) {
+        match storage.rpushx(&key, &values) {
             Ok(length) => {
                 client.set_reply(RespData::Integer(length));
             }
