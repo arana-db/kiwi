@@ -46,7 +46,7 @@ impl Redis {
         position: bool,
         allow_create: bool,
     ) -> Result<Option<i64>> {
-          let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
+        let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
         let lists_data_cf = &cfs[0];
 
         let base_meta_key = BaseMetaKey::new(key);
@@ -57,7 +57,8 @@ impl Redis {
             // If key exists, return current count; if not, return 0
             return match db.get(&meta_key).context(RocksSnafu)? {
                 Some(meta_value) => {
-                    let parsed_meta = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
+                    let parsed_meta =
+                        ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
                     if parsed_meta.is_valid() {
                         Ok(Some(parsed_meta.count() as i64))
                     } else {
@@ -802,7 +803,13 @@ impl Redis {
     }
 
     /// Insert value in the list stored at key either before or after the reference value pivot
-    pub fn linsert(&self, key: &[u8], before_or_after: BeforeOrAfter, pivot: &[u8], value: &[u8]) -> Result<i64> {
+    pub fn linsert(
+        &self,
+        key: &[u8],
+        before_or_after: BeforeOrAfter,
+        pivot: &[u8],
+        value: &[u8],
+    ) -> Result<i64> {
         let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
         let lists_data_cf = &cfs[0];
 
@@ -906,11 +913,7 @@ impl Redis {
         db.write(batch).context(RocksSnafu)?;
 
         // Update statistics
-        self.update_specific_key_statistics(
-            DataType::List,
-            &String::from_utf8_lossy(key),
-            1,
-        )?;
+        self.update_specific_key_statistics(DataType::List, &String::from_utf8_lossy(key), 1)?;
 
         Ok(all_elements.len() as i64)
     }
@@ -930,7 +933,7 @@ impl Redis {
         };
 
         // Then, push to destination list
-        self.lpush(destination_key, &[popped_value.clone()])?;
+        self.lpush(destination_key, std::slice::from_ref(&popped_value))?;
 
         Ok(Some(popped_value))
     }

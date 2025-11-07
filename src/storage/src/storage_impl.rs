@@ -440,28 +440,29 @@ impl Storage {
         self.insts[instance_id].lrem(key, count, value)
     }
 
-    pub fn linsert(&self, key: &[u8], before_or_after: BeforeOrAfter, pivot: &[u8], value: &[u8]) -> Result<i64> {
+    pub fn linsert(
+        &self,
+        key: &[u8],
+        before_or_after: BeforeOrAfter,
+        pivot: &[u8],
+        value: &[u8],
+    ) -> Result<i64> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].linsert(key, before_or_after, pivot, value)
     }
-
     pub fn rpoplpush(&self, source_key: &[u8], destination_key: &[u8]) -> Result<Option<Vec<u8>>> {
         let source_slot_id = key_to_slot_id(source_key);
-        let source_instance_id = self.slot_indexer.get_instance_id(source_slot_id);
-
         let dest_slot_id = key_to_slot_id(destination_key);
-        let dest_instance_id = self.slot_indexer.get_instance_id(dest_slot_id);
-
-        // For simplicity, we'll use the source instance for both operations
-        // In a production environment, you might need to handle cross-instance operations
-        if source_instance_id != dest_instance_id {
+        if source_slot_id != dest_slot_id {
             return InvalidArgumentSnafu {
                 message: "Cross-slot RPOPLPUSH operations are not supported".to_string(),
-            }.fail();
+            }
+            .fail();
         }
 
-        self.insts[source_instance_id].rpoplpush(source_key, destination_key)
+        let instance_id = self.slot_indexer.get_instance_id(source_slot_id);
+        self.insts[instance_id].rpoplpush(source_key, destination_key)
     }
 
     // TTL Commands Implementation

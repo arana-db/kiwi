@@ -22,8 +22,8 @@ use std::sync::Arc;
 use bytes::Bytes;
 use client::Client;
 use resp::RespData;
-use storage::storage::Storage;
 use storage::BeforeOrAfter;
+use storage::storage::Storage;
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta};
 use crate::{impl_cmd_clone_box, impl_cmd_meta};
@@ -228,7 +228,7 @@ impl Cmd for RPopCmd {
         // Parse optional count parameter
         let count = if client.argv().len() > 2 {
             match String::from_utf8_lossy(&client.argv()[2]).parse::<usize>() {
-                Ok(c) if c > 0 => Some(c),
+                Ok(c) if c > 0 && c < MAX_SAFE_POP_COUNT => Some(c),
                 _ => {
                     client.set_reply(RespData::Error(
                         "ERR value is not an integer or out of range".into(),
