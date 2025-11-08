@@ -114,14 +114,17 @@ impl StorageEngine for InMemoryStorageEngine {
     async fn create_snapshot(&self) -> RaftResult<Vec<u8>> {
         let data = self.data.read().await;
         let entries: Vec<_> = data.iter().map(|(k, v)| (k, v)).collect();
-        let serialized = serde_json::to_vec(&entries)
-            .map_err(|e| crate::error::RaftError::state_machine(format!("Serialization error: {}", e)))?;
+        let serialized = serde_json::to_vec(&entries).map_err(|e| {
+            crate::error::RaftError::state_machine(format!("Serialization error: {}", e))
+        })?;
         Ok(serialized)
     }
 
     async fn restore_from_snapshot(&self, snapshot_data: &[u8]) -> RaftResult<()> {
         let restored_entries: Vec<(Vec<u8>, Vec<u8>)> = serde_json::from_slice(snapshot_data)
-            .map_err(|e| crate::error::RaftError::state_machine(format!("Deserialization error: {}", e)))?;
+            .map_err(|e| {
+                crate::error::RaftError::state_machine(format!("Deserialization error: {}", e))
+            })?;
         let mut data = self.data.write().await;
         data.clear();
         for (key, value) in restored_entries {

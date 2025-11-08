@@ -5,6 +5,7 @@ members = [
 	"src/storage",
 	"src/kstd",
 	"src/common/macro",
+	"src/common/runtime",
 	"src/net",
 	"src/resp",
 	"src/server",
@@ -19,7 +20,7 @@ members = [
 version = "0.1.0"
 description = "An enhanced Redis server implemented in Rust"
 readme = "README.md"
-repository = "https://github.com/arana-db/kiwi-rs"
+repository = "https://github.com/arana-db/kiwi"
 edition = "2021"
 
 [workspace.lints.clippy]
@@ -62,6 +63,7 @@ async-trait = "0.1"
 foyer = { version = "0.17" }
 clap = { version = "4.0", features = ["derive"] }
 rand = "0.8"
+uuid = { version = "1.0", features = ["v4", "serde"] }
 openraft = { version = "0.9.21", features = ["serde"] }
 
 ## workspaces members
@@ -69,6 +71,7 @@ engine = { path = "src/engine" }
 storage = { path = "src/storage" }
 kstd = { path = "src/kstd" }
 common-macro = { path = "src/common/macro" }
+runtime = { path = "src/common/runtime" }
 net = { path = "src/net" }
 resp = { path = "src/resp" }
 server = { path = "src/server" }

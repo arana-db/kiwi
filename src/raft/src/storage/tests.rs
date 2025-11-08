@@ -334,9 +334,9 @@ mod storage_tests {
         // Test with invalid path (should fail gracefully)
         // Use a path with invalid characters that should definitely fail
         let invalid_path = if cfg!(windows) {
-            "C:\\invalid<>|path"  // Invalid characters on Windows
+            "C:\\invalid<>|path" // Invalid characters on Windows
         } else {
-            "/dev/null/invalid"   // Cannot create directory under /dev/null
+            "/dev/null/invalid" // Cannot create directory under /dev/null
         };
         let result = RaftStorage::new(invalid_path);
         assert!(result.is_err());

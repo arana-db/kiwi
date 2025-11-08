@@ -81,17 +81,49 @@ pub fn delete_dir<P: AsRef<Path>>(dirname: P) -> io::Result<()> {
 }
 
 pub fn unique_test_db_path() -> std::path::PathBuf {
+    use std::thread;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("Time went backwards")
         .as_nanos();
-    let pid = std::process::id();
-    let thread_id = std::thread::current().id();
 
-    std::env::temp_dir().join(format!(
-        "kiwi-test-db-{}-{:?}-{}",
-        pid, thread_id, timestamp
-    ))
+    let thread_id = format!("{:?}", thread::current().id());
+    let unique_name = format!(
+        "kiwi-test-db-{}-{}",
+        timestamp,
+        thread_id.replace("ThreadId(", "").replace(")", "")
+    );
+
+    tempfile::tempdir()
+        .expect("Failed to create temp dir")
+        .path()
+        .join(unique_name)
+}
+
+/// Safe cleanup function that handles Windows file locking issues
+pub fn safe_cleanup_test_db(path: &std::path::Path) {
+    if !path.exists() {
+        return;
+    }
+
+    // Try multiple times with delays to handle Windows file locking
+    for attempt in 0..5 {
+        match std::fs::remove_dir_all(path) {
+            Ok(_) => return,
+            Err(e) => {
+                if attempt == 4 {
+                    // Last attempt failed, log the error but don't panic
+                    eprintln!(
+                        "Warning: Failed to cleanup test database at {:?}: {}",
+                        path, e
+                    );
+                    return;
+                }
+                // Wait a bit before retrying
+                std::thread::sleep(std::time::Duration::from_millis(100 * (attempt + 1)));
+            }
+        }
+    }
 }
