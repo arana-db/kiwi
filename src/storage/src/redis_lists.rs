@@ -40,16 +40,22 @@ impl Redis {
     /// Core implementation for pushing values to a list
     /// position: true for left (head), false for right (tail)
     /// allow_create: if true, creates new list when key doesn't exist
+    /// acquire_lock: if true, acquires key lock (should be false when called from rpoplpush)
     fn push_core(
         &self,
         key: &[u8],
         values: &[Vec<u8>],
         position: bool,
         allow_create: bool,
+        acquire_lock: bool,
     ) -> Result<Option<i64>> {
         // Acquire key lock to prevent concurrent modifications
-        let key_str = String::from_utf8_lossy(key);
-        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+        let _lock = if acquire_lock {
+            let key_str = String::from_utf8_lossy(key);
+            Some(ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str))
+        } else {
+            None
+        };
 
         let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
         let lists_data_cf = &cfs[0];
@@ -240,7 +246,7 @@ impl Redis {
 
     /// Insert all the specified values at the head of the list stored at key
     pub fn lpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
-        match self.push_core(key, values, true, true)? {
+        match self.push_core(key, values, true, true, true)? {
             Some(count) => Ok(count),
             None => unreachable!("lpush always creates list when key doesn't exist"),
         }
@@ -248,7 +254,7 @@ impl Redis {
 
     /// Insert all the specified values at the tail of the list stored at key
     pub fn rpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
-        match self.push_core(key, values, false, true)? {
+        match self.push_core(key, values, false, true, true)? {
             Some(count) => Ok(count),
             None => unreachable!("rpush always creates list when key doesn't exist"),
         }
@@ -256,7 +262,7 @@ impl Redis {
 
     /// Insert all the specified values at the head of the list stored at key only if key exists
     pub fn lpushx(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
-        match self.push_core(key, values, true, false)? {
+        match self.push_core(key, values, true, false, true)? {
             Some(count) => Ok(count),
             None => Ok(0), // Key doesn't exist, return 0 per Redis protocol
         }
@@ -264,7 +270,7 @@ impl Redis {
 
     /// Insert all the specified values at the tail of the list stored at key only if key exists
     pub fn rpushx(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
-        match self.push_core(key, values, false, false)? {
+        match self.push_core(key, values, false, false, true)? {
             Some(count) => Ok(count),
             None => Ok(0), // Key doesn't exist, return 0 per Redis protocol
         }
@@ -1019,7 +1025,31 @@ impl Redis {
         let dest_str = String::from_utf8_lossy(destination_key);
 
         // Acquire locks for both keys to ensure atomicity
-        // Sort keys to prevent deadlocks
+        // For same key, only acquire one lock to avoid deadlock
+        if source_str == dest_str {
+            let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &source_str);
+
+            // First, pop from source list using internal logic
+            let popped_value = match self.rpop_internal(source_key, None)? {
+                Some(values) => {
+                    if values.is_empty() {
+                        return Ok(None);
+                    }
+                    values[0].clone()
+                }
+                None => return Ok(None),
+            };
+
+            // Then, push to destination list using internal method to avoid double locking
+            match self.push_core(destination_key, std::slice::from_ref(&popped_value), true, true, false)? {
+                Some(_) => {},
+                None => unreachable!("Destination list creation should always succeed"),
+            }
+
+            return Ok(Some(popped_value));
+        }
+
+        // For different keys, acquire both locks in sorted order
         let _lock1;
         let _lock2;
         if source_str < dest_str {
@@ -1042,7 +1072,7 @@ impl Redis {
         };
 
         // Then, push to destination list using internal method to avoid double locking
-        match self.push_core(destination_key, std::slice::from_ref(&popped_value), true, true)? {
+        match self.push_core(destination_key, std::slice::from_ref(&popped_value), true, true, false)? {
             Some(_) => {},
             None => unreachable!("Destination list creation should always succeed"),
         }
