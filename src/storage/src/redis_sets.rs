@@ -2548,7 +2548,7 @@ impl Redis {
 
 /// Simple glob pattern matching
 /// Supports * (match any sequence) and ? (match single character)
-fn glob_match(pattern: &str, text: &str) -> bool {
+pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     let pattern_chars: Vec<char> = pattern.chars().collect();
     let text_chars: Vec<char> = text.chars().collect();
 

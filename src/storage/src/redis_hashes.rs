@@ -28,6 +28,7 @@ use crate::base_meta_value_format::{HashesMetaValue, ParsedHashesMetaValue};
 use crate::error::{OptionNoneSnafu, RedisErrSnafu, RocksSnafu};
 use crate::get_db_and_cfs;
 use crate::member_data_key_format::MemberDataKey;
+use crate::redis_sets::glob_match;
 use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Redis, Result};
 
 impl Redis {
@@ -1081,6 +1082,179 @@ impl Redis {
         match self.hget(key, field)? {
             Some(value) => Ok(value.len() as i32),
             None => Ok(0),
+        }
+    }
+
+    /// Scan hash fields with cursor-based iteration
+    /// Returns (next_cursor, vec_of_(field, value)_tuples)
+    pub fn hscan(
+        &self,
+        key: &[u8],
+        cursor: u64,
+        pattern: Option<&str>,
+        count: Option<usize>,
+    ) -> Result<(u64, Vec<(String, String)>)> {
+        let (db, cfs) = get_db_and_cfs!(
+            self,
+            ColumnFamilyIndex::MetaCF,
+            ColumnFamilyIndex::HashesDataCF
+        );
+        debug_assert_eq!(cfs.len(), 2);
+        let meta_cf = &cfs[0];
+        let data_cf = &cfs[1];
+
+        let snapshot = db.snapshot();
+        let mut read_options = ReadOptions::default();
+        read_options.set_snapshot(&snapshot);
+
+        let base_meta_key = BaseMetaKey::new(key).encode()?;
+        let default_count = 10;
+        let scan_count = count.unwrap_or(default_count);
+        let mut rest = scan_count as i64;
+
+        // Read meta
+        match db
+            .get_cf_opt(meta_cf, &base_meta_key, &read_options)
+            .context(RocksSnafu)?
+        {
+            Some(meta_val_bytes) => {
+                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
+
+                if meta_val.is_stale() {
+                    return Ok((0, Vec::new()));
+                }
+                if meta_val.data_type() != DataType::Hash {
+                    return RedisErrSnafu {
+                        message: format!(
+                            "Wrong type of value, expected: {:?}, got: {:?}",
+                            DataType::Hash,
+                            meta_val.data_type()
+                        ),
+                    }
+                    .fail();
+                }
+
+                let version = meta_val.version();
+
+                let sub_field = if let Some(pat) = pattern {
+                    if pat.ends_with('*') && pat.len() > 1 {
+                        Some(&pat[..pat.len() - 1])
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let data_key_prefix = MemberDataKey::new(key, version, sub_field.map(|s| s.as_bytes()).unwrap_or(&[]));
+                let prefix = data_key_prefix.encode_seek_key()?;
+
+                let start_key = if cursor == 0 {
+                    prefix.clone()
+                } else {
+                    prefix.clone()
+                };
+
+                let mut result_fields = Vec::new();
+                let mut next_cursor = 0u64;
+
+                let iter = db.iterator_cf_opt(
+                    data_cf,
+                    read_options,
+                    rocksdb::IteratorMode::From(&start_key, rocksdb::Direction::Forward),
+                );
+
+                let mut items_scanned = 0u64;
+                let mut has_more = false;
+
+                for item in iter {
+                    let (k, v) = item.context(RocksSnafu)?;
+
+                    // Stop if we've moved beyond the prefix
+                    if !k.starts_with(&prefix) {
+                        break;
+                    }
+
+                    let parsed_key = crate::member_data_key_format::ParsedMemberDataKey::new(&k)?;
+                    let field = String::from_utf8_lossy(parsed_key.data()).to_string();
+
+                    if cursor > 0 && items_scanned < cursor {
+                        items_scanned += 1;
+                        continue;
+                    }
+
+                    let matches_pattern = if let Some(pat) = pattern {
+                        glob_match(pat, &field)
+                    } else {
+                        true
+                    };
+
+                    if matches_pattern {
+                        if rest > 0 {
+                            let mut parsed_val = ParsedBaseDataValue::new(&*v)?;
+                            parsed_val.strip_suffix();
+                            let value = String::from_utf8_lossy(&parsed_val.user_value()).to_string();
+
+                            result_fields.push((field.clone(), value));
+                            rest -= 1;
+                        } else {
+                            has_more = true;
+                            break;
+                        }
+                    }
+
+                    items_scanned += 1;
+                }
+
+                if has_more {
+                    next_cursor = cursor + scan_count as u64;
+                } else {
+                    if rest <= 0 {
+                        let mut check_read_options = ReadOptions::default();
+                        check_read_options.set_snapshot(&snapshot);
+
+                        let check_iter = db.iterator_cf_opt(
+                            data_cf,
+                            check_read_options,
+                            rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
+                        );
+
+                        let mut skip_count = 0u64;
+                        for item in check_iter {
+                            let (k, _) = item.context(RocksSnafu)?;
+                            if !k.starts_with(&prefix) {
+                                break;
+                            }
+
+                            if skip_count < items_scanned {
+                                skip_count += 1;
+                                continue;
+                            }
+
+                            if let Ok(parsed_key) = crate::member_data_key_format::ParsedMemberDataKey::new(&k) {
+                                let field = String::from_utf8_lossy(parsed_key.data()).to_string();
+                                let matches = if let Some(pat) = pattern {
+                                    glob_match(pat, &field)
+                                } else {
+                                    true
+                                };
+                                if matches {
+                                    next_cursor = cursor + scan_count as u64;
+                                    break;
+                                }
+                            }
+                            skip_count += 1;
+                        }
+                    } else {
+                        next_cursor = 0;
+                    }
+                }
+
+                Ok((next_cursor, result_fields))
+            }
+            None => {
+                Ok((0, Vec::new()))
+            }
         }
     }
 }
