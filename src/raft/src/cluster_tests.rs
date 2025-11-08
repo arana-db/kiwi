@@ -511,48 +511,112 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Ignore this test for now due to complexity
-    async fn test_consistency_after_failover() {
-        // Create and start cluster
-        let cluster = ThreeNodeCluster::new().await.unwrap();
-        cluster.start_all().await.unwrap();
+    #[ignore = "Consistency after failover test may be slow for CI"]
+    async fn test_consistency_after_failover() -> RaftResult<()> {
+        // 1. Create and start three-node cluster
+        let cluster = ThreeNodeCluster::new().await?;
+        cluster.start_all().await?;
 
-        // Wait for leader election
-        let leader_id = wait_for_leader(&cluster, Duration::from_secs(5))
-            .await
-            .unwrap();
+        // 2. Wait for initial leader election
+        let initial_leader_id = wait_for_leader(&cluster, Duration::from_secs(5)).await?;
+        log::info!("Initial leader elected: node {}", initial_leader_id);
 
-        // Write data
-        cluster.write("key1", "value1").await.unwrap();
-        cluster.write("key2", "value2").await.unwrap();
-        sleep(Duration::from_millis(300)).await;
+        // 3. Write test data to the cluster
+        let test_key1 = "failover_test_key1";
+        let test_value1 = "consistent_value1";
+        let test_key2 = "failover_test_key2";
+        let test_value2 = "consistent_value2";
 
-        // Stop leader
-        cluster.stop_node(leader_id).await.unwrap();
+        cluster.write(test_key1, test_value1).await?;
+        cluster.write(test_key2, test_value2).await?;
+        
+        // Wait for replication to complete
         sleep(Duration::from_millis(500)).await;
 
-        // Wait for new leader
-        let new_leader_id = wait_for_leader(&cluster, Duration::from_secs(5))
-            .await
-            .unwrap();
-        assert_ne!(new_leader_id, leader_id);
+        // 4. Verify all nodes have the data before failover
+        log::info!("Verifying initial data consistency across all nodes");
+        let value1_before = cluster.read(test_key1).await?;
+        let value2_before = cluster.read(test_key2).await?;
+        
+        assert_eq!(
+            value1_before,
+            Some(Bytes::from(test_value1)),
+            "Initial data should be consistent before failover"
+        );
+        assert_eq!(
+            value2_before,
+            Some(Bytes::from(test_value2)),
+            "Initial data should be consistent before failover"
+        );
 
-        // Verify data is still accessible and consistent
-        let value1 = cluster.read("key1").await.unwrap();
-        let value2 = cluster.read("key2").await.unwrap();
+        // 5. Simulate leader failure
+        log::info!("Stopping leader node {}", initial_leader_id);
+        cluster.stop_node(initial_leader_id).await?;
+        
+        // Wait for failure detection
+        sleep(Duration::from_secs(1)).await;
 
-        assert_eq!(value1, Some(Bytes::from("value1")));
-        assert_eq!(value2, Some(Bytes::from("value2")));
+        // 6. Wait for new leader election
+        let new_leader_id = wait_for_leader(&cluster, Duration::from_secs(10)).await?;
+        assert_ne!(
+            new_leader_id, initial_leader_id,
+            "New leader should be different from failed leader"
+        );
+        log::info!("New leader elected after failover: node {}", new_leader_id);
 
-        // Write more data after failover
-        cluster.write("key3", "value3").await.unwrap();
-        sleep(Duration::from_millis(300)).await;
+        // 7. Verify data consistency after failover on remaining nodes
+        log::info!("Verifying data consistency after failover");
+        let value1_after = cluster.read(test_key1).await?;
+        let value2_after = cluster.read(test_key2).await?;
 
-        // Verify new write is also consistent
-        let value3 = cluster.read("key3").await.unwrap();
-        assert_eq!(value3, Some(Bytes::from("value3")));
+        assert_eq!(
+            value1_after,
+            Some(Bytes::from(test_value1)),
+            "Data should remain consistent after failover for key '{}'",
+            test_key1
+        );
+        assert_eq!(
+            value2_after,
+            Some(Bytes::from(test_value2)),
+            "Data should remain consistent after failover for key '{}'",
+            test_key2
+        );
+
+        // 8. Write new data after failover to verify cluster is still operational
+        let test_key3 = "post_failover_key";
+        let test_value3 = "post_failover_value";
+        
+        log::info!("Writing new data after failover");
+        cluster.write(test_key3, test_value3).await?;
+        
+        // Wait for replication
+        sleep(Duration::from_millis(500)).await;
+
+        // 9. Verify new write is consistent across remaining nodes
+        let value3 = cluster.read(test_key3).await?;
+        assert_eq!(
+            value3,
+            Some(Bytes::from(test_value3)),
+            "New data written after failover should be consistent"
+        );
+
+        // 10. Verify all data is still consistent
+        log::info!("Final consistency check");
+        let mut test_data = HashMap::new();
+        test_data.insert(test_key1.to_string(), test_value1.to_string());
+        test_data.insert(test_key2.to_string(), test_value2.to_string());
+        test_data.insert(test_key3.to_string(), test_value3.to_string());
+
+        let is_consistent = verify_data_consistency(&cluster, &test_data).await?;
+        assert!(
+            is_consistent,
+            "All data should be consistent across remaining nodes after failover"
+        );
+
+        log::info!("Consistency after failover test completed successfully");
 
         // Cleanup
-        cluster.shutdown_all().await.unwrap();
+        cluster.shutdown_all().await?;
+        Ok(())
     }
 }
