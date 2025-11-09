@@ -20,7 +20,9 @@ mod cursor_management_test {
     use std::sync::Arc;
 
     use storage::error::Error;
-    use storage::{DataType, StorageOptions, storage::Storage, unique_test_db_path};
+    use storage::{
+        DataType, StorageOptions, safe_cleanup_test_db, storage::Storage, unique_test_db_path,
+    };
 
     #[tokio::test]
     async fn test_store_and_load_cursor_basic() {
@@ -42,9 +44,7 @@ mod cursor_management_test {
         assert_eq!(start_key, "test_key_001");
 
         drop(storage);
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[tokio::test]
@@ -61,9 +61,7 @@ mod cursor_management_test {
         assert!(matches!(err, Error::KeyNotFound { .. }));
 
         drop(storage);
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[tokio::test]
@@ -95,9 +93,7 @@ mod cursor_management_test {
         }
 
         drop(storage);
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[tokio::test]
@@ -124,8 +120,6 @@ mod cursor_management_test {
         assert!(matches!(err, Error::KeyNotFound { .. }));
 
         drop(storage);
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 }

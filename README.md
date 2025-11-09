@@ -6,11 +6,14 @@ Kiwi is a Redis-compatible key-value database built in Rust, leveraging RocksDB 
 
 ## Features
 
-- Uses RocksDB as the backend persistent storage.
-- Highly compatible with the Redis protocol.
-- Supports performance benchmarking using Redis.
-- Planned modular support, allowing developers to customize extensions.
-- Provides high-performance request handling capabilities.
+- **Dual Runtime Architecture**: Separate network and storage runtimes for optimal performance isolation
+- **RocksDB Backend**: Uses RocksDB as the backend persistent storage
+- **Redis Protocol Compatible**: Highly compatible with the Redis protocol
+- **High Performance**: Optimized request handling with dedicated thread pools
+- **Async Communication**: Message channel-based communication between network and storage layers
+- **Fault Isolation**: Network and storage operations run in isolated runtimes
+- **Performance Benchmarking**: Supports performance benchmarking using Redis tools
+- **Modular Design**: Planned modular support for custom extensions
 
 ## System Requirements
 
@@ -25,12 +28,44 @@ Please ensure that the Rust toolchain is installed, which can be done using [rus
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
+## Architecture
+
+Kiwi uses a **dual runtime architecture** to separate concerns and optimize performance:
+
+### Network Runtime
+- Handles all network I/O operations
+- Processes Redis protocol parsing
+- Manages client connections
+- Optimized for I/O-bound operations
+
+### Storage Runtime
+- Executes all storage operations (RocksDB interactions)
+- Processes storage commands from the network runtime
+- Optimized for CPU-intensive operations
+- Isolated from network latency
+
+### Communication
+- **MessageChannel**: Async message passing between runtimes
+- **StorageClient**: Network runtime sends requests to storage runtime
+- **StorageServer**: Storage runtime processes requests and returns responses
+- **Backpressure Handling**: Automatic flow control to prevent overload
+- **Circuit Breaker**: Fault tolerance for storage failures
+
+This architecture provides:
+- **Performance Isolation**: Network issues don't block storage operations
+- **Fault Isolation**: Failures in one runtime don't crash the other
+- **Scalability**: Independent thread pool sizing for network and storage
+- **Observability**: Separate health monitoring and metrics per runtime
+
+For detailed architecture documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Configuration
 
 Kiwi uses a Redis-style configuration file located at `src/conf/kiwi.conf`. Key configuration options:
 
 - **Port**: Default is `7379` (configurable via `port` setting, Redis-compatible variant of `6379`)
 - **Memory**: Maximum memory usage (supports units: B, KB, MB, GB, TB)
+- **Runtime Settings**: Thread pool sizes for network and storage runtimes
 - **RocksDB settings**: Various tuning parameters for the storage engine
 
 Example configuration:
@@ -40,6 +75,10 @@ port 7379
 
 # Maximum memory
 memory 1GB
+
+# Runtime configuration (auto-detected based on CPU cores)
+# network-threads 4
+# storage-threads 4
 
 # RocksDB configuration
 rocksdb-max-background-jobs 4
@@ -59,13 +98,46 @@ Port `7379` was chosen to indicate Redis compatibility while avoiding conflicts 
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed migration instructions.
 
+## Building and Running
+
+### Build from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/arana-db/kiwi.git
+cd kiwi
+
+# Build the project
+cargo build --release
+
+# Run the server
+./target/release/kiwi
+```
+
+### Command Line Options
+
+```bash
+# Use custom configuration file
+kiwi --config /path/to/kiwi.conf
+
+# Force single-node mode (disable cluster)
+kiwi --single-node
+
+# Initialize a new cluster (first node only)
+kiwi --init-cluster
+```
+
 ## Development Plan
 
-- Support most Redis commands
-- Add support for cluster mode
-- Extend command support and optimize command execution efficiency
-- Enhance modular extension features and provide examples
-- Improve development documentation and user guides
+- ✅ Dual runtime architecture for performance isolation
+- ✅ Message channel-based async communication
+- ✅ Basic Redis command support (GET, SET, DEL, etc.)
+- 🚧 Support most Redis commands
+- 🚧 Add support for cluster mode (Raft consensus)
+- 🚧 Extend command support and optimize command execution efficiency
+- 🚧 Enhance modular extension features and provide examples
+- 🚧 Improve development documentation and user guides
+- 🚧 Add comprehensive metrics and monitoring
 
 ## Contribution
 

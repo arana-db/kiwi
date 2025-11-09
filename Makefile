@@ -27,6 +27,10 @@ build:
 	@echo "Building project..."
 	@cargo build
 
+release:
+	@echo "Building project in release mode..."
+	@cargo build --release
+
 run:
 	@echo "Running project..."
 	@cargo run --bin server
@@ -57,4 +61,4 @@ help:
 	@echo "  lint          - Lint the code"
 	@echo "  help          - Show this help message"
 
-.PHONY: build run test clean fmt lint help
+.PHONY: build release run test clean fmt lint help

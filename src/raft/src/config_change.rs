@@ -2058,38 +2058,38 @@ impl ConfigChangeManager {
             ));
         }
 
-            // Check if leadership is recent and stable
-            // This would require additional metrics in a real implementation
+        // Check if leadership is recent and stable
+        // This would require additional metrics in a real implementation
 
-            // Check follower health
-            if let Some(replication_map) = &metrics.replication {
-                let total_followers = replication_map.len();
-                let healthy_followers = replication_map
-                    .iter()
-                    .filter(|(_, state)| {
-                        state
-                            .map(|s| {
-                                let current_index = metrics.last_log_index.unwrap_or(0);
-                                let lag = current_index.saturating_sub(s.index);
-                                lag <= 10 // Healthy if lag is small
-                            })
-                            .unwrap_or(false)
-                    })
-                    .count();
+        // Check follower health
+        if let Some(replication_map) = &metrics.replication {
+            let total_followers = replication_map.len();
+            let healthy_followers = replication_map
+                .iter()
+                .filter(|(_, state)| {
+                    state
+                        .map(|s| {
+                            let current_index = metrics.last_log_index.unwrap_or(0);
+                            let lag = current_index.saturating_sub(s.index);
+                            lag <= 10 // Healthy if lag is small
+                        })
+                        .unwrap_or(false)
+                })
+                .count();
 
-                let health_ratio = if total_followers > 0 {
-                    healthy_followers as f64 / total_followers as f64
-                } else {
-                    1.0
-                };
+            let health_ratio = if total_followers > 0 {
+                healthy_followers as f64 / total_followers as f64
+            } else {
+                1.0
+            };
 
-                if health_ratio < 0.7 {
-                    return Err(RaftError::configuration(format!(
-                        "Cluster health insufficient for configuration changes: {:.1}% healthy",
-                        health_ratio * 100.0
-                    )));
-                }
+            if health_ratio < 0.7 {
+                return Err(RaftError::configuration(format!(
+                    "Cluster health insufficient for configuration changes: {:.1}% healthy",
+                    health_ratio * 100.0
+                )));
             }
+        }
 
         Ok(())
     }
