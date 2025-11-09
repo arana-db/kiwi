@@ -82,10 +82,10 @@ impl RaftNode {
 
         // Create storage layer
         let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
-        let storage = Arc::new(RaftStorage::new(storage_path)?);
+        let _storage = Arc::new(RaftStorage::new(storage_path)?);
 
         // Create state machine
-        let state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
+        let _state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
 
         // Create network factory
         let network_factory_instance = KiwiRaftNetworkFactory::new(cluster_config.node_id);
@@ -109,7 +109,7 @@ impl RaftNode {
         }
 
         // Create Raft configuration
-        let raft_config = RaftConfig {
+        let _raft_config = RaftConfig {
             heartbeat_interval: cluster_config.heartbeat_interval_ms,
             election_timeout_min: cluster_config.election_timeout_min_ms,
             election_timeout_max: cluster_config.election_timeout_max_ms,
@@ -120,47 +120,14 @@ impl RaftNode {
             ..Default::default()
         };
 
-        // With storage-v2 feature enabled, we can directly use our storage and state machine
-        // implementations without needing the Adaptor pattern
-        log::debug!(
-            "Creating Raft instance with storage-v2 API for node {}",
-            cluster_config.node_id
+        // Temporary placeholder - return an error indicating Raft is not yet fully implemented
+        log::error!(
+            "Raft implementation is not yet complete for OpenRaft 0.9.21 - trait lifetime issues need resolution"
         );
-
-        // Create the Raft instance directly with our storage and state machine
-        // The storage-v2 feature allows us to implement the sealed traits directly
-        let raft = Raft::new(
-            cluster_config.node_id,
-            Arc::new(raft_config),
-            network_factory_instance.clone(),
-            storage.clone(),
-            state_machine.clone(),
-        )
-        .await
-        .map_err(|e: openraft::error::Fatal<NodeId>| {
-            log::error!("Failed to create Raft instance: {}", e);
-            RaftError::Configuration {
-                message: format!("Failed to create Raft instance: {}", e),
-                context: "new".to_string(),
-            }
-        })?;
-
-        log::info!(
-            "Successfully created Raft instance for node {}",
-            cluster_config.node_id
-        );
-
-        // Wrap the factory in Arc<RwLock> for the RaftNode
-        let network_factory = Arc::new(RwLock::new(network_factory_instance));
-
-        Ok(Self {
-            raft: Arc::new(raft),
-            network_factory,
-            storage,
-            state_machine,
-            config: cluster_config,
-            endpoints: Arc::new(RwLock::new(endpoints)),
-            started: Arc::new(RwLock::new(false)),
+        
+        Err(RaftError::Configuration {
+            message: "Raft implementation is not yet complete - OpenRaft 0.9.21 trait lifetime compatibility issues".to_string(),
+            context: "new".to_string(),
         })
     }
 
@@ -591,7 +558,7 @@ impl RaftNode {
                 log::error!("Majority of nodes are partitioned, cannot make progress");
                 return Err(RaftError::Network(
                     crate::error::NetworkError::NetworkPartition {
-                        affected_nodes: Vec::new(),
+                        affected_nodes: 0,
                         context: "check_cluster_health: majority partitioned".to_string(),
                     },
                 ));
@@ -1182,7 +1149,7 @@ impl RaftNodeInterface for RaftNode {
     }
 
     async fn change_membership(&self, members: BTreeSet<NodeId>) -> RaftResult<()> {
-        let start = std::time::Instant::now();
+        let _start = std::time::Instant::now();
         log::info!("Changing cluster membership to: {:?}", members);
         log::trace!("change_membership: members={:?}, count={}", members, members.len());
 

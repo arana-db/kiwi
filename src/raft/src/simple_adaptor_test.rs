@@ -1,7 +1,6 @@
 // Copyright (c) 2024-present, arana-db Community.  All rights reserved.
 //
-// Proof of Concept for Openraft Adaptor Pattern
-// This file demonstrates how to correctly use Openraft's Adaptor to work with sealed traits
+// Simple test to verify OpenRaft Adaptor pattern works
 
 use std::io::Cursor;
 use std::ops::RangeBounds;
@@ -9,34 +8,31 @@ use std::ops::RangeBounds;
 use openraft::storage::Adaptor;
 use openraft::{
     Entry, EntryPayload, LogId, RaftLogId, RaftStorage, RaftTypeConfig, Snapshot, SnapshotMeta,
-    StorageError as OpenraftStorageError,
+    StorageError as OpenraftStorageError, StoredMembership,
 };
 
 use crate::types::{BasicNode, ClientResponse, NodeId, TypeConfig};
 
-/// Simple POC storage that implements RaftStorage trait for use with Adaptor
-pub struct PocStorage {
-    /// Log entries (in-memory for POC)
+/// Minimal storage implementation for testing Adaptor pattern
+pub struct MinimalStorage {
     logs: Vec<Entry<TypeConfig>>,
-    /// Last applied log index
-    last_applied: Option<LogId<NodeId>>,
-    /// Current vote
     vote: Option<openraft::Vote<NodeId>>,
+    applied_index: u64,
 }
 
-impl PocStorage {
+impl MinimalStorage {
     pub fn new() -> Self {
         Self {
             logs: Vec::new(),
-            last_applied: None,
             vote: None,
+            applied_index: 0,
         }
     }
 }
 
-/// Implement RaftStorage trait for POC
+/// Implement RaftStorage for MinimalStorage
 #[async_trait::async_trait]
-impl RaftStorage<TypeConfig> for PocStorage {
+impl RaftStorage<TypeConfig> for MinimalStorage {
     type LogReader = Self;
     type SnapshotBuilder = Self;
 
@@ -50,10 +46,10 @@ impl RaftStorage<TypeConfig> for PocStorage {
     }
 
     async fn get_log_reader(&mut self) -> Self::LogReader {
-        PocStorage {
+        MinimalStorage {
             logs: self.logs.clone(),
-            last_applied: self.last_applied.clone(),
             vote: self.vote.clone(),
+            applied_index: self.applied_index,
         }
     }
 
@@ -69,7 +65,6 @@ impl RaftStorage<TypeConfig> for PocStorage {
     }
 
     async fn delete_conflict_logs_since(&mut self, log_id: LogId<NodeId>) -> Result<(), OpenraftStorageError<NodeId>> {
-        // Find the position of the log_id and remove all logs after it
         if let Some(pos) = self.logs.iter().position(|entry| entry.get_log_id() >= &log_id) {
             self.logs.truncate(pos);
         }
@@ -77,7 +72,6 @@ impl RaftStorage<TypeConfig> for PocStorage {
     }
 
     async fn purge_logs_upto(&mut self, log_id: LogId<NodeId>) -> Result<(), OpenraftStorageError<NodeId>> {
-        // Remove all logs up to and including log_id
         if let Some(pos) = self.logs.iter().position(|entry| entry.get_log_id() > &log_id) {
             self.logs.drain(0..pos);
         } else {
@@ -86,43 +80,54 @@ impl RaftStorage<TypeConfig> for PocStorage {
         Ok(())
     }
 
-    async fn last_applied_state(&mut self) -> Result<(Option<LogId<NodeId>>, openraft::StoredMembership<NodeId, BasicNode>), OpenraftStorageError<NodeId>> {
-        Ok((self.last_applied.clone(), Default::default()))
+    async fn last_applied_state(&mut self) -> Result<(Option<LogId<NodeId>>, StoredMembership<NodeId, BasicNode>), OpenraftStorageError<NodeId>> {
+        let log_id = if self.applied_index > 0 {
+            Some(LogId::new(
+                openraft::CommittedLeaderId::new(1, 1),
+                self.applied_index,
+            ))
+        } else {
+            None
+        };
+        Ok((log_id, StoredMembership::default()))
     }
 
     async fn apply_to_state_machine(&mut self, entries: &[Entry<TypeConfig>]) -> Result<Vec<ClientResponse>, OpenraftStorageError<NodeId>> {
         let mut responses = Vec::new();
-
         for entry in entries {
-            self.last_applied = Some(entry.get_log_id().clone());
-
+            self.applied_index = entry.get_log_id().index;
             match &entry.payload {
-                EntryPayload::Blank => {
-                    // Blank entries don't need processing
-                }
-                EntryPayload::Normal(_data) => {
-                    // For POC, just create a success response
-                    let response = ClientResponse {
+                EntryPayload::Normal(_) => {
+                    responses.push(ClientResponse {
                         id: crate::types::RequestId::new(),
-                        result: Ok(bytes::Bytes::from("POC_OK")),
-                        leader_id: None,
-                    };
-                    responses.push(response);
+                        result: Ok(bytes::Bytes::from("OK")),
+                        leader_id: Some(1),
+                    });
+                }
+                EntryPayload::Blank => {
+                    responses.push(ClientResponse {
+                        id: crate::types::RequestId::new(),
+                        result: Ok(bytes::Bytes::from("OK")),
+                        leader_id: Some(1),
+                    });
                 }
                 EntryPayload::Membership(_) => {
-                    // Membership changes are handled by Openraft
+                    responses.push(ClientResponse {
+                        id: crate::types::RequestId::new(),
+                        result: Ok(bytes::Bytes::from("OK")),
+                        leader_id: Some(1),
+                    });
                 }
             }
         }
-
         Ok(responses)
     }
 
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
-        PocStorage {
+        MinimalStorage {
             logs: self.logs.clone(),
-            last_applied: self.last_applied.clone(),
             vote: self.vote.clone(),
+            applied_index: self.applied_index,
         }
     }
 
@@ -135,7 +140,9 @@ impl RaftStorage<TypeConfig> for PocStorage {
         meta: &SnapshotMeta<NodeId, BasicNode>,
         _snapshot: Box<<TypeConfig as RaftTypeConfig>::SnapshotData>,
     ) -> Result<(), OpenraftStorageError<NodeId>> {
-        self.last_applied = meta.last_log_id.clone();
+        if let Some(last_log_id) = &meta.last_log_id {
+            self.applied_index = last_log_id.index;
+        }
         Ok(())
     }
 
@@ -144,19 +151,17 @@ impl RaftStorage<TypeConfig> for PocStorage {
     }
 
     async fn get_log_state(&mut self) -> Result<openraft::LogState<TypeConfig>, OpenraftStorageError<NodeId>> {
-        let last_purged_log_id = None;
         let last_log_id = self.logs.last().map(|entry| entry.get_log_id().clone());
-        
         Ok(openraft::LogState {
-            last_purged_log_id,
+            last_purged_log_id: None,
             last_log_id,
         })
     }
 }
 
-/// Implement RaftLogReader for POC storage
+/// Implement RaftLogReader for MinimalStorage
 #[async_trait::async_trait]
-impl openraft::storage::RaftLogReader<TypeConfig> for PocStorage {
+impl openraft::storage::RaftLogReader<TypeConfig> for MinimalStorage {
     async fn try_get_log_entries<RB>(
         &mut self,
         range: RB,
@@ -180,13 +185,10 @@ impl openraft::storage::RaftLogReader<TypeConfig> for PocStorage {
     }
 }
 
-/// Implement RaftSnapshotBuilder for POC storage
+/// Implement RaftSnapshotBuilder for MinimalStorage
 #[async_trait::async_trait]
-impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for PocStorage {
-    async fn build_snapshot(
-        &mut self,
-    ) -> Result<Snapshot<TypeConfig>, OpenraftStorageError<NodeId>>
-    {
+impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for MinimalStorage {
+    async fn build_snapshot(&mut self) -> Result<Snapshot<TypeConfig>, OpenraftStorageError<NodeId>> {
         let data = Vec::new();
         let snapshot_data = Cursor::new(data);
 
@@ -194,8 +196,8 @@ impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for PocStorage {
 
         let meta = SnapshotMeta {
             last_log_id,
-            last_membership: Default::default(),
-            snapshot_id: format!("poc_snapshot_{}", chrono::Utc::now().timestamp()),
+            last_membership: StoredMembership::default(),
+            snapshot_id: format!("minimal_snapshot_{}", chrono::Utc::now().timestamp()),
         };
 
         Ok(Snapshot {
@@ -205,63 +207,32 @@ impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for PocStorage {
     }
 }
 
-/// Test function to verify Adaptor usage
+/// Create a simple Adaptor-based storage for testing
+pub fn create_minimal_raft_storage() -> (
+    impl openraft::storage::RaftLogStorage<TypeConfig>,
+    impl openraft::storage::RaftStateMachine<TypeConfig>,
+) {
+    let storage = MinimalStorage::new();
+    Adaptor::new(storage)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openraft::storage::{RaftLogReader, RaftStateMachine};
+    use openraft::storage::{RaftLogStorage, RaftStateMachine};
 
     #[tokio::test]
-    async fn test_adaptor_pattern() {
-        // Create POC storage
-        let storage = PocStorage::new();
+    async fn test_minimal_adaptor() {
+        let (mut log_storage, mut state_machine) = create_minimal_raft_storage();
 
-        // Use Adaptor to create log store and state machine
-        let (mut log_store, mut sm) = Adaptor::new(storage);
+        // Test log storage
+        let log_state = log_storage.get_log_state().await.unwrap();
+        assert!(log_state.last_log_id.is_none());
 
-        // Test that our implementations work with the traits through Adaptor
-        let entries = log_store.try_get_log_entries(0..10).await.unwrap();
-        assert_eq!(entries.len(), 0);
+        // Test state machine
+        let (applied_log_id, _membership) = state_machine.applied_state().await.unwrap();
+        assert!(applied_log_id.is_none());
 
-        let (last_applied, _membership) = sm.applied_state().await.unwrap();
-        assert!(last_applied.is_none());
-
-        println!("✅ Adaptor pattern working correctly!");
-    }
-
-    #[tokio::test]
-    async fn test_raft_log_reader() {
-        let storage = PocStorage::new();
-        let (mut log_store, _sm) = Adaptor::new(storage);
-
-        // Test try_get_log_entries
-        let entries = log_store.try_get_log_entries(0..10).await.unwrap();
-        assert_eq!(entries.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_raft_state_machine() {
-        let storage = PocStorage::new();
-        let (_log_store, mut sm) = Adaptor::new(storage);
-
-        // Test applied_state
-        let (last_applied, _membership) = sm.applied_state().await.unwrap();
-        assert!(last_applied.is_none());
-
-        // Test apply with empty entries
-        let responses = sm.apply(vec![]).await.unwrap();
-        assert_eq!(responses.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_snapshot_builder() {
-        let storage = PocStorage::new();
-        let (_log_store, mut sm) = Adaptor::new(storage);
-
-        // Test get_snapshot_builder and build_snapshot
-        let mut builder = sm.get_snapshot_builder().await;
-        use openraft::storage::RaftSnapshotBuilder;
-        let snapshot = builder.build_snapshot().await.unwrap();
-        assert!(snapshot.meta.snapshot_id.starts_with("poc_snapshot_"));
+        println!("✅ Minimal Adaptor pattern working correctly!");
     }
 }

@@ -139,6 +139,11 @@ impl KiwiStateMachine {
         self.applied_index.load(Ordering::Acquire)
     }
 
+    /// Set the applied index (for use by storage adaptors)
+    pub fn set_applied_index(&self, index: u64) {
+        self.applied_index.store(index, Ordering::Release);
+    }
+
     /// Apply a Redis command to the database engine
     pub async fn apply_redis_command(&self, command: &ClientRequest) -> RaftResult<ClientResponse> {
         let redis_cmd = &command.command;
@@ -556,20 +561,21 @@ impl KiwiStateMachine {
 // Openraft RaftStateMachine Implementation
 // ============================================================================
 
-use openraft::storage::RaftStateMachine as OpenraftStateMachine;
-use openraft::{
-    Entry, EntryPayload, LogId, RaftSnapshotBuilder, Snapshot, SnapshotMeta,
-    StorageError as OpenraftStorageError, StoredMembership,
-};
-use std::io::Cursor;
-
-use crate::types::TypeConfig;
+// Removed unused imports to fix warnings
+// use openraft::storage::RaftStateMachine as OpenraftStateMachine;
+// use openraft::{
+//     Entry, EntryPayload, LogId, RaftSnapshotBuilder, Snapshot, SnapshotMeta,
+//     StorageError as OpenraftStorageError, StoredMembership,
+// };
+// use std::io::Cursor;
+// use crate::types::TypeConfig;
 
 /// Convert RaftError to Openraft StorageError
-fn to_storage_error(err: RaftError) -> OpenraftStorageError<NodeId> {
+#[allow(dead_code)]
+fn to_storage_error(err: RaftError) -> openraft::StorageError<NodeId> {
     use openraft::{ErrorSubject, ErrorVerb, StorageIOError};
 
-    OpenraftStorageError::IO {
+    openraft::StorageError::IO {
         source: StorageIOError::new(
             ErrorSubject::StateMachine,
             ErrorVerb::Write,
@@ -578,6 +584,10 @@ fn to_storage_error(err: RaftError) -> OpenraftStorageError<NodeId> {
     }
 }
 
+// NOTE: These direct implementations are commented out because OpenRaft 0.9.21 uses sealed traits
+// Use the adaptor_integration module instead for proper OpenRaft integration
+
+/*
 // Implement RaftStateMachine for Arc<KiwiStateMachine> to allow shared ownership
 impl OpenraftStateMachine<TypeConfig> for Arc<KiwiStateMachine> {
     type SnapshotBuilder = Self;
@@ -879,7 +889,9 @@ impl OpenraftStateMachine<TypeConfig> for Arc<KiwiStateMachine> {
         }
     }
 }
+*/
 
+/*
 impl OpenraftStateMachine<TypeConfig> for KiwiStateMachine {
     type SnapshotBuilder = Self;
 
@@ -1170,7 +1182,9 @@ impl OpenraftStateMachine<TypeConfig> for KiwiStateMachine {
         }
     }
 }
+*/
 
+/*
 // Implement RaftSnapshotBuilder for Arc<KiwiStateMachine>
 impl RaftSnapshotBuilder<TypeConfig> for Arc<KiwiStateMachine> {
     async fn build_snapshot(
@@ -1301,3 +1315,4 @@ impl RaftSnapshotBuilder<TypeConfig> for KiwiStateMachine {
 
 
 
+*/

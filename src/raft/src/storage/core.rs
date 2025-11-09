@@ -382,7 +382,7 @@ impl RaftStorage {
         let snapshot_id = snapshot_id.to_string();
         let data = data.to_vec();
 
-        tokio::task::spawn_blocking(move || {
+        let _ = tokio::task::spawn_blocking(move || {
             let block_start = std::time::Instant::now();
             let cf_snapshot = db.cf_handle(&cf_name).ok_or_else(|| {
                 RaftError::Storage(StorageError::DataInconsistency { message: format!("Column family {} not found", cf_name), context: String::new(),
@@ -489,7 +489,9 @@ impl RaftStorage {
     /// Parse log entry key from RocksDB
     pub fn parse_log_key(key: &[u8]) -> Result<LogIndex, RaftError> {
         if key.len() != 8 {
-            return Err(RaftError::Storage(StorageError::DataInconsistency { message: format!("Invalid log key length: {}", key.len()),
+            return Err(RaftError::Storage(StorageError::DataInconsistency { 
+                message: format!("Invalid log key length: {}", key.len()),
+                context: "parse_log_key".to_string(),
             }));
         }
         let mut bytes = [0u8; 8];
@@ -550,6 +552,28 @@ impl RaftStorage {
         } else {
             Ok(None)
         }
+    }
+
+    /// Get log entries in a range [start, end)
+    pub fn get_log_entries_range(&self, start: u64, end: u64) -> Result<Vec<StoredLogEntry>, RaftError> {
+        let cf_log = self.get_cf_handle(CF_LOG)?;
+        let mut entries = Vec::new();
+
+        for index in start..end {
+            let key = Self::log_key(index);
+            if let Some(value) = self.db.get_cf(&cf_log, &key)
+                .map_err(|e| RaftError::Storage(StorageError::from(e)))? {
+                let entry: StoredLogEntry = bincode::deserialize(&value).map_err(|e| {
+                    RaftError::Storage(StorageError::DataInconsistency {
+                        message: format!("Failed to deserialize log entry: {}", e),
+                        context: String::new(),
+                    })
+                })?;
+                entries.push(entry);
+            }
+        }
+
+        Ok(entries)
     }
 
     /// Delete log entries from index onwards

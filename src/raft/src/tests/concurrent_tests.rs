@@ -29,7 +29,7 @@ use tokio::time::Instant;
 
 use crate::state_machine::KiwiStateMachine;
 use crate::storage::RaftStorage;
-use crate::types::{ClientRequest, ConsistencyLevel, NodeId, RedisCommand, RequestId};
+use crate::types::{ClientRequest, ConsistencyLevel, RedisCommand, RequestId};
 use bytes::Bytes;
 use tempfile::TempDir;
 
@@ -211,7 +211,7 @@ async fn test_concurrent_snapshot_operations() {
     for i in 0..20 {
         let sm_clone = state_machine.clone();
         let handle = tokio::spawn(async move {
-            for j in 0..10 {
+            for _j in 0..10 {
                 let snapshot = sm_clone.get_current_snapshot_data().await.unwrap();
                 // Snapshot may or may not exist depending on timing
                 if let Some(snap) = snapshot {

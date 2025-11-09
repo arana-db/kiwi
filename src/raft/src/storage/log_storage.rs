@@ -17,17 +17,12 @@
 
 //! RaftLogStorage implementation for storage-v2 API
 
-use std::sync::Arc;
+// All imports removed to fix warnings - this file contains only commented out code
 
-use openraft::storage::{RaftLogStorage, LogFlushed};
-use openraft::{LogId, LogState, StorageError as OpenraftStorageError, Vote};
-use openraft::OptionalSend;
+// NOTE: This direct implementation is commented out because OpenRaft 0.9.21 uses sealed traits
+// Use the adaptor_integration module instead for proper OpenRaft integration
 
-use crate::error::RaftError;
-use crate::storage::RaftStorage;
-use crate::storage::core::to_storage_error;
-use crate::types::{NodeId, TypeConfig};
-
+/*
 /// Implement RaftLogStorage for Arc<RaftStorage>
 impl RaftLogStorage<TypeConfig> for Arc<RaftStorage> {
     type LogReader = Self;
@@ -184,3 +179,4 @@ impl RaftLogStorage<TypeConfig> for Arc<RaftStorage> {
 }
 
 
+*/

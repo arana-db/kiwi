@@ -428,7 +428,7 @@ async fn test_recovery_with_corrupted_log_handling() {
             };
             
             sleep(Duration::from_millis(500)).await;
-            let response = node.propose(test_request).await;
+            let _response = node.propose(test_request).await;
             // Response might succeed or fail depending on state
             
             node.shutdown().await.unwrap();
