@@ -448,7 +448,7 @@ impl Redis {
         }
 
         let data_type = DataType::try_from(val_raw[0])?;
-        if val_raw.len() < data_type.min_meta_raw_len() {
+        if val_raw.len() < data_type.min_meta_raw_len()? {
             return InvalidFormatSnafu {
                 message: format!("Invalid value length for data type: {data_type:?}"),
             }
@@ -521,9 +521,12 @@ impl Redis {
                 }
                 Ok(etime < now)
             }
-            _ => {
-                unreachable!("data type: {data_type:?} should not be used as meta value")
+            _ => InvalidFormatSnafu {
+                message: format!(
+                    "data type: {data_type:?} should not be used as meta value: {val_raw:?}"
+                ),
             }
+            .fail(),
         }
     }
 }

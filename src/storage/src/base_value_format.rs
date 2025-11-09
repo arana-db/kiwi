@@ -41,12 +41,15 @@ pub enum DataType {
 }
 
 impl DataType {
-    pub fn min_meta_raw_len(self) -> usize {
+    pub fn min_meta_raw_len(self) -> Result<usize> {
         match self {
-            DataType::String => TYPE_LENGTH + STRING_VALUE_SUFFIXLENGTH,
-            DataType::Hash | DataType::Set | DataType::ZSet => BASE_META_VALUE_LENGTH,
-            DataType::List => LISTS_META_VALUE_LENGTH,
-            _ => unreachable!("data type: {self:?} should not be used as meta value"),
+            DataType::String => Ok(TYPE_LENGTH + STRING_VALUE_SUFFIXLENGTH),
+            DataType::Hash | DataType::Set | DataType::ZSet => Ok(BASE_META_VALUE_LENGTH),
+            DataType::List => Ok(LISTS_META_VALUE_LENGTH),
+            _ => InvalidFormatSnafu {
+                message: format!("data type: {self:?} should not be used as meta value"),
+            }
+            .fail(),
         }
     }
 }
