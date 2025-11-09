@@ -132,6 +132,22 @@ impl StorageEngine for InMemoryStorageEngine {
         }
         Ok(())
     }
+
+    async fn batch_put(&self, operations: Vec<(Vec<u8>, Vec<u8>)>) -> RaftResult<()> {
+        let mut data = self.data.write().await;
+        for (key, value) in operations {
+            data.insert(key, value);
+        }
+        Ok(())
+    }
+
+    async fn batch_delete(&self, keys: Vec<Vec<u8>>) -> RaftResult<()> {
+        let mut data = self.data.write().await;
+        for key in keys {
+            data.remove(&key);
+        }
+        Ok(())
+    }
 }
 
 /// Test cluster for integration testing

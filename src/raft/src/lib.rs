@@ -49,12 +49,15 @@
 use openraft::Config;
 
 // pub mod adaptor; // TODO: Re-enable when adaptor is properly implemented
+#[cfg(test)]
+pub mod adaptor_poc; // Proof of concept for Adaptor pattern
 pub mod binlog;
 pub mod cluster_config;
 #[cfg(test)]
 pub mod cluster_tests;
 pub mod config_change;
 pub mod consistency;
+pub mod conversion;
 pub mod consistency_handler;
 pub mod discovery;
 pub mod error;
@@ -134,3 +137,6 @@ mod unit_tests {
 
 #[cfg(test)]
 pub mod integration_tests;
+
+#[cfg(test)]
+mod tests;

@@ -386,6 +386,7 @@ impl ConfigChangeManager {
             if !matches!(metrics.state, openraft::ServerState::Leader) {
                 return Err(RaftError::NotLeader {
                     leader_id: metrics.current_leader,
+                    context: "add_learner: not leader".to_string(),
                 });
             }
         } else {
@@ -1161,6 +1162,7 @@ impl ConfigChangeManager {
                 if !matches!(metrics.state, openraft::ServerState::Leader) {
                     return Err(RaftError::NotLeader {
                         leader_id: metrics.current_leader,
+                        context: "change_membership: not leader".to_string(),
                     });
                 }
             }
@@ -1287,6 +1289,7 @@ impl ConfigChangeManager {
                 if !matches!(metrics.state, openraft::ServerState::Leader) {
                     return Err(RaftError::NotLeader {
                         leader_id: metrics.current_leader,
+                        context: "remove_node: not leader".to_string(),
                     });
                 }
 

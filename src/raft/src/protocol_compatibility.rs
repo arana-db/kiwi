@@ -267,7 +267,7 @@ impl RedisProtocolCompatibility {
         // Process the command through the Raft handler
         match self.redis_handler.handle_command(command.clone()).await {
             Ok(response) => Ok(response),
-            Err(RaftError::NotLeader { leader_id }) => {
+            Err(RaftError::NotLeader { leader_id, .. }) => {
                 // This shouldn't happen as we checked leadership, but handle it
                 log::warn!("Lost leadership while processing write command");
                 Ok(self.format_cluster_error(ClusterErrorType::NotLeader { leader_id }, None))
@@ -1271,7 +1271,7 @@ impl RedisProtocolCompatibility {
     /// Convert Raft errors to Redis-compatible error responses
     pub fn format_redis_error(&self, error: &RaftError) -> RespData {
         match error {
-            RaftError::NotLeader { leader_id } => {
+            RaftError::NotLeader { leader_id, .. } => {
                 match leader_id {
                     Some(leader) => {
                         // Try to get leader endpoint for MOVED response
@@ -1280,8 +1280,8 @@ impl RedisProtocolCompatibility {
                     None => RespData::Error("CLUSTERDOWN The cluster is down".into()),
                 }
             }
-            RaftError::Timeout { operation: _ } => RespData::Error("ERR timeout".into()),
-            RaftError::Configuration { message } => {
+            RaftError::Timeout { .. } => RespData::Error("ERR timeout".into()),
+            RaftError::Configuration { message, .. } => {
                 // Map configuration errors to appropriate Redis error types
                 if message.contains("wrong number of arguments") {
                     RespData::Error(message.clone().into())

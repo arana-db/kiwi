@@ -64,7 +64,7 @@ foyer = { version = "0.17" }
 clap = { version = "4.0", features = ["derive"] }
 rand = "0.8"
 uuid = { version = "1.0", features = ["v4", "serde"] }
-openraft = { version = "0.9.21", features = ["serde"] }
+openraft = { version = "0.9.21", features = ["serde", "storage-v2"] }
 
 ## workspaces members
 engine = { path = "src/engine" }

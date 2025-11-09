@@ -152,8 +152,14 @@ impl ClientResponse {
 }
 
 /// Type configuration for openraft
-#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct TypeConfig;
+
+impl fmt::Display for TypeConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "TypeConfig")
+    }
+}
 
 impl openraft::RaftTypeConfig for TypeConfig {
     type D = ClientRequest;
@@ -166,10 +172,6 @@ impl openraft::RaftTypeConfig for TypeConfig {
     type Responder = openraft::impls::OneshotResponder<TypeConfig>;
 }
 
-/// Raft storage type alias - will be defined in storage module
-// pub type RaftStorage = openraft::storage::Adaptor<TypeConfig, crate::storage::RaftStorage>;
-/// Raft state machine type alias - will be defined in state_machine module
-// pub type RaftStateMachine = openraft::storage::Adaptor<TypeConfig, crate::state_machine::KiwiStateMachine>;
 /// Raft network type alias
 pub type RaftNetwork = crate::network::RaftNetworkClient;
 

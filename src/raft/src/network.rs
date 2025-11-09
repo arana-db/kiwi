@@ -116,12 +116,13 @@ impl NodeAuth {
     /// Generate HMAC for message authentication
     pub fn generate_hmac(&self, data: &[u8]) -> RaftResult<Vec<u8>> {
         let mut mac = HmacSha256::new_from_slice(&self.shared_secret).map_err(|e| {
-            RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
-                std::io::Error::new(
+            RaftError::Network(NetworkError::SerializationFailed {
+                source: serde_json::Error::io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!("HMAC key error: {}", e),
-                ),
-            )))
+                )),
+                context: "generate_hmac".to_string(),
+            })
         })?;
 
         mac.update(data);

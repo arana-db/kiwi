@@ -130,7 +130,10 @@ impl ConsistencyHandler {
         // Check if we're the leader
         if !self.raft_node.is_leader().await {
             let leader_id = self.raft_node.get_leader_id().await;
-            return Err(RaftError::NotLeader { leader_id });
+            return Err(RaftError::NotLeader { 
+                leader_id,
+                context: "handle_write: not leader".to_string(),
+            });
         }
 
         // Perform leadership confirmation
@@ -153,7 +156,10 @@ impl ConsistencyHandler {
         // but we should check if the data is too stale
         if !self.config.allow_follower_reads && !self.raft_node.is_leader().await {
             let leader_id = self.raft_node.get_leader_id().await;
-            return Err(RaftError::NotLeader { leader_id });
+            return Err(RaftError::NotLeader { 
+                leader_id,
+                context: "handle_read: not leader and follower reads disabled".to_string(),
+            });
         }
 
         // Check staleness if we're a follower
@@ -181,7 +187,10 @@ impl ConsistencyHandler {
         }
 
         let leader_id = self.raft_node.get_leader_id().await;
-        Err(RaftError::NotLeader { leader_id })
+        Err(RaftError::NotLeader { 
+            leader_id,
+            context: "handle_read: linearizable read failed".to_string(),
+        })
     }
 
     /// Confirm read index to ensure we have the latest committed state
@@ -201,7 +210,10 @@ impl ConsistencyHandler {
         // Step 2: Send heartbeat to majority to confirm leadership
         if !self.send_read_index_heartbeat(read_index).await? {
             let leader_id = self.raft_node.get_leader_id().await;
-            return Err(RaftError::NotLeader { leader_id });
+            return Err(RaftError::NotLeader { 
+                leader_id,
+                context: "linearizable_read: heartbeat failed".to_string(),
+            });
         }
 
         // Step 3: Wait for our applied index to catch up to read index
@@ -222,7 +234,10 @@ impl ConsistencyHandler {
             // Check if we're still the leader
             if !self.raft_node.is_leader().await {
                 let leader_id = self.raft_node.get_leader_id().await;
-                return Err(RaftError::NotLeader { leader_id });
+                return Err(RaftError::NotLeader { 
+                    leader_id,
+                    context: "linearizable_read: lost leadership during wait".to_string(),
+                });
             }
 
             tokio::time::sleep(Duration::from_millis(1)).await;

@@ -18,6 +18,7 @@
 //! Storage module for Raft implementation
 
 pub mod core;
+pub mod log_storage;
 
 pub use core::*;
 
