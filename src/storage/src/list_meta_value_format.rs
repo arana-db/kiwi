@@ -85,7 +85,7 @@ impl ListsMetaValue {
     }
 
     pub fn encode(&self) -> BytesMut {
-        // type(1) + user_value + version(8) + left_index(8) + right_index(8) + reserve(16) + ctime(8) + etime(8)
+        // type(1) + list_size(8) + version(8) + left_index(8) + right_index(8) + reserve(16) + ctime(8) + etime(8)
         let needed = TYPE_LENGTH
             + self.inner.user_value.len()
             + VERSION_LENGTH
