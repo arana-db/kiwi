@@ -20,6 +20,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use once_cell::sync::OnceCell;
+
 use engine::{Engine, RocksdbEngine};
 use foyer::{Cache, CacheBuilder};
 use kstd::lock_mgr::LockMgr;
@@ -33,8 +35,10 @@ use crate::custom_comparator::{
     lists_data_key_comparator_name, lists_data_key_compare, zsets_score_key_comparator_name,
     zsets_score_key_compare,
 };
+use crate::data_compaction_filter::DataCompactionFilterFactory;
 use crate::error::Error::RedisErr;
 use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
+use crate::meta_compaction_filter::MetaCompactionFilterFactory;
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
@@ -58,6 +62,18 @@ impl ColumnFamilyIndex {
             ColumnFamilyIndex::ListsDataCF => "list_data_cf",
             ColumnFamilyIndex::ZsetsDataCF => "zset_data_cf",
             ColumnFamilyIndex::ZsetsScoreCF => "zset_score_cf",
+        }
+    }
+
+    pub fn data_type(&self) -> Option<DataType> {
+        match self {
+            ColumnFamilyIndex::HashesDataCF => Some(DataType::Hash),
+            ColumnFamilyIndex::SetsDataCF => Some(DataType::Set),
+            ColumnFamilyIndex::ListsDataCF => Some(DataType::List),
+            ColumnFamilyIndex::ZsetsDataCF | ColumnFamilyIndex::ZsetsScoreCF => {
+                Some(DataType::ZSet)
+            }
+            ColumnFamilyIndex::MetaCF => None,
         }
     }
 }
@@ -144,30 +160,32 @@ impl Redis {
             ("zset_data_cf", false, Some(16 * 1024)),  // zset data: 16KB block size
             ("zset_score_cf", false, Some(16 * 1024)), // zset score: 16KB block size
         ];
-
+        let db_once_cell = Arc::new(OnceCell::new());
         let column_families: Vec<ColumnFamilyDescriptor> = CF_CONFIGS
             .iter()
             .map(|(name, use_bloom, block_size)| {
-                Self::create_cf_options(&self.storage, name, *use_bloom, *block_size)
+                Self::create_cf_options(
+                    &self.storage,
+                    name,
+                    *use_bloom,
+                    *block_size,
+                    Some(&db_once_cell),
+                )
             })
             .collect();
 
-        self.db = Some(Box::new(RocksdbEngine::new(
-            DB::open_cf_descriptors(&self.storage.options, db_path, column_families)
-                .context(RocksSnafu)?,
-        )));
+        let db = DB::open_cf_descriptors(&self.storage.options, db_path, column_families)
+            .context(RocksSnafu)?;
+        let engine = RocksdbEngine::new(db);
+        let db_arc = engine.shared_db();
+        let _ = db_once_cell.set(Arc::clone(&db_arc));
 
-        if let Some(db) = &self.db {
-            let mut handles = Vec::new();
-            for (name, _, _) in CF_CONFIGS {
-                if db.cf_handle(name).is_some() {
-                    // Store the column family name for later lookup
-                    handles.push(name.to_string());
-                }
-            }
-            self.handles = handles;
-        }
-
+        self.handles = CF_CONFIGS
+            .iter()
+            .filter(|(name, _, _)| engine.cf_handle(name).is_some())
+            .map(|(name, _, _)| name.to_string())
+            .collect();
+        self.db = Some(Box::new(engine));
         self.is_starting.store(false, Ordering::SeqCst);
 
         Ok(())
@@ -179,6 +197,7 @@ impl Redis {
         cf_name: &str,
         use_bloom_filter: bool,
         block_size: Option<usize>,
+        db_once_cell: Option<&Arc<OnceCell<Arc<DB>>>>,
     ) -> ColumnFamilyDescriptor {
         let mut cf_opts = storage_options.options.clone();
         let mut table_opts = BlockBasedOptions::default();
@@ -212,7 +231,29 @@ impl Redis {
             table_opts.set_block_cache(&cache);
         }
 
+        // Set table factory
         cf_opts.set_block_based_table_factory(&table_opts);
+
+        // Set compaction filter factory
+        if cf_name == ColumnFamilyIndex::MetaCF.name() {
+            cf_opts.set_compaction_filter_factory(MetaCompactionFilterFactory);
+        } else if let Some(db_once_cell) = db_once_cell {
+            if let Some(data_type) = [
+                ColumnFamilyIndex::HashesDataCF,
+                ColumnFamilyIndex::SetsDataCF,
+                ColumnFamilyIndex::ListsDataCF,
+                ColumnFamilyIndex::ZsetsDataCF,
+                ColumnFamilyIndex::ZsetsScoreCF,
+            ]
+            .iter()
+            .find(|cf| cf.name() == cf_name)
+            .and_then(|cf| cf.data_type())
+            {
+                let factory = DataCompactionFilterFactory::new(Arc::clone(db_once_cell), data_type);
+                cf_opts.set_compaction_filter_factory(factory);
+            }
+        }
+
         ColumnFamilyDescriptor::new(cf_name, cf_opts)
     }
 

@@ -22,14 +22,15 @@ mod redis_list_test {
     use std::sync::Arc;
 
     use kstd::lock_mgr::LockMgr;
-    use storage::{BgTaskHandler, BeforeOrAfter, Redis, StorageOptions, unique_test_db_path};
+    use storage::{
+        BeforeOrAfter, BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db,
+        unique_test_db_path,
+    };
 
     fn create_test_redis() -> Redis {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -695,7 +696,10 @@ mod redis_list_test {
 
         // Verify the list content
         let range = redis.lrange(key, 0, -1).expect("lrange should succeed");
-        assert_eq!(range, vec![b"a".to_vec(), b"x".to_vec(), b"b".to_vec(), b"c".to_vec()]);
+        assert_eq!(
+            range,
+            vec![b"a".to_vec(), b"x".to_vec(), b"b".to_vec(), b"c".to_vec()]
+        );
     }
 
     #[tokio::test]
@@ -716,7 +720,10 @@ mod redis_list_test {
 
         // Verify the list content
         let range = redis.lrange(key, 0, -1).expect("lrange should succeed");
-        assert_eq!(range, vec![b"a".to_vec(), b"b".to_vec(), b"y".to_vec(), b"c".to_vec()]);
+        assert_eq!(
+            range,
+            vec![b"a".to_vec(), b"b".to_vec(), b"y".to_vec(), b"c".to_vec()]
+        );
     }
 
     #[tokio::test]
@@ -789,17 +796,26 @@ mod redis_list_test {
             .expect("rpush should succeed");
 
         // RPOPLPUSH from source to destination
-        let result = redis.rpoplpush(source_key, dest_key).expect("rpoplpush should succeed");
+        let result = redis
+            .rpoplpush(source_key, dest_key)
+            .expect("rpoplpush should succeed");
         assert!(result.is_some());
         assert_eq!(result.unwrap(), b"c");
 
         // Verify source list: should become [a, b]
-        let source_range = redis.lrange(source_key, 0, -1).expect("lrange should succeed");
+        let source_range = redis
+            .lrange(source_key, 0, -1)
+            .expect("lrange should succeed");
         assert_eq!(source_range, vec![b"a".to_vec(), b"b".to_vec()]);
 
         // Verify destination list: should become [c, x, y]
-        let dest_range = redis.lrange(dest_key, 0, -1).expect("lrange should succeed");
-        assert_eq!(dest_range, vec![b"c".to_vec(), b"x".to_vec(), b"y".to_vec()]);
+        let dest_range = redis
+            .lrange(dest_key, 0, -1)
+            .expect("lrange should succeed");
+        assert_eq!(
+            dest_range,
+            vec![b"c".to_vec(), b"x".to_vec(), b"y".to_vec()]
+        );
     }
 
     #[tokio::test]
@@ -814,11 +830,15 @@ mod redis_list_test {
             .expect("rpush should succeed");
 
         // Try RPOPLPUSH from empty source
-        let result = redis.rpoplpush(source_key, dest_key).expect("rpoplpush should succeed");
+        let result = redis
+            .rpoplpush(source_key, dest_key)
+            .expect("rpoplpush should succeed");
         assert!(result.is_none());
 
         // Verify destination list is unchanged
-        let dest_range = redis.lrange(dest_key, 0, -1).expect("lrange should succeed");
+        let dest_range = redis
+            .lrange(dest_key, 0, -1)
+            .expect("lrange should succeed");
         assert_eq!(dest_range, vec![b"x".to_vec(), b"y".to_vec()]);
     }
 
@@ -834,16 +854,22 @@ mod redis_list_test {
             .expect("rpush should succeed");
 
         // RPOPLPUSH to non-existent destination (should create it)
-        let result = redis.rpoplpush(source_key, dest_key).expect("rpoplpush should succeed");
+        let result = redis
+            .rpoplpush(source_key, dest_key)
+            .expect("rpoplpush should succeed");
         assert!(result.is_some());
         assert_eq!(result.unwrap(), b"b");
 
         // Verify source list: should become [a]
-        let source_range = redis.lrange(source_key, 0, -1).expect("lrange should succeed");
+        let source_range = redis
+            .lrange(source_key, 0, -1)
+            .expect("lrange should succeed");
         assert_eq!(source_range, vec![b"a".to_vec()]);
 
         // Verify destination list: should become [b]
-        let dest_range = redis.lrange(dest_key, 0, -1).expect("lrange should succeed");
+        let dest_range = redis
+            .lrange(dest_key, 0, -1)
+            .expect("lrange should succeed");
         assert_eq!(dest_range, vec![b"b".to_vec()]);
     }
 
@@ -854,7 +880,9 @@ mod redis_list_test {
         let dest_key = b"nonexistent_dest";
 
         // Try RPOPLPUSH with both lists non-existent
-        let result = redis.rpoplpush(source_key, dest_key).expect("rpoplpush should succeed");
+        let result = redis
+            .rpoplpush(source_key, dest_key)
+            .expect("rpoplpush should succeed");
         assert!(result.is_none());
 
         // Verify neither list was created
@@ -867,8 +895,8 @@ mod redis_list_test {
     #[tokio::test]
     async fn test_concurrent_lpush() {
         use std::sync::Arc;
-        use std::thread;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
 
         let redis = Arc::new(create_test_redis());
         let key = b"concurrent_list";
@@ -918,7 +946,8 @@ mod redis_list_test {
         assert_eq!(list_content.len(), final_count);
 
         // Convert to strings for easier verification
-        let mut content_strings: Vec<String> = list_content.iter()
+        let mut content_strings: Vec<String> = list_content
+            .iter()
             .map(|v| String::from_utf8_lossy(v).to_string())
             .collect();
         content_strings.sort(); // Sort to make verification deterministic
@@ -927,8 +956,11 @@ mod redis_list_test {
         for thread_id in 0..num_threads {
             for i in 0..operations_per_thread {
                 let expected_value = format!("thread_{}_value_{}", thread_id, i);
-                assert!(content_strings.contains(&expected_value),
-                    "Missing value: {}", expected_value);
+                assert!(
+                    content_strings.contains(&expected_value),
+                    "Missing value: {}",
+                    expected_value
+                );
             }
         }
     }
@@ -936,15 +968,17 @@ mod redis_list_test {
     #[tokio::test]
     async fn test_concurrent_lpushx_rpushx() {
         use std::sync::Arc;
-        use std::thread;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
 
         let redis = Arc::new(create_test_redis());
         let key = b"concurrent_list_pushx";
         let num_threads = 8;
 
         // Initialize the list first
-        redis.lpush(key, &[b"initial".to_vec()]).expect("initial lpush should succeed");
+        redis
+            .lpush(key, &[b"initial".to_vec()])
+            .expect("initial lpush should succeed");
 
         let successful_lpushx = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![];
@@ -962,14 +996,18 @@ mod redis_list_test {
                     if thread_id % 2 == 0 {
                         // Use LPUSHX
                         match redis_clone.lpushx(&key, &[value.clone()]) {
-                            Ok(len) if len > 0 => successful_lpushx_clone.fetch_add(1, Ordering::Relaxed),
+                            Ok(len) if len > 0 => {
+                                successful_lpushx_clone.fetch_add(1, Ordering::Relaxed)
+                            }
                             Ok(_) => 0, // List doesn't exist (shouldn't happen in this test)
                             Err(_) => 0,
                         };
                     } else {
                         // Use RPUSHX
                         match redis_clone.rpushx(&key, &[value.clone()]) {
-                            Ok(len) if len > 0 => successful_lpushx_clone.fetch_add(1, Ordering::Relaxed),
+                            Ok(len) if len > 0 => {
+                                successful_lpushx_clone.fetch_add(1, Ordering::Relaxed)
+                            }
                             Ok(_) => 0, // List doesn't exist (shouldn't happen in this test)
                             Err(_) => 0,
                         };
@@ -996,8 +1034,8 @@ mod redis_list_test {
     #[tokio::test]
     async fn test_concurrent_rpoplpush() {
         use std::sync::Arc;
-        use std::thread;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
 
         let redis = Arc::new(create_test_redis());
         let source_key = b"concurrent_source";
@@ -1010,7 +1048,9 @@ mod redis_list_test {
         for i in 0..(num_threads * items_per_thread) {
             let item = format!("item_{}", i);
             expected_items.push(item.clone());
-            redis.rpush(source_key, &[item.into_bytes()]).expect("initial rpush should succeed");
+            redis
+                .rpush(source_key, &[item.into_bytes()])
+                .expect("initial rpush should succeed");
         }
 
         let moved_items = Arc::new(AtomicUsize::new(0));
@@ -1065,8 +1105,8 @@ mod redis_list_test {
     #[tokio::test]
     async fn test_concurrent_linsert() {
         use std::sync::Arc;
-        use std::thread;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::thread;
 
         let redis = Arc::new(create_test_redis());
         let key = b"concurrent_linsert_list";
@@ -1074,8 +1114,12 @@ mod redis_list_test {
         let inserts_per_thread = 10;
 
         // Create initial list with some pivot elements
-        redis.lpush(key, &[b"pivot_start".to_vec()]).expect("initial lpush failed");
-        redis.lpush(key, &[b"pivot_end".to_vec()]).expect("initial lpush failed");
+        redis
+            .lpush(key, &[b"pivot_start".to_vec()])
+            .expect("initial lpush failed");
+        redis
+            .lpush(key, &[b"pivot_end".to_vec()])
+            .expect("initial lpush failed");
 
         let successful_inserts = Arc::new(AtomicUsize::new(0));
         let mut handles = vec![];
@@ -1129,7 +1173,8 @@ mod redis_list_test {
         assert_eq!(list_content.len(), list_len as usize);
 
         // Check that pivot elements are still there
-        let content_strings: Vec<String> = list_content.iter()
+        let content_strings: Vec<String> = list_content
+            .iter()
             .map(|v| String::from_utf8_lossy(v).to_string())
             .collect();
 

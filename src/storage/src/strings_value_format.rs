@@ -16,7 +16,6 @@
 // limitations under the License.
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use rocksdb::CompactionDecision;
 use snafu::ensure;
 
 use crate::base_value_format::{DataType, InternalValue, ParsedInternalValue};
@@ -169,14 +168,6 @@ impl ParsedStringsValue {
         let bytes = self.inner.etime.to_le_bytes();
         let dst = &mut self.inner.value[suffix_start..suffix_start + TIMESTAMP_LENGTH];
         dst.copy_from_slice(&bytes);
-    }
-
-    pub fn filter_decision(&self, cur_time: u64) -> CompactionDecision {
-        if self.inner.etime != 0 && self.inner.etime < cur_time {
-            CompactionDecision::Remove
-        } else {
-            CompactionDecision::Keep
-        }
     }
 }
 

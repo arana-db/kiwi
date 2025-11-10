@@ -22,7 +22,7 @@ mod redis_set_test {
     use bytes::BufMut;
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, unique_test_db_path,
+        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path,
     };
 
     // Build a valid Set meta bytes:
@@ -47,9 +47,7 @@ mod redis_set_test {
     fn test_smembers_basic() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -89,17 +87,13 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
     #[test]
     fn test_sadd_basic_and_dedup() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -118,18 +112,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_scard_after_sadd_and_missing_key() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -156,18 +146,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sadd_to_existing_set() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -203,18 +189,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_smembers_empty_set() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -239,18 +221,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_smembers_large_set() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -286,18 +264,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_smembers_unicode_members() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -337,18 +311,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sdiff_basic() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -379,18 +349,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sdiff_multiple_sets() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -429,18 +395,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sdiff_non_existent_keys() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -472,18 +434,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sdiff_empty_sets() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -513,18 +471,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sinter_basic() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -557,18 +511,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sinter_multiple_sets() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -607,18 +557,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sinter_empty_result() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -648,18 +594,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sinter_non_existent_keys() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -688,18 +630,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sinter_single_set() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -726,18 +664,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sunion_basic() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -770,18 +704,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sunion_multiple_sets() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -825,18 +755,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sunion_non_existent_keys() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -868,18 +794,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sunion_single_set() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -906,18 +828,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sunion_uniqueness() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -950,18 +868,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sscan_basic() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -1007,18 +921,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sscan_pattern_matching() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -1054,18 +964,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sscan_empty_set() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -1084,18 +990,14 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
     fn test_sscan_count_parameter() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -1126,8 +1028,6 @@ mod redis_set_test {
         redis.set_need_close(true);
         drop(redis);
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
     }
 }
