@@ -20,6 +20,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use chrono::Utc;
+use once_cell::sync::OnceCell;
+
 use engine::{Engine, RocksdbEngine};
 use foyer::{Cache, CacheBuilder};
 use kstd::lock_mgr::LockMgr;
@@ -33,11 +36,15 @@ use crate::custom_comparator::{
     lists_data_key_comparator_name, lists_data_key_compare, zsets_score_key_comparator_name,
     zsets_score_key_compare,
 };
+use crate::data_compaction_filter::DataCompactionFilterFactory;
 use crate::error::Error::RedisErr;
+use crate::error::InvalidFormatSnafu;
 use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
+use crate::meta_compaction_filter::MetaCompactionFilterFactory;
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
+use crate::storage_define::TYPE_LENGTH;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnFamilyIndex {
@@ -58,6 +65,18 @@ impl ColumnFamilyIndex {
             ColumnFamilyIndex::ListsDataCF => "list_data_cf",
             ColumnFamilyIndex::ZsetsDataCF => "zset_data_cf",
             ColumnFamilyIndex::ZsetsScoreCF => "zset_score_cf",
+        }
+    }
+
+    pub fn data_type(&self) -> Option<DataType> {
+        match self {
+            ColumnFamilyIndex::HashesDataCF => Some(DataType::Hash),
+            ColumnFamilyIndex::SetsDataCF => Some(DataType::Set),
+            ColumnFamilyIndex::ListsDataCF => Some(DataType::List),
+            ColumnFamilyIndex::ZsetsDataCF | ColumnFamilyIndex::ZsetsScoreCF => {
+                Some(DataType::ZSet)
+            }
+            ColumnFamilyIndex::MetaCF => None,
         }
     }
 }
@@ -144,30 +163,32 @@ impl Redis {
             ("zset_data_cf", false, Some(16 * 1024)),  // zset data: 16KB block size
             ("zset_score_cf", false, Some(16 * 1024)), // zset score: 16KB block size
         ];
-
+        let db_once_cell = Arc::new(OnceCell::new());
         let column_families: Vec<ColumnFamilyDescriptor> = CF_CONFIGS
             .iter()
             .map(|(name, use_bloom, block_size)| {
-                Self::create_cf_options(&self.storage, name, *use_bloom, *block_size)
+                Self::create_cf_options(
+                    &self.storage,
+                    name,
+                    *use_bloom,
+                    *block_size,
+                    Some(&db_once_cell),
+                )
             })
             .collect();
 
-        self.db = Some(Box::new(RocksdbEngine::new(
-            DB::open_cf_descriptors(&self.storage.options, db_path, column_families)
-                .context(RocksSnafu)?,
-        )));
+        let db = DB::open_cf_descriptors(&self.storage.options, db_path, column_families)
+            .context(RocksSnafu)?;
+        let engine = RocksdbEngine::new(db);
+        let db_arc = engine.shared_db();
+        let _ = db_once_cell.set(Arc::clone(&db_arc));
 
-        if let Some(db) = &self.db {
-            let mut handles = Vec::new();
-            for (name, _, _) in CF_CONFIGS {
-                if db.cf_handle(name).is_some() {
-                    // Store the column family name for later lookup
-                    handles.push(name.to_string());
-                }
-            }
-            self.handles = handles;
-        }
-
+        self.handles = CF_CONFIGS
+            .iter()
+            .filter(|(name, _, _)| engine.cf_handle(name).is_some())
+            .map(|(name, _, _)| name.to_string())
+            .collect();
+        self.db = Some(Box::new(engine));
         self.is_starting.store(false, Ordering::SeqCst);
 
         Ok(())
@@ -179,6 +200,7 @@ impl Redis {
         cf_name: &str,
         use_bloom_filter: bool,
         block_size: Option<usize>,
+        db_once_cell: Option<&Arc<OnceCell<Arc<DB>>>>,
     ) -> ColumnFamilyDescriptor {
         let mut cf_opts = storage_options.options.clone();
         let mut table_opts = BlockBasedOptions::default();
@@ -212,7 +234,29 @@ impl Redis {
             table_opts.set_block_cache(&cache);
         }
 
+        // Set table factory
         cf_opts.set_block_based_table_factory(&table_opts);
+
+        // Set compaction filter factory
+        if cf_name == ColumnFamilyIndex::MetaCF.name() {
+            cf_opts.set_compaction_filter_factory(MetaCompactionFilterFactory);
+        } else if let Some(db_once_cell) = db_once_cell {
+            if let Some(data_type) = [
+                ColumnFamilyIndex::HashesDataCF,
+                ColumnFamilyIndex::SetsDataCF,
+                ColumnFamilyIndex::ListsDataCF,
+                ColumnFamilyIndex::ZsetsDataCF,
+                ColumnFamilyIndex::ZsetsScoreCF,
+            ]
+            .iter()
+            .find(|cf| cf.name() == cf_name)
+            .and_then(|cf| cf.data_type())
+            {
+                let factory = DataCompactionFilterFactory::new(Arc::clone(db_once_cell), data_type);
+                cf_opts.set_compaction_filter_factory(factory);
+            }
+        }
+
         ColumnFamilyDescriptor::new(cf_name, cf_opts)
     }
 
@@ -421,6 +465,110 @@ impl Redis {
                 .to_string(),
             location: Default::default(),
         })
+    }
+
+    /// check if the encoded value of any type is expired (type-agnostic)
+    ///
+    /// This function can check the expired status without parsing the value.
+    ///
+    /// The etime field is in the last 8 bytes of the value format of all types:
+    /// - String: | type(1B) | value | reserve(16B) | ctime(8B) | etime(8B) |
+    /// - Hash/Set/ZSet: | type(1B) | count(8B) | version(8B) | reserve(16B) | ctime(8B) | etime(8B) |
+    /// - List: | type(1B) | count(8B) | version(8B) | left(8B) | right(8B) | reserve(16B) | ctime(8B) | etime(8B) |
+    ///
+    /// # Arguments
+    /// * `val_raw` - the raw value bytes
+    ///
+    /// # Returns
+    /// * `Ok(true)` - the value is expired or the count is 0
+    /// * `Ok(false)` - the value is not expired and is valid
+    /// * `Err(_)` - parsing error
+    pub fn is_stale(&self, val_raw: &[u8]) -> Result<bool> {
+        if val_raw.is_empty() {
+            return Ok(false);
+        }
+
+        let data_type = DataType::try_from(val_raw[0])?;
+        if val_raw.len() < data_type.min_meta_raw_len()? {
+            return InvalidFormatSnafu {
+                message: format!("Invalid value length for data type: {data_type:?}"),
+            }
+            .fail();
+        }
+
+        let now = Utc::now().timestamp_micros() as u64;
+        match data_type {
+            DataType::String => {
+                // | type(1B) | value | reserve(16B) | ctime(8B) | etime(8B) |
+                let etime_offset = val_raw.len() - 8;
+                let etime_bytes = &val_raw[etime_offset..etime_offset + 8];
+                let etime = u64::from_le_bytes(etime_bytes.try_into().map_err(|_| RedisErr {
+                    message: "Failed to read etime".to_string(),
+                    location: Default::default(),
+                })?);
+
+                if etime == 0 {
+                    return Ok(false);
+                }
+                Ok(etime < now)
+            }
+            DataType::Hash | DataType::Set | DataType::ZSet => {
+                // | type(1B) | count(8B) | version(8B) | reserve(16B) | ctime(8B) | etime(8B) |
+                let count_offset = TYPE_LENGTH;
+                let count_bytes = &val_raw[count_offset..count_offset + 8];
+                let count = u64::from_le_bytes(count_bytes.try_into().map_err(|_| RedisErr {
+                    message: "Failed to read count".to_string(),
+                    location: Default::default(),
+                })?);
+
+                if count == 0 {
+                    return Ok(true);
+                }
+
+                let etime_offset = val_raw.len() - 8;
+                let etime_bytes = &val_raw[etime_offset..etime_offset + 8];
+                let etime = u64::from_le_bytes(etime_bytes.try_into().map_err(|_| RedisErr {
+                    message: "Failed to read etime".to_string(),
+                    location: Default::default(),
+                })?);
+
+                if etime == 0 {
+                    return Ok(false);
+                }
+                Ok(etime < now)
+            }
+            DataType::List => {
+                // | type(1B) | count(8B) | version(8B) | left(8B) | right(8B) | reserve(16B) | ctime(8B) | etime(8B) |
+                let count_offset = TYPE_LENGTH;
+                let count_bytes = &val_raw[count_offset..count_offset + 8];
+                let count = u64::from_le_bytes(count_bytes.try_into().map_err(|_| RedisErr {
+                    message: "Failed to read count".to_string(),
+                    location: Default::default(),
+                })?);
+
+                if count == 0 {
+                    return Ok(true);
+                }
+
+                let etime_offset = val_raw.len() - 8;
+                let etime_bytes = &val_raw[etime_offset..etime_offset + 8];
+                let etime = u64::from_le_bytes(etime_bytes.try_into().map_err(|_| RedisErr {
+                    message: "Failed to read etime".to_string(),
+                    location: Default::default(),
+                })?);
+
+                if etime == 0 {
+                    return Ok(false);
+                }
+                Ok(etime < now)
+            }
+            _ => InvalidFormatSnafu {
+                message: format!(
+                    "data type: {data_type:?} should not be used as meta value: {val_raw:?}"
+                ),
+            }
+            .fail(),
+        }
     }
 }
 
