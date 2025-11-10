@@ -22,13 +22,13 @@ mod data_compaction_filter;
 mod meta_compaction_filter;
 
 mod base_key_format;
-mod base_meta_value_format;
-mod base_value_format;
+pub mod base_meta_value_format;
+pub mod base_value_format;
 mod custom_comparator;
 
-mod strings_value_format;
+pub mod strings_value_format;
 
-mod list_meta_value_format;
+pub mod list_meta_value_format;
 mod lists_data_key_format;
 
 mod coding;
