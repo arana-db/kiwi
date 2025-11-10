@@ -56,8 +56,7 @@ use openraft::Config;
 // pub mod adaptor_poc; // Proof of concept for Adaptor pattern
 // #[cfg(test)]
 // pub mod minimal_storage; // Minimal working storage implementation
-// #[cfg(test)]
-// pub mod working_adaptor_v2; // Working Adaptor implementation v2
+pub mod adaptor_integration;
 pub mod binlog;
 pub mod cluster_config;
 #[cfg(test)]

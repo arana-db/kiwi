@@ -18,7 +18,7 @@
 //! Raft network layer implementation
 
 use crate::error::{NetworkError, RaftError, RaftResult};
-use crate::types::{NodeId, TypeConfig};
+use crate::types::{BasicNode, NodeId, TypeConfig};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use hmac::{Hmac, Mac};
@@ -1362,6 +1362,17 @@ impl KiwiRaftNetworkFactory {
     pub async fn check_partitions(&self) -> Vec<NodeId> {
         self.message_router.check_partitions().await
     }
+
+    /// Internal helper to build a network client without requiring mutable access
+    pub(crate) fn build_client(&self, target: NodeId) -> RaftNetworkClient {
+        RaftNetworkClient::with_source_node(
+            self.source_node,
+            target,
+            self.endpoints.clone(),
+            self.connection_pool.clone(),
+            self.message_router.clone(),
+        )
+    }
 }
 
 impl RaftNetworkFactory<TypeConfig> for KiwiRaftNetworkFactory {
@@ -1373,15 +1384,8 @@ impl RaftNetworkFactory<TypeConfig> for KiwiRaftNetworkFactory {
         target: NodeId,
         _node: &openraft::BasicNode,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Self::Network> + Send + '_>> {
-        Box::pin(async move {
-            RaftNetworkClient::with_source_node(
-                self.source_node,
-                target,
-                self.endpoints.clone(),
-                self.connection_pool.clone(),
-                self.message_router.clone(),
-            )
-        })
+        let client = self.build_client(target);
+        Box::pin(async move { client })
     }
 }
 

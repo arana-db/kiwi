@@ -23,11 +23,12 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::ops::RangeBounds;
+use std::path::Path;
 use std::sync::Arc;
 
 use openraft::storage::Adaptor;
 use openraft::{
-    Entry, EntryPayload, LogId, RaftLogId, RaftStorage, RaftTypeConfig, Snapshot, SnapshotMeta,
+    Entry, EntryPayload, LogId, RaftStorage, RaftTypeConfig, Snapshot, SnapshotMeta,
     StorageError as OpenraftStorageError, StoredMembership,
 };
 use tokio::sync::RwLock;
@@ -48,33 +49,38 @@ pub struct KiwiUnifiedStorage {
 }
 
 impl KiwiUnifiedStorage {
-    /// Create a new unified storage instance
-    pub fn new(node_id: NodeId) -> crate::error::RaftResult<Self> {
-        let log_storage = Arc::new(KiwiRaftStorage::new()?);
+    /// Create a new unified storage instance backed by RocksDB
+    pub fn new<P: AsRef<Path>>(
+        node_id: NodeId,
+        db_path: P,
+    ) -> crate::error::RaftResult<Self> {
+        let log_storage = Arc::new(KiwiRaftStorage::new(db_path)?);
         let state_machine = Arc::new(KiwiStateMachine::new(node_id));
-        let snapshots = Arc::new(RwLock::new(HashMap::new()));
-
-        Ok(Self {
-            log_storage,
-            state_machine,
-            snapshots,
-        })
+        Ok(Self::from_components(log_storage, state_machine))
     }
 
     /// Create a new unified storage instance with custom storage engine
-    pub fn with_storage_engine(
+    pub fn with_storage_engine<P: AsRef<Path>>(
         node_id: NodeId,
+        db_path: P,
         storage_engine: Arc<dyn crate::state_machine::core::StorageEngine>,
     ) -> crate::error::RaftResult<Self> {
-        let log_storage = Arc::new(KiwiRaftStorage::new()?);
+        let log_storage = Arc::new(KiwiRaftStorage::new(db_path)?);
         let state_machine = Arc::new(KiwiStateMachine::with_storage_engine(node_id, storage_engine));
-        let snapshots = Arc::new(RwLock::new(HashMap::new()));
+        Ok(Self::from_components(log_storage, state_machine))
+    }
 
-        Ok(Self {
+    /// Create unified storage from pre-built components
+    pub fn from_components(
+        log_storage: Arc<KiwiRaftStorage>,
+        state_machine: Arc<KiwiStateMachine>,
+    ) -> Self {
+        let snapshots = Arc::new(RwLock::new(HashMap::new()));
+        Self {
             log_storage,
             state_machine,
             snapshots,
-        })
+        }
     }
 
     /// Get the state machine component
@@ -102,8 +108,8 @@ fn to_storage_error(err: RaftError) -> OpenraftStorageError<NodeId> {
 }
 
 /// Implement RaftStorage for KiwiUnifiedStorage to work with Adaptor
-#[async_trait::async_trait]
-impl<'a> RaftStorage<TypeConfig> for KiwiUnifiedStorage {
+#[openraft::add_async_trait]
+impl RaftStorage<TypeConfig> for KiwiUnifiedStorage {
     type LogReader = Self;
     type SnapshotBuilder = Self;
 
@@ -433,24 +439,29 @@ impl openraft::storage::RaftSnapshotBuilder<TypeConfig> for KiwiUnifiedStorage {
 }
 
 /// Create an Adaptor-based Raft storage for use with OpenRaft
-pub fn create_raft_storage(node_id: NodeId) -> crate::error::RaftResult<(
+pub fn create_raft_storage<P: AsRef<Path>>(
+    node_id: NodeId,
+    db_path: P,
+) -> crate::error::RaftResult<(
     impl openraft::storage::RaftLogStorage<TypeConfig>,
     impl openraft::storage::RaftStateMachine<TypeConfig>,
 )> {
-    let unified_storage = KiwiUnifiedStorage::new(node_id)?;
+    let unified_storage = KiwiUnifiedStorage::new(node_id, db_path)?;
     let (log_storage, state_machine) = Adaptor::new(unified_storage);
     Ok((log_storage, state_machine))
 }
 
 /// Create an Adaptor-based Raft storage with custom storage engine
-pub fn create_raft_storage_with_engine(
+pub fn create_raft_storage_with_engine<P: AsRef<Path>>(
     node_id: NodeId,
+    db_path: P,
     storage_engine: Arc<dyn crate::state_machine::core::StorageEngine>,
 ) -> crate::error::RaftResult<(
     impl openraft::storage::RaftLogStorage<TypeConfig>,
     impl openraft::storage::RaftStateMachine<TypeConfig>,
 )> {
-    let unified_storage = KiwiUnifiedStorage::with_storage_engine(node_id, storage_engine)?;
+    let unified_storage =
+        KiwiUnifiedStorage::with_storage_engine(node_id, db_path, storage_engine)?;
     let (log_storage, state_machine) = Adaptor::new(unified_storage);
     Ok((log_storage, state_machine))
 }
@@ -459,11 +470,14 @@ pub fn create_raft_storage_with_engine(
 mod tests {
     use super::*;
     use openraft::storage::{RaftLogStorage, RaftStateMachine};
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_adaptor_integration() {
         let node_id = 1;
-        let (mut log_storage, mut state_machine) = create_raft_storage(node_id).unwrap();
+        let temp_dir = TempDir::new().unwrap();
+        let (mut log_storage, mut state_machine) =
+            create_raft_storage(node_id, temp_dir.path()).unwrap();
 
         // Test log storage
         let log_state = log_storage.get_log_state().await.unwrap();
