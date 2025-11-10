@@ -21,26 +21,8 @@
 
 use crate::state_machine::KiwiStateMachine;
 use crate::storage::RaftStorage;
-use crate::types::{ClientRequest, ConsistencyLevel, NodeId, RedisCommand, RequestId, TypeConfig};
-// Removed unused import: bytes::Bytes
-use openraft::{Entry, EntryPayload, LogId};
+use crate::types::{ClientRequest, ConsistencyLevel, RedisCommand, RequestId};
 use tempfile::TempDir;
-
-/// Helper function to create a test entry
-fn create_test_entry(index: u64, term: u64, request: ClientRequest) -> Entry<TypeConfig> {
-    Entry {
-        log_id: LogId::new(openraft::CommittedLeaderId::new(term, NodeId::default()), index),
-        payload: EntryPayload::Normal(request),
-    }
-}
-
-/// Helper function to create a blank entry
-fn create_blank_entry(index: u64, term: u64) -> Entry<TypeConfig> {
-    Entry {
-        log_id: LogId::new(openraft::CommittedLeaderId::new(term, NodeId::default()), index),
-        payload: EntryPayload::Blank,
-    }
-}
 
 #[tokio::test]
 async fn test_basic_storage_creation() {

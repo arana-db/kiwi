@@ -150,4 +150,5 @@ pub mod integration_tests;
 pub mod integration_tests_working;
 
 #[cfg(test)]
-mod tests;
+#[path = "tests/mod.rs"]
+mod test_harness;
