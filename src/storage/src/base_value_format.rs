@@ -23,7 +23,11 @@ use bytes::{BufMut, Bytes, BytesMut};
 use chrono::Utc;
 use snafu::OptionExt;
 
-use crate::error::{Error, InvalidFormatSnafu, Result};
+use crate::{
+    error::{Error, InvalidFormatSnafu, Result},
+    list_meta_value_format::LISTS_META_VALUE_LENGTH,
+    storage_define::{BASE_META_VALUE_LENGTH, STRING_VALUE_SUFFIXLENGTH, TYPE_LENGTH},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataType {
@@ -36,7 +40,20 @@ pub enum DataType {
     All = 6,
 }
 
-// TODO: use unified Result
+impl DataType {
+    pub fn min_meta_raw_len(self) -> Result<usize> {
+        match self {
+            DataType::String => Ok(TYPE_LENGTH + STRING_VALUE_SUFFIXLENGTH),
+            DataType::Hash | DataType::Set | DataType::ZSet => Ok(BASE_META_VALUE_LENGTH),
+            DataType::List => Ok(LISTS_META_VALUE_LENGTH),
+            _ => InvalidFormatSnafu {
+                message: format!("data type: {self:?} should not be used as meta value"),
+            }
+            .fail(),
+        }
+    }
+}
+
 impl TryFrom<u8> for DataType {
     type Error = Error;
 

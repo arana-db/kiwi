@@ -20,6 +20,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use chrono::Utc;
 use once_cell::sync::OnceCell;
 
 use engine::{Engine, RocksdbEngine};
@@ -37,11 +38,13 @@ use crate::custom_comparator::{
 };
 use crate::data_compaction_filter::DataCompactionFilterFactory;
 use crate::error::Error::RedisErr;
+use crate::error::InvalidFormatSnafu;
 use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
 use crate::meta_compaction_filter::MetaCompactionFilterFactory;
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
+use crate::storage_define::TYPE_LENGTH;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnFamilyIndex {
@@ -462,6 +465,110 @@ impl Redis {
                 .to_string(),
             location: Default::default(),
         })
+    }
+
+    /// check if the encoded value of any type is expired (type-agnostic)
+    ///
+    /// This function can check the expired status without parsing the value.
+    ///
+    /// The etime field is in the last 8 bytes of the value format of all types:
+    /// - String: | type(1B) | value | reserve(16B) | ctime(8B) | etime(8B) |
+    /// - Hash/Set/ZSet: | type(1B) | count(8B) | version(8B) | reserve(16B) | ctime(8B) | etime(8B) |
+    /// - List: | type(1B) | count(8B) | version(8B) | left(8B) | right(8B) | reserve(16B) | ctime(8B) | etime(8B) |
+    ///
+    /// # Arguments
+    /// * `val_raw` - the raw value bytes
+    ///
+    /// # Returns
+    /// * `Ok(true)` - the value is expired or the count is 0
+    /// * `Ok(false)` - the value is not expired and is valid
+    /// * `Err(_)` - parsing error
+    pub fn is_stale(&self, val_raw: &[u8]) -> Result<bool> {
+        if val_raw.is_empty() {
+            return Ok(false);
+        }
+
+        let data_type = DataType::try_from(val_raw[0])?;
+        if val_raw.len() < data_type.min_meta_raw_len()? {
+            return InvalidFormatSnafu {
+                message: format!("Invalid value length for data type: {data_type:?}"),
+            }
+            .fail();
+        }
+
+        let now = Utc::now().timestamp_micros() as u64;
+        match data_type {
+            DataType::String => {
+                // | type(1B) | value | reserve(16B) | ctime(8B) | etime(8B) |
+                let etime_offset = val_raw.len() - 8;
+                let etime_bytes = &val_raw[etime_offset..etime_offset + 8];
+                let etime = u64::from_le_bytes(etime_bytes.try_into().map_err(|_| RedisErr {
+                    message: "Failed to read etime".to_string(),
+                    location: Default::default(),
+                })?);
+
+                if etime == 0 {
+                    return Ok(false);
+                }
+                Ok(etime < now)
+            }
+            DataType::Hash | DataType::Set | DataType::ZSet => {
+                // | type(1B) | count(8B) | version(8B) | reserve(16B) | ctime(8B) | etime(8B) |
+                let count_offset = TYPE_LENGTH;
+                let count_bytes = &val_raw[count_offset..count_offset + 8];
+                let count = u64::from_le_bytes(count_bytes.try_into().map_err(|_| RedisErr {
+                    message: "Failed to read count".to_string(),
+                    location: Default::default(),
+                })?);
+
+                if count == 0 {
+                    return Ok(true);
+                }
+
+                let etime_offset = val_raw.len() - 8;
+                let etime_bytes = &val_raw[etime_offset..etime_offset + 8];
+                let etime = u64::from_le_bytes(etime_bytes.try_into().map_err(|_| RedisErr {
+                    message: "Failed to read etime".to_string(),
+                    location: Default::default(),
+                })?);
+
+                if etime == 0 {
+                    return Ok(false);
+                }
+                Ok(etime < now)
+            }
+            DataType::List => {
+                // | type(1B) | count(8B) | version(8B) | left(8B) | right(8B) | reserve(16B) | ctime(8B) | etime(8B) |
+                let count_offset = TYPE_LENGTH;
+                let count_bytes = &val_raw[count_offset..count_offset + 8];
+                let count = u64::from_le_bytes(count_bytes.try_into().map_err(|_| RedisErr {
+                    message: "Failed to read count".to_string(),
+                    location: Default::default(),
+                })?);
+
+                if count == 0 {
+                    return Ok(true);
+                }
+
+                let etime_offset = val_raw.len() - 8;
+                let etime_bytes = &val_raw[etime_offset..etime_offset + 8];
+                let etime = u64::from_le_bytes(etime_bytes.try_into().map_err(|_| RedisErr {
+                    message: "Failed to read etime".to_string(),
+                    location: Default::default(),
+                })?);
+
+                if etime == 0 {
+                    return Ok(false);
+                }
+                Ok(etime < now)
+            }
+            _ => InvalidFormatSnafu {
+                message: format!(
+                    "data type: {data_type:?} should not be used as meta value: {val_raw:?}"
+                ),
+            }
+            .fail(),
+        }
     }
 }
 
