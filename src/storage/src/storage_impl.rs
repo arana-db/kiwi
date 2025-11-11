@@ -454,6 +454,7 @@ impl Storage {
     pub fn rpoplpush(&self, source_key: &[u8], destination_key: &[u8]) -> Result<Option<Vec<u8>>> {
         let source_slot_id = key_to_slot_id(source_key);
         let dest_slot_id = key_to_slot_id(destination_key);
+        let source_instance_id = self.slot_indexer.get_instance_id(source_slot_id);
         let dest_instance_id = self.slot_indexer.get_instance_id(dest_slot_id);
 
         // For simplicity, we'll use the source instance for both operations
@@ -465,8 +466,7 @@ impl Storage {
             .fail();
         }
 
-        let instance_id = self.slot_indexer.get_instance_id(source_slot_id);
-        self.insts[instance_id].rpoplpush(source_key, destination_key)
+        self.insts[source_instance_id].rpoplpush(source_key, destination_key)
     }
 
     // TTL Commands Implementation
