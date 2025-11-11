@@ -13,9 +13,12 @@
 
 - [RAFT_IMPLEMENTATION_STATUS.md](RAFT_IMPLEMENTATION_STATUS.md) - Raft 实现状态和进度
 - [RAFT_CONSISTENCY_TEST_FIX.md](RAFT_CONSISTENCY_TEST_FIX.md) - Raft 集群一致性测试修复说明
-- [../src/raft/docs/OPENRAFT_INTEGRATION.md](../src/raft/docs/OPENRAFT_INTEGRATION.md) - Openraft 集成完整指南
-- [../src/raft/docs/TROUBLESHOOTING.md](../src/raft/docs/TROUBLESHOOTING.md) - Openraft 故障排除指南
-- [../src/raft/docs/QUICK_REFERENCE.md](../src/raft/docs/QUICK_REFERENCE.md) - Openraft 快速参考
+- **[raft/](raft/)** - Raft 模块详细文档目录
+  - [raft/README.md](raft/README.md) - Raft 文档索引
+  - [raft/COMPLETE_FIX_SUMMARY.md](raft/COMPLETE_FIX_SUMMARY.md) - ⭐ 完整测试修复总结（270 passed, 0 failed）
+  - [raft/OPENRAFT_INTEGRATION.md](raft/OPENRAFT_INTEGRATION.md) - Openraft 集成完整指南
+  - [raft/TROUBLESHOOTING.md](raft/TROUBLESHOOTING.md) - Openraft 故障排除指南
+  - [raft/QUICK_REFERENCE.md](raft/QUICK_REFERENCE.md) - Openraft 快速参考
 
 ### 测试相关
 

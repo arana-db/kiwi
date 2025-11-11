@@ -80,12 +80,12 @@ impl RaftNode {
             cluster_config
         );
 
-        // Create storage layer
+        // Create storage layer (for our own use, not for openraft)
         let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
-        let _storage = Arc::new(RaftStorage::new(storage_path)?);
+        let storage = Arc::new(RaftStorage::new(storage_path)?);
 
-        // Create state machine
-        let _state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
+        // Create state machine (for our own use)
+        let state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
 
         // Create network factory
         let network_factory_instance = KiwiRaftNetworkFactory::new(cluster_config.node_id);
@@ -109,7 +109,7 @@ impl RaftNode {
         }
 
         // Create Raft configuration
-        let _raft_config = RaftConfig {
+        let raft_config = Arc::new(RaftConfig {
             heartbeat_interval: cluster_config.heartbeat_interval_ms,
             election_timeout_min: cluster_config.election_timeout_min_ms,
             election_timeout_max: cluster_config.election_timeout_max_ms,
@@ -118,16 +118,37 @@ impl RaftNode {
                 cluster_config.snapshot_threshold,
             ),
             ..Default::default()
-        };
+        });
 
-        // Temporary placeholder - return an error indicating Raft is not yet fully implemented
-        log::error!(
-            "Raft implementation is not yet complete for OpenRaft 0.9.21 - trait lifetime issues need resolution"
-        );
+        // Use the simple memory store with Adaptor pattern
+        // This provides a working in-memory storage that satisfies OpenRaft's sealed traits
+        let store_dir = PathBuf::from(&cluster_config.data_dir).join("openraft_store");
+        let (log_store, sm) = crate::simple_mem_store::create_mem_store_with_dir(store_dir);
         
-        Err(RaftError::Configuration {
-            message: "Raft implementation is not yet complete - OpenRaft 0.9.21 trait lifetime compatibility issues".to_string(),
-            context: "new".to_string(),
+        let network_factory = Arc::new(RwLock::new(network_factory_instance));
+        let network = network_factory.read().await.clone();
+        
+        let raft = Raft::new(
+            cluster_config.node_id,
+            raft_config,
+            network,
+            log_store,
+            sm,
+        )
+        .await
+        .map_err(|e| RaftError::Configuration {
+            message: format!("Failed to create Raft instance: {}", e),
+            context: "Raft::new".to_string(),
+        })?;
+
+        Ok(Self {
+            raft: Arc::new(raft),
+            network_factory,
+            storage,
+            state_machine,
+            config: cluster_config,
+            endpoints: Arc::new(RwLock::new(endpoints)),
+            started: Arc::new(RwLock::new(false)),
         })
     }
 
@@ -1056,17 +1077,15 @@ impl RaftNodeInterface for RaftNode {
         // Submit the request to Raft
         let raft_write_start = std::time::Instant::now();
         match self.raft.client_write(request.clone()).await {
-            Ok(_response) => {
+            Ok(response) => {
                 let raft_write_elapsed = raft_write_start.elapsed();
                 let total_elapsed = start.elapsed();
                 log::debug!("Client request {} completed successfully in {:?}", request.id, total_elapsed);
                 log::trace!("propose: request_id={:?}, raft_write={:?}, total={:?}", 
                     request.id, raft_write_elapsed, total_elapsed);
-                Ok(ClientResponse {
-                    id: request.id,
-                    result: Ok(b"OK".to_vec().into()),
-                    leader_id: Some(self.config.node_id),
-                })
+                
+                // Return the actual response from the state machine
+                Ok(response.data)
             }
             Err(e) => {
                 let raft_write_elapsed = raft_write_start.elapsed();

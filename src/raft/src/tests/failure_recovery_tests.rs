@@ -283,10 +283,12 @@ async fn test_recovery_with_empty_state() {
     sleep(Duration::from_millis(500)).await;
     
     // Verify node starts correctly with empty state
+    // Note: OpenRaft creates an initial membership entry at index 1 when initializing,
+    // so we allow for index <= 1 (0 or 1) to account for this standard behavior
     let metrics = node.get_metrics().await.unwrap();
     assert!(
-        metrics.last_applied.is_none() || metrics.last_applied.unwrap().index == 0,
-        "Should start with empty state"
+        metrics.last_applied.is_none() || metrics.last_applied.unwrap().index <= 1,
+        "Should start with empty state (allowing for initial membership entry at index 1)"
     );
     
     // Verify node can accept writes
