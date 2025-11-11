@@ -19,47 +19,17 @@
 
 use crate::error::{RaftError, RaftResult};
 use crate::network::{KiwiRaftNetworkFactory, NodeAuth, TlsConfig};
-use crate::adaptor_integration::KiwiUnifiedStorage;
-use crate::network::RaftNetworkClient;
 use crate::state_machine::KiwiStateMachine;
 use crate::storage::RaftStorage;
 use crate::types::{BasicNode, ClusterConfig, ClusterHealth, NodeId, RaftMetrics, TypeConfig};
 use crate::{ClientRequest, ClientResponse};
 use async_trait::async_trait;
-use futures::Future;
-use openraft::network::RaftNetworkFactory;
-use openraft::{storage::Adaptor, Config as RaftConfig, Raft};
+use openraft::{Config as RaftConfig, Raft};
 use std::collections::{BTreeSet, HashMap};
-use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
-
-/// Shared network factory wrapper that can be cloned for OpenRaft
-#[derive(Clone)]
-struct SharedNetworkFactory {
-    inner: Arc<KiwiRaftNetworkFactory>,
-}
-
-impl SharedNetworkFactory {
-    fn new(inner: Arc<KiwiRaftNetworkFactory>) -> Self {
-        Self { inner }
-    }
-}
-
-impl RaftNetworkFactory<TypeConfig> for SharedNetworkFactory {
-    type Network = RaftNetworkClient;
-
-    fn new_client(
-        &mut self,
-        target: NodeId,
-        _node: &BasicNode,
-    ) -> impl Future<Output = Self::Network> + Send {
-        let factory = self.inner.clone();
-        async move { factory.build_client(target) }
-    }
-}
 
 /// Core Raft node interface
 #[async_trait]
@@ -88,7 +58,7 @@ pub struct RaftNode {
     /// The openraft instance
     raft: Arc<Raft<TypeConfig>>,
     /// Network factory for inter-node communication
-    network_factory: Arc<KiwiRaftNetworkFactory>,
+    network_factory: Arc<RwLock<KiwiRaftNetworkFactory>>,
     /// Storage layer
     storage: Arc<RaftStorage>,
     /// State machine
@@ -110,42 +80,36 @@ impl RaftNode {
             cluster_config
         );
 
-        // Ensure data directory exists
-        fs::create_dir_all(&cluster_config.data_dir)?;
-
         // Create storage layer
         let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
-        let storage = Arc::new(RaftStorage::new(&storage_path)?);
+        let _storage = Arc::new(RaftStorage::new(storage_path)?);
 
         // Create state machine
-        let state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
+        let _state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
 
         // Create network factory
         let network_factory_instance = KiwiRaftNetworkFactory::new(cluster_config.node_id);
-        let network_factory = Arc::new(network_factory_instance);
 
         // Parse cluster members and build endpoints
-        let endpoints = Arc::new(RwLock::new(HashMap::new()));
+        let mut endpoints = HashMap::new();
         for member in &cluster_config.cluster_members {
             if let Some((node_id_str, endpoint)) = member.split_once(':') {
                 if let Ok(node_id) = node_id_str.parse::<NodeId>() {
                     let host_port = member
                         .strip_prefix(&format!("{}:", node_id_str))
-                        .unwrap_or(endpoint)
-                        .to_string();
+                        .unwrap_or(endpoint);
+                    endpoints.insert(node_id, host_port.to_string());
 
-                    network_factory
-                        .add_endpoint(node_id, host_port.clone())
+                    // Add endpoint to network factory
+                    network_factory_instance
+                        .add_endpoint(node_id, host_port.to_string())
                         .await;
-
-                    let mut endpoints_guard = endpoints.write().await;
-                    endpoints_guard.insert(node_id, host_port);
                 }
             }
         }
 
         // Create Raft configuration
-        let raft_config = Arc::new(RaftConfig {
+        let _raft_config = RaftConfig {
             heartbeat_interval: cluster_config.heartbeat_interval_ms,
             election_timeout_min: cluster_config.election_timeout_min_ms,
             election_timeout_max: cluster_config.election_timeout_max_ms,
@@ -154,34 +118,16 @@ impl RaftNode {
                 cluster_config.snapshot_threshold,
             ),
             ..Default::default()
-        });
+        };
 
-        // Prepare storage adaptors for OpenRaft
-        let unified_storage =
-            KiwiUnifiedStorage::from_components(storage.clone(), state_machine.clone());
-        let (log_store, state_machine_adapter) = Adaptor::new(unified_storage);
-
-        // Share network factory with OpenRaft
-        let shared_network = SharedNetworkFactory::new(network_factory.clone());
-
-        let raft = Raft::new(
-            cluster_config.node_id,
-            raft_config,
-            shared_network,
-            log_store,
-            state_machine_adapter,
-        )
-        .await
-        .map_err(RaftError::from)?;
-
-        Ok(Self {
-            raft: Arc::new(raft),
-            network_factory,
-            storage,
-            state_machine,
-            config: cluster_config,
-            endpoints,
-            started: Arc::new(RwLock::new(false)),
+        // Temporary placeholder - return an error indicating Raft is not yet fully implemented
+        log::error!(
+            "Raft implementation is not yet complete for OpenRaft 0.9.21 - trait lifetime issues need resolution"
+        );
+        
+        Err(RaftError::Configuration {
+            message: "Raft implementation is not yet complete - OpenRaft 0.9.21 trait lifetime compatibility issues".to_string(),
+            context: "new".to_string(),
         })
     }
 
@@ -293,26 +239,32 @@ impl RaftNode {
     }
 
     /// Add TLS configuration for secure communication
-    pub async fn configure_tls(&self, _tls_config: TlsConfig) -> RaftResult<()> {
-        log::warn!(
-            "TLS configuration update requested for node {}, but hot reconfiguration is not supported yet",
-            self.config.node_id
-        );
-        Err(RaftError::configuration_with_context(
-            "TLS reconfiguration is not supported for a running Raft node",
-            format!("configure_tls({})", self.config.node_id),
-        ))
+    pub async fn configure_tls(&self, tls_config: TlsConfig) -> RaftResult<()> {
+        let mut network_factory = self.network_factory.write().await;
+        *network_factory = KiwiRaftNetworkFactory::new_secure(self.config.node_id, tls_config);
+
+        // Re-add all endpoints
+        let endpoints = self.endpoints.read().await;
+        for (&node_id, endpoint) in endpoints.iter() {
+            network_factory
+                .add_endpoint(node_id, endpoint.clone())
+                .await;
+        }
+
+        Ok(())
     }
 
     /// Add node authentication
     pub async fn add_node_auth(&self, node_id: NodeId, auth: NodeAuth) -> RaftResult<()> {
-        self.network_factory.add_node_auth(node_id, auth).await;
+        let network_factory = self.network_factory.read().await;
+        network_factory.add_node_auth(node_id, auth).await;
         Ok(())
     }
 
     /// Remove node authentication
     pub async fn remove_node_auth(&self, node_id: NodeId) -> RaftResult<()> {
-        self.network_factory.remove_node_auth(node_id).await;
+        let network_factory = self.network_factory.read().await;
+        network_factory.remove_node_auth(node_id).await;
         Ok(())
     }
 
@@ -323,7 +275,8 @@ impl RaftNode {
             endpoints.insert(node_id, endpoint.clone());
         }
 
-        self.network_factory.add_endpoint(node_id, endpoint).await;
+        let network_factory = self.network_factory.read().await;
+        network_factory.add_endpoint(node_id, endpoint).await;
         Ok(())
     }
 
@@ -334,13 +287,15 @@ impl RaftNode {
             endpoints.remove(&node_id);
         }
 
-        self.network_factory.remove_endpoint(node_id).await;
+        let network_factory = self.network_factory.read().await;
+        network_factory.remove_endpoint(node_id).await;
         Ok(())
     }
 
     /// Check for network partitions
     pub async fn check_partitions(&self) -> Vec<NodeId> {
-        self.network_factory.check_partitions().await
+        let network_factory = self.network_factory.read().await;
+        network_factory.check_partitions().await
     }
 
     /// Get current cluster membership
