@@ -405,8 +405,8 @@ pub fn verify_log_integrity(&self) -> Result<()> {
 
 如果以上方案无法解决问题：
 
-1. 查看 [Openraft 官方文档](https://docs.rs/openraft/)
-2. 搜索 [Openraft GitHub Issues](https://github.com/datafuselabs/openraft/issues)
+1. 查看 [Openraft 官方文档](https://databendlabs.github.io/openraft/)
+2. 搜索 [Openraft GitHub Issues](https://github.com/databendlabs/openraft/issues)
 3. 查看项目的集成测试：`src/raft/src/tests/`
 4. 启用 TRACE 级别日志并分析输出
 5. 提交 Issue 并附上详细的错误信息和日志
