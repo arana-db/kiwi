@@ -304,47 +304,126 @@ pub async fn verify_data_consistency(
     cluster: &ThreeNodeCluster,
     test_data: &HashMap<String, String>,
 ) -> RaftResult<bool> {
-    // Read each key from all nodes and verify consistency
-    for (key, expected_value) in test_data {
-        let mut values = Vec::new();
+    let nodes = vec![
+        (cluster.node1.node_id(), Arc::clone(&cluster.node1)),
+        (cluster.node2.node_id(), Arc::clone(&cluster.node2)),
+        (cluster.node3.node_id(), Arc::clone(&cluster.node3)),
+    ];
 
-        // Read from all nodes
-        for _node in [&cluster.node1, &cluster.node2, &cluster.node3] {
-            if let Ok(Some(value)) = cluster.read(key).await {
-                values.push(String::from_utf8_lossy(&value).to_string());
+    for (key, expected_value) in test_data {
+        let mut observed_values = Vec::new();
+
+        for (node_id, node) in &nodes {
+            match read_key_from_node(node, key).await? {
+                Some(value) => observed_values.push((*node_id, value)),
+                None => {
+                    log::error!("Node {} missing key '{}'", node_id, key);
+                    return Ok(false);
+                }
             }
         }
 
-        // Check if all values match
-        if values.is_empty() {
+        if observed_values.is_empty() {
+            log::error!("No values collected for key '{}'", key);
             return Ok(false);
         }
 
-        let first_value = &values[0];
-        for value in &values {
-            if value != first_value {
+        let first_value = observed_values[0].1.clone();
+
+        for (node_id, value) in &observed_values {
+            if value != &first_value {
+                let printable: Vec<String> = observed_values
+                    .iter()
+                    .map(|(id, val)| format!("node {} -> {}", id, String::from_utf8_lossy(val)))
+                    .collect();
                 log::error!(
-                    "Data inconsistency detected for key '{}': {:?}",
+                    "Data inconsistency detected for key '{}': node {} differs, values: {:?}",
                     key,
-                    values
+                    node_id,
+                    printable
                 );
                 return Ok(false);
             }
         }
 
-        // Verify against expected value
-        if first_value != expected_value {
+        if first_value.as_ref() != expected_value.as_bytes() {
+            let printable: Vec<String> = observed_values
+                .iter()
+                .map(|(id, val)| format!("node {} -> {}", id, String::from_utf8_lossy(val)))
+                .collect();
             log::error!(
-                "Value mismatch for key '{}': expected '{}', got '{}'",
+                "Value mismatch for key '{}': expected '{}', observed {:?}",
                 key,
                 expected_value,
-                first_value
+                printable
             );
             return Ok(false);
         }
     }
 
     Ok(true)
+}
+
+async fn read_key_from_node(node: &Arc<RaftNode>, key: &str) -> RaftResult<Option<Bytes>> {
+    let state_machine = node.state_machine();
+    let key_bytes = Bytes::copy_from_slice(key.as_bytes());
+
+    let exists_request = ClientRequest {
+        id: RequestId::new(),
+        command: RedisCommand {
+            command: "EXISTS".to_string(),
+            args: vec![key_bytes.clone()],
+        },
+        consistency_level: ConsistencyLevel::Eventual,
+    };
+
+    let exists_response = state_machine.apply_redis_command(&exists_request).await?;
+    let exists_bytes = exists_response.result.map_err(|err| {
+        RaftError::state_machine_with_context(
+            err,
+            format!("EXISTS '{}' on node {}", key, node.node_id()),
+        )
+    })?;
+
+    let exists = std::str::from_utf8(&exists_bytes)
+        .map_err(|err| {
+            RaftError::state_machine_with_context(
+                format!("Failed to parse EXISTS response: {}", err),
+                format!("node {}", node.node_id()),
+            )
+        })?
+        .trim()
+        .parse::<u64>()
+        .map_err(|err| {
+            RaftError::state_machine_with_context(
+                format!("Failed to parse EXISTS count: {}", err),
+                format!("node {}", node.node_id()),
+            )
+        })?
+        > 0;
+
+    if !exists {
+        return Ok(None);
+    }
+
+    let get_request = ClientRequest {
+        id: RequestId::new(),
+        command: RedisCommand {
+            command: "GET".to_string(),
+            args: vec![key_bytes],
+        },
+        consistency_level: ConsistencyLevel::Eventual,
+    };
+
+    let get_response = state_machine.apply_redis_command(&get_request).await?;
+    let value = get_response.result.map_err(|err| {
+        RaftError::state_machine_with_context(
+            err,
+            format!("GET '{}' on node {}", key, node.node_id()),
+        )
+    })?;
+
+    Ok(Some(value))
 }
 
 /// Create test data set
@@ -511,7 +590,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Consistency after failover test may be slow for CI"]
     async fn test_consistency_after_failover() -> RaftResult<()> {
         // 1. Create and start three-node cluster
         let cluster = ThreeNodeCluster::new().await?;
