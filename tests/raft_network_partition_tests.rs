@@ -61,7 +61,7 @@ mod network_partition_tests {
         /// 检查两个节点是否可以通信
         async fn can_communicate(&self, node1: u64, node2: u64) -> bool {
             let connections = self.connections.read().await;
-            *connections.get(&(node1, node2)).unwrap_or(&true)
+            *connections.get(&(node1, node2)).unwrap_or(&false)
         }
 
         /// 创建网络分区：将节点分成两组
@@ -416,30 +416,30 @@ mod network_partition_tests {
         println!("✅ 日志复制测试通过");
     }
 
-    #[test]
-    fn test_network_simulator() {
+    #[tokio::test]
+    async fn test_network_simulator() {
         // 测试网络模拟器本身的功能
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            let simulator = NetworkPartitionSimulator::new();
+        let simulator = NetworkPartitionSimulator::new();
 
-            // 初始状态：所有节点可以通信
-            assert!(simulator.can_communicate(1, 2).await);
-            assert!(simulator.can_communicate(2, 3).await);
+        // 初始化连接：所有节点可以通信
+        simulator.allow_connection(1, 2).await;
+        simulator.allow_connection(2, 3).await;
+        
+        assert!(simulator.can_communicate(1, 2).await);
+        assert!(simulator.can_communicate(2, 3).await);
 
-            // 阻止连接
-            simulator.block_connection(1, 2).await;
-            assert!(!simulator.can_communicate(1, 2).await);
-            assert!(!simulator.can_communicate(2, 1).await);
+        // 阻止连接
+        simulator.block_connection(1, 2).await;
+        assert!(!simulator.can_communicate(1, 2).await);
+        assert!(!simulator.can_communicate(2, 1).await);
 
-            // 其他连接不受影响
-            assert!(simulator.can_communicate(2, 3).await);
+        // 其他连接不受影响
+        assert!(simulator.can_communicate(2, 3).await);
 
-            // 恢复连接
-            simulator.allow_connection(1, 2).await;
-            assert!(simulator.can_communicate(1, 2).await);
+        // 恢复连接
+        simulator.allow_connection(1, 2).await;
+        assert!(simulator.can_communicate(1, 2).await);
 
-            println!("✅ 网络模拟器测试通过");
-        });
+        println!("✅ 网络模拟器测试通过");
     }
 }

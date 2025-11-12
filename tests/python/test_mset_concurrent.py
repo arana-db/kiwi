@@ -25,7 +25,6 @@ MSET 并发测试
     pytest tests/python/test_mset_concurrent.py -v
 """
 
-import redis
 import pytest
 import threading
 import time
@@ -249,6 +248,7 @@ class TestMsetConcurrency:
                     if result:
                         success_count += 1
                 except Exception:
+                    # 压力环境允许忽略异常，仅用于测量成功操作数量
                     pass
             return success_count
         
@@ -372,7 +372,7 @@ class TestMsetRaceConditions:
         values = r.mget(test_keys)
         
         # 要么全部存在，要么全部不存在（原子性）
-        if values[0] is not None:
+        if any(v is not None for v in values):
             assert all(v is not None for v in values), "MSET 应该是原子的"
         
         r.delete(*test_keys)

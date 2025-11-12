@@ -27,9 +27,14 @@ echo ""
 
 # 检查 Python 依赖
 echo "📦 检查 Python 依赖..."
-if ! python -c "import redis, pytest" 2>/dev/null; then
+PYTHON_BIN="$(command -v python3 || command -v python)"
+if [ -z "$PYTHON_BIN" ]; then
+    echo "❌ 未找到 Python 解释器，请安装 python3 或 python"
+    exit 1
+fi
+if ! "$PYTHON_BIN" -c "import redis, pytest" 2>/dev/null; then
     echo "⚠️  缺少依赖，正在安装..."
-    pip install redis pytest pytest-timeout
+    "$PYTHON_BIN" -m pip install redis pytest pytest-timeout
 fi
 echo "✅ Python 依赖已就绪"
 echo ""
@@ -72,7 +77,7 @@ echo "=========================================="
 echo ""
 echo "📊 测试统计:"
 echo "  - WRONGTYPE 错误测试: 10 个用例"
-echo "  - MSET 并发测试: 6 个用例（快速）"
+echo "  - MSET 并发测试: 6 个用例（not slow 标签，快速）"
 echo "  - Raft 网络分区测试: 1 个用例"
 echo ""
 echo "💡 提示:"

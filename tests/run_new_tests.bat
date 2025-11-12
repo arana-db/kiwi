@@ -49,6 +49,7 @@ echo ==========================================
 echo 1️⃣  运行 WRONGTYPE 错误测试
 echo ==========================================
 pytest tests/python/test_wrongtype_errors.py -v --tb=short
+if errorlevel 1 goto :fail
 echo.
 
 REM 运行 MSET 并发测试（排除慢速测试）
@@ -56,6 +57,7 @@ echo ==========================================
 echo 2️⃣  运行 MSET 并发测试（快速）
 echo ==========================================
 pytest tests/python/test_mset_concurrent.py -v --tb=short -m "not slow"
+if errorlevel 1 goto :fail
 echo.
 
 REM 运行 Raft 网络分区测试
@@ -63,6 +65,7 @@ echo ==========================================
 echo 3️⃣  运行 Raft 网络分区测试
 echo ==========================================
 cargo test --test raft_network_partition_tests test_network_simulator
+if errorlevel 1 goto :fail
 echo.
 
 REM 总结
@@ -72,7 +75,7 @@ echo ==========================================
 echo.
 echo 📊 测试统计:
 echo   - WRONGTYPE 错误测试: 10 个用例
-echo   - MSET 并发测试: 6 个用例（快速）
+echo   - MSET 并发测试: 6 个用例（not slow 标签，快速）
 echo   - Raft 网络分区测试: 1 个用例
 echo.
 echo 💡 提示:
@@ -80,3 +83,11 @@ echo   - 运行慢速测试: pytest tests/python/test_mset_concurrent.py -v -m s
 echo   - 运行所有并发测试: pytest tests/python/test_mset_concurrent.py -v
 echo   - 查看详细输出: pytest tests/python/test_*.py -v -s
 echo.
+goto :end
+
+:fail
+echo ❌ 测试执行失败，请检查上方日志输出
+exit /b 1
+
+:end
+exit /b 0
