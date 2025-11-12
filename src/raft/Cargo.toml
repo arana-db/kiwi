@@ -59,6 +59,7 @@ protoc-bin-vendored = "3"
 tempfile = { workspace = true }
 rand = "0.8"
 criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
+env_logger = { workspace = true }
 
 # Internal dependencies
 kstd = { workspace = true }
