@@ -26,6 +26,10 @@
 - [MSET_TESTING_SUMMARY.md](MSET_TESTING_SUMMARY.md) - MSET 命令测试总结
 - [MSET_FINAL_SUMMARY.md](MSET_FINAL_SUMMARY.md) - MSET 最终总结
 - [MSET_FINAL_UPDATES.md](MSET_FINAL_UPDATES.md) - MSET 最终更新
+- [问题检查报告.md](问题检查报告.md) - ⭐ OpenRaft 集成和测试覆盖问题检查
+- [测试补充实现计划.md](测试补充实现计划.md) - 测试补充实现计划
+- [测试补充完成总结.md](测试补充完成总结.md) - ⭐ 测试补充完成总结（新增 25 个测试用例）
+- [QUICK_TEST_REFERENCE.md](QUICK_TEST_REFERENCE.md) - ⭐ 快速测试参考卡片
 
 ### Bug 修复
 

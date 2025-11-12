@@ -53,7 +53,6 @@ jobs:
 
     - name: Run integration tests (will skip if no Redis server)
       run: make -C tests test-python
-      continue-on-error: true
 
   test-windows:
     runs-on: windows-latest
