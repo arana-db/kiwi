@@ -123,7 +123,7 @@ mod tests {
         ));
 
         let partition_err = NetworkError::NetworkPartition {
-            affected_nodes: vec![2],
+            affected_nodes: 2,
             context: "test".to_string(),
         };
         assert!(matches!(partition_err, NetworkError::NetworkPartition { .. }));
@@ -150,7 +150,7 @@ mod tests {
         assert!(timeout_string.contains("Request timeout for node 2"));
 
         let partition_err = NetworkError::NetworkPartition {
-            affected_nodes: vec![2],
+            affected_nodes: 2,
             context: "test".to_string(),
         };
         let partition_string = format!("{}", partition_err);
@@ -294,7 +294,7 @@ mod tests {
         assert!(debug_string.contains("debug test"));
 
         let network_err = NetworkError::NetworkPartition {
-            affected_nodes: vec![2],
+            affected_nodes: 2,
             context: "test".to_string(),
         };
         let debug_string = format!("{:?}", network_err);

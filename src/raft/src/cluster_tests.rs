@@ -440,7 +440,6 @@ pub fn create_test_data(count: usize) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use env_logger::Env;
 
     #[tokio::test]
     #[ignore = "Three-node cluster test may be slow for CI"]
@@ -590,16 +589,8 @@ mod tests {
         cluster.shutdown_all().await.unwrap();
     }
 
-    fn init_test_logging() {
-        let _ = env_logger::Builder::from_env(Env::default().default_filter_or("info"))
-            .is_test(true)
-            .try_init();
-    }
-
     #[tokio::test]
     async fn test_consistency_after_failover() -> RaftResult<()> {
-        init_test_logging();
-
         // 1. Create and start three-node cluster
         let cluster = ThreeNodeCluster::new().await?;
         cluster.start_all().await?;

@@ -1480,7 +1480,7 @@ impl RaftNetworkClient {
             .await
         {
             return Err(RaftError::Network(NetworkError::NetworkPartition {
-                affected_nodes: vec![self.target_node],
+                affected_nodes: 1,
                 context: format!("node {} is partitioned", self.target_node),
             }));
         }

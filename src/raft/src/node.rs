@@ -579,7 +579,7 @@ impl RaftNode {
                 log::error!("Majority of nodes are partitioned, cannot make progress");
                 return Err(RaftError::Network(
                     crate::error::NetworkError::NetworkPartition {
-                        affected_nodes: Vec::new(),
+                        affected_nodes: 0,
                         context: "check_cluster_health: majority partitioned".to_string(),
                     },
                 ));

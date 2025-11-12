@@ -150,13 +150,9 @@ pub enum NetworkError {
     },
 
     /// Network partition detected
-    #[error(
-        "Network partition detected: {} nodes affected ({:?}), context: {context}",
-        affected_nodes.len(),
-        affected_nodes
-    )]
+    #[error("Network partition detected: {affected_nodes} nodes affected, context: {context}")]
     NetworkPartition {
-        affected_nodes: Vec<NodeId>,
+        affected_nodes: usize,
         context: String,
     },
 
@@ -226,7 +222,7 @@ impl NetworkError {
 
     /// Create a network partition error with context
     pub fn network_partition_with_context<C: Into<String>>(
-        affected_nodes: Vec<NodeId>,
+        affected_nodes: usize,
         context: C,
     ) -> Self {
         NetworkError::NetworkPartition {
