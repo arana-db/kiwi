@@ -147,7 +147,7 @@ impl RaftRedisHandler {
                     }
                 }
             }
-            Err(RaftError::NotLeader { leader_id }) => {
+            Err(RaftError::NotLeader { leader_id, .. }) => {
                 log::debug!("Not leader, redirecting to leader: {:?}", leader_id);
                 self.redirect_to_leader_with_id(command, leader_id).await
             }
@@ -295,7 +295,7 @@ impl RaftRedisHandler {
                 );
                 self.execute_local_read(command).await
             }
-            Err(RaftError::NotLeader { leader_id }) => {
+            Err(RaftError::NotLeader { leader_id, .. }) => {
                 // Leadership changed during consistency check, redirect
                 self.redirect_read_to_leader(command, leader_id.unwrap_or(0))
                     .await

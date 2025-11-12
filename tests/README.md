@@ -6,18 +6,23 @@
 
 ```text
 tests/
-├── README.md                # 本文件
-├── fix_client_requests.py   # 历史修复脚本（已完成任务）
-├── python/                  # Python 集成测试
-│   ├── test_mset.py         # MSET 命令测试
-│   └── ...                  # 其他 Python 测试
-├── integration/             # 集成测试文档和脚本
-│   ├── test_mset.md         # MSET 测试指南
-│   └── ...                  # 其他集成测试文档
-├── tcl/                     # Redis 官方 TCL 测试用例（待添加）
-│   └── ...                  # Redis 官方测试套件
-└── go/                      # Go 语言测试用例（待添加）
-    └── ...                  # Go 测试文件
+├── README.md                        # 本文件
+├── fix_client_requests.py           # 历史修复脚本（已完成任务）
+├── python/                          # Python 集成测试
+│   ├── test_mset.py                 # MSET 命令测试
+│   ├── test_mset_concurrent.py      # MSET 并发测试 ⭐ 新增
+│   ├── test_wrongtype_errors.py     # WRONGTYPE 错误测试 ⭐ 新增
+│   ├── test_list_commands.py        # 列表命令测试
+│   ├── test_ttl_system.py           # TTL 系统测试
+│   └── conftest.py                  # pytest 配置
+├── integration/                     # 集成测试文档和脚本
+│   ├── test_mset.md                 # MSET 测试指南
+│   └── ...                          # 其他集成测试文档
+├── raft_network_partition_tests.rs  # Raft 网络分区测试 ⭐ 新增
+├── tcl/                             # Redis 官方 TCL 测试用例（待添加）
+│   └── ...                          # Redis 官方测试套件
+└── go/                              # Go 语言测试用例（待添加）
+    └── ...                          # Go 测试文件
 ```
 
 ## 🧪 测试类型
@@ -165,15 +170,22 @@ def test_newcmd_basic():
 
 ## 🎯 测试覆盖目标
 
-- [ ] **字符串命令**：SET, GET, MSET, MGET, APPEND, STRLEN, etc.
+### 基础命令测试
+- [x] **字符串命令**：SET, GET, MSET, MGET, APPEND, STRLEN, etc.
 - [ ] **哈希命令**：HSET, HGET, HMSET, HGETALL, etc.
-- [ ] **列表命令**：LPUSH, RPUSH, LPOP, RPOP, LRANGE, etc.
+- [x] **列表命令**：LPUSH, RPUSH, LPOP, RPOP, LRANGE, etc.
 - [ ] **集合命令**：SADD, SREM, SMEMBERS, SINTER, etc.
 - [ ] **有序集合**：ZADD, ZREM, ZRANGE, ZRANK, etc.
-- [ ] **键命令**：DEL, EXISTS, EXPIRE, TTL, etc.
+- [x] **键命令**：DEL, EXISTS, EXPIRE, TTL, etc.
 - [ ] **事务**：MULTI, EXEC, DISCARD, WATCH, etc.
 - [ ] **持久化**：SAVE, BGSAVE, etc.
-- [ ] **集群**：分布式操作测试
+
+### 高级测试 ⭐ 新增
+- [x] **并发测试**：MSET 并发操作、竞态条件、原子性验证
+- [x] **错误处理**：WRONGTYPE 错误、类型验证、边界条件
+- [x] **网络分区**：Raft 集群分区测试、脑裂防止、数据一致性
+- [ ] **性能测试**：吞吐量、延迟、资源使用
+- [ ] **压力测试**：高负载、内存压力、长时间运行
 
 ## 📊 测试报告
 

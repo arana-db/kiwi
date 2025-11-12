@@ -127,13 +127,25 @@ kiwi --single-node
 kiwi --init-cluster
 ```
 
+## Raft Consensus Integration
+
+Kiwi integrates the **Openraft** library to provide distributed consensus and high availability:
+
+- **Adaptor Pattern**: Custom adaptor layer to bridge Kiwi's storage with Openraft's sealed traits
+- **RocksDB-backed Raft Log**: Persistent Raft log storage using RocksDB
+- **State Machine Replication**: Consistent state replication across cluster nodes
+- **Snapshot Support**: Efficient state transfer for new or lagging nodes
+
+For detailed integration documentation, see [src/raft/docs/OPENRAFT_INTEGRATION.md](src/raft/docs/OPENRAFT_INTEGRATION.md).
+
 ## Development Plan
 
 - ✅ Dual runtime architecture for performance isolation
 - ✅ Message channel-based async communication
 - ✅ Basic Redis command support (GET, SET, DEL, etc.)
+- ✅ Openraft integration with Adaptor pattern
 - 🚧 Support most Redis commands
-- 🚧 Add support for cluster mode (Raft consensus)
+- 🚧 Complete cluster mode implementation
 - 🚧 Extend command support and optimize command execution efficiency
 - 🚧 Enhance modular extension features and provide examples
 - 🚧 Improve development documentation and user guides

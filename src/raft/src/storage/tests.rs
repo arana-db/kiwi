@@ -409,7 +409,7 @@ mod error_handling_tests {
         let result = storage.get_cf_handle("non_existent_cf");
         assert!(result.is_err());
 
-        if let Err(RaftError::Storage(StorageError::DataInconsistency { message })) = result {
+        if let Err(RaftError::Storage(StorageError::DataInconsistency { message, .. })) = result {
             assert!(message.contains("Column family non_existent_cf not found"));
         } else {
             panic!("Expected DataInconsistency error");
@@ -429,6 +429,7 @@ mod error_handling_tests {
         // For unit tests, we verify the error types are properly defined
         let _error = RaftError::Storage(StorageError::DataInconsistency {
             message: "Test serialization error".to_string(),
+            context: "test".to_string(),
         });
     }
 }

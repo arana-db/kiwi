@@ -5,11 +5,14 @@
 Kiwi 是用 Rust 实现的基于 RocksDB 和 Raft 协议的 大容量、高性能、强一致性的 兼容 Redis 协议的 KV 数据库。
 ## 功能特色
 
-- 使用 RocksDB 作为后端持久化存储。
-- 高度兼容 Redis 协议。
-- 支持使用 Redis 进行性能基准测试。
-- 计划中的模块化支持，允许开发者自定义扩展。
-- 提供高性能的请求处理能力。
+- **双运行时架构**: 网络和存储运行时分离，实现性能隔离
+- **RocksDB 后端**: 使用 RocksDB 作为后端持久化存储
+- **Redis 协议兼容**: 高度兼容 Redis 协议
+- **Raft 共识算法**: 集成 Openraft 实现强一致性和高可用
+- **Adaptor 模式**: 自定义适配器层桥接存储与 Openraft
+- **高性能**: 优化的请求处理和专用线程池
+- **异步通信**: 基于消息通道的异步通信
+- **故障隔离**: 网络和存储操作在隔离的运行时中运行
 
 ## 系统要求
 
@@ -24,13 +27,29 @@ Kiwi 是用 Rust 实现的基于 RocksDB 和 Raft 协议的 大容量、高性�
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
+## Raft 共识集成
+
+Kiwi 集成了 **Openraft** 库来提供分布式共识和高可用性：
+
+- **Adaptor 模式**: 自定义适配器层桥接 Kiwi 存储与 Openraft 的 sealed traits
+- **基于 RocksDB 的 Raft 日志**: 使用 RocksDB 持久化 Raft 日志
+- **状态机复制**: 跨集群节点的一致性状态复制
+- **快照支持**: 为新节点或落后节点提供高效的状态传输
+
+详细的集成文档请参见 [src/raft/docs/OPENRAFT_INTEGRATION.md](src/raft/docs/OPENRAFT_INTEGRATION.md)。
+
 ## 开发计划
 
-- 支持大部分 Redis 指令
-- 增加集群模式支持
-- 扩展命令支持并优化命令执行效率
-- 增强模块化扩展的功能并提供示例
-- 完善开发文档和用户指南
+- ✅ 双运行时架构实现性能隔离
+- ✅ 基于消息通道的异步通信
+- ✅ 基本 Redis 命令支持（GET、SET、DEL 等）
+- ✅ 使用 Adaptor 模式集成 Openraft
+- 🚧 支持大部分 Redis 指令
+- 🚧 完成集群模式实现
+- 🚧 扩展命令支持并优化命令执行效率
+- 🚧 增强模块化扩展的功能并提供示例
+- 🚧 完善开发文档和用户指南
+- 🚧 添加全面的指标和监控
 
 ## 贡献
 

@@ -48,13 +48,23 @@
 
 use openraft::Config;
 
-// pub mod adaptor; // TODO: Re-enable when adaptor is properly implemented
+// Temporarily disable problematic adaptors due to OpenRaft 0.9.21 lifetime issues
+// These modules have trait implementation issues with the current OpenRaft version
+// #[cfg(test)]
+// pub mod correct_adaptor; // Correct Adaptor implementation
+// #[cfg(test)]
+// pub mod adaptor_poc; // Proof of concept for Adaptor pattern
+// #[cfg(test)]
+// pub mod minimal_storage; // Minimal working storage implementation
+// pub mod working_adaptor_v2; // Working Adaptor implementation v2
+pub mod simple_mem_store; // Simple memory store using Adaptor pattern
 pub mod binlog;
 pub mod cluster_config;
 #[cfg(test)]
 pub mod cluster_tests;
 pub mod config_change;
 pub mod consistency;
+pub mod conversion;
 pub mod consistency_handler;
 pub mod discovery;
 pub mod error;
@@ -64,6 +74,7 @@ pub mod metrics;
 pub mod monitoring_api;
 pub mod network;
 pub mod node;
+pub mod openraft_compatibility;
 pub mod performance;
 pub mod placeholder_types;
 pub mod protocol_compatibility;
@@ -134,3 +145,10 @@ mod unit_tests {
 
 #[cfg(test)]
 pub mod integration_tests;
+
+#[cfg(test)]
+pub mod integration_tests_working;
+
+#[cfg(test)]
+#[path = "tests/mod.rs"]
+mod test_harness;

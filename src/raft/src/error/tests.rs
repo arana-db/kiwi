@@ -70,7 +70,10 @@ mod tests {
 
     #[test]
     fn test_raft_error_classification() {
-        let not_leader_err = RaftError::NotLeader { leader_id: Some(1) };
+        let not_leader_err = RaftError::NotLeader { 
+            leader_id: Some(1),
+            context: "test".to_string(),
+        };
         assert!(not_leader_err.is_not_leader());
         assert!(not_leader_err.is_retryable());
 
@@ -91,54 +94,82 @@ mod tests {
     fn test_network_error_creation() {
         let connection_err = NetworkError::ConnectionFailed {
             node_id: 1,
+            endpoint: "localhost:8080".to_string(),
             source: io::Error::new(io::ErrorKind::ConnectionRefused, "Connection refused"),
+            context: "test".to_string(),
         };
         assert!(matches!(
             connection_err,
             NetworkError::ConnectionFailed { .. }
         ));
 
-        let timeout_err = NetworkError::RequestTimeout { node_id: 2 };
+        let timeout_err = NetworkError::RequestTimeout { 
+            node_id: 2,
+            timeout_ms: 5000,
+            operation: "append_entries".to_string(),
+            context: "test".to_string(),
+        };
         assert!(matches!(timeout_err, NetworkError::RequestTimeout { .. }));
 
         let invalid_response_err = NetworkError::InvalidResponse {
             node_id: 3,
             message: "Invalid format".to_string(),
+            expected: "AppendEntriesResponse".to_string(),
+            context: "test".to_string(),
         };
         assert!(matches!(
             invalid_response_err,
             NetworkError::InvalidResponse { .. }
         ));
 
-        let partition_err = NetworkError::NetworkPartition;
-        assert!(matches!(partition_err, NetworkError::NetworkPartition));
+        let partition_err = NetworkError::NetworkPartition {
+            affected_nodes: 2,
+            context: "test".to_string(),
+        };
+        assert!(matches!(partition_err, NetworkError::NetworkPartition { .. }));
     }
 
     #[test]
     fn test_network_error_display() {
         let connection_err = NetworkError::ConnectionFailed {
             node_id: 1,
+            endpoint: "localhost:8080".to_string(),
             source: io::Error::new(io::ErrorKind::ConnectionRefused, "Connection refused"),
+            context: "test".to_string(),
         };
         let error_string = format!("{}", connection_err);
         assert!(error_string.contains("Connection failed to node 1"));
 
-        let timeout_err = NetworkError::RequestTimeout { node_id: 2 };
+        let timeout_err = NetworkError::RequestTimeout { 
+            node_id: 2,
+            timeout_ms: 5000,
+            operation: "append_entries".to_string(),
+            context: "test".to_string(),
+        };
         let timeout_string = format!("{}", timeout_err);
         assert!(timeout_string.contains("Request timeout for node 2"));
 
-        let partition_err = NetworkError::NetworkPartition;
+        let partition_err = NetworkError::NetworkPartition {
+            affected_nodes: 2,
+            context: "test".to_string(),
+        };
         let partition_string = format!("{}", partition_err);
         assert!(partition_string.contains("Network partition detected"));
     }
 
     #[test]
     fn test_storage_error_creation() {
-        let corruption_err = StorageError::LogCorruption { index: 100 };
+        let corruption_err = StorageError::LogCorruption { 
+            index: 100,
+            term: 1,
+            context: "test".to_string(),
+        };
         assert!(matches!(corruption_err, StorageError::LogCorruption { .. }));
 
         let snapshot_err = StorageError::SnapshotCreationFailed {
             message: "Disk full".to_string(),
+            snapshot_id: "snap_1".to_string(),
+            context: "test".to_string(),
         };
         assert!(matches!(
             snapshot_err,
@@ -147,17 +178,24 @@ mod tests {
 
         let restore_err = StorageError::SnapshotRestorationFailed {
             message: "Corrupted snapshot".to_string(),
+            snapshot_id: "snap_1".to_string(),
+            context: "test".to_string(),
         };
         assert!(matches!(
             restore_err,
             StorageError::SnapshotRestorationFailed { .. }
         ));
 
-        let disk_err = StorageError::InsufficientDiskSpace;
-        assert!(matches!(disk_err, StorageError::InsufficientDiskSpace));
+        let disk_err = StorageError::InsufficientDiskSpace {
+            required_bytes: 1000,
+            available_bytes: 500,
+            path: "/tmp".to_string(),
+        };
+        assert!(matches!(disk_err, StorageError::InsufficientDiskSpace { .. }));
 
         let consistency_err = StorageError::DataInconsistency {
             message: "Checksum mismatch".to_string(),
+            context: "test".to_string(),
         };
         assert!(matches!(
             consistency_err,
@@ -167,11 +205,19 @@ mod tests {
 
     #[test]
     fn test_storage_error_display() {
-        let corruption_err = StorageError::LogCorruption { index: 42 };
+        let corruption_err = StorageError::LogCorruption { 
+            index: 42,
+            term: 1,
+            context: "test".to_string(),
+        };
         let error_string = format!("{}", corruption_err);
         assert!(error_string.contains("Log corruption detected at index 42"));
 
-        let disk_err = StorageError::InsufficientDiskSpace;
+        let disk_err = StorageError::InsufficientDiskSpace {
+            required_bytes: 1000,
+            available_bytes: 500,
+            path: "/tmp".to_string(),
+        };
         let disk_string = format!("{}", disk_err);
         assert!(disk_string.contains("Disk space insufficient"));
     }
@@ -179,12 +225,21 @@ mod tests {
     #[test]
     fn test_error_conversion() {
         // Test conversion from NetworkError to RaftError
-        let network_err = NetworkError::RequestTimeout { node_id: 1 };
+        let network_err = NetworkError::RequestTimeout { 
+            node_id: 1,
+            timeout_ms: 5000,
+            operation: "append_entries".to_string(),
+            context: "test".to_string(),
+        };
         let raft_err: RaftError = network_err.into();
         assert!(matches!(raft_err, RaftError::Network(_)));
 
         // Test conversion from StorageError to RaftError
-        let storage_err = StorageError::InsufficientDiskSpace;
+        let storage_err = StorageError::InsufficientDiskSpace {
+            required_bytes: 1000,
+            available_bytes: 500,
+            path: "/tmp".to_string(),
+        };
         let raft_err: RaftError = storage_err.into();
         assert!(matches!(raft_err, RaftError::Storage(_)));
 
@@ -219,7 +274,9 @@ mod tests {
         let io_err = io::Error::new(io::ErrorKind::ConnectionRefused, "Connection refused");
         let network_err = NetworkError::ConnectionFailed {
             node_id: 1,
+            endpoint: "localhost:8080".to_string(),
             source: io_err,
+            context: "test".to_string(),
         };
         let raft_err: RaftError = network_err.into();
 
@@ -236,19 +293,28 @@ mod tests {
         assert!(debug_string.contains("Configuration"));
         assert!(debug_string.contains("debug test"));
 
-        let network_err = NetworkError::NetworkPartition;
+        let network_err = NetworkError::NetworkPartition {
+            affected_nodes: 2,
+            context: "test".to_string(),
+        };
         let debug_string = format!("{:?}", network_err);
         assert!(debug_string.contains("NetworkPartition"));
     }
 
     #[test]
     fn test_not_leader_error() {
-        let not_leader_with_id = RaftError::NotLeader { leader_id: Some(3) };
+        let not_leader_with_id = RaftError::NotLeader { 
+            leader_id: Some(3),
+            context: "test".to_string(),
+        };
         let error_string = format!("{}", not_leader_with_id);
         assert!(error_string.contains("Not leader"));
         assert!(error_string.contains("current leader is Some(3)"));
 
-        let not_leader_without_id = RaftError::NotLeader { leader_id: None };
+        let not_leader_without_id = RaftError::NotLeader { 
+            leader_id: None,
+            context: "test".to_string(),
+        };
         let error_string = format!("{}", not_leader_without_id);
         assert!(error_string.contains("Not leader"));
         assert!(error_string.contains("current leader is None"));

@@ -47,6 +47,7 @@ header:
     - 'config.ini'
     - '.github/**'
     - '.gitignore'
+    - 'src/raft/src/error_fixes.txt'
 
   comment: on-failure
 
