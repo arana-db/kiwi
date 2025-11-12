@@ -49,6 +49,7 @@ pub fn create_simple_raft_storage_with_engine<P: AsRef<Path>>(
     // TODO: Implement proper storage integration
     Err(RaftError::Configuration {
         message: "Simple storage implementation with engine is not yet complete. Need to research openraft's correct storage API.".to_string(),
+        context: "create_simple_storage".to_string(),
     })
 }
 

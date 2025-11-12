@@ -116,12 +116,13 @@ impl NodeAuth {
     /// Generate HMAC for message authentication
     pub fn generate_hmac(&self, data: &[u8]) -> RaftResult<Vec<u8>> {
         let mut mac = HmacSha256::new_from_slice(&self.shared_secret).map_err(|e| {
-            RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
-                std::io::Error::new(
+            RaftError::Network(NetworkError::SerializationFailed {
+                source: serde_json::Error::io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!("HMAC key error: {}", e),
-                ),
-            )))
+                )),
+                context: "generate_hmac".to_string(),
+            })
         })?;
 
         mac.update(data);
@@ -159,18 +160,23 @@ impl SecureStream {
         let cert_file = std::fs::File::open(&tls_config.cert_path).map_err(|e| {
             RaftError::Network(NetworkError::ConnectionFailed {
                 node_id: 0,
+                endpoint: tls_config.cert_path.clone(),
                 source: e,
+                context: "open_cert_file".to_string(),
             })
         })?;
         let mut cert_reader = std::io::BufReader::new(cert_file);
         let certs = certs(&mut cert_reader)
             .map_err(|e| {
-                RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("Certificate parsing error: {}", e),
+                RaftError::Network(NetworkError::SerializationFailed {
+                    source: serde_json::Error::io(
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Certificate parsing error: {}", e),
+                        ),
                     ),
-                )))
+                    context: "parse_certificates".to_string(),
+                })
             })?
             .into_iter()
             .map(Certificate)
@@ -179,26 +185,32 @@ impl SecureStream {
         let key_file = std::fs::File::open(&tls_config.key_path).map_err(|e| {
             RaftError::Network(NetworkError::ConnectionFailed {
                 node_id: 0,
+                endpoint: tls_config.key_path.clone(),
                 source: e,
+                context: "open_key_file".to_string(),
             })
         })?;
         let mut key_reader = std::io::BufReader::new(key_file);
         let mut keys = pkcs8_private_keys(&mut key_reader).map_err(|e| {
-            RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Private key parsing error: {}", e),
+            RaftError::Network(NetworkError::SerializationFailed {
+                source: serde_json::Error::io(
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Private key parsing error: {}", e),
+                    ),
                 ),
-            )))
+                context: "parse_private_keys".to_string(),
+            })
         })?;
 
         if keys.is_empty() {
-            return Err(RaftError::Network(NetworkError::SerializationFailed(
-                serde_json::Error::io(std::io::Error::new(
+            return Err(RaftError::Network(NetworkError::SerializationFailed {
+                source: serde_json::Error::io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "No private keys found",
                 )),
-            )));
+                context: "no_private_keys".to_string(),
+            }));
         }
 
         let key = PrivateKey(keys.remove(0));
@@ -209,12 +221,15 @@ impl SecureStream {
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_client_auth_cert(certs, key)
             .map_err(|e| {
-                RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("TLS config error: {}", e),
+                RaftError::Network(NetworkError::SerializationFailed {
+                    source: serde_json::Error::io(
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("TLS config error: {}", e),
+                        ),
                     ),
-                )))
+                    context: "tls_config_creation".to_string(),
+                })
             })?;
 
         // Disable certificate verification if requested (for testing)
@@ -230,16 +245,21 @@ impl SecureStream {
                 .await
                 .map_err(|e| NetworkError::ConnectionFailed {
                     node_id: 0,
+                    endpoint: addr.to_string(),
                     source: e,
+                    context: "tcp_connect".to_string(),
                 })?;
 
         let server_name = rustls::ServerName::try_from(server_name).map_err(|e| {
-            RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Invalid server name: {}", e),
+            RaftError::Network(NetworkError::SerializationFailed {
+                source: serde_json::Error::io(
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Invalid server name: {}", e),
+                    ),
                 ),
-            )))
+                context: "parse_server_name".to_string(),
+            })
         })?;
 
         let tls_stream = connector
@@ -248,7 +268,9 @@ impl SecureStream {
             .map_err(|e| {
                 RaftError::Network(NetworkError::ConnectionFailed {
                     node_id: 0,
+                    endpoint: addr.to_string(),
                     source: std::io::Error::new(std::io::ErrorKind::ConnectionRefused, e),
+                    context: "tls_connect".to_string(),
                 })
             })?;
 
@@ -264,7 +286,9 @@ impl SecureStream {
                 .await
                 .map_err(|e| NetworkError::ConnectionFailed {
                     node_id: 0,
+                    endpoint: addr.to_string(),
                     source: e,
+                    context: "tcp_connect_plain".to_string(),
                 })?;
         Ok(SecureStream::Plain(stream))
     }
@@ -443,6 +467,8 @@ impl MessageEnvelope {
             return Err(RaftError::Network(NetworkError::InvalidResponse {
                 node_id: 0,
                 message: "Message too short".to_string(),
+                expected: "at least 4 bytes".to_string(),
+                context: "deserialize_message".to_string(),
             }));
         }
 
@@ -457,6 +483,8 @@ impl MessageEnvelope {
                     "Message too large: {} bytes (max: {} bytes)",
                     len, MAX_MESSAGE_SIZE
                 ),
+                expected: format!("max {} bytes", MAX_MESSAGE_SIZE),
+                context: "deserialize_message_size_check".to_string(),
             }));
         }
 
@@ -464,6 +492,8 @@ impl MessageEnvelope {
             return Err(RaftError::Network(NetworkError::InvalidResponse {
                 node_id: 0,
                 message: "Incomplete message".to_string(),
+                expected: format!("{} bytes", len),
+                context: "deserialize_message_incomplete".to_string(),
             }));
         }
 
@@ -649,6 +679,8 @@ impl MessageRouter {
                 RaftError::Network(NetworkError::InvalidResponse {
                     node_id: target_node,
                     message: "Handler channel closed".to_string(),
+                    expected: "open channel".to_string(),
+                    context: "route_message".to_string(),
                 })
             })?;
         } else {
@@ -730,6 +762,8 @@ impl MessageRouter {
             Ok(Err(_)) => Err(RaftError::Network(NetworkError::InvalidResponse {
                 node_id: target_node,
                 message: "Response channel closed".to_string(),
+                expected: "response message".to_string(),
+                context: "send_request_with_response".to_string(),
             })),
             Err(_) => {
                 // Remove from pending requests on timeout
@@ -738,6 +772,9 @@ impl MessageRouter {
 
                 Err(RaftError::Network(NetworkError::RequestTimeout {
                     node_id: target_node,
+                    timeout_ms: timeout.as_millis() as u64,
+                    operation: "send_request_with_response".to_string(),
+                    context: "request_timeout".to_string(),
                 }))
             }
         }
@@ -1074,7 +1111,9 @@ impl RaftConnection {
         let addr = endpoint.parse::<std::net::SocketAddr>().map_err(|e| {
             NetworkError::ConnectionFailed {
                 node_id,
+                endpoint: endpoint.to_string(),
                 source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e),
+                context: "parse_endpoint".to_string(),
             }
         })?;
 
@@ -1087,11 +1126,21 @@ impl RaftConnection {
                 SecureStream::connect_tls(addr, tls_config, hostname),
             )
             .await
-            .map_err(|_| NetworkError::RequestTimeout { node_id })?
+            .map_err(|_| NetworkError::RequestTimeout {
+                node_id,
+                timeout_ms: timeout.as_millis() as u64,
+                operation: "tls_connect".to_string(),
+                context: "connection_timeout".to_string(),
+            })?
         } else {
             tokio_timeout(timeout, SecureStream::connect_plain(addr))
                 .await
-                .map_err(|_| NetworkError::RequestTimeout { node_id })?
+                .map_err(|_| NetworkError::RequestTimeout {
+                    node_id,
+                    timeout_ms: timeout.as_millis() as u64,
+                    operation: "plain_connect".to_string(),
+                    context: "connection_timeout".to_string(),
+                })?
         }?;
 
         let now = Instant::now();
@@ -1142,6 +1191,8 @@ impl RaftConnection {
                             return Err(RaftError::Network(NetworkError::InvalidResponse {
                                 node_id: self.node_id,
                                 message: "Authentication verification failed".to_string(),
+                                expected: "valid HMAC".to_string(),
+                                context: "verify_authentication".to_string(),
                             }));
                         }
                     }
@@ -1175,7 +1226,9 @@ impl RaftConnection {
         let stream = self.stream.as_ref().ok_or_else(|| {
             RaftError::Network(NetworkError::ConnectionFailed {
                 node_id: self.node_id,
+                endpoint: self.endpoint.clone(),
                 source: std::io::Error::new(std::io::ErrorKind::NotConnected, "No connection"),
+                context: "send_message".to_string(),
             })
         })?;
 
@@ -1188,7 +1241,9 @@ impl RaftConnection {
             .await
             .map_err(|e| NetworkError::ConnectionFailed {
                 node_id: self.node_id,
+                endpoint: self.endpoint.clone(),
                 source: e,
+                context: "write_message".to_string(),
             })?;
 
         // Read the response
@@ -1198,7 +1253,9 @@ impl RaftConnection {
             .await
             .map_err(|e| NetworkError::ConnectionFailed {
                 node_id: self.node_id,
+                endpoint: self.endpoint.clone(),
                 source: e,
+                context: "read_response_length".to_string(),
             })?;
 
         let length = u32::from_be_bytes(length_buf) as usize;
@@ -1212,6 +1269,8 @@ impl RaftConnection {
                     "Response size invalid: {} bytes (max: {} bytes)",
                     length, MAX_MESSAGE_SIZE
                 ),
+                expected: format!("1 to {} bytes", MAX_MESSAGE_SIZE),
+                context: "validate_response_size".to_string(),
             }));
         }
 
@@ -1221,7 +1280,9 @@ impl RaftConnection {
             .await
             .map_err(|e| NetworkError::ConnectionFailed {
                 node_id: self.node_id,
+                endpoint: self.endpoint.clone(),
                 source: e,
+                context: "read_response_body".to_string(),
             })?;
 
         // Deserialize the response
@@ -1393,10 +1454,12 @@ impl RaftNetworkClient {
                 .ok_or_else(|| {
                     RaftError::Network(NetworkError::ConnectionFailed {
                         node_id: self.target_node,
+                        endpoint: String::from("unknown"),
                         source: std::io::Error::new(
                             std::io::ErrorKind::NotFound,
                             "Endpoint not found for node",
                         ),
+                        context: String::from("send_message_get_endpoint"),
                     })
                 })?
                 .clone()
@@ -1416,7 +1479,10 @@ impl RaftNetworkClient {
             .is_partitioned(self.target_node)
             .await
         {
-            return Err(RaftError::Network(NetworkError::NetworkPartition));
+            return Err(RaftError::Network(NetworkError::NetworkPartition {
+                affected_nodes: 1,
+                context: format!("node {} is partitioned", self.target_node),
+            }));
         }
 
         // Try HTTP first, fallback to TCP if needed
@@ -1454,10 +1520,12 @@ impl RaftNetworkClient {
                 .ok_or_else(|| {
                     RaftError::Network(NetworkError::ConnectionFailed {
                         node_id: self.target_node,
+                        endpoint: String::new(),
                         source: std::io::Error::new(
                             std::io::ErrorKind::NotFound,
                             "Endpoint not found for node",
                         ),
+                        context: "get_endpoint".to_string(),
                     })
                 })?
                 .clone()
@@ -1476,7 +1544,9 @@ impl RaftNetworkClient {
             .map_err(|e| {
                 RaftError::Network(NetworkError::ConnectionFailed {
                     node_id: self.target_node,
+                    endpoint: endpoint.clone(),
                     source: std::io::Error::new(std::io::ErrorKind::Other, e),
+                    context: String::from("http_client_build"),
                 })
             })?;
 
@@ -1540,7 +1610,9 @@ impl RaftNetworkClient {
             .map_err(|e| {
                 RaftError::Network(NetworkError::ConnectionFailed {
                     node_id: self.target_node,
+                    endpoint: url.to_string(),
                     source: std::io::Error::new(std::io::ErrorKind::Other, e),
+                    context: String::from("http_send"),
                 })
             })?;
 
@@ -1548,13 +1620,16 @@ impl RaftNetworkClient {
             return Err(RaftError::Network(NetworkError::InvalidResponse {
                 node_id: self.target_node,
                 message: format!("HTTP error: {}", response.status()),
+                expected: "2xx status".to_string(),
+                context: "http_response".to_string(),
             }));
         }
 
         let response_data = response.bytes().await.map_err(|e| {
-            RaftError::Network(NetworkError::SerializationFailed(serde_json::Error::io(
-                std::io::Error::new(std::io::ErrorKind::Other, e),
-            )))
+            RaftError::Network(NetworkError::SerializationFailed {
+                source: serde_json::Error::io(std::io::Error::new(std::io::ErrorKind::Other, e)),
+                context: String::from("http_response_bytes"),
+            })
         })?;
 
         // Deserialize response
@@ -1566,6 +1641,8 @@ impl RaftNetworkClient {
             return Err(RaftError::Network(NetworkError::InvalidResponse {
                 node_id: self.target_node,
                 message: "Invalid response routing".to_string(),
+                expected: format!("from={}, to={}", self.target_node, self.source_node),
+                context: String::from("http_response_validation"),
             }));
         }
 
@@ -1605,12 +1682,14 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
                         NetworkError::InvalidResponse {
                             node_id: self.target_node,
                             message: "Unexpected response type".to_string(),
+                            expected: "AppendEntriesResponse".to_string(),
+                            context: "append_entries".to_string(),
                         },
                     )),
                 )),
                 Err(e) => {
                     // Handle network partitions gracefully
-                    if matches!(e, RaftError::Network(NetworkError::NetworkPartition)) {
+                    if matches!(e, RaftError::Network(NetworkError::NetworkPartition { .. })) {
                         log::warn!("Network partition detected with node {}", self.target_node);
                     }
                     Err(openraft::error::RPCError::Network(
@@ -1655,12 +1734,14 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
                         NetworkError::InvalidResponse {
                             node_id: self.target_node,
                             message: "Unexpected response type".to_string(),
+                            expected: "InstallSnapshotResponse".to_string(),
+                            context: "install_snapshot".to_string(),
                         },
                     )),
                 )),
                 Err(e) => {
                     // Handle network partitions gracefully
-                    if matches!(e, RaftError::Network(NetworkError::NetworkPartition)) {
+                    if matches!(e, RaftError::Network(NetworkError::NetworkPartition { .. })) {
                         log::warn!("Network partition detected with node {}", self.target_node);
                     }
                     Err(openraft::error::RPCError::Network(
@@ -1702,12 +1783,14 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
                         NetworkError::InvalidResponse {
                             node_id: self.target_node,
                             message: "Unexpected response type".to_string(),
+                            expected: "VoteResponse".to_string(),
+                            context: "vote".to_string(),
                         },
                     )),
                 )),
                 Err(e) => {
                     // Handle network partitions gracefully
-                    if matches!(e, RaftError::Network(NetworkError::NetworkPartition)) {
+                    if matches!(e, RaftError::Network(NetworkError::NetworkPartition { .. })) {
                         log::warn!("Network partition detected with node {}", self.target_node);
                     }
                     Err(openraft::error::RPCError::Network(
