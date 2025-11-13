@@ -481,11 +481,11 @@ impl KiwiStateMachine {
             // Get current value
             let current_value = match storage_engine.get(key).await? {
                 Some(value) => {
-                    // Parse as integer
-                    String::from_utf8(value)
-                        .ok()
-                        .and_then(|s| s.parse::<i64>().ok())
-                        .unwrap_or(0)
+                    // Parse as integer - must return error if not a valid integer
+                    let text = String::from_utf8(value)
+                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?;
+                    text.parse::<i64>()
+                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?
                 }
                 None => 0,
             };
@@ -516,11 +516,11 @@ impl KiwiStateMachine {
             // Get current value
             let current_value = match storage_engine.get(key).await? {
                 Some(value) => {
-                    // Parse as integer
-                    String::from_utf8(value)
-                        .ok()
-                        .and_then(|s| s.parse::<i64>().ok())
-                        .unwrap_or(0)
+                    // Parse as integer - must return error if not a valid integer
+                    let text = String::from_utf8(value)
+                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?;
+                    text.parse::<i64>()
+                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?
                 }
                 None => 0,
             };

@@ -46,19 +46,11 @@ impl raft::storage_engine::RedisOperations for RedisForRaft {
     }
 
     fn raft_del(&self, keys: &[&[u8]]) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
-        let mut deleted_count = 0;
-        
-        for &key in keys {
-            match RedisForRaft::raft_del(self, key) {
-                Ok(count) => deleted_count += count,
-                Err(e) => {
-                    let err_msg = format!("{}", e);
-                    return Err(Box::new(std::io::Error::other(err_msg)) as Box<dyn std::error::Error + Send + Sync>);
-                }
-            }
-        }
-        
-        Ok(deleted_count)
+        RedisForRaft::raft_del(self, keys)
+            .map_err(|e| {
+                let err_msg = format!("{}", e);
+                Box::new(std::io::Error::other(err_msg)) as Box<dyn std::error::Error + Send + Sync>
+            })
     }
 
     fn raft_mset(&self, pairs: &[(Vec<u8>, Vec<u8>)]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {

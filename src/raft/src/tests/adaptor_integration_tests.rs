@@ -28,7 +28,7 @@ use tempfile::TempDir;
 async fn test_basic_storage_creation() {
     // Test basic storage creation without adaptor pattern
     let temp_dir = TempDir::new().unwrap();
-    let _storage = RaftStorage::new(temp_dir.path()).unwrap();
+    let _storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
     
     // If this compiles and runs, basic storage creation works
     // Storage creation succeeded if we reach this point
@@ -76,7 +76,7 @@ async fn test_state_machine_snapshot_creation() {
 async fn test_storage_basic_operations() {
     // Test basic storage operations
     let temp_dir = TempDir::new().unwrap();
-    let _storage = RaftStorage::new(temp_dir.path()).unwrap();
+    let _storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
     
     // Test that storage can be created and has basic properties
     // Storage creation succeeded if we reach this point
@@ -117,7 +117,7 @@ async fn test_state_machine_batch_commands() {
 async fn test_integration_basic_functionality() {
     // Test that basic integration components work together
     let temp_dir = TempDir::new().unwrap();
-    let _storage = RaftStorage::new(temp_dir.path()).unwrap();
+    let _storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
     let state_machine = KiwiStateMachine::new(1);
     
     // Test basic state machine functionality

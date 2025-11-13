@@ -33,6 +33,7 @@ test_debug_*
 /.env
 /.env*
 /integration-tests
+**/test_data
 
 #web distribution
 /web/dist

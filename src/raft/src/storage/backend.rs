@@ -522,9 +522,9 @@ impl StorageBackend for StorageBackendImpl {
 /// # Examples
 ///
 /// ```no_run
-/// use kiwi_raft::storage::backend::{create_backend, BackendType};
+/// use raft::storage::backend::{create_backend, BackendType, StorageBackend};
 ///
-/// # async fn example() -> Result<(), kiwi_raft::error::RaftError> {
+/// # async fn example() -> Result<(), raft::error::RaftError> {
 /// let backend = create_backend(BackendType::RocksDB, "/tmp/raft_storage")?;
 /// backend.write(b"key", b"value").await?;
 /// # Ok(())
@@ -570,10 +570,10 @@ pub fn create_backend<P: AsRef<Path>>(
 /// # Examples
 ///
 /// ```no_run
-/// use kiwi_raft::storage::backend::{create_backend_with_options, BackendType};
+/// use raft::storage::backend::{create_backend_with_options, BackendType};
 /// use rocksdb::Options;
 ///
-/// # async fn example() -> Result<(), kiwi_raft::error::RaftError> {
+/// # async fn example() -> Result<(), raft::error::RaftError> {
 /// let mut opts = Options::default();
 /// opts.create_if_missing(true);
 /// opts.set_max_open_files(1000);

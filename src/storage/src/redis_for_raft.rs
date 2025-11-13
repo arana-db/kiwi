@@ -50,12 +50,15 @@ impl RedisForRaft {
         self.redis.as_ref().set(key, value)
     }
     
-    /// Delete a key
-    pub fn raft_del(&self, key: &[u8]) -> crate::Result<i32> {
-        match self.redis.as_ref().del_key(key)? {
-            true => Ok(1),
-            false => Ok(0),
+    /// Delete multiple keys
+    pub fn raft_del(&self, keys: &[&[u8]]) -> crate::Result<i32> {
+        let mut deleted = 0;
+        for key in keys {
+            if self.redis.as_ref().del_key(key)? {
+                deleted += 1;
+            }
         }
+        Ok(deleted)
     }
     
     /// Set multiple key-value pairs
