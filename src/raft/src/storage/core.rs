@@ -19,6 +19,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::future::Future;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,28 @@ use serde::{Deserialize, Serialize};
 use crate::error::{RaftError, StorageError};
 use crate::storage::backend::{BackendType, StorageBackend, StorageBackendImpl, WriteOp, create_backend};
 use crate::types::{LogIndex, NodeId, Term};
+
+/// Helper function to run async code from sync context
+/// This handles both cases: when we're in a runtime and when we're not
+/// Uses scoped threads to avoid 'static lifetime requirements
+fn run_async<F>(future: F) -> F::Output
+where
+    F: Future + Send,
+    F::Output: Send,
+{
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            // Create a new tokio runtime in this thread
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create runtime");
+            rt.block_on(future)
+        })
+        .join()
+        .expect("Thread panicked")
+    })
+}
 
 /// Keys for storing Raft state
 const KEY_CURRENT_TERM: &str = "current_term";
@@ -109,27 +132,12 @@ impl RaftStorage {
     /// Create a new Raft storage instance with default backend (RocksDB)
     /// 
     /// This is a synchronous wrapper that blocks on the async initialization.
-    /// For async contexts, use `new_async` instead.
-    pub fn new<P: AsRef<Path>>(db_path: P) -> Result<Self, RaftError> {
-        // Try to use current runtime, fall back to creating a new one if needed
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => {
-                // We're in a runtime context, use block_in_place to avoid nested runtime error
-                tokio::task::block_in_place(|| {
-                    handle.block_on(Self::new_async(db_path))
-                })
-            }
-            Err(_) => {
-                // No runtime available, create a temporary one
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("RaftStorage::new"),
-                    })
-                })?;
-                rt.block_on(Self::new_async(db_path))
-            }
-        }
+    /// 
+    /// **Important**: This function creates its own tokio runtime and should NOT be called
+    /// from within an async context (like inside `#[tokio::test]` or async functions).
+    /// If you're already in an async context, use `new_async()` instead.
+    pub fn new<P: AsRef<Path> + Send>(db_path: P) -> Result<Self, RaftError> {
+        run_async(Self::new_async(db_path))
     }
 
     /// Create a new Raft storage instance with default backend (RocksDB) - async version
@@ -138,24 +146,8 @@ impl RaftStorage {
     }
 
     /// Create a new Raft storage instance with specified backend type
-    pub fn with_backend<P: AsRef<Path>>(backend_type: BackendType, db_path: P) -> Result<Self, RaftError> {
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => {
-                // We're in a runtime context, use block_in_place to avoid nested runtime error
-                tokio::task::block_in_place(|| {
-                    handle.block_on(Self::with_backend_async(backend_type, db_path))
-                })
-            }
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("RaftStorage::with_backend"),
-                    })
-                })?;
-                rt.block_on(Self::with_backend_async(backend_type, db_path))
-            }
-        }
+    pub fn with_backend<P: AsRef<Path> + Send>(backend_type: BackendType, db_path: P) -> Result<Self, RaftError> {
+        run_async(Self::with_backend_async(backend_type, db_path))
     }
 
     /// Create a new Raft storage instance with specified backend type - async version
@@ -179,23 +171,7 @@ impl RaftStorage {
 
     /// Create a new Raft storage instance with a custom backend implementation
     pub fn with_custom_backend(backend: StorageBackendImpl) -> Result<Self, RaftError> {
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => {
-                // We're in a runtime context, use block_in_place to avoid nested runtime error
-                tokio::task::block_in_place(|| {
-                    handle.block_on(Self::with_custom_backend_async(backend))
-                })
-            }
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("RaftStorage::with_custom_backend"),
-                    })
-                })?;
-                rt.block_on(Self::with_custom_backend_async(backend))
-            }
-        }
+        run_async(Self::with_custom_backend_async(backend))
     }
 
     /// Create a new Raft storage instance with a custom backend implementation - async version
@@ -459,18 +435,7 @@ impl RaftStorage {
             state.clone()
         };
         
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.save_state_async(&state)),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("set_current_term"),
-                    })
-                })?;
-                rt.block_on(self.save_state_async(&state))
-            }
-        }
+        run_async(self.save_state_async(&state))
     }
 
     /// Set current term (async version)
@@ -496,18 +461,7 @@ impl RaftStorage {
             state.clone()
         };
         
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.save_state_async(&state)),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("set_voted_for"),
-                    })
-                })?;
-                rt.block_on(self.save_state_async(&state))
-            }
-        }
+        run_async(self.save_state_async(&state))
     }
 
     /// Set voted for (async version)
@@ -533,18 +487,7 @@ impl RaftStorage {
             state.clone()
         };
         
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.save_state_async(&state)),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("set_last_applied"),
-                    })
-                })?;
-                rt.block_on(self.save_state_async(&state))
-            }
-        }
+        run_async(self.save_state_async(&state))
     }
 
     /// Set last applied index (async version)
@@ -595,26 +538,7 @@ impl RaftStorage {
 
     /// Append log entry (synchronous wrapper)
     pub fn append_log_entry(&self, entry: &StoredLogEntry) -> Result<(), RaftError> {
-        let key = Self::log_key(entry.index);
-        let value = bincode::serialize(entry).map_err(|e| {
-            RaftError::Storage(StorageError::DataInconsistency { 
-                message: format!("Failed to serialize log entry: {}", e), 
-                context: String::from("append_log_entry"),
-            })
-        })?;
-
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.backend.write(&key, &value)),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("append_log_entry"),
-                    })
-                })?;
-                rt.block_on(self.backend.write(&key, &value))
-            }
-        }
+        run_async(self.append_log_entry_async(entry))
     }
 
     /// Append log entry (async version)
@@ -634,50 +558,17 @@ impl RaftStorage {
 
     /// Get log entry by index (synchronous wrapper)
     pub fn get_log_entry(&self, index: LogIndex) -> Result<Option<StoredLogEntry>, RaftError> {
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.get_log_entry_async(index)),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("get_log_entry"),
-                    })
-                })?;
-                rt.block_on(self.get_log_entry_async(index))
-            }
-        }
+        run_async(self.get_log_entry_async(index))
     }
 
     /// Get the last log entry (synchronous wrapper)
     pub fn get_last_log_entry(&self) -> Result<Option<StoredLogEntry>, RaftError> {
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.get_last_log_entry_async()),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("get_last_log_entry"),
-                    })
-                })?;
-                rt.block_on(self.get_last_log_entry_async())
-            }
-        }
+        run_async(self.get_last_log_entry_async())
     }
 
     /// Get log entries in a range [start, end) (synchronous wrapper)
     pub fn get_log_entries_range(&self, start: u64, end: u64) -> Result<Vec<StoredLogEntry>, RaftError> {
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.get_log_entries_range_async(start, end)),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("get_log_entries_range"),
-                    })
-                })?;
-                rt.block_on(self.get_log_entries_range_async(start, end))
-            }
-        }
+        run_async(self.get_log_entries_range_async(start, end))
     }
 
     /// Get log entries in a range [start, end) (async version)
@@ -697,18 +588,7 @@ impl RaftStorage {
 
     /// Delete log entries from index onwards (synchronous wrapper)
     pub fn delete_log_entries_from(&self, from_index: LogIndex) -> Result<(), RaftError> {
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.delete_log_entries_from_async(from_index)),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("delete_log_entries_from"),
-                    })
-                })?;
-                rt.block_on(self.delete_log_entries_from_async(from_index))
-            }
-        }
+        run_async(self.delete_log_entries_from_async(from_index))
     }
 
     /// Delete log entries from index onwards (async version)
@@ -735,18 +615,7 @@ impl RaftStorage {
 
     /// Purge log entries up to (but not including) the specified index (synchronous wrapper)
     pub fn purge_logs_upto(&self, upto_index: LogIndex) -> Result<(), RaftError> {
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.purge_logs_upto_async(upto_index)),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("purge_logs_upto"),
-                    })
-                })?;
-                rt.block_on(self.purge_logs_upto_async(upto_index))
-            }
-        }
+        run_async(self.purge_logs_upto_async(upto_index))
     }
 
     /// Purge log entries up to (but not including) the specified index (async version)
@@ -777,18 +646,7 @@ impl RaftStorage {
     /// Store snapshot metadata (synchronous wrapper)
     /// Updates both persistent storage and in-memory cache
     pub fn store_snapshot_meta(&self, meta: &StoredSnapshotMeta) -> Result<(), RaftError> {
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.store_snapshot_meta_async(meta)),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("store_snapshot_meta"),
-                    })
-                })?;
-                rt.block_on(self.store_snapshot_meta_async(meta))
-            }
-        }
+        run_async(self.store_snapshot_meta_async(meta))
     }
 
     /// Get snapshot metadata (synchronous wrapper)
@@ -803,18 +661,7 @@ impl RaftStorage {
         }
 
         // Cache miss - read from storage (slow path)
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.get_snapshot_meta_async()),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("get_snapshot_meta"),
-                    })
-                })?;
-                rt.block_on(self.get_snapshot_meta_async())
-            }
-        }
+        run_async(self.get_snapshot_meta_async())
     }
 
     /// Get snapshot metadata (async version)
@@ -842,35 +689,12 @@ impl RaftStorage {
 
     /// Store snapshot data (synchronous wrapper)
     pub fn store_snapshot_data(&self, snapshot_id: &str, data: &[u8]) -> Result<(), RaftError> {
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.store_snapshot_data_async(snapshot_id, data)),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("store_snapshot_data"),
-                    })
-                })?;
-                rt.block_on(self.store_snapshot_data_async(snapshot_id, data))
-            }
-        }
+        run_async(self.store_snapshot_data_async(snapshot_id, data))
     }
 
     /// Get snapshot data (synchronous wrapper)
     pub fn get_snapshot_data(&self, snapshot_id: &str) -> Result<Option<Vec<u8>>, RaftError> {
-        let key = Self::snapshot_key(snapshot_id);
-        match tokio::runtime::Handle::try_current() {
-            Ok(handle) => handle.block_on(self.backend.read(&key)),
-            Err(_) => {
-                let rt = tokio::runtime::Runtime::new().map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency {
-                        message: format!("Failed to create tokio runtime: {}", e),
-                        context: String::from("get_snapshot_data"),
-                    })
-                })?;
-                rt.block_on(self.backend.read(&key))
-            }
-        }
+        run_async(self.get_snapshot_data_async(snapshot_id))
     }
 
     /// Get snapshot data (async version)
@@ -1224,7 +1048,7 @@ mod raft_log_reader_tests {
     #[tokio::test]
     async fn test_try_get_log_entries_empty() {
         let temp_dir = TempDir::new().unwrap();
-        let mut storage = RaftStorage::new(temp_dir.path()).unwrap();
+        let mut storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
 
         let entries = storage.try_get_log_entries(0..10).await.unwrap();
         assert_eq!(entries.len(), 0);
@@ -1233,7 +1057,7 @@ mod raft_log_reader_tests {
     #[tokio::test]
     async fn test_try_get_log_entries_with_data() {
         let temp_dir = TempDir::new().unwrap();
-        let mut storage = RaftStorage::new(temp_dir.path()).unwrap();
+        let mut storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
 
         // Add some log entries
         for i in 0..5 {
@@ -1256,7 +1080,7 @@ mod raft_log_reader_tests {
                 payload,
             };
 
-            storage.append_log_entry(&entry).unwrap();
+            storage.append_log_entry_async(&entry).await.unwrap();
         }
 
         // Read all entries
@@ -1273,7 +1097,7 @@ mod raft_log_reader_tests {
     #[tokio::test]
     async fn test_try_get_log_entries_unbounded() {
         let temp_dir = TempDir::new().unwrap();
-        let mut storage = RaftStorage::new(temp_dir.path()).unwrap();
+        let mut storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
 
         // Add some log entries
         for i in 0..3 {
@@ -1311,7 +1135,7 @@ mod raft_snapshot_builder_tests {
     #[tokio::test]
     async fn test_build_snapshot_empty() {
         let temp_dir = TempDir::new().unwrap();
-        let mut storage = RaftStorage::new(temp_dir.path()).unwrap();
+        let mut storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
 
         // Build snapshot with no log entries
         let snapshot = storage.build_snapshot().await.unwrap();
@@ -1328,7 +1152,7 @@ mod raft_snapshot_builder_tests {
     #[tokio::test]
     async fn test_build_snapshot_with_logs() {
         let temp_dir = TempDir::new().unwrap();
-        let mut storage = RaftStorage::new(temp_dir.path()).unwrap();
+        let mut storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
 
         // Add some log entries
         for i in 0..5 {
@@ -1368,7 +1192,7 @@ mod raft_snapshot_builder_tests {
     #[tokio::test]
     async fn test_build_snapshot_metadata_persistence() {
         let temp_dir = TempDir::new().unwrap();
-        let mut storage = RaftStorage::new(temp_dir.path()).unwrap();
+        let mut storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
 
         // Add a log entry
         let request = ClientRequest {
@@ -1412,7 +1236,7 @@ mod raft_snapshot_builder_tests {
     #[tokio::test]
     async fn test_build_snapshot_serialization() {
         let temp_dir = TempDir::new().unwrap();
-        let mut storage = RaftStorage::new(temp_dir.path()).unwrap();
+        let mut storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
 
         // Add log entries
         for i in 0..3 {
@@ -1432,7 +1256,7 @@ mod raft_snapshot_builder_tests {
                 payload,
             };
 
-            storage.append_log_entry(&entry).unwrap();
+            storage.append_log_entry_async(&entry).await.unwrap();
         }
 
         // Build snapshot
@@ -1449,7 +1273,7 @@ mod raft_snapshot_builder_tests {
     #[tokio::test]
     async fn test_multiple_snapshots() {
         let temp_dir = TempDir::new().unwrap();
-        let mut storage = RaftStorage::new(temp_dir.path()).unwrap();
+        let mut storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
 
         // Build first snapshot
         let snapshot1 = storage.build_snapshot().await.unwrap();

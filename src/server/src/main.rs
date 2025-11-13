@@ -202,8 +202,7 @@ fn main() -> std::io::Result<()> {
                 },
                 Err(e) => {
                     error!("Failed to initialize Raft node: {}", e);
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return Err(std::io::Error::other(
                         format!("Failed to initialize Raft node: {}", e)
                     ));
                 }
@@ -213,8 +212,7 @@ fn main() -> std::io::Result<()> {
             info!("Starting Raft node (init_cluster: {})", args.init_cluster);
             if let Err(e) = raft_node.start(args.init_cluster).await {
                 error!("Failed to start Raft node: {}", e);
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                return Err(std::io::Error::other(
                     format!("Failed to start Raft node: {}", e)
                 ));
             }

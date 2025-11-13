@@ -30,7 +30,7 @@ mod tests {
         use crate::storage::core::RaftStorage as RaftStorageImpl;
 
         let temp_dir = TempDir::new().unwrap();
-        let storage = Arc::new(RaftStorageImpl::new(temp_dir.path()).unwrap());
+        let storage = Arc::new(RaftStorageImpl::new_async(temp_dir.path()).await.unwrap());
         let state_machine = Arc::new(KiwiStateMachine::new(1));
 
         let (_log_storage, _state_machine) = create_raft_storage_adaptor(storage, state_machine);
@@ -45,7 +45,7 @@ mod tests {
         use crate::storage::core::RaftStorage as RaftStorageImpl;
 
         let temp_dir = TempDir::new().unwrap();
-        let storage = Arc::new(RaftStorageImpl::new(temp_dir.path()).unwrap());
+        let storage = Arc::new(RaftStorageImpl::new_async(temp_dir.path()).await.unwrap());
         let state_machine = Arc::new(KiwiStateMachine::new(1));
 
         let (mut log_storage, _sm) = create_raft_storage_adaptor(storage, state_machine);

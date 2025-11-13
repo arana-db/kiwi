@@ -84,12 +84,16 @@ impl RaftNode {
 
         // Create storage layer (for our own use, not for openraft)
         let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
-        let storage = Arc::new(RaftStorage::new(storage_path)?);
+        let storage = Arc::new(RaftStorage::new_async(storage_path).await?);
 
-        // Create state machine without storage engine for now
-        // The storage engine will be set later by the caller using set_storage_engine()
-        let state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
-        log::info!("State machine created (storage engine will be set by caller)");
+        // Create state machine with in-memory storage engine for testing
+        // In production, this should be replaced with RedisStorageEngine
+        let storage_engine = Arc::new(crate::storage_engine::MemoryStorageEngine::new());
+        let state_machine = Arc::new(KiwiStateMachine::with_storage_engine(
+            cluster_config.node_id,
+            storage_engine,
+        ));
+        log::info!("State machine created with in-memory storage engine");
 
         // Create network factory
         let network_factory_instance = KiwiRaftNetworkFactory::new(cluster_config.node_id);

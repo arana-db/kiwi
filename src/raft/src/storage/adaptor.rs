@@ -88,22 +88,28 @@ impl RaftStorageAdaptor {
         &self,
         stored: &StoredLogEntry,
     ) -> Result<Entry<TypeConfig>, StorageError<NodeId>> {
-        // Deserialize the payload to get the ClientRequest
-        let request: ClientRequest = bincode::deserialize(&stored.payload).map_err(|e| {
-            Self::to_storage_error(RaftError::Storage(
-                crate::error::StorageError::DataInconsistency {
-                    message: format!("Failed to deserialize log entry payload: {}", e),
-                    context: String::from("stored_entry_to_openraft_entry"),
-                },
-            ))
-        })?;
+        // Handle empty payload (Blank or Membership entries)
+        let payload = if stored.payload.is_empty() {
+            EntryPayload::Blank
+        } else {
+            // Deserialize the payload to get the ClientRequest
+            let request: ClientRequest = bincode::deserialize(&stored.payload).map_err(|e| {
+                Self::to_storage_error(RaftError::Storage(
+                    crate::error::StorageError::DataInconsistency {
+                        message: format!("Failed to deserialize log entry payload: {}", e),
+                        context: String::from("stored_entry_to_openraft_entry"),
+                    },
+                ))
+            })?;
+            EntryPayload::Normal(request)
+        };
 
         Ok(Entry {
             log_id: LogId::new(
                 openraft::CommittedLeaderId::new(stored.term, self.state_machine.node_id),
                 stored.index,
             ),
-            payload: EntryPayload::Normal(request),
+            payload,
         })
     }
 }

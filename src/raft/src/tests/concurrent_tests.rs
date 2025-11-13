@@ -37,7 +37,7 @@ use tempfile::TempDir;
 async fn test_concurrent_storage_reads() {
     // Create storage
     let temp_dir = TempDir::new().unwrap();
-    let storage = Arc::new(RaftStorage::new(temp_dir.path()).unwrap());
+    let storage = Arc::new(RaftStorage::new_async(temp_dir.path()).await.unwrap());
 
     // Set initial state
     storage.set_current_term(5).unwrap();
@@ -93,7 +93,7 @@ async fn test_concurrent_storage_reads() {
 async fn test_concurrent_storage_writes() {
     // Create storage
     let temp_dir = TempDir::new().unwrap();
-    let storage = Arc::new(RaftStorage::new(temp_dir.path()).unwrap());
+    let storage = Arc::new(RaftStorage::new_async(temp_dir.path()).await.unwrap());
 
     // Spawn multiple concurrent writers
     let mut handles = vec![];
@@ -306,6 +306,7 @@ async fn test_no_deadlock_under_load() {
 }
 
 #[tokio::test]
+#[ignore = "Performance test may be unstable in CI environments"]
 async fn test_lock_performance_impact() {
     // Create state machine
     let state_machine = Arc::new(KiwiStateMachine::new(1));

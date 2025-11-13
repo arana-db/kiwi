@@ -185,7 +185,7 @@ impl TestCluster {
             })?;
 
             // Create storage
-            let storage = Arc::new(RaftStorage::new(temp_dir.path())?);
+            let storage = Arc::new(RaftStorage::new_async(temp_dir.path()).await?);
 
             // Create state machine with in-memory storage for testing
             let state_machine = Arc::new(KiwiStateMachine::with_storage_engine(
