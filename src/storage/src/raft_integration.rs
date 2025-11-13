@@ -99,8 +99,8 @@ mod tests {
     use crate::{StorageOptions, unique_test_db_path, safe_cleanup_test_db};
     use kstd::lock_mgr::LockMgr;
 
-    fn create_test_redis() -> Arc<Redis> {
-        let db_path = unique_test_db_path("raft_integration_test");
+    fn create_test_redis() -> (Arc<Redis>, std::path::PathBuf) {
+        let db_path = unique_test_db_path();
         let options = Arc::new(StorageOptions::default());
         let lock_mgr = Arc::new(LockMgr::new(1000));
         let bg_task_handler = Arc::new(crate::BgTaskHandler::new().0);
@@ -108,12 +108,12 @@ mod tests {
         let mut redis = Redis::new(options, 0, bg_task_handler, lock_mgr);
         redis.open(db_path.to_str().unwrap()).expect("Failed to open Redis");
         
-        Arc::new(redis)
+        (Arc::new(redis), db_path)
     }
 
     #[test]
     fn test_redis_operations_trait() {
-        let redis = create_test_redis();
+        let (redis, db_path) = create_test_redis();
         let redis_for_raft = RedisForRaft::new(redis.clone());
         
         // Test through trait
@@ -135,21 +135,23 @@ mod tests {
         assert!(result.is_err());
         
         // Cleanup
-        safe_cleanup_test_db(&redis);
+        drop(redis);
+        safe_cleanup_test_db(&db_path);
     }
 
     #[test]
     fn test_create_raft_storage_engine() {
-        let redis = create_test_redis();
+        let (redis, db_path) = create_test_redis();
         let _engine = create_raft_storage_engine(redis.clone());
         
         // Just verify it compiles and creates successfully
-        safe_cleanup_test_db(&redis);
+        drop(redis);
+        safe_cleanup_test_db(&db_path);
     }
 
     #[test]
     fn test_mset_operation() {
-        let redis = create_test_redis();
+        let (redis, db_path) = create_test_redis();
         let redis_for_raft = RedisForRaft::new(redis.clone());
         let ops: &dyn raft::storage_engine::RedisOperations = &redis_for_raft;
         
@@ -168,6 +170,7 @@ mod tests {
         assert_eq!(ops.raft_get_binary(b"key3").unwrap(), b"value3");
         
         // Cleanup
-        safe_cleanup_test_db(&redis);
+        drop(redis);
+        safe_cleanup_test_db(&db_path);
     }
 }

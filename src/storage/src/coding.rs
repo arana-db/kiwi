@@ -90,7 +90,7 @@ mod tests {
         let original = 0x12345678u32;
 
         encode_fixed(&mut buf, original);
-        let decoded = decode_fixed(&buf);
+        let decoded: u32 = decode_fixed(&buf);
 
         assert_eq!(
             original, decoded,
@@ -104,7 +104,7 @@ mod tests {
         let original = 0x1234567890ABCDEFu64;
 
         encode_fixed(&mut buf, original);
-        let decoded = decode_fixed(&buf);
+        let decoded: u64 = decode_fixed(&buf);
 
         assert_eq!(
             original, decoded,
@@ -314,7 +314,7 @@ mod tests {
 
         for &value in &values {
             encode_fixed::<u64>(&mut buf, value);
-            let decoded = decode_fixed(&buf);
+            let decoded: u64 = decode_fixed(&buf);
             assert_eq!(value, decoded, "Round trip of 0x{:X} failed", value);
         }
     }
