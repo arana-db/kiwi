@@ -114,7 +114,10 @@ impl RaftStorage {
         // Try to use current runtime, fall back to creating a new one if needed
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
-                handle.block_on(Self::new_async(db_path))
+                // We're in a runtime context, use block_in_place to avoid nested runtime error
+                tokio::task::block_in_place(|| {
+                    handle.block_on(Self::new_async(db_path))
+                })
             }
             Err(_) => {
                 // No runtime available, create a temporary one
@@ -138,7 +141,10 @@ impl RaftStorage {
     pub fn with_backend<P: AsRef<Path>>(backend_type: BackendType, db_path: P) -> Result<Self, RaftError> {
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
-                handle.block_on(Self::with_backend_async(backend_type, db_path))
+                // We're in a runtime context, use block_in_place to avoid nested runtime error
+                tokio::task::block_in_place(|| {
+                    handle.block_on(Self::with_backend_async(backend_type, db_path))
+                })
             }
             Err(_) => {
                 let rt = tokio::runtime::Runtime::new().map_err(|e| {
@@ -175,7 +181,10 @@ impl RaftStorage {
     pub fn with_custom_backend(backend: StorageBackendImpl) -> Result<Self, RaftError> {
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
-                handle.block_on(Self::with_custom_backend_async(backend))
+                // We're in a runtime context, use block_in_place to avoid nested runtime error
+                tokio::task::block_in_place(|| {
+                    handle.block_on(Self::with_custom_backend_async(backend))
+                })
             }
             Err(_) => {
                 let rt = tokio::runtime::Runtime::new().map_err(|e| {

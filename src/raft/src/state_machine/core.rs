@@ -550,10 +550,7 @@ impl KiwiStateMachine {
 
         if let Some(storage_engine) = &self.storage_engine {
             // Get current value
-            let mut current_value = match storage_engine.get(key).await? {
-                Some(value) => value,
-                None => Vec::new(),
-            };
+            let mut current_value: Vec<u8> = (storage_engine.get(key).await?).unwrap_or_default();
 
             // Append new value
             current_value.extend_from_slice(append_value);

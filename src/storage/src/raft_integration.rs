@@ -33,7 +33,7 @@ impl raft::storage_engine::RedisOperations for RedisForRaft {
         RedisForRaft::raft_get_binary(self, key)
             .map_err(|e| {
                 let err_msg = format!("{}", e);
-                Box::new(std::io::Error::new(std::io::ErrorKind::Other, err_msg)) as Box<dyn std::error::Error + Send + Sync>
+                Box::new(std::io::Error::other(err_msg)) as Box<dyn std::error::Error + Send + Sync>
             })
     }
 
@@ -41,7 +41,7 @@ impl raft::storage_engine::RedisOperations for RedisForRaft {
         RedisForRaft::raft_set(self, key, value)
             .map_err(|e| {
                 let err_msg = format!("{}", e);
-                Box::new(std::io::Error::new(std::io::ErrorKind::Other, err_msg)) as Box<dyn std::error::Error + Send + Sync>
+                Box::new(std::io::Error::other(err_msg)) as Box<dyn std::error::Error + Send + Sync>
             })
     }
 
@@ -53,7 +53,7 @@ impl raft::storage_engine::RedisOperations for RedisForRaft {
                 Ok(count) => deleted_count += count,
                 Err(e) => {
                     let err_msg = format!("{}", e);
-                    return Err(Box::new(std::io::Error::new(std::io::ErrorKind::Other, err_msg)) as Box<dyn std::error::Error + Send + Sync>);
+                    return Err(Box::new(std::io::Error::other(err_msg)) as Box<dyn std::error::Error + Send + Sync>);
                 }
             }
         }
@@ -65,7 +65,7 @@ impl raft::storage_engine::RedisOperations for RedisForRaft {
         RedisForRaft::raft_mset(self, pairs)
             .map_err(|e| {
                 let err_msg = format!("{}", e);
-                Box::new(std::io::Error::new(std::io::ErrorKind::Other, err_msg)) as Box<dyn std::error::Error + Send + Sync>
+                Box::new(std::io::Error::other(err_msg)) as Box<dyn std::error::Error + Send + Sync>
             })
     }
 }

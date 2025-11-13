@@ -23,7 +23,6 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::state_machine::KiwiStateMachine;
-    use crate::storage::core::RaftStorage;
     use crate::storage::adaptor::create_raft_storage_adaptor;
 
     #[tokio::test]
