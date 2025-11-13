@@ -15,8 +15,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// TODO(marsevilspirit): remove allow dead_code
-
 use std::ops::Range;
 
 use bytes::{BufMut, Bytes, BytesMut};

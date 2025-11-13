@@ -48,21 +48,16 @@
 
 use openraft::Config;
 
-// Temporarily disable problematic adaptors due to OpenRaft 0.9.21 lifetime issues
-// These modules have trait implementation issues with the current OpenRaft version
-// #[cfg(test)]
-// pub mod correct_adaptor; // Correct Adaptor implementation
-// #[cfg(test)]
-// pub mod adaptor_poc; // Proof of concept for Adaptor pattern
-// #[cfg(test)]
-// pub mod minimal_storage; // Minimal working storage implementation
-// pub mod working_adaptor_v2; // Working Adaptor implementation v2
 pub mod simple_mem_store; // Simple memory store using Adaptor pattern
 pub mod binlog;
 pub mod cluster_config;
 #[cfg(test)]
 pub mod cluster_tests;
 pub mod config_change;
+#[cfg(test)]
+pub mod config_change_tests;
+#[cfg(test)]
+pub mod failover_tests;
 pub mod consistency;
 pub mod conversion;
 pub mod consistency_handler;
@@ -81,6 +76,7 @@ pub mod protocol_compatibility;
 pub mod redis_integration;
 pub mod replication_mode;
 pub mod rocksdb_integration;
+pub mod router;
 pub mod segment_log;
 pub mod sequence_mapping;
 pub mod serialization;
@@ -88,13 +84,16 @@ pub mod simple_storage;
 pub mod snapshot;
 pub mod state_machine;
 pub mod storage;
+pub mod storage_engine;
 pub mod types;
 
 // Re-export commonly used types
 pub use error::RaftError;
 pub use node::{RaftNode, RaftNodeInterface};
+pub use router::{RequestRouter, ClusterMode, RedisResponse};
 pub use state_machine::KiwiStateMachine;
-pub use storage::RaftStorage;
+pub use storage::{RaftStorage, RaftStorageAdaptor, create_raft_storage_adaptor};
+pub use storage_engine::RedisStorageEngine;
 pub use types::*;
 
 // Re-export simple storage functions

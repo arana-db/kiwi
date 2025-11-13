@@ -18,11 +18,29 @@
 use clap::Parser;
 use conf::config::Config;
 use log::{error, info, warn};
-use net::ServerFactory;
+// ServerFactory is used via net::ServerFactory::create_server_with_mode
 use runtime::{DualRuntimeError, RuntimeConfig, RuntimeManager, StorageServer};
 use std::sync::Arc;
 use storage::storage::Storage;
-// use raft::{RaftNode, ClusterConfig}; // TODO: Re-enable when Raft module is fixed
+
+/// Convert conf::config::ClusterConfig to raft::types::ClusterConfig
+/// 
+/// This provides a unified entry point for cluster configuration conversion,
+/// following the pattern used in kiwi-cpp where configuration is mapped
+/// at the server initialization layer.
+fn convert_cluster_config(config: &conf::config::ClusterConfig) -> raft::types::ClusterConfig {
+    raft::types::ClusterConfig {
+        enabled: config.enabled,
+        node_id: config.node_id,
+        cluster_members: config.cluster_members.clone(),
+        data_dir: config.data_dir.clone(),
+        heartbeat_interval_ms: config.heartbeat_interval_ms,
+        election_timeout_min_ms: config.election_timeout_min_ms,
+        election_timeout_max_ms: config.election_timeout_max_ms,
+        snapshot_threshold: config.snapshot_threshold,
+        max_payload_entries: config.max_payload_entries,
+    }
+}
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
 #[derive(Parser)]
@@ -172,14 +190,12 @@ fn main() -> std::io::Result<()> {
                 ));
             }
 
-            // TODO: Re-enable Raft initialization when module is fixed
-            /*
             // Create Raft cluster configuration from the validated config
-            let raft_cluster_config = config.cluster.clone();
+            let raft_cluster_config = convert_cluster_config(&config.cluster);
 
             // Initialize Raft node
             info!("Initializing Raft node with configuration: {:?}", raft_cluster_config);
-            let raft_node = match RaftNode::new(raft_cluster_config).await {
+            let raft_node = match raft::RaftNode::new(raft_cluster_config).await {
                 Ok(node) => {
                     info!("Raft node initialized successfully");
                     Arc::new(node)
@@ -204,15 +220,10 @@ fn main() -> std::io::Result<()> {
             }
 
             info!("Raft node started successfully");
-            */
 
-            // Cluster mode temporarily disabled - falling back to single-node mode
-            warn!("Cluster mode temporarily disabled due to Raft module compilation issues");
-            warn!("Falling back to single-node mode");
-            info!("Starting server in single-node mode on {}", addr);
-
-            match start_server(protocol, &addr, &mut runtime_manager).await {
-                Ok(_) => info!("Server started successfully"),
+            // Start server in cluster mode
+            match start_server_with_mode(protocol, &addr, &mut runtime_manager, true).await {
+                Ok(_) => info!("Server started successfully in cluster mode"),
                 Err(e) => {
                     error!("Failed to start server: {}", e);
                     return Err(e);
@@ -224,7 +235,7 @@ fn main() -> std::io::Result<()> {
             }
             info!("Starting Kiwi server in single-node mode on {}", addr);
 
-            match start_server(protocol, &addr, &mut runtime_manager).await {
+            match start_server_with_mode(protocol, &addr, &mut runtime_manager, false).await {
                 Ok(_) => info!("Server started successfully"),
                 Err(e) => {
                     error!("Failed to start server: {}", e);
@@ -264,14 +275,31 @@ async fn initialize_storage_server(
     Ok(())
 }
 
-/// Start the server with proper error handling
-async fn start_server(
+/// Start the server with proper error handling and cluster mode support
+///
+/// # Requirements
+/// - Requirement 6.1: Network layer SHALL support mode switching
+async fn start_server_with_mode(
     protocol: &str,
     addr: &str,
     runtime_manager: &mut RuntimeManager,
+    cluster_mode: bool,
 ) -> std::io::Result<()> {
+    let mode = if cluster_mode {
+        net::raft_network_handle::ClusterMode::Cluster
+    } else {
+        net::raft_network_handle::ClusterMode::Single
+    };
+
+    info!("Starting server in {:?} mode", mode);
+
     if let Some(server) =
-        ServerFactory::create_server(protocol, Some(addr.to_string()), runtime_manager)
+        net::ServerFactory::create_server_with_mode(
+            protocol,
+            Some(addr.to_string()),
+            runtime_manager,
+            mode,
+        )
     {
         server.run().await.map_err(|e| {
             std::io::Error::other(format!("Failed to start the server on {}: {}. Please check the server configuration and ensure the address is available.", addr, e))

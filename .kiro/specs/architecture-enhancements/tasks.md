@@ -6,12 +6,12 @@
 **Priority**: High
 **Estimated Effort**: 3 days
 
-- [ ] Create src/raft/src/storage/backend.rs with StorageBackend trait
-- [ ] Implement RocksDBBackend wrapper
+- [x] Create src/raft/src/storage/backend.rs with StorageBackend trait
+- [x] Implement RocksDBBackend wrapper
 - [ ] Implement LevelDBBackend (using leveldb crate)
-- [ ] Add factory pattern for backend selection
-- [ ] Update RaftStorage to use StorageBackend trait
-- [ ] Add unit tests for each backend implementation
+- [x] Add factory pattern for backend selection
+- [x] Update RaftStorage to use StorageBackend trait
+- [x] Add unit tests for each backend implementation
 
 **Acceptance Criteria**: All Raft storage operations work through abstraction layer with both RocksDB and LevelDB
 
@@ -19,13 +19,13 @@
 **Priority**: High
 **Estimated Effort**: 2 days
 
-- [ ] Extend RuntimeConfig with scaling parameters
-- [ ] Add PriorityConfig struct
-- [ ] Add RaftMetricsConfig struct
-- [ ] Add FaultInjectionConfig struct
-- [ ] Add TOML configuration parsing
-- [ ] Add configuration validation
-- [ ] Update documentation
+- [x] Extend RuntimeConfig with scaling parameters
+- [x] Add PriorityConfig struct
+- [x] Add RaftMetricsConfig struct
+- [x] Add FaultInjectionConfig struct
+- [x] Add TOML configuration parsing
+- [x] Add configuration validation
+- [x] Update documentation
 
 **Acceptance Criteria**: All new features configurable via TOML file
 
