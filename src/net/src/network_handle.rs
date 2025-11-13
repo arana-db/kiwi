@@ -141,6 +141,10 @@ pub async fn process_network_connection(
 ///
 /// This function processes Redis commands by routing them through the
 /// StorageClient instead of accessing storage directly.
+///
+/// # Requirements
+/// - Requirement 6.1.1: Network layer SHALL identify read/write operation types
+/// - Requirement 6.1.4: Command parsing SHALL maintain Redis protocol compatibility
 async fn handle_network_command(
     client: Arc<Client>,
     storage_client: Arc<StorageClient>,

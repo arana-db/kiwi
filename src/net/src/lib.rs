@@ -25,6 +25,7 @@ pub mod network_server;
 pub mod optimized_handler;
 pub mod pipeline;
 pub mod pool;
+pub mod raft_network_handle;
 pub mod storage_client;
 pub mod tcp;
 
@@ -53,15 +54,35 @@ pub struct ServerFactory;
 
 impl ServerFactory {
     /// Create a server with dual runtime architecture support
+    ///
+    /// Defaults to single-node mode. Use `create_server_with_mode` for cluster mode.
     pub fn create_server(
         protocol: &str,
         addr: Option<String>,
         runtime_manager: &RuntimeManager,
     ) -> Option<Box<dyn ServerTrait>> {
+        Self::create_server_with_mode(
+            protocol,
+            addr,
+            runtime_manager,
+            crate::raft_network_handle::ClusterMode::Single,
+        )
+    }
+
+    /// Create a server with dual runtime architecture and specified cluster mode
+    ///
+    /// # Requirements
+    /// - Requirement 6.1: Network layer SHALL support mode switching
+    pub fn create_server_with_mode(
+        protocol: &str,
+        addr: Option<String>,
+        runtime_manager: &RuntimeManager,
+        cluster_mode: crate::raft_network_handle::ClusterMode,
+    ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
             "tcp" => {
                 // Create NetworkServer with dual runtime architecture
-                match Self::create_network_server(addr, runtime_manager) {
+                match Self::create_network_server_with_mode(addr, runtime_manager, cluster_mode) {
                     Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
                     Err(e) => {
                         log::error!("Failed to create NetworkServer: {}", e);
@@ -94,10 +115,11 @@ impl ServerFactory {
         }
     }
 
-    /// Create a NetworkServer with dual runtime architecture
-    fn create_network_server(
+    /// Create a NetworkServer with dual runtime architecture and specified cluster mode
+    fn create_network_server_with_mode(
         addr: Option<String>,
         runtime_manager: &RuntimeManager,
+        cluster_mode: crate::raft_network_handle::ClusterMode,
     ) -> Result<NetworkServer, Box<dyn std::error::Error>> {
         // Create message channel for communication between runtimes
         let message_channel = Arc::new(MessageChannel::new(
@@ -115,8 +137,11 @@ impl ServerFactory {
         let cmd_table = Arc::new(create_command_table());
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
-        // Create NetworkServer
-        NetworkServer::new(addr, storage_client, cmd_table, executor)
+        // Create NetworkServer with cluster mode
+        let mut server = NetworkServer::new(addr, storage_client, cmd_table, executor)?;
+        server.set_cluster_mode(cluster_mode);
+        
+        Ok(server)
     }
 
     pub fn create_cluster_server(

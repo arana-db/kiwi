@@ -104,8 +104,6 @@ impl Default for StorageOptions {
     }
 }
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 impl StorageOptions {
     /// Create a new StorageOptions with default values
     pub fn new() -> Self {

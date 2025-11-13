@@ -53,6 +53,12 @@ pub mod error;
 pub mod options;
 pub mod storage;
 
+// Raft integration modules
+mod redis_for_raft;
+pub mod raft_integration;
+
+pub use redis_for_raft::RedisForRaft;
+
 pub use base_key_format::BaseMetaKey;
 pub use base_value_format::*;
 pub use cluster_storage::ClusterStorage;

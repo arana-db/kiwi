@@ -219,16 +219,100 @@ pub struct RuntimeConfig {
     pub storage_threads: usize,      // Storage runtime thread pool size
     pub channel_buffer_size: usize,  // Message channel buffer size
     pub request_timeout: Duration,   // Default request timeout
-    pub max_pending_requests: usize, // Max pending requests
-    pub backpressure_threshold: Duration, // Backpressure threshold
+    pub batch_size: usize,           // Batch size for storage operations
+    pub batch_timeout: Duration,     // Timeout for batch processing
+    pub scaling: ScalingConfig,      // Dynamic thread pool scaling
+    pub priority: PriorityConfig,    // Request priority configuration
+    pub raft_metrics: RaftMetricsConfig,     // Raft metrics collection
+    pub fault_injection: FaultInjectionConfig, // Fault injection (testing)
 }
 ```
 
 **Default Behavior**:
-- Network threads: 25% of CPU cores (min 2, max 8)
-- Storage threads: 50% of CPU cores (min 2, max 16)
+- Network threads: 25% of CPU cores (min 1, max 4)
+- Storage threads: 50% of CPU cores (min 2, max 8)
 - Channel buffer: 10,000 requests
 - Request timeout: 30 seconds
+- Batch size: 100 requests
+- Batch timeout: 10ms
+
+### ScalingConfig
+
+Dynamic thread pool scaling allows the runtime to automatically adjust thread pool sizes based on workload:
+
+```rust
+pub struct ScalingConfig {
+    pub enabled: bool,                    // Enable dynamic scaling
+    pub min_network_threads: usize,       // Minimum network threads
+    pub max_network_threads: usize,       // Maximum network threads
+    pub min_storage_threads: usize,       // Minimum storage threads
+    pub max_storage_threads: usize,       // Maximum storage threads
+    pub scale_up_threshold: usize,        // Queue % to trigger scale-up
+    pub scale_down_threshold: usize,      // Queue % to trigger scale-down
+    pub scale_increment: usize,           // Threads to add/remove
+    pub evaluation_interval: Duration,    // Scaling evaluation interval
+}
+```
+
+**Default**: Disabled for backward compatibility
+
+### PriorityConfig
+
+Request prioritization enables processing critical operations before lower-priority requests:
+
+```rust
+pub struct PriorityConfig {
+    pub enabled: bool,                        // Enable priority queues
+    pub high_priority_weight: usize,          // High priority weight
+    pub normal_priority_weight: usize,        // Normal priority weight
+    pub low_priority_weight: usize,           // Low priority weight
+    pub max_queue_size_per_priority: usize,   // Max queue size per level
+}
+```
+
+**Default**: Disabled for backward compatibility
+
+### RaftMetricsConfig
+
+Fine-grained Raft metrics collection for monitoring cluster health:
+
+```rust
+pub struct RaftMetricsConfig {
+    pub enabled: bool,                        // Enable metrics collection
+    pub collection_interval: Duration,        // Collection interval
+    pub retention_period: Duration,           // How long to retain metrics
+    pub track_replication_latency: bool,      // Track per-follower latency
+    pub track_election_events: bool,          // Track leader elections
+}
+```
+
+**Default**: Enabled with 100ms collection interval and 1-hour retention
+
+### FaultInjectionConfig
+
+Fault injection for resilience testing (test environments only):
+
+```rust
+pub struct FaultInjectionConfig {
+    pub enabled: bool,                    // Enable fault injection
+    pub default_network_delay: Duration,  // Default network delay
+    pub default_drop_rate: f64,           // Default message drop rate
+    pub log_events: bool,                 // Log fault injection events
+}
+```
+
+**Default**: Disabled for safety
+
+### Configuration Presets
+
+Two preset configurations are available:
+
+- `RuntimeConfig::high_throughput()`: Optimized for maximum throughput with larger buffers and batch sizes
+- `RuntimeConfig::low_latency()`: Optimized for minimal latency with smaller batches and faster timeouts
+
+### TOML Configuration
+
+All configuration options can be specified in a TOML file. See `config.example.toml` for a complete example.
 
 ## Monitoring and Observability
 

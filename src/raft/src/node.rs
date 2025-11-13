@@ -31,6 +31,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+
+
 /// Core Raft node interface
 #[async_trait]
 pub trait RaftNodeInterface {
@@ -82,10 +84,16 @@ impl RaftNode {
 
         // Create storage layer (for our own use, not for openraft)
         let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
-        let storage = Arc::new(RaftStorage::new(storage_path)?);
+        let storage = Arc::new(RaftStorage::new_async(storage_path).await?);
 
-        // Create state machine (for our own use)
-        let state_machine = Arc::new(KiwiStateMachine::new(cluster_config.node_id));
+        // Create state machine with in-memory storage engine for testing
+        // In production, this should be replaced with RedisStorageEngine
+        let storage_engine = Arc::new(crate::storage_engine::MemoryStorageEngine::new());
+        let state_machine = Arc::new(KiwiStateMachine::with_storage_engine(
+            cluster_config.node_id,
+            storage_engine,
+        ));
+        log::info!("State machine created with in-memory storage engine");
 
         // Create network factory
         let network_factory_instance = KiwiRaftNetworkFactory::new(cluster_config.node_id);
@@ -120,10 +128,12 @@ impl RaftNode {
             ..Default::default()
         });
 
-        // Use the simple memory store with Adaptor pattern
-        // This provides a working in-memory storage that satisfies OpenRaft's sealed traits
-        let store_dir = PathBuf::from(&cluster_config.data_dir).join("openraft_store");
-        let (log_store, sm) = crate::simple_mem_store::create_mem_store_with_dir(store_dir);
+        // Use RaftStorage adaptor with state machine
+        let (log_store, sm) = crate::storage::create_raft_storage_adaptor(
+            storage.clone(),
+            state_machine.clone()
+        );
+        log::info!("RaftStorage adaptor created");
         
         let network_factory = Arc::new(RwLock::new(network_factory_instance));
         let network = network_factory.read().await.clone();
@@ -140,6 +150,8 @@ impl RaftNode {
             message: format!("Failed to create Raft instance: {}", e),
             context: "Raft::new".to_string(),
         })?;
+        
+        log::info!("Raft instance created successfully");
 
         Ok(Self {
             raft: Arc::new(raft),

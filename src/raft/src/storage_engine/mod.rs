@@ -15,19 +15,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Storage module for Raft implementation
+//! Storage engine module for Raft integration
 
-pub mod adaptor;
-pub mod backend;
-pub mod core;
-pub mod log_storage;
+pub mod redis_storage_engine;
+pub mod redis_adapter;
+pub mod redis_for_raft_impl;
+pub mod memory_storage_engine;
 
-pub use adaptor::*;
-pub use backend::*;
-pub use core::*;
-
-#[cfg(test)]
-pub mod adaptor_tests;
-
-#[cfg(test)]
-pub mod tests;
+pub use redis_storage_engine::{RedisStorageEngine, RedisStorage};
+pub use redis_adapter::{RedisStorageAdapter, RedisOperations};
+pub use memory_storage_engine::MemoryStorageEngine;

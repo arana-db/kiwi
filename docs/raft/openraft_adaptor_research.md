@@ -45,16 +45,16 @@ pub fn new(store: S) -> (Self, Self)
 ```
 
 **Adaptor 的作用**：
-- **绕过 sealed traits 限制**：Adaptor 本身实现了 sealed `Sealed` trait
-- 接受一个实现了 `RaftStorage<C>` 的存储对象
-- 返回**两个** Adaptor 实例：一个用于 log storage，一个用于 state machine
+- **绕过 sealed traits 限制**：Adaptor 自己实现了内部的 `Sealed`，并对外暴露 `RaftLogStorage` / `RaftStateMachine`
+- 只需要传入一个实现了 *旧版* `RaftStorage<C>` trait 的存储对象（这个 trait 仍然可实现，只是被标记为 deprecated）
+- 返回**两个** Adaptor 实例：一个充当 log storage，一个充当 state machine
 - `RaftStorage<C>` 是一个组合 trait，要求实现：
-  - `RaftLogReader<C>`
-  - `RaftSnapshotBuilder<C>`
-  - `RaftLogWriter<C>`
-  - `RaftStateMachine<C>`（但这个是 sealed 的！）
+  - `RaftLogReader<C>`（读取日志）
+  - `RaftSnapshotBuilder<C>`（构建快照）
+  - `append_to_log` / `delete_conflict_logs_since` / `purge_logs_upto` 等日志写入 API
+  - `apply_to_state_machine` / `last_applied_state` 等状态机 API
 
-**关键问题**：`RaftStorage<C>` 要求实现 `RaftStateMachine<C>`，但后者是 sealed 的，所以我们仍然不能直接实现 `RaftStorage<C>`！
+> ✅ 结论：`RaftStorage<C>` 本身 **不是 sealed trait**。我们完全可以直接实现它，然后通过 `Adaptor::new(store)` 换取 Openraft v2 所需的 `RaftLogStorage` 与 `RaftStateMachine`。先前“无法实现 `RaftStorage`”的说法是错误/过时的描述。
 
 ### 3. 正确的集成方式 ⚠️ 完全重写
 
