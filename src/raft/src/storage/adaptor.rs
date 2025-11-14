@@ -88,20 +88,32 @@ impl RaftStorageAdaptor {
         &self,
         stored: &StoredLogEntry,
     ) -> Result<Entry<TypeConfig>, StorageError<NodeId>> {
-        // Handle empty payload (Blank or Membership entries)
-        let payload = if stored.payload.is_empty() {
-            EntryPayload::Blank
-        } else {
-            // Deserialize the payload to get the ClientRequest
-            let request: ClientRequest = bincode::deserialize(&stored.payload).map_err(|e| {
-                Self::to_storage_error(RaftError::Storage(
-                    crate::error::StorageError::DataInconsistency {
-                        message: format!("Failed to deserialize log entry payload: {}", e),
-                        context: String::from("stored_entry_to_openraft_entry"),
-                    },
-                ))
-            })?;
-            EntryPayload::Normal(request)
+        // Convert payload based on its variant
+        let payload = match &stored.payload {
+            crate::storage::core::StoredEntryPayload::Normal(bytes) => {
+                let request: ClientRequest = bincode::deserialize(bytes).map_err(|e| {
+                    Self::to_storage_error(RaftError::Storage(
+                        crate::error::StorageError::DataInconsistency {
+                            message: format!("Failed to deserialize log entry payload: {}", e),
+                            context: String::from("stored_entry_to_openraft_entry"),
+                        },
+                    ))
+                })?;
+                EntryPayload::Normal(request)
+            }
+            crate::storage::core::StoredEntryPayload::Blank => EntryPayload::Blank,
+            crate::storage::core::StoredEntryPayload::Membership(bytes) => {
+                let membership: openraft::Membership<NodeId, BasicNode> = 
+                    bincode::deserialize(bytes).map_err(|e| {
+                        Self::to_storage_error(RaftError::Storage(
+                            crate::error::StorageError::DataInconsistency {
+                                message: format!("Failed to deserialize membership: {}", e),
+                                context: String::from("stored_entry_to_openraft_entry"),
+                            },
+                        ))
+                    })?;
+                EntryPayload::Membership(membership)
+            }
         };
 
         Ok(Entry {
@@ -180,21 +192,30 @@ impl RaftStorage<TypeConfig> for RaftStorageAdaptor {
         for entry in entries_vec {
             let (term, index) = Self::convert_log_id_to_entry(&entry.log_id);
 
-            // Serialize the payload
+            // Serialize the payload based on its type
             let payload = match &entry.payload {
-                EntryPayload::Normal(request) => bincode::serialize(request).map_err(|e| {
-                    Self::to_storage_error(RaftError::Storage(
-                        crate::error::StorageError::DataInconsistency {
-                            message: format!("Failed to serialize log entry: {}", e),
-                            context: String::from("append_to_log"),
-                        },
-                    ))
-                })?,
-                EntryPayload::Blank => Vec::new(),
-                EntryPayload::Membership(_) => {
-                    // For membership changes, we'll store an empty payload
-                    // The membership is tracked separately by OpenRaft
-                    Vec::new()
+                EntryPayload::Normal(request) => {
+                    let serialized = bincode::serialize(request).map_err(|e| {
+                        Self::to_storage_error(RaftError::Storage(
+                            crate::error::StorageError::DataInconsistency {
+                                message: format!("Failed to serialize log entry: {}", e),
+                                context: String::from("append_to_log"),
+                            },
+                        ))
+                    })?;
+                    crate::storage::core::StoredEntryPayload::Normal(serialized)
+                }
+                EntryPayload::Blank => crate::storage::core::StoredEntryPayload::Blank,
+                EntryPayload::Membership(membership) => {
+                    let serialized = bincode::serialize(membership).map_err(|e| {
+                        Self::to_storage_error(RaftError::Storage(
+                            crate::error::StorageError::DataInconsistency {
+                                message: format!("Failed to serialize membership: {}", e),
+                                context: String::from("append_to_log"),
+                            },
+                        ))
+                    })?;
+                    crate::storage::core::StoredEntryPayload::Membership(serialized)
                 }
             };
 

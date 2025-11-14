@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{RaftError, StorageError};
 use crate::storage::backend::{BackendType, StorageBackend, StorageBackendImpl, WriteOp, create_backend};
 use crate::types::{LogIndex, NodeId, Term};
+use openraft::Membership;
 
 /// Helper function to run async code from sync context
 /// This handles both cases: when we're in a runtime and when we're not
@@ -37,7 +38,7 @@ where
     F::Output: Send,
 {
     std::thread::scope(|s| {
-        s.spawn(|| {
+        s.spawn(move || {
             // Create a new tokio runtime in this thread
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -104,6 +105,33 @@ impl Default for RaftState {
     }
 }
 
+/// Stored entry payload variants
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum StoredEntryPayload {
+    /// Normal client request
+    Normal(Vec<u8>),
+    /// Blank entry (no-op)
+    Blank,
+    /// Membership change entry
+    Membership(Vec<u8>),
+}
+
+impl StoredEntryPayload {
+    /// Get the byte length of the payload
+    pub fn len(&self) -> usize {
+        match self {
+            StoredEntryPayload::Normal(bytes) => bytes.len(),
+            StoredEntryPayload::Blank => 0,
+            StoredEntryPayload::Membership(bytes) => bytes.len(),
+        }
+    }
+
+    /// Check if the payload is empty
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// Log entry for storage
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoredLogEntry {
@@ -111,8 +139,8 @@ pub struct StoredLogEntry {
     pub index: LogIndex,
     /// Term when entry was created
     pub term: Term,
-    /// Entry payload (serialized Redis command)
-    pub payload: Vec<u8>,
+    /// Entry payload (serialized Redis command or membership)
+    pub payload: StoredEntryPayload,
 }
 
 /// Snapshot metadata for persistence
@@ -846,22 +874,40 @@ impl RaftLogReader<TypeConfig> for RaftStorage {
 fn convert_stored_entry_to_openraft_entry(
     stored: StoredLogEntry,
 ) -> Result<Entry<TypeConfig>, RaftError> {
-    // Deserialize the payload to ClientRequest
-    let client_request: ClientRequest = bincode::deserialize(&stored.payload).map_err(|e| {
-        RaftError::Storage(StorageError::DataInconsistency { message: format!("Failed to deserialize log entry payload: {}", e), context: String::new(),
-        })
-    })?;
-
     // Create LogId
     let log_id = LogId::new(
         openraft::CommittedLeaderId::new(stored.term, 0), // TODO: Get actual leader_id
         stored.index,
     );
 
-    // Create Entry with Normal payload
+    // Convert payload based on variant
+    let payload = match stored.payload {
+        StoredEntryPayload::Normal(bytes) => {
+            let client_request: ClientRequest = bincode::deserialize(&bytes).map_err(|e| {
+                RaftError::Storage(StorageError::DataInconsistency { 
+                    message: format!("Failed to deserialize log entry payload: {}", e), 
+                    context: String::from("convert_stored_entry_to_openraft_entry"),
+                })
+            })?;
+            EntryPayload::Normal(client_request)
+        }
+        StoredEntryPayload::Blank => EntryPayload::Blank,
+        StoredEntryPayload::Membership(bytes) => {
+            let membership: Membership<NodeId, openraft::BasicNode> = 
+                bincode::deserialize(&bytes).map_err(|e| {
+                    RaftError::Storage(StorageError::DataInconsistency { 
+                        message: format!("Failed to deserialize membership: {}", e), 
+                        context: String::from("convert_stored_entry_to_openraft_entry"),
+                    })
+                })?;
+            EntryPayload::Membership(membership)
+        }
+    };
+
+    // Create Entry
     let entry = Entry {
         log_id,
-        payload: EntryPayload::Normal(client_request),
+        payload,
     };
 
     Ok(entry)
@@ -1077,7 +1123,7 @@ mod raft_log_reader_tests {
             let entry = StoredLogEntry {
                 index: i,
                 term: 1,
-                payload,
+                payload: StoredEntryPayload::Normal(payload),
             };
 
             storage.append_log_entry_async(&entry).await.unwrap();
@@ -1114,7 +1160,7 @@ mod raft_log_reader_tests {
             let entry = StoredLogEntry {
                 index: i,
                 term: 1,
-                payload,
+                payload: StoredEntryPayload::Normal(payload),
             };
 
             storage.append_log_entry(&entry).unwrap();
@@ -1172,7 +1218,7 @@ mod raft_snapshot_builder_tests {
             let entry = StoredLogEntry {
                 index: i,
                 term: 2,
-                payload,
+                payload: StoredEntryPayload::Normal(payload),
             };
 
             storage.append_log_entry(&entry).unwrap();
@@ -1211,7 +1257,7 @@ mod raft_snapshot_builder_tests {
         let entry = StoredLogEntry {
             index: 10,
             term: 3,
-            payload,
+            payload: StoredEntryPayload::Normal(payload),
         };
 
         storage.append_log_entry(&entry).unwrap();
@@ -1253,7 +1299,7 @@ mod raft_snapshot_builder_tests {
             let entry = StoredLogEntry {
                 index: i,
                 term: 1,
-                payload,
+                payload: StoredEntryPayload::Normal(payload),
             };
 
             storage.append_log_entry_async(&entry).await.unwrap();
@@ -1297,7 +1343,7 @@ mod raft_snapshot_builder_tests {
             let entry = StoredLogEntry {
                 index: i,
                 term: 1,
-                payload,
+                payload: StoredEntryPayload::Normal(payload),
             };
 
             storage.append_log_entry(&entry).unwrap();

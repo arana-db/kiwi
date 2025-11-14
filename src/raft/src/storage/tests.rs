@@ -36,7 +36,7 @@ fn create_test_log_entry(index: LogIndex, term: Term, payload: &str) -> StoredLo
     StoredLogEntry {
         index,
         term,
-        payload: payload.as_bytes().to_vec(),
+        payload: crate::storage::core::StoredEntryPayload::Normal(payload.as_bytes().to_vec()),
     }
 }
 
@@ -150,7 +150,10 @@ mod storage_tests {
             let entry = storage.get_log_entry(i).unwrap().unwrap();
             assert_eq!(entry.index, i);
             assert_eq!(entry.term, 1);
-            assert_eq!(entry.payload, format!("command_{}", i).as_bytes());
+            assert_eq!(
+                entry.payload,
+                StoredEntryPayload::Normal(format!("command_{}", i).as_bytes().to_vec())
+            );
         }
     }
 
@@ -174,7 +177,10 @@ mod storage_tests {
         let last = storage.get_last_log_entry().unwrap().unwrap();
         assert_eq!(last.index, 3);
         assert_eq!(last.term, 2);
-        assert_eq!(last.payload, b"third");
+        assert_eq!(
+            last.payload,
+            StoredEntryPayload::Normal(b"third".to_vec())
+        );
     }
 
     #[test]
@@ -318,15 +324,20 @@ mod storage_tests {
         let entry = StoredLogEntry {
             index: 1,
             term: 1,
-            payload: large_payload.clone(),
+            payload: crate::storage::core::StoredEntryPayload::Normal(large_payload.clone()),
         };
 
         // Store and retrieve large entry
         storage.append_log_entry(&entry).unwrap();
         let retrieved = storage.get_log_entry(1).unwrap().unwrap();
 
-        assert_eq!(retrieved.payload.len(), large_payload.len());
-        assert_eq!(retrieved.payload, large_payload);
+        match &retrieved.payload {
+            crate::storage::core::StoredEntryPayload::Normal(bytes) => {
+                assert_eq!(bytes.len(), large_payload.len());
+                assert_eq!(bytes, &large_payload);
+            }
+            _ => panic!("Expected Normal payload"),
+        }
     }
 
     #[test]
@@ -459,11 +470,11 @@ mod edge_case_tests {
     fn test_empty_payload_entry() {
         let (storage, _temp_dir) = create_test_storage();
 
-        // Test entry with empty payload
+        // Test entry with empty payload (Blank)
         let entry = StoredLogEntry {
             index: 1,
             term: 1,
-            payload: vec![],
+            payload: crate::storage::core::StoredEntryPayload::Blank,
         };
 
         storage.append_log_entry(&entry).unwrap();
