@@ -1205,46 +1205,42 @@ impl Redis {
 
                 if has_more {
                     next_cursor = cursor + items_scanned;
-                } else {
-                    if rest <= 0 {
-                        let mut check_read_options = ReadOptions::default();
-                        check_read_options.set_snapshot(&snapshot);
+                } else if rest <= 0 {
+                    let mut check_read_options = ReadOptions::default();
+                    check_read_options.set_snapshot(&snapshot);
 
-                        let check_iter = db.iterator_cf_opt(
-                            data_cf,
-                            check_read_options,
-                            rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
-                        );
+                    let check_iter = db.iterator_cf_opt(
+                        data_cf,
+                        check_read_options,
+                        rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
+                    );
 
-                        let mut skip_count = 0u64;
-                        let total_scanned = cursor + items_scanned;
-                        for item in check_iter {
-                            let (k, _) = item.context(RocksSnafu)?;
-                            if !k.starts_with(&prefix) {
+                    let mut skip_count = 0u64;
+                    let total_scanned = cursor + items_scanned;
+                    for item in check_iter {
+                        let (k, _) = item.context(RocksSnafu)?;
+                        if !k.starts_with(&prefix) {
+                            break;
+                        }
+
+                        if skip_count < total_scanned {
+                            skip_count += 1;
+                            continue;
+                        }
+
+                        if let Ok(parsed_key) = crate::member_data_key_format::ParsedMemberDataKey::new(&k) {
+                            let field = String::from_utf8_lossy(parsed_key.data()).to_string();
+                            let matches = if let Some(pat) = pattern {
+                                glob_match(pat, field.as_str())
+                            } else {
+                                true
+                            };
+                            if matches {
+                                next_cursor = total_scanned;
                                 break;
                             }
-
-                            if skip_count < total_scanned {
-                                skip_count += 1;
-                                continue;
-                            }
-
-                            if let Ok(parsed_key) = crate::member_data_key_format::ParsedMemberDataKey::new(&k) {
-                                let field = String::from_utf8_lossy(parsed_key.data()).to_string();
-                                let matches = if let Some(pat) = pattern {
-                                    glob_match(pat, field.as_str())
-                                } else {
-                                    true
-                                };
-                                if matches {
-                                    next_cursor = total_scanned;
-                                    break;
-                                }
-                            }
-                            skip_count += 1;
                         }
-                    } else {
-                        next_cursor = 0;
+                        skip_count += 1;
                     }
                 }
 
