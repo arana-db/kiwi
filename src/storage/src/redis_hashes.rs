@@ -1203,8 +1203,9 @@ impl Redis {
                 }
 
                 if has_more {
-                    next_cursor = cursor + scan_count as u64;
-                } else if rest <= 0 {
+                    next_cursor = cursor + items_scanned;
+                } else {
+                    if rest <= 0 {
                         let mut check_read_options = ReadOptions::default();
                         check_read_options.set_snapshot(&snapshot);
 
@@ -1234,14 +1235,15 @@ impl Redis {
                                     true
                                 };
                                 if matches {
-                                    next_cursor = cursor + scan_count as u64;
+                                    next_cursor = cursor + items_scanned;
                                     break;
                                 }
                             }
                             skip_count += 1;
                         }
-                } else {
-                    next_cursor = 0;
+                    } else {
+                        next_cursor = 0;
+                    }
                 }
 
                 Ok((next_cursor, result_fields))
