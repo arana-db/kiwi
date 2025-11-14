@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use bytes::Bytes;
 use openraft::EffectiveMembership;
+use openraft::StoredMembership;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 
@@ -109,6 +110,7 @@ pub struct KiwiStateMachine {
     apply_mutex: Arc<Mutex<()>>,
     /// Storage engine reference for operations
     storage_engine: Option<Arc<dyn StorageEngine>>,
+    membership: Arc<RwLock<StoredMembership<NodeId, openraft::BasicNode>>>,
 }
 
 impl KiwiStateMachine {
@@ -120,6 +122,7 @@ impl KiwiStateMachine {
             node_id,
             apply_mutex: Arc::new(Mutex::new(())),
             storage_engine: None,
+            membership: Arc::new(RwLock::new(StoredMembership::default())),
         }
     }
 
@@ -131,6 +134,7 @@ impl KiwiStateMachine {
             node_id,
             apply_mutex: Arc::new(Mutex::new(())),
             storage_engine: Some(storage_engine),
+            membership: Arc::new(RwLock::new(StoredMembership::default())),
         }
     }
 
@@ -142,6 +146,21 @@ impl KiwiStateMachine {
     /// Set the applied index (for use by storage adaptors)
     pub fn set_applied_index(&self, index: u64) {
         self.applied_index.store(index, Ordering::Release);
+    }
+
+    pub async fn set_membership(
+        &self,
+        log_id: openraft::LogId<NodeId>,
+        m: openraft::Membership<NodeId, openraft::BasicNode>,
+    ) {
+        let mut mem = self.membership.write().await;
+        *mem = StoredMembership::new(Some(log_id), m);
+    }
+
+    pub async fn get_current_stored_membership(
+        &self,
+    ) -> StoredMembership<NodeId, openraft::BasicNode> {
+        self.membership.read().await.clone()
     }
 
     /// Apply a Redis command to the database engine

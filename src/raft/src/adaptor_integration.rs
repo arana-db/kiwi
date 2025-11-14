@@ -207,8 +207,30 @@ impl<'a> RaftStorage<TypeConfig> for KiwiUnifiedStorage {
     }
 
     async fn last_applied_state(&mut self) -> Result<(Option<LogId<NodeId>>, StoredMembership<NodeId, BasicNode>), OpenraftStorageError<NodeId>> {
-        let (log_id, _membership) = self.state_machine.get_applied_state().await;
-        Ok((log_id, StoredMembership::default()))
+        let (log_id, _) = self.state_machine.get_applied_state().await;
+
+        // Try to read the latest membership change from log storage
+        let membership = match self.log_storage.get_last_log_entry() {
+            Ok(Some(entry)) => {
+                match entry.payload {
+                    crate::storage::core::StoredEntryPayload::Membership(bytes) => {
+                        // Deserialize membership and build StoredMembership with log id
+                        let m: openraft::Membership<NodeId, BasicNode> = bincode::deserialize(&bytes)
+                            .map_err(|e| to_storage_error(RaftError::Storage(crate::error::StorageError::DataInconsistency {
+                                message: format!("Failed to deserialize membership: {}", e),
+                                context: String::from("last_applied_state_membership"),
+                            })))?;
+                        let lid = LogId::new(openraft::CommittedLeaderId::new(entry.term, self.state_machine.node_id), entry.index);
+                        StoredMembership::new(Some(lid), m)
+                    }
+                    _ => StoredMembership::default(),
+                }
+            }
+            Ok(None) => StoredMembership::default(),
+            Err(_) => StoredMembership::default(),
+        };
+
+        Ok((log_id, membership))
     }
 
     async fn apply_to_state_machine(&mut self, entries: &[Entry<TypeConfig>]) -> Result<Vec<ClientResponse>, OpenraftStorageError<NodeId>> {

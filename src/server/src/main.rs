@@ -219,8 +219,8 @@ fn main() -> std::io::Result<()> {
 
             info!("Raft node started successfully");
 
-            // Start server in cluster mode
-            match start_server_with_mode(protocol, &addr, &mut runtime_manager, true).await {
+            // Start server in cluster mode with raft node injected
+            match start_server_with_mode(protocol, &addr, &mut runtime_manager, true, Some(Arc::clone(&raft_node))).await {
                 Ok(_) => info!("Server started successfully in cluster mode"),
                 Err(e) => {
                     error!("Failed to start server: {}", e);
@@ -233,7 +233,7 @@ fn main() -> std::io::Result<()> {
             }
             info!("Starting Kiwi server in single-node mode on {}", addr);
 
-            match start_server_with_mode(protocol, &addr, &mut runtime_manager, false).await {
+            match start_server_with_mode(protocol, &addr, &mut runtime_manager, false, None).await {
                 Ok(_) => info!("Server started successfully"),
                 Err(e) => {
                     error!("Failed to start server: {}", e);
@@ -282,6 +282,7 @@ async fn start_server_with_mode(
     addr: &str,
     runtime_manager: &mut RuntimeManager,
     cluster_mode: bool,
+    raft_node_opt: Option<Arc<raft::RaftNode>>,
 ) -> std::io::Result<()> {
     let mode = if cluster_mode {
         net::raft_network_handle::ClusterMode::Cluster
@@ -291,16 +292,20 @@ async fn start_server_with_mode(
 
     info!("Starting server in {:?} mode", mode);
 
-    if let Some(server) =
-        net::ServerFactory::create_server_with_mode(
-            protocol,
-            Some(addr.to_string()),
-            runtime_manager,
-            mode,
-        )
-    {
+    if let Some(mut server) = net::ServerFactory::create_server_with_mode(
+        protocol,
+        Some(addr.to_string()),
+        runtime_manager,
+        mode,
+        raft_node_opt,
+    ) {
+        // If cluster mode, set raft router from a globally accessible RaftNode if available
+        // For now, server will run without explicit router unless provided via ServerFactory
         server.run().await.map_err(|e| {
-            std::io::Error::other(format!("Failed to start the server on {}: {}. Please check the server configuration and ensure the address is available.", addr, e))
+            std::io::Error::other(format!(
+                "Failed to start the server on {}: {}. Please check the server configuration and ensure the address is available.",
+                addr, e
+            ))
         })
     } else {
         Err(std::io::Error::other(format!(

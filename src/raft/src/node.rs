@@ -86,8 +86,7 @@ impl RaftNode {
         let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
         let storage = Arc::new(RaftStorage::new_async(storage_path).await?);
 
-        // Create state machine with in-memory storage engine for testing
-        // In production, this should be replaced with RedisStorageEngine
+        // Default: in-memory storage engine for testing
         let storage_engine = Arc::new(crate::storage_engine::MemoryStorageEngine::new());
         let state_machine = Arc::new(KiwiStateMachine::with_storage_engine(
             cluster_config.node_id,
@@ -152,6 +151,85 @@ impl RaftNode {
         })?;
         
         log::info!("Raft instance created successfully");
+
+        Ok(Self {
+            raft: Arc::new(raft),
+            network_factory,
+            storage,
+            state_machine,
+            config: cluster_config,
+            endpoints: Arc::new(RwLock::new(endpoints)),
+            started: Arc::new(RwLock::new(false)),
+        })
+    }
+
+    /// Create a Raft node with a custom storage engine (e.g., RedisStorageEngine)
+    pub async fn new_with_engine(
+        cluster_config: ClusterConfig,
+        storage_engine: Arc<dyn crate::state_machine::core::StorageEngine>,
+    ) -> RaftResult<Self> {
+        log::info!(
+            "Creating Raft node {} with config: {:?}",
+            cluster_config.node_id,
+            cluster_config
+        );
+
+        let storage_path = PathBuf::from(&cluster_config.data_dir).join("raft_storage");
+        let storage = Arc::new(RaftStorage::new_async(storage_path).await?);
+
+        let state_machine = Arc::new(KiwiStateMachine::with_storage_engine(
+            cluster_config.node_id,
+            storage_engine,
+        ));
+
+        let network_factory_instance = KiwiRaftNetworkFactory::new(cluster_config.node_id);
+
+        let mut endpoints = HashMap::new();
+        for member in &cluster_config.cluster_members {
+            if let Some((node_id_str, endpoint)) = member.split_once(':') {
+                if let Ok(node_id) = node_id_str.parse::<NodeId>() {
+                    let host_port = member
+                        .strip_prefix(&format!("{}:", node_id_str))
+                        .unwrap_or(endpoint);
+                    endpoints.insert(node_id, host_port.to_string());
+                    network_factory_instance
+                        .add_endpoint(node_id, host_port.to_string())
+                        .await;
+                }
+            }
+        }
+
+        let raft_config = Arc::new(RaftConfig {
+            heartbeat_interval: cluster_config.heartbeat_interval_ms,
+            election_timeout_min: cluster_config.election_timeout_min_ms,
+            election_timeout_max: cluster_config.election_timeout_max_ms,
+            max_payload_entries: cluster_config.max_payload_entries,
+            snapshot_policy: openraft::SnapshotPolicy::LogsSinceLast(
+                cluster_config.snapshot_threshold,
+            ),
+            ..Default::default()
+        });
+
+        let (log_store, sm) = crate::storage::create_raft_storage_adaptor(
+            storage.clone(),
+            state_machine.clone(),
+        );
+
+        let network_factory = Arc::new(RwLock::new(network_factory_instance));
+        let network = network_factory.read().await.clone();
+
+        let raft = Raft::new(
+            cluster_config.node_id,
+            raft_config,
+            network,
+            log_store,
+            sm,
+        )
+        .await
+        .map_err(|e| RaftError::Configuration {
+            message: format!("Failed to create Raft instance: {}", e),
+            context: "Raft::new".to_string(),
+        })?;
 
         Ok(Self {
             raft: Arc::new(raft),
@@ -238,6 +316,12 @@ impl RaftNode {
     pub async fn get_leader_id(&self) -> Option<NodeId> {
         let metrics = self.raft.metrics().borrow().clone();
         metrics.current_leader
+    }
+
+    /// Get endpoint for a given node id
+    pub async fn get_endpoint(&self, node_id: NodeId) -> Option<String> {
+        let endpoints = self.endpoints.read().await;
+        endpoints.get(&node_id).cloned()
     }
 
     /// Wait for the node to become leader or follower (not candidate)

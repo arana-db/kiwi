@@ -48,6 +48,7 @@ pub struct NetworkResources {
     pub cmd_table: Arc<CmdTable>,
     pub executor: Arc<CmdExecutor>,
     pub cluster_mode: crate::raft_network_handle::ClusterMode,
+    pub raft_router: Option<Arc<raft::RequestRouter>>,
 }
 
 /// NetworkServer replaces TcpServer with dual runtime architecture support
@@ -71,6 +72,8 @@ pub struct NetworkServer {
     connection_pool: Arc<ConnectionPool<NetworkResources>>,
     /// Cluster mode for routing decisions
     cluster_mode: crate::raft_network_handle::ClusterMode,
+    /// Optional raft request router for cluster mode
+    raft_router: Option<Arc<raft::RequestRouter>>,
 }
 
 impl NetworkServer {
@@ -92,6 +95,7 @@ impl NetworkServer {
             executor: executor.clone(),
             connection_pool: Arc::new(ConnectionPool::new(pool_config)),
             cluster_mode: crate::raft_network_handle::ClusterMode::Single,
+            raft_router: None,
         })
     }
 
@@ -110,6 +114,7 @@ impl NetworkServer {
             executor: executor.clone(),
             connection_pool: Arc::new(ConnectionPool::new(pool_config)),
             cluster_mode: crate::raft_network_handle::ClusterMode::Single,
+            raft_router: None,
         })
     }
 
@@ -120,6 +125,12 @@ impl NetworkServer {
     pub fn set_cluster_mode(&mut self, mode: crate::raft_network_handle::ClusterMode) {
         info!("Setting cluster mode to: {:?}", mode);
         self.cluster_mode = mode;
+    }
+    pub fn set_raft_router(&mut self, router: Arc<raft::RequestRouter>) {
+        self.raft_router = Some(router);
+    }
+    pub fn raft_router(&self) -> Option<Arc<raft::RequestRouter>> {
+        self.raft_router.clone()
     }
 
     /// Get the current cluster mode
@@ -190,6 +201,7 @@ impl ServerTrait for NetworkServer {
             let executor = self.executor.clone();
 
             let cluster_mode = self.cluster_mode;
+            let raft_router = self.raft_router.clone();
             
             tokio::spawn(async move {
                 // Get or create resources from the pool
@@ -200,6 +212,7 @@ impl ServerTrait for NetworkServer {
                             cmd_table: cmd_table.clone(),
                             executor: executor.clone(),
                             cluster_mode,
+                            raft_router: raft_router.clone(),
                         })
                     })
                     .await
@@ -225,6 +238,7 @@ impl ServerTrait for NetworkServer {
                     pooled_resources.inner().cmd_table.clone(),
                     pooled_resources.inner().executor.clone(),
                     pooled_resources.inner().cluster_mode,
+                    pooled_resources.inner().raft_router.clone(),
                 )
                 .await;
 

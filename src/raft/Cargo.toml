@@ -50,6 +50,7 @@ warp = "0.3"
 prost = "0.12"
 prost-types = "0.12"
 futures = "0.3"
+once_cell = { workspace = true }
 
 [build-dependencies]
 prost-build = "0.12"
