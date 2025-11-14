@@ -106,21 +106,21 @@ impl RaftLogStorage<TypeConfig> for Arc<RaftStorage> {
             // Convert openraft Entry to our StoredLogEntry
             let payload = match &entry.payload {
                 openraft::EntryPayload::Normal(client_request) => {
-                    bincode::serialize(client_request).map_err(|e| {
+                    let serialized = bincode::serialize(client_request).map_err(|e| {
                         to_storage_error(RaftError::Storage(crate::error::StorageError::DataInconsistency { message: format!("Failed to serialize entry payload: {}", e), context: String::new(),
                         }))
-                    })?
+                    })?;
+                    super::core::StoredEntryPayload::Normal(serialized)
                 }
                 openraft::EntryPayload::Blank => {
-                    // For blank entries, just store an empty payload
-                    Vec::new()
+                    super::core::StoredEntryPayload::Blank
                 }
-                openraft::EntryPayload::Membership(_) => {
-                    // For membership entries, serialize the whole entry
-                    bincode::serialize(&entry).map_err(|e| {
+                openraft::EntryPayload::Membership(membership) => {
+                    let serialized = bincode::serialize(membership).map_err(|e| {
                         to_storage_error(RaftError::Storage(crate::error::StorageError::DataInconsistency { message: format!("Failed to serialize membership entry: {}", e), context: String::new(),
                         }))
-                    })?
+                    })?;
+                    super::core::StoredEntryPayload::Membership(serialized)
                 }
             };
 
