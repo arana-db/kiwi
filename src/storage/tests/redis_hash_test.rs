@@ -196,6 +196,7 @@ mod redis_hash_test {
 
         redis.set_need_close(true);
         drop(redis);
+        std::thread::sleep(std::time::Duration::from_millis(30));
 
         if test_db_path.exists() {
             std::fs::remove_dir_all(test_db_path).unwrap();
@@ -252,6 +253,7 @@ mod redis_hash_test {
 
         redis.set_need_close(true);
         drop(redis);
+        std::thread::sleep(std::time::Duration::from_millis(30));
 
         if test_db_path.exists() {
             std::fs::remove_dir_all(test_db_path).unwrap();
@@ -283,6 +285,7 @@ mod redis_hash_test {
 
         redis.set_need_close(true);
         drop(redis);
+        std::thread::sleep(std::time::Duration::from_millis(30));
 
         if test_db_path.exists() {
             std::fs::remove_dir_all(test_db_path).unwrap();
@@ -353,6 +356,7 @@ mod redis_hash_test {
 
         redis.set_need_close(true);
         drop(redis);
+        std::thread::sleep(std::time::Duration::from_millis(30));
 
         if test_db_path.exists() {
             std::fs::remove_dir_all(test_db_path).unwrap();
@@ -400,6 +404,7 @@ mod redis_hash_test {
 
         redis.set_need_close(true);
         drop(redis);
+        std::thread::sleep(std::time::Duration::from_millis(30));
 
         if test_db_path.exists() {
             std::fs::remove_dir_all(test_db_path).unwrap();

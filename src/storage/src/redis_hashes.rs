@@ -1160,6 +1160,7 @@ impl Redis {
                     rocksdb::IteratorMode::From(&start_key, rocksdb::Direction::Forward),
                 );
 
+                let mut skipped_items = 0u64;
                 let mut items_scanned = 0u64;
                 let mut has_more = false;
 
@@ -1174,13 +1175,13 @@ impl Redis {
                     let parsed_key = crate::member_data_key_format::ParsedMemberDataKey::new(&k)?;
                     let field = String::from_utf8_lossy(parsed_key.data()).to_string();
 
-                    if cursor > 0 && items_scanned < cursor {
-                        items_scanned += 1;
+                    if cursor > 0 && skipped_items < cursor {
+                        skipped_items += 1;
                         continue;
                     }
 
                     let matches_pattern = if let Some(pat) = pattern {
-                        glob_match(pat, &field)
+                        glob_match(pat, field.as_str())
                     } else {
                         true
                     };
@@ -1216,13 +1217,14 @@ impl Redis {
                         );
 
                         let mut skip_count = 0u64;
+                        let total_scanned = cursor + items_scanned;
                         for item in check_iter {
                             let (k, _) = item.context(RocksSnafu)?;
                             if !k.starts_with(&prefix) {
                                 break;
                             }
 
-                            if skip_count < items_scanned {
+                            if skip_count < total_scanned {
                                 skip_count += 1;
                                 continue;
                             }
@@ -1230,12 +1232,12 @@ impl Redis {
                             if let Ok(parsed_key) = crate::member_data_key_format::ParsedMemberDataKey::new(&k) {
                                 let field = String::from_utf8_lossy(parsed_key.data()).to_string();
                                 let matches = if let Some(pat) = pattern {
-                                    glob_match(pat, &field)
+                                    glob_match(pat, field.as_str())
                                 } else {
                                     true
                                 };
                                 if matches {
-                                    next_cursor = cursor + items_scanned;
+                                    next_cursor = total_scanned;
                                     break;
                                 }
                             }
