@@ -156,15 +156,6 @@ impl ServerFactory {
         Ok(server)
     }
 
-    /// Try to construct a RequestRouter from RuntimeManager context if available
-    fn initialize_request_router(
-        _runtime_manager: &RuntimeManager,
-    ) -> Option<Arc<RequestRouter>> {
-        // Placeholder: In a complete integration, obtain the RaftNode from a registry
-        // and create RequestRouter::new(raft_node, ClusterMode::Cluster)
-        None
-    }
-
     pub fn create_cluster_server(
         protocol: &str,
         addr: Option<String>,

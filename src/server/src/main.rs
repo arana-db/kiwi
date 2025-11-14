@@ -292,7 +292,7 @@ async fn start_server_with_mode(
 
     info!("Starting server in {:?} mode", mode);
 
-    if let Some(mut server) = net::ServerFactory::create_server_with_mode(
+    if let Some(server) = net::ServerFactory::create_server_with_mode(
         protocol,
         Some(addr.to_string()),
         runtime_manager,
