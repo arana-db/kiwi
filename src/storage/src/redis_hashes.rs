@@ -1149,11 +1149,7 @@ impl Redis {
                 let data_key_prefix = MemberDataKey::new(key, version, sub_field.map(|s| s.as_bytes()).unwrap_or(&[]));
                 let prefix = data_key_prefix.encode_seek_key()?;
 
-                let start_key = if cursor == 0 {
-                    prefix.clone()
-                } else {
-                    prefix.clone()
-                };
+                let start_key = prefix.clone();
 
                 let mut result_fields = Vec::new();
                 let mut next_cursor = 0u64;
@@ -1208,8 +1204,7 @@ impl Redis {
 
                 if has_more {
                     next_cursor = cursor + scan_count as u64;
-                } else {
-                    if rest <= 0 {
+                } else if rest <= 0 {
                         let mut check_read_options = ReadOptions::default();
                         check_read_options.set_snapshot(&snapshot);
 
@@ -1245,9 +1240,8 @@ impl Redis {
                             }
                             skip_count += 1;
                         }
-                    } else {
-                        next_cursor = 0;
-                    }
+                } else {
+                    next_cursor = 0;
                 }
 
                 Ok((next_cursor, result_fields))
