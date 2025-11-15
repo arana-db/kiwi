@@ -85,7 +85,7 @@ pub struct Redis {
     pub small_compaction_duration_threshold: AtomicU64,
 
     // For Scan
-    pub scan_cursors_store: Mutex<Cache<String, u64>>,
+    pub scan_cursors_store: Mutex<Cache<String, String>>,
     pub spop_counts_store: Mutex<Cache<String, u64>>,
 
     // For raft
@@ -421,6 +421,32 @@ impl Redis {
                 .to_string(),
             location: Default::default(),
         })
+    }
+
+    pub fn get_scan_start_point(&self, dtype: DataType, key: &[u8], pattern: &[u8], cursor: u64) -> Result<Option<String>> {
+        let index_key = format!(
+            "{}_{}_{}_{}",
+            DATA_TYPE_TAG[dtype as usize],
+            String::from_utf8_lossy(key),
+            String::from_utf8_lossy(pattern),
+            cursor
+        );
+        Ok(self.scan_cursors_store.lock().unwrap().get(&index_key).map(|entry| entry.value().clone()))
+    }
+
+    pub fn store_scan_next_point(&self, dtype: DataType, key: &[u8], pattern: &[u8], cursor: u64, next_point: &[u8]) -> Result<()> {
+        let index_key = format!(
+            "{}_{}_{}_{}",
+            DATA_TYPE_TAG[dtype as usize],
+            String::from_utf8_lossy(key),
+            String::from_utf8_lossy(pattern),
+            cursor
+        );
+        let next_point_str = String::from_utf8_lossy(next_point).to_string();
+        let store = self.scan_cursors_store.lock().unwrap();
+
+        store.insert(index_key, next_point_str);
+        Ok(())
     }
 }
 
