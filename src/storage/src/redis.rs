@@ -491,6 +491,7 @@ impl Redis {
 
         store.insert(index_key, next_point_str);
         Ok(())
+    }
     /// check if the encoded value of any type is expired (type-agnostic)
     ///
     /// This function can check the expired status without parsing the value.
