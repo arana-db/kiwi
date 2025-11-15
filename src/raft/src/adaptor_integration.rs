@@ -207,8 +207,13 @@ impl<'a> RaftStorage<TypeConfig> for KiwiUnifiedStorage {
     }
 
     async fn last_applied_state(&mut self) -> Result<(Option<LogId<NodeId>>, StoredMembership<NodeId, BasicNode>), OpenraftStorageError<NodeId>> {
-        let (log_id, _membership) = self.state_machine.get_applied_state().await;
-        Ok((log_id, StoredMembership::default()))
+        let (log_id, _effective_membership) = self.state_machine.get_applied_state().await;
+
+        // Get the stored membership from state machine, which is properly tracked when applying entries
+        // This avoids the issue of only checking the last log entry, which might not be a membership change
+        let membership = self.state_machine.get_current_stored_membership().await;
+
+        Ok((log_id, membership))
     }
 
     async fn apply_to_state_machine(&mut self, entries: &[Entry<TypeConfig>]) -> Result<Vec<ClientResponse>, OpenraftStorageError<NodeId>> {

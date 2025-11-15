@@ -34,13 +34,14 @@ pub mod error;
 pub mod unix;
 
 use std::error::Error;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use crate::network_server::NetworkServer;
 use crate::storage_client::StorageClient;
 use crate::tcp::{ClusterTcpServer, TcpServer};
+use raft::{RequestRouter, RaftNode};
+use std::sync::Arc;
 use cmd::table::create_command_table;
 use executor::CmdExecutorBuilder;
 use runtime::{MessageChannel, RuntimeManager, StorageClient as RuntimeStorageClient};
@@ -66,6 +67,7 @@ impl ServerFactory {
             addr,
             runtime_manager,
             crate::raft_network_handle::ClusterMode::Single,
+            None,
         )
     }
 
@@ -78,11 +80,12 @@ impl ServerFactory {
         addr: Option<String>,
         runtime_manager: &RuntimeManager,
         cluster_mode: crate::raft_network_handle::ClusterMode,
+        raft_node_opt: Option<Arc<RaftNode>>,
     ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
             "tcp" => {
                 // Create NetworkServer with dual runtime architecture
-                match Self::create_network_server_with_mode(addr, runtime_manager, cluster_mode) {
+                match Self::create_network_server_with_mode(addr, runtime_manager, cluster_mode, raft_node_opt) {
                     Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
                     Err(e) => {
                         log::error!("Failed to create NetworkServer: {}", e);
@@ -120,6 +123,7 @@ impl ServerFactory {
         addr: Option<String>,
         runtime_manager: &RuntimeManager,
         cluster_mode: crate::raft_network_handle::ClusterMode,
+        raft_node_opt: Option<Arc<RaftNode>>,
     ) -> Result<NetworkServer, Box<dyn std::error::Error>> {
         // Create message channel for communication between runtimes
         let message_channel = Arc::new(MessageChannel::new(
@@ -140,7 +144,15 @@ impl ServerFactory {
         // Create NetworkServer with cluster mode
         let mut server = NetworkServer::new(addr, storage_client, cmd_table, executor)?;
         server.set_cluster_mode(cluster_mode);
-        
+        if matches!(cluster_mode, crate::raft_network_handle::ClusterMode::Cluster) {
+            if let Some(raft_node) = raft_node_opt {
+                let router = Arc::new(RequestRouter::new(Arc::clone(&raft_node), raft::ClusterMode::Cluster));
+                server.set_raft_router(router);
+            } else {
+                log::warn!("Cluster mode enabled but RequestRouter is not available at server creation time");
+            }
+        }
+
         Ok(server)
     }
 

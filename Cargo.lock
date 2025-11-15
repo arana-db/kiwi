@@ -2115,6 +2115,7 @@ dependencies = [
  "executor",
  "log",
  "parking_lot",
+ "raft",
  "resp",
  "runtime",
  "snafu",
