@@ -207,28 +207,11 @@ impl<'a> RaftStorage<TypeConfig> for KiwiUnifiedStorage {
     }
 
     async fn last_applied_state(&mut self) -> Result<(Option<LogId<NodeId>>, StoredMembership<NodeId, BasicNode>), OpenraftStorageError<NodeId>> {
-        let (log_id, _) = self.state_machine.get_applied_state().await;
+        let (log_id, _effective_membership) = self.state_machine.get_applied_state().await;
 
-        // Try to read the latest membership change from log storage
-        let membership = match self.log_storage.get_last_log_entry() {
-            Ok(Some(entry)) => {
-                match entry.payload {
-                    crate::storage::core::StoredEntryPayload::Membership(bytes) => {
-                        // Deserialize membership and build StoredMembership with log id
-                        let m: openraft::Membership<NodeId, BasicNode> = bincode::deserialize(&bytes)
-                            .map_err(|e| to_storage_error(RaftError::Storage(crate::error::StorageError::DataInconsistency {
-                                message: format!("Failed to deserialize membership: {}", e),
-                                context: String::from("last_applied_state_membership"),
-                            })))?;
-                        let lid = LogId::new(openraft::CommittedLeaderId::new(entry.term, self.state_machine.node_id), entry.index);
-                        StoredMembership::new(Some(lid), m)
-                    }
-                    _ => StoredMembership::default(),
-                }
-            }
-            Ok(None) => StoredMembership::default(),
-            Err(_) => StoredMembership::default(),
-        };
+        // Get the stored membership from state machine, which is properly tracked when applying entries
+        // This avoids the issue of only checking the last log entry, which might not be a membership change
+        let membership = self.state_machine.get_current_stored_membership().await;
 
         Ok((log_id, membership))
     }

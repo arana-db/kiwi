@@ -644,8 +644,14 @@ impl KiwiStateMachine {
             None
         };
 
-        // Return empty membership for now - this should also be sourced from actual Raft state
-        let membership = EffectiveMembership::new(None, openraft::Membership::new(vec![], None));
+        // Get the actual stored membership and convert it to EffectiveMembership
+        let stored_membership = self.get_current_stored_membership().await;
+        // StoredMembership contains both log_id and membership
+        // We need to extract the EffectiveMembership from it
+        let membership = EffectiveMembership::new(
+            *stored_membership.log_id(),
+            stored_membership.membership().clone()
+        );
 
         (log_id, membership)
     }
@@ -925,12 +931,15 @@ impl OpenraftStateMachine<TypeConfig> for Arc<KiwiStateMachine> {
                         },
                     ));
                 }
-                EntryPayload::Membership(ref _membership) => {
+                EntryPayload::Membership(ref membership) => {
                     log::info!(
                         "Node {} applied membership change at index {}",
                         self.node_id,
                         entry.log_id.index
                     );
+
+                    // Update the stored membership when applying membership changes
+                    self.set_membership(entry.log_id, membership.clone()).await;
 
                     responses.push((
                         idx,
@@ -1226,12 +1235,15 @@ impl OpenraftStateMachine<TypeConfig> for KiwiStateMachine {
                         },
                     ));
                 }
-                EntryPayload::Membership(ref _membership) => {
+                EntryPayload::Membership(ref membership) => {
                     log::info!(
                         "Node {} applied membership change at index {}",
                         self.node_id,
                         entry.log_id.index
                     );
+
+                    // Update the stored membership when applying membership changes
+                    self.set_membership(entry.log_id, membership.clone()).await;
 
                     responses.push((
                         idx,

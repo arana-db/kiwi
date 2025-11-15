@@ -27,6 +27,20 @@ Kiwi 是用 Rust 实现的基于 RocksDB 和 Raft 协议的 大容量、高性�
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
+## 快速开始
+
+- 运行 `kiwi-server`（默认监听 `127.0.0.1:7379`）
+- 对于集群模式，请参考仓库根目录下的 `config.example.toml` 或 `cluster.conf`，并在启动第一个节点时使用 `--init-cluster` 参数
+
+## 核心组件
+
+- **Raft 网络处理器**: `src/net/src/raft_network_handle.rs`
+- **路由器**: `src/raft/src/router.rs`
+- **Raft 节点**: `src/raft/src/node.rs`
+- **存储后端**: `src/storage/src` 和 `src/raft/src/storage_engine/redis_storage_engine.rs`
+
+更多详情请参见 `docs/CONSISTENCY_README.md`。
+
 ## Raft 共识集成
 
 Kiwi 集成了 **Openraft** 库来提供分布式共识和高可用性：
@@ -36,7 +50,7 @@ Kiwi 集成了 **Openraft** 库来提供分布式共识和高可用性：
 - **状态机复制**: 跨集群节点的一致性状态复制
 - **快照支持**: 为新节点或落后节点提供高效的状态传输
 
-详细的集成文档请参见 [src/raft/docs/OPENRAFT_INTEGRATION.md](src/raft/docs/OPENRAFT_INTEGRATION.md)。
+详细的集成文档请参见 [docs/raft/OPENRAFT_INTEGRATION.md](docs/raft/OPENRAFT_INTEGRATION.md)。
 
 ## 开发计划
 
@@ -55,4 +69,6 @@ Kiwi 集成了 **Openraft** 库来提供分布式共识和高可用性：
 
 欢迎对 Kiwi 项目的贡献！如果你有任何建议或发现了问题，请提交 Issue 或创建 Pull Request。
 
-## 联系我们
+## 许可证
+
+本项目采用 Apache License 2.0 许可证。详情请参见 [LICENSE](LICENSE) 文件。

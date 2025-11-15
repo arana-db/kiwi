@@ -19,8 +19,8 @@ Kiwi 使用 OpenRaft (v0.9.x) 提供强一致性，网络层采用双运行时�
 
 ## 启动配置
 
-- `server/src/main.rs` 根据配置启动集群模式并初始化 `RaftNode`
-- `raft/src/node.rs` 在集群数据目录下创建 `redis_db` 并打开 RocksDB，引导 `RedisStorageEngine`
+- `src/server/src/main.rs` 根据配置启动集群模式并初始化 `RaftNode`
+- `src/raft/src/node.rs` 在集群数据目录下创建 `redis_db` 并打开 RocksDB，引导 `RedisStorageEngine`
 
 ## 测试参考
 

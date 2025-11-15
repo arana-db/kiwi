@@ -2679,7 +2679,6 @@ dependencies = [
  "hmac",
  "kstd",
  "log",
- "once_cell",
  "openraft",
  "parking_lot",
  "prost",
