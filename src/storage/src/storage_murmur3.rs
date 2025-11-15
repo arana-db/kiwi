@@ -15,8 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// TODO: remove allow dead code
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn murmur3_32<T: AsRef<[u8]>>(data: T, seed: u32) -> u32 {
     let data = data.as_ref();
     let mut hash = seed;

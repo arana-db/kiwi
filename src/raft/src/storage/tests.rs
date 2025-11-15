@@ -36,7 +36,7 @@ fn create_test_log_entry(index: LogIndex, term: Term, payload: &str) -> StoredLo
     StoredLogEntry {
         index,
         term,
-        payload: payload.as_bytes().to_vec(),
+        payload: crate::storage::core::StoredEntryPayload::Normal(payload.as_bytes().to_vec()),
     }
 }
 
@@ -150,7 +150,10 @@ mod storage_tests {
             let entry = storage.get_log_entry(i).unwrap().unwrap();
             assert_eq!(entry.index, i);
             assert_eq!(entry.term, 1);
-            assert_eq!(entry.payload, format!("command_{}", i).as_bytes());
+            assert_eq!(
+                entry.payload,
+                StoredEntryPayload::Normal(format!("command_{}", i).as_bytes().to_vec())
+            );
         }
     }
 
@@ -174,7 +177,10 @@ mod storage_tests {
         let last = storage.get_last_log_entry().unwrap().unwrap();
         assert_eq!(last.index, 3);
         assert_eq!(last.term, 2);
-        assert_eq!(last.payload, b"third");
+        assert_eq!(
+            last.payload,
+            StoredEntryPayload::Normal(b"third".to_vec())
+        );
     }
 
     #[test]
@@ -318,15 +324,20 @@ mod storage_tests {
         let entry = StoredLogEntry {
             index: 1,
             term: 1,
-            payload: large_payload.clone(),
+            payload: crate::storage::core::StoredEntryPayload::Normal(large_payload.clone()),
         };
 
         // Store and retrieve large entry
         storage.append_log_entry(&entry).unwrap();
         let retrieved = storage.get_log_entry(1).unwrap().unwrap();
 
-        assert_eq!(retrieved.payload.len(), large_payload.len());
-        assert_eq!(retrieved.payload, large_payload);
+        match &retrieved.payload {
+            crate::storage::core::StoredEntryPayload::Normal(bytes) => {
+                assert_eq!(bytes.len(), large_payload.len());
+                assert_eq!(bytes, &large_payload);
+            }
+            _ => panic!("Expected Normal payload"),
+        }
     }
 
     #[test]
@@ -375,46 +386,50 @@ mod storage_tests {
 mod error_handling_tests {
     use super::*;
 
-    #[test]
-    fn test_corrupted_state_handling() {
-        let temp_dir = TempDir::new().unwrap();
-        let db_path = temp_dir.path();
+    // NOTE: These tests are commented out because they test internal implementation details
+    // that no longer exist after the storage backend abstraction was introduced.
+    // The backend abstraction hides direct access to RocksDB column families and db handle.
+    
+    // #[test]
+    // fn test_corrupted_state_handling() {
+    //     let temp_dir = TempDir::new().unwrap();
+    //     let db_path = temp_dir.path();
+    //
+    //     // Create storage and corrupt the state
+    //     {
+    //         let storage = RaftStorage::new(db_path).unwrap();
+    //         storage.set_current_term(42).unwrap();
+    //
+    //         // Manually corrupt the state by writing invalid data
+    //         let cf_state = storage.get_cf_handle("raft_state").unwrap();
+    //         storage
+    //             .db
+    //             .put_cf(&cf_state, "current_term", b"invalid_data")
+    //             .unwrap();
+    //     }
+    //
+    //     // Try to load corrupted storage - should handle gracefully
+    //     let result = RaftStorage::new(db_path);
+    //     // In a real implementation, this might return an error or use default values
+    //     // For now, we just verify it doesn't panic
+    //     assert!(result.is_ok() || result.is_err());
+    // }
 
-        // Create storage and corrupt the state
-        {
-            let storage = RaftStorage::new(db_path).unwrap();
-            storage.set_current_term(42).unwrap();
-
-            // Manually corrupt the state by writing invalid data
-            let cf_state = storage.get_cf_handle("raft_state").unwrap();
-            storage
-                .db
-                .put_cf(&cf_state, "current_term", b"invalid_data")
-                .unwrap();
-        }
-
-        // Try to load corrupted storage - should handle gracefully
-        let result = RaftStorage::new(db_path);
-        // In a real implementation, this might return an error or use default values
-        // For now, we just verify it doesn't panic
-        assert!(result.is_ok() || result.is_err());
-    }
-
-    #[test]
-    fn test_missing_column_family_error() {
-        let temp_dir = TempDir::new().unwrap();
-        let storage = RaftStorage::new(temp_dir.path()).unwrap();
-
-        // Try to get non-existent column family
-        let result = storage.get_cf_handle("non_existent_cf");
-        assert!(result.is_err());
-
-        if let Err(RaftError::Storage(StorageError::DataInconsistency { message, .. })) = result {
-            assert!(message.contains("Column family non_existent_cf not found"));
-        } else {
-            panic!("Expected DataInconsistency error");
-        }
-    }
+    // #[test]
+    // fn test_missing_column_family_error() {
+    //     let temp_dir = TempDir::new().unwrap();
+    //     let storage = RaftStorage::new(temp_dir.path()).unwrap();
+    //
+    //     // Try to get non-existent column family
+    //     let result = storage.get_cf_handle("non_existent_cf");
+    //     assert!(result.is_err());
+    //
+    //     if let Err(RaftError::Storage(StorageError::DataInconsistency { message, .. })) = result {
+    //         assert!(message.contains("Column family non_existent_cf not found"));
+    //     } else {
+    //         panic!("Expected DataInconsistency error");
+    //     }
+    // }
 
     #[test]
     fn test_serialization_error_handling() {
@@ -455,11 +470,11 @@ mod edge_case_tests {
     fn test_empty_payload_entry() {
         let (storage, _temp_dir) = create_test_storage();
 
-        // Test entry with empty payload
+        // Test entry with empty payload (Blank)
         let entry = StoredLogEntry {
             index: 1,
             term: 1,
-            payload: vec![],
+            payload: crate::storage::core::StoredEntryPayload::Blank,
         };
 
         storage.append_log_entry(&entry).unwrap();

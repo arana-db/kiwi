@@ -156,21 +156,23 @@ impl<'a> RaftStorage<TypeConfig> for KiwiUnifiedStorage {
             // Convert openraft Entry to our StoredLogEntry
             let payload = match &entry.payload {
                 EntryPayload::Normal(client_request) => {
-                    bincode::serialize(client_request).map_err(|e| {
+                    let serialized = bincode::serialize(client_request).map_err(|e| {
                         to_storage_error(RaftError::Storage(crate::error::StorageError::DataInconsistency {
                             message: format!("Failed to serialize entry payload: {}", e),
                             context: String::new(),
                         }))
-                    })?
+                    })?;
+                    crate::storage::core::StoredEntryPayload::Normal(serialized)
                 }
-                EntryPayload::Blank => Vec::new(),
-                EntryPayload::Membership(_) => {
-                    bincode::serialize(&entry).map_err(|e| {
+                EntryPayload::Blank => crate::storage::core::StoredEntryPayload::Blank,
+                EntryPayload::Membership(membership) => {
+                    let serialized = bincode::serialize(membership).map_err(|e| {
                         to_storage_error(RaftError::Storage(crate::error::StorageError::DataInconsistency {
                             message: format!("Failed to serialize membership entry: {}", e),
                             context: String::new(),
                         }))
-                    })?
+                    })?;
+                    crate::storage::core::StoredEntryPayload::Membership(serialized)
                 }
             };
 

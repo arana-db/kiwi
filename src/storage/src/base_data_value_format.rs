@@ -29,7 +29,6 @@ use crate::{
 // | value | reserve | ctime |
 // |       |   16B   |   8B  |
 
-/// TODO: remove allow dead code
 #[allow(dead_code)]
 pub struct BaseDataValue {
     inner: InternalValue,
@@ -69,7 +68,6 @@ pub struct ParsedBaseDataValue {
     inner: ParsedInternalValue,
 }
 
-/// TODO: remove allow dead code
 #[allow(dead_code)]
 impl ParsedBaseDataValue {
     const BASEDATAVALUESUFFIXLENGTH: usize = SUFFIX_RESERVE_LENGTH + TIMESTAMP_LENGTH;

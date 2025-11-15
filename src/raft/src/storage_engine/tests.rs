@@ -15,19 +15,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Storage module for Raft implementation
-
-pub mod adaptor;
-pub mod backend;
-pub mod core;
-pub mod log_storage;
-
-pub use adaptor::*;
-pub use backend::*;
-pub use core::*;
+//! Tests for the storage engine module
 
 #[cfg(test)]
-pub mod adaptor_tests;
+mod tests {
+    use super::super::*;
 
-#[cfg(test)]
-pub mod tests;
+    #[test]
+    fn test_storage_engine_placeholder() {
+        // Placeholder test to ensure the module compiles
+        assert!(true);
+    }
+}

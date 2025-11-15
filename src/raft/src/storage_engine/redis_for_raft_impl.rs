@@ -15,19 +15,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Storage module for Raft implementation
+//! RedisOperations trait implementation for RedisForRaft
+//!
+//! This implementation is in the raft crate to avoid method name resolution
+//! conflicts that would occur if it were in the storage crate.
 
-pub mod adaptor;
-pub mod backend;
-pub mod core;
-pub mod log_storage;
-
-pub use adaptor::*;
-pub use backend::*;
-pub use core::*;
-
-#[cfg(test)]
-pub mod adaptor_tests;
-
-#[cfg(test)]
-pub mod tests;
+// This file is intentionally empty for now.
+// The RedisOperations trait will be implemented using the RedisStorageAdapter
+// which uses function pointers to avoid method name conflicts.
+//
+// See src/raft/src/storage_engine/redis_adapter.rs for the actual implementation.

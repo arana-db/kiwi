@@ -145,6 +145,13 @@ impl KiwiStateMachine {
     }
 
     /// Apply a Redis command to the database engine
+    /// 
+    /// This method routes Redis commands to the appropriate handler and executes them
+    /// through the storage engine if available.
+    /// 
+    /// # Requirements
+    /// - Requirement 2.2: Execute Redis commands through state machine
+    /// - Requirement 2.3: Support all basic Redis commands (GET, SET, DEL, EXISTS, etc.)
     pub async fn apply_redis_command(&self, command: &ClientRequest) -> RaftResult<ClientResponse> {
         let redis_cmd = &command.command;
 
@@ -155,6 +162,12 @@ impl KiwiStateMachine {
             "DEL" => self.handle_del_command(redis_cmd).await,
             "EXISTS" => self.handle_exists_command(redis_cmd).await,
             "PING" => self.handle_ping_command().await,
+            "MSET" => self.handle_mset_command(redis_cmd).await,
+            "MGET" => self.handle_mget_command(redis_cmd).await,
+            "INCR" => self.handle_incr_command(redis_cmd).await,
+            "DECR" => self.handle_decr_command(redis_cmd).await,
+            "APPEND" => self.handle_append_command(redis_cmd).await,
+            "STRLEN" => self.handle_strlen_command(redis_cmd).await,
             _ => Err(RaftError::state_machine(format!(
                 "Unsupported command: {}",
                 redis_cmd.command
@@ -172,6 +185,9 @@ impl KiwiStateMachine {
     /// Returns (batch_operations, response_result) where response_result is Some for read operations
     /// 
     /// This method uses Bytes internally to avoid unnecessary copies
+    /// 
+    /// # Requirements
+    /// - Requirement 2.4: Commands must be atomic
     fn collect_batch_operation(
         &self,
         command: &ClientRequest,
@@ -206,6 +222,21 @@ impl KiwiStateMachine {
                         None,
                         Some(Err(RaftError::invalid_request(
                             "DEL requires at least one key",
+                        ))),
+                    )
+                }
+            }
+            // MSET can be batched as multiple Put operations
+            "MSET" => {
+                if redis_cmd.args.len() >= 2 && redis_cmd.args.len() % 2 == 0 {
+                    // For now, we'll handle MSET individually in apply_redis_commands_batch
+                    // to properly batch all the key-value pairs together
+                    (None, None)
+                } else {
+                    (
+                        None,
+                        Some(Err(RaftError::invalid_request(
+                            "MSET requires an even number of arguments",
                         ))),
                     )
                 }
@@ -384,6 +415,195 @@ impl KiwiStateMachine {
     /// Handle PING command
     async fn handle_ping_command(&self) -> RaftResult<Bytes> {
         Ok(Bytes::from_static(b"PONG"))
+    }
+
+    /// Handle MSET command (multiple SET operations)
+    /// Requirement 2.2: Execute Redis commands through state machine
+    async fn handle_mset_command(&self, cmd: &RedisCommand) -> RaftResult<Bytes> {
+        if cmd.args.len() < 2 || cmd.args.len() % 2 != 0 {
+            return Err(RaftError::invalid_request(
+                "MSET requires an even number of arguments (key value pairs)",
+            ));
+        }
+
+        if let Some(storage_engine) = &self.storage_engine {
+            // Build batch operations
+            let mut operations = Vec::new();
+            for i in (0..cmd.args.len()).step_by(2) {
+                let key = cmd.args[i].to_vec();
+                let value = cmd.args[i + 1].to_vec();
+                operations.push((key, value));
+            }
+
+            storage_engine.batch_put(operations).await?;
+        }
+
+        Ok(Bytes::from_static(b"OK"))
+    }
+
+    /// Handle MGET command (multiple GET operations)
+    /// Requirement 2.2: Execute Redis commands through state machine
+    async fn handle_mget_command(&self, cmd: &RedisCommand) -> RaftResult<Bytes> {
+        if cmd.args.is_empty() {
+            return Err(RaftError::invalid_request("MGET requires at least one key"));
+        }
+
+        if let Some(storage_engine) = &self.storage_engine {
+            let mut results = Vec::new();
+            for key in &cmd.args {
+                match storage_engine.get(key).await? {
+                    Some(value) => results.push(value),
+                    None => results.push(Vec::new()), // Empty for non-existent keys
+                }
+            }
+
+            // Serialize results as a simple format: count followed by values
+            let serialized = bincode::serialize(&results).unwrap_or_default();
+            Ok(Bytes::from(serialized))
+        } else {
+            // Return empty results when no storage engine
+            let empty_results: Vec<Vec<u8>> = vec![Vec::new(); cmd.args.len()];
+            let serialized = bincode::serialize(&empty_results).unwrap_or_default();
+            Ok(Bytes::from(serialized))
+        }
+    }
+
+    /// Handle INCR command (increment integer value)
+    /// Requirement 2.2: Execute Redis commands through state machine
+    async fn handle_incr_command(&self, cmd: &RedisCommand) -> RaftResult<Bytes> {
+        if cmd.args.is_empty() {
+            return Err(RaftError::invalid_request("INCR requires key"));
+        }
+
+        let key = &cmd.args[0];
+
+        if let Some(storage_engine) = &self.storage_engine {
+            // Get current value
+            let current_value = match storage_engine.get(key).await? {
+                Some(value) => {
+                    // Parse as integer - must return error if not a valid integer
+                    let text = String::from_utf8(value)
+                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?;
+                    text.parse::<i64>()
+                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?
+                }
+                None => 0,
+            };
+
+            // Increment
+            let new_value = current_value + 1;
+            let new_value_bytes = new_value.to_string().into_bytes();
+
+            // Store new value
+            storage_engine.put(key, &new_value_bytes).await?;
+
+            Ok(Bytes::from(new_value.to_string()))
+        } else {
+            Ok(Bytes::from("1"))
+        }
+    }
+
+    /// Handle DECR command (decrement integer value)
+    /// Requirement 2.2: Execute Redis commands through state machine
+    async fn handle_decr_command(&self, cmd: &RedisCommand) -> RaftResult<Bytes> {
+        if cmd.args.is_empty() {
+            return Err(RaftError::invalid_request("DECR requires key"));
+        }
+
+        let key = &cmd.args[0];
+
+        if let Some(storage_engine) = &self.storage_engine {
+            // Get current value
+            let current_value = match storage_engine.get(key).await? {
+                Some(value) => {
+                    // Parse as integer - must return error if not a valid integer
+                    let text = String::from_utf8(value)
+                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?;
+                    text.parse::<i64>()
+                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?
+                }
+                None => 0,
+            };
+
+            // Decrement
+            let new_value = current_value - 1;
+            let new_value_bytes = new_value.to_string().into_bytes();
+
+            // Store new value
+            storage_engine.put(key, &new_value_bytes).await?;
+
+            Ok(Bytes::from(new_value.to_string()))
+        } else {
+            Ok(Bytes::from("-1"))
+        }
+    }
+
+    /// Handle APPEND command (append to string value)
+    /// Requirement 2.2: Execute Redis commands through state machine
+    async fn handle_append_command(&self, cmd: &RedisCommand) -> RaftResult<Bytes> {
+        if cmd.args.len() < 2 {
+            return Err(RaftError::invalid_request("APPEND requires key and value"));
+        }
+
+        let key = &cmd.args[0];
+        let append_value = &cmd.args[1];
+
+        if let Some(storage_engine) = &self.storage_engine {
+            // Get current value
+            let mut current_value: Vec<u8> = (storage_engine.get(key).await?).unwrap_or_default();
+
+            // Append new value
+            current_value.extend_from_slice(append_value);
+
+            // Store updated value
+            storage_engine.put(key, &current_value).await?;
+
+            Ok(Bytes::from(current_value.len().to_string()))
+        } else {
+            Ok(Bytes::from(append_value.len().to_string()))
+        }
+    }
+
+    /// Handle STRLEN command (get string length)
+    /// Requirement 2.2: Execute Redis commands through state machine
+    async fn handle_strlen_command(&self, cmd: &RedisCommand) -> RaftResult<Bytes> {
+        if cmd.args.is_empty() {
+            return Err(RaftError::invalid_request("STRLEN requires key"));
+        }
+
+        let key = &cmd.args[0];
+
+        if let Some(storage_engine) = &self.storage_engine {
+            match storage_engine.get(key).await? {
+                Some(value) => Ok(Bytes::from(value.len().to_string())),
+                None => Ok(Bytes::from("0")),
+            }
+        } else {
+            Ok(Bytes::from("0"))
+        }
+    }
+
+    /// Execute a read command from the state machine
+    /// 
+    /// This method is used by the RequestRouter to execute read operations
+    /// directly from the state machine without going through Raft consensus.
+    /// 
+    /// # Requirements
+    /// - Requirement 4.1: Support strong consistency reads
+    /// - Requirement 4.2: Support eventual consistency reads
+    pub async fn execute_read(&self, cmd: &RedisCommand) -> RaftResult<Bytes> {
+        match cmd.command.to_uppercase().as_str() {
+            "GET" => self.handle_get_command(cmd).await,
+            "EXISTS" => self.handle_exists_command(cmd).await,
+            "MGET" => self.handle_mget_command(cmd).await,
+            "STRLEN" => self.handle_strlen_command(cmd).await,
+            "PING" => self.handle_ping_command().await,
+            // Add more read commands as needed
+            _ => Err(RaftError::state_machine(format!(
+                "Unsupported read command: {}",
+                cmd.command
+            ))),
+        }
     }
 
     /// Get the current applied state for Raft

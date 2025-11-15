@@ -60,7 +60,7 @@ async fn test_log_replication_single_node() {
     node.start(true).await.unwrap();
     
     // Wait for node to become leader
-    sleep(Duration::from_millis(500)).await;
+    node.wait_for_election(Duration::from_secs(5)).await.unwrap();
     
     // Verify node is leader
     assert!(node.is_leader().await, "Single node should become leader");
@@ -94,7 +94,8 @@ async fn test_state_machine_application() {
     let node = RaftNode::new(config).await.unwrap();
     node.start(true).await.unwrap();
     
-    sleep(Duration::from_millis(500)).await;
+    // Wait for node to become leader
+    node.wait_for_election(Duration::from_secs(5)).await.unwrap();
     
     // Apply multiple commands to test state machine
     let commands = vec![
@@ -147,7 +148,8 @@ async fn test_snapshot_generation() {
     let node = RaftNode::new(config).await.unwrap();
     node.start(true).await.unwrap();
     
-    sleep(Duration::from_millis(500)).await;
+    // Wait for node to become leader
+    node.wait_for_election(Duration::from_secs(5)).await.unwrap();
     
     // Apply enough entries to trigger snapshot
     for i in 0..10 {
@@ -199,7 +201,8 @@ async fn test_snapshot_installation() {
     let node1 = RaftNode::new(config1).await.unwrap();
     node1.start(true).await.unwrap();
     
-    sleep(Duration::from_millis(500)).await;
+    // Wait for node to become leader
+    node1.wait_for_election(Duration::from_secs(5)).await.unwrap();
     
     // Add data to node1
     for i in 0..5 {
@@ -264,7 +267,8 @@ async fn test_log_replication_with_multiple_entries() {
     let node = RaftNode::new(config).await.unwrap();
     node.start(true).await.unwrap();
     
-    sleep(Duration::from_millis(500)).await;
+    // Wait for node to become leader
+    node.wait_for_election(Duration::from_secs(5)).await.unwrap();
     
     // Replicate multiple entries rapidly
     let mut responses = Vec::new();
@@ -305,7 +309,8 @@ async fn test_state_machine_consistency() {
     let node = RaftNode::new(config).await.unwrap();
     node.start(true).await.unwrap();
     
-    sleep(Duration::from_millis(500)).await;
+    // Wait for node to become leader
+    node.wait_for_election(Duration::from_secs(5)).await.unwrap();
     
     // Set a value
     let set_request = ClientRequest {
@@ -361,7 +366,8 @@ async fn test_concurrent_log_replication() {
     let node = RaftNode::new(config).await.unwrap();
     node.start(true).await.unwrap();
     
-    sleep(Duration::from_millis(500)).await;
+    // Wait for node to become leader
+    node.wait_for_election(Duration::from_secs(5)).await.unwrap();
     
     // Send concurrent requests
     let mut handles = Vec::new();
@@ -407,7 +413,8 @@ async fn test_log_compaction_after_snapshot() {
     let node = RaftNode::new(config).await.unwrap();
     node.start(true).await.unwrap();
     
-    sleep(Duration::from_millis(500)).await;
+    // Wait for node to become leader
+    node.wait_for_election(Duration::from_secs(5)).await.unwrap();
     
     // Add entries to trigger snapshot
     for i in 0..15 {
@@ -444,3 +451,4 @@ async fn test_log_compaction_after_snapshot() {
     
     node.shutdown().await.unwrap();
 }
+

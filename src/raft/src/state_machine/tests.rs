@@ -126,3 +126,100 @@ async fn test_snapshot_restore() {
     let result = state_machine.restore_from_snapshot(&snapshot).await;
     assert!(result.is_ok(), "Snapshot restore should succeed");
 }
+
+#[tokio::test]
+async fn test_mset_command() {
+    // Test MSET command (multiple SET operations)
+    let state_machine = KiwiStateMachine::new(1);
+
+    let request = ClientRequest {
+        id: RequestId::new(),
+        command: RedisCommand::new(
+            "MSET".to_string(),
+            vec![
+                Bytes::from("key1"),
+                Bytes::from("value1"),
+                Bytes::from("key2"),
+                Bytes::from("value2"),
+            ],
+        ),
+        consistency_level: ConsistencyLevel::Linearizable,
+    };
+
+    let response = state_machine.apply_redis_command(&request).await.unwrap();
+    assert!(response.result.is_ok());
+}
+
+#[tokio::test]
+async fn test_incr_decr_commands() {
+    // Test INCR and DECR commands
+    let state_machine = KiwiStateMachine::new(1);
+
+    // Test INCR
+    let incr_request = ClientRequest {
+        id: RequestId::new(),
+        command: RedisCommand::new("INCR".to_string(), vec![Bytes::from("counter")]),
+        consistency_level: ConsistencyLevel::Linearizable,
+    };
+
+    let response = state_machine.apply_redis_command(&incr_request).await.unwrap();
+    assert!(response.result.is_ok());
+
+    // Test DECR
+    let decr_request = ClientRequest {
+        id: RequestId::new(),
+        command: RedisCommand::new("DECR".to_string(), vec![Bytes::from("counter")]),
+        consistency_level: ConsistencyLevel::Linearizable,
+    };
+
+    let response = state_machine.apply_redis_command(&decr_request).await.unwrap();
+    assert!(response.result.is_ok());
+}
+
+#[tokio::test]
+async fn test_append_command() {
+    // Test APPEND command
+    let state_machine = KiwiStateMachine::new(1);
+
+    let request = ClientRequest {
+        id: RequestId::new(),
+        command: RedisCommand::new(
+            "APPEND".to_string(),
+            vec![Bytes::from("mykey"), Bytes::from("Hello")],
+        ),
+        consistency_level: ConsistencyLevel::Linearizable,
+    };
+
+    let response = state_machine.apply_redis_command(&request).await.unwrap();
+    assert!(response.result.is_ok());
+}
+
+#[tokio::test]
+async fn test_strlen_command() {
+    // Test STRLEN command
+    let state_machine = KiwiStateMachine::new(1);
+
+    let request = ClientRequest {
+        id: RequestId::new(),
+        command: RedisCommand::new("STRLEN".to_string(), vec![Bytes::from("mykey")]),
+        consistency_level: ConsistencyLevel::Linearizable,
+    };
+
+    let response = state_machine.apply_redis_command(&request).await.unwrap();
+    assert!(response.result.is_ok());
+}
+
+#[tokio::test]
+async fn test_unsupported_command() {
+    // Test that unsupported commands return an error
+    let state_machine = KiwiStateMachine::new(1);
+
+    let request = ClientRequest {
+        id: RequestId::new(),
+        command: RedisCommand::new("UNSUPPORTED".to_string(), vec![]),
+        consistency_level: ConsistencyLevel::Linearizable,
+    };
+
+    let response = state_machine.apply_redis_command(&request).await.unwrap();
+    assert!(response.result.is_err());
+}

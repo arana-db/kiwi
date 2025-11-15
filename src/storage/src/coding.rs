@@ -15,8 +15,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 pub trait FixedInt: Copy {
     /// convert self to little-endian bytes
     fn to_le_bytes(self) -> Vec<u8>;
@@ -66,8 +64,6 @@ impl_fixed_int_32!(i32, u32);
 impl_fixed_int_64!(i64, u64);
 
 /// encode a fixed-width int into a byte buffer
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 #[inline]
 pub fn encode_fixed<T: FixedInt>(buf: &mut [u8], value: T) {
     let size = T::byte_size();
@@ -76,8 +72,6 @@ pub fn encode_fixed<T: FixedInt>(buf: &mut [u8], value: T) {
 }
 
 /// decode a fixed-width int from a byte buffer
-/// TODO: remove allow dead code
-#[allow(dead_code)]
 #[inline]
 pub fn decode_fixed<T: FixedInt>(buf: &[u8]) -> T {
     let size = T::byte_size();
@@ -96,7 +90,7 @@ mod tests {
         let original = 0x12345678u32;
 
         encode_fixed(&mut buf, original);
-        let decoded = decode_fixed(&buf);
+        let decoded: u32 = decode_fixed(&buf);
 
         assert_eq!(
             original, decoded,
@@ -110,7 +104,7 @@ mod tests {
         let original = 0x1234567890ABCDEFu64;
 
         encode_fixed(&mut buf, original);
-        let decoded = decode_fixed(&buf);
+        let decoded: u64 = decode_fixed(&buf);
 
         assert_eq!(
             original, decoded,
@@ -320,7 +314,7 @@ mod tests {
 
         for &value in &values {
             encode_fixed::<u64>(&mut buf, value);
-            let decoded = decode_fixed(&buf);
+            let decoded: u64 = decode_fixed(&buf);
             assert_eq!(value, decoded, "Round trip of 0x{:X} failed", value);
         }
     }
