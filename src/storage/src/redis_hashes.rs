@@ -1144,10 +1144,8 @@ impl Redis {
                         if let Some(sp) = self.get_scan_start_point(DataType::Hash, key, pat.as_bytes(), cursor)? {
                             start_point = sp;
                         }
-                    } else {
-                        if let Some(sp) = self.get_scan_start_point(DataType::Hash, key, &[], cursor)? {
+                    } else if let Some(sp) = self.get_scan_start_point(DataType::Hash, key, &[], cursor)? {
                             start_point = sp;
-                        }
                     }
                 } else if let Some(pat) = pattern {
                     if is_tail_wildcard(pat) {
@@ -1194,13 +1192,10 @@ impl Redis {
                             true
                         };
 
-                        if matches_pattern {
-                            if rest > 0 {
-                                let parsed_internal_value = ParsedBaseDataValue::new(&*v)?;
-                                let value = String::from_utf8_lossy(&parsed_internal_value.user_value()).to_string();
-
-                                field_values.push((field.clone(), value));
-                            }
+                        if matches_pattern && rest > 0 {
+                            let parsed_internal_value = ParsedBaseDataValue::new(&*v)?;
+                            let value = String::from_utf8_lossy(&parsed_internal_value.user_value()).to_string();
+                            field_values.push((field.clone(), value));
                         }
                         rest -= 1;
                     } else {
@@ -1225,6 +1220,7 @@ impl Redis {
                 } else {
                     0
                 };
+                drop(iter);
                 Ok((next_cursor, field_values))
             }
             None => {
