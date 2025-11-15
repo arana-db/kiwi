@@ -38,6 +38,10 @@ impl RocksdbEngine {
     pub fn db(&self) -> &DB {
         &self.db
     }
+
+    pub fn shared_db(&self) -> Arc<DB> {
+        Arc::clone(&self.db)
+    }
 }
 
 impl Engine for RocksdbEngine {

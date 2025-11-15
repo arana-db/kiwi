@@ -157,15 +157,16 @@ impl ThreeNodeCluster {
         ];
 
         for (node_id, node) in nodes {
-            match node.get_metrics().await {
-                Ok(metrics) => {
+            // Add timeout to prevent hanging on shutdown nodes
+            match timeout(Duration::from_millis(500), node.get_metrics()).await {
+                Ok(Ok(metrics)) => {
                     if let Some(leader_id) = metrics.current_leader {
                         if leader_id == node_id {
                             return Ok(Some(node));
                         }
                     }
                 }
-                Err(_) => continue,
+                Ok(Err(_)) | Err(_) => continue,
             }
         }
 
@@ -304,47 +305,135 @@ pub async fn verify_data_consistency(
     cluster: &ThreeNodeCluster,
     test_data: &HashMap<String, String>,
 ) -> RaftResult<bool> {
-    // Read each key from all nodes and verify consistency
-    for (key, expected_value) in test_data {
-        let mut values = Vec::new();
+    let nodes = vec![
+        (cluster.node1.node_id(), Arc::clone(&cluster.node1)),
+        (cluster.node2.node_id(), Arc::clone(&cluster.node2)),
+        (cluster.node3.node_id(), Arc::clone(&cluster.node3)),
+    ];
 
-        // Read from all nodes
-        for _node in [&cluster.node1, &cluster.node2, &cluster.node3] {
-            if let Ok(Some(value)) = cluster.read(key).await {
-                values.push(String::from_utf8_lossy(&value).to_string());
+    for (key, expected_value) in test_data {
+        let mut observed_values = Vec::new();
+
+        for (node_id, node) in &nodes {
+            // Add timeout to prevent hanging on shutdown nodes
+            match timeout(Duration::from_secs(2), read_key_from_node(node, key)).await {
+                Ok(Ok(Some(value))) => observed_values.push((*node_id, value)),
+                Ok(Ok(None)) => {
+                    log::error!("Node {} missing key '{}'", node_id, key);
+                    return Ok(false);
+                }
+                Ok(Err(e)) => {
+                    log::warn!("Node {} error reading key '{}': {}, skipping", node_id, key, e);
+                    continue; // Skip shutdown nodes
+                }
+                Err(_) => {
+                    log::warn!("Node {} timeout reading key '{}', skipping", node_id, key);
+                    continue; // Skip unresponsive nodes
+                }
             }
         }
 
-        // Check if all values match
-        if values.is_empty() {
+        if observed_values.is_empty() {
+            log::error!("No values collected for key '{}'", key);
             return Ok(false);
         }
 
-        let first_value = &values[0];
-        for value in &values {
-            if value != first_value {
+        let first_value = observed_values[0].1.clone();
+
+        for (node_id, value) in &observed_values {
+            if value != &first_value {
+                let printable: Vec<String> = observed_values
+                    .iter()
+                    .map(|(id, val)| format!("node {} -> {}", id, String::from_utf8_lossy(val)))
+                    .collect();
                 log::error!(
-                    "Data inconsistency detected for key '{}': {:?}",
+                    "Data inconsistency detected for key '{}': node {} differs, values: {:?}",
                     key,
-                    values
+                    node_id,
+                    printable
                 );
                 return Ok(false);
             }
         }
 
-        // Verify against expected value
-        if first_value != expected_value {
+        if first_value.as_ref() != expected_value.as_bytes() {
+            let printable: Vec<String> = observed_values
+                .iter()
+                .map(|(id, val)| format!("node {} -> {}", id, String::from_utf8_lossy(val)))
+                .collect();
             log::error!(
-                "Value mismatch for key '{}': expected '{}', got '{}'",
+                "Value mismatch for key '{}': expected '{}', observed {:?}",
                 key,
                 expected_value,
-                first_value
+                printable
             );
             return Ok(false);
         }
     }
 
     Ok(true)
+}
+
+async fn read_key_from_node(node: &Arc<RaftNode>, key: &str) -> RaftResult<Option<Bytes>> {
+    let state_machine = node.state_machine();
+    let key_bytes = Bytes::copy_from_slice(key.as_bytes());
+
+    let exists_request = ClientRequest {
+        id: RequestId::new(),
+        command: RedisCommand {
+            command: "EXISTS".to_string(),
+            args: vec![key_bytes.clone()],
+        },
+        consistency_level: ConsistencyLevel::Eventual,
+    };
+
+    let exists_response = state_machine.apply_redis_command(&exists_request).await?;
+    let exists_bytes = exists_response.result.map_err(|err| {
+        RaftError::state_machine_with_context(
+            err,
+            format!("EXISTS '{}' on node {}", key, node.node_id()),
+        )
+    })?;
+
+    let exists = std::str::from_utf8(&exists_bytes)
+        .map_err(|err| {
+            RaftError::state_machine_with_context(
+                format!("Failed to parse EXISTS response: {}", err),
+                format!("node {}", node.node_id()),
+            )
+        })?
+        .trim()
+        .parse::<u64>()
+        .map_err(|err| {
+            RaftError::state_machine_with_context(
+                format!("Failed to parse EXISTS count: {}", err),
+                format!("node {}", node.node_id()),
+            )
+        })?
+        > 0;
+
+    if !exists {
+        return Ok(None);
+    }
+
+    let get_request = ClientRequest {
+        id: RequestId::new(),
+        command: RedisCommand {
+            command: "GET".to_string(),
+            args: vec![key_bytes],
+        },
+        consistency_level: ConsistencyLevel::Eventual,
+    };
+
+    let get_response = state_machine.apply_redis_command(&get_request).await?;
+    let value = get_response.result.map_err(|err| {
+        RaftError::state_machine_with_context(
+            err,
+            format!("GET '{}' on node {}", key, node.node_id()),
+        )
+    })?;
+
+    Ok(Some(value))
 }
 
 /// Create test data set
@@ -511,48 +600,121 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Ignore this test for now due to complexity
-    async fn test_consistency_after_failover() {
-        // Create and start cluster
-        let cluster = ThreeNodeCluster::new().await.unwrap();
-        cluster.start_all().await.unwrap();
+    #[ignore] // This test can be flaky in CI due to timing issues
+    async fn test_consistency_after_failover() -> RaftResult<()> {
+        // Wrap entire test with timeout to prevent hanging in CI
+        timeout(Duration::from_secs(120), async {
+            test_consistency_after_failover_impl().await
+        })
+        .await
+        .map_err(|_| RaftError::timeout("Test exceeded 120 second timeout"))?
+    }
 
-        // Wait for leader election
-        let leader_id = wait_for_leader(&cluster, Duration::from_secs(5))
-            .await
-            .unwrap();
+    async fn test_consistency_after_failover_impl() -> RaftResult<()> {
+        // 1. Create and start three-node cluster
+        let cluster = ThreeNodeCluster::new().await?;
+        cluster.start_all().await?;
 
-        // Write data
-        cluster.write("key1", "value1").await.unwrap();
-        cluster.write("key2", "value2").await.unwrap();
-        sleep(Duration::from_millis(300)).await;
+        // 2. Wait for initial leader election
+        let initial_leader_id = wait_for_leader(&cluster, Duration::from_secs(5)).await?;
+        log::info!("Initial leader elected: node {}", initial_leader_id);
 
-        // Stop leader
-        cluster.stop_node(leader_id).await.unwrap();
+        // 3. Write test data to the cluster
+        let test_key1 = "failover_test_key1";
+        let test_value1 = "consistent_value1";
+        let test_key2 = "failover_test_key2";
+        let test_value2 = "consistent_value2";
+
+        cluster.write(test_key1, test_value1).await?;
+        cluster.write(test_key2, test_value2).await?;
+        
+        // Wait for replication to complete
         sleep(Duration::from_millis(500)).await;
 
-        // Wait for new leader
-        let new_leader_id = wait_for_leader(&cluster, Duration::from_secs(5))
-            .await
-            .unwrap();
-        assert_ne!(new_leader_id, leader_id);
+        // 4. Verify all nodes have the data before failover
+        log::info!("Verifying initial data consistency across all nodes");
+        let value1_before = cluster.read(test_key1).await?;
+        let value2_before = cluster.read(test_key2).await?;
+        
+        assert_eq!(
+            value1_before,
+            Some(Bytes::from(test_value1)),
+            "Initial data should be consistent before failover"
+        );
+        assert_eq!(
+            value2_before,
+            Some(Bytes::from(test_value2)),
+            "Initial data should be consistent before failover"
+        );
 
-        // Verify data is still accessible and consistent
-        let value1 = cluster.read("key1").await.unwrap();
-        let value2 = cluster.read("key2").await.unwrap();
+        // 5. Simulate leader failure
+        log::info!("Stopping leader node {}", initial_leader_id);
+        cluster.stop_node(initial_leader_id).await?;
+        
+        // Wait for failure detection
+        sleep(Duration::from_secs(1)).await;
 
-        assert_eq!(value1, Some(Bytes::from("value1")));
-        assert_eq!(value2, Some(Bytes::from("value2")));
+        // 6. Wait for new leader election
+        let new_leader_id = wait_for_leader(&cluster, Duration::from_secs(10)).await?;
+        assert_ne!(
+            new_leader_id, initial_leader_id,
+            "New leader should be different from failed leader"
+        );
+        log::info!("New leader elected after failover: node {}", new_leader_id);
 
-        // Write more data after failover
-        cluster.write("key3", "value3").await.unwrap();
-        sleep(Duration::from_millis(300)).await;
+        // 7. Verify data consistency after failover on remaining nodes
+        log::info!("Verifying data consistency after failover");
+        let value1_after = cluster.read(test_key1).await?;
+        let value2_after = cluster.read(test_key2).await?;
 
-        // Verify new write is also consistent
-        let value3 = cluster.read("key3").await.unwrap();
-        assert_eq!(value3, Some(Bytes::from("value3")));
+        assert_eq!(
+            value1_after,
+            Some(Bytes::from(test_value1)),
+            "Data should remain consistent after failover for key '{}'",
+            test_key1
+        );
+        assert_eq!(
+            value2_after,
+            Some(Bytes::from(test_value2)),
+            "Data should remain consistent after failover for key '{}'",
+            test_key2
+        );
+
+        // 8. Write new data after failover to verify cluster is still operational
+        let test_key3 = "post_failover_key";
+        let test_value3 = "post_failover_value";
+        
+        log::info!("Writing new data after failover");
+        cluster.write(test_key3, test_value3).await?;
+        
+        // Wait for replication
+        sleep(Duration::from_millis(500)).await;
+
+        // 9. Verify new write is consistent across remaining nodes
+        let value3 = cluster.read(test_key3).await?;
+        assert_eq!(
+            value3,
+            Some(Bytes::from(test_value3)),
+            "New data written after failover should be consistent"
+        );
+
+        // 10. Verify all data is still consistent
+        log::info!("Final consistency check");
+        let mut test_data = HashMap::new();
+        test_data.insert(test_key1.to_string(), test_value1.to_string());
+        test_data.insert(test_key2.to_string(), test_value2.to_string());
+        test_data.insert(test_key3.to_string(), test_value3.to_string());
+
+        let is_consistent = verify_data_consistency(&cluster, &test_data).await?;
+        assert!(
+            is_consistent,
+            "All data should be consistent across remaining nodes after failover"
+        );
+
+        log::info!("Consistency after failover test completed successfully");
 
         // Cleanup
-        cluster.shutdown_all().await.unwrap();
+        cluster.shutdown_all().await?;
+        Ok(())
     }
 }

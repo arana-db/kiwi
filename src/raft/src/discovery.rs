@@ -309,6 +309,7 @@ impl NodeDiscovery {
                     NetworkError::ConnectionFailedToAddress {
                         address: address_clone,
                         source: e,
+                        context: "discover_node: address resolution failed".to_string(),
                     },
                 ));
             }
@@ -509,6 +510,7 @@ impl HealthMonitor {
                 crate::error::NetworkError::ConnectionFailedToAddress {
                     address: addr.to_string(),
                     source: e,
+                    context: "check_connectivity: TCP connection failed".to_string(),
                 },
             )),
         }

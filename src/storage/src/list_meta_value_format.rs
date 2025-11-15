@@ -35,6 +35,10 @@ use crate::{
 const INITIAL_LEFT_INDEX: u64 = 9223372036854775807;
 const INITIAL_RIGHT_INDEX: u64 = 9223372036854775808;
 const LIST_VALUE_INDEX_LENGTH: usize = 8;
+const LISTS_META_VALUE_SUFFIX_LENGTH: usize =
+    VERSION_LENGTH + 2 * LIST_VALUE_INDEX_LENGTH + SUFFIX_RESERVE_LENGTH + 2 * TIMESTAMP_LENGTH;
+pub const LISTS_META_VALUE_LENGTH: usize =
+    TYPE_LENGTH + BASE_META_VALUE_COUNT_LENGTH + LISTS_META_VALUE_SUFFIX_LENGTH;
 
 // | type  | list_size | version | left index | right index | reserve |  cdate | timestamp |
 // |  1B   |     8B    |    8B   |     8B     |      8B     |   16B   |    8B  |     8B    |
@@ -85,7 +89,7 @@ impl ListsMetaValue {
     }
 
     pub fn encode(&self) -> BytesMut {
-        // type(1) + user_value + version(8) + left_index(8) + right_index(8) + reserve(16) + ctime(8) + etime(8)
+        // type(1) + list_size(8) + version(8) + left_index(8) + right_index(8) + reserve(16) + ctime(8) + etime(8)
         let needed = TYPE_LENGTH
             + self.inner.user_value.len()
             + VERSION_LENGTH

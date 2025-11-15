@@ -19,7 +19,7 @@
 
 pub mod core;
 
-pub use core::*;
+pub use core::{KiwiStateMachine, StateMachineSnapshot, StorageEngine};
 
 #[cfg(test)]
 pub mod tests;

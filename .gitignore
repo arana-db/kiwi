@@ -33,6 +33,8 @@ test_debug_*
 /.env
 /.env*
 /integration-tests
+**/test_data
+**/target
 
 #web distribution
 /web/dist
@@ -47,5 +49,7 @@ STORAGE_COMPARISON.md
 .claude/
 
 # Kiro
-# .kiro
+.kiro
 CHECKLIST.md
+.trae
+kiwi-cpp

@@ -48,13 +48,18 @@
 
 use openraft::Config;
 
-// pub mod adaptor; // TODO: Re-enable when adaptor is properly implemented
+pub mod simple_mem_store; // Simple memory store using Adaptor pattern
 pub mod binlog;
 pub mod cluster_config;
 #[cfg(test)]
 pub mod cluster_tests;
 pub mod config_change;
+#[cfg(test)]
+pub mod config_change_tests;
+#[cfg(test)]
+pub mod failover_tests;
 pub mod consistency;
+pub mod conversion;
 pub mod consistency_handler;
 pub mod discovery;
 pub mod error;
@@ -64,12 +69,14 @@ pub mod metrics;
 pub mod monitoring_api;
 pub mod network;
 pub mod node;
+pub mod openraft_compatibility;
 pub mod performance;
 pub mod placeholder_types;
 pub mod protocol_compatibility;
 pub mod redis_integration;
 pub mod replication_mode;
 pub mod rocksdb_integration;
+pub mod router;
 pub mod segment_log;
 pub mod sequence_mapping;
 pub mod serialization;
@@ -77,13 +84,16 @@ pub mod simple_storage;
 pub mod snapshot;
 pub mod state_machine;
 pub mod storage;
+pub mod storage_engine;
 pub mod types;
 
 // Re-export commonly used types
 pub use error::RaftError;
 pub use node::{RaftNode, RaftNodeInterface};
+pub use router::{RequestRouter, ClusterMode, RedisResponse};
 pub use state_machine::KiwiStateMachine;
-pub use storage::RaftStorage;
+pub use storage::{RaftStorage, RaftStorageAdaptor, create_raft_storage_adaptor};
+pub use storage_engine::RedisStorageEngine;
 pub use types::*;
 
 // Re-export simple storage functions
@@ -134,3 +144,10 @@ mod unit_tests {
 
 #[cfg(test)]
 pub mod integration_tests;
+
+#[cfg(test)]
+pub mod integration_tests_working;
+
+#[cfg(test)]
+#[path = "tests/mod.rs"]
+mod test_harness;

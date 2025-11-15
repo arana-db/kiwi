@@ -17,9 +17,17 @@
 
 //! Storage module for Raft implementation
 
+pub mod adaptor;
+pub mod backend;
 pub mod core;
+pub mod log_storage;
 
+pub use adaptor::*;
+pub use backend::*;
 pub use core::*;
+
+#[cfg(test)]
+pub mod adaptor_tests;
 
 #[cfg(test)]
 pub mod tests;

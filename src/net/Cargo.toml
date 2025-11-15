@@ -21,6 +21,7 @@ executor = { path = "../executor" }
 runtime = { path = "../common/runtime" }
 thiserror = "1.0"
 parking_lot = "0.12"
+raft = { path = "../raft" }
 
 [dev-dependencies]
 env_logger = "0.11"

@@ -116,3 +116,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "benchmark: marks tests as benchmark tests"
     )
+    config.addinivalue_line(
+        "markers", "concurrent: marks tests as concurrency tests"
+    )
+    config.addinivalue_line(
+        "markers", "wrongtype: marks tests as type error tests"
+    )
