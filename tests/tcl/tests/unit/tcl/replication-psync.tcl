@@ -11,7 +11,7 @@ proc stop_bg_complex_data {handle} {
 # partial resyncs attempts, all this while flooding the master with
 # write queries.
 #
-# You can specifiy backlog size, ttl, delay before reconnection, test duration
+# You can specify backlog size, ttl, delay before reconnection, test duration
 # in seconds, and an additional condition to verify at the end.
 proc test_psync {descr duration backlog_size backlog_ttl delay cond} {
     start_server {tags {"repl"}} {
@@ -49,7 +49,7 @@ proc test_psync {descr duration backlog_size backlog_ttl delay cond} {
             }
 
             test "Test replication partial resync: $descr" {
-                # Now while the clients are writing data, break the maste-slave
+                # Now while the clients are writing data, break the master-slave
                 # link multiple times.
                 for {set j 0} {$j < $duration*10} {incr j} {
                     after 100

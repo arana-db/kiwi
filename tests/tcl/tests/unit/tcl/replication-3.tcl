@@ -14,7 +14,7 @@ start_server {tags {"repl"}} {
         test {MASTER and SLAVE consistency with expire} {
             createComplexDataset r $numops useexpire
             after 4000 ;# Make sure everything expired before taking the digest
-            r keys *   ;# Force DEL syntesizing to slave
+            r keys *   ;# Force DEL synthesizing to slave
             after 1000 ;# Wait another second. Now everything should be fine.
             if {[r debug digest] ne [r -1 debug digest]} {
                 set csv1 [csvdump r]

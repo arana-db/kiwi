@@ -806,7 +806,7 @@ start_server {tags {"zset"}} {
                 if {$maxinc} {set cmax "\[$max"} else {set cmax "($max"}
                 set rev [randomInt 2]
                 if {$rev} {
-		    break
+                break
                     set cmd zrevrangebylex
                 } else {
                     set cmd zrangebylex

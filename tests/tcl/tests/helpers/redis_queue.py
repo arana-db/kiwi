@@ -30,7 +30,7 @@ def dequeue(client: redis.Redis, queue_name: str):
         if n <= 10:
             time.sleep(0.1)
             continue
-        res = client.zremrangebyrank(queue_name, 0, 9)
+        client.zremrangebyrank(queue_name, 0, 9)
         latency = time.time() - start_time
         loop += 1
         if loop % 20 == 0:

@@ -113,7 +113,7 @@ start_server {tags {"multi"}} {
 
 #    test {EXEC fail on WATCHed key modified by SORT with STORE even if the result is empty} {
 #        r flushdb
-#        r lpush foo barsync"
+#        r lpush foo "barsync"
 #        r watch foo
 #        r sort emptylist store foo
 #        r multi
