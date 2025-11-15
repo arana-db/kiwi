@@ -63,11 +63,11 @@ pub enum ClusterMode {
 /// - Requirement 6.1.5: Response format SHALL conform to Redis protocol
 pub async fn process_raft_aware_connection(
     client: Arc<Client>,
-    storage_client: Arc<StorageClient>,
+    _storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
-    executor: Arc<CmdExecutor>,
+    _executor: Arc<CmdExecutor>,
     cluster_mode: ClusterMode,
-    // raft_router: Option<Arc<raft::RequestRouter>>, // TODO: Add when Raft is ready
+    raft_router: Option<Arc<raft::RequestRouter>>,
 ) -> std::io::Result<()> {
     let mut buf = vec![0; 4096];
     let mut resp_parser = resp::RespParse::new(resp::RespVersion::RESP2);
@@ -117,11 +117,11 @@ pub async fn process_raft_aware_connection(
                                     // Route command based on cluster mode
                                     handle_raft_aware_command(
                                         client.clone(),
-                                        storage_client.clone(),
+                                        _storage_client.clone(),
                                         cmd_table.clone(),
-                                        executor.clone(),
+                                        _executor.clone(),
                                         cluster_mode,
-                                        // raft_router.clone(), // TODO: Add when Raft is ready
+                                        raft_router.clone(),
                                     ).await;
 
                                     // Extract the reply and send it
@@ -177,7 +177,7 @@ async fn handle_raft_aware_command(
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
     cluster_mode: ClusterMode,
-    // raft_router: Option<Arc<raft::RequestRouter>>, // TODO: Add when Raft is ready
+    raft_router: Option<Arc<raft::RequestRouter>>,
 ) {
     let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
     debug!("Handling Raft-aware command: {} in {:?} mode", cmd_name, cluster_mode);
@@ -194,20 +194,6 @@ async fn handle_raft_aware_command(
             ).await;
         }
         ClusterMode::Cluster => {
-            // Cluster mode: route through Raft
-            debug!("Cluster mode: routing through Raft (not yet implemented)");
-            
-            // TODO: Implement Raft routing when ready
-            // For now, fall back to single mode behavior
-            warn!("Cluster mode not yet fully implemented, falling back to single mode");
-            handle_single_mode_command(
-                client,
-                storage_client,
-                cmd_table,
-                executor,
-            ).await;
-            
-            /* TODO: Uncomment when Raft is ready
             if let Some(router) = raft_router {
                 handle_cluster_mode_command(
                     client,
@@ -219,10 +205,9 @@ async fn handle_raft_aware_command(
             } else {
                 error!("Cluster mode enabled but no Raft router available");
                 client.set_reply(RespData::Error(
-                    "ERR Cluster mode not properly configured".into()
+                    "CLUSTERDOWN Cluster not configured".into()
                 ));
             }
-            */
         }
     }
 }
@@ -265,7 +250,6 @@ async fn handle_single_mode_command(
     }
 }
 
-/* TODO: Uncomment when Raft is ready
 /// Handle command in cluster mode (Raft routing)
 ///
 /// # Requirements
@@ -274,9 +258,9 @@ async fn handle_single_mode_command(
 /// - Requirement 6.1.3: Read operations SHALL route based on consistency level
 async fn handle_cluster_mode_command(
     client: Arc<Client>,
-    storage_client: Arc<StorageClient>,
+    _storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
-    executor: Arc<CmdExecutor>,
+    _executor: Arc<CmdExecutor>,
     raft_router: Arc<raft::RequestRouter>,
 ) {
     let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
@@ -294,8 +278,8 @@ async fn handle_cluster_mode_command(
 
     // Create RedisCommand for Raft routing
     let redis_command = raft::types::RedisCommand::from_bytes(
-        cmd_name.as_bytes().to_vec(),
-        argv.to_vec(),
+        cmd_name.clone(),
+        argv.clone(),
     );
 
     // Route through Raft
@@ -306,7 +290,6 @@ async fn handle_cluster_mode_command(
             // Convert Raft response to RESP data
             match response.data {
                 Ok(data) => {
-                    // Parse the response data as RESP
                     let resp_data = parse_raft_response(data);
                     client.set_reply(resp_data);
                 }
@@ -317,15 +300,20 @@ async fn handle_cluster_mode_command(
             }
         }
         Err(raft::error::RaftError::NotLeader { leader_id, .. }) => {
-            // Not the leader - return redirect error
-            let error_msg = if let Some(leader) = leader_id {
-                format!("MOVED {} Leader is node {}", cmd_name, leader)
-            } else {
-                format!("CLUSTERDOWN No leader available for command {}", cmd_name)
-            };
-            
             warn!("Not leader for command {}: {:?}", cmd_name, leader_id);
-            client.set_reply(RespData::Error(error_msg.into()));
+            let endpoint_opt = raft_router.get_leader_endpoint().await;
+            if let Some(endpoint) = endpoint_opt {
+                let slot = if argv.len() > 1 {
+                    let key = &argv[1];
+                    let mut s: u16 = 0;
+                    for b in key.iter() { s = s.wrapping_add(*b as u16); }
+                    (s % 16384) as usize
+                } else { 0 };
+                let msg = format!("MOVED {} {}", slot, endpoint);
+                client.set_reply(RespData::Error(msg.into()));
+            } else {
+                client.set_reply(RespData::Error("CLUSTERDOWN No leader available".into()));
+            }
         }
         Err(e) => {
             error!("Raft routing error for {}: {}", cmd_name, e);
@@ -337,7 +325,6 @@ async fn handle_cluster_mode_command(
 
 /// Parse Raft response bytes into RESP data
 fn parse_raft_response(data: bytes::Bytes) -> RespData {
-    // Try to parse as RESP data
     let mut parser = resp::RespParse::new(RespVersion::RESP2);
     match parser.parse(data) {
         RespParseResult::Complete(resp_data) => resp_data,
@@ -351,7 +338,6 @@ fn parse_raft_response(data: bytes::Bytes) -> RespData {
         }
     }
 }
-*/
 
 /// Generate error response in RESP format
 fn generate_error_response(cmd_name: &str, error: &str) -> RespData {

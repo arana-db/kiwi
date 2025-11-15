@@ -28,11 +28,16 @@ mod tests {
     #[tokio::test]
     async fn test_router_creation() {
         // Create a test cluster config
+        let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
+            .map(|p| std::path::PathBuf::from(p).parent().unwrap().parent().unwrap().to_path_buf())
+            .unwrap_or_else(|_| std::env::current_dir().unwrap());
+        let test_dir = workspace_root.join("target/test_data/router_test");
+        
         let config = ClusterConfig {
             enabled: true,
             node_id: 1,
             cluster_members: vec!["1:127.0.0.1:7379".to_string()].into_iter().collect(),
-            data_dir: "./test_data/router_test".to_string(),
+            data_dir: test_dir.to_string_lossy().to_string(),
             ..Default::default()
         };
 
@@ -125,11 +130,16 @@ mod tests {
         use crate::node::RaftNodeInterface;
 
         // Create a test cluster config
+        let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
+            .map(|p| std::path::PathBuf::from(p).parent().unwrap().parent().unwrap().to_path_buf())
+            .unwrap_or_else(|_| std::env::current_dir().unwrap());
+        let test_dir = workspace_root.join("target/test_data/router_read_test");
+        
         let config = ClusterConfig {
             enabled: true,
             node_id: 1,
             cluster_members: vec!["1:127.0.0.1:7380".to_string()].into_iter().collect(),
-            data_dir: "./test_data/router_read_test".to_string(),
+            data_dir: test_dir.to_string_lossy().to_string(),
             ..Default::default()
         };
 
@@ -175,7 +185,7 @@ mod tests {
         
         // Cleanup
         let _ = raft_node.shutdown().await;
-        let _ = std::fs::remove_dir_all("./test_data/router_read_test");
+        let _ = std::fs::remove_dir_all(&test_dir);
     }
 
     #[tokio::test]
@@ -184,11 +194,16 @@ mod tests {
         use crate::node::RaftNodeInterface;
 
         // Create a test cluster config
+        let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
+            .map(|p| std::path::PathBuf::from(p).parent().unwrap().parent().unwrap().to_path_buf())
+            .unwrap_or_else(|_| std::env::current_dir().unwrap());
+        let test_dir = workspace_root.join("target/test_data/router_write_read_test");
+        
         let config = ClusterConfig {
             enabled: true,
             node_id: 1,
             cluster_members: vec!["1:127.0.0.1:7381".to_string()].into_iter().collect(),
-            data_dir: "./test_data/router_write_read_test".to_string(),
+            data_dir: test_dir.to_string_lossy().to_string(),
             ..Default::default()
         };
 
@@ -236,7 +251,7 @@ mod tests {
 
         // Cleanup
         let _ = raft_node.shutdown().await;
-        let _ = std::fs::remove_dir_all("./test_data/router_write_read_test");
+        let _ = std::fs::remove_dir_all(&test_dir);
     }
 
     #[test]

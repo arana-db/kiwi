@@ -414,13 +414,7 @@ impl RequestRouter {
     /// - Requirement 8.3.3: Client requests SHALL automatically redirect to new leader
     pub async fn get_leader_endpoint(&self) -> Option<String> {
         let leader_id = self.get_leader_id().await?;
-        
-        // Get the endpoint from the Raft node
-        // Note: This requires adding a public method to RaftNode to get endpoints
-        // For now, we return None and rely on the leader_id in the error
-        // TODO: Add RaftNode::get_endpoint(node_id) method
-        log::debug!("Leader endpoint lookup for node {} not yet implemented", leader_id);
-        None
+        self.raft_node.get_endpoint(leader_id).await
     }
 
     /// Create a redirect response for non-leader nodes
@@ -436,15 +430,9 @@ impl RequestRouter {
         let leader_endpoint = self.get_leader_endpoint().await;
         
         let error_msg = match (leader_id, leader_endpoint) {
-            (Some(id), Some(endpoint)) => {
-                format!("MOVED {} {}", id, endpoint)
-            }
-            (Some(id), None) => {
-                format!("MOVED {} (endpoint unknown)", id)
-            }
-            (None, _) => {
-                "CLUSTERDOWN No leader available".to_string()
-            }
+            (Some(_id), Some(endpoint)) => format!("MOVED 0 {}", endpoint),
+            (Some(_id), None) => "CLUSTERDOWN No leader endpoint known".to_string(),
+            (None, _) => "CLUSTERDOWN No leader available".to_string(),
         };
         
         RedisResponse::error(request_id, error_msg).with_leader(leader_id)
