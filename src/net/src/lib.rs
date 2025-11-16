@@ -43,7 +43,7 @@ use crate::tcp::{ClusterTcpServer, TcpServer};
 use cmd::table::create_command_table;
 use executor::CmdExecutorBuilder;
 use raft::{RaftNode, RequestRouter};
-use runtime::{MessageChannel, RuntimeManager, StorageClient as RuntimeStorageClient};
+use runtime::RuntimeManager;
 use std::sync::Arc;
 
 #[async_trait]
@@ -130,16 +130,15 @@ impl ServerFactory {
         cluster_mode: crate::raft_network_handle::ClusterMode,
         raft_node_opt: Option<Arc<RaftNode>>,
     ) -> Result<NetworkServer, Box<dyn std::error::Error>> {
-        // Create message channel for communication between runtimes
-        let message_channel = Arc::new(MessageChannel::new(
-            runtime_manager.config().channel_buffer_size,
-        ));
+        // Get the storage client from RuntimeManager
+        let runtime_storage_client = runtime_manager.storage_client().map_err(|e| {
+            format!(
+                "Storage client not initialized. Make sure RuntimeManager::initialize_storage_components() was called first: {}",
+                e
+            )
+        })?;
 
-        // Create storage client for network-to-storage communication
-        let runtime_storage_client = Arc::new(RuntimeStorageClient::new(
-            message_channel.clone(),
-            runtime_manager.config().request_timeout,
-        ));
+        // Wrap the runtime storage client in the network-side StorageClient
         let storage_client = Arc::new(StorageClient::new(runtime_storage_client));
 
         // Create command table and executor
