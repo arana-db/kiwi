@@ -17,10 +17,12 @@
 
 use clap::Parser;
 use conf::config::Config;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 // ServerFactory is used via net::ServerFactory::create_server_with_mode
 use runtime::{DualRuntimeError, RuntimeConfig, RuntimeManager, StorageServer};
+use std::path::PathBuf;
 use std::sync::Arc;
+use storage::StorageOptions;
 use storage::storage::Storage;
 
 /// Convert conf::config::ClusterConfig to raft::types::ClusterConfig
@@ -131,10 +133,18 @@ fn main() -> std::io::Result<()> {
 
     storage_handle.spawn(async move {
         info!("Initializing storage server...");
-        if let Err(e) = initialize_storage_server(storage_receiver).await {
-            error!("Storage server failed: {}", e);
+        match initialize_storage_server(storage_receiver).await {
+            Ok(_) => {
+                error!("Storage server exited unexpectedly - this should never happen!");
+            }
+            Err(e) => {
+                error!("Storage server failed: {}", e);
+            }
         }
     });
+
+    // Store the handle to monitor the task (optional)
+    // You could add this to RuntimeManager to track the storage server task
 
     // Give storage server a moment to initialize
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -253,8 +263,32 @@ async fn initialize_storage_server(
 ) -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
 
-    // Create storage instance
-    let storage = Arc::new(Storage::new(1, 0)); // Single instance, db_id 0
+    // Create storage options and path
+    let storage_options = Arc::new(StorageOptions::default());
+    let db_path = PathBuf::from("./db");
+
+    // Create storage instance (not yet opened)
+    let mut storage = Storage::new(1, 0); // Single instance, db_id 0
+
+    // Open storage to initialize actual RocksDB instances
+    info!("Opening storage at path: {:?}", db_path);
+    let bg_task_receiver = storage
+        .open(storage_options, &db_path)
+        .map_err(|e| DualRuntimeError::storage_runtime(format!("Failed to open storage: {}", e)))?;
+    info!("Storage opened successfully");
+
+    // Start background task handler for storage maintenance
+    tokio::spawn(async move {
+        let mut receiver = bg_task_receiver;
+        while let Some(_task) = receiver.recv().await {
+            debug!("Processing background task");
+            // Background tasks are handled by Storage internally
+        }
+        info!("Background task receiver closed");
+    });
+
+    // Wrap storage in Arc for sharing
+    let storage = Arc::new(storage);
 
     // Create and start storage server with the receiver
     let storage_server = StorageServer::new(storage, request_receiver);
