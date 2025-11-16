@@ -17,16 +17,14 @@
 
 use clap::Parser;
 use conf::config::Config;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 // ServerFactory is used via net::ServerFactory::create_server_with_mode
 use runtime::{DualRuntimeError, RuntimeConfig, RuntimeManager, StorageServer};
-use std::path::PathBuf;
 use std::sync::Arc;
-use storage::StorageOptions;
 use storage::storage::Storage;
 
 /// Convert conf::config::ClusterConfig to raft::types::ClusterConfig
-///
+/// 
 /// This provides a unified entry point for cluster configuration conversion,
 /// following the pattern used in kiwi-cpp where configuration is mapped
 /// at the server initialization layer.
@@ -91,21 +89,26 @@ fn main() -> std::io::Result<()> {
     );
 
     // Create and start RuntimeManager
-    let mut runtime_manager = RuntimeManager::new(runtime_config)
-        .map_err(|e| std::io::Error::other(format!("Failed to create RuntimeManager: {}", e)))?;
+    let mut runtime_manager = RuntimeManager::new(runtime_config).map_err(|e| {
+        std::io::Error::other(
+            format!("Failed to create RuntimeManager: {}", e),
+        )
+    })?;
 
     // Start the RuntimeManager first
     // We need to use a basic runtime to start the RuntimeManager
-    let basic_rt = tokio::runtime::Runtime::new()
-        .map_err(|e| std::io::Error::other(format!("Failed to create basic runtime: {}", e)))?;
+    let basic_rt = tokio::runtime::Runtime::new().map_err(|e| {
+        std::io::Error::other(
+            format!("Failed to create basic runtime: {}", e),
+        )
+    })?;
 
     basic_rt.block_on(async {
         if let Err(e) = runtime_manager.start().await {
             error!("Failed to start RuntimeManager: {}", e);
-            return Err(std::io::Error::other(format!(
-                "Failed to start RuntimeManager: {}",
-                e
-            )));
+            return Err(std::io::Error::other(
+                format!("Failed to start RuntimeManager: {}", e),
+            ));
         }
         Ok(())
     })?;
@@ -113,29 +116,38 @@ fn main() -> std::io::Result<()> {
     info!("RuntimeManager started successfully");
 
     // Get runtime handles after starting
-    let network_handle = runtime_manager
-        .network_handle()
-        .map_err(|e| std::io::Error::other(format!("Failed to get network handle: {}", e)))?;
-    let storage_handle = runtime_manager
-        .storage_handle()
-        .map_err(|e| std::io::Error::other(format!("Failed to get storage handle: {}", e)))?;
+    let network_handle = runtime_manager.network_handle().map_err(|e| {
+        std::io::Error::other(
+            format!("Failed to get network handle: {}", e),
+        )
+    })?;
+    let storage_handle = runtime_manager.storage_handle().map_err(|e| {
+        std::io::Error::other(
+            format!("Failed to get storage handle: {}", e),
+        )
+    })?;
 
     // Initialize storage components and get the receiver for the storage server
     let storage_receiver = runtime_manager
         .initialize_storage_components()
         .map_err(|e| {
-            std::io::Error::other(format!("Failed to initialize storage components: {}", e))
+            std::io::Error::other(
+                format!("Failed to initialize storage components: {}", e),
+            )
         })?;
 
     info!("Storage components initialized, starting storage server...");
 
-    // Initialize storage server in storage runtime (runs in background)
+    // Use ready signal to ensure storage server is initialized before proceeding
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
 
+    // Initialize storage server in storage runtime (runs in background)
     storage_handle.spawn(async move {
         info!("Initializing storage server...");
-        match initialize_storage_server(storage_receiver).await {
+        match initialize_storage_server(storage_receiver, Some(ready_tx)).await {
             Ok(_) => {
-                error!("Storage server exited unexpectedly - this should never happen!");
+                // Server run() completed (should not happen normally as it runs indefinitely)
+                info!("Storage server stopped");
             }
             Err(e) => {
                 error!("Storage server failed: {}", e);
@@ -143,15 +155,20 @@ fn main() -> std::io::Result<()> {
         }
     });
 
-    // Store the handle to monitor the task (optional)
-    // You could add this to RuntimeManager to track the storage server task
-
-    // Give storage server a moment to initialize
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
     // Use the network runtime to run the main server logic
     let result = network_handle.block_on(async {
-        info!("Storage server started in background");
+        // Wait for storage server to be ready
+        match ready_rx.await {
+            Ok(_) => {
+                info!("Storage server initialized successfully");
+            }
+            Err(_) => {
+                error!("Storage server failed to initialize");
+                return Err(std::io::Error::other(
+                    "Storage server failed to initialize"
+                ));
+            }
+        }
 
         // Determine if we should run in cluster mode using the new method
         let cluster_mode = config.should_run_cluster_mode(args.single_node);
@@ -185,21 +202,17 @@ fn main() -> std::io::Result<()> {
             let raft_cluster_config = convert_cluster_config(&config.cluster);
 
             // Initialize Raft node
-            info!(
-                "Initializing Raft node with configuration: {:?}",
-                raft_cluster_config
-            );
+            info!("Initializing Raft node with configuration: {:?}", raft_cluster_config);
             let raft_node = match raft::RaftNode::new(raft_cluster_config).await {
                 Ok(node) => {
                     info!("Raft node initialized successfully");
                     Arc::new(node)
-                }
+                },
                 Err(e) => {
                     error!("Failed to initialize Raft node: {}", e);
-                    return Err(std::io::Error::other(format!(
-                        "Failed to initialize Raft node: {}",
-                        e
-                    )));
+                    return Err(std::io::Error::other(
+                        format!("Failed to initialize Raft node: {}", e)
+                    ));
                 }
             };
 
@@ -207,24 +220,15 @@ fn main() -> std::io::Result<()> {
             info!("Starting Raft node (init_cluster: {})", args.init_cluster);
             if let Err(e) = raft_node.start(args.init_cluster).await {
                 error!("Failed to start Raft node: {}", e);
-                return Err(std::io::Error::other(format!(
-                    "Failed to start Raft node: {}",
-                    e
-                )));
+                return Err(std::io::Error::other(
+                    format!("Failed to start Raft node: {}", e)
+                ));
             }
 
             info!("Raft node started successfully");
 
             // Start server in cluster mode with raft node injected
-            match start_server_with_mode(
-                protocol,
-                &addr,
-                &mut runtime_manager,
-                true,
-                Some(Arc::clone(&raft_node)),
-            )
-            .await
-            {
+            match start_server_with_mode(protocol, &addr, &mut runtime_manager, true, Some(Arc::clone(&raft_node))).await {
                 Ok(_) => info!("Server started successfully in cluster mode"),
                 Err(e) => {
                     error!("Failed to start server: {}", e);
@@ -260,43 +264,80 @@ fn main() -> std::io::Result<()> {
 /// Initialize the storage server in the storage runtime
 async fn initialize_storage_server(
     request_receiver: tokio::sync::mpsc::Receiver<runtime::StorageRequest>,
+    ready_signal: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
 
-    // Create storage options and path
-    let storage_options = Arc::new(StorageOptions::default());
-    let db_path = PathBuf::from("./db");
-
-    // Create storage instance (not yet opened)
-    let mut storage = Storage::new(1, 0); // Single instance, db_id 0
-
-    // Open storage to initialize actual RocksDB instances
-    info!("Opening storage at path: {:?}", db_path);
-    let bg_task_receiver = storage
-        .open(storage_options, &db_path)
-        .map_err(|e| DualRuntimeError::storage_runtime(format!("Failed to open storage: {}", e)))?;
-    info!("Storage opened successfully");
-
-    // Start background task handler for storage maintenance
-    tokio::spawn(async move {
-        let mut receiver = bg_task_receiver;
-        while let Some(_task) = receiver.recv().await {
-            debug!("Processing background task");
-            // Background tasks are handled by Storage internally
-        }
-        info!("Background task receiver closed");
-    });
-
-    // Wrap storage in Arc for sharing
-    let storage = Arc::new(storage);
+    // Create storage instance
+    let storage = Arc::new(Storage::new(1, 0)); // Single instance, db_id 0
 
     // Create and start storage server with the receiver
     let storage_server = StorageServer::new(storage, request_receiver);
 
     info!("Storage server created, starting processing...");
 
-    // Start the storage server (this will run indefinitely)
-    storage_server.run().await?;
+    // Start the storage server in a separate task so we can send ready signal
+    // Use a channel to detect if the task starts successfully
+    let (start_tx, mut start_rx) = tokio::sync::oneshot::channel();
+    
+    let run_task = tokio::spawn(async move {
+        // Signal that we're about to start running (send before calling run())
+        // This ensures we detect if the task starts, even if run() fails immediately
+        let start_result = start_tx.send(());
+        if start_result.is_err() {
+            // Receiver was dropped, but continue anyway
+            warn!("Start signal receiver was dropped");
+        }
+        
+        // Start the storage server (runs indefinitely)
+        storage_server.run().await
+    });
+
+    // Wait for the task to signal it has started, then send ready signal
+    if let Some(tx) = ready_signal {
+        // Wait for task to start (or fail immediately)
+        match tokio::time::timeout(
+            tokio::time::Duration::from_millis(100),
+            start_rx
+        ).await {
+            Ok(Ok(_)) => {
+                // Task started successfully, send ready signal
+                let _ = tx.send(());
+            }
+            Ok(Err(_)) => {
+                // Start signal channel was dropped, task likely panicked
+                return Err(DualRuntimeError::storage_runtime(
+                    "Storage server task failed to start"
+                ));
+            }
+            Err(_) => {
+                // Timeout waiting for start signal, check if task failed
+                // This shouldn't happen, but handle it gracefully
+                let _ = tx.send(());
+            }
+        }
+    }
+
+    // Spawn a task to monitor the run task for errors
+    // The run task should run indefinitely, but if it fails, we want to know
+    tokio::spawn(async move {
+        match run_task.await {
+            Ok(Ok(_)) => {
+                // Task completed successfully (unexpected for a long-running server)
+                error!("Storage server task completed unexpectedly");
+            }
+            Ok(Err(e)) => {
+                // Task returned an error
+                error!("Storage server task failed: {}", e);
+            }
+            Err(e) => {
+                // Task panicked
+                error!("Storage server task panicked: {:?}", e);
+            }
+        }
+    });
+
+    // Return success - the server is running in the background
 
     Ok(())
 }
@@ -320,15 +361,15 @@ async fn start_server_with_mode(
 
     info!("Starting server in {:?} mode", mode);
 
-    if let Some(server) = net::ServerFactory::create_server_with_mode(
+    // Create ServerFactory instance and use it to create server with mode
+    let factory = net::ServerFactory;
+    if let Some(server) = factory.create_server_with_mode(
         protocol,
         Some(addr.to_string()),
         runtime_manager,
         mode,
         raft_node_opt,
     ) {
-        // If cluster mode, set raft router from a globally accessible RaftNode if available
-        // For now, server will run without explicit router unless provided via ServerFactory
         server.run().await.map_err(|e| {
             std::io::Error::other(format!(
                 "Failed to start the server on {}: {}. Please check the server configuration and ensure the address is available.",
