@@ -48,6 +48,7 @@ header:
     - '.github/**'
     - '.gitignore'
     - 'src/raft/src/error_fixes.txt'
+    - 'tests/tcl/**'
 
   comment: on-failure
 
