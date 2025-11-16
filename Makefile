@@ -47,6 +47,10 @@ fmt:
 	@echo "Formatting code..."
 	@cargo fmt --manifest-path ./Cargo.toml --all
 
+fmt-check:
+	@echo "Formatting code..."
+	@cargo fmt --manifest-path ./Cargo.toml --all -- --check
+
 lint:
 	@echo "Linting code..."
 	@cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings

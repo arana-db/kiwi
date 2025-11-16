@@ -169,12 +169,10 @@ impl SecureStream {
         let certs = certs(&mut cert_reader)
             .map_err(|e| {
                 RaftError::Network(NetworkError::SerializationFailed {
-                    source: serde_json::Error::io(
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("Certificate parsing error: {}", e),
-                        ),
-                    ),
+                    source: serde_json::Error::io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Certificate parsing error: {}", e),
+                    )),
                     context: "parse_certificates".to_string(),
                 })
             })?
@@ -193,12 +191,10 @@ impl SecureStream {
         let mut key_reader = std::io::BufReader::new(key_file);
         let mut keys = pkcs8_private_keys(&mut key_reader).map_err(|e| {
             RaftError::Network(NetworkError::SerializationFailed {
-                source: serde_json::Error::io(
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("Private key parsing error: {}", e),
-                    ),
-                ),
+                source: serde_json::Error::io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Private key parsing error: {}", e),
+                )),
                 context: "parse_private_keys".to_string(),
             })
         })?;
@@ -222,12 +218,10 @@ impl SecureStream {
             .with_client_auth_cert(certs, key)
             .map_err(|e| {
                 RaftError::Network(NetworkError::SerializationFailed {
-                    source: serde_json::Error::io(
-                        std::io::Error::new(
-                            std::io::ErrorKind::InvalidData,
-                            format!("TLS config error: {}", e),
-                        ),
-                    ),
+                    source: serde_json::Error::io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("TLS config error: {}", e),
+                    )),
                     context: "tls_config_creation".to_string(),
                 })
             })?;
@@ -252,12 +246,10 @@ impl SecureStream {
 
         let server_name = rustls::ServerName::try_from(server_name).map_err(|e| {
             RaftError::Network(NetworkError::SerializationFailed {
-                source: serde_json::Error::io(
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("Invalid server name: {}", e),
-                    ),
-                ),
+                source: serde_json::Error::io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Invalid server name: {}", e),
+                )),
                 context: "parse_server_name".to_string(),
             })
         })?;

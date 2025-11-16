@@ -17,11 +17,11 @@
 
 //! Storage engine module for Raft integration
 
-pub mod redis_storage_engine;
+pub mod memory_storage_engine;
 pub mod redis_adapter;
 pub mod redis_for_raft_impl;
-pub mod memory_storage_engine;
+pub mod redis_storage_engine;
 
-pub use redis_storage_engine::{RedisStorageEngine, RedisStorage};
-pub use redis_adapter::{RedisStorageAdapter, RedisOperations};
 pub use memory_storage_engine::MemoryStorageEngine;
+pub use redis_adapter::{RedisOperations, RedisStorageAdapter};
+pub use redis_storage_engine::{RedisStorage, RedisStorageEngine};

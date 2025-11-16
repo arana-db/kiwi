@@ -17,9 +17,9 @@
 
 // OpenRaft compatibility layer that works around lifetime issues in 0.9.21
 
-use std::sync::Arc;
 use crate::state_machine::core::KiwiStateMachine;
-use crate::types::{NodeId, ClientRequest, ClientResponse};
+use crate::types::{ClientRequest, ClientResponse, NodeId};
+use std::sync::Arc;
 
 /// A compatibility layer that provides OpenRaft-like functionality
 /// without directly implementing the problematic traits
@@ -45,7 +45,10 @@ impl OpenRaftCompatibilityLayer {
     }
 
     /// Apply a client request to the state machine
-    pub async fn apply_client_request(&self, request: &ClientRequest) -> Result<ClientResponse, String> {
+    pub async fn apply_client_request(
+        &self,
+        request: &ClientRequest,
+    ) -> Result<ClientResponse, String> {
         self.state_machine
             .apply_redis_command(request)
             .await
@@ -53,7 +56,10 @@ impl OpenRaftCompatibilityLayer {
     }
 
     /// Apply multiple client requests in batch
-    pub async fn apply_client_requests_batch(&self, requests: &[ClientRequest]) -> Result<Vec<ClientResponse>, String> {
+    pub async fn apply_client_requests_batch(
+        &self,
+        requests: &[ClientRequest],
+    ) -> Result<Vec<ClientResponse>, String> {
         self.state_machine
             .apply_redis_commands_batch(requests)
             .await
@@ -67,18 +73,19 @@ impl OpenRaftCompatibilityLayer {
 
     /// Create a snapshot of the current state
     pub async fn create_snapshot(&self) -> Result<Vec<u8>, String> {
-        let snapshot = self.state_machine
+        let snapshot = self
+            .state_machine
             .create_snapshot()
             .await
             .map_err(|e| e.to_string())?;
-        
+
         bincode::serialize(&snapshot).map_err(|e| e.to_string())
     }
 
     /// Restore from a snapshot
     pub async fn restore_from_snapshot(&self, snapshot_data: &[u8]) -> Result<(), String> {
         let snapshot = bincode::deserialize(snapshot_data).map_err(|e| e.to_string())?;
-        
+
         self.state_machine
             .restore_from_snapshot(&snapshot)
             .await
@@ -99,7 +106,7 @@ impl OpenRaftCompatibilityLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{RedisCommand, ConsistencyLevel, RequestId};
+    use crate::types::{ConsistencyLevel, RedisCommand, RequestId};
     use bytes::Bytes;
 
     #[tokio::test]
@@ -123,10 +130,7 @@ mod tests {
         // Test GET command
         let get_request = ClientRequest {
             id: RequestId::new(),
-            command: RedisCommand::new(
-                "GET".to_string(),
-                vec![Bytes::from("key1")],
-            ),
+            command: RedisCommand::new("GET".to_string(), vec![Bytes::from("key1")]),
             consistency_level: ConsistencyLevel::Linearizable,
         };
 

@@ -23,7 +23,9 @@
 
 use crate::error::{RaftError, RaftResult};
 use crate::node::{RaftNode, RaftNodeInterface};
-use crate::types::{ClientRequest, ClientResponse, ConsistencyLevel, NodeId, RedisCommand, RequestId};
+use crate::types::{
+    ClientRequest, ClientResponse, ConsistencyLevel, NodeId, RedisCommand, RequestId,
+};
 use bytes::Bytes;
 use std::sync::Arc;
 
@@ -115,7 +117,7 @@ impl RequestRouter {
                 // Single mode: direct storage access (not implemented yet)
                 // For now, return an error
                 Err(RaftError::configuration(
-                    "Single mode not yet implemented - use cluster mode"
+                    "Single mode not yet implemented - use cluster mode",
                 ))
             }
             ClusterMode::Cluster => {
@@ -134,7 +136,7 @@ impl RequestRouter {
     /// Write commands must go through Raft to ensure strong consistency.
     /// If this node is not the leader, the request will be rejected with
     /// leader information for client redirection.
-    /// 
+    ///
     /// # Requirements
     /// - Requirement 3.1: Write operations SHALL be submitted through RaftNode.propose()
     /// - Requirement 3.2: Write operations SHALL be confirmed by majority before returning
@@ -180,7 +182,10 @@ impl RequestRouter {
                 );
                 Err(RaftError::NotLeader {
                     leader_id,
-                    context: format!("route_write: leadership changed for command={}", cmd.command),
+                    context: format!(
+                        "route_write: leadership changed for command={}",
+                        cmd.command
+                    ),
                 })
             }
             Err(e) => {
@@ -195,25 +200,26 @@ impl RequestRouter {
     /// Read commands can be served with different consistency guarantees:
     /// - Linearizable: Requires leader confirmation (default)
     /// - Eventual: Can be served from any node
-    /// 
+    ///
     /// # Requirements
     /// - Requirement 4.1: Strong consistency reads through Leader confirmation
     /// - Requirement 4.2: Eventual consistency reads from any node
     /// - Requirement 4.3: Route reads based on consistency level
     async fn route_read(&self, cmd: RedisCommand) -> RaftResult<RedisResponse> {
         // Default to linearizable reads for strong consistency
-        self.route_read_with_consistency(cmd, ConsistencyLevel::Linearizable).await
+        self.route_read_with_consistency(cmd, ConsistencyLevel::Linearizable)
+            .await
     }
 
     /// Route a read command with explicit consistency level
     ///
     /// This method allows callers to specify the desired consistency level
     /// for read operations.
-    /// 
+    ///
     /// # Arguments
     /// * `cmd` - The Redis command to execute
     /// * `consistency_level` - The desired consistency level
-    /// 
+    ///
     /// # Requirements
     /// - Requirement 4.1: Strong consistency reads through Leader confirmation
     /// - Requirement 4.2: Eventual consistency reads from any node
@@ -230,12 +236,8 @@ impl RequestRouter {
         );
 
         match consistency_level {
-            ConsistencyLevel::Linearizable => {
-                self.route_linearizable_read(cmd).await
-            }
-            ConsistencyLevel::Eventual => {
-                self.route_eventual_read(cmd).await
-            }
+            ConsistencyLevel::Linearizable => self.route_linearizable_read(cmd).await,
+            ConsistencyLevel::Eventual => self.route_eventual_read(cmd).await,
         }
     }
 
@@ -244,12 +246,12 @@ impl RequestRouter {
     /// Linearizable reads require confirmation that this node is still the leader
     /// and that it has up-to-date information. This implements the read_index
     /// mechanism from the Raft paper.
-    /// 
+    ///
     /// # Requirements
     /// - Requirement 4.1.1: Strong consistency reads SHALL be confirmed by Leader
     /// - Requirement 4.1.4: Leader confirmation SHALL use read_index mechanism
     /// - Requirement 4.1.5: Read operations SHALL not block write operations
-    /// 
+    ///
     /// # Process
     /// 1. Verify this node is the leader
     /// 2. Use ensure_linearizable() to confirm leadership (read_index)
@@ -296,12 +298,12 @@ impl RequestRouter {
     /// Eventual reads can be served from the local state without
     /// requiring leader confirmation. This allows reads from any node
     /// (leader or follower) with lower latency but potentially stale data.
-    /// 
+    ///
     /// # Requirements
     /// - Requirement 4.2.2: Eventual consistency reads SHALL be able to read from any node
     /// - Requirement 4.2.3: Read operations SHALL route based on consistency level
     /// - Requirement 4.2.5: Read operations SHALL not block write operations
-    /// 
+    ///
     /// # Process
     /// 1. Execute the read directly from local state machine
     /// 2. No leader confirmation required
@@ -316,11 +318,11 @@ impl RequestRouter {
     }
 
     /// Execute a read command from the state machine
-    /// 
+    ///
     /// This method executes read-only commands directly from the state machine
     /// without going through Raft consensus. It's used by both linearizable
     /// and eventual consistency reads (after appropriate consistency checks).
-    /// 
+    ///
     /// # Requirements
     /// - Requirement 4.1: Support strong consistency reads
     /// - Requirement 4.2: Support eventual consistency reads
@@ -405,10 +407,10 @@ impl RequestRouter {
     }
 
     /// Get the leader endpoint for client redirection
-    /// 
+    ///
     /// Returns the endpoint (host:port) of the current leader if known.
     /// This is used by clients to redirect requests to the leader.
-    /// 
+    ///
     /// # Requirements
     /// - Requirement 8.3.1: Non-leader nodes SHALL redirect write requests to leader
     /// - Requirement 8.3.3: Client requests SHALL automatically redirect to new leader
@@ -418,23 +420,23 @@ impl RequestRouter {
     }
 
     /// Create a redirect response for non-leader nodes
-    /// 
+    ///
     /// This creates a response that tells the client to redirect to the leader.
     /// The response includes the leader's endpoint if known.
-    /// 
+    ///
     /// # Requirements
     /// - Requirement 8.3.1: Non-leader nodes SHALL redirect write requests to leader
     /// - Requirement 8.3.3: Client requests SHALL automatically redirect to new leader
     pub async fn create_redirect_response(&self, request_id: RequestId) -> RedisResponse {
         let leader_id = self.get_leader_id().await;
         let leader_endpoint = self.get_leader_endpoint().await;
-        
+
         let error_msg = match (leader_id, leader_endpoint) {
             (Some(_id), Some(endpoint)) => format!("MOVED 0 {}", endpoint),
             (Some(_id), None) => "CLUSTERDOWN No leader endpoint known".to_string(),
             (None, _) => "CLUSTERDOWN No leader available".to_string(),
         };
-        
+
         RedisResponse::error(request_id, error_msg).with_leader(leader_id)
     }
 }
@@ -463,7 +465,10 @@ mod tests {
 
     #[test]
     fn test_write_command_detection() {
-        let cmd_set = RedisCommand::from_strings("SET".to_string(), vec!["key".to_string(), "value".to_string()]);
+        let cmd_set = RedisCommand::from_strings(
+            "SET".to_string(),
+            vec!["key".to_string(), "value".to_string()],
+        );
         let cmd_get = RedisCommand::from_strings("GET".to_string(), vec!["key".to_string()]);
         let cmd_del = RedisCommand::from_strings("DEL".to_string(), vec!["key".to_string()]);
         let cmd_exists = RedisCommand::from_strings("EXISTS".to_string(), vec!["key".to_string()]);

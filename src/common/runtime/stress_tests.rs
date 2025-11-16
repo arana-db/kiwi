@@ -16,27 +16,27 @@
 // limitations under the License.
 
 //! Stress tests for dual runtime architecture reliability
-//! 
+//!
 //! This module contains comprehensive stress tests for:
 //! - System behavior under memory pressure and resource constraints
 //! - Network partition and communication failure scenarios
 //! - Graceful degradation and recovery mechanisms
 //! - Chaos testing for runtime failure scenarios
-//! 
+//!
 //! Requirements covered: 6.1, 6.2, 6.3, 6.4, 6.5
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use rand::Rng;
 use tokio::sync::Barrier;
 use tokio::time::sleep;
-use rand::Rng;
 
 // Import the dual runtime components
 use crate::{
-    RuntimeManager, RuntimeConfig, MessageChannel, StorageCommand, 
-    DualRuntimeError, ManagerRuntimeHealth as RuntimeHealth,
+    DualRuntimeError, ManagerRuntimeHealth as RuntimeHealth, MessageChannel, RuntimeConfig,
+    RuntimeManager, StorageCommand,
 };
 
 /// Configuration for stress tests
@@ -75,7 +75,7 @@ impl MemoryPressureSimulator {
             target_mb,
         }
     }
-    
+
     fn apply_pressure(&mut self) {
         let chunk_size = 1024 * 1024; // 1MB chunks
         for _ in 0..self.target_mb {
@@ -83,7 +83,7 @@ impl MemoryPressureSimulator {
             self.allocations.push(chunk);
         }
     }
-    
+
     fn release_pressure(&mut self) {
         self.allocations.clear();
     }
@@ -103,13 +103,13 @@ impl NetworkPartitionSimulator {
             partition_duration,
         }
     }
-    
+
     async fn simulate_partition(&self) {
         self.is_partitioned.store(true, Ordering::SeqCst);
         sleep(self.partition_duration).await;
         self.is_partitioned.store(false, Ordering::SeqCst);
     }
-    
+
     fn is_partitioned(&self) -> bool {
         self.is_partitioned.load(Ordering::SeqCst)
     }
@@ -130,11 +130,11 @@ impl ChaosTestFramework {
             rng: rand::thread_rng(),
         }
     }
-    
+
     fn should_inject_failure(&mut self) -> bool {
         self.rng.gen::<f64>() < self.failure_rate
     }
-    
+
     fn random_failure_type(&mut self) -> ChaosFailureType {
         match self.rng.gen_range(0..4) {
             0 => ChaosFailureType::RuntimePanic,
@@ -163,132 +163,144 @@ mod memory_pressure_tests {
     async fn test_system_behavior_under_memory_pressure() {
         let mut runtime_manager = RuntimeManager::with_defaults().unwrap();
         runtime_manager.start().await.unwrap();
-        
+
         let mut memory_simulator = MemoryPressureSimulator::new(50); // 50MB pressure
         let success_count = Arc::new(AtomicUsize::new(0));
         let error_count = Arc::new(AtomicUsize::new(0));
-        
+
         // Apply memory pressure
         memory_simulator.apply_pressure();
-        
+
         // Create message channel and storage client
         let message_channel = Arc::new(MessageChannel::new(1000));
-        let storage_client = crate::StorageClient::new(
-            Arc::clone(&message_channel),
-            Duration::from_millis(500),
-        );
-        
+        let storage_client =
+            crate::StorageClient::new(Arc::clone(&message_channel), Duration::from_millis(500));
+
         // Spawn concurrent operations under memory pressure
         let mut handles = Vec::new();
         for i in 0..100 {
             let client = storage_client.clone();
             let success_count = Arc::clone(&success_count);
             let error_count = Arc::clone(&error_count);
-            
+
             let handle = tokio::spawn(async move {
                 let command = StorageCommand::Set {
                     key: format!("stress_key_{}", i).into_bytes(),
                     value: vec![0u8; 1024], // 1KB value
                     ttl: None,
                 };
-                
+
                 match client.send_request(command).await {
-                    Ok(_) => { success_count.fetch_add(1, Ordering::SeqCst); },
-                    Err(_) => { error_count.fetch_add(1, Ordering::SeqCst); },
+                    Ok(_) => {
+                        success_count.fetch_add(1, Ordering::SeqCst);
+                    }
+                    Err(_) => {
+                        error_count.fetch_add(1, Ordering::SeqCst);
+                    }
                 };
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Wait for all operations to complete
         for handle in handles {
             let _ = handle.await;
         }
-        
+
         // Verify system remained functional under memory pressure
         let (network_health, storage_health) = runtime_manager.health_check().await.unwrap();
-        
+
         // System should still be responsive (may be degraded but not failed)
-        assert!(matches!(network_health, RuntimeHealth::Healthy | RuntimeHealth::Degraded(_)));
-        assert!(matches!(storage_health, RuntimeHealth::Healthy | RuntimeHealth::Degraded(_)));
-        
+        assert!(matches!(
+            network_health,
+            RuntimeHealth::Healthy | RuntimeHealth::Degraded(_)
+        ));
+        assert!(matches!(
+            storage_health,
+            RuntimeHealth::Healthy | RuntimeHealth::Degraded(_)
+        ));
+
         // Some operations should have completed (system didn't completely fail)
-        let total_operations = success_count.load(Ordering::SeqCst) + error_count.load(Ordering::SeqCst);
+        let total_operations =
+            success_count.load(Ordering::SeqCst) + error_count.load(Ordering::SeqCst);
         assert_eq!(total_operations, 100);
-        
+
         // Release memory pressure
         memory_simulator.release_pressure();
-        
+
         // System should recover
         tokio::time::sleep(Duration::from_millis(100)).await;
         let (network_health, storage_health) = runtime_manager.health_check().await.unwrap();
         assert_eq!(network_health, RuntimeHealth::Healthy);
         assert_eq!(storage_health, RuntimeHealth::Healthy);
-        
+
         runtime_manager.stop().await.unwrap();
     }
 
     #[tokio::test]
     async fn test_resource_exhaustion_handling() {
         let config = RuntimeConfig::new(
-            1, 1, 10, // Very limited resources
+            1,
+            1,
+            10, // Very limited resources
             Duration::from_millis(100),
             5,
-            Duration::from_millis(1)
-        ).unwrap();
-        
+            Duration::from_millis(1),
+        )
+        .unwrap();
+
         let mut runtime_manager = RuntimeManager::new(config).unwrap();
         runtime_manager.start().await.unwrap();
-        
+
         let message_channel = Arc::new(MessageChannel::new(10)); // Small buffer
         let storage_client = crate::StorageClient::new(
             Arc::clone(&message_channel),
             Duration::from_millis(50), // Short timeout
         );
-        
+
         // Overwhelm the system with requests
         let mut handles = Vec::new();
         let barrier = Arc::new(Barrier::new(50));
-        
+
         for i in 0..50 {
             let client = storage_client.clone();
             let barrier = Arc::clone(&barrier);
-            
+
             let handle = tokio::spawn(async move {
                 barrier.wait().await;
-                
+
                 let command = StorageCommand::Get {
                     key: format!("key_{}", i).into_bytes(),
                 };
-                
+
                 client.send_request(command).await
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Collect results
         let mut _success_count = 0;
         let mut timeout_count = 0;
         let mut channel_error_count = 0;
-        
+
         for handle in handles {
             match handle.await.unwrap() {
                 Ok(_) => _success_count += 1,
                 Err(DualRuntimeError::Timeout { .. }) => timeout_count += 1,
                 Err(DualRuntimeError::Channel(_)) => channel_error_count += 1,
-                Err(_) => {}, // Other errors
+                Err(_) => {} // Other errors
             }
         }
-        
+
         // System should handle resource exhaustion gracefully
         // Some requests should timeout or fail due to backpressure
         assert!(timeout_count > 0 || channel_error_count > 0);
-        
+
         // But system should remain responsive
         assert!(runtime_manager.is_running().await);
-        
+
         runtime_manager.stop().await.unwrap();
     }
 
@@ -296,10 +308,10 @@ mod memory_pressure_tests {
     async fn test_concurrent_memory_allocation_stress() {
         let mut runtime_manager = RuntimeManager::with_defaults().unwrap();
         runtime_manager.start().await.unwrap();
-        
+
         let allocation_count = Arc::new(AtomicUsize::new(0));
         let mut handles = Vec::new();
-        
+
         // Spawn tasks that allocate and deallocate memory concurrently
         for _ in 0..20 {
             let count = Arc::clone(&allocation_count);
@@ -308,27 +320,27 @@ mod memory_pressure_tests {
                     // Allocate large chunks of memory
                     let _large_allocation = vec![0u8; 1024 * 1024]; // 1MB
                     count.fetch_add(1, Ordering::SeqCst);
-                    
+
                     // Small delay to allow other tasks to run
                     tokio::task::yield_now().await;
                 }
             });
             handles.push(handle);
         }
-        
+
         // Wait for all allocations to complete
         for handle in handles {
             handle.await.unwrap();
         }
-        
+
         // Verify all allocations completed
         assert_eq!(allocation_count.load(Ordering::SeqCst), 200);
-        
+
         // System should still be healthy
         let (network_health, storage_health) = runtime_manager.health_check().await.unwrap();
         assert_eq!(network_health, RuntimeHealth::Healthy);
         assert_eq!(storage_health, RuntimeHealth::Healthy);
-        
+
         runtime_manager.stop().await.unwrap();
     }
 }
@@ -342,14 +354,12 @@ mod network_partition_tests {
     async fn test_network_partition_simulation() {
         let mut runtime_manager = RuntimeManager::with_defaults().unwrap();
         runtime_manager.start().await.unwrap();
-        
+
         let partition_simulator = NetworkPartitionSimulator::new(Duration::from_millis(200));
         let message_channel = Arc::new(MessageChannel::new(1000));
-        let storage_client = crate::StorageClient::new(
-            Arc::clone(&message_channel),
-            Duration::from_millis(100),
-        );
-        
+        let storage_client =
+            crate::StorageClient::new(Arc::clone(&message_channel), Duration::from_millis(100));
+
         // Start partition simulation
         let partition_handle = {
             let simulator = partition_simulator.clone();
@@ -357,21 +367,21 @@ mod network_partition_tests {
                 simulator.simulate_partition().await;
             })
         };
-        
+
         // Try to send requests during partition
         let mut handles = Vec::new();
         for i in 0..10 {
             let client = storage_client.clone();
             let simulator = partition_simulator.clone();
-            
+
             let handle = tokio::spawn(async move {
                 // Wait a bit to ensure partition is active
                 tokio::time::sleep(Duration::from_millis(50)).await;
-                
+
                 let command = StorageCommand::Get {
                     key: format!("partition_test_{}", i).into_bytes(),
                 };
-                
+
                 if simulator.is_partitioned() {
                     // During partition, requests should timeout or fail
                     let result = client.send_request(command).await;
@@ -382,20 +392,20 @@ mod network_partition_tests {
                     (i, result, false) // false = after partition
                 }
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Wait for partition to complete
         partition_handle.await.unwrap();
-        
+
         // Collect results
         let mut _partition_failures = 0;
         let mut _post_partition_attempts = 0;
-        
+
         for handle in handles {
             let (_, result, during_partition) = handle.await.unwrap();
-            
+
             if during_partition {
                 if result.is_err() {
                     _partition_failures += 1;
@@ -404,13 +414,13 @@ mod network_partition_tests {
                 _post_partition_attempts += 1;
             }
         }
-        
+
         // During partition, some requests should fail
         // This validates that the system properly handles communication failures
-        
+
         // System should remain running despite partition
         assert!(runtime_manager.is_running().await);
-        
+
         runtime_manager.stop().await.unwrap();
     }
 
@@ -418,37 +428,35 @@ mod network_partition_tests {
     async fn test_channel_communication_failure_recovery() {
         let mut runtime_manager = RuntimeManager::with_defaults().unwrap();
         runtime_manager.start().await.unwrap();
-        
+
         let mut message_channel = MessageChannel::new(100);
-        
+
         // Simulate channel disruption by dropping the receiver
         let _receiver = message_channel.take_request_receiver();
         // Receiver is dropped here, simulating communication failure
-        
+
         let message_channel_arc = Arc::new(message_channel);
-        let storage_client = crate::StorageClient::new(
-            Arc::clone(&message_channel_arc),
-            Duration::from_millis(100),
-        );
-        
+        let storage_client =
+            crate::StorageClient::new(Arc::clone(&message_channel_arc), Duration::from_millis(100));
+
         // Try to send requests after channel disruption
         let mut handles = Vec::new();
         for i in 0..5 {
             let client = storage_client.clone();
-            
+
             let handle = tokio::spawn(async move {
                 let command = StorageCommand::Set {
                     key: format!("recovery_test_{}", i).into_bytes(),
                     value: b"test_value".to_vec(),
                     ttl: None,
                 };
-                
+
                 client.send_request(command).await
             });
-            
+
             handles.push(handle);
         }
-        
+
         // All requests should fail due to channel disruption
         let mut failure_count = 0;
         for handle in handles {
@@ -456,13 +464,13 @@ mod network_partition_tests {
                 failure_count += 1;
             }
         }
-        
+
         // Most or all requests should fail
         assert!(failure_count >= 3);
-        
+
         // System should still be running (fault isolation)
         assert!(runtime_manager.is_running().await);
-        
+
         runtime_manager.stop().await.unwrap();
     }
 
@@ -470,55 +478,59 @@ mod network_partition_tests {
     async fn test_intermittent_communication_failures() {
         let mut runtime_manager = RuntimeManager::with_defaults().unwrap();
         runtime_manager.start().await.unwrap();
-        
+
         let message_channel = Arc::new(MessageChannel::new(1000));
-        let storage_client = crate::StorageClient::new(
-            Arc::clone(&message_channel),
-            Duration::from_millis(200),
-        );
-        
+        let storage_client =
+            crate::StorageClient::new(Arc::clone(&message_channel), Duration::from_millis(200));
+
         let success_count = Arc::new(AtomicUsize::new(0));
         let failure_count = Arc::new(AtomicUsize::new(0));
-        
+
         // Simulate intermittent failures over time
         let mut handles = Vec::new();
         for i in 0..20 {
             let client = storage_client.clone();
             let success_count = Arc::clone(&success_count);
             let failure_count = Arc::clone(&failure_count);
-            
+
             let handle = tokio::spawn(async move {
                 // Add random delays to simulate network jitter
                 let delay = Duration::from_millis(rand::thread_rng().gen_range(10..100));
                 tokio::time::sleep(delay).await;
-                
+
                 let command = StorageCommand::Get {
                     key: format!("intermittent_test_{}", i).into_bytes(),
                 };
-                
+
                 match client.send_request(command).await {
                     Ok(_) => success_count.fetch_add(1, Ordering::SeqCst),
                     Err(_) => failure_count.fetch_add(1, Ordering::SeqCst),
                 };
             });
-            
+
             handles.push(handle);
         }
-        
+
         // Wait for all operations
         for handle in handles {
             handle.await.unwrap();
         }
-        
+
         // Verify total operations
         let total = success_count.load(Ordering::SeqCst) + failure_count.load(Ordering::SeqCst);
         assert_eq!(total, 20);
-        
+
         // System should remain healthy
         let (network_health, storage_health) = runtime_manager.health_check().await.unwrap();
-        assert!(matches!(network_health, RuntimeHealth::Healthy | RuntimeHealth::Degraded(_)));
-        assert!(matches!(storage_health, RuntimeHealth::Healthy | RuntimeHealth::Degraded(_)));
-        
+        assert!(matches!(
+            network_health,
+            RuntimeHealth::Healthy | RuntimeHealth::Degraded(_)
+        ));
+        assert!(matches!(
+            storage_health,
+            RuntimeHealth::Healthy | RuntimeHealth::Degraded(_)
+        ));
+
         runtime_manager.stop().await.unwrap();
     }
 }

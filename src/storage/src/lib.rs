@@ -54,8 +54,8 @@ pub mod options;
 pub mod storage;
 
 // Raft integration modules
-mod redis_for_raft;
 pub mod raft_integration;
+mod redis_for_raft;
 
 pub use redis_for_raft::RedisForRaft;
 

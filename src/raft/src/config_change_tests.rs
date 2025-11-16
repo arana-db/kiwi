@@ -30,9 +30,13 @@ use crate::node::{RaftNode, RaftNodeInterface};
 use crate::types::{ClusterConfig, NodeId};
 
 /// Helper to create a test node
-async fn create_test_node(node_id: NodeId, cluster_members: Vec<String>) -> RaftResult<(Arc<RaftNode>, TempDir)> {
-    let temp_dir = TempDir::new()
-        .map_err(|e| crate::error::RaftError::state_machine(format!("Failed to create temp dir: {}", e)))?;
+async fn create_test_node(
+    node_id: NodeId,
+    cluster_members: Vec<String>,
+) -> RaftResult<(Arc<RaftNode>, TempDir)> {
+    let temp_dir = TempDir::new().map_err(|e| {
+        crate::error::RaftError::state_machine(format!("Failed to create temp dir: {}", e))
+    })?;
 
     let config = ClusterConfig {
         node_id,
@@ -54,10 +58,7 @@ mod tests {
     async fn test_add_node_to_single_node_cluster() -> RaftResult<()> {
         timeout(Duration::from_secs(10), async {
             // Create initial single-node cluster
-            let (node1, _temp1) = create_test_node(
-                1,
-                vec!["1:127.0.0.1:8001".to_string()],
-            ).await?;
+            let (node1, _temp1) = create_test_node(1, vec!["1:127.0.0.1:8001".to_string()]).await?;
 
             // Start node1 as initial cluster
             node1.start(true).await?;
@@ -74,14 +75,17 @@ mod tests {
                     "1:127.0.0.1:8001".to_string(),
                     "2:127.0.0.1:8002".to_string(),
                 ],
-            ).await?;
+            )
+            .await?;
 
             // Start node2 (not initializing cluster)
             node2.start(false).await?;
             sleep(Duration::from_millis(200)).await;
 
             // Add node2 to cluster using add_node_safely
-            node1.add_node_safely(2, "127.0.0.1:8002".to_string()).await?;
+            node1
+                .add_node_safely(2, "127.0.0.1:8002".to_string())
+                .await?;
             sleep(Duration::from_millis(500)).await;
 
             // Verify membership
@@ -104,10 +108,7 @@ mod tests {
     async fn test_add_multiple_nodes_sequentially() -> RaftResult<()> {
         timeout(Duration::from_secs(15), async {
             // Create initial single-node cluster
-            let (node1, _temp1) = create_test_node(
-                1,
-                vec!["1:127.0.0.1:8011".to_string()],
-            ).await?;
+            let (node1, _temp1) = create_test_node(1, vec!["1:127.0.0.1:8011".to_string()]).await?;
 
             node1.start(true).await?;
             // Wait for node1 to become leader
@@ -120,12 +121,15 @@ mod tests {
                     "1:127.0.0.1:8011".to_string(),
                     "2:127.0.0.1:8012".to_string(),
                 ],
-            ).await?;
+            )
+            .await?;
 
             node2.start(false).await?;
             sleep(Duration::from_millis(200)).await;
 
-            node1.add_node_safely(2, "127.0.0.1:8012".to_string()).await?;
+            node1
+                .add_node_safely(2, "127.0.0.1:8012".to_string())
+                .await?;
             sleep(Duration::from_millis(500)).await;
 
             // Create and add node3
@@ -136,12 +140,15 @@ mod tests {
                     "2:127.0.0.1:8012".to_string(),
                     "3:127.0.0.1:8013".to_string(),
                 ],
-            ).await?;
+            )
+            .await?;
 
             node3.start(false).await?;
             sleep(Duration::from_millis(200)).await;
 
-            node1.add_node_safely(3, "127.0.0.1:8013".to_string()).await?;
+            node1
+                .add_node_safely(3, "127.0.0.1:8013".to_string())
+                .await?;
             sleep(Duration::from_millis(500)).await;
 
             // Verify final membership
@@ -172,7 +179,8 @@ mod tests {
                     "1:127.0.0.1:8021".to_string(),
                     "2:127.0.0.1:8022".to_string(),
                 ],
-            ).await?;
+            )
+            .await?;
 
             let (node2, _temp2) = create_test_node(
                 2,
@@ -180,7 +188,8 @@ mod tests {
                     "1:127.0.0.1:8021".to_string(),
                     "2:127.0.0.1:8022".to_string(),
                 ],
-            ).await?;
+            )
+            .await?;
 
             node1.start(true).await?;
             // Wait for node1 to become leader
@@ -189,12 +198,17 @@ mod tests {
             node2.start(false).await?;
             sleep(Duration::from_millis(200)).await;
 
-            node1.add_node_safely(2, "127.0.0.1:8022".to_string()).await?;
+            node1
+                .add_node_safely(2, "127.0.0.1:8022".to_string())
+                .await?;
             sleep(Duration::from_millis(500)).await;
 
             // Try to add node2 again (should succeed without error)
             let result = node1.add_node_safely(2, "127.0.0.1:8022".to_string()).await;
-            assert!(result.is_ok(), "Adding existing member should succeed gracefully");
+            assert!(
+                result.is_ok(),
+                "Adding existing member should succeed gracefully"
+            );
 
             // Verify membership unchanged
             let membership = node1.get_membership().await?;
@@ -221,7 +235,8 @@ mod tests {
                     "2:127.0.0.1:8032".to_string(),
                     "3:127.0.0.1:8033".to_string(),
                 ],
-            ).await?;
+            )
+            .await?;
 
             let (node2, _temp2) = create_test_node(
                 2,
@@ -230,7 +245,8 @@ mod tests {
                     "2:127.0.0.1:8032".to_string(),
                     "3:127.0.0.1:8033".to_string(),
                 ],
-            ).await?;
+            )
+            .await?;
 
             let (node3, _temp3) = create_test_node(
                 3,
@@ -239,7 +255,8 @@ mod tests {
                     "2:127.0.0.1:8032".to_string(),
                     "3:127.0.0.1:8033".to_string(),
                 ],
-            ).await?;
+            )
+            .await?;
 
             // Start all nodes
             node1.start(true).await?;
@@ -251,9 +268,13 @@ mod tests {
             sleep(Duration::from_millis(200)).await;
 
             // Add nodes to cluster
-            node1.add_node_safely(2, "127.0.0.1:8032".to_string()).await?;
+            node1
+                .add_node_safely(2, "127.0.0.1:8032".to_string())
+                .await?;
             sleep(Duration::from_millis(300)).await;
-            node1.add_node_safely(3, "127.0.0.1:8033".to_string()).await?;
+            node1
+                .add_node_safely(3, "127.0.0.1:8033".to_string())
+                .await?;
             sleep(Duration::from_millis(500)).await;
 
             // Verify initial membership
@@ -266,10 +287,23 @@ mod tests {
 
             // Verify membership after removal
             let membership_after = node1.get_membership().await?;
-            assert_eq!(membership_after.len(), 2, "Cluster should have 2 members after removal");
-            assert!(membership_after.contains(&1), "Cluster should still contain node 1");
-            assert!(membership_after.contains(&2), "Cluster should still contain node 2");
-            assert!(!membership_after.contains(&3), "Cluster should not contain node 3");
+            assert_eq!(
+                membership_after.len(),
+                2,
+                "Cluster should have 2 members after removal"
+            );
+            assert!(
+                membership_after.contains(&1),
+                "Cluster should still contain node 1"
+            );
+            assert!(
+                membership_after.contains(&2),
+                "Cluster should still contain node 2"
+            );
+            assert!(
+                !membership_after.contains(&3),
+                "Cluster should not contain node 3"
+            );
 
             // Cleanup
             let _ = node1.shutdown().await;
@@ -284,10 +318,7 @@ mod tests {
     #[tokio::test]
     async fn test_remove_non_member_node() -> RaftResult<()> {
         // Create single-node cluster
-        let (node1, _temp1) = create_test_node(
-            1,
-            vec!["1:127.0.0.1:8041".to_string()],
-        ).await?;
+        let (node1, _temp1) = create_test_node(1, vec!["1:127.0.0.1:8041".to_string()]).await?;
 
         node1.start(true).await?;
         // Wait for node1 to become leader
@@ -295,7 +326,10 @@ mod tests {
 
         // Try to remove non-existent node (should succeed gracefully)
         let result = node1.remove_node_safely(99).await;
-        assert!(result.is_ok(), "Removing non-member should succeed gracefully");
+        assert!(
+            result.is_ok(),
+            "Removing non-member should succeed gracefully"
+        );
 
         // Verify membership unchanged
         let membership = node1.get_membership().await?;
@@ -309,10 +343,7 @@ mod tests {
     #[tokio::test]
     async fn test_cannot_remove_last_node() -> RaftResult<()> {
         // Create single-node cluster
-        let (node1, _temp1) = create_test_node(
-            1,
-            vec!["1:127.0.0.1:8051".to_string()],
-        ).await?;
+        let (node1, _temp1) = create_test_node(1, vec!["1:127.0.0.1:8051".to_string()]).await?;
 
         node1.start(true).await?;
         // Wait for node1 to become leader
@@ -320,7 +351,10 @@ mod tests {
 
         // Try to remove the only node (should fail)
         let result = node1.remove_node_safely(1).await;
-        assert!(result.is_err(), "Should not be able to remove the last node");
+        assert!(
+            result.is_err(),
+            "Should not be able to remove the last node"
+        );
 
         // Verify membership unchanged
         let membership = node1.get_membership().await?;
@@ -334,10 +368,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_node_requires_leader() -> RaftResult<()> {
         // Create a follower node (not leader)
-        let (node1, _temp1) = create_test_node(
-            1,
-            vec!["1:127.0.0.1:8061".to_string()],
-        ).await?;
+        let (node1, _temp1) = create_test_node(1, vec!["1:127.0.0.1:8061".to_string()]).await?;
 
         // Start without initializing cluster (will be follower/candidate)
         node1.start(false).await?;
@@ -345,7 +376,10 @@ mod tests {
 
         // Try to add a node (should fail because not leader)
         let result = node1.add_node_safely(2, "127.0.0.1:8062".to_string()).await;
-        assert!(result.is_err(), "Non-leader should not be able to add nodes");
+        assert!(
+            result.is_err(),
+            "Non-leader should not be able to add nodes"
+        );
 
         // Cleanup
         let _ = node1.shutdown().await;
@@ -355,10 +389,7 @@ mod tests {
     #[tokio::test]
     async fn test_remove_node_requires_leader() -> RaftResult<()> {
         // Create a follower node (not leader)
-        let (node1, _temp1) = create_test_node(
-            1,
-            vec!["1:127.0.0.1:8071".to_string()],
-        ).await?;
+        let (node1, _temp1) = create_test_node(1, vec!["1:127.0.0.1:8071".to_string()]).await?;
 
         // Start without initializing cluster (will be follower/candidate)
         node1.start(false).await?;
@@ -366,7 +397,10 @@ mod tests {
 
         // Try to remove a node (should fail because not leader)
         let result = node1.remove_node_safely(2).await;
-        assert!(result.is_err(), "Non-leader should not be able to remove nodes");
+        assert!(
+            result.is_err(),
+            "Non-leader should not be able to remove nodes"
+        );
 
         // Cleanup
         let _ = node1.shutdown().await;
@@ -384,7 +418,8 @@ mod tests {
                     "1:127.0.0.1:8081".to_string(),
                     "2:127.0.0.1:8082".to_string(),
                 ],
-            ).await?;
+            )
+            .await?;
 
             node1.start(true).await?;
             // Wait for node1 to become leader
@@ -397,7 +432,8 @@ mod tests {
                     "1:127.0.0.1:8081".to_string(),
                     "2:127.0.0.1:8082".to_string(),
                 ],
-            ).await?;
+            )
+            .await?;
 
             node2.start(false).await?;
             sleep(Duration::from_millis(200)).await;

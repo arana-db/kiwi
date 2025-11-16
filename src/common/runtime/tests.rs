@@ -17,7 +17,6 @@
 
 //! Unit tests for dual runtime architecture core components
 
-
 use std::time::Duration;
 
 // Import the dual runtime components

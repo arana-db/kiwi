@@ -17,6 +17,7 @@
 
 use bytes::{BufMut, Bytes, BytesMut};
 
+use crate::storage_define::seek_userkey_delim;
 use crate::{
     error::Result,
     storage_define::{
@@ -24,7 +25,6 @@ use crate::{
         encode_user_key,
     },
 };
-use crate::storage_define::seek_userkey_delim;
 // used for Hash/Set/Zset's member data key. format:
 // | reserve1 | key | version | data | reserve2 |
 // |    8B    |     |    8B   |      |   16B    |
@@ -129,7 +129,7 @@ impl ParsedMemberDataKey {
             key_str,
             version,
             data,
-            reserve2
+            reserve2,
         })
     }
 
@@ -190,7 +190,7 @@ mod tests {
         // verify data region by slicing the encoded buffer directly
         let start_idx = PREFIX_RESERVE_LENGTH;
         let end_idx = encoded.len() - SUFFIX_RESERVE_LENGTH;
-        let encoded_key_part = &encoded[start_idx..end_idx];  // key | version | data
+        let encoded_key_part = &encoded[start_idx..end_idx]; // key | version | data
         // find the position of delimiter in encoded key part ("\x00\x00")
         let mut pos = None;
         for i in 0..encoded_key_part.len().saturating_sub(1) {
