@@ -37,72 +37,6 @@ use crate::{
 };
 
 impl Redis {
-    // /// Scan sets key number
-    // pub fn scan_sets_key_num(&self, key_info: &mut crate::types::KeyInfo) -> Result<()> {
-    //     let db = self
-    //         .db
-    //         .as_ref()
-    //         .ok_or_else(|| StorageError::InvalidFormat("DB not initialized".to_string()))?;
-    //
-    //     let mut keys = 0;
-    //     let mut expires = 0;
-    //     let mut ttl_sum = 0;
-    //     let mut invalid_keys = 0;
-    //
-    //     // Get current time
-    //     let now = SystemTime::now()
-    //         .duration_since(UNIX_EPOCH)
-    //         .unwrap()
-    //         .as_secs();
-    //
-    //     // Create iterator options
-    //     let mut iterator_options = ReadOptions::default();
-    //     iterator_options.fill_cache(false);
-    //
-    //     // Create snapshot
-    //     let snapshot = db.snapshot();
-    //     iterator_options.set_snapshot(&snapshot);
-    //
-    //     // Iterate through all keys in meta column family
-    //     let iter = db.iterator_cf_opt(
-    //         self.get_handle(crate::redis::ColumnFamilyIndex::MetaCF),
-    //         iterator_options,
-    //         IteratorMode::Start,
-    //     );
-    //
-    //     for (_, value) in iter {
-    //         // Parse the meta value
-    //         let parsed_value = ParsedInternalValue::new(&value);
-    //
-    //         // Check if it's a sets type
-    //         if parsed_value.data_type() != DataType::Sets {
-    //             continue;
-    //         }
-    //
-    //         // Check if it's stale or empty
-    //         if parsed_value.is_expired(now) || parsed_value.size() == 0 {
-    //             invalid_keys += 1;
-    //         } else {
-    //             keys += 1;
-    //
-    //             // Check if it has expiration
-    //             let etime = parsed_value.etime();
-    //             if etime > 0 {
-    //                 expires += 1;
-    //                 ttl_sum += etime - now;
-    //             }
-    //         }
-    //     }
-    //
-    //     // Set key info
-    //     key_info.keys = keys;
-    //     key_info.expires = expires;
-    //     key_info.avg_ttl = if expires > 0 { ttl_sum / expires } else { 0 };
-    //     key_info.invalid_keys = invalid_keys;
-    //
-    //     Ok(())
-    // }
-
     /// Add one or more members to a set
     pub fn sadd(&self, key: &[u8], members: &[&[u8]]) -> Result<i32> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
@@ -305,13 +239,8 @@ impl Redis {
         }
         let version = set_meta.version();
 
-        // Build prefix: reserve(8) + version(8) + encoded(key)
-        let mut prefix = bytes::BytesMut::with_capacity(PREFIX_RESERVE_LENGTH + 8 + key.len() * 2);
-        prefix.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-        prefix.put_u64(version);
-        encode_user_key(&bytes::Bytes::copy_from_slice(key), &mut prefix)?;
-
         // Iterate from prefix and collect members until prefix no longer matches
+        let prefix = MemberDataKey::new(key, version, &[]).encode_seek_key()?;
         let iter = db.iterator_cf_opt(
             &cf_data,
             ReadOptions::default(),
@@ -339,8 +268,6 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
-        let base_meta_key = BaseMetaKey::new(key).encode()?;
-
         let cf_meta = self
             .get_cf_handle(ColumnFamilyIndex::MetaCF)
             .context(OptionNoneSnafu {
@@ -353,6 +280,7 @@ impl Redis {
                 })?;
 
         // Read meta
+        let base_meta_key = BaseMetaKey::new(key).encode()?;
         let meta_val = db.get_cf(&cf_meta, &base_meta_key).context(RocksSnafu)?;
         let Some(val) = meta_val else {
             // Redis SISMEMBER returns 0 for non-existent keys
@@ -368,20 +296,10 @@ impl Redis {
             // Redis SISMEMBER returns 0 for expired/invalid keys
             return Ok(false);
         }
-
         let version = set_meta.version();
 
-        // Build member key: reserve(8) + version(8) + encoded(key) + member + reserve(8)
-        let mut member_key = bytes::BytesMut::with_capacity(
-            PREFIX_RESERVE_LENGTH + 8 + key.len() * 2 + member.len() + SUFFIX_RESERVE_LENGTH,
-        );
-        member_key.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-        member_key.put_u64(version);
-        encode_user_key(&bytes::Bytes::copy_from_slice(key), &mut member_key)?;
-        member_key.extend_from_slice(member);
-        member_key.extend_from_slice(&[0u8; SUFFIX_RESERVE_LENGTH]);
-
         // Check if member exists
+        let member_key = MemberDataKey::new(key, version, member).encode()?;
         let exists = db
             .get_cf(&cf_data, &member_key)
             .context(RocksSnafu)?
@@ -433,13 +351,8 @@ impl Redis {
             return Ok(Vec::new());
         }
 
-        // Build prefix: reserve(8) + version(8) + encoded(key)
-        let mut prefix = bytes::BytesMut::with_capacity(PREFIX_RESERVE_LENGTH + 8 + key.len() * 2);
-        prefix.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-        prefix.put_u64(version);
-        encode_user_key(&bytes::Bytes::copy_from_slice(key), &mut prefix)?;
-
         // Collect all members first
+        let prefix = MemberDataKey::new(key, version, &[]).encode_seek_key()?;
         let iter = db.iterator_cf_opt(
             &cf_data,
             ReadOptions::default(),
@@ -644,13 +557,8 @@ impl Redis {
             return Ok(Vec::new());
         }
 
-        // Build prefix: reserve(8) + version(8) + encoded(key)
-        let mut prefix = bytes::BytesMut::with_capacity(PREFIX_RESERVE_LENGTH + 8 + key.len() * 2);
-        prefix.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-        prefix.put_u64(version);
-        encode_user_key(&bytes::Bytes::copy_from_slice(key), &mut prefix)?;
-
         // Collect all members first
+        let prefix = MemberDataKey::new(key, version, &[]).encode_seek_key()?;
         let iter = db.iterator_cf_opt(
             &cf_data,
             ReadOptions::default(),
@@ -2061,14 +1969,8 @@ impl Redis {
 
         let version = set_meta.version();
 
-        // Build prefix: reserve(8) + version(8) + encoded(key)
-        let mut prefix =
-            bytes::BytesMut::with_capacity(PREFIX_RESERVE_LENGTH + 8 + first_key.len() * 2);
-        prefix.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-        prefix.put_u64(version);
-        encode_user_key(&bytes::Bytes::copy_from_slice(first_key), &mut prefix)?;
-
         // Iterate through all members of the first set
+        let prefix = MemberDataKey::new(first_key, version, &[]).encode_seek_key()?;
         let iter = db.iterator_cf_opt(
             &cf_data,
             ReadOptions::default(),
@@ -2485,13 +2387,8 @@ impl Redis {
         let version = set_meta.version();
         let _set_size = set_meta.count() as usize;
 
-        // Build prefix: reserve(8) + version(8) + encoded(key)
-        let mut prefix = bytes::BytesMut::with_capacity(PREFIX_RESERVE_LENGTH + 8 + key.len() * 2);
-        prefix.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-        prefix.put_u64(version);
-        encode_user_key(&bytes::Bytes::copy_from_slice(key), &mut prefix)?;
-
         // Collect all members first
+        let prefix = MemberDataKey::new(key, version, &[]).encode_seek_key()?;
         let iter = db.iterator_cf_opt(
             &cf_data,
             ReadOptions::default(),
