@@ -202,7 +202,7 @@ impl ServerTrait for NetworkServer {
 
             let cluster_mode = self.cluster_mode;
             let raft_router = self.raft_router.clone();
-            
+
             tokio::spawn(async move {
                 // Get or create resources from the pool
                 let pooled_resources = match pool
@@ -287,7 +287,10 @@ mod tests {
         let server = server.unwrap();
         assert_eq!(server.addr(), "127.0.0.1:0");
         assert!(server.is_healthy());
-        assert_eq!(server.cluster_mode(), crate::raft_network_handle::ClusterMode::Single);
+        assert_eq!(
+            server.cluster_mode(),
+            crate::raft_network_handle::ClusterMode::Single
+        );
     }
 
     #[tokio::test]
@@ -357,17 +360,27 @@ mod tests {
             storage_client,
             cmd_table,
             executor,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Default should be single mode
-        assert_eq!(server.cluster_mode(), crate::raft_network_handle::ClusterMode::Single);
+        assert_eq!(
+            server.cluster_mode(),
+            crate::raft_network_handle::ClusterMode::Single
+        );
 
         // Switch to cluster mode
         server.set_cluster_mode(crate::raft_network_handle::ClusterMode::Cluster);
-        assert_eq!(server.cluster_mode(), crate::raft_network_handle::ClusterMode::Cluster);
+        assert_eq!(
+            server.cluster_mode(),
+            crate::raft_network_handle::ClusterMode::Cluster
+        );
 
         // Switch back to single mode
         server.set_cluster_mode(crate::raft_network_handle::ClusterMode::Single);
-        assert_eq!(server.cluster_mode(), crate::raft_network_handle::ClusterMode::Single);
+        assert_eq!(
+            server.cluster_mode(),
+            crate::raft_network_handle::ClusterMode::Single
+        );
     }
 }

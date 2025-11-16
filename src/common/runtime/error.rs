@@ -148,7 +148,7 @@ impl DualRuntimeError {
     /// This provides a more accurate assessment than string matching
     pub fn is_storage_error_recoverable(err: &storage::error::Error) -> bool {
         use storage::error::Error as StorageError;
-        
+
         match err {
             // Recoverable: transient errors that can be retried
             StorageError::Io { .. } => true,
@@ -158,27 +158,26 @@ impl DualRuntimeError {
             StorageError::Batch { .. } => true,
             StorageError::System { .. } => true,
             StorageError::KeyNotFound { .. } => true, // Not found is recoverable (can retry or handle)
-            
+
             // Non-recoverable: structural or configuration errors
             StorageError::Encoding { .. } => false,
             StorageError::InvalidFormat { .. } => false,
             StorageError::Config { .. } => false,
             StorageError::InvalidArgument { .. } => false,
             StorageError::OptionNotDynamicallyModifiable { .. } => false,
-            
+
             // RocksDB errors need inspection - some are recoverable
             StorageError::Rocks { error, .. } => {
                 let msg = error.to_string().to_lowercase();
                 // Recoverable RocksDB errors unless corruption is reported
-                (
-                    msg.contains("busy")
-                        || msg.contains("locked")
-                        || msg.contains("timeout")
-                        || msg.contains("write buffer")
-                        || msg.contains("compaction")
-                ) && !msg.contains("corrupt")
+                (msg.contains("busy")
+                    || msg.contains("locked")
+                    || msg.contains("timeout")
+                    || msg.contains("write buffer")
+                    || msg.contains("compaction"))
+                    && !msg.contains("corrupt")
             }
-            
+
             // Unknown errors - default to non-recoverable for safety
             StorageError::Unknown { .. } => false,
             StorageError::OptionNone { .. } => false,
@@ -192,13 +191,13 @@ impl DualRuntimeError {
     }
 
     /// Check if this error indicates a recoverable condition
-    /// 
+    ///
     /// Storage errors are evaluated based on their content to distinguish between:
-    /// - Recoverable: transient I/O issues, compaction conflicts, write buffer full, 
+    /// - Recoverable: transient I/O issues, compaction conflicts, write buffer full,
     ///   timeouts, busy/locked resources, transaction/batch failures
     /// - Non-recoverable: corruption, invalid format, configuration errors, encoding errors
-    /// 
-    /// For more accurate assessment with the actual storage error type, use 
+    ///
+    /// For more accurate assessment with the actual storage error type, use
     /// `is_storage_error_recoverable()` instead.
     pub fn is_recoverable(&self) -> bool {
         match self {
@@ -218,7 +217,7 @@ impl DualRuntimeError {
                 // Recoverable: transient I/O issues, compaction conflicts, write buffer full, timeouts
                 // Non-recoverable: corruption, invalid format, configuration errors
                 let msg_lower = msg.to_lowercase();
-                
+
                 // Non-recoverable errors
                 if msg_lower.contains("corrupt")
                     || msg_lower.contains("invalid format")
@@ -227,7 +226,7 @@ impl DualRuntimeError {
                 {
                     return false;
                 }
-                
+
                 // Recoverable errors
                 if msg_lower.contains("io error")
                     || msg_lower.contains("compaction")
@@ -241,7 +240,7 @@ impl DualRuntimeError {
                 {
                     return true;
                 }
-                
+
                 // Default to non-recoverable for unknown storage errors to be safe
                 false
             }
@@ -252,7 +251,16 @@ impl DualRuntimeError {
 
     /// Check if this error should trigger circuit breaker
     pub fn should_trigger_circuit_breaker(&self) -> bool {
-        matches!(self, Self::NetworkRuntime(_) | Self::StorageRuntime(_) | Self::Channel(_) | Self::Timeout { .. } | Self::RuntimeIsolation { .. } | Self::ErrorBoundary { .. } | Self::FaultIsolation { .. })
+        matches!(
+            self,
+            Self::NetworkRuntime(_)
+                | Self::StorageRuntime(_)
+                | Self::Channel(_)
+                | Self::Timeout { .. }
+                | Self::RuntimeIsolation { .. }
+                | Self::ErrorBoundary { .. }
+                | Self::FaultIsolation { .. }
+        )
     }
 
     /// Get the severity level of this error
@@ -294,8 +302,12 @@ mod tests {
     #[test]
     fn test_storage_error_recoverability() {
         // Recoverable storage errors
-        assert!(DualRuntimeError::Storage("IO error: connection failed".to_string()).is_recoverable());
-        assert!(DualRuntimeError::Storage("Compaction conflict detected".to_string()).is_recoverable());
+        assert!(
+            DualRuntimeError::Storage("IO error: connection failed".to_string()).is_recoverable()
+        );
+        assert!(
+            DualRuntimeError::Storage("Compaction conflict detected".to_string()).is_recoverable()
+        );
         assert!(DualRuntimeError::Storage("Write buffer is full".to_string()).is_recoverable());
         assert!(DualRuntimeError::Storage("Transaction timeout".to_string()).is_recoverable());
         assert!(DualRuntimeError::Storage("Database is busy".to_string()).is_recoverable());
@@ -304,11 +316,21 @@ mod tests {
         assert!(DualRuntimeError::Storage("Batch operation failed".to_string()).is_recoverable());
 
         // Non-recoverable storage errors
-        assert!(!DualRuntimeError::Storage("Data corruption detected".to_string()).is_recoverable());
-        assert!(!DualRuntimeError::Storage("Invalid format: bad header".to_string()).is_recoverable());
-        assert!(!DualRuntimeError::Storage("Configuration error: invalid path".to_string()).is_recoverable());
-        assert!(!DualRuntimeError::Storage("Encoding error: invalid UTF-8".to_string()).is_recoverable());
-        
+        assert!(
+            !DualRuntimeError::Storage("Data corruption detected".to_string()).is_recoverable()
+        );
+        assert!(
+            !DualRuntimeError::Storage("Invalid format: bad header".to_string()).is_recoverable()
+        );
+        assert!(
+            !DualRuntimeError::Storage("Configuration error: invalid path".to_string())
+                .is_recoverable()
+        );
+        assert!(
+            !DualRuntimeError::Storage("Encoding error: invalid UTF-8".to_string())
+                .is_recoverable()
+        );
+
         // Unknown storage errors default to non-recoverable
         assert!(!DualRuntimeError::Storage("Unknown storage issue".to_string()).is_recoverable());
     }
@@ -319,37 +341,79 @@ mod tests {
         assert!(DualRuntimeError::NetworkRuntime("connection reset".to_string()).is_recoverable());
         assert!(DualRuntimeError::StorageRuntime("thread panic".to_string()).is_recoverable());
         assert!(DualRuntimeError::Channel("send failed".to_string()).is_recoverable());
-        assert!(DualRuntimeError::Timeout { timeout: Duration::from_secs(5) }.is_recoverable());
-        assert!(DualRuntimeError::CircuitBreakerOpen { reason: "too many failures".to_string() }.is_recoverable());
+        assert!(
+            DualRuntimeError::Timeout {
+                timeout: Duration::from_secs(5)
+            }
+            .is_recoverable()
+        );
+        assert!(
+            DualRuntimeError::CircuitBreakerOpen {
+                reason: "too many failures".to_string()
+            }
+            .is_recoverable()
+        );
         assert!(DualRuntimeError::Io("file not found".to_string()).is_recoverable());
         assert!(DualRuntimeError::HealthCheck("unhealthy".to_string()).is_recoverable());
 
         // Non-recoverable errors
         assert!(!DualRuntimeError::Configuration("invalid config".to_string()).is_recoverable());
         assert!(!DualRuntimeError::Lifecycle("already stopped".to_string()).is_recoverable());
-        assert!(!DualRuntimeError::RecoveryFailed { 
-            mechanism: "retry".to_string(), 
-            reason: "max attempts".to_string() 
-        }.is_recoverable());
+        assert!(
+            !DualRuntimeError::RecoveryFailed {
+                mechanism: "retry".to_string(),
+                reason: "max attempts".to_string()
+            }
+            .is_recoverable()
+        );
     }
 
     #[test]
     fn test_error_severity() {
-        assert_eq!(DualRuntimeError::Configuration("test".to_string()).severity(), ErrorSeverity::Critical);
-        assert_eq!(DualRuntimeError::Lifecycle("test".to_string()).severity(), ErrorSeverity::Critical);
-        assert_eq!(DualRuntimeError::Storage("test".to_string()).severity(), ErrorSeverity::High);
-        assert_eq!(DualRuntimeError::NetworkRuntime("test".to_string()).severity(), ErrorSeverity::Medium);
-        assert_eq!(DualRuntimeError::Timeout { timeout: Duration::from_secs(1) }.severity(), ErrorSeverity::Low);
+        assert_eq!(
+            DualRuntimeError::Configuration("test".to_string()).severity(),
+            ErrorSeverity::Critical
+        );
+        assert_eq!(
+            DualRuntimeError::Lifecycle("test".to_string()).severity(),
+            ErrorSeverity::Critical
+        );
+        assert_eq!(
+            DualRuntimeError::Storage("test".to_string()).severity(),
+            ErrorSeverity::High
+        );
+        assert_eq!(
+            DualRuntimeError::NetworkRuntime("test".to_string()).severity(),
+            ErrorSeverity::Medium
+        );
+        assert_eq!(
+            DualRuntimeError::Timeout {
+                timeout: Duration::from_secs(1)
+            }
+            .severity(),
+            ErrorSeverity::Low
+        );
     }
 
     #[test]
     fn test_circuit_breaker_trigger() {
-        assert!(DualRuntimeError::NetworkRuntime("test".to_string()).should_trigger_circuit_breaker());
-        assert!(DualRuntimeError::StorageRuntime("test".to_string()).should_trigger_circuit_breaker());
+        assert!(
+            DualRuntimeError::NetworkRuntime("test".to_string()).should_trigger_circuit_breaker()
+        );
+        assert!(
+            DualRuntimeError::StorageRuntime("test".to_string()).should_trigger_circuit_breaker()
+        );
         assert!(DualRuntimeError::Channel("test".to_string()).should_trigger_circuit_breaker());
-        assert!(DualRuntimeError::Timeout { timeout: Duration::from_secs(1) }.should_trigger_circuit_breaker());
-        
-        assert!(!DualRuntimeError::Configuration("test".to_string()).should_trigger_circuit_breaker());
+        assert!(
+            DualRuntimeError::Timeout {
+                timeout: Duration::from_secs(1)
+            }
+            .should_trigger_circuit_breaker()
+        );
+
+        assert!(
+            !DualRuntimeError::Configuration("test".to_string()).should_trigger_circuit_breaker()
+        );
         assert!(!DualRuntimeError::Lifecycle("test".to_string()).should_trigger_circuit_breaker());
     }
 }

@@ -82,23 +82,20 @@ async fn test_apply_multiple_commands() {
     let requests = vec![
         ClientRequest {
             id: RequestId::new(),
-            command: RedisCommand::new(
-                "PING".to_string(),
-                vec![],
-            ),
+            command: RedisCommand::new("PING".to_string(), vec![]),
             consistency_level: ConsistencyLevel::Linearizable,
         },
         ClientRequest {
             id: RequestId::new(),
-            command: RedisCommand::new(
-                "PING".to_string(),
-                vec![],
-            ),
+            command: RedisCommand::new("PING".to_string(), vec![]),
             consistency_level: ConsistencyLevel::Linearizable,
         },
     ];
 
-    let responses = state_machine.apply_redis_commands_batch(&requests).await.unwrap();
+    let responses = state_machine
+        .apply_redis_commands_batch(&requests)
+        .await
+        .unwrap();
 
     assert_eq!(responses.len(), 2);
     assert!(responses[0].result.is_ok());
@@ -121,7 +118,7 @@ async fn test_snapshot_restore() {
 
     // Create a snapshot
     let snapshot = state_machine.create_snapshot().await.unwrap();
-    
+
     // Restore from the snapshot
     let result = state_machine.restore_from_snapshot(&snapshot).await;
     assert!(result.is_ok(), "Snapshot restore should succeed");
@@ -162,7 +159,10 @@ async fn test_incr_decr_commands() {
         consistency_level: ConsistencyLevel::Linearizable,
     };
 
-    let response = state_machine.apply_redis_command(&incr_request).await.unwrap();
+    let response = state_machine
+        .apply_redis_command(&incr_request)
+        .await
+        .unwrap();
     assert!(response.result.is_ok());
 
     // Test DECR
@@ -172,7 +172,10 @@ async fn test_incr_decr_commands() {
         consistency_level: ConsistencyLevel::Linearizable,
     };
 
-    let response = state_machine.apply_redis_command(&decr_request).await.unwrap();
+    let response = state_machine
+        .apply_redis_command(&decr_request)
+        .await
+        .unwrap();
     assert!(response.result.is_ok());
 }
 

@@ -20,7 +20,10 @@ mod redis_basic_test {
     use std::sync::{Arc, atomic::Ordering};
 
     use kstd::lock_mgr::LockMgr;
-    use storage::{BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+    use storage::{
+        BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, safe_cleanup_test_db,
+        unique_test_db_path,
+    };
 
     #[test]
     fn test_redis_creation() {

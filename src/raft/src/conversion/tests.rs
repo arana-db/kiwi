@@ -68,16 +68,18 @@ fn test_entry_to_client_request_blank() {
     // Convert Entry to ClientRequest should fail
     let result = entry_to_client_request(&entry);
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Cannot convert blank entry"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot convert blank entry")
+    );
 }
 
 #[test]
 fn test_entry_to_client_request_membership() {
     use std::collections::BTreeSet;
-    
+
     // Create an Entry with Membership payload
     let log_id = LogId::new(CommittedLeaderId::new(1, 1), 10);
     let mut nodes = BTreeSet::new();
@@ -93,10 +95,12 @@ fn test_entry_to_client_request_membership() {
     // Convert Entry to ClientRequest should fail
     let result = entry_to_client_request(&entry);
     assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("Cannot convert membership entry"));
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("Cannot convert membership entry")
+    );
 }
 
 #[test]
@@ -104,10 +108,7 @@ fn test_deserialize_client_request_success() {
     // Create and serialize a ClientRequest
     let request = ClientRequest {
         id: RequestId::new(),
-        command: RedisCommand::new(
-            "GET".to_string(),
-            vec![Bytes::from("test_key")],
-        ),
+        command: RedisCommand::new("GET".to_string(), vec![Bytes::from("test_key")]),
         consistency_level: ConsistencyLevel::Eventual,
     };
 
@@ -138,11 +139,7 @@ fn test_deserialize_client_request_invalid_data() {
 #[test]
 fn test_serialize_client_response_success() {
     // Create a successful ClientResponse
-    let response = ClientResponse::success(
-        RequestId::new(),
-        Bytes::from("OK"),
-        Some(1),
-    );
+    let response = ClientResponse::success(RequestId::new(), Bytes::from("OK"), Some(1));
 
     // Serialize it
     let result = serialize_client_response(&response);
@@ -160,11 +157,7 @@ fn test_serialize_client_response_success() {
 #[test]
 fn test_serialize_client_response_error() {
     // Create an error ClientResponse
-    let response = ClientResponse::error(
-        RequestId::new(),
-        "Command failed".to_string(),
-        Some(2),
-    );
+    let response = ClientResponse::error(RequestId::new(), "Command failed".to_string(), Some(2));
 
     // Serialize it
     let result = serialize_client_response(&response);
@@ -223,10 +216,7 @@ fn test_client_response_roundtrip() {
 
     assert_eq!(deserialized.id, original.id);
     assert_eq!(deserialized.leader_id, original.leader_id);
-    assert_eq!(
-        deserialized.result.unwrap(),
-        original.result.unwrap()
-    );
+    assert_eq!(deserialized.result.unwrap(), original.result.unwrap());
 }
 
 // ============================================================================
@@ -253,7 +243,7 @@ fn test_to_storage_error_rocksdb() {
 
 #[test]
 fn test_to_storage_error_log_corruption() {
-    let raft_error = RaftError::Storage(StorageError::LogCorruption { 
+    let raft_error = RaftError::Storage(StorageError::LogCorruption {
         index: 42,
         term: 1,
         context: "test".to_string(),
@@ -441,7 +431,10 @@ fn test_from_storage_error_io() {
     let raft_error = from_storage_error(storage_error);
 
     match raft_error {
-        RaftError::Storage(StorageError::DataInconsistency { message, context: _ }) => {
+        RaftError::Storage(StorageError::DataInconsistency {
+            message,
+            context: _,
+        }) => {
             assert!(message.contains("Storage IO error"));
         }
         _ => panic!("Expected Storage error with DataInconsistency"),

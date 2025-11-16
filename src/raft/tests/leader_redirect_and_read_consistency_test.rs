@@ -15,15 +15,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
 use bytes::Bytes;
-use raft::{RaftNode, RaftNodeInterface, types::{ClusterConfig, ClientRequest, ConsistencyLevel, RedisCommand}};
+use raft::{
+    RaftNode, RaftNodeInterface,
+    types::{ClientRequest, ClusterConfig, ConsistencyLevel, RedisCommand},
+};
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_non_leader_write_redirects_and_linearizable_read_succeeds() {
     // Clean up any existing data directories
     let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
-        .map(|p| std::path::PathBuf::from(p).parent().unwrap().parent().unwrap().to_path_buf())
+        .map(|p| {
+            std::path::PathBuf::from(p)
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf()
+        })
         .unwrap_or_else(|_| std::env::current_dir().unwrap());
     let test_dir1 = workspace_root.join("target/test_data/it_cluster_node1");
     let test_dir2 = workspace_root.join("target/test_data/it_cluster_node2");
@@ -73,7 +83,10 @@ async fn test_non_leader_write_redirects_and_linearizable_read_succeeds() {
     // Leader writes
     let set_req = ClientRequest {
         id: raft::types::RequestId::new(),
-        command: RedisCommand::new("SET".to_string(), vec![Bytes::from("redir_key"), Bytes::from("redir_val")]),
+        command: RedisCommand::new(
+            "SET".to_string(),
+            vec![Bytes::from("redir_key"), Bytes::from("redir_val")],
+        ),
         consistency_level: ConsistencyLevel::Linearizable,
     };
     let _ = node1.propose(set_req).await.unwrap();
@@ -81,12 +94,19 @@ async fn test_non_leader_write_redirects_and_linearizable_read_succeeds() {
     // Follower attempts write; expect NotLeader error (handled in network path normally)
     let set_req_follower = ClientRequest {
         id: raft::types::RequestId::new(),
-        command: RedisCommand::new("SET".to_string(), vec![Bytes::from("redir_key2"), Bytes::from("v")]),
+        command: RedisCommand::new(
+            "SET".to_string(),
+            vec![Bytes::from("redir_key2"), Bytes::from("v")],
+        ),
         consistency_level: ConsistencyLevel::Linearizable,
     };
     let resp = node2.propose(set_req_follower).await.unwrap();
     let err_msg = resp.result.err().unwrap();
-    assert!(err_msg.contains("NotLeader") || err_msg.contains("not leader") || err_msg.contains("Not leader"));
+    assert!(
+        err_msg.contains("NotLeader")
+            || err_msg.contains("not leader")
+            || err_msg.contains("Not leader")
+    );
 
     // Linearizable read from leader should succeed
     let get_req = ClientRequest {

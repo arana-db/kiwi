@@ -40,29 +40,29 @@ Write-Info "=== Kiwi Development Tool ==="
 Write-Info ""
 
 # Check if this is first-time use (only for build/run commands)
-$setupMarker = ".kiwi_setup_done"
-if (($Command -eq "build" -or $Command -eq "run") -and -not (Test-Path $setupMarker)) {
-    Write-Host ""
-    Write-Warning "⚠️  First-time setup recommended for optimal performance!"
-    Write-Host ""
-    Write-Host "Run this command to install sccache and cargo-watch:"
-    Write-Info "  scripts\quick_setup.ps1"
-    Write-Host ""
-    Write-Host "Or continue without setup (you can run it later)."
-    Write-Host ""
-    $setupNow = Read-Host "Run quick setup now? (y/n)"
-    if ($setupNow -eq "y" -or $setupNow -eq "Y") {
-        & "scripts\quick_setup.ps1"
-        if ($LASTEXITCODE -eq 0) {
-            New-Item -ItemType File -Path $setupMarker -Force | Out-Null
-            Write-Success "✓ Setup complete! Continuing with build..."
+if ($Command -eq "build" -or $Command -eq "run") {
+    # Check if sccache is available, if not prompt to install
+    $sccacheInstalled = Get-Command sccache -ErrorAction SilentlyContinue
+    if (-not $sccacheInstalled) {
+        Write-Host ""
+        Write-Warning "⚠️  sccache not detected for optimal performance!"
+        Write-Host ""
+        Write-Host "Run this command to install sccache and cargo-watch:"
+        Write-Info "  scripts\quick_setup.ps1"
+        Write-Host ""
+        Write-Host "Or continue without setup (you can run it later)."
+        Write-Host ""
+        $setupNow = Read-Host "Run quick setup now? (y/n)"
+        if ($setupNow -eq "y" -or $setupNow -eq "Y") {
+            & "scripts\quick_setup.ps1"
+            if ($LASTEXITCODE -eq 0) {
+                Write-Success "✓ Setup complete! Continuing with build..."
+                Write-Host ""
+            }
+        } else {
+            Write-Info "Skipping setup. You can run 'scripts\quick_setup.ps1' anytime."
             Write-Host ""
         }
-    } else {
-        Write-Info "Skipping setup. You can run 'scripts\quick_setup.ps1' anytime."
-        # Create marker to not ask again
-        New-Item -ItemType File -Path $setupMarker -Force | Out-Null
-        Write-Host ""
     }
 }
 
@@ -71,10 +71,13 @@ $env:CARGO_BUILD_JOBS = [Environment]::ProcessorCount
 
 # Check and setup sccache if available
 $sccacheInstalled = Get-Command sccache -ErrorAction SilentlyContinue
+# Check and setup sccache if available
+$sccacheInstalled = Get-Command sccache -ErrorAction SilentlyContinue
 if ($sccacheInstalled) {
     $env:RUSTC_WRAPPER = "sccache"
     # sccache doesn't support incremental compilation, so disable it
     $env:CARGO_INCREMENTAL = "0"
+    Remove-Item Env:\CARGO_CACHE_RUSTC_INFO -ErrorAction SilentlyContinue
     # Silently start sccache server if not running
     sccache --start-server 2>&1 | Out-Null
 } else {
@@ -120,7 +123,7 @@ switch ($Command) {
     
     "run" {
         Write-Info "Running Kiwi..."
-        $env:RUST_LOG = "info"
+        $env:RUST_LOG = "debug"
         cargo run $profileFlag $verboseFlag
     }
     

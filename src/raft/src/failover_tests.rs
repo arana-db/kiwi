@@ -33,7 +33,7 @@ use crate::types::{ClientRequest, ConsistencyLevel, RedisCommand, RequestId};
 use bytes::Bytes;
 
 /// Test basic leader election after leader failure
-/// 
+///
 /// Requirements:
 /// - 8.1.1: Leader failure SHALL trigger new election
 /// - 8.1.2: New leader SHALL be elected with majority agreement
@@ -55,7 +55,10 @@ async fn test_leader_election_after_failure() -> RaftResult<()> {
         3 => &cluster.node3,
         _ => panic!("Invalid leader ID"),
     };
-    assert!(initial_leader.is_leader().await, "Initial leader should be in leader state");
+    assert!(
+        initial_leader.is_leader().await,
+        "Initial leader should be in leader state"
+    );
 
     // Stop the leader to trigger election
     log::info!("Stopping leader node {}", initial_leader_id);
@@ -81,7 +84,10 @@ async fn test_leader_election_after_failure() -> RaftResult<()> {
         3 => &cluster.node3,
         _ => panic!("Invalid leader ID"),
     };
-    assert!(new_leader.is_leader().await, "New leader should be in leader state");
+    assert!(
+        new_leader.is_leader().await,
+        "New leader should be in leader state"
+    );
 
     // Verify remaining nodes recognize the new leader
     let remaining_nodes: Vec<_> = vec![&cluster.node1, &cluster.node2, &cluster.node3]
@@ -106,7 +112,7 @@ async fn test_leader_election_after_failure() -> RaftResult<()> {
 }
 
 /// Test leader election with multiple failures
-/// 
+///
 /// Requirements:
 /// - 8.1.1: Leader failure SHALL trigger new election
 /// - 8.1.2: New leader SHALL be elected with majority agreement
@@ -157,7 +163,7 @@ async fn test_multiple_leader_failures() -> RaftResult<()> {
 }
 
 /// Test that data remains consistent after leader election
-/// 
+///
 /// Requirements:
 /// - 8.1.4: Data SHALL remain consistent after failover
 #[tokio::test]
@@ -214,7 +220,7 @@ async fn test_data_consistency_after_election() -> RaftResult<()> {
 }
 
 /// Test leader election timing and term increments
-/// 
+///
 /// Requirements:
 /// - 8.1.2: New leader SHALL be elected with majority agreement
 #[tokio::test]
@@ -270,7 +276,7 @@ async fn test_leader_election_timing() -> RaftResult<()> {
 }
 
 /// Test request redirection from follower to leader
-/// 
+///
 /// Requirements:
 /// - 8.3.1: Non-leader nodes SHALL redirect write requests to leader
 /// - 8.3.3: Client requests SHALL automatically redirect to new leader
@@ -295,7 +301,11 @@ async fn test_request_redirection_to_leader() -> RaftResult<()> {
     log::info!("Testing with follower: node {}", follower_id);
 
     // Verify follower is not the leader
-    assert!(!follower.is_leader().await, "Node {} should not be leader", follower_id);
+    assert!(
+        !follower.is_leader().await,
+        "Node {} should not be leader",
+        follower_id
+    );
 
     // Try to write through follower (should get NotLeader error)
     let request = ClientRequest {
@@ -314,14 +324,22 @@ async fn test_request_redirection_to_leader() -> RaftResult<()> {
 
     // Should get NotLeader error with leader information
     match result {
-        Err(RaftError::NotLeader { leader_id: Some(returned_leader_id), .. }) => {
+        Err(RaftError::NotLeader {
+            leader_id: Some(returned_leader_id),
+            ..
+        }) => {
             assert_eq!(
                 returned_leader_id, leader_id,
                 "Follower should return correct leader ID"
             );
-            log::info!("Follower correctly returned leader ID: {}", returned_leader_id);
+            log::info!(
+                "Follower correctly returned leader ID: {}",
+                returned_leader_id
+            );
         }
-        Err(RaftError::NotLeader { leader_id: None, .. }) => {
+        Err(RaftError::NotLeader {
+            leader_id: None, ..
+        }) => {
             log::warn!("Follower returned NotLeader but no leader ID");
         }
         Ok(_) => {
@@ -338,7 +356,7 @@ async fn test_request_redirection_to_leader() -> RaftResult<()> {
 }
 
 /// Test request redirection after leader failure
-/// 
+///
 /// Requirements:
 /// - 8.3.3: Client requests SHALL automatically redirect to new leader
 /// - 8.3.4: Data SHALL remain consistent after failover
@@ -394,14 +412,22 @@ async fn test_request_redirection_after_failover() -> RaftResult<()> {
 
     // Should get NotLeader error with new leader information
     match result {
-        Err(RaftError::NotLeader { leader_id: Some(returned_leader_id), .. }) => {
+        Err(RaftError::NotLeader {
+            leader_id: Some(returned_leader_id),
+            ..
+        }) => {
             assert_eq!(
                 returned_leader_id, new_leader_id,
                 "Follower should return new leader ID after failover"
             );
-            log::info!("Follower correctly returned new leader ID: {}", returned_leader_id);
+            log::info!(
+                "Follower correctly returned new leader ID: {}",
+                returned_leader_id
+            );
         }
-        Err(RaftError::NotLeader { leader_id: None, .. }) => {
+        Err(RaftError::NotLeader {
+            leader_id: None, ..
+        }) => {
             log::warn!("Follower returned NotLeader but no leader ID");
         }
         Ok(_) => {
@@ -422,7 +448,7 @@ async fn test_request_redirection_after_failover() -> RaftResult<()> {
 }
 
 /// Test that followers correctly track leader changes
-/// 
+///
 /// Requirements:
 /// - 8.3.3: Client requests SHALL automatically redirect to new leader
 #[tokio::test]

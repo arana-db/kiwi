@@ -28,7 +28,7 @@
 //! - Adaptor overhead: < 1ms
 
 use bytes::Bytes;
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use raft::error::RaftResult;
 use raft::state_machine::{KiwiStateMachine, StorageEngine};
 use raft::types::{ClientRequest, ConsistencyLevel, RedisCommand, RequestId};
@@ -73,14 +73,17 @@ impl StorageEngine for BenchStorageEngine {
     async fn create_snapshot(&self) -> RaftResult<Vec<u8>> {
         let data = self.data.read().await;
         let entries: Vec<_> = data.iter().map(|(k, v)| (k, v)).collect();
-        let serialized = serde_json::to_vec(&entries)
-            .map_err(|e| raft::error::RaftError::state_machine(format!("Serialization error: {}", e)))?;
+        let serialized = serde_json::to_vec(&entries).map_err(|e| {
+            raft::error::RaftError::state_machine(format!("Serialization error: {}", e))
+        })?;
         Ok(serialized)
     }
 
     async fn restore_from_snapshot(&self, snapshot_data: &[u8]) -> RaftResult<()> {
         let restored_entries: Vec<(Vec<u8>, Vec<u8>)> = serde_json::from_slice(snapshot_data)
-            .map_err(|e| raft::error::RaftError::state_machine(format!("Deserialization error: {}", e)))?;
+            .map_err(|e| {
+                raft::error::RaftError::state_machine(format!("Deserialization error: {}", e))
+            })?;
         let mut data = self.data.write().await;
         data.clear();
         for (key, value) in restored_entries {
@@ -263,12 +266,7 @@ fn bench_adaptor_overhead(c: &mut Criterion) {
     // Direct storage access (baseline)
     group.bench_function("direct_storage", |b| {
         b.to_async(&rt).iter(|| async {
-            black_box(
-                storage
-                    .put(b"test_key", b"test_value")
-                    .await
-                    .unwrap(),
-            );
+            black_box(storage.put(b"test_key", b"test_value").await.unwrap());
         });
     });
 
