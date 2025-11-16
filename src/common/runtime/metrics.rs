@@ -1893,9 +1893,11 @@ impl HealthCheckEndpoints {
 
     /// Determine overall system status from component health
     fn determine_overall_status(components: &ComponentHealth) -> String {
-        let statuses = [&components.network_runtime.status,
+        let statuses = [
+            &components.network_runtime.status,
             &components.storage_runtime.status,
-            &components.channel.status];
+            &components.channel.status,
+        ];
 
         if statuses.iter().any(|s| *s == "unhealthy") {
             "unhealthy".to_string()

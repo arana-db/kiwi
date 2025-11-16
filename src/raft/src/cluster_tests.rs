@@ -323,7 +323,12 @@ pub async fn verify_data_consistency(
                     return Ok(false);
                 }
                 Ok(Err(e)) => {
-                    log::warn!("Node {} error reading key '{}': {}, skipping", node_id, key, e);
+                    log::warn!(
+                        "Node {} error reading key '{}': {}, skipping",
+                        node_id,
+                        key,
+                        e
+                    );
                     continue; // Skip shutdown nodes
                 }
                 Err(_) => {
@@ -627,7 +632,7 @@ mod tests {
 
         cluster.write(test_key1, test_value1).await?;
         cluster.write(test_key2, test_value2).await?;
-        
+
         // Wait for replication to complete
         sleep(Duration::from_millis(500)).await;
 
@@ -635,7 +640,7 @@ mod tests {
         log::info!("Verifying initial data consistency across all nodes");
         let value1_before = cluster.read(test_key1).await?;
         let value2_before = cluster.read(test_key2).await?;
-        
+
         assert_eq!(
             value1_before,
             Some(Bytes::from(test_value1)),
@@ -650,7 +655,7 @@ mod tests {
         // 5. Simulate leader failure
         log::info!("Stopping leader node {}", initial_leader_id);
         cluster.stop_node(initial_leader_id).await?;
-        
+
         // Wait for failure detection
         sleep(Duration::from_secs(1)).await;
 
@@ -683,10 +688,10 @@ mod tests {
         // 8. Write new data after failover to verify cluster is still operational
         let test_key3 = "post_failover_key";
         let test_value3 = "post_failover_value";
-        
+
         log::info!("Writing new data after failover");
         cluster.write(test_key3, test_value3).await?;
-        
+
         // Wait for replication
         sleep(Duration::from_millis(500)).await;
 

@@ -19,20 +19,27 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::node::RaftNode;
     use crate::router::{ClusterMode, RequestRouter};
     use crate::types::{ClusterConfig, RedisCommand};
-    use crate::node::RaftNode;
-    use std::sync::Arc;
     use bytes::Bytes;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_router_creation() {
         // Create a test cluster config
         let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
-            .map(|p| std::path::PathBuf::from(p).parent().unwrap().parent().unwrap().to_path_buf())
+            .map(|p| {
+                std::path::PathBuf::from(p)
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .to_path_buf()
+            })
             .unwrap_or_else(|_| std::env::current_dir().unwrap());
         let test_dir = workspace_root.join("target/test_data/router_test");
-        
+
         let config = ClusterConfig {
             enabled: true,
             node_id: 1,
@@ -56,8 +63,8 @@ mod tests {
     fn test_write_command_detection() {
         // Test that write commands are correctly identified
         let write_commands = vec![
-            "SET", "DEL", "SETEX", "SETNX", "INCR", "DECR",
-            "LPUSH", "RPUSH", "SADD", "ZADD", "HSET",
+            "SET", "DEL", "SETEX", "SETNX", "INCR", "DECR", "LPUSH", "RPUSH", "SADD", "ZADD",
+            "HSET",
         ];
 
         for cmd in write_commands {
@@ -75,15 +82,11 @@ mod tests {
     fn test_read_command_detection() {
         // Test that read commands are correctly identified
         let read_commands = vec![
-            "GET", "MGET", "EXISTS", "STRLEN", "LLEN",
-            "SCARD", "ZCARD", "HGET", "HGETALL",
+            "GET", "MGET", "EXISTS", "STRLEN", "LLEN", "SCARD", "ZCARD", "HGET", "HGETALL",
         ];
 
         for cmd in read_commands {
-            let redis_cmd = RedisCommand::from_strings(
-                cmd.to_string(),
-                vec!["key".to_string()],
-            );
+            let redis_cmd = RedisCommand::from_strings(cmd.to_string(), vec!["key".to_string()]);
             assert_eq!(redis_cmd.command, cmd);
         }
     }
@@ -109,10 +112,7 @@ mod tests {
         assert_eq!(cmd1.command, "SET");
         assert_eq!(cmd1.args.len(), 2);
 
-        let cmd2 = RedisCommand::from_bytes(
-            "GET".to_string(),
-            vec![b"key".to_vec()],
-        );
+        let cmd2 = RedisCommand::from_bytes("GET".to_string(), vec![b"key".to_vec()]);
         assert_eq!(cmd2.command, "GET");
         assert_eq!(cmd2.args.len(), 1);
 
@@ -126,15 +126,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_routing_with_consistency_levels() {
-        use crate::types::ConsistencyLevel;
         use crate::node::RaftNodeInterface;
+        use crate::types::ConsistencyLevel;
 
         // Create a test cluster config
         let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
-            .map(|p| std::path::PathBuf::from(p).parent().unwrap().parent().unwrap().to_path_buf())
+            .map(|p| {
+                std::path::PathBuf::from(p)
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .to_path_buf()
+            })
             .unwrap_or_else(|_| std::env::current_dir().unwrap());
         let test_dir = workspace_root.join("target/test_data/router_read_test");
-        
+
         let config = ClusterConfig {
             enabled: true,
             node_id: 1,
@@ -145,7 +152,7 @@ mod tests {
 
         // Create a Raft node
         let raft_node = Arc::new(RaftNode::new(config).await.unwrap());
-        
+
         // Initialize the cluster
         raft_node.start(true).await.unwrap();
 
@@ -153,16 +160,13 @@ mod tests {
         let router = RequestRouter::new(raft_node.clone(), ClusterMode::Cluster);
 
         // Test read command
-        let get_cmd = RedisCommand::from_strings(
-            "GET".to_string(),
-            vec!["test_key".to_string()],
-        );
+        let get_cmd = RedisCommand::from_strings("GET".to_string(), vec!["test_key".to_string()]);
 
         // Test linearizable read (should work on leader)
         let result_linearizable = router
             .route_read_with_consistency(get_cmd.clone(), ConsistencyLevel::Linearizable)
             .await;
-        
+
         // Should succeed or return NotLeader error (depending on leadership state)
         match result_linearizable {
             Ok(response) => {
@@ -179,10 +183,13 @@ mod tests {
         let result_eventual = router
             .route_read_with_consistency(get_cmd.clone(), ConsistencyLevel::Eventual)
             .await;
-        
+
         // Eventual reads should always succeed (even on followers)
-        assert!(result_eventual.is_ok(), "Eventual consistency read should succeed");
-        
+        assert!(
+            result_eventual.is_ok(),
+            "Eventual consistency read should succeed"
+        );
+
         // Cleanup
         let _ = raft_node.shutdown().await;
         let _ = std::fs::remove_dir_all(&test_dir);
@@ -190,15 +197,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_then_read_consistency() {
-        use crate::types::ConsistencyLevel;
         use crate::node::RaftNodeInterface;
+        use crate::types::ConsistencyLevel;
 
         // Create a test cluster config
         let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
-            .map(|p| std::path::PathBuf::from(p).parent().unwrap().parent().unwrap().to_path_buf())
+            .map(|p| {
+                std::path::PathBuf::from(p)
+                    .parent()
+                    .unwrap()
+                    .parent()
+                    .unwrap()
+                    .to_path_buf()
+            })
             .unwrap_or_else(|_| std::env::current_dir().unwrap());
         let test_dir = workspace_root.join("target/test_data/router_write_read_test");
-        
+
         let config = ClusterConfig {
             enabled: true,
             node_id: 1,
@@ -209,7 +223,7 @@ mod tests {
 
         // Create a Raft node
         let raft_node = Arc::new(RaftNode::new(config).await.unwrap());
-        
+
         // Initialize the cluster
         raft_node.start(true).await.unwrap();
 
@@ -226,7 +240,7 @@ mod tests {
         );
 
         let write_result = router.route_command(set_cmd).await;
-        
+
         if write_result.is_ok() {
             // If write succeeded, try to read it back
             let get_cmd = RedisCommand::from_strings(
@@ -238,15 +252,21 @@ mod tests {
             let read_result = router
                 .route_read_with_consistency(get_cmd.clone(), ConsistencyLevel::Linearizable)
                 .await;
-            
-            assert!(read_result.is_ok(), "Linearizable read after write should succeed");
+
+            assert!(
+                read_result.is_ok(),
+                "Linearizable read after write should succeed"
+            );
 
             // Eventual read should also work
             let eventual_read_result = router
                 .route_read_with_consistency(get_cmd, ConsistencyLevel::Eventual)
                 .await;
-            
-            assert!(eventual_read_result.is_ok(), "Eventual read after write should succeed");
+
+            assert!(
+                eventual_read_result.is_ok(),
+                "Eventual read after write should succeed"
+            );
         }
 
         // Cleanup

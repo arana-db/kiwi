@@ -154,14 +154,21 @@ pub fn to_storage_error(err: RaftError) -> OpenraftStorageError<NodeId> {
         err.category(),
         err
     );
-    log::trace!("to_storage_error: error_type={:?}, category={}", 
-        std::any::type_name_of_val(&err), err.category());
+    log::trace!(
+        "to_storage_error: error_type={:?}, category={}",
+        std::any::type_name_of_val(&err),
+        err.category()
+    );
 
     match &err {
         // Storage errors - map to IO errors with appropriate subject/verb
         RaftError::Storage(storage_err) => match storage_err {
             StorageError::RocksDb { context, .. } => {
-                log::error!("RocksDB error during storage operation: {}, context: {}", err, context);
+                log::error!(
+                    "RocksDB error during storage operation: {}, context: {}",
+                    err,
+                    context
+                );
                 OpenraftStorageError::IO {
                     source: StorageIOError::new(
                         ErrorSubject::Store,
@@ -170,7 +177,11 @@ pub fn to_storage_error(err: RaftError) -> OpenraftStorageError<NodeId> {
                     ),
                 }
             }
-            StorageError::LogCorruption { index, term, context } => {
+            StorageError::LogCorruption {
+                index,
+                term,
+                context,
+            } => {
                 log::error!(
                     "Log corruption detected at index {} term {}: context: {}",
                     index,
@@ -178,10 +189,8 @@ pub fn to_storage_error(err: RaftError) -> OpenraftStorageError<NodeId> {
                     context
                 );
                 // Create a LogId for the corrupted log entry
-                let log_id = openraft::LogId::new(
-                    openraft::CommittedLeaderId::new(*term, 0),
-                    *index,
-                );
+                let log_id =
+                    openraft::LogId::new(openraft::CommittedLeaderId::new(*term, 0), *index);
                 OpenraftStorageError::IO {
                     source: StorageIOError::new(
                         ErrorSubject::Log(log_id),
@@ -190,7 +199,11 @@ pub fn to_storage_error(err: RaftError) -> OpenraftStorageError<NodeId> {
                     ),
                 }
             }
-            StorageError::SnapshotCreationFailed { snapshot_id, context, .. } => {
+            StorageError::SnapshotCreationFailed {
+                snapshot_id,
+                context,
+                ..
+            } => {
                 log::error!(
                     "Snapshot creation failed for {}: context: {}",
                     snapshot_id,
@@ -204,7 +217,11 @@ pub fn to_storage_error(err: RaftError) -> OpenraftStorageError<NodeId> {
                     ),
                 }
             }
-            StorageError::SnapshotRestorationFailed { snapshot_id, context, .. } => {
+            StorageError::SnapshotRestorationFailed {
+                snapshot_id,
+                context,
+                ..
+            } => {
                 log::error!(
                     "Snapshot restoration failed for {}: context: {}",
                     snapshot_id,
@@ -218,7 +235,11 @@ pub fn to_storage_error(err: RaftError) -> OpenraftStorageError<NodeId> {
                     ),
                 }
             }
-            StorageError::InsufficientDiskSpace { required_bytes, available_bytes, path } => {
+            StorageError::InsufficientDiskSpace {
+                required_bytes,
+                available_bytes,
+                path,
+            } => {
                 log::error!(
                     "Insufficient disk space at {}: required {} bytes, available {} bytes",
                     path,
@@ -293,7 +314,11 @@ pub fn to_storage_error(err: RaftError) -> OpenraftStorageError<NodeId> {
             }
         }
 
-        RaftError::InvalidState { message, current_state, context } => {
+        RaftError::InvalidState {
+            message,
+            current_state,
+            context,
+        } => {
             log::warn!(
                 "Invalid state: {}, current_state: {}, context: {}",
                 message,
