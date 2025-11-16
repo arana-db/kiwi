@@ -64,3 +64,24 @@ pub fn safe_cleanup_test_db(path: &std::path::Path) {
         }
     }
 }
+
+// requires:
+// 1. pattern's length >= 2
+// 2. tail character is '*'
+// 3. other position's charactor cannot be *, ?, [,]
+pub fn is_tail_wildcard(pattern: &str) -> bool {
+    let bytes = pattern.as_bytes();
+    let len = bytes.len();
+
+    if len < 2 || bytes[len - 1] != b'*' {
+        return false;
+    }
+
+    for &c in &bytes[..len - 1] {
+        if c == b'*' || c == b'?' || c == b'[' || c == b']' {
+            return false;
+        }
+    }
+
+    true
+}
