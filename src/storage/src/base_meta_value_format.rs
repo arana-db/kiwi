@@ -39,9 +39,9 @@ type SetsMetaValue = BaseMetaValue;
 #[allow(dead_code)]
 pub type ParsedSetsMetaValue = ParsedBaseMetaValue;
 #[allow(dead_code)]
-type ZSetsMetaValue = BaseMetaValue;
+pub type ZSetsMetaValue = BaseMetaValue;
 #[allow(dead_code)]
-type ParsedZSetsMetaValue = ParsedBaseMetaValue;
+pub type ParsedZSetsMetaValue = ParsedBaseMetaValue;
 
 // | type | len | version | reserve | cdate | timestamp |
 // |  1B  | 8B  |    8B   |   16B   |   8B  |     8B    |
@@ -195,6 +195,7 @@ impl ParsedBaseMetaValue {
 
     pub fn set_count(&mut self, count: u64) {
         self.count = count;
+        self.set_count_to_value();
     }
 
     pub fn set_etime(&mut self, etime: u64) {
