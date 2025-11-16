@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn test_raft_error_classification() {
-        let not_leader_err = RaftError::NotLeader { 
+        let not_leader_err = RaftError::NotLeader {
             leader_id: Some(1),
             context: "test".to_string(),
         };
@@ -103,7 +103,7 @@ mod tests {
             NetworkError::ConnectionFailed { .. }
         ));
 
-        let timeout_err = NetworkError::RequestTimeout { 
+        let timeout_err = NetworkError::RequestTimeout {
             node_id: 2,
             timeout_ms: 5000,
             operation: "append_entries".to_string(),
@@ -126,7 +126,10 @@ mod tests {
             affected_nodes: 2,
             context: "test".to_string(),
         };
-        assert!(matches!(partition_err, NetworkError::NetworkPartition { .. }));
+        assert!(matches!(
+            partition_err,
+            NetworkError::NetworkPartition { .. }
+        ));
     }
 
     #[test]
@@ -140,7 +143,7 @@ mod tests {
         let error_string = format!("{}", connection_err);
         assert!(error_string.contains("Connection failed to node 1"));
 
-        let timeout_err = NetworkError::RequestTimeout { 
+        let timeout_err = NetworkError::RequestTimeout {
             node_id: 2,
             timeout_ms: 5000,
             operation: "append_entries".to_string(),
@@ -159,7 +162,7 @@ mod tests {
 
     #[test]
     fn test_storage_error_creation() {
-        let corruption_err = StorageError::LogCorruption { 
+        let corruption_err = StorageError::LogCorruption {
             index: 100,
             term: 1,
             context: "test".to_string(),
@@ -191,7 +194,10 @@ mod tests {
             available_bytes: 500,
             path: "/tmp".to_string(),
         };
-        assert!(matches!(disk_err, StorageError::InsufficientDiskSpace { .. }));
+        assert!(matches!(
+            disk_err,
+            StorageError::InsufficientDiskSpace { .. }
+        ));
 
         let consistency_err = StorageError::DataInconsistency {
             message: "Checksum mismatch".to_string(),
@@ -205,7 +211,7 @@ mod tests {
 
     #[test]
     fn test_storage_error_display() {
-        let corruption_err = StorageError::LogCorruption { 
+        let corruption_err = StorageError::LogCorruption {
             index: 42,
             term: 1,
             context: "test".to_string(),
@@ -225,7 +231,7 @@ mod tests {
     #[test]
     fn test_error_conversion() {
         // Test conversion from NetworkError to RaftError
-        let network_err = NetworkError::RequestTimeout { 
+        let network_err = NetworkError::RequestTimeout {
             node_id: 1,
             timeout_ms: 5000,
             operation: "append_entries".to_string(),
@@ -303,7 +309,7 @@ mod tests {
 
     #[test]
     fn test_not_leader_error() {
-        let not_leader_with_id = RaftError::NotLeader { 
+        let not_leader_with_id = RaftError::NotLeader {
             leader_id: Some(3),
             context: "test".to_string(),
         };
@@ -311,7 +317,7 @@ mod tests {
         assert!(error_string.contains("Not leader"));
         assert!(error_string.contains("current leader is Some(3)"));
 
-        let not_leader_without_id = RaftError::NotLeader { 
+        let not_leader_without_id = RaftError::NotLeader {
             leader_id: None,
             context: "test".to_string(),
         };

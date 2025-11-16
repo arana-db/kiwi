@@ -17,9 +17,9 @@
 
 //! In-memory storage engine for testing
 
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
-use parking_lot::RwLock;
 
 use crate::error::RaftResult;
 use crate::state_machine::StorageEngine;

@@ -22,7 +22,8 @@ mod redis_set_test {
     use bytes::BufMut;
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path,
+        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, safe_cleanup_test_db,
+        unique_test_db_path,
     };
 
     // Build a valid Set meta bytes:

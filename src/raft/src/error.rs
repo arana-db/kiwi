@@ -21,7 +21,7 @@ use crate::types::NodeId;
 use thiserror::Error;
 
 /// Comprehensive error type for Raft operations
-/// 
+///
 /// This error type provides detailed context for all Raft-related errors,
 /// ensuring proper error propagation and debugging information.
 #[derive(Debug, Error)]
@@ -107,7 +107,7 @@ pub enum RaftError {
 }
 
 /// Network-related errors
-/// 
+///
 /// These errors represent issues with network communication between Raft nodes,
 /// including connection failures, timeouts, and protocol violations.
 #[derive(Debug, Error)]
@@ -132,7 +132,9 @@ pub enum NetworkError {
     },
 
     /// Request to a node timed out
-    #[error("Request timeout for node {node_id} after {timeout_ms}ms, operation: {operation}, context: {context}")]
+    #[error(
+        "Request timeout for node {node_id} after {timeout_ms}ms, operation: {operation}, context: {context}"
+    )]
     RequestTimeout {
         node_id: NodeId,
         timeout_ms: u64,
@@ -141,7 +143,9 @@ pub enum NetworkError {
     },
 
     /// Invalid response received from a node
-    #[error("Invalid response from node {node_id}: {message}, expected: {expected}, context: {context}")]
+    #[error(
+        "Invalid response from node {node_id}: {message}, expected: {expected}, context: {context}"
+    )]
     InvalidResponse {
         node_id: NodeId,
         message: String,
@@ -253,7 +257,7 @@ impl NetworkError {
 }
 
 /// Storage-related errors
-/// 
+///
 /// These errors represent issues with persistent storage operations,
 /// including disk I/O, data corruption, and consistency violations.
 #[derive(Debug, Error)]
@@ -283,7 +287,9 @@ pub enum StorageError {
     },
 
     /// Snapshot restoration failed
-    #[error("Snapshot restoration failed: {message}, snapshot_id: {snapshot_id}, context: {context}")]
+    #[error(
+        "Snapshot restoration failed: {message}, snapshot_id: {snapshot_id}, context: {context}"
+    )]
     SnapshotRestorationFailed {
         message: String,
         snapshot_id: String,
@@ -291,7 +297,9 @@ pub enum StorageError {
     },
 
     /// Insufficient disk space
-    #[error("Disk space insufficient: required {required_bytes} bytes, available {available_bytes} bytes, path: {path}")]
+    #[error(
+        "Disk space insufficient: required {required_bytes} bytes, available {available_bytes} bytes, path: {path}"
+    )]
     InsufficientDiskSpace {
         required_bytes: u64,
         available_bytes: u64,
@@ -325,11 +333,7 @@ impl StorageError {
     }
 
     /// Create a log corruption error with context
-    pub fn log_corruption_with_context<C: Into<String>>(
-        index: u64,
-        term: u64,
-        context: C,
-    ) -> Self {
+    pub fn log_corruption_with_context<C: Into<String>>(index: u64, term: u64, context: C) -> Self {
         StorageError::LogCorruption {
             index,
             term,
@@ -338,7 +342,11 @@ impl StorageError {
     }
 
     /// Create a snapshot creation failed error with context
-    pub fn snapshot_creation_failed_with_context<M: Into<String>, S: Into<String>, C: Into<String>>(
+    pub fn snapshot_creation_failed_with_context<
+        M: Into<String>,
+        S: Into<String>,
+        C: Into<String>,
+    >(
         message: M,
         snapshot_id: S,
         context: C,
@@ -351,7 +359,11 @@ impl StorageError {
     }
 
     /// Create a snapshot restoration failed error with context
-    pub fn snapshot_restoration_failed_with_context<M: Into<String>, S: Into<String>, C: Into<String>>(
+    pub fn snapshot_restoration_failed_with_context<
+        M: Into<String>,
+        S: Into<String>,
+        C: Into<String>,
+    >(
         message: M,
         snapshot_id: S,
         context: C,

@@ -698,15 +698,15 @@ impl BatchProcessor {
                 // Check if we have a good batch composition
                 if self.config.enable_operation_grouping
                     && state.requests.len() >= self.config.min_batch_size
-                    && self.has_efficient_batch_composition(&state) {
-                        break;
-                    }
+                    && self.has_efficient_batch_composition(&state)
+                {
+                    break;
+                }
 
                 // Check if we have high priority requests that should be processed quickly
-                if self.config.enable_priority_batching
-                    && self.has_high_priority_requests(&state) {
-                        break;
-                    }
+                if self.config.enable_priority_batching && self.has_high_priority_requests(&state) {
+                    break;
+                }
             }
 
             tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;

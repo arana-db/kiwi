@@ -33,7 +33,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Run fmt
-        run: make fmt
+        run: make fmt-check
 
   cargo-clippy:
     strategy:

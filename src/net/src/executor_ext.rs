@@ -46,76 +46,76 @@ impl CmdExecutorNetworkExt for CmdExecutor {
         exec: NetworkCmdExecution,
     ) -> Pin<Box<dyn Future<Output = Result<(), DualRuntimeError>> + Send + '_>> {
         Box::pin(async move {
-        let cmd_name = String::from_utf8_lossy(&exec.client.cmd_name()).to_lowercase();
-        debug!("Executing network command: {}", cmd_name);
+            let cmd_name = String::from_utf8_lossy(&exec.client.cmd_name()).to_lowercase();
+            debug!("Executing network command: {}", cmd_name);
 
-        // Check argument count first
-        let argv = exec.client.argv();
-        if !exec.cmd.check_arg(argv.len()) {
-            let error_msg = format!("ERR wrong number of arguments for '{}' command", cmd_name);
-            exec.client.set_reply(RespData::Error(error_msg.into()));
-            return Ok(());
-        }
-
-        // Execute do_initial if needed
-        if !exec.cmd.do_initial(&exec.client) {
-            debug!("Command initial check failed for: {}", cmd_name);
-            return Ok(());
-        }
-
-        // Route command to appropriate async storage operation
-        match cmd_name.as_str() {
-            "get" => {
-                execute_get_command(&exec).await?;
-            }
-            "set" => {
-                execute_set_command(&exec).await?;
-            }
-            "del" => {
-                execute_del_command(&exec).await?;
-            }
-            "exists" => {
-                execute_exists_command(&exec).await?;
-            }
-            "expire" => {
-                execute_expire_command(&exec).await?;
-            }
-            "ttl" => {
-                execute_ttl_command(&exec).await?;
-            }
-            "incr" => {
-                execute_incr_command(&exec).await?;
-            }
-            "incrby" => {
-                execute_incrby_command(&exec).await?;
-            }
-            "decr" => {
-                execute_decr_command(&exec).await?;
-            }
-            "decrby" => {
-                execute_decrby_command(&exec).await?;
-            }
-            "mget" => {
-                execute_mget_command(&exec).await?;
-            }
-            "mset" => {
-                execute_mset_command(&exec).await?;
-            }
-            "ping" => {
-                execute_ping_command(&exec).await?;
-            }
-            _ => {
-                // For unsupported commands, return an error
-                let error_msg = format!(
-                    "ERR command '{}' not supported in dual runtime mode",
-                    cmd_name
-                );
-                warn!("Unsupported network command: {}", cmd_name);
+            // Check argument count first
+            let argv = exec.client.argv();
+            if !exec.cmd.check_arg(argv.len()) {
+                let error_msg = format!("ERR wrong number of arguments for '{}' command", cmd_name);
                 exec.client.set_reply(RespData::Error(error_msg.into()));
+                return Ok(());
             }
-        }
 
-        Ok(())
+            // Execute do_initial if needed
+            if !exec.cmd.do_initial(&exec.client) {
+                debug!("Command initial check failed for: {}", cmd_name);
+                return Ok(());
+            }
+
+            // Route command to appropriate async storage operation
+            match cmd_name.as_str() {
+                "get" => {
+                    execute_get_command(&exec).await?;
+                }
+                "set" => {
+                    execute_set_command(&exec).await?;
+                }
+                "del" => {
+                    execute_del_command(&exec).await?;
+                }
+                "exists" => {
+                    execute_exists_command(&exec).await?;
+                }
+                "expire" => {
+                    execute_expire_command(&exec).await?;
+                }
+                "ttl" => {
+                    execute_ttl_command(&exec).await?;
+                }
+                "incr" => {
+                    execute_incr_command(&exec).await?;
+                }
+                "incrby" => {
+                    execute_incrby_command(&exec).await?;
+                }
+                "decr" => {
+                    execute_decr_command(&exec).await?;
+                }
+                "decrby" => {
+                    execute_decrby_command(&exec).await?;
+                }
+                "mget" => {
+                    execute_mget_command(&exec).await?;
+                }
+                "mset" => {
+                    execute_mset_command(&exec).await?;
+                }
+                "ping" => {
+                    execute_ping_command(&exec).await?;
+                }
+                _ => {
+                    // For unsupported commands, return an error
+                    let error_msg = format!(
+                        "ERR command '{}' not supported in dual runtime mode",
+                        cmd_name
+                    );
+                    warn!("Unsupported network command: {}", cmd_name);
+                    exec.client.set_reply(RespData::Error(error_msg.into()));
+                }
+            }
+
+            Ok(())
         })
     }
 }

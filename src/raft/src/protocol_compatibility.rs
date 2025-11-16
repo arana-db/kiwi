@@ -315,9 +315,10 @@ impl RedisProtocolCompatibility {
             .await
         {
             Ok(response) => Ok(response),
-            Err(RaftError::NotLeader { leader_id, context: _ })
-                if consistency == ConsistencyLevel::Linearizable =>
-            {
+            Err(RaftError::NotLeader {
+                leader_id,
+                context: _,
+            }) if consistency == ConsistencyLevel::Linearizable => {
                 // Linearizable reads require leader, redirect
                 Ok(self.format_cluster_error(ClusterErrorType::NotLeader { leader_id }, None))
             }

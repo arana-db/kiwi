@@ -280,9 +280,7 @@ impl RuntimeConfig {
         }
 
         if self.scaling.max_network_threads < self.scaling.min_network_threads {
-            return Err(
-                "scaling.max_network_threads must be >= min_network_threads".to_string(),
-            );
+            return Err("scaling.max_network_threads must be >= min_network_threads".to_string());
         }
 
         if self.scaling.min_storage_threads == 0 {
@@ -290,9 +288,7 @@ impl RuntimeConfig {
         }
 
         if self.scaling.max_storage_threads < self.scaling.min_storage_threads {
-            return Err(
-                "scaling.max_storage_threads must be >= min_storage_threads".to_string(),
-            );
+            return Err("scaling.max_storage_threads must be >= min_storage_threads".to_string());
         }
 
         if self.scaling.scale_up_threshold == 0 || self.scaling.scale_up_threshold > 100 {
@@ -304,9 +300,7 @@ impl RuntimeConfig {
         }
 
         if self.scaling.scale_down_threshold >= self.scaling.scale_up_threshold {
-            return Err(
-                "scaling.scale_down_threshold must be < scale_up_threshold".to_string(),
-            );
+            return Err("scaling.scale_down_threshold must be < scale_up_threshold".to_string());
         }
 
         if self.scaling.scale_increment == 0 {
@@ -385,7 +379,9 @@ impl RuntimeConfig {
         }
 
         if self.fault_injection.default_network_delay.is_zero() {
-            log::warn!("fault_injection.default_network_delay is zero, which may not be useful for testing");
+            log::warn!(
+                "fault_injection.default_network_delay is zero, which may not be useful for testing"
+            );
         }
 
         // Warn if fault injection is enabled in production

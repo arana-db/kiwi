@@ -115,8 +115,6 @@ pub struct StorageStats {
     pub compaction_level: Option<u32>,
 }
 
-
-
 /// Request sent from network runtime to storage runtime
 #[derive(Debug)]
 pub struct StorageRequest {
@@ -147,8 +145,6 @@ pub enum RequestPriority {
     /// Critical priority requests (system operations)
     Critical = 3,
 }
-
-
 
 /// Response sent from storage runtime back to network runtime
 #[derive(Debug)]
@@ -1288,9 +1284,7 @@ impl StorageClient {
                             Err(err) => StorageResponse {
                                 id: queued.request.id,
                                 result: Err(storage::error::Error::Io {
-                                    error: std::io::Error::other(
-                                        err.to_string(),
-                                    ),
+                                    error: std::io::Error::other(err.to_string()),
                                     location: snafu::Location::new(file!(), line!(), column!()),
                                 }),
                                 execution_time: queued.queued_at.elapsed(),
@@ -1387,8 +1381,6 @@ impl StorageClient {
             }
         }
     }
-
-
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ use std::sync::Arc;
 use storage::storage::Storage;
 
 /// Convert conf::config::ClusterConfig to raft::types::ClusterConfig
-/// 
+///
 /// This provides a unified entry point for cluster configuration conversion,
 /// following the pattern used in kiwi-cpp where configuration is mapped
 /// at the server initialization layer.
@@ -89,26 +89,21 @@ fn main() -> std::io::Result<()> {
     );
 
     // Create and start RuntimeManager
-    let mut runtime_manager = RuntimeManager::new(runtime_config).map_err(|e| {
-        std::io::Error::other(
-            format!("Failed to create RuntimeManager: {}", e),
-        )
-    })?;
+    let mut runtime_manager = RuntimeManager::new(runtime_config)
+        .map_err(|e| std::io::Error::other(format!("Failed to create RuntimeManager: {}", e)))?;
 
     // Start the RuntimeManager first
     // We need to use a basic runtime to start the RuntimeManager
-    let basic_rt = tokio::runtime::Runtime::new().map_err(|e| {
-        std::io::Error::other(
-            format!("Failed to create basic runtime: {}", e),
-        )
-    })?;
+    let basic_rt = tokio::runtime::Runtime::new()
+        .map_err(|e| std::io::Error::other(format!("Failed to create basic runtime: {}", e)))?;
 
     basic_rt.block_on(async {
         if let Err(e) = runtime_manager.start().await {
             error!("Failed to start RuntimeManager: {}", e);
-            return Err(std::io::Error::other(
-                format!("Failed to start RuntimeManager: {}", e),
-            ));
+            return Err(std::io::Error::other(format!(
+                "Failed to start RuntimeManager: {}",
+                e
+            )));
         }
         Ok(())
     })?;
@@ -116,29 +111,24 @@ fn main() -> std::io::Result<()> {
     info!("RuntimeManager started successfully");
 
     // Get runtime handles after starting
-    let network_handle = runtime_manager.network_handle().map_err(|e| {
-        std::io::Error::other(
-            format!("Failed to get network handle: {}", e),
-        )
-    })?;
-    let storage_handle = runtime_manager.storage_handle().map_err(|e| {
-        std::io::Error::other(
-            format!("Failed to get storage handle: {}", e),
-        )
-    })?;
+    let network_handle = runtime_manager
+        .network_handle()
+        .map_err(|e| std::io::Error::other(format!("Failed to get network handle: {}", e)))?;
+    let storage_handle = runtime_manager
+        .storage_handle()
+        .map_err(|e| std::io::Error::other(format!("Failed to get storage handle: {}", e)))?;
 
     // Initialize storage components and get the receiver for the storage server
     let storage_receiver = runtime_manager
         .initialize_storage_components()
         .map_err(|e| {
-            std::io::Error::other(
-                format!("Failed to initialize storage components: {}", e),
-            )
+            std::io::Error::other(format!("Failed to initialize storage components: {}", e))
         })?;
 
     info!("Storage components initialized, starting storage server...");
 
     // Initialize storage server in storage runtime (runs in background)
+
     storage_handle.spawn(async move {
         info!("Initializing storage server...");
         if let Err(e) = initialize_storage_server(storage_receiver).await {
@@ -185,17 +175,21 @@ fn main() -> std::io::Result<()> {
             let raft_cluster_config = convert_cluster_config(&config.cluster);
 
             // Initialize Raft node
-            info!("Initializing Raft node with configuration: {:?}", raft_cluster_config);
+            info!(
+                "Initializing Raft node with configuration: {:?}",
+                raft_cluster_config
+            );
             let raft_node = match raft::RaftNode::new(raft_cluster_config).await {
                 Ok(node) => {
                     info!("Raft node initialized successfully");
                     Arc::new(node)
-                },
+                }
                 Err(e) => {
                     error!("Failed to initialize Raft node: {}", e);
-                    return Err(std::io::Error::other(
-                        format!("Failed to initialize Raft node: {}", e)
-                    ));
+                    return Err(std::io::Error::other(format!(
+                        "Failed to initialize Raft node: {}",
+                        e
+                    )));
                 }
             };
 
@@ -203,15 +197,24 @@ fn main() -> std::io::Result<()> {
             info!("Starting Raft node (init_cluster: {})", args.init_cluster);
             if let Err(e) = raft_node.start(args.init_cluster).await {
                 error!("Failed to start Raft node: {}", e);
-                return Err(std::io::Error::other(
-                    format!("Failed to start Raft node: {}", e)
-                ));
+                return Err(std::io::Error::other(format!(
+                    "Failed to start Raft node: {}",
+                    e
+                )));
             }
 
             info!("Raft node started successfully");
 
             // Start server in cluster mode with raft node injected
-            match start_server_with_mode(protocol, &addr, &mut runtime_manager, true, Some(Arc::clone(&raft_node))).await {
+            match start_server_with_mode(
+                protocol,
+                &addr,
+                &mut runtime_manager,
+                true,
+                Some(Arc::clone(&raft_node)),
+            )
+            .await
+            {
                 Ok(_) => info!("Server started successfully in cluster mode"),
                 Err(e) => {
                     error!("Failed to start server: {}", e);

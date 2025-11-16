@@ -20,7 +20,9 @@ mod redis_hash_test {
     use std::sync::Arc;
 
     use kstd::lock_mgr::LockMgr;
-    use storage::{BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+    use storage::{
+        BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path,
+    };
 
     #[test]
     fn test_hset_hget_hexists_basic() {

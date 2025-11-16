@@ -17,15 +17,17 @@
 
 //! Raft storage layer implementation using RocksDB
 
+use std::future::Future;
 use std::path::Path;
 use std::sync::Arc;
-use std::future::Future;
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{RaftError, StorageError};
-use crate::storage::backend::{BackendType, StorageBackend, StorageBackendImpl, WriteOp, create_backend};
+use crate::storage::backend::{
+    BackendType, StorageBackend, StorageBackendImpl, WriteOp, create_backend,
+};
 use crate::types::{LogIndex, NodeId, Term};
 use openraft::Membership;
 
@@ -57,23 +59,23 @@ const KEY_VOTED_FOR: &str = "voted_for";
 const KEY_LAST_APPLIED: &str = "last_applied";
 
 /// Raft storage implementation using pluggable storage backend
-/// 
+///
 /// # Locking Strategy
-/// 
+///
 /// This implementation uses `parking_lot::RwLock` for the cached Raft state to allow:
 /// - Concurrent reads of state (term, voted_for, last_applied) without blocking
 /// - Exclusive writes when state needs to be updated
-/// 
+///
 /// The storage backend itself is thread-safe and handles its own internal locking, so we don't
 /// need additional locks for database operations. The RwLock is only for the in-memory
 /// cache to avoid frequent database reads.
-/// 
+///
 /// # Caching Strategy
-/// 
+///
 /// This implementation caches frequently accessed data in memory:
 /// - Raft state (term, voted_for, last_applied) - cached in `state` field
 /// - Snapshot metadata - cached in `snapshot_meta_cache` field
-/// 
+///
 /// This reduces storage backend reads and improves performance for hot paths.
 pub struct RaftStorage {
     /// Storage backend (thread-safe, handles its own locking)
@@ -158,9 +160,9 @@ pub struct StoredSnapshotMeta {
 
 impl RaftStorage {
     /// Create a new Raft storage instance with default backend (RocksDB)
-    /// 
+    ///
     /// This is a synchronous wrapper that blocks on the async initialization.
-    /// 
+    ///
     /// **Important**: This function creates its own tokio runtime and should NOT be called
     /// from within an async context (like inside `#[tokio::test]` or async functions).
     /// If you're already in an async context, use `new_async()` instead.
@@ -174,12 +176,18 @@ impl RaftStorage {
     }
 
     /// Create a new Raft storage instance with specified backend type
-    pub fn with_backend<P: AsRef<Path> + Send>(backend_type: BackendType, db_path: P) -> Result<Self, RaftError> {
+    pub fn with_backend<P: AsRef<Path> + Send>(
+        backend_type: BackendType,
+        db_path: P,
+    ) -> Result<Self, RaftError> {
         run_async(Self::with_backend_async(backend_type, db_path))
     }
 
     /// Create a new Raft storage instance with specified backend type - async version
-    pub async fn with_backend_async<P: AsRef<Path>>(backend_type: BackendType, db_path: P) -> Result<Self, RaftError> {
+    pub async fn with_backend_async<P: AsRef<Path>>(
+        backend_type: BackendType,
+        db_path: P,
+    ) -> Result<Self, RaftError> {
         let backend = create_backend(backend_type, db_path)?;
         let state = Arc::new(RwLock::new(RaftState::default()));
         let snapshot_meta_cache = Arc::new(RwLock::new(None));
@@ -226,9 +234,9 @@ impl RaftStorage {
 
         if let Some(meta_data) = self.backend.read(&key).await? {
             let meta: StoredSnapshotMeta = bincode::deserialize(&meta_data).map_err(|e| {
-                RaftError::Storage(StorageError::SnapshotRestorationFailed { 
-                    message: format!("Failed to deserialize snapshot metadata: {}", e), 
-                    snapshot_id: String::from("unknown"), 
+                RaftError::Storage(StorageError::SnapshotRestorationFailed {
+                    message: format!("Failed to deserialize snapshot metadata: {}", e),
+                    snapshot_id: String::from("unknown"),
                     context: String::from("load_snapshot_meta_cache_async"),
                 })
             })?;
@@ -243,10 +251,14 @@ impl RaftStorage {
     /// Load Raft state from persistent storage
     async fn load_state_async(&self) -> Result<(), RaftError> {
         // Load current term
-        let current_term = if let Some(data) = self.backend.read(&Self::state_key(KEY_CURRENT_TERM)).await? {
+        let current_term = if let Some(data) = self
+            .backend
+            .read(&Self::state_key(KEY_CURRENT_TERM))
+            .await?
+        {
             bincode::deserialize(&data).map_err(|e| {
-                RaftError::Storage(StorageError::DataInconsistency { 
-                    message: format!("Failed to deserialize current term: {}", e), 
+                RaftError::Storage(StorageError::DataInconsistency {
+                    message: format!("Failed to deserialize current term: {}", e),
                     context: String::from("load_state_async"),
                 })
             })?
@@ -255,22 +267,27 @@ impl RaftStorage {
         };
 
         // Load voted for
-        let voted_for = if let Some(data) = self.backend.read(&Self::state_key(KEY_VOTED_FOR)).await? {
-            bincode::deserialize(&data).map_err(|e| {
-                RaftError::Storage(StorageError::DataInconsistency { 
-                    message: format!("Failed to deserialize voted_for: {}", e), 
-                    context: String::from("load_state_async"),
-                })
-            })?
-        } else {
-            None
-        };
+        let voted_for =
+            if let Some(data) = self.backend.read(&Self::state_key(KEY_VOTED_FOR)).await? {
+                bincode::deserialize(&data).map_err(|e| {
+                    RaftError::Storage(StorageError::DataInconsistency {
+                        message: format!("Failed to deserialize voted_for: {}", e),
+                        context: String::from("load_state_async"),
+                    })
+                })?
+            } else {
+                None
+            };
 
         // Load last applied
-        let last_applied = if let Some(data) = self.backend.read(&Self::state_key(KEY_LAST_APPLIED)).await? {
+        let last_applied = if let Some(data) = self
+            .backend
+            .read(&Self::state_key(KEY_LAST_APPLIED))
+            .await?
+        {
             bincode::deserialize(&data).map_err(|e| {
-                RaftError::Storage(StorageError::DataInconsistency { 
-                    message: format!("Failed to deserialize last_applied: {}", e), 
+                RaftError::Storage(StorageError::DataInconsistency {
+                    message: format!("Failed to deserialize last_applied: {}", e),
                     context: String::from("load_state_async"),
                 })
             })?
@@ -288,41 +305,62 @@ impl RaftStorage {
     }
 
     /// Async wrapper for get_log_entry to avoid blocking
-    async fn get_log_entry_async(&self, index: LogIndex) -> Result<Option<StoredLogEntry>, RaftError> {
+    async fn get_log_entry_async(
+        &self,
+        index: LogIndex,
+    ) -> Result<Option<StoredLogEntry>, RaftError> {
         let start = std::time::Instant::now();
         log::trace!("get_log_entry_async: index={}", index);
-        
+
         let key = Self::log_key(index);
         let read_start = std::time::Instant::now();
-        
+
         if let Some(value) = self.backend.read(&key).await? {
             let read_elapsed = read_start.elapsed();
-            log::trace!("Storage backend read for index {}: {:?}", index, read_elapsed);
-            
+            log::trace!(
+                "Storage backend read for index {}: {:?}",
+                index,
+                read_elapsed
+            );
+
             let deserialize_start = std::time::Instant::now();
             let entry: StoredLogEntry = bincode::deserialize(&value).map_err(|e| {
-                RaftError::Storage(StorageError::DataInconsistency { 
-                    message: format!("Failed to deserialize log entry: {}", e), 
+                RaftError::Storage(StorageError::DataInconsistency {
+                    message: format!("Failed to deserialize log entry: {}", e),
                     context: String::from("get_log_entry_async"),
                 })
             })?;
             let deserialize_elapsed = deserialize_start.elapsed();
-            log::trace!("Deserialization for index {}: {:?}, entry_size={} bytes", 
-                index, deserialize_elapsed, value.len());
-            
+            log::trace!(
+                "Deserialization for index {}: {:?}, entry_size={} bytes",
+                index,
+                deserialize_elapsed,
+                value.len()
+            );
+
             let elapsed = start.elapsed();
-            log::trace!("get_log_entry_async: index={}, found=true, total_duration={:?}", 
-                index, elapsed);
-            
+            log::trace!(
+                "get_log_entry_async: index={}, found=true, total_duration={:?}",
+                index,
+                elapsed
+            );
+
             Ok(Some(entry))
         } else {
             let read_elapsed = read_start.elapsed();
-            log::trace!("Storage backend read for index {} (not found): {:?}", index, read_elapsed);
-            
+            log::trace!(
+                "Storage backend read for index {} (not found): {:?}",
+                index,
+                read_elapsed
+            );
+
             let elapsed = start.elapsed();
-            log::trace!("get_log_entry_async: index={}, found=false, total_duration={:?}", 
-                index, elapsed);
-            
+            log::trace!(
+                "get_log_entry_async: index={}, found=false, total_duration={:?}",
+                index,
+                elapsed
+            );
+
             Ok(None)
         }
     }
@@ -333,13 +371,13 @@ impl RaftStorage {
         let start_key = b"log:".to_vec();
         let mut end_key = b"log:".to_vec();
         end_key.push(0xFF); // End of log: prefix range
-        
+
         let entries = self.backend.read_range(start_key..end_key).await?;
-        
+
         if let Some((_, value)) = entries.last() {
             let entry: StoredLogEntry = bincode::deserialize(value).map_err(|e| {
-                RaftError::Storage(StorageError::DataInconsistency { 
-                    message: format!("Failed to deserialize log entry: {}", e), 
+                RaftError::Storage(StorageError::DataInconsistency {
+                    message: format!("Failed to deserialize log entry: {}", e),
                     context: String::from("get_last_log_entry_async"),
                 })
             })?;
@@ -353,26 +391,35 @@ impl RaftStorage {
     /// Updates both persistent storage and in-memory cache
     async fn store_snapshot_meta_async(&self, meta: &StoredSnapshotMeta) -> Result<(), RaftError> {
         let start = std::time::Instant::now();
-        log::trace!("store_snapshot_meta_async: snapshot_id={}, index={}", 
-            meta.snapshot_id, meta.last_log_index);
-        
+        log::trace!(
+            "store_snapshot_meta_async: snapshot_id={}, index={}",
+            meta.snapshot_id,
+            meta.last_log_index
+        );
+
         let serialize_start = std::time::Instant::now();
         let meta_data = bincode::serialize(meta).map_err(|e| {
-            RaftError::Storage(StorageError::SnapshotCreationFailed { 
-                message: format!("Failed to serialize snapshot metadata: {}", e), 
-                snapshot_id: String::from("unknown"), 
+            RaftError::Storage(StorageError::SnapshotCreationFailed {
+                message: format!("Failed to serialize snapshot metadata: {}", e),
+                snapshot_id: String::from("unknown"),
                 context: String::from("store_snapshot_meta_async"),
             })
         })?;
         let serialize_elapsed = serialize_start.elapsed();
-        log::trace!("Snapshot metadata serialization: {:?}, size={} bytes", 
-            serialize_elapsed, meta_data.len());
+        log::trace!(
+            "Snapshot metadata serialization: {:?}, size={} bytes",
+            serialize_elapsed,
+            meta_data.len()
+        );
 
         let write_start = std::time::Instant::now();
         let key = Self::snapshot_meta_key();
         self.backend.write(&key, &meta_data).await?;
         let write_elapsed = write_start.elapsed();
-        log::trace!("Storage backend snapshot metadata write: {:?}", write_elapsed);
+        log::trace!(
+            "Storage backend snapshot metadata write: {:?}",
+            write_elapsed
+        );
 
         // Update cache after successful write
         let cache_start = std::time::Instant::now();
@@ -387,18 +434,29 @@ impl RaftStorage {
     }
 
     /// Async wrapper for store_snapshot_data to avoid blocking
-    async fn store_snapshot_data_async(&self, snapshot_id: &str, data: &[u8]) -> Result<(), RaftError> {
+    async fn store_snapshot_data_async(
+        &self,
+        snapshot_id: &str,
+        data: &[u8],
+    ) -> Result<(), RaftError> {
         let start = std::time::Instant::now();
-        log::trace!("store_snapshot_data_async: snapshot_id={}, data_size={} bytes", 
-            snapshot_id, data.len());
-        
+        log::trace!(
+            "store_snapshot_data_async: snapshot_id={}, data_size={} bytes",
+            snapshot_id,
+            data.len()
+        );
+
         let write_start = std::time::Instant::now();
         let key = Self::snapshot_key(snapshot_id);
         self.backend.write(&key, data).await?;
         let write_elapsed = write_start.elapsed();
-        log::trace!("Storage backend snapshot data write for {}: {:?}, size={} bytes", 
-            snapshot_id, write_elapsed, data.len());
-        
+        log::trace!(
+            "Storage backend snapshot data write for {}: {:?}, size={} bytes",
+            snapshot_id,
+            write_elapsed,
+            data.len()
+        );
+
         let elapsed = start.elapsed();
         log::trace!("store_snapshot_data_async: total_duration={:?}", elapsed);
         Ok(())
@@ -410,8 +468,8 @@ impl RaftStorage {
 
         // Serialize and save current term
         let term_data = bincode::serialize(&state.current_term).map_err(|e| {
-            RaftError::Storage(StorageError::DataInconsistency { 
-                message: format!("Failed to serialize current term: {}", e), 
+            RaftError::Storage(StorageError::DataInconsistency {
+                message: format!("Failed to serialize current term: {}", e),
                 context: String::from("save_state_async"),
             })
         })?;
@@ -422,8 +480,8 @@ impl RaftStorage {
 
         // Serialize and save voted for
         let voted_for_data = bincode::serialize(&state.voted_for).map_err(|e| {
-            RaftError::Storage(StorageError::DataInconsistency { 
-                message: format!("Failed to serialize voted_for: {}", e), 
+            RaftError::Storage(StorageError::DataInconsistency {
+                message: format!("Failed to serialize voted_for: {}", e),
                 context: String::from("save_state_async"),
             })
         })?;
@@ -434,8 +492,8 @@ impl RaftStorage {
 
         // Serialize and save last applied
         let last_applied_data = bincode::serialize(&state.last_applied).map_err(|e| {
-            RaftError::Storage(StorageError::DataInconsistency { 
-                message: format!("Failed to serialize last_applied: {}", e), 
+            RaftError::Storage(StorageError::DataInconsistency {
+                message: format!("Failed to serialize last_applied: {}", e),
                 context: String::from("save_state_async"),
             })
         })?;
@@ -462,7 +520,7 @@ impl RaftStorage {
             state.current_term = term;
             state.clone()
         };
-        
+
         run_async(self.save_state_async(&state))
     }
 
@@ -488,7 +546,7 @@ impl RaftStorage {
             state.voted_for = node_id;
             state.clone()
         };
-        
+
         run_async(self.save_state_async(&state))
     }
 
@@ -514,7 +572,7 @@ impl RaftStorage {
             state.last_applied = index;
             state.clone()
         };
-        
+
         run_async(self.save_state_async(&state))
     }
 
@@ -539,7 +597,7 @@ impl RaftStorage {
     /// Parse log entry key from storage backend
     pub fn parse_log_key(key: &[u8]) -> Result<LogIndex, RaftError> {
         if key.len() != 12 || &key[0..4] != b"log:" {
-            return Err(RaftError::Storage(StorageError::DataInconsistency { 
+            return Err(RaftError::Storage(StorageError::DataInconsistency {
                 message: format!("Invalid log key format: expected 'log:' prefix and 8-byte index"),
                 context: "parse_log_key".to_string(),
             }));
@@ -573,8 +631,8 @@ impl RaftStorage {
     pub async fn append_log_entry_async(&self, entry: &StoredLogEntry) -> Result<(), RaftError> {
         let key = Self::log_key(entry.index);
         let value = bincode::serialize(entry).map_err(|e| {
-            RaftError::Storage(StorageError::DataInconsistency { 
-                message: format!("Failed to serialize log entry: {}", e), 
+            RaftError::Storage(StorageError::DataInconsistency {
+                message: format!("Failed to serialize log entry: {}", e),
                 context: String::from("append_log_entry_async"),
             })
         })?;
@@ -595,12 +653,20 @@ impl RaftStorage {
     }
 
     /// Get log entries in a range [start, end) (synchronous wrapper)
-    pub fn get_log_entries_range(&self, start: u64, end: u64) -> Result<Vec<StoredLogEntry>, RaftError> {
+    pub fn get_log_entries_range(
+        &self,
+        start: u64,
+        end: u64,
+    ) -> Result<Vec<StoredLogEntry>, RaftError> {
         run_async(self.get_log_entries_range_async(start, end))
     }
 
     /// Get log entries in a range [start, end) (async version)
-    pub async fn get_log_entries_range_async(&self, start: u64, end: u64) -> Result<Vec<StoredLogEntry>, RaftError> {
+    pub async fn get_log_entries_range_async(
+        &self,
+        start: u64,
+        end: u64,
+    ) -> Result<Vec<StoredLogEntry>, RaftError> {
         let mut entries = Vec::new();
 
         for index in start..end {
@@ -620,14 +686,17 @@ impl RaftStorage {
     }
 
     /// Delete log entries from index onwards (async version)
-    pub async fn delete_log_entries_from_async(&self, from_index: LogIndex) -> Result<(), RaftError> {
+    pub async fn delete_log_entries_from_async(
+        &self,
+        from_index: LogIndex,
+    ) -> Result<(), RaftError> {
         let start_key = Self::log_key(from_index);
         let mut end_key = b"log:".to_vec();
         end_key.push(0xFF); // End of log: prefix range
-        
+
         // Get all keys in the range
         let entries = self.backend.read_range(start_key..end_key).await?;
-        
+
         // Create batch delete operations
         let mut ops = Vec::new();
         for (key, _) in entries {
@@ -654,10 +723,10 @@ impl RaftStorage {
 
         let start_key = Self::log_key(0);
         let end_key = Self::log_key(upto_index);
-        
+
         // Get all keys in the range [0, upto_index)
         let entries = self.backend.read_range(start_key..end_key).await?;
-        
+
         // Create batch delete operations
         let mut ops = Vec::new();
         for (key, _) in entries {
@@ -698,9 +767,9 @@ impl RaftStorage {
 
         if let Some(meta_data) = self.backend.read(&key).await? {
             let meta: StoredSnapshotMeta = bincode::deserialize(&meta_data).map_err(|e| {
-                RaftError::Storage(StorageError::SnapshotRestorationFailed { 
-                    message: format!("Failed to deserialize snapshot metadata: {}", e), 
-                    snapshot_id: String::from("unknown"), 
+                RaftError::Storage(StorageError::SnapshotRestorationFailed {
+                    message: format!("Failed to deserialize snapshot metadata: {}", e),
+                    snapshot_id: String::from("unknown"),
                     context: String::from("get_snapshot_meta_async"),
                 })
             })?;
@@ -726,7 +795,10 @@ impl RaftStorage {
     }
 
     /// Get snapshot data (async version)
-    pub async fn get_snapshot_data_async(&self, snapshot_id: &str) -> Result<Option<Vec<u8>>, RaftError> {
+    pub async fn get_snapshot_data_async(
+        &self,
+        snapshot_id: &str,
+    ) -> Result<Option<Vec<u8>>, RaftError> {
         let key = Self::snapshot_key(snapshot_id);
         self.backend.read(&key).await
     }
@@ -737,7 +809,10 @@ impl RaftStorage {
 // ============================================================================
 
 use openraft::storage::{RaftLogReader, RaftSnapshotBuilder};
-use openraft::{Entry, EntryPayload, LogId, Snapshot, SnapshotMeta, StorageError as OpenraftStorageError, StoredMembership};
+use openraft::{
+    Entry, EntryPayload, LogId, Snapshot, SnapshotMeta, StorageError as OpenraftStorageError,
+    StoredMembership,
+};
 use std::io::Cursor;
 use std::ops::RangeBounds;
 
@@ -746,7 +821,7 @@ use crate::types::{ClientRequest, TypeConfig};
 /// Convert RaftError to Openraft StorageError
 pub(crate) fn to_storage_error(err: RaftError) -> OpenraftStorageError<crate::types::NodeId> {
     use openraft::{ErrorSubject, ErrorVerb, StorageIOError};
-    
+
     OpenraftStorageError::IO {
         source: StorageIOError::new(
             ErrorSubject::Store,
@@ -761,7 +836,7 @@ impl RaftLogReader<TypeConfig> for Arc<RaftStorage> {
     async fn try_get_log_entries<RB>(
         &mut self,
         range: RB,
-    ) -> Result<Vec<Entry<TypeConfig>>, OpenraftStorageError<crate::types::NodeId>> 
+    ) -> Result<Vec<Entry<TypeConfig>>, OpenraftStorageError<crate::types::NodeId>>
     where
         RB: RangeBounds<u64> + Clone + Send,
     {
@@ -778,17 +853,17 @@ impl RaftLogReader<TypeConfig> for Arc<RaftStorage> {
             std::ops::Bound::Unbounded => u64::MAX,
         };
 
-        log::debug!(
-            "Reading log entries from {} to {}",
-            start_index,
-            end_index
-        );
+        log::debug!("Reading log entries from {} to {}", start_index, end_index);
 
         let mut entries = Vec::new();
 
         // Use async wrapper to avoid blocking the async runtime
         for index in start_index..end_index {
-            match self.get_log_entry_async(index).await.map_err(to_storage_error)? {
+            match self
+                .get_log_entry_async(index)
+                .await
+                .map_err(to_storage_error)?
+            {
                 Some(stored_entry) => {
                     let entry = convert_stored_entry_to_openraft_entry(stored_entry)
                         .map_err(to_storage_error)?;
@@ -810,12 +885,12 @@ impl RaftLogReader<TypeConfig> for RaftStorage {
     async fn try_get_log_entries<RB>(
         &mut self,
         range: RB,
-    ) -> Result<Vec<Entry<TypeConfig>>, OpenraftStorageError<crate::types::NodeId>> 
+    ) -> Result<Vec<Entry<TypeConfig>>, OpenraftStorageError<crate::types::NodeId>>
     where
         RB: RangeBounds<u64> + Clone + Send,
     {
         let start = std::time::Instant::now();
-        
+
         // Determine the start and end indices from the range bounds
         let start_index = match range.start_bound() {
             std::ops::Bound::Included(&n) => n,
@@ -829,19 +904,23 @@ impl RaftLogReader<TypeConfig> for RaftStorage {
             std::ops::Bound::Unbounded => u64::MAX,
         };
 
-        log::debug!(
-            "Reading log entries from {} to {}",
+        log::debug!("Reading log entries from {} to {}", start_index, end_index);
+        log::trace!(
+            "try_get_log_entries: range=[{}, {})",
             start_index,
             end_index
         );
-        log::trace!("try_get_log_entries: range=[{}, {})", start_index, end_index);
 
         let mut entries = Vec::new();
         let mut total_bytes = 0usize;
 
         // Iterate through the range and collect entries using async wrapper
         for index in start_index..end_index {
-            match self.get_log_entry_async(index).await.map_err(to_storage_error)? {
+            match self
+                .get_log_entry_async(index)
+                .await
+                .map_err(to_storage_error)?
+            {
                 Some(stored_entry) => {
                     total_bytes += stored_entry.payload.len();
                     // Convert StoredLogEntry to Openraft Entry
@@ -859,13 +938,17 @@ impl RaftLogReader<TypeConfig> for RaftStorage {
 
         let elapsed = start.elapsed();
         log::debug!("Read {} log entries in {:?}", entries.len(), elapsed);
-        log::trace!("try_get_log_entries: count={}, total_bytes={}, duration={:?}, throughput={:.2} MB/s", 
-            entries.len(), total_bytes, elapsed,
+        log::trace!(
+            "try_get_log_entries: count={}, total_bytes={}, duration={:?}, throughput={:.2} MB/s",
+            entries.len(),
+            total_bytes,
+            elapsed,
             if elapsed.as_secs_f64() > 0.0 {
                 (total_bytes as f64 / 1_048_576.0) / elapsed.as_secs_f64()
             } else {
                 0.0
-            });
+            }
+        );
         Ok(entries)
     }
 }
@@ -884,8 +967,8 @@ fn convert_stored_entry_to_openraft_entry(
     let payload = match stored.payload {
         StoredEntryPayload::Normal(bytes) => {
             let client_request: ClientRequest = bincode::deserialize(&bytes).map_err(|e| {
-                RaftError::Storage(StorageError::DataInconsistency { 
-                    message: format!("Failed to deserialize log entry payload: {}", e), 
+                RaftError::Storage(StorageError::DataInconsistency {
+                    message: format!("Failed to deserialize log entry payload: {}", e),
                     context: String::from("convert_stored_entry_to_openraft_entry"),
                 })
             })?;
@@ -893,10 +976,10 @@ fn convert_stored_entry_to_openraft_entry(
         }
         StoredEntryPayload::Blank => EntryPayload::Blank,
         StoredEntryPayload::Membership(bytes) => {
-            let membership: Membership<NodeId, openraft::BasicNode> = 
-                bincode::deserialize(&bytes).map_err(|e| {
-                    RaftError::Storage(StorageError::DataInconsistency { 
-                        message: format!("Failed to deserialize membership: {}", e), 
+            let membership: Membership<NodeId, openraft::BasicNode> = bincode::deserialize(&bytes)
+                .map_err(|e| {
+                    RaftError::Storage(StorageError::DataInconsistency {
+                        message: format!("Failed to deserialize membership: {}", e),
                         context: String::from("convert_stored_entry_to_openraft_entry"),
                     })
                 })?;
@@ -905,10 +988,7 @@ fn convert_stored_entry_to_openraft_entry(
     };
 
     // Create Entry
-    let entry = Entry {
-        log_id,
-        payload,
-    };
+    let entry = Entry { log_id, payload };
 
     Ok(entry)
 }
@@ -1310,7 +1390,7 @@ mod raft_snapshot_builder_tests {
 
         // Verify we can read the snapshot data
         let snapshot_data = snapshot.snapshot.into_inner();
-        
+
         // For now, snapshot data is empty (placeholder implementation)
         // In a full implementation, this would contain serialized state machine data
         assert_eq!(snapshot_data.len(), 0);
@@ -1364,11 +1444,3 @@ mod raft_snapshot_builder_tests {
         assert_eq!(stored_meta.last_log_index, 1); // Last index is 1 (0-1)
     }
 }
-
-
-
-
-
-
-
-

@@ -488,7 +488,6 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-
     #[tokio::test]
     async fn test_performance_test_config() {
         let config = PerformanceTestConfig::default();

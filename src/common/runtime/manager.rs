@@ -24,7 +24,7 @@ use tokio::sync::{Notify, RwLock};
 use tokio::task::JoinHandle;
 
 use crate::error_logging::{ErrorLogger, RuntimeContext};
-use crate::{DualRuntimeError, RuntimeConfig, MessageChannel, StorageClient};
+use crate::{DualRuntimeError, MessageChannel, RuntimeConfig, StorageClient};
 
 /// Health status of a runtime
 #[derive(Debug, Clone, PartialEq)]
@@ -398,15 +398,11 @@ impl RuntimeManager {
     /// Get the storage client for sending requests from network to storage runtime
     /// This should only be called after the RuntimeManager has been started
     pub fn storage_client(&self) -> Result<Arc<StorageClient>, DualRuntimeError> {
-        self.storage_client
-            .as_ref()
-            .map(Arc::clone)
-            .ok_or_else(|| {
-                DualRuntimeError::lifecycle(
-                    "Storage client not initialized. RuntimeManager must be started first."
-                        .to_string(),
-                )
-            })
+        self.storage_client.as_ref().map(Arc::clone).ok_or_else(|| {
+            DualRuntimeError::lifecycle(
+                "Storage client not initialized. RuntimeManager must be started first.".to_string(),
+            )
+        })
     }
 
     /// Initialize storage components by extracting the receiver and creating the storage client

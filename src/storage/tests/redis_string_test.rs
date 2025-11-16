@@ -20,7 +20,9 @@ mod redis_string_test {
     use std::{sync::Arc, thread, time::Duration};
 
     use kstd::lock_mgr::LockMgr;
-    use storage::{BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+    use storage::{
+        BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path,
+    };
 
     #[test]
     fn test_redis_set() {
@@ -63,8 +65,8 @@ mod redis_string_test {
 
         safe_cleanup_test_db(&test_db_path);
     }
-    
-#[test]
+
+    #[test]
     fn test_redis_set_multiple() {
         let test_db_path = unique_test_db_path();
 
@@ -353,7 +355,7 @@ mod redis_string_test {
 
         safe_cleanup_test_db(&test_db_path);
     }
-   
+
     #[test]
     fn test_redis_setex() {
         let test_db_path = unique_test_db_path();

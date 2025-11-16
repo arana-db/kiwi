@@ -29,7 +29,7 @@ async fn test_basic_storage_creation() {
     // Test basic storage creation without adaptor pattern
     let temp_dir = TempDir::new().unwrap();
     let _storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
-    
+
     // If this compiles and runs, basic storage creation works
     // Storage creation succeeded if we reach this point
     assert!(true, "Storage creation succeeded");
@@ -39,9 +39,13 @@ async fn test_basic_storage_creation() {
 async fn test_basic_state_machine_creation() {
     // Test basic state machine creation
     let state_machine = KiwiStateMachine::new(1);
-    
+
     // Test basic functionality
-    assert_eq!(state_machine.applied_index(), 0, "Initial applied index should be 0");
+    assert_eq!(
+        state_machine.applied_index(),
+        0,
+        "Initial applied index should be 0"
+    );
     assert_eq!(state_machine.node_id, 1, "Node ID should match");
 }
 
@@ -49,7 +53,7 @@ async fn test_basic_state_machine_creation() {
 async fn test_state_machine_redis_commands() {
     // Test state machine Redis command handling
     let state_machine = KiwiStateMachine::new(1);
-    
+
     let request = ClientRequest {
         id: RequestId(1),
         command: RedisCommand {
@@ -58,7 +62,7 @@ async fn test_state_machine_redis_commands() {
         },
         consistency_level: ConsistencyLevel::Linearizable,
     };
-    
+
     let response = state_machine.apply_redis_command(&request).await.unwrap();
     assert!(response.result.is_ok(), "PING command should succeed");
 }
@@ -67,9 +71,12 @@ async fn test_state_machine_redis_commands() {
 async fn test_state_machine_snapshot_creation() {
     // Test state machine snapshot functionality
     let state_machine = KiwiStateMachine::new(1);
-    
+
     let snapshot = state_machine.create_snapshot().await.unwrap();
-    assert_eq!(snapshot.applied_index, 0, "Initial snapshot should have applied_index 0");
+    assert_eq!(
+        snapshot.applied_index, 0,
+        "Initial snapshot should have applied_index 0"
+    );
 }
 
 #[tokio::test]
@@ -77,7 +84,7 @@ async fn test_storage_basic_operations() {
     // Test basic storage operations
     let temp_dir = TempDir::new().unwrap();
     let _storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
-    
+
     // Test that storage can be created and has basic properties
     // Storage creation succeeded if we reach this point
     assert!(true, "Storage creation succeeded");
@@ -87,7 +94,7 @@ async fn test_storage_basic_operations() {
 async fn test_state_machine_batch_commands() {
     // Test state machine batch command processing
     let state_machine = KiwiStateMachine::new(1);
-    
+
     let requests = vec![
         ClientRequest {
             id: RequestId(1),
@@ -106,8 +113,11 @@ async fn test_state_machine_batch_commands() {
             consistency_level: ConsistencyLevel::Linearizable,
         },
     ];
-    
-    let responses = state_machine.apply_redis_commands_batch(&requests).await.unwrap();
+
+    let responses = state_machine
+        .apply_redis_commands_batch(&requests)
+        .await
+        .unwrap();
     assert_eq!(responses.len(), 2, "Should have two responses");
     assert!(responses[0].result.is_ok(), "First PING should succeed");
     assert!(responses[1].result.is_ok(), "Second PING should succeed");
@@ -119,11 +129,14 @@ async fn test_integration_basic_functionality() {
     let temp_dir = TempDir::new().unwrap();
     let _storage = RaftStorage::new_async(temp_dir.path()).await.unwrap();
     let state_machine = KiwiStateMachine::new(1);
-    
+
     // Test basic state machine functionality
     let snapshot = state_machine.create_snapshot().await.unwrap();
-    assert_eq!(snapshot.applied_index, 0, "Initial snapshot should have applied_index 0");
-    
+    assert_eq!(
+        snapshot.applied_index, 0,
+        "Initial snapshot should have applied_index 0"
+    );
+
     // Test basic command processing
     let request = ClientRequest {
         id: RequestId(1),
@@ -133,10 +146,10 @@ async fn test_integration_basic_functionality() {
         },
         consistency_level: ConsistencyLevel::Linearizable,
     };
-    
+
     let response = state_machine.apply_redis_command(&request).await.unwrap();
     assert!(response.result.is_ok(), "PING command should succeed");
-    
+
     // If we reach here, basic integration works
     assert!(true, "Basic integration functionality works correctly");
 }

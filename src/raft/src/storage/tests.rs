@@ -177,10 +177,7 @@ mod storage_tests {
         let last = storage.get_last_log_entry().unwrap().unwrap();
         assert_eq!(last.index, 3);
         assert_eq!(last.term, 2);
-        assert_eq!(
-            last.payload,
-            StoredEntryPayload::Normal(b"third".to_vec())
-        );
+        assert_eq!(last.payload, StoredEntryPayload::Normal(b"third".to_vec()));
     }
 
     #[test]
@@ -389,7 +386,7 @@ mod error_handling_tests {
     // NOTE: These tests are commented out because they test internal implementation details
     // that no longer exist after the storage backend abstraction was introduced.
     // The backend abstraction hides direct access to RocksDB column families and db handle.
-    
+
     // #[test]
     // fn test_corrupted_state_handling() {
     //     let temp_dir = TempDir::new().unwrap();

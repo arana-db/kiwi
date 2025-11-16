@@ -22,7 +22,9 @@ mod redis_list_test {
     use std::sync::Arc;
 
     use kstd::lock_mgr::LockMgr;
-    use storage::{BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+    use storage::{
+        BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path,
+    };
 
     fn create_test_redis() -> Redis {
         let test_db_path = unique_test_db_path();

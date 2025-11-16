@@ -16,7 +16,7 @@
 // limitations under the License.
 
 //! Simple memory store using OpenRaft's Adaptor pattern
-//! 
+//!
 //! This implementation uses OpenRaft's `Adaptor` to wrap a simple storage
 //! that implements the non-sealed helper traits.
 
@@ -27,7 +27,6 @@ use std::ops::RangeBounds;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use openraft::storage::Adaptor;
 use openraft::BasicNode;
 use openraft::Entry;
 use openraft::EntryPayload;
@@ -41,10 +40,11 @@ use openraft::SnapshotMeta;
 use openraft::StorageError;
 use openraft::StoredMembership;
 use openraft::Vote;
+use openraft::storage::Adaptor;
 use tokio::sync::RwLock;
 
-use crate::types::{NodeId, TypeConfig};
 use crate::error::RaftResult;
+use crate::types::{NodeId, TypeConfig};
 
 /// Simple in-memory storage that implements RaftStorage
 #[derive(Debug)]
@@ -76,7 +76,7 @@ impl SimpleMemStore {
     pub fn new() -> Self {
         Self::with_data_dir(None)
     }
-    
+
     pub fn with_data_dir(data_dir: Option<PathBuf>) -> Self {
         let store = Self {
             vote: Arc::new(RwLock::new(None)),
@@ -88,7 +88,7 @@ impl SimpleMemStore {
             kv_store: Arc::new(RwLock::new(HashMap::new())),
             data_dir: data_dir.clone(),
         };
-        
+
         // Try to load persisted state if data_dir is provided
         if let Some(ref dir) = data_dir {
             if let Err(e) = std::fs::create_dir_all(dir) {
@@ -106,30 +106,33 @@ impl SimpleMemStore {
                         }
                     }
                 }
-                
+
                 // Try to load logs
                 let logs_path = dir.join("logs.bin");
                 if logs_path.exists() {
                     if let Ok(data) = std::fs::read(&logs_path) {
-                        if let Ok(logs_vec) = bincode::deserialize::<Vec<Entry<TypeConfig>>>(&data) {
+                        if let Ok(logs_vec) = bincode::deserialize::<Vec<Entry<TypeConfig>>>(&data)
+                        {
                             if let Ok(mut logs) = store.logs.try_write() {
                                 for entry in logs_vec {
                                     logs.insert(entry.log_id.index, entry);
                                 }
                                 log::info!("Loaded {} log entries from disk", logs.len());
-                                
+
                                 // DON'T set applied index here - let OpenRaft replay the logs
                                 // This ensures the state machine gets updated properly
                             }
                         }
                     }
                 }
-                
+
                 // Try to load applied index
                 let applied_path = dir.join("applied.bin");
                 if applied_path.exists() {
                     if let Ok(data) = std::fs::read(&applied_path) {
-                        if let Ok(applied_log_id) = bincode::deserialize::<Option<LogId<NodeId>>>(&data) {
+                        if let Ok(applied_log_id) =
+                            bincode::deserialize::<Option<LogId<NodeId>>>(&data)
+                        {
                             if let Ok(mut applied) = store.applied.try_write() {
                                 *applied = applied_log_id;
                                 log::info!("Loaded applied index: {:?}", applied_log_id);
@@ -137,12 +140,14 @@ impl SimpleMemStore {
                         }
                     }
                 }
-                
+
                 // Try to load membership
                 let membership_path = dir.join("membership.bin");
                 if membership_path.exists() {
                     if let Ok(data) = std::fs::read(&membership_path) {
-                        if let Ok(stored_membership) = bincode::deserialize::<StoredMembership<NodeId, BasicNode>>(&data) {
+                        if let Ok(stored_membership) =
+                            bincode::deserialize::<StoredMembership<NodeId, BasicNode>>(&data)
+                        {
                             if let Ok(mut membership) = store.membership.try_write() {
                                 *membership = stored_membership;
                                 log::info!("Loaded membership from disk");
@@ -150,7 +155,7 @@ impl SimpleMemStore {
                         }
                     }
                 }
-                
+
                 // Try to load kv_store state
                 let kv_path = dir.join("kv_store.bin");
                 if kv_path.exists() {
@@ -163,19 +168,21 @@ impl SimpleMemStore {
                         }
                     }
                 }
-                
+
                 // Try to load snapshot metadata to know the applied index (fallback)
                 let snapshot_meta_path = dir.join("snapshot_meta.bin");
                 if snapshot_meta_path.exists() {
                     if let Ok(data) = std::fs::read(&snapshot_meta_path) {
-                        if let Ok(meta) = bincode::deserialize::<SnapshotMeta<NodeId, BasicNode>>(&data) {
+                        if let Ok(meta) =
+                            bincode::deserialize::<SnapshotMeta<NodeId, BasicNode>>(&data)
+                        {
                             if let Ok(mut membership) = store.membership.try_write() {
                                 *membership = meta.last_membership.clone();
                             }
                         }
                     }
                 }
-                
+
                 // Try to load snapshot (fallback for kv_store)
                 let snapshot_path = dir.join("snapshot.bin");
                 if snapshot_path.exists() && !kv_path.exists() {
@@ -191,23 +198,28 @@ impl SimpleMemStore {
                 }
             }
         }
-        
+
         store
     }
-    
+
     /// Execute a Redis command on the in-memory store
-    async fn execute_command(&self, request: &crate::types::ClientRequest) -> RaftResult<bytes::Bytes> {
+    async fn execute_command(
+        &self,
+        request: &crate::types::ClientRequest,
+    ) -> RaftResult<bytes::Bytes> {
         use bytes::Bytes;
-        
+
         let cmd = &request.command;
         match cmd.command.to_uppercase().as_str() {
             "SET" => {
                 if cmd.args.len() < 2 {
-                    return Err(crate::error::RaftError::invalid_request("SET requires key and value"));
+                    return Err(crate::error::RaftError::invalid_request(
+                        "SET requires key and value",
+                    ));
                 }
                 let key = cmd.args[0].to_vec();
                 let value = cmd.args[1].to_vec();
-                
+
                 let mut store = self.kv_store.write().await;
                 store.insert(key, value);
                 Ok(Bytes::from_static(b"OK"))
@@ -217,7 +229,7 @@ impl SimpleMemStore {
                     return Err(crate::error::RaftError::invalid_request("GET requires key"));
                 }
                 let key = &cmd.args[0];
-                
+
                 let store = self.kv_store.read().await;
                 match store.get(key.as_ref()) {
                     Some(value) => Ok(Bytes::from(value.clone())),
@@ -226,9 +238,11 @@ impl SimpleMemStore {
             }
             "DEL" => {
                 if cmd.args.is_empty() {
-                    return Err(crate::error::RaftError::invalid_request("DEL requires at least one key"));
+                    return Err(crate::error::RaftError::invalid_request(
+                        "DEL requires at least one key",
+                    ));
                 }
-                
+
                 let mut store = self.kv_store.write().await;
                 let mut deleted_count = 0;
                 for key in &cmd.args {
@@ -240,9 +254,11 @@ impl SimpleMemStore {
             }
             "EXISTS" => {
                 if cmd.args.is_empty() {
-                    return Err(crate::error::RaftError::invalid_request("EXISTS requires at least one key"));
+                    return Err(crate::error::RaftError::invalid_request(
+                        "EXISTS requires at least one key",
+                    ));
                 }
-                
+
                 let store = self.kv_store.read().await;
                 let mut exists_count = 0;
                 for key in &cmd.args {
@@ -269,7 +285,7 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
     async fn save_vote(&mut self, vote: &Vote<NodeId>) -> Result<(), StorageError<NodeId>> {
         let mut v = self.vote.write().await;
         *v = Some(*vote);
-        
+
         // Persist vote to disk if data_dir is set
         if let Some(ref dir) = self.data_dir {
             let vote_path = dir.join("vote.bin");
@@ -279,7 +295,7 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -292,7 +308,7 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
         let logs = self.logs.read().await;
         let last_log_id = logs.values().last().map(|entry| entry.log_id);
         let last_purged_log_id = None;
-        
+
         Ok(LogState {
             last_purged_log_id,
             last_log_id,
@@ -320,7 +336,7 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
         for entry in entries {
             logs.insert(entry.log_id.index, entry);
         }
-        
+
         // Persist logs to disk if data_dir is set
         if let Some(ref dir) = self.data_dir {
             let logs_path = dir.join("logs.bin");
@@ -331,11 +347,14 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
                 }
             }
         }
-        
+
         Ok(())
     }
 
-    async fn delete_conflict_logs_since(&mut self, log_id: LogId<NodeId>) -> Result<(), StorageError<NodeId>> {
+    async fn delete_conflict_logs_since(
+        &mut self,
+        log_id: LogId<NodeId>,
+    ) -> Result<(), StorageError<NodeId>> {
         let mut logs = self.logs.write().await;
         logs.retain(|&index, _| index < log_id.index);
         Ok(())
@@ -349,7 +368,8 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
 
     async fn last_applied_state(
         &mut self,
-    ) -> Result<(Option<LogId<NodeId>>, StoredMembership<NodeId, BasicNode>), StorageError<NodeId>> {
+    ) -> Result<(Option<LogId<NodeId>>, StoredMembership<NodeId, BasicNode>), StorageError<NodeId>>
+    {
         let applied = self.applied.read().await;
         let membership = self.membership.read().await;
         Ok((*applied, membership.clone()))
@@ -362,19 +382,17 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
         let mut applied = self.applied.write().await;
         let mut membership = self.membership.write().await;
         let mut responses = Vec::new();
-        
+
         for entry in entries {
             *applied = Some(entry.log_id);
-            
+
             // Create a response for each entry
             let response = match &entry.payload {
-                EntryPayload::Blank => {
-                    crate::types::ClientResponse {
-                        id: crate::types::RequestId::new(),
-                        result: Ok(bytes::Bytes::from("OK")),
-                        leader_id: None,
-                    }
-                }
+                EntryPayload::Blank => crate::types::ClientResponse {
+                    id: crate::types::RequestId::new(),
+                    result: Ok(bytes::Bytes::from("OK")),
+                    leader_id: None,
+                },
                 EntryPayload::Normal(ref request) => {
                     // Execute the command and get the actual result
                     let result = self.execute_command(request).await;
@@ -395,7 +413,7 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
             };
             responses.push(response);
         }
-        
+
         // Persist the kv_store state after applying entries
         if let Some(ref dir) = self.data_dir {
             let kv_path = dir.join("kv_store.bin");
@@ -408,7 +426,7 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
                     log::warn!("Failed to persist kv_store to disk: {}", e);
                 }
             }
-            
+
             // Also persist the applied index
             let applied_path = dir.join("applied.bin");
             if let Ok(data) = bincode::serialize(&*applied) {
@@ -416,7 +434,7 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
                     log::warn!("Failed to persist applied index to disk: {}", e);
                 }
             }
-            
+
             // Persist the membership
             let membership_path = dir.join("membership.bin");
             if let Ok(data) = bincode::serialize(&*membership) {
@@ -425,7 +443,7 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
                 }
             }
         }
-        
+
         Ok(responses)
     }
 
@@ -454,7 +472,7 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
         snapshot: Box<Cursor<Vec<u8>>>,
     ) -> Result<(), StorageError<NodeId>> {
         let data = snapshot.into_inner();
-        
+
         // Deserialize and restore the kv_store
         if !data.is_empty() {
             if let Ok(snapshot_data) = bincode::deserialize::<SnapshotData>(&data) {
@@ -462,19 +480,19 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
                 *kv_store = snapshot_data.kv_store;
             }
         }
-        
+
         let mut snap = self.snapshot.write().await;
         *snap = Some(StoredSnapshot {
             meta: meta.clone(),
             data,
         });
-        
+
         let mut applied = self.applied.write().await;
         *applied = meta.last_log_id;
-        
+
         let mut membership = self.membership.write().await;
         *membership = meta.last_membership.clone();
-        
+
         Ok(())
     }
 
@@ -482,7 +500,7 @@ impl RaftStorage<TypeConfig> for SimpleMemStore {
         &mut self,
     ) -> Result<Option<Snapshot<TypeConfig>>, StorageError<NodeId>> {
         let snapshot = self.snapshot.read().await;
-        
+
         if let Some(snap) = snapshot.as_ref() {
             Ok(Some(Snapshot {
                 meta: snap.meta.clone(),
@@ -501,10 +519,7 @@ impl RaftLogReader<TypeConfig> for SimpleMemStore {
         range: RB,
     ) -> Result<Vec<Entry<TypeConfig>>, StorageError<NodeId>> {
         let logs = self.logs.read().await;
-        let entries: Vec<_> = logs
-            .range(range)
-            .map(|(_, entry)| entry.clone())
-            .collect();
+        let entries: Vec<_> = logs.range(range).map(|(_, entry)| entry.clone()).collect();
         Ok(entries)
     }
 }
@@ -515,12 +530,12 @@ impl RaftSnapshotBuilder<TypeConfig> for SimpleMemStore {
         let applied = self.applied.read().await;
         let membership = self.membership.read().await;
         let kv_store = self.kv_store.read().await;
-        
+
         // Serialize the current kv_store state
         let snapshot_data = SnapshotData {
             kv_store: kv_store.clone(),
         };
-        
+
         let data = bincode::serialize(&snapshot_data).map_err(|e| {
             use openraft::{ErrorSubject, ErrorVerb, StorageIOError};
             StorageError::IO {
@@ -531,31 +546,34 @@ impl RaftSnapshotBuilder<TypeConfig> for SimpleMemStore {
                 ),
             }
         })?;
-        
+
         let meta = SnapshotMeta {
             last_log_id: *applied,
             last_membership: membership.clone(),
-            snapshot_id: format!("snapshot_{}", applied.as_ref().map(|l| l.index).unwrap_or(0)),
+            snapshot_id: format!(
+                "snapshot_{}",
+                applied.as_ref().map(|l| l.index).unwrap_or(0)
+            ),
         };
-        
+
         // Store the snapshot in memory
         let mut snapshot = self.snapshot.write().await;
         *snapshot = Some(StoredSnapshot {
             meta: meta.clone(),
             data: data.clone(),
         });
-        
+
         // Persist to disk if data_dir is set
         if let Some(ref dir) = self.data_dir {
             let snapshot_path = dir.join("snapshot.bin");
             let snapshot_meta_path = dir.join("snapshot_meta.bin");
-            
+
             if let Err(e) = std::fs::write(&snapshot_path, &data) {
                 log::warn!("Failed to persist snapshot to disk: {}", e);
             } else {
                 log::info!("Persisted snapshot with {} keys to disk", kv_store.len());
             }
-            
+
             // Also persist the metadata
             if let Ok(meta_data) = bincode::serialize(&meta) {
                 if let Err(e) = std::fs::write(&snapshot_meta_path, &meta_data) {
@@ -563,7 +581,7 @@ impl RaftSnapshotBuilder<TypeConfig> for SimpleMemStore {
                 }
             }
         }
-        
+
         Ok(Snapshot {
             meta,
             snapshot: Box::new(Cursor::new(data)),
@@ -581,7 +599,9 @@ pub fn create_mem_store() -> (
 }
 
 /// Create a new simple memory store with persistence using the Adaptor pattern
-pub fn create_mem_store_with_dir(data_dir: PathBuf) -> (
+pub fn create_mem_store_with_dir(
+    data_dir: PathBuf,
+) -> (
     impl openraft::storage::RaftLogStorage<TypeConfig>,
     impl openraft::storage::RaftStateMachine<TypeConfig>,
 ) {

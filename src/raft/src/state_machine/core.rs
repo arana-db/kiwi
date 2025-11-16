@@ -82,22 +82,22 @@ pub trait StorageEngine: Send + Sync {
 }
 
 /// Kiwi state machine for Raft integration
-/// 
+///
 /// # Locking Strategy
-/// 
+///
 /// This implementation uses a multi-layered locking approach:
-/// 
+///
 /// 1. **AtomicU64 for applied_index**: Lock-free atomic operations for reading the current
 ///    applied index, which is frequently accessed and rarely causes contention.
-/// 
+///
 /// 2. **tokio::sync::Mutex for apply operations**: Ensures that log entries are applied
 ///    sequentially and atomically. This is critical for maintaining state machine consistency.
 ///    We use tokio's async Mutex to avoid blocking the async runtime.
-/// 
+///
 /// 3. **tokio::sync::RwLock for snapshot_data**: Allows concurrent reads of snapshot data
 ///    while ensuring exclusive access during snapshot creation or restoration. This optimizes
 ///    for the common case where snapshots are read more often than written.
-/// 
+///
 /// The locking order is always: apply_mutex -> snapshot_data RwLock to prevent deadlocks.
 pub struct KiwiStateMachine {
     /// Last applied log index (lock-free atomic for high-frequency reads)
@@ -164,10 +164,10 @@ impl KiwiStateMachine {
     }
 
     /// Apply a Redis command to the database engine
-    /// 
+    ///
     /// This method routes Redis commands to the appropriate handler and executes them
     /// through the storage engine if available.
-    /// 
+    ///
     /// # Requirements
     /// - Requirement 2.2: Execute Redis commands through state machine
     /// - Requirement 2.3: Support all basic Redis commands (GET, SET, DEL, EXISTS, etc.)
@@ -202,9 +202,9 @@ impl KiwiStateMachine {
 
     /// Collect batch operations from a command without executing them
     /// Returns (batch_operations, response_result) where response_result is Some for read operations
-    /// 
+    ///
     /// This method uses Bytes internally to avoid unnecessary copies
-    /// 
+    ///
     /// # Requirements
     /// - Requirement 2.4: Commands must be atomic
     fn collect_batch_operation(
@@ -501,10 +501,12 @@ impl KiwiStateMachine {
             let current_value = match storage_engine.get(key).await? {
                 Some(value) => {
                     // Parse as integer - must return error if not a valid integer
-                    let text = String::from_utf8(value)
-                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?;
-                    text.parse::<i64>()
-                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?
+                    let text = String::from_utf8(value).map_err(|_| {
+                        RaftError::invalid_request("ERR value is not an integer or out of range")
+                    })?;
+                    text.parse::<i64>().map_err(|_| {
+                        RaftError::invalid_request("ERR value is not an integer or out of range")
+                    })?
                 }
                 None => 0,
             };
@@ -536,10 +538,12 @@ impl KiwiStateMachine {
             let current_value = match storage_engine.get(key).await? {
                 Some(value) => {
                     // Parse as integer - must return error if not a valid integer
-                    let text = String::from_utf8(value)
-                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?;
-                    text.parse::<i64>()
-                        .map_err(|_| RaftError::invalid_request("ERR value is not an integer or out of range"))?
+                    let text = String::from_utf8(value).map_err(|_| {
+                        RaftError::invalid_request("ERR value is not an integer or out of range")
+                    })?;
+                    text.parse::<i64>().map_err(|_| {
+                        RaftError::invalid_request("ERR value is not an integer or out of range")
+                    })?
                 }
                 None => 0,
             };
@@ -603,10 +607,10 @@ impl KiwiStateMachine {
     }
 
     /// Execute a read command from the state machine
-    /// 
+    ///
     /// This method is used by the RequestRouter to execute read operations
     /// directly from the state machine without going through Raft consensus.
-    /// 
+    ///
     /// # Requirements
     /// - Requirement 4.1: Support strong consistency reads
     /// - Requirement 4.2: Support eventual consistency reads
@@ -650,7 +654,7 @@ impl KiwiStateMachine {
         // We need to extract the EffectiveMembership from it
         let membership = EffectiveMembership::new(
             *stored_membership.log_id(),
-            stored_membership.membership().clone()
+            stored_membership.membership().clone(),
         );
 
         (log_id, membership)
@@ -660,13 +664,17 @@ impl KiwiStateMachine {
     pub async fn create_snapshot(&self) -> RaftResult<StateMachineSnapshot> {
         let start = std::time::Instant::now();
         let applied_index = self.applied_index();
-        
+
         log::info!(
             "Node {} creating snapshot at applied index {}",
             self.node_id,
             applied_index
         );
-        log::trace!("Node {} create_snapshot: starting at index {}", self.node_id, applied_index);
+        log::trace!(
+            "Node {} create_snapshot: starting at index {}",
+            self.node_id,
+            applied_index
+        );
 
         let snapshot_data = HashMap::new();
 
@@ -682,7 +690,11 @@ impl KiwiStateMachine {
             *snapshot_store = Some(snapshot.clone());
         }
         let store_elapsed = store_start.elapsed();
-        log::trace!("Node {} stored snapshot in memory: {:?}", self.node_id, store_elapsed);
+        log::trace!(
+            "Node {} stored snapshot in memory: {:?}",
+            self.node_id,
+            store_elapsed
+        );
 
         let elapsed = start.elapsed();
         log::info!(
@@ -691,28 +703,40 @@ impl KiwiStateMachine {
             snapshot.applied_index,
             elapsed
         );
-        log::trace!("Node {} create_snapshot: total_duration={:?}, keys={}", 
-            self.node_id, elapsed, snapshot.data.len());
+        log::trace!(
+            "Node {} create_snapshot: total_duration={:?}, keys={}",
+            self.node_id,
+            elapsed,
+            snapshot.data.len()
+        );
         Ok(snapshot)
     }
 
     /// Restore state from snapshot
     pub async fn restore_from_snapshot(&self, snapshot: &StateMachineSnapshot) -> RaftResult<()> {
         let start = std::time::Instant::now();
-        
+
         log::info!(
             "Node {} restoring from snapshot at index {}",
             self.node_id,
             snapshot.applied_index
         );
-        log::trace!("Node {} restore_from_snapshot: index={}, keys={}", 
-            self.node_id, snapshot.applied_index, snapshot.data.len());
+        log::trace!(
+            "Node {} restore_from_snapshot: index={}, keys={}",
+            self.node_id,
+            snapshot.applied_index,
+            snapshot.data.len()
+        );
 
         // Acquire the apply mutex to ensure no concurrent operations during restore
         let lock_start = std::time::Instant::now();
         let _apply_lock = self.apply_mutex.lock().await;
         let lock_elapsed = lock_start.elapsed();
-        log::trace!("Node {} acquired apply_mutex for restore in {:?}", self.node_id, lock_elapsed);
+        log::trace!(
+            "Node {} acquired apply_mutex for restore in {:?}",
+            self.node_id,
+            lock_elapsed
+        );
 
         // If we have a storage engine, restore the data
         if let Some(storage_engine) = &self.storage_engine {
@@ -734,13 +758,15 @@ impl KiwiStateMachine {
                 snapshot.data.len(),
                 restore_elapsed
             );
-            log::trace!("Node {} restore throughput: {:.2} keys/sec", 
+            log::trace!(
+                "Node {} restore throughput: {:.2} keys/sec",
                 self.node_id,
                 if restore_elapsed.as_secs_f64() > 0.0 {
                     snapshot.data.len() as f64 / restore_elapsed.as_secs_f64()
                 } else {
                     0.0
-                });
+                }
+            );
         } else {
             log::debug!(
                 "Node {} skipping data restore (no storage engine)",
@@ -753,7 +779,11 @@ impl KiwiStateMachine {
         self.applied_index
             .store(snapshot.applied_index, Ordering::Release);
         let update_elapsed = update_start.elapsed();
-        log::trace!("Node {} updated applied_index in {:?}", self.node_id, update_elapsed);
+        log::trace!(
+            "Node {} updated applied_index in {:?}",
+            self.node_id,
+            update_elapsed
+        );
 
         // Store the snapshot in memory
         let store_start = std::time::Instant::now();
@@ -762,7 +792,11 @@ impl KiwiStateMachine {
             *snapshot_store = Some(snapshot.clone());
         }
         let store_elapsed = store_start.elapsed();
-        log::trace!("Node {} stored snapshot in memory in {:?}", self.node_id, store_elapsed);
+        log::trace!(
+            "Node {} stored snapshot in memory in {:?}",
+            self.node_id,
+            store_elapsed
+        );
 
         let elapsed = start.elapsed();
         log::info!(
@@ -771,7 +805,11 @@ impl KiwiStateMachine {
             snapshot.applied_index,
             elapsed
         );
-        log::trace!("Node {} restore_from_snapshot: total_duration={:?}", self.node_id, elapsed);
+        log::trace!(
+            "Node {} restore_from_snapshot: total_duration={:?}",
+            self.node_id,
+            elapsed
+        );
         Ok(())
     }
 
@@ -782,15 +820,15 @@ impl KiwiStateMachine {
     }
 
     /// Verify locking strategy is correct (for testing/debugging)
-    /// 
+    ///
     /// This method documents the expected locking order and can be used
     /// to verify that no deadlocks can occur.
-    /// 
+    ///
     /// # Locking Order
-    /// 
+    ///
     /// 1. apply_mutex (if needed for sequential operations)
     /// 2. snapshot_data RwLock (if needed for snapshot access)
-    /// 
+    ///
     /// Never acquire locks in reverse order to prevent deadlocks.
     #[allow(dead_code)]
     fn verify_locking_order_documentation(&self) {
@@ -883,7 +921,7 @@ impl OpenraftStateMachine<TypeConfig> for Arc<KiwiStateMachine> {
         I::IntoIter: Send,
     {
         let start = std::time::Instant::now();
-        
+
         let lock_start = std::time::Instant::now();
         let _apply_lock = self.apply_mutex.lock().await;
         let lock_elapsed = lock_start.elapsed();
@@ -893,9 +931,9 @@ impl OpenraftStateMachine<TypeConfig> for Arc<KiwiStateMachine> {
         let collect_start = std::time::Instant::now();
         let entries_vec: Vec<_> = entries.into_iter().collect();
         let collect_elapsed = collect_start.elapsed();
-        log::trace!("Node {} collected {} entries in {:?}", 
+        log::trace!("Node {} collected {} entries in {:?}",
             self.node_id, entries_vec.len(), collect_elapsed);
-        
+
         if entries_vec.is_empty() {
             return Ok(Vec::new());
         }
@@ -953,8 +991,8 @@ impl OpenraftStateMachine<TypeConfig> for Arc<KiwiStateMachine> {
             }
         }
         let separate_elapsed = separate_start.elapsed();
-        log::trace!("Node {} separated entries in {:?}: normal={}, blank={}, membership={}", 
-            self.node_id, separate_elapsed, normal_requests.len(), 
+        log::trace!("Node {} separated entries in {:?}: normal={}, blank={}, membership={}",
+            self.node_id, separate_elapsed, normal_requests.len(),
             entries_vec.len() - normal_requests.len() - normal_indices.len(),
             entries_vec.iter().filter(|e| matches!(e.payload, EntryPayload::Membership(_))).count());
 
@@ -966,7 +1004,7 @@ impl OpenraftStateMachine<TypeConfig> for Arc<KiwiStateMachine> {
                 .await
                 .map_err(to_storage_error)?;
             let batch_elapsed = batch_start.elapsed();
-            log::trace!("Node {} applied {} commands in batch: {:?}, throughput={:.2} ops/sec", 
+            log::trace!("Node {} applied {} commands in batch: {:?}, throughput={:.2} ops/sec",
                 self.node_id, normal_requests.len(), batch_elapsed,
                 if batch_elapsed.as_secs_f64() > 0.0 {
                     normal_requests.len() as f64 / batch_elapsed.as_secs_f64()
@@ -983,7 +1021,7 @@ impl OpenraftStateMachine<TypeConfig> for Arc<KiwiStateMachine> {
         let update_start = std::time::Instant::now();
         self.applied_index.store(last_index, Ordering::Release);
         let update_elapsed = update_start.elapsed();
-        log::trace!("Node {} updated applied_index to {} in {:?}", 
+        log::trace!("Node {} updated applied_index to {} in {:?}",
             self.node_id, last_index, update_elapsed);
 
         log::debug!(
@@ -997,18 +1035,18 @@ impl OpenraftStateMachine<TypeConfig> for Arc<KiwiStateMachine> {
         let sort_start = std::time::Instant::now();
         responses.sort_by_key(|(idx, _)| *idx);
         let sort_elapsed = sort_start.elapsed();
-        log::trace!("Node {} sorted {} responses in {:?}", 
+        log::trace!("Node {} sorted {} responses in {:?}",
             self.node_id, responses.len(), sort_elapsed);
-        
+
         let elapsed = start.elapsed();
-        log::trace!("Node {} apply total duration: {:?}, entries={}, throughput={:.2} entries/sec", 
+        log::trace!("Node {} apply total duration: {:?}, entries={}, throughput={:.2} entries/sec",
             self.node_id, elapsed, entries_vec.len(),
             if elapsed.as_secs_f64() > 0.0 {
                 entries_vec.len() as f64 / elapsed.as_secs_f64()
             } else {
                 0.0
             });
-        
+
         Ok(responses.into_iter().map(|(_, resp)| resp).collect())
     }
 
@@ -1200,7 +1238,7 @@ impl OpenraftStateMachine<TypeConfig> for KiwiStateMachine {
 
         // Collect all entries into a vector for batch processing
         let entries_vec: Vec<_> = entries.into_iter().collect();
-        
+
         if entries_vec.is_empty() {
             return Ok(Vec::new());
         }

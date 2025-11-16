@@ -15,15 +15,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
 use bytes::Bytes;
-use raft::{RaftNode, RaftNodeInterface, types::{ClusterConfig, ClientRequest, ConsistencyLevel, RedisCommand}};
+use raft::{
+    RaftNode, RaftNodeInterface,
+    types::{ClientRequest, ClusterConfig, ConsistencyLevel, RedisCommand},
+};
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_raft_writes_persist_in_redis_engine() {
     // Clean up any existing data directory
     let workspace_root = std::env::var("CARGO_MANIFEST_DIR")
-        .map(|p| std::path::PathBuf::from(p).parent().unwrap().parent().unwrap().to_path_buf())
+        .map(|p| {
+            std::path::PathBuf::from(p)
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf()
+        })
         .unwrap_or_else(|_| std::env::current_dir().unwrap());
     let test_dir = workspace_root.join("target/test_data/it_redis_engine");
     let _ = std::fs::remove_dir_all(&test_dir);
@@ -52,7 +62,10 @@ async fn test_raft_writes_persist_in_redis_engine() {
     // Propose a SET via Raft
     let set_req = ClientRequest {
         id: raft::types::RequestId::new(),
-        command: RedisCommand::new("SET".to_string(), vec![Bytes::from("it_key"), Bytes::from("it_val")]),
+        command: RedisCommand::new(
+            "SET".to_string(),
+            vec![Bytes::from("it_key"), Bytes::from("it_val")],
+        ),
         consistency_level: ConsistencyLevel::Linearizable,
     };
     let _ = node.propose(set_req).await.unwrap();

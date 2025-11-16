@@ -103,7 +103,7 @@ impl RaftStorageAdaptor {
             }
             crate::storage::core::StoredEntryPayload::Blank => EntryPayload::Blank,
             crate::storage::core::StoredEntryPayload::Membership(bytes) => {
-                let membership: openraft::Membership<NodeId, BasicNode> = 
+                let membership: openraft::Membership<NodeId, BasicNode> =
                     bincode::deserialize(bytes).map_err(|e| {
                         Self::to_storage_error(RaftError::Storage(
                             crate::error::StorageError::DataInconsistency {
@@ -188,7 +188,7 @@ impl RaftStorage<TypeConfig> for RaftStorageAdaptor {
     {
         // Collect entries into a Vec first to avoid Send issues with the iterator
         let entries_vec: Vec<_> = entries.into_iter().collect();
-        
+
         for entry in entries_vec {
             let (term, index) = Self::convert_log_id_to_entry(&entry.log_id);
 
@@ -301,12 +301,11 @@ impl RaftStorage<TypeConfig> for RaftStorageAdaptor {
                     result: Ok(bytes::Bytes::from("OK")),
                     leader_id: None,
                 },
-                EntryPayload::Normal(request) => {
-                    self.state_machine
-                        .apply_redis_command(request)
-                        .await
-                        .map_err(Self::to_storage_error)?
-                }
+                EntryPayload::Normal(request) => self
+                    .state_machine
+                    .apply_redis_command(request)
+                    .await
+                    .map_err(Self::to_storage_error)?,
                 EntryPayload::Membership(_) => ClientResponse {
                     id: crate::types::RequestId::new(),
                     result: Ok(bytes::Bytes::from("OK")),
@@ -342,16 +341,15 @@ impl RaftStorage<TypeConfig> for RaftStorageAdaptor {
 
         // Deserialize the snapshot
         if !data.is_empty() {
-            let snapshot_data: StateMachineSnapshot =
-                bincode::deserialize(&data).map_err(|e| {
-                    Self::to_storage_error(RaftError::Storage(
-                        crate::error::StorageError::SnapshotRestorationFailed {
-                            message: format!("Failed to deserialize snapshot: {}", e),
-                            snapshot_id: meta.snapshot_id.clone(),
-                            context: String::from("install_snapshot"),
-                        },
-                    ))
-                })?;
+            let snapshot_data: StateMachineSnapshot = bincode::deserialize(&data).map_err(|e| {
+                Self::to_storage_error(RaftError::Storage(
+                    crate::error::StorageError::SnapshotRestorationFailed {
+                        message: format!("Failed to deserialize snapshot: {}", e),
+                        snapshot_id: meta.snapshot_id.clone(),
+                        context: String::from("install_snapshot"),
+                    },
+                ))
+            })?;
 
             // Restore the state machine from snapshot
             self.state_machine

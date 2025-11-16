@@ -21,21 +21,31 @@ use super::redis_storage_engine::RedisStorage;
 use std::sync::Arc;
 
 /// Adapter that implements RedisStorage trait for storage::Redis
-/// 
+///
 /// This uses dynamic dispatch to avoid direct type dependency on storage::Redis
 pub struct RedisStorageAdapter {
     // Store as trait object to avoid direct dependency
-    get_fn: Box<dyn Fn(&[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> + Send + Sync>,
-    set_fn: Box<dyn Fn(&[u8], &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> + Send + Sync>,
-    del_fn: Box<dyn Fn(&[&[u8]]) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> + Send + Sync>,
-    mset_fn: Box<dyn Fn(&[(Vec<u8>, Vec<u8>)]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> + Send + Sync>,
+    get_fn: Box<
+        dyn Fn(&[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> + Send + Sync,
+    >,
+    set_fn: Box<
+        dyn Fn(&[u8], &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>> + Send + Sync,
+    >,
+    del_fn: Box<
+        dyn Fn(&[&[u8]]) -> Result<i32, Box<dyn std::error::Error + Send + Sync>> + Send + Sync,
+    >,
+    mset_fn: Box<
+        dyn Fn(&[(Vec<u8>, Vec<u8>)]) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+            + Send
+            + Sync,
+    >,
 }
 
 impl RedisStorageAdapter {
     /// Create a new adapter with function closures
-    /// 
+    ///
     /// This allows us to avoid direct dependency on storage::Redis type
-    pub fn new<R>(redis: Arc<R>) -> Self 
+    pub fn new<R>(redis: Arc<R>) -> Self
     where
         R: 'static + Send + Sync,
         R: RedisOperations,
@@ -55,23 +65,30 @@ impl RedisStorageAdapter {
 }
 
 /// Trait for Redis operations to avoid direct dependency
-/// 
+///
 /// Note: Method names are prefixed with `raft_` to avoid conflicts with
 /// Redis's inherent methods (e.g., `raft_del` instead of `del`).
 /// This is necessary because Rust's method resolution prioritizes trait
 /// methods over inherent methods when implementing a trait.
 pub trait RedisOperations: Send + Sync {
-    fn raft_get_binary(&self, key: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>;
-    fn raft_set(&self, key: &[u8], value: &[u8]) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    fn raft_get_binary(
+        &self,
+        key: &[u8],
+    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>>;
+    fn raft_set(
+        &self,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
     fn raft_del(&self, keys: &[&[u8]]) -> Result<i32, Box<dyn std::error::Error + Send + Sync>>;
-    fn raft_mset(&self, pairs: &[(Vec<u8>, Vec<u8>)]) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    fn raft_mset(
+        &self,
+        pairs: &[(Vec<u8>, Vec<u8>)],
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
 impl RedisStorage for RedisStorageAdapter {
-    fn get_binary(
-        &self,
-        key: &[u8],
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    fn get_binary(&self, key: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         (self.get_fn)(key)
     }
 

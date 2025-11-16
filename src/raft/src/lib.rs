@@ -48,7 +48,6 @@
 
 use openraft::Config;
 
-pub mod simple_mem_store; // Simple memory store using Adaptor pattern
 pub mod binlog;
 pub mod cluster_config;
 #[cfg(test)]
@@ -56,13 +55,13 @@ pub mod cluster_tests;
 pub mod config_change;
 #[cfg(test)]
 pub mod config_change_tests;
-#[cfg(test)]
-pub mod failover_tests;
 pub mod consistency;
-pub mod conversion;
 pub mod consistency_handler;
+pub mod conversion;
 pub mod discovery;
 pub mod error;
+#[cfg(test)]
+pub mod failover_tests;
 pub mod health_monitor;
 pub mod logging;
 pub mod metrics;
@@ -80,6 +79,7 @@ pub mod router;
 pub mod segment_log;
 pub mod sequence_mapping;
 pub mod serialization;
+pub mod simple_mem_store; // Simple memory store using Adaptor pattern
 pub mod simple_storage;
 pub mod snapshot;
 pub mod state_machine;
@@ -90,7 +90,7 @@ pub mod types;
 // Re-export commonly used types
 pub use error::RaftError;
 pub use node::{RaftNode, RaftNodeInterface};
-pub use router::{RequestRouter, ClusterMode, RedisResponse};
+pub use router::{ClusterMode, RedisResponse, RequestRouter};
 pub use state_machine::KiwiStateMachine;
 pub use storage::{RaftStorage, RaftStorageAdaptor, create_raft_storage_adaptor};
 pub use storage_engine::RedisStorageEngine;
