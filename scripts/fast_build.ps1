@@ -55,6 +55,7 @@ if (Test-Path $rocksdbLib) {
 # Run cargo build with optimizations
 if ($Check) {
     Write-Host "Running cargo check..." -ForegroundColor Cyan
+    $startTime = Get-Date
     cargo check $profileFlag
 } else {
     Write-Host "Running cargo build..." -ForegroundColor Cyan
@@ -73,6 +74,7 @@ if ($Check) {
         $env:CARGO_INCREMENTAL = "1"
     }
     
+    $startTime = Get-Date
     cargo build $profileFlag
 }
 

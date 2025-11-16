@@ -39,9 +39,16 @@ findstr /C:"rustc-wrapper" "%CARGO_CONFIG%" >nul 2>&1
 if %errorlevel% equ 0 (
     echo [32m✓ sccache is already configured[0m
 ) else (
-    echo. >> "%CARGO_CONFIG%"
-    echo [build] >> "%CARGO_CONFIG%"
-    echo rustc-wrapper = "sccache" >> "%CARGO_CONFIG%"
+    findstr /C:"[build]" "%CARGO_CONFIG%" >nul 2>&1
+    if %errorlevel% equ 0 (
+        REM [build] section exists, just add rustc-wrapper
+        echo rustc-wrapper = "sccache" >> "%CARGO_CONFIG%"
+    ) else (
+        REM No [build] section, add both
+        echo. >> "%CARGO_CONFIG%"
+        echo [build] >> "%CARGO_CONFIG%"
+        echo rustc-wrapper = "sccache" >> "%CARGO_CONFIG%"
+    )
     echo [32m✓ sccache configured in %CARGO_CONFIG%[0m
 )
 

@@ -74,9 +74,18 @@ if exist "%USERPROFILE%\.cargo\config.toml" (
 )
 
 echo.
-echo [6] Testing incremental compilation...
-echo Running: cargo build --verbose 2^>^&1 ^| findstr /C:"Fresh" /C:"Compiling"
-cargo build --verbose 2>&1 | findstr /C:"Fresh" /C:"Compiling" | findstr /C:"librocksdb" /C:"openssl" /C:"ring"
+echo [6] Checking incremental compilation artifacts...
+if exist target\debug (
+    echo [32m✓ Build artifacts found in target\debug[0m
+    dir target\debug\deps\*.rlib 2>nul | find "File(s)" | find /V " 0 File"
+    if %errorlevel% equ 0 (
+        echo [32m✓ Incremental artifacts present[0m
+    ) else (
+        echo [33m✗ No incremental artifacts found - run a build first[0m
+    )
+) else (
+    echo [33m✗ No build artifacts found - run a build first[0m
+)
 
 echo.
 echo === Recommendations ===

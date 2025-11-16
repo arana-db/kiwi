@@ -37,11 +37,20 @@ $sccacheConfig = @"
 rustc-wrapper = "sccache"
 "@
 
+# Check if config already has sccache
+$hasSccache = $false
 if (Test-Path $cargoConfigFile) {
-    Add-Content -Path $cargoConfigFile -Value $sccacheConfig
-} else {
-    Set-Content -Path $cargoConfigFile -Value $sccacheConfig
+    $hasSccache = Get-Content $cargoConfigFile | Select-String -Pattern "rustc-wrapper.*sccache" -Quiet
 }
 
-Write-Host "sccache configured successfully!"
+if ($hasSccache) {
+    Write-Host "sccache is already configured in Cargo"
+} else {
+    if (Test-Path $cargoConfigFile) {
+        Add-Content -Path $cargoConfigFile -Value $sccacheConfig
+    } else {
+        Set-Content -Path $cargoConfigFile -Value $sccacheConfig
+    }
+    Write-Host "sccache configured successfully!"
+}
 Write-Host "You can check sccache statistics with: sccache --show-stats"
