@@ -61,11 +61,11 @@ info "=== Kiwi Development Tool ==="
 echo ""
 
 # Check if this is first-time use (only for build/run commands)
-SETUP_MARKER=".kiwi_setup_done"
 if [ "$COMMAND" = "build" ] || [ "$COMMAND" = "run" ]; then
-    if [ ! -f "$SETUP_MARKER" ]; then
+    # Check if sccache is available, if not prompt to install
+    if ! command -v sccache &> /dev/null; then
         echo ""
-        warning "⚠️  First-time setup recommended for optimal performance!"
+        warning "⚠️  sccache not detected for optimal performance!"
         echo ""
         echo "Run this command to install sccache and cargo-watch:"
         info "  ./scripts/quick_setup.sh"
@@ -77,14 +77,11 @@ if [ "$COMMAND" = "build" ] || [ "$COMMAND" = "run" ]; then
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             ./scripts/quick_setup.sh
             if [ $? -eq 0 ]; then
-                touch "$SETUP_MARKER"
                 success "✓ Setup complete! Continuing with build..."
                 echo ""
             fi
         else
             info "Skipping setup. You can run './scripts/quick_setup.sh' anytime."
-            # Create marker to not ask again
-            touch "$SETUP_MARKER"
             echo ""
         fi
     fi
@@ -98,6 +95,7 @@ if command -v sccache &> /dev/null; then
     export RUSTC_WRAPPER=sccache
     # sccache doesn't support incremental compilation, so disable it
     export CARGO_INCREMENTAL=0
+    unset CARGO_CACHE_RUSTC_INFO
     # Silently start sccache server if not running
     sccache --start-server &> /dev/null || true
 else
