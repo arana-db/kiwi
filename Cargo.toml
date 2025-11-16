@@ -84,8 +84,12 @@ raft = { path = "src/raft" }
 [profile.dev]
 split-debuginfo = "unpacked"
 overflow-checks = true
-# Report to https://github.com/rust-lang/rust/issues/100142 if incremental works well
+# Enable incremental compilation for faster rebuilds
 incremental = true
+# Reduce optimization level for faster compilation
+opt-level = 0
+# Reduce debug info for faster compilation
+debug = 1
 
 [profile.release]
 debug = 1

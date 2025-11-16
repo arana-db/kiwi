@@ -138,29 +138,20 @@ fn main() -> std::io::Result<()> {
 
     info!("Storage components initialized, starting storage server...");
 
-    // Initialize storage server in storage runtime
-    let storage_server_result = storage_handle.spawn(async move {
-        initialize_storage_server(storage_receiver).await
+    // Initialize storage server in storage runtime (runs in background)
+    storage_handle.spawn(async move {
+        info!("Initializing storage server...");
+        if let Err(e) = initialize_storage_server(storage_receiver).await {
+            error!("Storage server failed: {}", e);
+        }
     });
+
+    // Give storage server a moment to initialize
+    std::thread::sleep(std::time::Duration::from_millis(100));
 
     // Use the network runtime to run the main server logic
     let result = network_handle.block_on(async {
-        // Wait for storage server initialization
-        match storage_server_result.await {
-            Ok(Ok(_)) => info!("Storage server initialized successfully"),
-            Ok(Err(e)) => {
-                error!("Failed to initialize storage server: {}", e);
-                return Err(std::io::Error::other(
-                    format!("Failed to initialize storage server: {}", e),
-                ));
-            }
-            Err(e) => {
-                error!("Storage server initialization task failed: {}", e);
-                return Err(std::io::Error::other(
-                    format!("Storage server initialization task failed: {}", e),
-                ));
-            }
-        }
+        info!("Storage server started in background");
 
         // Determine if we should run in cluster mode using the new method
         let cluster_mode = config.should_run_cluster_mode(args.single_node);
