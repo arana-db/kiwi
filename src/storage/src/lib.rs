@@ -15,6 +15,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+extern crate core;
+
 mod base_data_value_format;
 mod member_data_key_format;
 
@@ -52,12 +54,14 @@ pub mod cluster_storage;
 pub mod error;
 pub mod options;
 pub mod storage;
+mod zset_score_key_format;
 
 // Raft integration modules
 pub mod raft_integration;
 mod redis_for_raft;
 
 pub use redis_for_raft::RedisForRaft;
+mod redis_zsets;
 
 pub use base_key_format::BaseMetaKey;
 pub use base_value_format::*;
@@ -69,3 +73,4 @@ pub use redis::{ColumnFamilyIndex, Redis};
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use util::{safe_cleanup_test_db, unique_test_db_path};
+pub use zset_score_key_format::{ScoreMember, ZsetScoreMember};
