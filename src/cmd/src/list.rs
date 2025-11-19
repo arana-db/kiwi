@@ -19,8 +19,10 @@
 
 use std::sync::Arc;
 
+use bytes::Bytes;
 use client::Client;
 use resp::RespData;
+use storage::BeforeOrAfter;
 use storage::storage::Storage;
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta};
@@ -136,6 +138,8 @@ impl LPopCmd {
     }
 }
 
+const MAX_SAFE_POP_COUNT: usize = 1_000_000;
+
 impl Cmd for LPopCmd {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
@@ -152,7 +156,7 @@ impl Cmd for LPopCmd {
         // Parse optional count parameter
         let count = if client.argv().len() > 2 {
             match String::from_utf8_lossy(&client.argv()[2]).parse::<usize>() {
-                Ok(c) if c > 0 => Some(c),
+                Ok(c) if c > 0 && c < MAX_SAFE_POP_COUNT => Some(c),
                 _ => {
                     client.set_reply(RespData::Error(
                         "ERR value is not an integer or out of range".into(),
@@ -224,7 +228,7 @@ impl Cmd for RPopCmd {
         // Parse optional count parameter
         let count = if client.argv().len() > 2 {
             match String::from_utf8_lossy(&client.argv()[2]).parse::<usize>() {
-                Ok(c) if c > 0 => Some(c),
+                Ok(c) if c > 0 && c < MAX_SAFE_POP_COUNT => Some(c),
                 _ => {
                     client.set_reply(RespData::Error(
                         "ERR value is not an integer or out of range".into(),
@@ -247,7 +251,11 @@ impl Cmd for RPopCmd {
                     client.set_reply(RespData::Array(Some(resp_values)));
                 } else {
                     // Return single value for RPOP without count
-                    client.set_reply(RespData::BulkString(Some(values[0].clone().into())));
+                    if values.is_empty() {
+                        client.set_reply(RespData::BulkString(None));
+                    } else {
+                        client.set_reply(RespData::BulkString(Some(values[0].clone().into())));
+                    }
                 }
             }
             Ok(None) => {
@@ -609,6 +617,207 @@ impl Cmd for LRemCmd {
         match storage.lrem(&key, count, value) {
             Ok(removed_count) => {
                 client.set_reply(RespData::Integer(removed_count));
+            }
+            Err(e) => {
+                client.set_reply(RespData::Error(format!("ERR {e}").into()));
+            }
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct LPushxCmd {
+    meta: CmdMeta,
+}
+
+impl LPushxCmd {
+    pub fn new() -> Self {
+        Self {
+            meta: CmdMeta {
+                name: "lpushx".to_string(),
+                arity: -3, // LPUSHX key value
+                flags: CmdFlags::WRITE,
+                acl_category: AclCategory::LIST | AclCategory::WRITE,
+                ..Default::default()
+            },
+        }
+    }
+}
+
+impl Cmd for LPushxCmd {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
+
+    fn do_initial(&self, client: &Client) -> bool {
+        let key = client.argv()[1].clone();
+        client.set_key(&key);
+        true
+    }
+
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
+        let key = client.key();
+        let values = client.argv()[2..].to_vec();
+
+        // LPUSHX implemented - wrap single value in vector
+        match storage.lpushx(&key, &values) {
+            Ok(length) => {
+                client.set_reply(RespData::Integer(length));
+            }
+            Err(e) => {
+                client.set_reply(RespData::Error(format!("ERR {e}").into()));
+            }
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct RPushxCmd {
+    meta: CmdMeta,
+}
+
+impl RPushxCmd {
+    pub fn new() -> Self {
+        Self {
+            meta: CmdMeta {
+                name: "rpushx".to_string(),
+                arity: -3, // RPUSHX key value
+                flags: CmdFlags::WRITE,
+                acl_category: AclCategory::LIST | AclCategory::WRITE,
+                ..Default::default()
+            },
+        }
+    }
+}
+
+impl Cmd for RPushxCmd {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
+
+    fn do_initial(&self, client: &Client) -> bool {
+        let key = client.argv()[1].clone();
+        client.set_key(&key);
+        true
+    }
+
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
+        let key = client.key();
+        let values = client.argv()[2..].to_vec();
+
+        // RPUSHX implemented - wrap single value in vector
+        match storage.rpushx(&key, &values) {
+            Ok(length) => {
+                client.set_reply(RespData::Integer(length));
+            }
+            Err(e) => {
+                client.set_reply(RespData::Error(format!("ERR {e}").into()));
+            }
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct LInsertCmd {
+    meta: CmdMeta,
+}
+
+impl LInsertCmd {
+    pub fn new() -> Self {
+        Self {
+            meta: CmdMeta {
+                name: "linsert".to_string(),
+                arity: 5, // LINSERT key BEFORE|AFTER pivot value
+                flags: CmdFlags::WRITE,
+                acl_category: AclCategory::LIST | AclCategory::WRITE,
+                ..Default::default()
+            },
+        }
+    }
+}
+
+impl Cmd for LInsertCmd {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
+
+    fn do_initial(&self, client: &Client) -> bool {
+        // Validate BEFORE|AFTER parameter
+        let position = &client.argv()[2];
+        if !position.eq_ignore_ascii_case(b"BEFORE") && !position.eq_ignore_ascii_case(b"AFTER") {
+            return false;
+        }
+
+        let key = client.argv()[1].clone();
+        client.set_key(&key);
+        true
+    }
+
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
+        let key = client.key();
+        let position = &client.argv()[2];
+        let pivot = client.argv()[3].clone();
+        let value = client.argv()[4].clone();
+
+        let before_or_after = if position.eq_ignore_ascii_case(b"BEFORE") {
+            BeforeOrAfter::Before
+        } else {
+            BeforeOrAfter::After
+        };
+
+        match storage.linsert(&key, before_or_after, &pivot, &value) {
+            Ok(length) => {
+                client.set_reply(RespData::Integer(length));
+            }
+            Err(e) => {
+                client.set_reply(RespData::Error(format!("ERR {e}").into()));
+            }
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct RPoplpushCmd {
+    meta: CmdMeta,
+}
+
+impl RPoplpushCmd {
+    pub fn new() -> Self {
+        Self {
+            meta: CmdMeta {
+                name: "rpoplpush".to_string(),
+                arity: 3, // RPOPLPUSH source destination
+                flags: CmdFlags::WRITE,
+                acl_category: AclCategory::LIST | AclCategory::WRITE,
+                ..Default::default()
+            },
+        }
+    }
+}
+
+impl Cmd for RPoplpushCmd {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
+
+    fn do_initial(&self, client: &Client) -> bool {
+        let source_key = client.argv()[1].clone();
+        let _dest_key = client.argv()[2].clone();
+
+        // Set source key for initial validation
+        client.set_key(&source_key);
+        true
+    }
+
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
+        let source_key = client.argv()[1].clone();
+        let destination_key = client.argv()[2].clone();
+
+        match storage.rpoplpush(&source_key, &destination_key) {
+            Ok(Some(value)) => {
+                client.set_reply(RespData::BulkString(Some(Bytes::from(value))));
+                // Set destination key for blocking operations
+                client.set_key(&destination_key);
+            }
+            Ok(None) => {
+                // Source list was empty or didn't exist
+                client.set_reply(RespData::BulkString(None));
             }
             Err(e) => {
                 client.set_reply(RespData::Error(format!("ERR {e}").into()));
