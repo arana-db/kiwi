@@ -37,6 +37,7 @@ error() { echo -e "${RED}$1${NC}"; }
 COMMAND=${1:-check}
 PROFILE=""
 VERBOSE=""
+DEBUG_MODE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -47,6 +48,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -v|--verbose)
             VERBOSE="-v"
+            shift
+            ;;
+        --debug)
+            DEBUG_MODE="true"
             shift
             ;;
         *)
@@ -90,35 +95,57 @@ fi
 # Set environment variables for faster builds
 export CARGO_BUILD_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
-# Check and setup sccache if available
-if command -v sccache &> /dev/null; then
-    export RUSTC_WRAPPER=sccache
-    # sccache doesn't support incremental compilation, so disable it
-    export CARGO_INCREMENTAL=0
-    unset CARGO_CACHE_RUSTC_INFO
-    # Silently start sccache server if not running
-    sccache --start-server &> /dev/null || true
-else
-    # Enable incremental compilation when not using sccache
+# Debug mode configuration
+if [ -n "$DEBUG_MODE" ]; then
+    info "🐛 Debug mode enabled - using Cargo_debug.toml"
+    # Set environment variables for debugging
+    export RUSTFLAGS="-g -Zmacro-backtrace"
     export CARGO_INCREMENTAL=1
-    if [ "$COMMAND" = "build" ] || [ "$COMMAND" = "run" ]; then
-        warning "⚡ Tip: Install sccache for faster builds: cargo install sccache"
-        warning "   Or run: ./scripts/quick_setup.sh"
+    # Disable sccache for debug builds to ensure debug symbols
+    unset RUSTC_WRAPPER
+    # Use debug config if available
+    if [ -f "Cargo_debug.toml" ]; then
+        CARGO_CONFIG_FLAG="--config Cargo_debug.toml"
+        info "📋 Using Cargo_debug.toml for maximum debug symbols"
+    else
+        warning "⚠️ Cargo_debug.toml not found, using default debug settings"
     fi
+else
+    # Check and setup sccache if available (normal builds)
+    if command -v sccache &> /dev/null; then
+        export RUSTC_WRAPPER=sccache
+        # sccache doesn't support incremental compilation, so disable it
+        export CARGO_INCREMENTAL=0
+        unset CARGO_CACHE_RUSTC_INFO
+        # Silently start sccache server if not running
+        sccache --start-server &> /dev/null || true
+    else
+        # Enable incremental compilation when not using sccache
+        export CARGO_INCREMENTAL=1
+        if [ "$COMMAND" = "build" ] || [ "$COMMAND" = "run" ]; then
+            warning "⚡ Tip: Install sccache for faster builds: cargo install sccache"
+            warning "   Or run: ./scripts/quick_setup.sh"
+        fi
+    fi
+    CARGO_CONFIG_FLAG=""
 fi
 
 case $COMMAND in
     check)
         info "Running cargo check (fast syntax check)..."
-        cargo check $PROFILE $VERBOSE
+        cargo check $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         if [ $? -eq 0 ]; then
             success "✓ Check passed!"
         fi
         ;;
     
     build)
-        info "Building Kiwi..."
-        
+        if [ -n "$DEBUG_MODE" ]; then
+            info "Building Kiwi in DEBUG mode..."
+        else
+            info "Building Kiwi..."
+        fi
+
         # Check if librocksdb-sys is cached
         TARGET_DIR="target/debug"
         if [ "$PROFILE" = "--release" ]; then
@@ -132,26 +159,61 @@ case $COMMAND in
         fi
         
         START_TIME=$(date +%s)
-        cargo build $PROFILE $VERBOSE
+        cargo build $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         END_TIME=$(date +%s)
         BUILD_TIME=$((END_TIME - START_TIME))
         
         if [ $? -eq 0 ]; then
-            success "✓ Build completed in ${BUILD_TIME} seconds"
+            if [ -n "$DEBUG_MODE" ]; then
+                success "✓ Debug build completed in ${BUILD_TIME} seconds"
+                echo ""
+                info "🐛 Debug binary ready at: target/debug/kiwi"
+                info "🔍 GDB command: gdb -ex 'break main' -ex 'run' target/debug/kiwi"
+                info "🔍 Or use: rust-gdb target/debug/kiwi"
+            else
+                success "✓ Build completed in ${BUILD_TIME} seconds"
+            fi
         fi
         ;;
     
     run)
-        info "Running Kiwi..."
+        if [ -n "$DEBUG_MODE" ]; then
+            info "Running Kiwi in DEBUG mode..."
+        else
+            info "Running Kiwi..."
+        fi
         export RUST_LOG=debug
-        cargo run $PROFILE $VERBOSE
+        cargo run $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         ;;
     
     test)
         info "Running tests..."
-        cargo test $PROFILE $VERBOSE
+        cargo test $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         ;;
-    
+
+    gdb)
+        info "Starting GDB debug session..."
+        # First build with debug symbols if not already built
+        if [ ! -f "target/debug/kiwi" ]; then
+            warning "Debug binary not found, building first..."
+            ./scripts/dev.sh build --debug
+        fi
+
+        if [ -f "target/debug/kiwi" ]; then
+            success "✓ Starting GDB with debug symbols"
+            if command -v rust-gdb &> /dev/null; then
+                info "Using rust-gdb for better Rust debugging..."
+                rust-gdb -ex 'break main' -ex 'run' target/debug/kiwi
+            else
+                info "Using standard gdb..."
+                gdb -ex 'set debug-file-directory ./target/debug/deps' -ex 'break main' -ex 'run' target/debug/kiwi
+            fi
+        else
+            error "Debug binary not found. Run './scripts/dev.sh build --debug' first."
+            exit 1
+        fi
+        ;;
+
     clean)
         warning "Cleaning build artifacts..."
         cargo clean
@@ -228,13 +290,20 @@ case $COMMAND in
         echo "  build  - Build the project"
         echo "  run    - Build and run"
         echo "  test   - Run tests"
+        echo "  gdb    - Build and start GDB"
         echo "  clean  - Clean build artifacts"
         echo "  watch  - Auto-check on file changes"
         echo "  stats  - Show build statistics"
         echo ""
         echo "Options:"
+        echo "  --debug    - Enable full debug symbols (slower build, better debugging)"
         echo "  --release  - Use release profile"
         echo "  -v         - Verbose output"
+        echo ""
+        echo "Debug examples:"
+        echo "  ./scripts/dev.sh build --debug     # Build with debug symbols"
+        echo "  ./scripts/dev.sh run --debug       # Run with debug symbols"
+        echo "  ./scripts/dev.sh gdb               # Build and start GDB"
         exit 1
         ;;
 esac
