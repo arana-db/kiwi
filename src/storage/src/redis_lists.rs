@@ -1041,8 +1041,14 @@ impl Redis {
             };
 
             // Then, push to destination list using internal method to avoid double locking
-            match self.push_core(destination_key, std::slice::from_ref(&popped_value), true, true, false)? {
-                Some(_) => {},
+            match self.push_core(
+                destination_key,
+                std::slice::from_ref(&popped_value),
+                true,
+                true,
+                false,
+            )? {
+                Some(_) => {}
                 None => unreachable!("Destination list creation should always succeed"),
             }
 
@@ -1072,8 +1078,14 @@ impl Redis {
         };
 
         // Then, push to destination list using internal method to avoid double locking
-        match self.push_core(destination_key, std::slice::from_ref(&popped_value), true, true, false)? {
-            Some(_) => {},
+        match self.push_core(
+            destination_key,
+            std::slice::from_ref(&popped_value),
+            true,
+            true,
+            false,
+        )? {
+            Some(_) => {}
             None => unreachable!("Destination list creation should always succeed"),
         }
 
