@@ -467,7 +467,13 @@ impl Redis {
         })
     }
 
-    pub fn get_scan_start_point(&self, dtype: DataType, key: &[u8], pattern: &[u8], cursor: u64) -> Result<Option<String>> {
+    pub fn get_scan_start_point(
+        &self,
+        dtype: DataType,
+        key: &[u8],
+        pattern: &[u8],
+        cursor: u64,
+    ) -> Result<Option<String>> {
         let index_key = format!(
             "{}_{}_{}_{}",
             DATA_TYPE_TAG[dtype as usize],
@@ -475,10 +481,22 @@ impl Redis {
             String::from_utf8_lossy(pattern),
             cursor
         );
-        Ok(self.scan_cursors_store.lock().unwrap().get(&index_key).map(|entry| entry.value().clone()))
+        Ok(self
+            .scan_cursors_store
+            .lock()
+            .unwrap()
+            .get(&index_key)
+            .map(|entry| entry.value().clone()))
     }
 
-    pub fn store_scan_next_point(&self, dtype: DataType, key: &[u8], pattern: &[u8], cursor: u64, next_point: &[u8]) -> Result<()> {
+    pub fn store_scan_next_point(
+        &self,
+        dtype: DataType,
+        key: &[u8],
+        pattern: &[u8],
+        cursor: u64,
+        next_point: &[u8],
+    ) -> Result<()> {
         let index_key = format!(
             "{}_{}_{}_{}",
             DATA_TYPE_TAG[dtype as usize],
@@ -487,7 +505,7 @@ impl Redis {
             cursor
         );
         let next_point_str = String::from_utf8_lossy(next_point).to_string();
-        let mut store = self.scan_cursors_store.lock().map_err(|_| RedisErr {
+        let store = self.scan_cursors_store.lock().map_err(|_| RedisErr {
             message: "Failed to lock scan_cursors_store".to_string(),
             location: Default::default(),
         })?;

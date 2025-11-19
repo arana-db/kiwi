@@ -188,4 +188,3 @@ mod tests {
         assert!(!cmd.check_arg(0)); // No arguments
     }
 }
-

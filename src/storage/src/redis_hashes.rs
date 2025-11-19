@@ -1111,7 +1111,7 @@ impl Redis {
         let base_meta_key = BaseMetaKey::new(key).encode()?;
         let default_count = 10usize;
         let step_length = count.unwrap_or(default_count);
-        let mut rest = step_length as i64; 
+        let mut rest = step_length as i64;
 
         // Read meta
         match db
@@ -1141,11 +1141,15 @@ impl Redis {
 
                 if cursor > 0 {
                     if let Some(pat) = pattern {
-                        if let Some(sp) = self.get_scan_start_point(DataType::Hash, key, pat.as_bytes(), cursor)? {
+                        if let Some(sp) =
+                            self.get_scan_start_point(DataType::Hash, key, pat.as_bytes(), cursor)?
+                        {
                             start_point = sp;
                         }
-                    } else if let Some(sp) = self.get_scan_start_point(DataType::Hash, key, &[], cursor)? {
-                            start_point = sp;
+                    } else if let Some(sp) =
+                        self.get_scan_start_point(DataType::Hash, key, &[], cursor)?
+                    {
+                        start_point = sp;
                     }
                 } else if let Some(pat) = pattern {
                     if is_tail_wildcard(pat) {
@@ -1157,9 +1161,13 @@ impl Redis {
                     _ => None,
                 };
 
-                let hashes_data_prefix = MemberDataKey::new(key, version, sub_field.map(|s| s.as_bytes()).unwrap_or(&[]));
+                let hashes_data_prefix = MemberDataKey::new(
+                    key,
+                    version,
+                    sub_field.map(|s| s.as_bytes()).unwrap_or(&[]),
+                );
                 let prefix = hashes_data_prefix.encode_seek_key()?;
-                
+
                 let start_key = if !start_point.is_empty() {
                     let hashes_start_key = MemberDataKey::new(key, version, start_point.as_bytes());
                     hashes_start_key.encode_seek_key()?
@@ -1178,13 +1186,15 @@ impl Redis {
                 while rest > 0 {
                     if let Some(item) = iter.next() {
                         let (k, v) = item.context(RocksSnafu)?;
-                        
+
                         if !k.starts_with(&prefix) {
                             break;
                         }
 
-                        let parsed_hashes_data_key = crate::member_data_key_format::ParsedMemberDataKey::new(&k)?;
-                        let field = String::from_utf8_lossy(parsed_hashes_data_key.data()).to_string();
+                        let parsed_hashes_data_key =
+                            crate::member_data_key_format::ParsedMemberDataKey::new(&k)?;
+                        let field =
+                            String::from_utf8_lossy(parsed_hashes_data_key.data()).to_string();
 
                         let matches_pattern = if let Some(pat) = pattern {
                             glob_match(pat, field.as_str())
@@ -1194,7 +1204,9 @@ impl Redis {
 
                         if matches_pattern && rest > 0 {
                             let parsed_internal_value = ParsedBaseDataValue::new(&*v)?;
-                            let value = String::from_utf8_lossy(&parsed_internal_value.user_value()).to_string();
+                            let value =
+                                String::from_utf8_lossy(&parsed_internal_value.user_value())
+                                    .to_string();
                             field_values.push((field.clone(), value));
                         }
                         rest -= 1;
@@ -1205,14 +1217,21 @@ impl Redis {
 
                 next_cursor = if let Some(item) = iter.next() {
                     let (k, _v) = item.context(RocksSnafu)?;
-                    
+
                     if k.starts_with(&prefix) {
                         let new_cursor = next_cursor + step_length as u64;
 
-                        let parsed_key = crate::member_data_key_format::ParsedMemberDataKey::new(&k)?;
+                        let parsed_key =
+                            crate::member_data_key_format::ParsedMemberDataKey::new(&k)?;
                         let next_field = String::from_utf8_lossy(parsed_key.data()).to_string();
 
-                        self.store_scan_next_point(DataType::Hash, key, pattern.unwrap_or("").as_bytes(), new_cursor, next_field.as_bytes())?;
+                        self.store_scan_next_point(
+                            DataType::Hash,
+                            key,
+                            pattern.unwrap_or("").as_bytes(),
+                            new_cursor,
+                            next_field.as_bytes(),
+                        )?;
                         new_cursor
                     } else {
                         0
@@ -1223,9 +1242,7 @@ impl Redis {
                 drop(iter);
                 Ok((next_cursor, field_values))
             }
-            None => {
-                Ok((0, Vec::new()))
-            }
+            None => Ok((0, Vec::new())),
         }
     }
 }
