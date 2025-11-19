@@ -129,9 +129,7 @@ mod redis_hash_test {
     fn test_hscan_basic() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -196,9 +194,7 @@ mod redis_hash_test {
     fn test_hscan_with_pattern() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -250,9 +246,7 @@ mod redis_hash_test {
     fn test_hscan_nonexistent_key() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -279,9 +273,7 @@ mod redis_hash_test {
     fn test_hscan_full_iteration() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
@@ -347,9 +339,7 @@ mod redis_hash_test {
     fn test_hscan_with_wildcards() {
         let test_db_path = unique_test_db_path();
 
-        if test_db_path.exists() {
-            std::fs::remove_dir_all(&test_db_path).unwrap();
-        }
+        safe_cleanup_test_db(&test_db_path);
 
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();

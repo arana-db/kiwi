@@ -487,7 +487,10 @@ impl Redis {
             cursor
         );
         let next_point_str = String::from_utf8_lossy(next_point).to_string();
-        let store = self.scan_cursors_store.lock().unwrap();
+        let mut store = self.scan_cursors_store.lock().map_err(|_| RedisErr {
+            message: "Failed to lock scan_cursors_store".to_string(),
+            location: Default::default(),
+        })?;
 
         store.insert(index_key, next_point_str);
         Ok(())
