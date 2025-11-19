@@ -186,7 +186,6 @@ pub trait StorageBackend: Send + Sync {
     async fn flush(&self) -> Result<(), RaftError>;
 }
 
-
 /// RocksDB storage backend implementation
 ///
 /// This implementation wraps RocksDB to provide the StorageBackend trait interface.
@@ -212,11 +211,12 @@ impl RocksDBBackend {
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
 
-        let db = rocksdb::DB::open(&opts, path)
-            .map_err(|e| RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
+        let db = rocksdb::DB::open(&opts, path).map_err(|e| {
+            RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
                 e,
                 "Failed to open RocksDB",
-            )))?;
+            ))
+        })?;
 
         Ok(Self {
             db: std::sync::Arc::new(db),
@@ -238,11 +238,12 @@ impl RocksDBBackend {
         path: P,
         opts: rocksdb::Options,
     ) -> Result<Self, RaftError> {
-        let db = rocksdb::DB::open(&opts, path)
-            .map_err(|e| RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
+        let db = rocksdb::DB::open(&opts, path).map_err(|e| {
+            RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
                 e,
                 "Failed to open RocksDB with custom options",
-            )))?;
+            ))
+        })?;
 
         Ok(Self {
             db: std::sync::Arc::new(db),
@@ -257,17 +258,20 @@ impl StorageBackend for RocksDBBackend {
         let key = key.to_vec();
 
         tokio::task::spawn_blocking(move || {
-            db.get(&key)
-                .map_err(|e| RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
+            db.get(&key).map_err(|e| {
+                RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
                     e,
                     "RocksDB read error",
-                )))
+                ))
+            })
         })
         .await
-        .map_err(|e| RaftError::Storage(crate::error::StorageError::DataInconsistency {
-            message: format!("Task join error: {}", e),
-            context: "read".to_string(),
-        }))?
+        .map_err(|e| {
+            RaftError::Storage(crate::error::StorageError::DataInconsistency {
+                message: format!("Task join error: {}", e),
+                context: "read".to_string(),
+            })
+        })?
     }
 
     async fn write(&self, key: &[u8], value: &[u8]) -> Result<(), RaftError> {
@@ -276,17 +280,20 @@ impl StorageBackend for RocksDBBackend {
         let value = value.to_vec();
 
         tokio::task::spawn_blocking(move || {
-            db.put(&key, &value)
-                .map_err(|e| RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
+            db.put(&key, &value).map_err(|e| {
+                RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
                     e,
                     "RocksDB write error",
-                )))
+                ))
+            })
         })
         .await
-        .map_err(|e| RaftError::Storage(crate::error::StorageError::DataInconsistency {
-            message: format!("Task join error: {}", e),
-            context: "write".to_string(),
-        }))?
+        .map_err(|e| {
+            RaftError::Storage(crate::error::StorageError::DataInconsistency {
+                message: format!("Task join error: {}", e),
+                context: "write".to_string(),
+            })
+        })?
     }
 
     async fn delete(&self, key: &[u8]) -> Result<(), RaftError> {
@@ -294,17 +301,20 @@ impl StorageBackend for RocksDBBackend {
         let key = key.to_vec();
 
         tokio::task::spawn_blocking(move || {
-            db.delete(&key)
-                .map_err(|e| RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
+            db.delete(&key).map_err(|e| {
+                RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
                     e,
                     "RocksDB delete error",
-                )))
+                ))
+            })
         })
         .await
-        .map_err(|e| RaftError::Storage(crate::error::StorageError::DataInconsistency {
-            message: format!("Task join error: {}", e),
-            context: "delete".to_string(),
-        }))?
+        .map_err(|e| {
+            RaftError::Storage(crate::error::StorageError::DataInconsistency {
+                message: format!("Task join error: {}", e),
+                context: "delete".to_string(),
+            })
+        })?
     }
 
     async fn batch_write(&self, ops: Vec<WriteOp>) -> Result<(), RaftError> {
@@ -324,17 +334,20 @@ impl StorageBackend for RocksDBBackend {
                 }
             }
 
-            db.write(batch)
-                .map_err(|e| RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
+            db.write(batch).map_err(|e| {
+                RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
                     e,
                     "RocksDB batch write error",
-                )))
+                ))
+            })
         })
         .await
-        .map_err(|e| RaftError::Storage(crate::error::StorageError::DataInconsistency {
-            message: format!("Task join error: {}", e),
-            context: "batch_write".to_string(),
-        }))?
+        .map_err(|e| {
+            RaftError::Storage(crate::error::StorageError::DataInconsistency {
+                message: format!("Task join error: {}", e),
+                context: "batch_write".to_string(),
+            })
+        })?
     }
 
     async fn read_range<R>(&self, range: R) -> Result<Vec<(Vec<u8>, Vec<u8>)>, RaftError>
@@ -394,10 +407,12 @@ impl StorageBackend for RocksDBBackend {
             Ok(results)
         })
         .await
-        .map_err(|e| RaftError::Storage(crate::error::StorageError::DataInconsistency {
-            message: format!("Task join error: {}", e),
-            context: "read_range".to_string(),
-        }))?
+        .map_err(|e| {
+            RaftError::Storage(crate::error::StorageError::DataInconsistency {
+                message: format!("Task join error: {}", e),
+                context: "read_range".to_string(),
+            })
+        })?
     }
 
     async fn get_last(&self) -> Result<Option<(Vec<u8>, Vec<u8>)>, RaftError> {
@@ -419,27 +434,32 @@ impl StorageBackend for RocksDBBackend {
             }
         })
         .await
-        .map_err(|e| RaftError::Storage(crate::error::StorageError::DataInconsistency {
-            message: format!("Task join error: {}", e),
-            context: "get_last".to_string(),
-        }))?
+        .map_err(|e| {
+            RaftError::Storage(crate::error::StorageError::DataInconsistency {
+                message: format!("Task join error: {}", e),
+                context: "get_last".to_string(),
+            })
+        })?
     }
 
     async fn flush(&self) -> Result<(), RaftError> {
         let db = self.db.clone();
 
         tokio::task::spawn_blocking(move || {
-            db.flush()
-                .map_err(|e| RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
+            db.flush().map_err(|e| {
+                RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
                     e,
                     "RocksDB flush error",
-                )))
+                ))
+            })
         })
         .await
-        .map_err(|e| RaftError::Storage(crate::error::StorageError::DataInconsistency {
-            message: format!("Task join error: {}", e),
-            context: "flush".to_string(),
-        }))?
+        .map_err(|e| {
+            RaftError::Storage(crate::error::StorageError::DataInconsistency {
+                message: format!("Task join error: {}", e),
+                context: "flush".to_string(),
+            })
+        })?
     }
 }
 
@@ -596,14 +616,12 @@ pub fn create_backend_with_options<P: AsRef<Path>>(
             let backend = RocksDBBackend::with_options(path, opts)?;
             Ok(StorageBackendImpl::RocksDB(std::sync::Arc::new(backend)))
         }
-        BackendType::LevelDB => {
-            Err(RaftError::Storage(
-                crate::error::StorageError::DataInconsistency {
-                    message: "LevelDB backend does not support custom options yet".to_string(),
-                    context: "create_backend_with_options".to_string(),
-                },
-            ))
-        }
+        BackendType::LevelDB => Err(RaftError::Storage(
+            crate::error::StorageError::DataInconsistency {
+                message: "LevelDB backend does not support custom options yet".to_string(),
+                context: "create_backend_with_options".to_string(),
+            },
+        )),
     }
 }
 
@@ -619,7 +637,9 @@ mod tests {
     impl MockBackend {
         fn new() -> Self {
             Self {
-                data: std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+                data: std::sync::Arc::new(tokio::sync::RwLock::new(
+                    std::collections::HashMap::new(),
+                )),
             }
         }
     }
@@ -664,20 +684,21 @@ mod tests {
         {
             let data = self.data.read().await;
             let mut results = Vec::new();
-            
+
             for (key, value) in data.iter() {
                 if range.contains(key) {
                     results.push((key.clone(), value.clone()));
                 }
             }
-            
+
             results.sort_by(|a, b| a.0.cmp(&b.0));
             Ok(results)
         }
 
         async fn get_last(&self) -> Result<Option<(Vec<u8>, Vec<u8>)>, RaftError> {
             let data = self.data.read().await;
-            Ok(data.iter()
+            Ok(data
+                .iter()
                 .max_by(|a, b| a.0.cmp(b.0))
                 .map(|(k, v)| (k.clone(), v.clone())))
         }
@@ -691,14 +712,14 @@ mod tests {
     #[tokio::test]
     async fn test_storage_backend_read_write() {
         let backend = MockBackend::new();
-        
+
         // Write a value
         backend.write(b"key1", b"value1").await.unwrap();
-        
+
         // Read it back
         let value = backend.read(b"key1").await.unwrap();
         assert_eq!(value, Some(b"value1".to_vec()));
-        
+
         // Read non-existent key
         let value = backend.read(b"key2").await.unwrap();
         assert_eq!(value, None);
@@ -707,11 +728,11 @@ mod tests {
     #[tokio::test]
     async fn test_storage_backend_delete() {
         let backend = MockBackend::new();
-        
+
         // Write and delete
         backend.write(b"key1", b"value1").await.unwrap();
         backend.delete(b"key1").await.unwrap();
-        
+
         // Verify deleted
         let value = backend.read(b"key1").await.unwrap();
         assert_eq!(value, None);
@@ -720,7 +741,7 @@ mod tests {
     #[tokio::test]
     async fn test_storage_backend_batch_write() {
         let backend = MockBackend::new();
-        
+
         // Batch write
         let ops = vec![
             WriteOp::Put {
@@ -735,26 +756,29 @@ mod tests {
                 key: b"key1".to_vec(),
             },
         ];
-        
+
         backend.batch_write(ops).await.unwrap();
-        
+
         // Verify results
         assert_eq!(backend.read(b"key1").await.unwrap(), None);
-        assert_eq!(backend.read(b"key2").await.unwrap(), Some(b"value2".to_vec()));
+        assert_eq!(
+            backend.read(b"key2").await.unwrap(),
+            Some(b"value2".to_vec())
+        );
     }
 
     #[tokio::test]
     async fn test_storage_backend_get_last() {
         let backend = MockBackend::new();
-        
+
         // Empty storage
         assert_eq!(backend.get_last().await.unwrap(), None);
-        
+
         // Add some entries
         backend.write(b"key1", b"value1").await.unwrap();
         backend.write(b"key3", b"value3").await.unwrap();
         backend.write(b"key2", b"value2").await.unwrap();
-        
+
         // Get last (should be key3 lexicographically)
         let last = backend.get_last().await.unwrap();
         assert_eq!(last, Some((b"key3".to_vec(), b"value3".to_vec())));
@@ -763,10 +787,10 @@ mod tests {
     #[tokio::test]
     async fn test_storage_backend_flush() {
         let backend = MockBackend::new();
-        
+
         backend.write(b"key1", b"value1").await.unwrap();
         backend.flush().await.unwrap();
-        
+
         // Verify data still accessible after flush
         let value = backend.read(b"key1").await.unwrap();
         assert_eq!(value, Some(b"value1".to_vec()));
@@ -777,14 +801,14 @@ mod tests {
     async fn test_rocksdb_backend_read_write() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let backend = RocksDBBackend::new(temp_dir.path()).unwrap();
-        
+
         // Write a value
         backend.write(b"key1", b"value1").await.unwrap();
-        
+
         // Read it back
         let value = backend.read(b"key1").await.unwrap();
         assert_eq!(value, Some(b"value1".to_vec()));
-        
+
         // Read non-existent key
         let value = backend.read(b"key2").await.unwrap();
         assert_eq!(value, None);
@@ -794,11 +818,11 @@ mod tests {
     async fn test_rocksdb_backend_delete() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let backend = RocksDBBackend::new(temp_dir.path()).unwrap();
-        
+
         // Write and delete
         backend.write(b"key1", b"value1").await.unwrap();
         backend.delete(b"key1").await.unwrap();
-        
+
         // Verify deleted
         let value = backend.read(b"key1").await.unwrap();
         assert_eq!(value, None);
@@ -808,7 +832,7 @@ mod tests {
     async fn test_rocksdb_backend_batch_write() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let backend = RocksDBBackend::new(temp_dir.path()).unwrap();
-        
+
         // Batch write
         let ops = vec![
             WriteOp::Put {
@@ -823,27 +847,33 @@ mod tests {
                 key: b"key1".to_vec(),
             },
         ];
-        
+
         backend.batch_write(ops).await.unwrap();
-        
+
         // Verify results
         assert_eq!(backend.read(b"key1").await.unwrap(), None);
-        assert_eq!(backend.read(b"key2").await.unwrap(), Some(b"value2".to_vec()));
+        assert_eq!(
+            backend.read(b"key2").await.unwrap(),
+            Some(b"value2".to_vec())
+        );
     }
 
     #[tokio::test]
     async fn test_rocksdb_backend_read_range() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let backend = RocksDBBackend::new(temp_dir.path()).unwrap();
-        
+
         // Write multiple keys
         backend.write(b"key1", b"value1").await.unwrap();
         backend.write(b"key2", b"value2").await.unwrap();
         backend.write(b"key3", b"value3").await.unwrap();
         backend.write(b"key4", b"value4").await.unwrap();
-        
+
         // Read range
-        let results = backend.read_range(b"key2".to_vec()..b"key4".to_vec()).await.unwrap();
+        let results = backend
+            .read_range(b"key2".to_vec()..b"key4".to_vec())
+            .await
+            .unwrap();
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].0, b"key2");
         assert_eq!(results[1].0, b"key3");
@@ -853,15 +883,15 @@ mod tests {
     async fn test_rocksdb_backend_get_last() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let backend = RocksDBBackend::new(temp_dir.path()).unwrap();
-        
+
         // Empty storage
         assert_eq!(backend.get_last().await.unwrap(), None);
-        
+
         // Add some entries
         backend.write(b"key1", b"value1").await.unwrap();
         backend.write(b"key3", b"value3").await.unwrap();
         backend.write(b"key2", b"value2").await.unwrap();
-        
+
         // Get last (should be key3 lexicographically)
         let last = backend.get_last().await.unwrap();
         assert_eq!(last, Some((b"key3".to_vec(), b"value3".to_vec())));
@@ -871,10 +901,10 @@ mod tests {
     async fn test_rocksdb_backend_flush() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let backend = RocksDBBackend::new(temp_dir.path()).unwrap();
-        
+
         backend.write(b"key1", b"value1").await.unwrap();
         backend.flush().await.unwrap();
-        
+
         // Verify data still accessible after flush
         let value = backend.read(b"key1").await.unwrap();
         assert_eq!(value, Some(b"value1".to_vec()));
@@ -884,14 +914,14 @@ mod tests {
     async fn test_rocksdb_backend_persistence() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let path = temp_dir.path().to_path_buf();
-        
+
         // Write data and drop backend
         {
             let backend = RocksDBBackend::new(&path).unwrap();
             backend.write(b"key1", b"value1").await.unwrap();
             backend.flush().await.unwrap();
         }
-        
+
         // Reopen and verify data persisted
         {
             let backend = RocksDBBackend::new(&path).unwrap();
@@ -904,7 +934,7 @@ mod tests {
     async fn test_rocksdb_backend_concurrent_operations() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let backend = std::sync::Arc::new(RocksDBBackend::new(temp_dir.path()).unwrap());
-        
+
         // Spawn multiple concurrent write tasks
         let mut handles = vec![];
         for i in 0..10 {
@@ -912,16 +942,19 @@ mod tests {
             let handle = tokio::spawn(async move {
                 let key = format!("key{}", i);
                 let value = format!("value{}", i);
-                backend.write(key.as_bytes(), value.as_bytes()).await.unwrap();
+                backend
+                    .write(key.as_bytes(), value.as_bytes())
+                    .await
+                    .unwrap();
             });
             handles.push(handle);
         }
-        
+
         // Wait for all writes to complete
         for handle in handles {
             handle.await.unwrap();
         }
-        
+
         // Verify all writes succeeded
         for i in 0..10 {
             let key = format!("key{}", i);
@@ -935,9 +968,8 @@ mod tests {
     #[tokio::test]
     async fn test_create_backend_rocksdb() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let backend = super::create_backend(super::BackendType::RocksDB, temp_dir.path())
-            .unwrap();
-        
+        let backend = super::create_backend(super::BackendType::RocksDB, temp_dir.path()).unwrap();
+
         // Test basic operations
         backend.write(b"key1", b"value1").await.unwrap();
         let value = backend.read(b"key1").await.unwrap();
@@ -948,7 +980,7 @@ mod tests {
     async fn test_create_backend_leveldb_not_implemented() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let result = super::create_backend(super::BackendType::LevelDB, temp_dir.path());
-        
+
         // Should return error since LevelDB is not yet implemented
         assert!(result.is_err());
         if let Err(e) = result {
@@ -959,18 +991,15 @@ mod tests {
     #[tokio::test]
     async fn test_create_backend_with_options() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        
+
         let mut opts = rocksdb::Options::default();
         opts.create_if_missing(true);
         opts.set_max_open_files(100);
-        
-        let backend = super::create_backend_with_options(
-            super::BackendType::RocksDB,
-            temp_dir.path(),
-            opts,
-        )
-        .unwrap();
-        
+
+        let backend =
+            super::create_backend_with_options(super::BackendType::RocksDB, temp_dir.path(), opts)
+                .unwrap();
+
         // Test basic operations
         backend.write(b"key1", b"value1").await.unwrap();
         let value = backend.read(b"key1").await.unwrap();
@@ -986,7 +1015,7 @@ mod tests {
     #[test]
     fn test_backend_type_from_str() {
         use std::str::FromStr;
-        
+
         assert_eq!(
             super::BackendType::from_str("rocksdb").unwrap(),
             super::BackendType::RocksDB
@@ -1007,7 +1036,7 @@ mod tests {
             super::BackendType::from_str("LevelDB").unwrap(),
             super::BackendType::LevelDB
         );
-        
+
         // Test invalid backend type
         assert!(super::BackendType::from_str("invalid").is_err());
     }
@@ -1016,22 +1045,22 @@ mod tests {
     async fn test_factory_creates_independent_backends() {
         let temp_dir1 = tempfile::TempDir::new().unwrap();
         let temp_dir2 = tempfile::TempDir::new().unwrap();
-        
-        let backend1 = super::create_backend(super::BackendType::RocksDB, temp_dir1.path())
-            .unwrap();
-        let backend2 = super::create_backend(super::BackendType::RocksDB, temp_dir2.path())
-            .unwrap();
-        
+
+        let backend1 =
+            super::create_backend(super::BackendType::RocksDB, temp_dir1.path()).unwrap();
+        let backend2 =
+            super::create_backend(super::BackendType::RocksDB, temp_dir2.path()).unwrap();
+
         // Write to backend1
         backend1.write(b"key1", b"value1").await.unwrap();
-        
+
         // Verify backend2 doesn't have the data
         let value = backend2.read(b"key1").await.unwrap();
         assert_eq!(value, None);
-        
+
         // Write to backend2
         backend2.write(b"key1", b"value2").await.unwrap();
-        
+
         // Verify backends have different values
         let value1 = backend1.read(b"key1").await.unwrap();
         let value2 = backend2.read(b"key1").await.unwrap();
@@ -1042,15 +1071,14 @@ mod tests {
     #[tokio::test]
     async fn test_storage_backend_impl_clone() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let backend = super::create_backend(super::BackendType::RocksDB, temp_dir.path())
-            .unwrap();
-        
+        let backend = super::create_backend(super::BackendType::RocksDB, temp_dir.path()).unwrap();
+
         // Clone the backend
         let backend_clone = backend.clone();
-        
+
         // Write using original
         backend.write(b"key1", b"value1").await.unwrap();
-        
+
         // Read using clone (should see the same data since they share the same Arc)
         let value = backend_clone.read(b"key1").await.unwrap();
         assert_eq!(value, Some(b"value1".to_vec()));
@@ -1059,17 +1087,19 @@ mod tests {
     #[tokio::test]
     async fn test_storage_backend_impl_all_operations() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let backend = super::create_backend(super::BackendType::RocksDB, temp_dir.path())
-            .unwrap();
-        
+        let backend = super::create_backend(super::BackendType::RocksDB, temp_dir.path()).unwrap();
+
         // Test write and read
         backend.write(b"key1", b"value1").await.unwrap();
-        assert_eq!(backend.read(b"key1").await.unwrap(), Some(b"value1".to_vec()));
-        
+        assert_eq!(
+            backend.read(b"key1").await.unwrap(),
+            Some(b"value1".to_vec())
+        );
+
         // Test delete
         backend.delete(b"key1").await.unwrap();
         assert_eq!(backend.read(b"key1").await.unwrap(), None);
-        
+
         // Test batch write
         let ops = vec![
             super::WriteOp::Put {
@@ -1082,17 +1112,26 @@ mod tests {
             },
         ];
         backend.batch_write(ops).await.unwrap();
-        assert_eq!(backend.read(b"key2").await.unwrap(), Some(b"value2".to_vec()));
-        assert_eq!(backend.read(b"key3").await.unwrap(), Some(b"value3".to_vec()));
-        
+        assert_eq!(
+            backend.read(b"key2").await.unwrap(),
+            Some(b"value2".to_vec())
+        );
+        assert_eq!(
+            backend.read(b"key3").await.unwrap(),
+            Some(b"value3".to_vec())
+        );
+
         // Test read_range
-        let range_results = backend.read_range(b"key2".to_vec()..b"key4".to_vec()).await.unwrap();
+        let range_results = backend
+            .read_range(b"key2".to_vec()..b"key4".to_vec())
+            .await
+            .unwrap();
         assert_eq!(range_results.len(), 2);
-        
+
         // Test get_last
         let last = backend.get_last().await.unwrap();
         assert!(last.is_some());
-        
+
         // Test flush
         backend.flush().await.unwrap();
     }

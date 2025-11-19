@@ -23,8 +23,7 @@ mod redis_list_test {
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BeforeOrAfter, BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db,
-        unique_test_db_path,
+        BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path,
     };
 
     fn create_test_redis() -> Redis {

@@ -17,6 +17,7 @@
 
 use bytes::{BufMut, Bytes, BytesMut};
 
+use crate::storage_define::seek_userkey_delim;
 use crate::{
     error::Result,
     storage_define::{
@@ -24,7 +25,6 @@ use crate::{
         encode_user_key,
     },
 };
-
 // used for Hash/Set/Zset's member data key. format:
 // | reserve1 | key | version | data | reserve2 |
 // |    8B    |     |    8B   |      |   16B    |
@@ -60,8 +60,8 @@ impl MemberDataKey {
         let mut dst = BytesMut::with_capacity(estimated_cap);
 
         dst.put_slice(&self.reserve1);
-        dst.put_u64(self.version);
         encode_user_key(&self.key, &mut dst)?;
+        dst.put_u64(self.version);
         dst.put_slice(&self.data);
         dst.put_slice(&self.reserve2);
         Ok(dst)
@@ -77,8 +77,8 @@ impl MemberDataKey {
         let mut dst = BytesMut::with_capacity(estimated_cap);
 
         dst.put_slice(&self.reserve1);
-        dst.put_u64(self.version);
         encode_user_key(&self.key, &mut dst)?;
+        dst.put_u64(self.version);
         dst.put_slice(&self.data);
         Ok(dst)
     }
@@ -86,10 +86,11 @@ impl MemberDataKey {
 
 #[allow(dead_code)]
 pub struct ParsedMemberDataKey {
+    reserve1: [u8; 8],
     key_str: BytesMut,
-    reserve: [u8; 8],
     version: u64,
     data: Bytes,
+    reserve2: [u8; 16],
 }
 
 #[allow(dead_code)]
@@ -100,40 +101,35 @@ impl ParsedMemberDataKey {
         let start_idx = PREFIX_RESERVE_LENGTH;
         let end_idx = encoded_key.len() - SUFFIX_RESERVE_LENGTH;
 
-        // reserve
+        // reserve1
         let reserve_slice = &encoded_key[0..PREFIX_RESERVE_LENGTH];
-        let mut reserve = [0u8; PREFIX_RESERVE_LENGTH];
-        reserve.copy_from_slice(reserve_slice);
+        let mut reserve1 = [0u8; PREFIX_RESERVE_LENGTH];
+        reserve1.copy_from_slice(reserve_slice);
 
-        // version is 8 bytes right after reserve
-        let version_slice = &encoded_key[start_idx..start_idx + size_of::<u64>()];
+        // key
+        let key_end_idx = start_idx + seek_userkey_delim(&encoded_key[start_idx..]);
+        decode_user_key(&encoded_key[start_idx..key_end_idx], &mut key_str)?;
+
+        // version
+        let version_end_idx = key_end_idx + size_of::<u64>();
+        let version_slice = &encoded_key[key_end_idx..version_end_idx];
         let version = u64::from_be_bytes(version_slice.try_into().unwrap());
 
-        // encoded key part starts after version and ends at delimiter before suffix
-        let encoded_key_part = &encoded_key[start_idx + size_of::<u64>()..end_idx];
-
-        // find delimiter (0x00 0x00) to know the encoded length of key
-        let mut delim_pos = None;
-        for i in 0..encoded_key_part.len().saturating_sub(1) {
-            if encoded_key_part[i] == 0x00 && encoded_key_part[i + 1] == 0x00 {
-                delim_pos = Some(i + 2);
-                break;
-            }
-        }
-        let key_encoded_len = delim_pos.expect("encoded key delimiter not found");
-
-        // decode only the key part (including delimiter) into key_str
-        decode_user_key(&encoded_key_part[..key_encoded_len], &mut key_str)?;
-
-        // data is whatever remains before suffix
-        let data_slice = &encoded_key[start_idx + size_of::<u64>() + key_encoded_len..end_idx];
+        // data
+        let data_slice = &encoded_key[version_end_idx..end_idx];
         let data = Bytes::copy_from_slice(data_slice);
 
+        // reserve2
+        let reserve_slice = &encoded_key[end_idx..];
+        let mut reserve2 = [0u8; SUFFIX_RESERVE_LENGTH];
+        reserve2.copy_from_slice(reserve_slice);
+
         Ok(ParsedMemberDataKey {
+            reserve1,
             key_str,
-            reserve,
             version,
             data,
+            reserve2,
         })
     }
 
@@ -192,9 +188,9 @@ mod tests {
         assert_eq!(parsed.version(), test_version);
 
         // verify data region by slicing the encoded buffer directly
-        let start_idx = PREFIX_RESERVE_LENGTH + size_of::<u64>();
+        let start_idx = PREFIX_RESERVE_LENGTH;
         let end_idx = encoded.len() - SUFFIX_RESERVE_LENGTH;
-        let encoded_key_part = &encoded[start_idx..end_idx];
+        let encoded_key_part = &encoded[start_idx..end_idx]; // key | version | data
         // find the position of delimiter in encoded key part ("\x00\x00")
         let mut pos = None;
         for i in 0..encoded_key_part.len().saturating_sub(1) {

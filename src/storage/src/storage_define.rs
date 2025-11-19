@@ -40,7 +40,7 @@ pub const BASE_META_VALUE_LENGTH: usize = TYPE_LENGTH
     + VERSION_LENGTH
     + SUFFIX_RESERVE_LENGTH
     + 2 * TIMESTAMP_LENGTH;
-    
+
 use bytes::{BufMut, BytesMut};
 use snafu::ensure;
 

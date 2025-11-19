@@ -31,8 +31,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-
-
 /// Core Raft node interface
 #[async_trait]
 pub trait RaftNodeInterface {
@@ -128,28 +126,20 @@ impl RaftNode {
         });
 
         // Use RaftStorage adaptor with state machine
-        let (log_store, sm) = crate::storage::create_raft_storage_adaptor(
-            storage.clone(),
-            state_machine.clone()
-        );
+        let (log_store, sm) =
+            crate::storage::create_raft_storage_adaptor(storage.clone(), state_machine.clone());
         log::info!("RaftStorage adaptor created");
-        
+
         let network_factory = Arc::new(RwLock::new(network_factory_instance));
         let network = network_factory.read().await.clone();
-        
-        let raft = Raft::new(
-            cluster_config.node_id,
-            raft_config,
-            network,
-            log_store,
-            sm,
-        )
-        .await
-        .map_err(|e| RaftError::Configuration {
-            message: format!("Failed to create Raft instance: {}", e),
-            context: "Raft::new".to_string(),
-        })?;
-        
+
+        let raft = Raft::new(cluster_config.node_id, raft_config, network, log_store, sm)
+            .await
+            .map_err(|e| RaftError::Configuration {
+                message: format!("Failed to create Raft instance: {}", e),
+                context: "Raft::new".to_string(),
+            })?;
+
         log::info!("Raft instance created successfully");
 
         Ok(Self {
@@ -210,26 +200,18 @@ impl RaftNode {
             ..Default::default()
         });
 
-        let (log_store, sm) = crate::storage::create_raft_storage_adaptor(
-            storage.clone(),
-            state_machine.clone(),
-        );
+        let (log_store, sm) =
+            crate::storage::create_raft_storage_adaptor(storage.clone(), state_machine.clone());
 
         let network_factory = Arc::new(RwLock::new(network_factory_instance));
         let network = network_factory.read().await.clone();
 
-        let raft = Raft::new(
-            cluster_config.node_id,
-            raft_config,
-            network,
-            log_store,
-            sm,
-        )
-        .await
-        .map_err(|e| RaftError::Configuration {
-            message: format!("Failed to create Raft instance: {}", e),
-            context: "Raft::new".to_string(),
-        })?;
+        let raft = Raft::new(cluster_config.node_id, raft_config, network, log_store, sm)
+            .await
+            .map_err(|e| RaftError::Configuration {
+                message: format!("Failed to create Raft instance: {}", e),
+                context: "Raft::new".to_string(),
+            })?;
 
         Ok(Self {
             raft: Arc::new(raft),
@@ -448,7 +430,7 @@ impl RaftNode {
         // Check if we're the leader
         if !self.is_leader().await {
             let leader_id = self.get_leader_id().await;
-            return Err(RaftError::NotLeader { 
+            return Err(RaftError::NotLeader {
                 leader_id,
                 context: "add_node: not leader".to_string(),
             });
@@ -492,7 +474,7 @@ impl RaftNode {
         // Check if we're the leader
         if !self.is_leader().await {
             let leader_id = self.get_leader_id().await;
-            return Err(RaftError::NotLeader { 
+            return Err(RaftError::NotLeader {
                 leader_id,
                 context: "remove_node_safely: not leader".to_string(),
             });
@@ -1152,15 +1134,22 @@ impl RaftNodeInterface for RaftNode {
     async fn propose(&self, request: ClientRequest) -> RaftResult<ClientResponse> {
         let start = std::time::Instant::now();
         log::debug!("Proposing client request: {:?}", request.id);
-        log::trace!("propose: request_id={:?}, command={}", request.id, request.command.command);
+        log::trace!(
+            "propose: request_id={:?}, command={}",
+            request.id,
+            request.command.command
+        );
 
         // Check if we're the leader
         let leader_check_start = std::time::Instant::now();
         if !self.is_leader().await {
             let leader_id = self.get_leader_id().await;
             let leader_check_elapsed = leader_check_start.elapsed();
-            log::trace!("propose: not leader check took {:?}, redirecting to {:?}", 
-                leader_check_elapsed, leader_id);
+            log::trace!(
+                "propose: not leader check took {:?}, redirecting to {:?}",
+                leader_check_elapsed,
+                leader_id
+            );
             return Ok(ClientResponse {
                 id: request.id,
                 result: Err("Not leader".to_string()),
@@ -1176,10 +1165,18 @@ impl RaftNodeInterface for RaftNode {
             Ok(response) => {
                 let raft_write_elapsed = raft_write_start.elapsed();
                 let total_elapsed = start.elapsed();
-                log::debug!("Client request {} completed successfully in {:?}", request.id, total_elapsed);
-                log::trace!("propose: request_id={:?}, raft_write={:?}, total={:?}", 
-                    request.id, raft_write_elapsed, total_elapsed);
-                
+                log::debug!(
+                    "Client request {} completed successfully in {:?}",
+                    request.id,
+                    total_elapsed
+                );
+                log::trace!(
+                    "propose: request_id={:?}, raft_write={:?}, total={:?}",
+                    request.id,
+                    raft_write_elapsed,
+                    total_elapsed
+                );
+
                 // Return the actual response from the state machine
                 Ok(response.data)
             }
@@ -1187,8 +1184,13 @@ impl RaftNodeInterface for RaftNode {
                 let raft_write_elapsed = raft_write_start.elapsed();
                 let total_elapsed = start.elapsed();
                 log::error!("Client request failed after {:?}: {}", total_elapsed, e);
-                log::trace!("propose: request_id={:?}, error={}, raft_write={:?}, total={:?}", 
-                    request.id, e, raft_write_elapsed, total_elapsed);
+                log::trace!(
+                    "propose: request_id={:?}, error={}, raft_write={:?}, total={:?}",
+                    request.id,
+                    e,
+                    raft_write_elapsed,
+                    total_elapsed
+                );
                 Ok(ClientResponse {
                     id: request.id,
                     result: Err(format!("Raft error: {}", e)),
@@ -1208,7 +1210,7 @@ impl RaftNodeInterface for RaftNode {
         if !self.is_leader().await {
             let leader_id = self.get_leader_id().await;
             log::trace!("add_learner: not leader, redirecting to {:?}", leader_id);
-            return Err(RaftError::NotLeader { 
+            return Err(RaftError::NotLeader {
                 leader_id,
                 context: "add_learner: not leader".to_string(),
             });
@@ -1234,13 +1236,19 @@ impl RaftNodeInterface for RaftNode {
             )));
         }
         let membership_check_elapsed = membership_check_start.elapsed();
-        log::trace!("add_learner: membership checks took {:?}", membership_check_elapsed);
+        log::trace!(
+            "add_learner: membership checks took {:?}",
+            membership_check_elapsed
+        );
 
         // Add the endpoint first
         let endpoint_add_start = std::time::Instant::now();
         self.add_endpoint(node_id, endpoint).await?;
         let endpoint_add_elapsed = endpoint_add_start.elapsed();
-        log::trace!("add_learner: endpoint addition took {:?}", endpoint_add_elapsed);
+        log::trace!(
+            "add_learner: endpoint addition took {:?}",
+            endpoint_add_elapsed
+        );
 
         // Add as learner to the cluster
         let raft_add_start = std::time::Instant::now();
@@ -1258,7 +1266,11 @@ impl RaftNodeInterface for RaftNode {
         log::trace!("add_learner: raft add_learner took {:?}", raft_add_elapsed);
 
         let elapsed = start.elapsed();
-        log::info!("Successfully added learner node {} in {:?}", node_id, elapsed);
+        log::info!(
+            "Successfully added learner node {} in {:?}",
+            node_id,
+            elapsed
+        );
         log::trace!("add_learner: total_duration={:?}", elapsed);
         Ok(())
     }
@@ -1266,20 +1278,30 @@ impl RaftNodeInterface for RaftNode {
     async fn change_membership(&self, members: BTreeSet<NodeId>) -> RaftResult<()> {
         let _start = std::time::Instant::now();
         log::info!("Changing cluster membership to: {:?}", members);
-        log::trace!("change_membership: members={:?}, count={}", members, members.len());
+        log::trace!(
+            "change_membership: members={:?}, count={}",
+            members,
+            members.len()
+        );
 
         // Check if we're the leader
         let leader_check_start = std::time::Instant::now();
         if !self.is_leader().await {
             let leader_id = self.get_leader_id().await;
-            log::trace!("change_membership: not leader, redirecting to {:?}", leader_id);
-            return Err(RaftError::NotLeader { 
+            log::trace!(
+                "change_membership: not leader, redirecting to {:?}",
+                leader_id
+            );
+            return Err(RaftError::NotLeader {
                 leader_id,
                 context: "change_membership: not leader".to_string(),
             });
         }
         let leader_check_elapsed = leader_check_start.elapsed();
-        log::trace!("change_membership: leader check took {:?}", leader_check_elapsed);
+        log::trace!(
+            "change_membership: leader check took {:?}",
+            leader_check_elapsed
+        );
 
         // Validate the membership change
         let validation_start = std::time::Instant::now();
@@ -1302,7 +1324,10 @@ impl RaftNodeInterface for RaftNode {
             }
         }
         let validation_elapsed = validation_start.elapsed();
-        log::trace!("change_membership: validation took {:?}", validation_elapsed);
+        log::trace!(
+            "change_membership: validation took {:?}",
+            validation_elapsed
+        );
 
         // Create membership configuration
         let _membership: openraft::Membership<NodeId, openraft::BasicNode> =

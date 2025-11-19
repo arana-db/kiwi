@@ -40,9 +40,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_adaptor_basic_operations() {
-        use openraft::storage::RaftLogStorage;
-        use openraft::Vote;
         use crate::storage::core::RaftStorage as RaftStorageImpl;
+        use openraft::Vote;
+        use openraft::storage::RaftLogStorage;
 
         let temp_dir = TempDir::new().unwrap();
         let storage = Arc::new(RaftStorageImpl::new_async(temp_dir.path()).await.unwrap());

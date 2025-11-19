@@ -18,6 +18,7 @@
 use crate::error::{Error, InvalidArgumentSnafu, Result};
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage::Storage;
+use crate::zset_score_key_format::ZsetScoreMember;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeforeOrAfter {
@@ -961,5 +962,232 @@ impl Storage {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].sscan(key, cursor, pattern, count)
+    }
+
+    pub fn zadd(&self, key: &[u8], member_scores: &[ZsetScoreMember]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = 0;
+        self.insts[instance_id].zadd(key, member_scores, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zcount(&self, key: &[u8], min: f64, max: f64) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = 0;
+        self.insts[instance_id].zcount(key, min, max, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zlexcount(&self, key: &[u8], min: &[u8], max: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = 0;
+        self.insts[instance_id].zlexcount(key, min, max, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zcard(&self, key: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = 0;
+        self.insts[instance_id].zcard(key, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zincrby(&self, key: &[u8], increment: f64, member: &[u8]) -> Result<Vec<u8>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = Vec::new();
+        self.insts[instance_id].zincrby(key, increment, member, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zscore(&self, key: &[u8], member: &[u8]) -> Result<Option<Vec<u8>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = None;
+        self.insts[instance_id].zscore(key, member, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zscan(
+        &self,
+        key: &[u8],
+        cursor: u64,
+        pattern: Option<&str>,
+        count: Option<usize>,
+    ) -> Result<(u64, Vec<(String, String)>)> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].zscan(key, cursor, pattern, count)
+    }
+
+    pub fn zrank(&self, key: &[u8], member: &[u8]) -> Result<Option<i64>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = None;
+        self.insts[instance_id].zrank(key, member, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zrevrank(&self, key: &[u8], member: &[u8]) -> Result<Option<i64>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = None;
+        self.insts[instance_id].zrevrank(key, member, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zrem(&self, key: &[u8], members: &[Vec<u8>]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = 0;
+        self.insts[instance_id].zrem(key, members, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zrange(
+        &self,
+        key: &[u8],
+        start: i64,
+        stop: i64,
+        with_scores: bool,
+    ) -> Result<Vec<Vec<u8>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = Vec::new();
+        self.insts[instance_id].zrange(key, start, stop, with_scores, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zinterstore(
+        &self,
+        destination: &[u8],
+        keys: &[Vec<u8>],
+        weights: &[f64],
+        aggregate: &str,
+    ) -> Result<i32> {
+        let slot_id = key_to_slot_id(destination);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = 0;
+        self.insts[instance_id].zinterstore(destination, keys, weights, aggregate, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zunionstore(
+        &self,
+        destination: &[u8],
+        keys: &[Vec<u8>],
+        weights: &[f64],
+        aggregate: &str,
+    ) -> Result<i32> {
+        let slot_id = key_to_slot_id(destination);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = 0;
+        self.insts[instance_id].zunionstore(destination, keys, weights, aggregate, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zrangebylex(
+        &self,
+        key: &[u8],
+        min: &[u8],
+        max: &[u8],
+        offset: Option<i64>,
+        count: Option<i64>,
+    ) -> Result<Vec<Vec<u8>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = Vec::new();
+        self.insts[instance_id].zrangebylex(key, min, max, offset, count, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zrangebyscore(
+        &self,
+        key: &[u8],
+        min_score: f64,
+        max_score: f64,
+        with_scores: bool,
+        offset: Option<i64>,
+        count: Option<i64>,
+    ) -> Result<Vec<Vec<u8>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = Vec::new();
+        self.insts[instance_id].zrangebyscore(
+            key,
+            min_score,
+            max_score,
+            with_scores,
+            offset,
+            count,
+            &mut ret,
+        )?;
+        Ok(ret)
+    }
+
+    pub fn zremrangebylex(&self, key: &[u8], min: &[u8], max: &[u8]) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = 0;
+        self.insts[instance_id].zremrangebylex(key, min, max, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zremrangebyrank(&self, key: &[u8], start: i64, stop: i64) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = 0;
+        self.insts[instance_id].zremrangebyrank(key, start, stop, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zremrangebyscore(&self, key: &[u8], min_score: f64, max_score: f64) -> Result<i32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = 0;
+        self.insts[instance_id].zremrangebyscore(key, min_score, max_score, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zrevrange(
+        &self,
+        key: &[u8],
+        start: i64,
+        stop: i64,
+        with_scores: bool,
+    ) -> Result<Vec<Vec<u8>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = Vec::new();
+        self.insts[instance_id].zrevrange(key, start, stop, with_scores, &mut ret)?;
+        Ok(ret)
+    }
+
+    pub fn zrevrangebyscore(
+        &self,
+        key: &[u8],
+        max_score: f64,
+        min_score: f64,
+        with_scores: bool,
+        offset: Option<i64>,
+        count: Option<i64>,
+    ) -> Result<Vec<Vec<u8>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let mut ret = Vec::new();
+        self.insts[instance_id].zrevrangebyscore(
+            key,
+            max_score,
+            min_score,
+            with_scores,
+            offset,
+            count,
+            &mut ret,
+        )?;
+        Ok(ret)
     }
 }

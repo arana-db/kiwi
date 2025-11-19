@@ -180,33 +180,24 @@ async fn handle_raft_aware_command(
     raft_router: Option<Arc<raft::RequestRouter>>,
 ) {
     let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
-    debug!("Handling Raft-aware command: {} in {:?} mode", cmd_name, cluster_mode);
+    debug!(
+        "Handling Raft-aware command: {} in {:?} mode",
+        cmd_name, cluster_mode
+    );
 
     match cluster_mode {
         ClusterMode::Single => {
             // Single mode: direct storage access
             debug!("Single mode: routing to storage directly");
-            handle_single_mode_command(
-                client,
-                storage_client,
-                cmd_table,
-                executor,
-            ).await;
+            handle_single_mode_command(client, storage_client, cmd_table, executor).await;
         }
         ClusterMode::Cluster => {
             if let Some(router) = raft_router {
-                handle_cluster_mode_command(
-                    client,
-                    storage_client,
-                    cmd_table,
-                    executor,
-                    router,
-                ).await;
+                handle_cluster_mode_command(client, storage_client, cmd_table, executor, router)
+                    .await;
             } else {
                 error!("Cluster mode enabled but no Raft router available");
-                client.set_reply(RespData::Error(
-                    "CLUSTERDOWN Cluster not configured".into()
-                ));
+                client.set_reply(RespData::Error("CLUSTERDOWN Cluster not configured".into()));
             }
         }
     }
@@ -265,7 +256,7 @@ async fn handle_cluster_mode_command(
 ) {
     let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
     let argv = client.argv();
-    
+
     debug!("Handling cluster mode command: {}", cmd_name);
 
     // Check if command exists in table
@@ -277,16 +268,13 @@ async fn handle_cluster_mode_command(
     }
 
     // Create RedisCommand for Raft routing
-    let redis_command = raft::types::RedisCommand::from_bytes(
-        cmd_name.clone(),
-        argv.clone(),
-    );
+    let redis_command = raft::types::RedisCommand::from_bytes(cmd_name.clone(), argv.clone());
 
     // Route through Raft
     match raft_router.route_command(redis_command).await {
         Ok(response) => {
             debug!("Raft command succeeded: {}", cmd_name);
-            
+
             // Convert Raft response to RESP data
             match response.data {
                 Ok(data) => {
@@ -306,9 +294,13 @@ async fn handle_cluster_mode_command(
                 let slot = if argv.len() > 1 {
                     let key = &argv[1];
                     let mut s: u16 = 0;
-                    for b in key.iter() { s = s.wrapping_add(*b as u16); }
+                    for b in key.iter() {
+                        s = s.wrapping_add(*b as u16);
+                    }
                     (s % 16384) as usize
-                } else { 0 };
+                } else {
+                    0
+                };
                 let msg = format!("MOVED {} {}", slot, endpoint);
                 client.set_reply(RespData::Error(msg.into()));
             } else {
@@ -426,7 +418,7 @@ mod tests {
         assert!(is_write_command("SADD"));
         assert!(is_write_command("ZADD"));
         assert!(is_write_command("HSET"));
-        
+
         assert!(!is_write_command("GET"));
         assert!(!is_write_command("LRANGE"));
         assert!(!is_write_command("SMEMBERS"));
@@ -442,7 +434,7 @@ mod tests {
         assert!(is_read_command("SMEMBERS"));
         assert!(is_read_command("ZRANGE"));
         assert!(is_read_command("HGET"));
-        
+
         assert!(!is_read_command("SET"));
         assert!(!is_read_command("DEL"));
         assert!(!is_read_command("LPUSH"));

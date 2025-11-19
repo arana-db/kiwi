@@ -152,7 +152,9 @@ impl ClientResponse {
 }
 
 /// Type configuration for openraft
-#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
+)]
 pub struct TypeConfig;
 
 impl fmt::Display for TypeConfig {
