@@ -1,24 +1,38 @@
-# 调试专用配置文件
-# 覆盖默认配置以提供最佳的调试体验
+# Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# special Cargo configuration for debug builds
 
 [profile.dev]
-# 启用完整调试信息（最高级别）
+# enable debug info
 debug = true
 split-debuginfo = "unpacked"
-# 完全禁用优化，保持源码结构
+
+# disable optimizations for easier debugging
 opt-level = 0
-# 禁用内联和其他优化，便于单步调试
+# increase codegen units for faster compilation
 codegen-units = 256
-# 启用溢出检查
+# enable overflow checks
 overflow-checks = true
-# 保持增量编译
+
 incremental = true
-# 保留函数名称符号，便于调试器识别
 panic = "unwind"
-# 禁用LTO（链接时优化）
 lto = false
 
-# 确保所有包都使用调试配置
 [profile.dev.package."*"]
 debug = true
 opt-level = 0
