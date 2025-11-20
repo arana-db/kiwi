@@ -63,31 +63,34 @@ if "%COMMAND%"=="" set COMMAND=check
 echo === Kiwi Development Tool ===
 echo(
 
-REM Check if this is first-time use (only for build/run commands)
-if "%COMMAND%"=="build" (
-    where sccache >nul 2>&1
-    if !errorlevel! neq 0 (
-        call :first_time_setup
-    )
-)
-if "%COMMAND%"=="run" (
-    where sccache >nul 2>&1
-    if !errorlevel! neq 0 (
-        call :first_time_setup
-    )
-)
-
 REM Set environment for faster builds
 set CARGO_BUILD_JOBS=%NUMBER_OF_PROCESSORS%
 
-REM Debug mode configuration
+REM Debug mode configuration with toolchain detection
 if defined DEBUG_MODE (
     echo 🐛 Debug mode enabled - using Cargo_debug.toml
-    REM Set environment variables for debugging
-    set RUSTFLAGS=-g -Zmacro-backtrace
+
+    REM Detect Rust toolchain for compatible flags
+    for /f "tokens=*" %%i in ('rustup show active-toolchain 2^>nul ^| findstr /i "nightly"') do set NIGHTLY_DETECTED=%%i
+    if defined NIGHTLY_DETECTED (
+        set RUSTFLAGS=-g -Zmacro-backtrace
+        echo 🔧 Using nightly toolchain with -Zmacro-backtrace
+    ) else (
+        REM Fallback: check with cargo --version
+        for /f "tokens=*" %%i in ('cargo --version --verbose 2^>nul ^| findstr /i "nightly"') do set NIGHTLY_DETECTED_FALLBACK=%%i
+        if defined NIGHTLY_DETECTED_FALLBACK (
+            set RUSTFLAGS=-g -Zmacro-backtrace
+            echo 🔧 Using nightly toolchain with -Zmacro-backtrace
+        ) else (
+            set RUSTFLAGS=-g
+            echo 🔧 Using stable toolchain (macro backtrace unavailable on stable)
+        )
+    )
+
     set CARGO_INCREMENTAL=1
     REM Disable sccache for debug builds to ensure debug symbols
     set RUSTC_WRAPPER=
+
     REM Use debug config if available
     if exist "Cargo_debug.toml" (
         set CARGO_CONFIG_FLAG=--config Cargo_debug.toml
@@ -98,7 +101,7 @@ if defined DEBUG_MODE (
 ) else (
     REM Check and setup sccache if available (normal builds)
     where sccache >nul 2>&1
-    if %errorlevel% equ 0 (
+    if !errorlevel! equ 0 (
         set RUSTC_WRAPPER=sccache
         set CARGO_INCREMENTAL=0
         set CARGO_CACHE_RUSTC_INFO=
@@ -113,6 +116,20 @@ if defined DEBUG_MODE (
             echo ⚡ Tip: Install sccache for faster builds: cargo install sccache
             echo    Or run: scripts\quick_setup.cmd
         )
+    )
+)
+
+REM Check if this is first-time use (only for build/run commands)
+if "%COMMAND%"=="build" (
+    where sccache >nul 2>&1
+    if !errorlevel! neq 0 (
+        call :first_time_setup
+    )
+)
+if "%COMMAND%"=="run" (
+    where sccache >nul 2>&1
+    if !errorlevel! neq 0 (
+        call :first_time_setup
     )
 )
 

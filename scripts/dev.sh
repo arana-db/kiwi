@@ -33,6 +33,22 @@ success() { echo -e "${GREEN}$1${NC}"; }
 warning() { echo -e "${YELLOW}$1${NC}"; }
 error() { echo -e "${RED}$1${NC}"; }
 
+# Detect current Rust toolchain
+detect_rust_toolchain() {
+    if rustup show active-toolchain 2>/dev/null | grep -q "nightly"; then
+        echo "nightly"
+    elif rustup show active-toolchain 2>/dev/null | grep -q "stable"; then
+        echo "stable"
+    else
+        # Fallback: check with cargo --version
+        if cargo --version --verbose 2>/dev/null | grep -q "nightly"; then
+            echo "nightly"
+        else
+            echo "stable"
+        fi
+    fi
+}
+
 # Default command
 COMMAND=${1:-check}
 PROFILE=""
@@ -65,44 +81,29 @@ done
 info "=== Kiwi Development Tool ==="
 echo ""
 
-# Check if this is first-time use (only for build/run commands)
-if [ "$COMMAND" = "build" ] || [ "$COMMAND" = "run" ]; then
-    # Check if sccache is available, if not prompt to install
-    if ! command -v sccache &> /dev/null; then
-        echo ""
-        warning "⚠️  sccache not detected for optimal performance!"
-        echo ""
-        echo "Run this command to install sccache and cargo-watch:"
-        info "  ./scripts/quick_setup.sh"
-        echo ""
-        echo "Or continue without setup (you can run it later)."
-        echo ""
-        read -p "Run quick setup now? (y/n) " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            ./scripts/quick_setup.sh
-            if [ $? -eq 0 ]; then
-                success "✓ Setup complete! Continuing with build..."
-                echo ""
-            fi
-        else
-            info "Skipping setup. You can run './scripts/quick_setup.sh' anytime."
-            echo ""
-        fi
-    fi
-fi
-
 # Set environment variables for faster builds
 export CARGO_BUILD_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 # Debug mode configuration
 if [ -n "$DEBUG_MODE" ]; then
     info "🐛 Debug mode enabled - using Cargo_debug.toml"
+
+    # Detect Rust toolchain for compatible flags
+    RUST_TOOLCHAIN=$(detect_rust_toolchain)
+
     # Set environment variables for debugging
-    export RUSTFLAGS="-g -Zmacro-backtrace"
+    if [ "$RUST_TOOLCHAIN" = "nightly" ]; then
+        export RUSTFLAGS="-g -Zmacro-backtrace"
+        info "🔧 Using nightly toolchain with -Zmacro-backtrace"
+    else
+        export RUSTFLAGS="-g"
+        info "🔧 Using stable toolchain (macro backtrace unavailable on stable)"
+    fi
+
     export CARGO_INCREMENTAL=1
     # Disable sccache for debug builds to ensure debug symbols
     unset RUSTC_WRAPPER
+
     # Use debug config if available
     if [ -f "Cargo_debug.toml" ]; then
         CARGO_CONFIG_FLAG="--config Cargo_debug.toml"
@@ -130,6 +131,33 @@ else
     CARGO_CONFIG_FLAG=""
 fi
 
+# Check if this is first-time use (only for build/run commands)
+if [ "$COMMAND" = "build" ] || [ "$COMMAND" = "run" ]; then
+    # Check if sccache is available, if not prompt to install
+    if ! command -v sccache &> /dev/null; then
+        echo ""
+        warning "⚠️  sccache not detected for optimal performance!"
+        echo ""
+        echo "Run this command to install sccache and cargo-watch:"
+        info "  ./scripts/quick_setup.sh"
+        echo ""
+        echo "Or continue without setup (you can run it later)."
+        echo ""
+        read -p "Run quick setup now? (y/n) " -n 1 -r
+        echo ""
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            ./scripts/quick_setup.sh
+            if [ $? -eq 0 ]; then
+                success "✓ Setup complete! Continuing with build..."
+                echo ""
+            fi
+        else
+            info "Skipping setup. You can run './scripts/quick_setup.sh' anytime."
+            echo ""
+        fi
+    fi
+fi
+
 case $COMMAND in
     check)
         info "Running cargo check (fast syntax check)..."
@@ -138,7 +166,7 @@ case $COMMAND in
             success "✓ Check passed!"
         fi
         ;;
-    
+
     build)
         if [ -n "$DEBUG_MODE" ]; then
             info "Building Kiwi in DEBUG mode..."
@@ -151,18 +179,18 @@ case $COMMAND in
         if [ "$PROFILE" = "--release" ]; then
             TARGET_DIR="target/release"
         fi
-        
+
         if ls $TARGET_DIR/deps/*rocksdb*.rlib 1> /dev/null 2>&1; then
             success "✓ Using cached librocksdb-sys"
         else
             warning "⚠ librocksdb-sys will be compiled (this may take a while)..."
         fi
-        
+
         START_TIME=$(date +%s)
         cargo build $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         END_TIME=$(date +%s)
         BUILD_TIME=$((END_TIME - START_TIME))
-        
+
         if [ $? -eq 0 ]; then
             if [ -n "$DEBUG_MODE" ]; then
                 success "✓ Debug build completed in ${BUILD_TIME} seconds"
@@ -175,7 +203,7 @@ case $COMMAND in
             fi
         fi
         ;;
-    
+
     run)
         if [ -n "$DEBUG_MODE" ]; then
             info "Running Kiwi in DEBUG mode..."
@@ -185,7 +213,7 @@ case $COMMAND in
         export RUST_LOG=debug
         cargo run $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         ;;
-    
+
     test)
         info "Running tests..."
         cargo test $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
@@ -219,13 +247,13 @@ case $COMMAND in
         cargo clean
         success "✓ Clean complete"
         ;;
-    
+
     watch)
         info "Starting cargo-watch..."
         info "This will automatically check your code on file changes"
         info "Press Ctrl+C to stop"
         echo ""
-        
+
         # Check if cargo-watch is installed
         if ! command -v cargo-watch &> /dev/null; then
             warning "cargo-watch not found."
@@ -241,20 +269,20 @@ case $COMMAND in
                 exit 1
             fi
         fi
-        
+
         cargo watch -x check -x "test --lib"
         ;;
-    
+
     stats)
         info "Build Statistics:"
         echo ""
-        
+
         # Check target directory size
         if [ -d "target" ]; then
             TARGET_SIZE=$(du -sh target 2>/dev/null | cut -f1)
             info "Target directory size: $TARGET_SIZE"
         fi
-        
+
         # Check if sccache is available
         if command -v sccache &> /dev/null; then
             echo ""
@@ -268,7 +296,7 @@ case $COMMAND in
             warning "  [build]"
             warning "  rustc-wrapper = \"sccache\""
         fi
-        
+
         # Show last build times
         echo ""
         info "Recent builds:"
@@ -281,7 +309,7 @@ case $COMMAND in
             info "  Release: $RELEASE_TIME"
         fi
         ;;
-    
+
     *)
         error "Unknown command: $COMMAND"
         echo ""

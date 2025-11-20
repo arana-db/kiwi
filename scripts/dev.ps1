@@ -36,6 +36,29 @@ function Write-Success { param($msg) Write-Host $msg -ForegroundColor Green }
 function Write-Warning { param($msg) Write-Host $msg -ForegroundColor Yellow }
 function Write-Error { param($msg) Write-Host $msg -ForegroundColor Red }
 
+# Get Rust toolchain information
+function Get-RustToolchain {
+    try {
+        $rustupOutput = rustup show active-toolchain 2>$null
+        if ($rustupOutput -match "nightly") {
+            return "nightly"
+        } elseif ($rustupOutput -match "stable") {
+            return "stable"
+        } else {
+            # Fallback: check with cargo --version
+            $cargoOutput = cargo --version --verbose 2>$null
+            if ($cargoOutput -match "nightly") {
+                return "nightly"
+            } else {
+                return "stable"
+            }
+        }
+    } catch {
+        # Default to stable if detection fails
+        return "stable"
+    }
+}
+
 # Banner
 Write-Info "=== Kiwi Development Tool ==="
 Write-Info ""
@@ -73,19 +96,30 @@ $env:CARGO_BUILD_JOBS = [Environment]::ProcessorCount
 # Debug mode configuration
 if ($Debug.IsPresent) {
     Write-Info "🐛 Debug mode enabled - using Cargo_debug.toml"
+
+    # Detect Rust toolchain for compatible flags
+    $rustToolchain = Get-RustToolchain
+
     # Set environment variables for debugging
-    $env:RUSTFLAGS = "-g -Zmacro-backtrace"
+    if ($rustToolchain -eq "nightly") {
+        $env:RUSTFLAGS = "-g -Zmacro-backtrace"
+        Write-Info "🔧 Using nightly toolchain with -Zmacro-backtrace"
+    } else {
+        $env:RUSTFLAGS = "-g"
+        Write-Info "🔧 Using stable toolchain (macro backtrace unavailable on stable)"
+    }
+
     $env:CARGO_INCREMENTAL = "1"
     # Disable sccache for debug builds to ensure debug symbols
     Remove-Item Env:\RUSTC_WRAPPER -ErrorAction SilentlyContinue
 
-    # Use debug config if available
+    # Use debug config if available - FIXED: Use array instead of string
     if (Test-Path "Cargo_debug.toml") {
-        $cargoConfigFlag = "--config Cargo_debug.toml"
+        $cargoConfigFlag = @("--config", "Cargo_debug.toml")
         Write-Info "📋 Using Cargo_debug.toml for maximum debug symbols"
     } else {
         Write-Warning "⚠️ Cargo_debug.toml not found, using default debug settings"
-        $cargoConfigFlag = ""
+        $cargoConfigFlag = @()
     }
 } else {
     # Check and setup sccache if available (normal builds)
@@ -105,7 +139,7 @@ if ($Debug.IsPresent) {
             Write-Warning "   Or run: scripts\quick_setup.ps1"
         }
     }
-    $cargoConfigFlag = ""
+    $cargoConfigFlag = @()
 }
 
 $profileFlag = if ($Release) { "--release" } else { "" }
@@ -114,7 +148,7 @@ $verboseFlag = if ($Verbose) { "-v" } else { "" }
 switch ($Command) {
     "check" {
         Write-Info "Running cargo check (fast syntax check)..."
-        cargo check $profileFlag $cargoConfigFlag $verboseFlag
+        cargo check $profileFlag @cargoConfigFlag $verboseFlag
         if ($LASTEXITCODE -eq 0) {
             Write-Success "✓ Check passed!"
         }
@@ -136,7 +170,7 @@ switch ($Command) {
         }
 
         $startTime = Get-Date
-        cargo build $profileFlag $cargoConfigFlag $verboseFlag
+        cargo build $profileFlag @cargoConfigFlag $verboseFlag
         $buildTime = (Get-Date) - $startTime
 
         if ($LASTEXITCODE -eq 0) {
@@ -159,12 +193,12 @@ switch ($Command) {
             Write-Info "Running Kiwi..."
         }
         $env:RUST_LOG = "debug"
-        cargo run $profileFlag $cargoConfigFlag $verboseFlag
+        cargo run $profileFlag @cargoConfigFlag $verboseFlag
     }
 
     "test" {
         Write-Info "Running tests..."
-        cargo test $profileFlag $cargoConfigFlag $verboseFlag
+        cargo test $profileFlag @cargoConfigFlag $verboseFlag
     }
 
     "gdb" {
