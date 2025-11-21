@@ -196,8 +196,6 @@ case $COMMAND in
                 success "✓ Debug build completed in ${BUILD_TIME} seconds"
                 echo ""
                 info "🐛 Debug binary ready at: target/debug/kiwi"
-                info "🔍 GDB command: gdb -ex 'break main' -ex 'run' target/debug/kiwi"
-                info "🔍 Or use: rust-gdb target/debug/kiwi"
             else
                 success "✓ Build completed in ${BUILD_TIME} seconds"
             fi
@@ -219,29 +217,7 @@ case $COMMAND in
         cargo test $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         ;;
 
-    gdb)
-        info "Starting GDB debug session..."
-        # First build with debug symbols if not already built
-        if [ ! -f "target/debug/kiwi" ]; then
-            warning "Debug binary not found, building first..."
-            ./scripts/dev.sh build --debug
-        fi
-
-        if [ -f "target/debug/kiwi" ]; then
-            success "✓ Starting GDB with debug symbols"
-            if command -v rust-gdb &> /dev/null; then
-                info "Using rust-gdb for better Rust debugging..."
-                rust-gdb -ex 'break main' -ex 'run' target/debug/kiwi
-            else
-                info "Using standard gdb..."
-                gdb -ex 'set debug-file-directory ./target/debug/deps' -ex 'break main' -ex 'run' target/debug/kiwi
-            fi
-        else
-            error "Debug binary not found. Run './scripts/dev.sh build --debug' first."
-            exit 1
-        fi
-        ;;
-
+  
     clean)
         warning "Cleaning build artifacts..."
         cargo clean
@@ -318,8 +294,7 @@ case $COMMAND in
         echo "  build  - Build the project"
         echo "  run    - Build and run"
         echo "  test   - Run tests"
-        echo "  gdb    - Build and start GDB"
-        echo "  clean  - Clean build artifacts"
+          echo "  clean  - Clean build artifacts"
         echo "  watch  - Auto-check on file changes"
         echo "  stats  - Show build statistics"
         echo ""
@@ -331,7 +306,6 @@ case $COMMAND in
         echo "Debug examples:"
         echo "  ./scripts/dev.sh build --debug     # Build with debug symbols"
         echo "  ./scripts/dev.sh run --debug       # Run with debug symbols"
-        echo "  ./scripts/dev.sh gdb               # Build and start GDB"
-        exit 1
+          exit 1
         ;;
 esac

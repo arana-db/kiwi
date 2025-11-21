@@ -167,8 +167,6 @@ if "%COMMAND%"=="build" (
             echo ✓ Debug build completed
             echo(
             echo 🐛 Debug binary ready at: target\debug\kiwi
-            echo 🔍 GDB command: gdb -ex "break main" -ex "run" target\debug\kiwi
-            echo 🔍 Or use: rust-gdb target\debug\kiwi
         ) else (
             echo ✓ Build completed
         )
@@ -193,30 +191,6 @@ if "%COMMAND%"=="test" (
     goto :end
 )
 
-if "%COMMAND%"=="gdb" (
-    echo Starting GDB debug session...
-    REM First build with debug symbols if not already built
-    if not exist "target\debug\kiwi" (
-        echo Debug binary not found, building first...
-        call "%~dp0dev.cmd" build --debug
-    )
-
-    if exist "target\debug\kiwi" (
-        echo ✓ Starting GDB with debug symbols
-        where rust-gdb >nul 2>&1
-        if !errorlevel! equ 0 (
-            echo Using rust-gdb for better Rust debugging...
-            rust-gdb -ex "break main" -ex "run" target\debug\kiwi
-        ) else (
-            echo Using standard gdb...
-            gdb -ex "set debug-file-directory ./target/debug/deps" -ex "break main" -ex "run" target\debug\kiwi
-        )
-    ) else (
-        echo ✗ Debug binary not found. Run 'dev.cmd build --debug' first.
-        exit /b 1
-    )
-    goto :end
-)
 
 if "%COMMAND%"=="clean" (
     echo Cleaning build artifacts...
@@ -279,7 +253,6 @@ echo   check  - Quick syntax check
 echo   build  - Build the project
 echo   run    - Build and run
 echo   test   - Run tests
-echo   gdb    - Build and start GDB
 echo   clean  - Clean build artifacts
 echo   watch  - Auto-check on file changes
 echo   stats  - Show build statistics
@@ -292,7 +265,6 @@ echo(
 echo Debug examples:
 echo   dev.cmd build --debug     # Build with debug symbols
 echo   dev.cmd run --debug       # Run with debug symbols
-echo   dev.cmd gdb               # Build and start GDB
 
 :end
 endlocal

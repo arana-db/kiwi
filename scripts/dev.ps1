@@ -20,7 +20,7 @@
 
 param(
     [Parameter(Position=0)]
-    [ValidateSet("check", "build", "run", "test", "clean", "watch", "stats", "gdb")]
+    [ValidateSet("check", "build", "run", "test", "clean", "watch", "stats")]
     [string]$Command = "check",
 
     [switch]$Release,
@@ -178,8 +178,6 @@ switch ($Command) {
                 Write-Success "✓ Debug build completed in $([math]::Round($buildTime.TotalSeconds, 2)) seconds"
                 Write-Host ""
                 Write-Info "🐛 Debug binary ready at: target\debug\kiwi"
-                Write-Info "🔍 GDB command: gdb -ex 'break main' -ex 'run' target\debug\kiwi"
-                Write-Info "🔍 Or use: rust-gdb target\debug\kiwi"
             } else {
                 Write-Success "✓ Build completed in $([math]::Round($buildTime.TotalSeconds, 2)) seconds"
             }
@@ -201,30 +199,7 @@ switch ($Command) {
         cargo test $profileFlag @cargoConfigFlag $verboseFlag
     }
 
-    "gdb" {
-        Write-Info "Starting GDB debug session..."
-        # First build with debug symbols if not already built
-        if (-not (Test-Path "target\debug\kiwi")) {
-            Write-Warning "Debug binary not found, building first..."
-            & "$PSScriptRoot\dev.ps1" build -Debug
-        }
-
-        if (Test-Path "target\debug\kiwi") {
-            Write-Success "✓ Starting GDB with debug symbols"
-            $rustGdbInstalled = Get-Command rust-gdb -ErrorAction SilentlyContinue
-            if ($rustGdbInstalled) {
-                Write-Info "Using rust-gdb for better Rust debugging..."
-                rust-gdb -ex 'break main' -ex 'run' target\debug\kiwi
-            } else {
-                Write-Info "Using standard gdb..."
-                gdb -ex 'set debug-file-directory ./target/debug/deps' -ex 'break main' -ex 'run' target\debug\kiwi
-            }
-        } else {
-            Write-Error "Debug binary not found. Run 'dev.ps1 build -Debug' first."
-            exit 1
-        }
-    }
-
+  
     "clean" {
         Write-Warning "Cleaning build artifacts..."
         cargo clean
@@ -303,8 +278,7 @@ switch ($Command) {
         Write-Host "  build  - Build the project"
         Write-Host "  run    - Build and run"
         Write-Host "  test   - Run tests"
-        Write-Host "  gdb    - Build and start GDB"
-        Write-Host "  clean  - Clean build artifacts"
+          Write-Host "  clean  - Clean build artifacts"
         Write-Host "  watch  - Auto-check on file changes"
         Write-Host "  stats  - Show build statistics"
         Write-Host ""
@@ -316,8 +290,7 @@ switch ($Command) {
         Write-Host "Debug examples:"
         Write-Host "  .\dev.ps1 build -Debug     # Build with debug symbols"
         Write-Host "  .\dev.ps1 run -Debug       # Run with debug symbols"
-        Write-Host "  .\dev.ps1 gdb              # Build and start GDB"
-        exit 1
+            exit 1
     }
 }
 
