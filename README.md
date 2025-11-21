@@ -68,7 +68,7 @@ chmod +x scripts/*.sh
 ./scripts/dev.sh watch
 
 # Open the debug info while building
-./scripts/dev.sh --debug
+./scripts/dev.sh build --debug
 ```
 
 **Windows:**
