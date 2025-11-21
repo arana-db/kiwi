@@ -24,38 +24,32 @@ set PROFILE=
 set VERBOSE=
 set DEBUG_MODE=
 set CARGO_CONFIG_FLAG=
-set SHIFT_COUNT=0
 
 REM Parse arguments - use loop instead of goto
 :parse_args_loop
 if "%1"=="" goto args_done
 if /i "%1"=="--release" (
     set PROFILE=--release
-    set /a SHIFT_COUNT+=1
     shift
     goto parse_args_loop
 )
 if /i "%1"=="-v" (
     set VERBOSE=-v
-    set /a SHIFT_COUNT+=1
     shift
     goto parse_args_loop
 )
 if /i "%1"=="--verbose" (
     set VERBOSE=-v
-    set /a SHIFT_COUNT+=1
     shift
     goto parse_args_loop
 )
 if /i "%1"=="--debug" (
     set DEBUG_MODE=true
-    set /a SHIFT_COUNT+=1
     shift
     goto parse_args_loop
 )
 if not defined COMMAND (
     set COMMAND=%1
-    set /a SHIFT_COUNT+=1
     shift
     goto parse_args_loop
 )
@@ -253,10 +247,6 @@ if !errorlevel! equ 0 (
 )
 exit /b
 
-:execute_
-REM Handle empty command (default to check)
-call :execute_check
-exit /b
 
 REM ==================== Utility Functions ====================
 

@@ -66,6 +66,9 @@ chmod +x scripts/*.sh
 
 # Auto-watch mode (checks on file save)
 ./scripts/dev.sh watch
+
+# Open the debug info while building
+./scripts/dev.sh --debug
 ```
 
 **Windows:**
@@ -78,6 +81,9 @@ scripts\dev run
 
 # Auto-watch mode
 scripts\dev watch
+
+# Open the debug info while building
+scripts\dev build --debug
 ```
 
 ### Cluster Mode
