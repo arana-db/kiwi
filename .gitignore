@@ -51,6 +51,8 @@ STORAGE_COMPARISON.md
 # Claude Spec Workflow configuration
 .spec-workflow/
 
+agent-os/
+
 # Serana AI configuration
 .serena/
 

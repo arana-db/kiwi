@@ -1,0 +1,40 @@
+# Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# special Cargo configuration for debug builds
+
+[profile.dev]
+# enable debug info
+debug = true
+split-debuginfo = "unpacked"
+
+# disable optimizations for easier debugging
+opt-level = 0
+# increase codegen units for faster compilation
+codegen-units = 256
+# enable overflow checks
+overflow-checks = true
+
+incremental = true
+panic = "unwind"
+lto = false
+
+[profile.dev.package."*"]
+debug = true
+opt-level = 0
+codegen-units = 256
+incremental = true

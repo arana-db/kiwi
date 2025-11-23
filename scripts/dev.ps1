@@ -22,9 +22,10 @@ param(
     [Parameter(Position=0)]
     [ValidateSet("check", "build", "run", "test", "clean", "watch", "stats")]
     [string]$Command = "check",
-    
+
     [switch]$Release,
-    [switch]$Verbose
+    [switch]$Verbose,
+    [switch]$Debug
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,6 +35,29 @@ function Write-Info { param($msg) Write-Host $msg -ForegroundColor Cyan }
 function Write-Success { param($msg) Write-Host $msg -ForegroundColor Green }
 function Write-Warning { param($msg) Write-Host $msg -ForegroundColor Yellow }
 function Write-Error { param($msg) Write-Host $msg -ForegroundColor Red }
+
+# Get Rust toolchain information
+function Get-RustToolchain {
+    try {
+        $rustupOutput = rustup show active-toolchain 2>$null
+        if ($rustupOutput -match "nightly") {
+            return "nightly"
+        } elseif ($rustupOutput -match "stable") {
+            return "stable"
+        } else {
+            # Fallback: check with cargo --version
+            $cargoOutput = cargo --version --verbose 2>$null
+            if ($cargoOutput -match "nightly") {
+                return "nightly"
+            } else {
+                return "stable"
+            }
+        }
+    } catch {
+        # Default to stable if detection fails
+        return "stable"
+    }
+}
 
 # Banner
 Write-Info "=== Kiwi Development Tool ==="
@@ -69,24 +93,53 @@ if ($Command -eq "build" -or $Command -eq "run") {
 # Set environment variables for faster builds
 $env:CARGO_BUILD_JOBS = [Environment]::ProcessorCount
 
-# Check and setup sccache if available
-$sccacheInstalled = Get-Command sccache -ErrorAction SilentlyContinue
-# Check and setup sccache if available
-$sccacheInstalled = Get-Command sccache -ErrorAction SilentlyContinue
-if ($sccacheInstalled) {
-    $env:RUSTC_WRAPPER = "sccache"
-    # sccache doesn't support incremental compilation, so disable it
-    $env:CARGO_INCREMENTAL = "0"
-    Remove-Item Env:\CARGO_CACHE_RUSTC_INFO -ErrorAction SilentlyContinue
-    # Silently start sccache server if not running
-    sccache --start-server 2>&1 | Out-Null
-} else {
-    # Enable incremental compilation when not using sccache
-    $env:CARGO_INCREMENTAL = "1"
-    if ($Command -eq "build" -or $Command -eq "run") {
-        Write-Warning "⚡ Tip: Install sccache for faster builds: cargo install sccache"
-        Write-Warning "   Or run: scripts\quick_setup.ps1"
+# Debug mode configuration
+if ($Debug.IsPresent) {
+    Write-Info "🐛 Debug mode enabled - using Cargo_debug.toml"
+
+    # Detect Rust toolchain for compatible flags
+    $rustToolchain = Get-RustToolchain
+
+    # Set environment variables for debugging
+    if ($rustToolchain -eq "nightly") {
+        $env:RUSTFLAGS = "-g -Zmacro-backtrace"
+        Write-Info "🔧 Using nightly toolchain with -Zmacro-backtrace"
+    } else {
+        $env:RUSTFLAGS = "-g"
+        Write-Info "🔧 Using stable toolchain (macro backtrace unavailable on stable)"
     }
+
+    $env:CARGO_INCREMENTAL = "1"
+    # Disable sccache for debug builds to ensure debug symbols
+    Remove-Item Env:\RUSTC_WRAPPER -ErrorAction SilentlyContinue
+
+    # Use debug config if available - FIXED: Use array instead of string
+    if (Test-Path "Cargo_debug.toml") {
+        $cargoConfigFlag = @("--config", "Cargo_debug.toml")
+        Write-Info "📋 Using Cargo_debug.toml for maximum debug symbols"
+    } else {
+        Write-Warning "⚠️ Cargo_debug.toml not found, using default debug settings"
+        $cargoConfigFlag = @()
+    }
+} else {
+    # Check and setup sccache if available (normal builds)
+    $sccacheInstalled = Get-Command sccache -ErrorAction SilentlyContinue
+    if ($sccacheInstalled) {
+        $env:RUSTC_WRAPPER = "sccache"
+        # sccache doesn't support incremental compilation, so disable it
+        $env:CARGO_INCREMENTAL = "0"
+        Remove-Item Env:\CARGO_CACHE_RUSTC_INFO -ErrorAction SilentlyContinue
+        # Silently start sccache server if not running
+        sccache --start-server 2>&1 | Out-Null
+    } else {
+        # Enable incremental compilation when not using sccache
+        $env:CARGO_INCREMENTAL = "1"
+        if ($Command -eq "build" -or $Command -eq "run") {
+            Write-Warning "⚡ Tip: Install sccache for faster builds: cargo install sccache"
+            Write-Warning "   Or run: scripts\quick_setup.ps1"
+        }
+    }
+    $cargoConfigFlag = @()
 }
 
 $profileFlag = if ($Release) { "--release" } else { "" }
@@ -95,15 +148,19 @@ $verboseFlag = if ($Verbose) { "-v" } else { "" }
 switch ($Command) {
     "check" {
         Write-Info "Running cargo check (fast syntax check)..."
-        cargo check $profileFlag $verboseFlag
+        cargo check $profileFlag @cargoConfigFlag $verboseFlag
         if ($LASTEXITCODE -eq 0) {
             Write-Success "✓ Check passed!"
         }
     }
-    
+
     "build" {
-        Write-Info "Building Kiwi..."
-        
+        if ($Debug.IsPresent) {
+            Write-Info "Building Kiwi in DEBUG mode..."
+        } else {
+            Write-Info "Building Kiwi..."
+        }
+
         # Check if librocksdb-sys is cached
         $targetDir = if ($Release) { "target\release" } else { "target\debug" }
         if (Test-Path "$targetDir\deps\*rocksdb*.rlib") {
@@ -111,39 +168,50 @@ switch ($Command) {
         } else {
             Write-Warning "⚠ librocksdb-sys will be compiled (this may take a while)..."
         }
-        
+
         $startTime = Get-Date
-        cargo build $profileFlag $verboseFlag
+        cargo build $profileFlag @cargoConfigFlag $verboseFlag
         $buildTime = (Get-Date) - $startTime
-        
+
         if ($LASTEXITCODE -eq 0) {
-            Write-Success "✓ Build completed in $([math]::Round($buildTime.TotalSeconds, 2)) seconds"
+            if ($Debug.IsPresent) {
+                Write-Success "✓ Debug build completed in $([math]::Round($buildTime.TotalSeconds, 2)) seconds"
+                Write-Host ""
+                Write-Info "🐛 Debug binary ready at: target\debug\kiwi"
+            } else {
+                Write-Success "✓ Build completed in $([math]::Round($buildTime.TotalSeconds, 2)) seconds"
+            }
         }
     }
-    
+
     "run" {
-        Write-Info "Running Kiwi..."
+        if ($Debug.IsPresent) {
+            Write-Info "Running Kiwi in DEBUG mode..."
+        } else {
+            Write-Info "Running Kiwi..."
+        }
         $env:RUST_LOG = "debug"
-        cargo run $profileFlag $verboseFlag
+        cargo run $profileFlag @cargoConfigFlag $verboseFlag
     }
-    
+
     "test" {
         Write-Info "Running tests..."
-        cargo test $profileFlag $verboseFlag
+        cargo test $profileFlag @cargoConfigFlag $verboseFlag
     }
-    
+
+  
     "clean" {
         Write-Warning "Cleaning build artifacts..."
         cargo clean
         Write-Success "✓ Clean complete"
     }
-    
+
     "watch" {
         Write-Info "Starting cargo-watch..."
         Write-Info "This will automatically check your code on file changes"
         Write-Info "Press Ctrl+C to stop"
         Write-Info ""
-        
+
         # Check if cargo-watch is installed
         $watchInstalled = Get-Command cargo-watch -ErrorAction SilentlyContinue
         if (-not $watchInstalled) {
@@ -159,21 +227,21 @@ switch ($Command) {
                 exit 1
             }
         }
-        
+
         cargo watch -x check -x "test --lib"
     }
-    
+
     "stats" {
         Write-Info "Build Statistics:"
         Write-Info ""
-        
+
         # Check target directory size
         if (Test-Path "target") {
             $targetSize = (Get-ChildItem target -Recurse -File | Measure-Object -Property Length -Sum).Sum
             $targetSizeGB = [math]::Round($targetSize / 1GB, 2)
             Write-Info "Target directory size: $targetSizeGB GB"
         }
-        
+
         # Check if sccache is available
         $sccacheInstalled = Get-Command sccache -ErrorAction SilentlyContinue
         if ($sccacheInstalled) {
@@ -188,7 +256,7 @@ switch ($Command) {
             Write-Warning "  [build]"
             Write-Warning "  rustc-wrapper = `"sccache`""
         }
-        
+
         # Show last build times
         Write-Info ""
         Write-Info "Recent builds:"
@@ -200,6 +268,29 @@ switch ($Command) {
             $releaseTime = (Get-Item "target\release").LastWriteTime
             Write-Info "  Release: $releaseTime"
         }
+    }
+
+    default {
+        Write-Error "Unknown command: $Command"
+        Write-Host ""
+        Write-Host "Available commands:"
+        Write-Host "  check  - Quick syntax check"
+        Write-Host "  build  - Build the project"
+        Write-Host "  run    - Build and run"
+        Write-Host "  test   - Run tests"
+          Write-Host "  clean  - Clean build artifacts"
+        Write-Host "  watch  - Auto-check on file changes"
+        Write-Host "  stats  - Show build statistics"
+        Write-Host ""
+        Write-Host "Parameters:"
+        Write-Host "  -Debug     - Enable full debug symbols (slower build, better debugging)"
+        Write-Host "  -Release   - Use release profile"
+        Write-Host "  -Verbose   - Verbose output"
+        Write-Host ""
+        Write-Host "Debug examples:"
+        Write-Host "  .\dev.ps1 build -Debug     # Build with debug symbols"
+        Write-Host "  .\dev.ps1 run -Debug       # Run with debug symbols"
+            exit 1
     }
 }
 

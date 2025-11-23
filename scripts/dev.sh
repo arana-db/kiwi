@@ -33,10 +33,27 @@ success() { echo -e "${GREEN}$1${NC}"; }
 warning() { echo -e "${YELLOW}$1${NC}"; }
 error() { echo -e "${RED}$1${NC}"; }
 
+# Detect current Rust toolchain
+detect_rust_toolchain() {
+    if rustup show active-toolchain 2>/dev/null | grep -q "nightly"; then
+        echo "nightly"
+    elif rustup show active-toolchain 2>/dev/null | grep -q "stable"; then
+        echo "stable"
+    else
+        # Fallback: check with cargo --version
+        if cargo --version --verbose 2>/dev/null | grep -q "nightly"; then
+            echo "nightly"
+        else
+            echo "stable"
+        fi
+    fi
+}
+
 # Default command
 COMMAND=${1:-check}
 PROFILE=""
 VERBOSE=""
+DEBUG_MODE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -49,6 +66,10 @@ while [[ $# -gt 0 ]]; do
             VERBOSE="-v"
             shift
             ;;
+        --debug)
+            DEBUG_MODE="true"
+            shift
+            ;;
         *)
             COMMAND=$1
             shift
@@ -59,6 +80,56 @@ done
 # Banner
 info "=== Kiwi Development Tool ==="
 echo ""
+
+# Set environment variables for faster builds
+export CARGO_BUILD_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+
+# Debug mode configuration
+if [ -n "$DEBUG_MODE" ]; then
+    info "🐛 Debug mode enabled - using Cargo_debug.toml"
+
+    # Detect Rust toolchain for compatible flags
+    RUST_TOOLCHAIN=$(detect_rust_toolchain)
+
+    # Set environment variables for debugging
+    if [ "$RUST_TOOLCHAIN" = "nightly" ]; then
+        export RUSTFLAGS="-g -Zmacro-backtrace"
+        info "🔧 Using nightly toolchain with -Zmacro-backtrace"
+    else
+        export RUSTFLAGS="-g"
+        info "🔧 Using stable toolchain (macro backtrace unavailable on stable)"
+    fi
+
+    export CARGO_INCREMENTAL=1
+    # Disable sccache for debug builds to ensure debug symbols
+    unset RUSTC_WRAPPER
+
+    # Use debug config if available
+    if [ -f "Cargo_debug.toml" ]; then
+        CARGO_CONFIG_FLAG="--config Cargo_debug.toml"
+        info "📋 Using Cargo_debug.toml for maximum debug symbols"
+    else
+        warning "⚠️ Cargo_debug.toml not found, using default debug settings"
+    fi
+else
+    # Check and setup sccache if available (normal builds)
+    if command -v sccache &> /dev/null; then
+        export RUSTC_WRAPPER=sccache
+        # sccache doesn't support incremental compilation, so disable it
+        export CARGO_INCREMENTAL=0
+        unset CARGO_CACHE_RUSTC_INFO
+        # Silently start sccache server if not running
+        sccache --start-server &> /dev/null || true
+    else
+        # Enable incremental compilation when not using sccache
+        export CARGO_INCREMENTAL=1
+        if [ "$COMMAND" = "build" ] || [ "$COMMAND" = "run" ]; then
+            warning "⚡ Tip: Install sccache for faster builds: cargo install sccache"
+            warning "   Or run: ./scripts/quick_setup.sh"
+        fi
+    fi
+    CARGO_CONFIG_FLAG=""
+fi
 
 # Check if this is first-time use (only for build/run commands)
 if [ "$COMMAND" = "build" ] || [ "$COMMAND" = "run" ]; then
@@ -87,83 +158,78 @@ if [ "$COMMAND" = "build" ] || [ "$COMMAND" = "run" ]; then
     fi
 fi
 
-# Set environment variables for faster builds
-export CARGO_BUILD_JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
-
-# Check and setup sccache if available
-if command -v sccache &> /dev/null; then
-    export RUSTC_WRAPPER=sccache
-    # sccache doesn't support incremental compilation, so disable it
-    export CARGO_INCREMENTAL=0
-    unset CARGO_CACHE_RUSTC_INFO
-    # Silently start sccache server if not running
-    sccache --start-server &> /dev/null || true
-else
-    # Enable incremental compilation when not using sccache
-    export CARGO_INCREMENTAL=1
-    if [ "$COMMAND" = "build" ] || [ "$COMMAND" = "run" ]; then
-        warning "⚡ Tip: Install sccache for faster builds: cargo install sccache"
-        warning "   Or run: ./scripts/quick_setup.sh"
-    fi
-fi
-
 case $COMMAND in
     check)
         info "Running cargo check (fast syntax check)..."
-        cargo check $PROFILE $VERBOSE
+        cargo check $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         if [ $? -eq 0 ]; then
             success "✓ Check passed!"
         fi
         ;;
-    
+
     build)
-        info "Building Kiwi..."
-        
+        if [ -n "$DEBUG_MODE" ]; then
+            info "Building Kiwi in DEBUG mode..."
+        else
+            info "Building Kiwi..."
+        fi
+
         # Check if librocksdb-sys is cached
         TARGET_DIR="target/debug"
         if [ "$PROFILE" = "--release" ]; then
             TARGET_DIR="target/release"
         fi
-        
+
         if ls $TARGET_DIR/deps/*rocksdb*.rlib 1> /dev/null 2>&1; then
             success "✓ Using cached librocksdb-sys"
         else
             warning "⚠ librocksdb-sys will be compiled (this may take a while)..."
         fi
-        
+
         START_TIME=$(date +%s)
-        cargo build $PROFILE $VERBOSE
+        cargo build $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         END_TIME=$(date +%s)
         BUILD_TIME=$((END_TIME - START_TIME))
-        
+
         if [ $? -eq 0 ]; then
-            success "✓ Build completed in ${BUILD_TIME} seconds"
+            if [ -n "$DEBUG_MODE" ]; then
+                success "✓ Debug build completed in ${BUILD_TIME} seconds"
+                echo ""
+                info "🐛 Debug binary ready at: target/debug/kiwi"
+            else
+                success "✓ Build completed in ${BUILD_TIME} seconds"
+            fi
         fi
         ;;
-    
+
     run)
-        info "Running Kiwi..."
+        if [ -n "$DEBUG_MODE" ]; then
+            info "Running Kiwi in DEBUG mode..."
+        else
+            info "Running Kiwi..."
+        fi
         export RUST_LOG=debug
-        cargo run $PROFILE $VERBOSE
+        cargo run $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         ;;
-    
+
     test)
         info "Running tests..."
-        cargo test $PROFILE $VERBOSE
+        cargo test $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         ;;
-    
+
+  
     clean)
         warning "Cleaning build artifacts..."
         cargo clean
         success "✓ Clean complete"
         ;;
-    
+
     watch)
         info "Starting cargo-watch..."
         info "This will automatically check your code on file changes"
         info "Press Ctrl+C to stop"
         echo ""
-        
+
         # Check if cargo-watch is installed
         if ! command -v cargo-watch &> /dev/null; then
             warning "cargo-watch not found."
@@ -179,20 +245,20 @@ case $COMMAND in
                 exit 1
             fi
         fi
-        
+
         cargo watch -x check -x "test --lib"
         ;;
-    
+
     stats)
         info "Build Statistics:"
         echo ""
-        
+
         # Check target directory size
         if [ -d "target" ]; then
             TARGET_SIZE=$(du -sh target 2>/dev/null | cut -f1)
             info "Target directory size: $TARGET_SIZE"
         fi
-        
+
         # Check if sccache is available
         if command -v sccache &> /dev/null; then
             echo ""
@@ -206,7 +272,7 @@ case $COMMAND in
             warning "  [build]"
             warning "  rustc-wrapper = \"sccache\""
         fi
-        
+
         # Show last build times
         echo ""
         info "Recent builds:"
@@ -219,7 +285,7 @@ case $COMMAND in
             info "  Release: $RELEASE_TIME"
         fi
         ;;
-    
+
     *)
         error "Unknown command: $COMMAND"
         echo ""
@@ -228,13 +294,18 @@ case $COMMAND in
         echo "  build  - Build the project"
         echo "  run    - Build and run"
         echo "  test   - Run tests"
-        echo "  clean  - Clean build artifacts"
+          echo "  clean  - Clean build artifacts"
         echo "  watch  - Auto-check on file changes"
         echo "  stats  - Show build statistics"
         echo ""
         echo "Options:"
+        echo "  --debug    - Enable full debug symbols (slower build, better debugging)"
         echo "  --release  - Use release profile"
         echo "  -v         - Verbose output"
-        exit 1
+        echo ""
+        echo "Debug examples:"
+        echo "  ./scripts/dev.sh build --debug     # Build with debug symbols"
+        echo "  ./scripts/dev.sh run --debug       # Run with debug symbols"
+          exit 1
         ;;
 esac
