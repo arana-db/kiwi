@@ -367,6 +367,18 @@ impl Storage {
         self.insts[instance_id].hstrlen(key, field)
     }
 
+    pub fn hscan(
+        &self,
+        key: &[u8],
+        cursor: u64,
+        pattern: Option<&str>,
+        count: Option<usize>,
+    ) -> Result<(u64, Vec<(String, String)>)> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].hscan(key, cursor, pattern, count)
+    }
+
     // List Commands Implementation
 
     pub fn lpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {

@@ -93,6 +93,7 @@ pub fn create_command_table() -> CmdTable {
         crate::hincrbyfloat::HIncrByFloatCmd,
         crate::hsetnx::HSetNXCmd,
         crate::hstrlen::HStrLenCmd,
+        crate::hscan::HScanCmd,
         // List commands
         crate::list::LPushCmd,
         crate::list::RPushCmd,
