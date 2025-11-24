@@ -9,7 +9,7 @@ jobs:
     name: license header check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: check license header
         uses: apache/skywalking-eyes/header@main
@@ -24,7 +24,7 @@ jobs:
     name: cargo fmt
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -45,7 +45,7 @@ jobs:
     name: cargo clippy
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -87,7 +87,7 @@ jobs:
     name: build and test
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
