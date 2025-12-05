@@ -854,15 +854,11 @@ impl KiwiStateMachine {
                 self.node_id
             );
         } else {
-            log::debug!(
-                "Node {} no storage engine",
-                self.node_id
-            );
+            log::debug!("Node {} no storage engine", self.node_id);
         }
         Ok(())
     }
 }
-
 
 // ============================================================================
 // Openraft RaftStateMachine Implementation

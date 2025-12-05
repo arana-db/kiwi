@@ -170,13 +170,13 @@ impl RaftStorageAdaptor {
             meta.snapshot_id
         );
 
-        let snapshot : StateMachineSnapshot = bincode::deserialize(&data).map_err(|e| {
+        let snapshot: StateMachineSnapshot = bincode::deserialize(&data).map_err(|e| {
             Self::to_storage_error(RaftError::Storage(
-                crate::error::StorageError::SnapshotRestorationFailed{
+                crate::error::StorageError::SnapshotRestorationFailed {
                     message: format!("Failed to deserialize snapshot: {}", e),
                     snapshot_id: meta.snapshot_id.clone(),
                     context: String::from("load_snapshot"),
-                }
+                },
             ))
         })?;
 
@@ -188,11 +188,14 @@ impl RaftStorageAdaptor {
 
         let storage_data = bincode::serialize(&snapshot.data).map_err(|e| {
             Self::to_storage_error(RaftError::Storage(
-                crate::error::StorageError::SnapshotRestorationFailed{
-                    message: format!("Failed to serialize snapshot data for starage engine: {}", e),
+                crate::error::StorageError::SnapshotRestorationFailed {
+                    message: format!(
+                        "Failed to serialize snapshot data for storage engine: {}",
+                        e
+                    ),
                     snapshot_id: meta.snapshot_id.clone(),
                     context: String::from("load_snapshot"),
-                }
+                },
             ))
         })?;
 
@@ -202,7 +205,7 @@ impl RaftStorageAdaptor {
             .map_err(Self::to_storage_error)?;
 
         self.state_machine.set_applied_index(meta.last_log_index);
-        log::info!{
+        log::info! {
             "Updated applied_index to {} from snapshot metadata",
             meta.last_log_index
         };
