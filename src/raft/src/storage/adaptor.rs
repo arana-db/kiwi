@@ -156,11 +156,13 @@ impl RaftStorageAdaptor {
         let data = match data {
             Some(d) => d,
             None => {
-                log::warn!(
-                    "Snapshot metadata exists but data not found for id = {}",
-                    meta.snapshot_id,
-                );
-                return Ok(());
+                return Err(Self::to_storage_error(RaftError::Storage(
+                    crate::error::StorageError::SnapshotRestorationFailed {
+                        message: "Snapshot metadata exists but data not found".to_string(),
+                        snapshot_id: meta.snapshot_id.clone(),
+                        context: String::from("load_snapshot"),
+                    },
+                )));
             }
         };
 
