@@ -124,101 +124,101 @@ impl RaftStorageAdaptor {
             payload,
         })
     }
-}
 
-pub async fn load_snapshot(&mut self) -> Result<(), StroageError<NodeId>> {
-    log::info!("Loading snapshot from persistent storage");
+    pub async fn load_snapshot(&mut self) -> Result<(), StorageError<NodeId>> {
+        log::info!("Loading snapshot from persistent storage");
 
-    let meta = self
-        .storage
-        .get_snapshot_meta()
-        .map_err(Self::to_storage_error)?;
+        let meta = self
+            .storage
+            .get_snapshot_meta()
+            .map_err(Self::to_storage_error)?;
 
-    let meta = match meta {
-        Some(m) => m,
-        None => {
-            log::info!("No snapshot found in storage");
-            return Ok(());
-        }
-    };
-
-    log::info!(
-        "Found snapshot metadata: id = {}, last_log_index = {}, last_log_term = {}",
-        meta.snapshot_id,
-        meta.last_log_index,
-        meta.last_log_term
-    );
-
-    let data = self
-        .storage
-        .get_snapshot_data(&meta.snapshot_id)
-        .map_err(Self::to_storage_error)?;
-
-    let data = match data {
-        Some(d) => d,
-        None => {
-            log::warn!(
-                "Snapshot metadata exists but data not found for id = {}",
-                meta.snapshot_id,
-            );
-            return Ok(());
-        }
-    };
-
-    log::info!(
-        "Loaded snapshot data: {} bytes for id = {}",
-        data.len(),
-        meta.snapshot_id
-    );
-
-    let snapshot : StateMachineSnapshot = bincode::deserialize(&data).map_err(|e| {
-        Self::to_storage_error(RaftError::Storage(
-            create::error::StorageError::SnapshotRestorationFailed{
-                message: format!("Failed to deserialize snapshot: {}", e),
-                snapshot_id: meta.snapshot_id.clone(),
-                context: String::from("load_snapshot"),
+        let meta = match meta {
+            Some(m) => m,
+            None => {
+                log::info!("No snapshot found in storage");
+                return Ok(());
             }
-        ))
-    })?;
+        };
 
-    log::info!(
-        "Deserialized snapshto: {} keys, applied_index = {}",
-        snapsht.data.len(),
-        snapshot.applied_index
-    );
+        log::info!(
+            "Found snapshot metadata: id = {}, last_log_index = {}, last_log_term = {}",
+            meta.snapshot_id,
+            meta.last_log_index,
+            meta.last_log_term
+        );
 
-    let storage_data = bincode::serialize(&snapshot.data).map_err(|e| {
-        Self::to_storage_error(RaftError::Storage(
-            create::error::StorageError::SnapshotRestorationFailed{
-                message: format!("Failed to serialize snapshot data for starage engine: {}", e),
-                snapshot_id: meta.snapshot_id.clone(),
-                context: String::from("load_snapshot"),
+        let data = self
+            .storage
+            .get_snapshot_data(&meta.snapshot_id)
+            .map_err(Self::to_storage_error)?;
+
+        let data = match data {
+            Some(d) => d,
+            None => {
+                log::warn!(
+                    "Snapshot metadata exists but data not found for id = {}",
+                    meta.snapshot_id,
+                );
+                return Ok(());
             }
-        ))
-    })
+        };
 
-    self.state_machine
-        .restore_storage_from_snapshot(&storage_data)
-        .await
-        .map_err(Self::to_storage_error)?;
+        log::info!(
+            "Loaded snapshot data: {} bytes for id = {}",
+            data.len(),
+            meta.snapshot_id
+        );
 
-    self.state_machine.set_applied_index(meta.last_log_index);
-    log::info!{
-        "Updated applied_index to {} from snapshot metadata",
-        meta.last_log_index
-    };
+        let snapshot : StateMachineSnapshot = bincode::deserialize(&data).map_err(|e| {
+            Self::to_storage_error(RaftError::Storage(
+                crate::error::StorageError::SnapshotRestorationFailed{
+                    message: format!("Failed to deserialize snapshot: {}", e),
+                    snapshot_id: meta.snapshot_id.clone(),
+                    context: String::from("load_snapshot"),
+                }
+            ))
+        })?;
 
-    self.storage
-        .purge_logs_upto_async(meta.last_log_index)
-        .await
-        .map_err(Self::to_storage_err)?;
+        log::info!(
+            "Deserialized snapshot: {} keys, applied_index = {}",
+            snapshot.data.len(),
+            snapshot.applied_index
+        );
 
-    log::info!(
-        "Purged logs up to index {}, snapshot load complete",
-        meta.last_log_index
-    );
+        let storage_data = bincode::serialize(&snapshot.data).map_err(|e| {
+            Self::to_storage_error(RaftError::Storage(
+                crate::error::StorageError::SnapshotRestorationFailed{
+                    message: format!("Failed to serialize snapshot data for starage engine: {}", e),
+                    snapshot_id: meta.snapshot_id.clone(),
+                    context: String::from("load_snapshot"),
+                }
+            ))
+        })?;
 
-    Ok(());
+        self.state_machine
+            .restore_storage_from_snapshot(&storage_data)
+            .await
+            .map_err(Self::to_storage_error)?;
+
+        self.state_machine.set_applied_index(meta.last_log_index);
+        log::info!{
+            "Updated applied_index to {} from snapshot metadata",
+            meta.last_log_index
+        };
+
+        self.storage
+            .purge_logs_upto_async(meta.last_log_index)
+            .await
+            .map_err(Self::to_storage_error)?;
+
+        log::info!(
+            "Purged logs up to index {}, snapshot load complete",
+            meta.last_log_index
+        );
+
+        Ok(())
+    }
 }
 
 // Implement RaftStorage trait for RaftStorageAdaptor
