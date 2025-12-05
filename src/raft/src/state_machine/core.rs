@@ -840,6 +840,30 @@ impl KiwiStateMachine {
     }
 }
 
+// Restore storage engine from raw snapshot data
+// The method directly calls storage_engine.restore_from_snapshot
+pub async fn restore_storage_from_snapshot(&self, snapshot_data: &[u8]) -> RaftResult<()> {
+    if let Some(storage_engine) = &self.storage_engine {
+        log::info!(
+            "Node {} restoring storage engine from snapshot ({} bytes)",
+            self.node_id,
+            snapshot_data.len()
+        );
+        storage_engine.restore_from_snapshot(snapshot_data).await?;
+        log::info!{
+            "Node {} successfully restore storage engine from snapshot",
+            self.node_id
+        };
+    } else {
+        log::debug!(
+            "Node {} no storage engine",
+            self.node_id
+        );
+    }
+    Ok(());
+}
+
+
 // ============================================================================
 // Openraft RaftStateMachine Implementation
 // ============================================================================
