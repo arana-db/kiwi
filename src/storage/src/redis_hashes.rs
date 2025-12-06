@@ -28,6 +28,8 @@ use crate::base_meta_value_format::{HashesMetaValue, ParsedHashesMetaValue};
 use crate::error::{OptionNoneSnafu, RedisErrSnafu, RocksSnafu};
 use crate::get_db_and_cfs;
 use crate::member_data_key_format::MemberDataKey;
+use crate::redis_sets::glob_match;
+use crate::util::is_tail_wildcard;
 use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Redis, Result};
 
 impl Redis {
@@ -1081,6 +1083,166 @@ impl Redis {
         match self.hget(key, field)? {
             Some(value) => Ok(value.len() as i32),
             None => Ok(0),
+        }
+    }
+
+    /// Scan hash fields with cursor-based iteration
+    /// Returns (next_cursor, vec_of_(field, value)_tuples)
+    pub fn hscan(
+        &self,
+        key: &[u8],
+        cursor: u64,
+        pattern: Option<&str>,
+        count: Option<usize>,
+    ) -> Result<(u64, Vec<(String, String)>)> {
+        let (db, cfs) = get_db_and_cfs!(
+            self,
+            ColumnFamilyIndex::MetaCF,
+            ColumnFamilyIndex::HashesDataCF
+        );
+        debug_assert_eq!(cfs.len(), 2);
+        let meta_cf = &cfs[0];
+        let data_cf = &cfs[1];
+
+        let snapshot = db.snapshot();
+        let mut read_options = ReadOptions::default();
+        read_options.set_snapshot(&snapshot);
+
+        let base_meta_key = BaseMetaKey::new(key).encode()?;
+        let default_count = 10usize;
+        let step_length = count.unwrap_or(default_count);
+        let mut rest = step_length as i64;
+
+        // Read meta
+        match db
+            .get_cf_opt(meta_cf, &base_meta_key, &read_options)
+            .context(RocksSnafu)?
+        {
+            Some(meta_val_bytes) => {
+                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
+
+                if meta_val.is_stale() {
+                    return Ok((0, Vec::new()));
+                }
+                if meta_val.data_type() != DataType::Hash {
+                    return RedisErrSnafu {
+                        message: format!(
+                            "Wrong type of value, expected: {:?}, got: {:?}",
+                            DataType::Hash,
+                            meta_val.data_type()
+                        ),
+                    }
+                    .fail();
+                }
+
+                let mut start_point = String::new();
+                let version = meta_val.version();
+                let mut next_cursor = cursor;
+
+                if cursor > 0 {
+                    if let Some(pat) = pattern {
+                        if let Some(sp) =
+                            self.get_scan_start_point(DataType::Hash, key, pat.as_bytes(), cursor)?
+                        {
+                            start_point = sp;
+                        }
+                    } else if let Some(sp) =
+                        self.get_scan_start_point(DataType::Hash, key, &[], cursor)?
+                    {
+                        start_point = sp;
+                    }
+                } else if let Some(pat) = pattern {
+                    if is_tail_wildcard(pat) {
+                        start_point = pat[..pat.len() - 1].to_string();
+                    }
+                }
+                let sub_field: Option<&str> = match pattern {
+                    Some(pat) if is_tail_wildcard(pat) => Some(&pat[..pat.len() - 1]),
+                    _ => None,
+                };
+
+                let hashes_data_prefix = MemberDataKey::new(
+                    key,
+                    version,
+                    sub_field.map(|s| s.as_bytes()).unwrap_or(&[]),
+                );
+                let prefix = hashes_data_prefix.encode_seek_key()?;
+
+                let start_key = if !start_point.is_empty() {
+                    let hashes_start_key = MemberDataKey::new(key, version, start_point.as_bytes());
+                    hashes_start_key.encode_seek_key()?
+                } else {
+                    prefix.clone()
+                };
+
+                let mut field_values = Vec::new();
+
+                let mut iter = db.iterator_cf_opt(
+                    data_cf,
+                    read_options,
+                    rocksdb::IteratorMode::From(&start_key, rocksdb::Direction::Forward),
+                );
+
+                while rest > 0 {
+                    if let Some(item) = iter.next() {
+                        let (k, v) = item.context(RocksSnafu)?;
+
+                        if !k.starts_with(&prefix) {
+                            break;
+                        }
+
+                        let parsed_hashes_data_key =
+                            crate::member_data_key_format::ParsedMemberDataKey::new(&k)?;
+                        let field =
+                            String::from_utf8_lossy(parsed_hashes_data_key.data()).to_string();
+
+                        let matches_pattern = if let Some(pat) = pattern {
+                            glob_match(pat, field.as_str())
+                        } else {
+                            true
+                        };
+
+                        if matches_pattern && rest > 0 {
+                            let parsed_internal_value = ParsedBaseDataValue::new(&*v)?;
+                            let value =
+                                String::from_utf8_lossy(&parsed_internal_value.user_value())
+                                    .to_string();
+                            field_values.push((field.clone(), value));
+                        }
+                        rest -= 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                next_cursor = if let Some(item) = iter.next() {
+                    let (k, _v) = item.context(RocksSnafu)?;
+
+                    if k.starts_with(&prefix) {
+                        let new_cursor = next_cursor + step_length as u64;
+
+                        let parsed_key =
+                            crate::member_data_key_format::ParsedMemberDataKey::new(&k)?;
+                        let next_field = String::from_utf8_lossy(parsed_key.data()).to_string();
+
+                        self.store_scan_next_point(
+                            DataType::Hash,
+                            key,
+                            pattern.unwrap_or("").as_bytes(),
+                            new_cursor,
+                            next_field.as_bytes(),
+                        )?;
+                        new_cursor
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+                drop(iter);
+                Ok((next_cursor, field_values))
+            }
+            None => Ok((0, Vec::new())),
         }
     }
 }
