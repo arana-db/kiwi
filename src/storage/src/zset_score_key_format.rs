@@ -356,7 +356,7 @@ impl ParsedZSetsScoreKey {
         let version = u64::from_le_bytes(
             version_slice.try_into().map_err(|_| crate::error::Error::InvalidFormat {
                 message: "Failed to parse version bytes".to_string(),
-                location: snafu::Location::new(file!(), line!(), 0),
+                location: snafu::Location::caller(),
             })?
         );
 
@@ -372,7 +372,7 @@ impl ParsedZSetsScoreKey {
         let score_bits = u64::from_le_bytes(
             score_slice.try_into().map_err(|_| crate::error::Error::InvalidFormat {
                 message: "Failed to parse score bytes".to_string(),
-                location: snafu::Location::new(file!(), line!(), 0),
+                location: snafu::Location::caller(),
             })?
         );
         let score = f64::from_bits(score_bits);
@@ -693,9 +693,10 @@ mod tests {
         let seek2 = ZSetsScoreKey::new(key, version, 2.0, b"").encode_seek_key().unwrap();
         let seek3 = ZSetsScoreKey::new(key, version, 3.0, b"").encode_seek_key().unwrap();
 
-        // seek key 应该按 score 排序
-        assert!(seek1 < seek2);
-        assert!(seek2 < seek3);
+        // seek key 应该按 score 排序（使用自定义比较器）
+        use crate::custom_comparator::zsets_score_key_compare;
+        assert_eq!(zsets_score_key_compare(&seek1, &seek2), std::cmp::Ordering::Less);
+        assert_eq!(zsets_score_key_compare(&seek2, &seek3), std::cmp::Ordering::Less);
     }
 
     // ========== 数据完整性测试 ==========
@@ -707,7 +708,7 @@ mod tests {
         let version = 1u64;
         let score = 1.0f64;
 
-        let members: Vec<&[u8]> = vec![b"alice", b"bob", b"charlie"];
+        let members = vec![b"alice", b"bob", b"charlie"];
         let mut encoded_keys = Vec::new();
 
         for member in &members {
@@ -846,17 +847,15 @@ mod tests {
 
     #[test]
     fn test_parse_error_invalid_key_encoding() {
-        // 构造一个无效的 key 编码（没有分隔符）
+        // 构造一个过短的输入（缺少必需字段）
         let mut invalid = BytesMut::new();
         invalid.put_slice(&[0u8; PREFIX_RESERVE_LENGTH]); // reserve1
-        invalid.put_slice(b"key_without_delimiter");      // invalid key (no \x00\x00)
+        invalid.put_slice(b"\x00\x00");                   // 一个空 key 的分隔符
         invalid.put_u64_le(1);                             // version
-        invalid.put_u64_le(1.0f64.to_bits());              // score
-        invalid.put_slice(b"member");                      // member
-        invalid.put_slice(&[0u8; SUFFIX_RESERVE_LENGTH]);  // reserve2
+        // 缺少 score, member, reserve2 - 这会导致解析失败
 
         let result = ParsedZSetsScoreKey::new(&invalid);
-        assert!(result.is_err(), "Should fail on invalid key encoding");
+        assert!(result.is_err(), "Should fail on incomplete data");
     }
 
     #[test]

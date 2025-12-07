@@ -21,7 +21,7 @@ use crate::storage_define::seek_userkey_delim;
 use crate::{
     error::Result,
     storage_define::{
-        PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, decode_user_key,
+        ENCODED_KEY_DELIM_SIZE, PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, decode_user_key,
         encode_user_key, encoded_user_key_len,
     },
 };
