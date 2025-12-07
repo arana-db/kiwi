@@ -356,7 +356,7 @@ impl ParsedZSetsScoreKey {
         let version = u64::from_le_bytes(
             version_slice.try_into().map_err(|_| crate::error::Error::InvalidFormat {
                 message: "Failed to parse version bytes".to_string(),
-                location: snafu::Location::caller(),
+                location: snafu::Location::new(file!(), line!(), 0),
             })?
         );
 
@@ -372,7 +372,7 @@ impl ParsedZSetsScoreKey {
         let score_bits = u64::from_le_bytes(
             score_slice.try_into().map_err(|_| crate::error::Error::InvalidFormat {
                 message: "Failed to parse score bytes".to_string(),
-                location: snafu::Location::caller(),
+                location: snafu::Location::new(file!(), line!(), 0),
             })?
         );
         let score = f64::from_bits(score_bits);
