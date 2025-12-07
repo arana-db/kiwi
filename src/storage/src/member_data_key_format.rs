@@ -150,6 +150,7 @@ impl ParsedMemberDataKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage_define::ENCODED_KEY_DELIM_SIZE;
 
     #[test]
     fn mv_test_member_data_key_encode_and_decode() {

@@ -707,7 +707,7 @@ mod tests {
         let version = 1u64;
         let score = 1.0f64;
 
-        let members = vec![b"alice", b"bob", b"charlie"];
+        let members: Vec<&[u8]> = vec![b"alice", b"bob", b"charlie"];
         let mut encoded_keys = Vec::new();
 
         for member in &members {
