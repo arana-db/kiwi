@@ -46,6 +46,26 @@ use snafu::ensure;
 
 use crate::error::{InvalidFormatSnafu, Result};
 
+/// Calculates the exact encoded length of a user key.
+///
+/// # Arguments
+///
+/// * `user_key` - The user key to calculate encoded length for
+///
+/// # Returns
+///
+/// The exact number of bytes the encoded key will occupy, including the delimiter.
+///
+/// # Note
+///
+/// Each `\x00` byte in the user key is encoded as `\x00\x01` (2 bytes),
+/// and the key is terminated with `\x00\x00` (2 bytes delimiter).
+pub fn encoded_user_key_len(user_key: &[u8]) -> usize {
+    let zero_count = user_key.iter().filter(|&&b| b == 0x00).count();
+    // Original bytes + extra bytes for zeros + delimiter
+    user_key.len() + zero_count + ENCODED_KEY_DELIM_SIZE
+}
+
 pub fn encode_user_key(user_key: &[u8], dst: &mut BytesMut) -> Result<()> {
     let mut start_pos = 0;
     for (i, &byte) in user_key.iter().enumerate() {

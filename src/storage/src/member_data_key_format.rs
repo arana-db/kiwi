@@ -22,7 +22,7 @@ use crate::{
     error::Result,
     storage_define::{
         ENCODED_KEY_DELIM_SIZE, PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, decode_user_key,
-        encode_user_key,
+        encode_user_key, encoded_user_key_len,
     },
 };
 // used for Hash/Set/Zset's member data key. format:
@@ -50,18 +50,18 @@ impl MemberDataKey {
     }
 
     pub fn encode(&self) -> Result<BytesMut> {
-        // TODO(marsevilspirit): allocate right memory size
+        // Calculate exact capacity for better performance
         let estimated_cap = PREFIX_RESERVE_LENGTH
-            + self.key.len() * 2
-            + size_of::<u64>()
-            + self.data.len()
-            + ENCODED_KEY_DELIM_SIZE
-            + SUFFIX_RESERVE_LENGTH;
+            + encoded_user_key_len(&self.key)  // Precise encoded key length
+            + size_of::<u64>()                 // version
+            + self.data.len()                  // data
+            + SUFFIX_RESERVE_LENGTH;           // reserve2
         let mut dst = BytesMut::with_capacity(estimated_cap);
 
         dst.put_slice(&self.reserve1);
         encode_user_key(&self.key, &mut dst)?;
-        dst.put_u64(self.version);
+        // Use little-endian for consistency with ZSetsScoreKey
+        dst.put_u64_le(self.version);
         dst.put_slice(&self.data);
         dst.put_slice(&self.reserve2);
         Ok(dst)
@@ -69,16 +69,17 @@ impl MemberDataKey {
 
     /// Encode a seek key prefix for iteration
     pub fn encode_seek_key(&self) -> Result<BytesMut> {
+        // Calculate exact capacity for better performance
         let estimated_cap = PREFIX_RESERVE_LENGTH
-            + self.key.len() * 2
-            + size_of::<u64>()
-            + self.data.len()
-            + ENCODED_KEY_DELIM_SIZE;
+            + encoded_user_key_len(&self.key)  // Precise encoded key length
+            + size_of::<u64>()                 // version
+            + self.data.len();                 // data (no reserve2 in seek key)
         let mut dst = BytesMut::with_capacity(estimated_cap);
 
         dst.put_slice(&self.reserve1);
         encode_user_key(&self.key, &mut dst)?;
-        dst.put_u64(self.version);
+        // Use little-endian for consistency with ZSetsScoreKey
+        dst.put_u64_le(self.version);
         dst.put_slice(&self.data);
         Ok(dst)
     }
@@ -110,10 +111,10 @@ impl ParsedMemberDataKey {
         let key_end_idx = start_idx + seek_userkey_delim(&encoded_key[start_idx..]);
         decode_user_key(&encoded_key[start_idx..key_end_idx], &mut key_str)?;
 
-        // version
+        // version (little-endian for consistency with ZSetsScoreKey)
         let version_end_idx = key_end_idx + size_of::<u64>();
         let version_slice = &encoded_key[key_end_idx..version_end_idx];
-        let version = u64::from_be_bytes(version_slice.try_into().unwrap());
+        let version = u64::from_le_bytes(version_slice.try_into().unwrap());
 
         // data
         let data_slice = &encoded_key[version_end_idx..end_idx];
