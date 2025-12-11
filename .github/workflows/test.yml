@@ -20,7 +20,7 @@ jobs:
     - name: Setup Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        toolchain: nightly-2025-08-20
+        toolchain: stable
         components: rustfmt, clippy
 
     - name: Install protoc (Linux)
@@ -64,7 +64,7 @@ jobs:
     - name: Setup Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        toolchain: nightly-2025-08-20
+        toolchain: stable
         components: rustfmt, clippy
 
     - name: Install protoc (Windows)
@@ -93,7 +93,7 @@ jobs:
     - name: Setup Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        toolchain: nightly-2025-08-20
+        toolchain: stable
         components: rustfmt, clippy
 
     - name: Install protoc (macOS)
@@ -116,7 +116,7 @@ jobs:
     - name: Setup Rust toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        toolchain: nightly-2025-08-20
+        toolchain: stable
         components: rustfmt, clippy
 
     - name: Install protoc (Linux)
