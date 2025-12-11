@@ -34,6 +34,7 @@ use raft::state_machine::{KiwiStateMachine, StorageEngine};
 use raft::types::{ClientRequest, ConsistencyLevel, RedisCommand, RequestId};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -199,18 +200,17 @@ fn bench_throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("throughput");
     group.measurement_time(Duration::from_secs(10));
     group.sample_size(100);
-
     group.bench_function("sustained_writes", |b| {
-        let mut counter = 0;
+        let counter = Arc::new(AtomicI32::new(0));
         b.to_async(&rt).iter(|| async {
-            counter += 1;
+            let kv = counter.fetch_add(1, Ordering::Relaxed);
             let request = ClientRequest {
                 id: RequestId::new(),
                 command: RedisCommand::new(
                     "SET".to_string(),
                     vec![
-                        Bytes::from(format!("key{}", counter)),
-                        Bytes::from(format!("value{}", counter)),
+                        Bytes::from(format!("key{}", kv)),
+                        Bytes::from(format!("value{}", kv)),
                     ],
                 ),
                 consistency_level: ConsistencyLevel::Linearizable,
@@ -232,17 +232,17 @@ fn bench_latency(c: &mut Criterion) {
     group.sample_size(1000);
 
     group.bench_function("write_latency", |b| {
-        let mut counter = 0;
+        let counter = Arc::new(AtomicI32::new(0));
         b.to_async(&rt).iter(|| async {
-            counter += 1;
+            let kv = counter.fetch_add(1, Ordering::Relaxed);
             let start = std::time::Instant::now();
             let request = ClientRequest {
                 id: RequestId::new(),
                 command: RedisCommand::new(
                     "SET".to_string(),
                     vec![
-                        Bytes::from(format!("key{}", counter)),
-                        Bytes::from(format!("value{}", counter)),
+                        Bytes::from(format!("key{}", kv)),
+                        Bytes::from(format!("value{}", kv)),
                     ],
                 ),
                 consistency_level: ConsistencyLevel::Linearizable,
