@@ -354,10 +354,7 @@ impl ParsedZSetsScoreKey {
         );
         let version_slice = &encoded_key[key_end_idx..version_end_idx];
         let version = u64::from_le_bytes(
-            version_slice.try_into().map_err(|_| crate::error::Error::InvalidFormat {
-                message: "Failed to parse version bytes".to_string(),
-                location: snafu::Location::new(file!(), line!(), column!()),
-            })?
+            version_slice.try_into().expect("version slice should be 8 bytes")
         );
 
         // score (little-endian, decode from raw IEEE 754 bits)
@@ -370,10 +367,7 @@ impl ParsedZSetsScoreKey {
         );
         let score_slice = &encoded_key[version_end_idx..score_end_idx];
         let score_bits = u64::from_le_bytes(
-            score_slice.try_into().map_err(|_| crate::error::Error::InvalidFormat {
-                message: "Failed to parse score bytes".to_string(),
-                location: snafu::Location::new(file!(), line!(), column!()),
-            })?
+            score_slice.try_into().expect("score slice should be 8 bytes")
         );
         let score = f64::from_bits(score_bits);
 
