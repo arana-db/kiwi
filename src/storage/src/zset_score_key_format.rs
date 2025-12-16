@@ -356,7 +356,7 @@ impl ParsedZSetsScoreKey {
         let version = u64::from_le_bytes(
             version_slice.try_into().map_err(|_| crate::error::Error::InvalidFormat {
                 message: "Failed to parse version bytes".to_string(),
-                location: snafu::Location::caller(),
+                location: snafu::Location::new(file!(), line!(), column!()),
             })?
         );
 
@@ -372,7 +372,7 @@ impl ParsedZSetsScoreKey {
         let score_bits = u64::from_le_bytes(
             score_slice.try_into().map_err(|_| crate::error::Error::InvalidFormat {
                 message: "Failed to parse score bytes".to_string(),
-                location: snafu::Location::caller(),
+                location: snafu::Location::new(file!(), line!(), column!()),
             })?
         );
         let score = f64::from_bits(score_bits);
@@ -708,7 +708,7 @@ mod tests {
         let version = 1u64;
         let score = 1.0f64;
 
-        let members = vec![b"alice", b"bob", b"charlie"];
+        let members: Vec<&[u8]> = vec![b"alice", b"bob", b"charlie"];
         let mut encoded_keys = Vec::new();
 
         for member in &members {

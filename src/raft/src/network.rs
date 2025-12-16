@@ -396,9 +396,14 @@ impl MessageEnvelope {
                 RaftMessage::VoteResponse(_) => "VoteResponse",
                 RaftMessage::InstallSnapshot(_) => "InstallSnapshot",
                 RaftMessage::InstallSnapshotResponse(_) => "InstallSnapshotResponse",
-                RaftMessage::Heartbeat { from, term } => &format!("Heartbeat:{}:{}", from, term),
-                RaftMessage::HeartbeatResponse { from, success } =>
-                    &format!("HeartbeatResponse:{}:{}", from, success),
+                RaftMessage::Heartbeat { from, term } => {
+                    let s = format!("Heartbeat:{}:{}", from, term);
+                    s.leak()
+                },
+                RaftMessage::HeartbeatResponse { from, success } => {
+                    let s = format!("HeartbeatResponse:{}:{}", from, success);
+                    s.leak()
+                },
             }
         );
 
@@ -423,10 +428,14 @@ impl MessageEnvelope {
                     RaftMessage::VoteResponse(_) => "VoteResponse",
                     RaftMessage::InstallSnapshot(_) => "InstallSnapshot",
                     RaftMessage::InstallSnapshotResponse(_) => "InstallSnapshotResponse",
-                    RaftMessage::Heartbeat { from, term } =>
-                        &format!("Heartbeat:{}:{}", from, term),
-                    RaftMessage::HeartbeatResponse { from, success } =>
-                        &format!("HeartbeatResponse:{}:{}", from, success),
+                    RaftMessage::Heartbeat { from, term } => {
+                        let s = format!("Heartbeat:{}:{}", from, term);
+                        s.leak()
+                    },
+                    RaftMessage::HeartbeatResponse { from, success } => {
+                        let s = format!("HeartbeatResponse:{}:{}", from, success);
+                        s.leak()
+                    },
                 }
             );
 
