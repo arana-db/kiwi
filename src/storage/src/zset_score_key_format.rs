@@ -26,7 +26,7 @@ use crate::{
 use bytes::{BufMut, Bytes, BytesMut};
 
 /// A score-member pair for Sorted Set (ZSet) operations.
-/// 
+///
 /// This structure represents a member in a sorted set along with its associated score.
 /// In Redis-compatible sorted sets, each member has a floating-point score that determines
 /// its position in the set.
@@ -194,7 +194,7 @@ impl ZSetsScoreKey {
             + size_of::<u64>()                 // version
             + size_of::<u64>()                 // score (as u64 bits)
             + self.member.len()                // member
-            + SUFFIX_RESERVE_LENGTH;           // reserve2
+            + SUFFIX_RESERVE_LENGTH; // reserve2
         let mut dst = BytesMut::with_capacity(estimated_cap);
 
         dst.put_slice(&self.reserve1);
@@ -239,7 +239,7 @@ impl ZSetsScoreKey {
         let estimated_cap = PREFIX_RESERVE_LENGTH
             + encoded_user_key_len(&self.key)  // Precise encoded key length
             + size_of::<u64>()                 // version
-            + size_of::<u64>();                // score (as u64 bits)
+            + size_of::<u64>(); // score (as u64 bits)
         let mut dst = BytesMut::with_capacity(estimated_cap);
 
         dst.put_slice(&self.reserve1);
@@ -313,14 +313,18 @@ impl ParsedZSetsScoreKey {
         let mut key_str = BytesMut::new();
 
         // Validate minimum length
-        let min_len = PREFIX_RESERVE_LENGTH + ENCODED_KEY_DELIM_SIZE + 
-                     size_of::<u64>() + size_of::<u64>() + SUFFIX_RESERVE_LENGTH;
+        let min_len = PREFIX_RESERVE_LENGTH
+            + ENCODED_KEY_DELIM_SIZE
+            + size_of::<u64>()
+            + size_of::<u64>()
+            + SUFFIX_RESERVE_LENGTH;
         ensure!(
             encoded_key.len() >= min_len,
             InvalidFormatSnafu {
                 message: format!(
                     "Encoded key too short: got {} bytes, need at least {} bytes",
-                    encoded_key.len(), min_len
+                    encoded_key.len(),
+                    min_len
                 )
             }
         );
@@ -354,7 +358,9 @@ impl ParsedZSetsScoreKey {
         );
         let version_slice = &encoded_key[key_end_idx..version_end_idx];
         let version = u64::from_le_bytes(
-            version_slice.try_into().expect("version slice should be 8 bytes")
+            version_slice
+                .try_into()
+                .expect("version slice should be 8 bytes"),
         );
 
         // score (little-endian, decode from raw IEEE 754 bits)
@@ -367,7 +373,9 @@ impl ParsedZSetsScoreKey {
         );
         let score_slice = &encoded_key[version_end_idx..score_end_idx];
         let score_bits = u64::from_le_bytes(
-            score_slice.try_into().expect("score slice should be 8 bytes")
+            score_slice
+                .try_into()
+                .expect("score slice should be 8 bytes"),
         );
         let score = f64::from_bits(score_bits);
 
@@ -382,7 +390,8 @@ impl ParsedZSetsScoreKey {
             InvalidFormatSnafu {
                 message: format!(
                     "Invalid reserve2 length: got {} bytes, expected {} bytes",
-                    reserve_slice.len(), SUFFIX_RESERVE_LENGTH
+                    reserve_slice.len(),
+                    SUFFIX_RESERVE_LENGTH
                 )
             }
         );
@@ -521,7 +530,7 @@ mod tests {
             + size_of::<u64>()                 // version
             + size_of::<u64>()                 // score (as u64 bits)
             + member.len()                     // member
-            + SUFFIX_RESERVE_LENGTH;           // reserve2
+            + SUFFIX_RESERVE_LENGTH; // reserve2
 
         assert_eq!(encoded.len(), expected_len);
     }
@@ -673,7 +682,11 @@ mod tests {
         // seek_encoded 不应包含 member
         let seek_bytes = seek_encoded.as_ref();
         // member 的起始位置应该在 seek_encoded 的末尾之后
-        assert!(!seek_bytes.windows(member.len()).any(|window| window == member));
+        assert!(
+            !seek_bytes
+                .windows(member.len())
+                .any(|window| window == member)
+        );
     }
 
     #[test]
@@ -681,16 +694,28 @@ mod tests {
         // 模拟范围查询场景
         let key = b"zset_key";
         let version = 1u64;
-        
+
         // 创建多个不同 score 的 seek key
-        let seek1 = ZSetsScoreKey::new(key, version, 1.0, b"").encode_seek_key().unwrap();
-        let seek2 = ZSetsScoreKey::new(key, version, 2.0, b"").encode_seek_key().unwrap();
-        let seek3 = ZSetsScoreKey::new(key, version, 3.0, b"").encode_seek_key().unwrap();
+        let seek1 = ZSetsScoreKey::new(key, version, 1.0, b"")
+            .encode_seek_key()
+            .unwrap();
+        let seek2 = ZSetsScoreKey::new(key, version, 2.0, b"")
+            .encode_seek_key()
+            .unwrap();
+        let seek3 = ZSetsScoreKey::new(key, version, 3.0, b"")
+            .encode_seek_key()
+            .unwrap();
 
         // seek key 应该按 score 排序（使用自定义比较器）
         use crate::custom_comparator::zsets_score_key_compare;
-        assert_eq!(zsets_score_key_compare(&seek1, &seek2), std::cmp::Ordering::Less);
-        assert_eq!(zsets_score_key_compare(&seek2, &seek3), std::cmp::Ordering::Less);
+        assert_eq!(
+            zsets_score_key_compare(&seek1, &seek2),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            zsets_score_key_compare(&seek2, &seek3),
+            std::cmp::Ordering::Less
+        );
     }
 
     // ========== 数据完整性测试 ==========
@@ -743,7 +768,7 @@ mod tests {
             let score_key = ZSetsScoreKey::new(key, version, score, member);
             let encoded = score_key.encode().expect("encode failed");
             let parsed = ParsedZSetsScoreKey::new(&encoded).expect("decode failed");
-            
+
             if score.is_infinite() {
                 assert_eq!(parsed.score().is_infinite(), score.is_infinite());
                 assert_eq!(parsed.score().is_sign_positive(), score.is_sign_positive());
@@ -785,7 +810,7 @@ mod tests {
         for (key, member) in test_cases {
             let score_key = ZSetsScoreKey::new(key, 1, 1.0, member);
             let encoded = score_key.encode().expect("encode failed");
-            
+
             // 计算预期长度
             let expected_len = PREFIX_RESERVE_LENGTH
                 + encoded_user_key_len(key)
@@ -793,39 +818,52 @@ mod tests {
                 + size_of::<u64>()  // score
                 + member.len()
                 + SUFFIX_RESERVE_LENGTH;
-            
+
             // 实际编码长度应该等于预期长度
-            assert_eq!(encoded.len(), expected_len, 
-                "Capacity mismatch for key={:?}, member={:?}", key, member);
-            
+            assert_eq!(
+                encoded.len(),
+                expected_len,
+                "Capacity mismatch for key={:?}, member={:?}",
+                key,
+                member
+            );
+
             // 验证 BytesMut 的容量也是精确的（没有过度分配）
-            assert_eq!(encoded.capacity(), expected_len,
-                "Overcapacity allocation for key={:?}, member={:?}", key, member);
+            assert_eq!(
+                encoded.capacity(),
+                expected_len,
+                "Overcapacity allocation for key={:?}, member={:?}",
+                key,
+                member
+            );
         }
     }
 
     #[test]
     fn test_seek_key_exact_capacity() {
-        let test_cases = vec![
-            b"simple" as &[u8],
-            b"key\x00with\x00nulls",
-            b"",
-            b"a",
-        ];
+        let test_cases = vec![b"simple" as &[u8], b"key\x00with\x00nulls", b"", b"a"];
 
         for key in test_cases {
             let score_key = ZSetsScoreKey::new(key, 1, 1.0, b"ignored");
             let seek_encoded = score_key.encode_seek_key().expect("encode_seek_key failed");
-            
+
             let expected_len = PREFIX_RESERVE_LENGTH
                 + encoded_user_key_len(key)
                 + size_of::<u64>()  // version
                 + size_of::<u64>(); // score
-            
-            assert_eq!(seek_encoded.len(), expected_len, 
-                "Seek key capacity mismatch for key={:?}", key);
-            assert_eq!(seek_encoded.capacity(), expected_len,
-                "Seek key overcapacity for key={:?}", key);
+
+            assert_eq!(
+                seek_encoded.len(),
+                expected_len,
+                "Seek key capacity mismatch for key={:?}",
+                key
+            );
+            assert_eq!(
+                seek_encoded.capacity(),
+                expected_len,
+                "Seek key overcapacity for key={:?}",
+                key
+            );
         }
     }
 
@@ -844,8 +882,8 @@ mod tests {
         // 构造一个过短的输入（缺少必需字段）
         let mut invalid = BytesMut::new();
         invalid.put_slice(&[0u8; PREFIX_RESERVE_LENGTH]); // reserve1
-        invalid.put_slice(b"\x00\x00");                   // 一个空 key 的分隔符
-        invalid.put_u64_le(1);                             // version
+        invalid.put_slice(b"\x00\x00"); // 一个空 key 的分隔符
+        invalid.put_u64_le(1); // version
         // 缺少 score, member, reserve2 - 这会导致解析失败
 
         let result = ParsedZSetsScoreKey::new(&invalid);

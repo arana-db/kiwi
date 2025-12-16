@@ -21,8 +21,8 @@ use crate::storage_define::seek_userkey_delim;
 use crate::{
     error::Result,
     storage_define::{
-        PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, decode_user_key,
-        encode_user_key, encoded_user_key_len,
+        PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, decode_user_key, encode_user_key,
+        encoded_user_key_len,
     },
 };
 // used for Hash/Set/Zset's member data key. format:
@@ -55,7 +55,7 @@ impl MemberDataKey {
             + encoded_user_key_len(&self.key)  // Precise encoded key length
             + size_of::<u64>()                 // version
             + self.data.len()                  // data
-            + SUFFIX_RESERVE_LENGTH;           // reserve2
+            + SUFFIX_RESERVE_LENGTH; // reserve2
         let mut dst = BytesMut::with_capacity(estimated_cap);
 
         dst.put_slice(&self.reserve1);
@@ -73,7 +73,7 @@ impl MemberDataKey {
         let estimated_cap = PREFIX_RESERVE_LENGTH
             + encoded_user_key_len(&self.key)  // Precise encoded key length
             + size_of::<u64>()                 // version
-            + self.data.len();                 // data (no reserve2 in seek key)
+            + self.data.len(); // data (no reserve2 in seek key)
         let mut dst = BytesMut::with_capacity(estimated_cap);
 
         dst.put_slice(&self.reserve1);

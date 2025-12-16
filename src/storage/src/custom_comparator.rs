@@ -277,67 +277,101 @@ mod tests {
     #[test]
     fn test_zsets_score_key_compare_by_key() {
         // 不同 key，其他相同
-        let a = ZSetsScoreKey::new(b"key1", 1, 1.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key2", 1, 1.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key1", 1, 1.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key2", 1, 1.0, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
     }
 
     #[test]
     fn test_zsets_score_key_compare_by_version() {
         // 相同 key，不同 version
-        let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 2, 1.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 2, 1.0, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
-        let a = ZSetsScoreKey::new(b"key", 10, 1.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 5, 1.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 10, 1.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 5, 1.0, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Greater);
     }
 
     #[test]
     fn test_zsets_score_key_compare_by_score() {
         // 相同 key 和 version，不同 score
-        let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, 2.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, 2.0, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
         // 负数 score
-        let a = ZSetsScoreKey::new(b"key", 1, -5.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, -2.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, -5.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, -2.0, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
         // 正负 score
-        let a = ZSetsScoreKey::new(b"key", 1, -1.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, 1.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, -1.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, 1.0, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
     }
 
     #[test]
     fn test_zsets_score_key_compare_by_member() {
         // 相同 key、version、score，不同 member
-        let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"alice").encode().unwrap();
+        let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"alice")
+            .encode()
+            .unwrap();
         let b = ZSetsScoreKey::new(b"key", 1, 1.0, b"bob").encode().unwrap();
-        
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
-        let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"zebra").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, 1.0, b"apple").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"zebra")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, 1.0, b"apple")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Greater);
     }
 
     #[test]
     fn test_zsets_score_key_compare_equal() {
         // 完全相同
-        let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, 1.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, 1.0, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Equal);
     }
 
@@ -346,36 +380,56 @@ mod tests {
     #[test]
     fn test_zsets_score_key_compare_infinity() {
         // 正无穷 vs 有限值
-        let a = ZSetsScoreKey::new(b"key", 1, 100.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, f64::INFINITY, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, 100.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, f64::INFINITY, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
         // 负无穷 vs 有限值
-        let a = ZSetsScoreKey::new(b"key", 1, f64::NEG_INFINITY, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, -100.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, f64::NEG_INFINITY, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, -100.0, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
         // 正无穷 vs 负无穷
-        let a = ZSetsScoreKey::new(b"key", 1, f64::NEG_INFINITY, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, f64::INFINITY, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, f64::NEG_INFINITY, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, f64::INFINITY, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
         // 两个正无穷，比较 member
-        let a = ZSetsScoreKey::new(b"key", 1, f64::INFINITY, b"alice").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, f64::INFINITY, b"bob").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, f64::INFINITY, b"alice")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, f64::INFINITY, b"bob")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
     }
 
     #[test]
     fn test_zsets_score_key_compare_positive_negative_zero() {
         // 0.0 vs -0.0 应该相等（数值上）
-        let a = ZSetsScoreKey::new(b"key", 1, 0.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, -0.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, 0.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, -0.0, b"member")
+            .encode()
+            .unwrap();
+
         // 注意：0.0 和 -0.0 的 to_bits() 不同，所以编码不同
         // 但在比较时，f64::partial_cmp 会认为它们相等
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Equal);
@@ -386,49 +440,77 @@ mod tests {
     #[test]
     fn test_zsets_score_key_compare_nan_vs_number() {
         // NaN > 非NaN
-        let a = ZSetsScoreKey::new(b"key", 1, 100.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, 100.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
-        let a = ZSetsScoreKey::new(b"key", 1, -100.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, -100.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
     }
 
     #[test]
     fn test_zsets_score_key_compare_nan_vs_infinity() {
         // NaN > 正无穷
-        let a = ZSetsScoreKey::new(b"key", 1, f64::INFINITY, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, f64::INFINITY, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
         // NaN > 负无穷
-        let a = ZSetsScoreKey::new(b"key", 1, f64::NEG_INFINITY, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, f64::NEG_INFINITY, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
     }
 
     #[test]
     fn test_zsets_score_key_compare_nan_vs_nan() {
         // 两个 NaN，比较 member
-        let a = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"alice").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"bob").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"alice")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"bob")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
-        let a = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"zebra").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"apple").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"zebra")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"apple")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Greater);
 
         // 相同 NaN 和 member
-        let a = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 1, f64::NAN, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Equal);
     }
 
@@ -442,16 +524,23 @@ mod tests {
             ZSetsScoreKey::new(b"zset", 1, 1.0, b"a").encode().unwrap(),
             ZSetsScoreKey::new(b"zset", 1, 2.0, b"b").encode().unwrap(),
             ZSetsScoreKey::new(b"zset", 1, 1.0, b"z").encode().unwrap(), // 相同 score，不同 member
-            ZSetsScoreKey::new(b"zset", 1, f64::NEG_INFINITY, b"neg_inf").encode().unwrap(),
-            ZSetsScoreKey::new(b"zset", 1, f64::INFINITY, b"pos_inf").encode().unwrap(),
-            ZSetsScoreKey::new(b"zset", 1, f64::NAN, b"nan").encode().unwrap(),
+            ZSetsScoreKey::new(b"zset", 1, f64::NEG_INFINITY, b"neg_inf")
+                .encode()
+                .unwrap(),
+            ZSetsScoreKey::new(b"zset", 1, f64::INFINITY, b"pos_inf")
+                .encode()
+                .unwrap(),
+            ZSetsScoreKey::new(b"zset", 1, f64::NAN, b"nan")
+                .encode()
+                .unwrap(),
         ];
 
         keys.sort_by(|a, b| zsets_score_key_compare(a, b));
 
         // 验证排序顺序：-inf < 1.0 < 2.0 < 3.0 < +inf < NaN
         // 对于相同 score，按 member 字典序
-        let parsed_keys: Vec<_> = keys.iter()
+        let parsed_keys: Vec<_> = keys
+            .iter()
             .map(|k| crate::zset_score_key_format::ParsedZSetsScoreKey::new(k).unwrap())
             .collect();
 
@@ -469,9 +558,15 @@ mod tests {
     #[test]
     fn test_zsets_score_key_compare_different_keys() {
         // 不同 key 的排序
-        let a = ZSetsScoreKey::new(b"aaa", 1, 1.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"bbb", 1, 1.0, b"member").encode().unwrap();
-        let c = ZSetsScoreKey::new(b"ccc", 1, 1.0, b"member").encode().unwrap();
+        let a = ZSetsScoreKey::new(b"aaa", 1, 1.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"bbb", 1, 1.0, b"member")
+            .encode()
+            .unwrap();
+        let c = ZSetsScoreKey::new(b"ccc", 1, 1.0, b"member")
+            .encode()
+            .unwrap();
 
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
         assert_eq!(zsets_score_key_compare(&b, &c), Ordering::Less);
@@ -481,9 +576,13 @@ mod tests {
     #[test]
     fn test_zsets_score_key_compare_version_priority() {
         // version 的优先级高于 score
-        let a = ZSetsScoreKey::new(b"key", 1, 100.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", 2, 1.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 1, 100.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", 2, 1.0, b"member")
+            .encode()
+            .unwrap();
+
         // 即使 a 的 score 更大，但 version 更小，所以 a < b
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
     }
@@ -493,28 +592,36 @@ mod tests {
         // 空 member
         let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"").encode().unwrap();
         let b = ZSetsScoreKey::new(b"key", 1, 1.0, b"a").encode().unwrap();
-        
+
         // 空 member < 非空member
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
         // 两个空 member
         let a = ZSetsScoreKey::new(b"key", 1, 1.0, b"").encode().unwrap();
         let b = ZSetsScoreKey::new(b"key", 1, 1.0, b"").encode().unwrap();
-        
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Equal);
     }
 
     #[test]
     fn test_zsets_score_key_compare_boundary_versions() {
         // 边界 version 值
-        let a = ZSetsScoreKey::new(b"key", 0, 1.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", u64::MAX, 1.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", 0, 1.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", u64::MAX, 1.0, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
 
-        let a = ZSetsScoreKey::new(b"key", u64::MAX - 1, 1.0, b"member").encode().unwrap();
-        let b = ZSetsScoreKey::new(b"key", u64::MAX, 1.0, b"member").encode().unwrap();
-        
+        let a = ZSetsScoreKey::new(b"key", u64::MAX - 1, 1.0, b"member")
+            .encode()
+            .unwrap();
+        let b = ZSetsScoreKey::new(b"key", u64::MAX, 1.0, b"member")
+            .encode()
+            .unwrap();
+
         assert_eq!(zsets_score_key_compare(&a, &b), Ordering::Less);
     }
 }
