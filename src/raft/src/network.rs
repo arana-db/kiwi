@@ -389,22 +389,7 @@ impl MessageEnvelope {
             self.to,
             self.timestamp,
             // Use a simplified message representation for HMAC
-            match &self.message {
-                RaftMessage::AppendEntries(_) => "AppendEntries",
-                RaftMessage::AppendEntriesResponse(_) => "AppendEntriesResponse",
-                RaftMessage::Vote(_) => "Vote",
-                RaftMessage::VoteResponse(_) => "VoteResponse",
-                RaftMessage::InstallSnapshot(_) => "InstallSnapshot",
-                RaftMessage::InstallSnapshotResponse(_) => "InstallSnapshotResponse",
-                RaftMessage::Heartbeat { from, term } => {
-                    let s = format!("Heartbeat:{}:{}", from, term);
-                    s.leak()
-                },
-                RaftMessage::HeartbeatResponse { from, success } => {
-                    let s = format!("HeartbeatResponse:{}:{}", from, success);
-                    s.leak()
-                },
-            }
+            self.message.hmac_repr()
         );
 
         self.hmac = Some(auth.generate_hmac(data_for_hmac.as_bytes())?);
@@ -421,22 +406,7 @@ impl MessageEnvelope {
                 self.from,
                 self.to,
                 self.timestamp,
-                match &self.message {
-                    RaftMessage::AppendEntries(_) => "AppendEntries",
-                    RaftMessage::AppendEntriesResponse(_) => "AppendEntriesResponse",
-                    RaftMessage::Vote(_) => "Vote",
-                    RaftMessage::VoteResponse(_) => "VoteResponse",
-                    RaftMessage::InstallSnapshot(_) => "InstallSnapshot",
-                    RaftMessage::InstallSnapshotResponse(_) => "InstallSnapshotResponse",
-                    RaftMessage::Heartbeat { from, term } => {
-                        let s = format!("Heartbeat:{}:{}", from, term);
-                        s.leak()
-                    },
-                    RaftMessage::HeartbeatResponse { from, success } => {
-                        let s = format!("HeartbeatResponse:{}:{}", from, success);
-                        s.leak()
-                    },
-                }
+                self.message.hmac_repr()
             );
 
             auth.verify_hmac(data_for_hmac.as_bytes(), expected_hmac)
@@ -505,6 +475,24 @@ impl MessageEnvelope {
                 e.to_string(),
             )))
         })
+    }
+}
+
+impl RaftMessage {
+    /// Get string representation for HMAC calculation
+    fn hmac_repr(&self) -> String {
+        match self {
+            RaftMessage::AppendEntries(_) => "AppendEntries".to_string(),
+            RaftMessage::AppendEntriesResponse(_) => "AppendEntriesResponse".to_string(),
+            RaftMessage::Vote(_) => "Vote".to_string(),
+            RaftMessage::VoteResponse(_) => "VoteResponse".to_string(),
+            RaftMessage::InstallSnapshot(_) => "InstallSnapshot".to_string(),
+            RaftMessage::InstallSnapshotResponse(_) => "InstallSnapshotResponse".to_string(),
+            RaftMessage::Heartbeat { from, term } => format!("Heartbeat:{}:{}", from, term),
+            RaftMessage::HeartbeatResponse { from, success } => {
+                format!("HeartbeatResponse:{}:{}", from, success)
+            }
+        }
     }
 }
 
