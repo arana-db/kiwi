@@ -475,7 +475,7 @@ impl Redis {
                 PREFIX_RESERVE_LENGTH + 8 + key.len() * 2 + member.len() + SUFFIX_RESERVE_LENGTH,
             );
             member_key.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-            member_key.put_u64(version);
+            member_key.put_u64_le(version);
             encode_user_key(&bytes::Bytes::copy_from_slice(key), &mut member_key)?;
             member_key.extend_from_slice(member);
             member_key.extend_from_slice(&[0u8; SUFFIX_RESERVE_LENGTH]);
@@ -2192,7 +2192,7 @@ impl Redis {
                         PREFIX_RESERVE_LENGTH + 8 + destination.len() * 2,
                     );
                     prefix.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-                    prefix.put_u64(version);
+                    prefix.put_u64_le(version);
                     encode_user_key(&bytes::Bytes::copy_from_slice(destination), &mut prefix)?;
 
                     let iter = db.iterator_cf_opt(
@@ -2304,7 +2304,7 @@ impl Redis {
                         PREFIX_RESERVE_LENGTH + 8 + destination.len() * 2,
                     );
                     prefix.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-                    prefix.put_u64(version);
+                    prefix.put_u64_le(version);
                     encode_user_key(&bytes::Bytes::copy_from_slice(destination), &mut prefix)?;
 
                     let iter = db.iterator_cf_opt(

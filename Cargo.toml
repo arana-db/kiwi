@@ -65,6 +65,7 @@ clap = { version = "4.0", features = ["derive"] }
 rand = "0.8"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 openraft = { version = "0.9.20", features = ["serde"] }
+criterion = { version = "0.5", features = ["html_reports"] }
 
 ## workspaces members
 engine = { path = "src/engine" }
