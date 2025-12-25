@@ -26,7 +26,7 @@ mod meta_compaction_filter;
 mod base_key_format;
 pub mod base_meta_value_format;
 pub mod base_value_format;
-mod custom_comparator;
+pub mod custom_comparator;
 
 pub mod strings_value_format;
 
@@ -41,7 +41,7 @@ mod util;
 mod migration;
 
 mod redis;
-mod storage_define;
+pub mod storage_define;
 mod storage_impl;
 mod storage_murmur3;
 
@@ -55,7 +55,7 @@ pub mod cluster_storage;
 pub mod error;
 pub mod options;
 pub mod storage;
-mod zset_score_key_format;
+pub mod zset_score_key_format;
 
 // Raft integration modules
 pub mod raft_integration;
@@ -75,5 +75,5 @@ pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use storage_impl::BeforeOrAfter;
 pub use util::{safe_cleanup_test_db, unique_test_db_path};
-pub use zset_score_key_format::{ScoreMember, ZsetScoreMember};
+pub use zset_score_key_format::{ScoreMember, ZsetScoreMember, ZSetsScoreKey, ParsedZSetsScoreKey, FORMAT_VERSION_LE, FORMAT_VERSION_BE, detect_format_version, is_little_endian_format, is_big_endian_format};
 pub use migration::{MigrationStats, migrate_member_keys_be_to_le, verify_key_format, generate_migration_report};
