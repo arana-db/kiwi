@@ -38,6 +38,7 @@ mod expiration_manager;
 mod slot_indexer;
 mod statistics;
 mod util;
+mod migration;
 
 mod redis;
 mod storage_define;
@@ -75,3 +76,4 @@ pub use storage::{BgTask, BgTaskHandler};
 pub use storage_impl::BeforeOrAfter;
 pub use util::{safe_cleanup_test_db, unique_test_db_path};
 pub use zset_score_key_format::{ScoreMember, ZsetScoreMember};
+pub use migration::{MigrationStats, migrate_member_keys_be_to_le, verify_key_format, generate_migration_report};
