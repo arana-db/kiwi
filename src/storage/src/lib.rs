@@ -39,6 +39,7 @@ mod slot_indexer;
 mod statistics;
 mod util;
 
+mod batch;
 mod redis;
 mod storage_define;
 mod storage_impl;
@@ -65,6 +66,7 @@ mod redis_zsets;
 
 pub use base_key_format::BaseMetaKey;
 pub use base_value_format::*;
+pub use batch::{Batch, BinlogBatch, RocksBatch};
 pub use cluster_storage::ClusterStorage;
 pub use error::Result;
 pub use expiration_manager::ExpirationManager;

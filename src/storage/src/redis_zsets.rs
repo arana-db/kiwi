@@ -27,7 +27,7 @@ use crate::error::{OptionNoneSnafu, RocksSnafu};
 use crate::redis::Redis;
 use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Result};
 use kstd::lock_mgr::ScopeRecordLock;
-use rocksdb::{Direction, IteratorMode, ReadOptions, WriteBatch};
+use rocksdb::{Direction, IteratorMode, ReadOptions};
 use snafu::OptionExt;
 use snafu::ResultExt;
 use std::collections::HashSet;
@@ -56,12 +56,7 @@ impl Redis {
             return Ok(());
         }
 
-        // Get column family handles
-        let cf_score = self
-            .get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF)
-            .context(OptionNoneSnafu {
-                message: "cf score is not initialized".to_string(),
-            })?;
+        // Get column family handle for data reads
         let cf_data =
             self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF)
                 .context(OptionNoneSnafu {
@@ -103,7 +98,7 @@ impl Redis {
 
             // Prepare batch write
             let mut count = 0u64;
-            let mut batch = WriteBatch::default();
+            let mut batch = self.create_batch()?;
             for sm in &filtered_score_members {
                 let mut not_found = true;
                 let member_key = MemberDataKey::new(key, version, &sm.member).encode()?;
@@ -133,7 +128,8 @@ impl Redis {
                                         &sm.member,
                                     )
                                     .encode()?;
-                                    batch.delete_cf(&cf_score, &old_score_key);
+                                    batch
+                                        .delete(ColumnFamilyIndex::ZsetsScoreCF, &old_score_key)?;
                                     statistic += 1;
                                 }
                             }
@@ -151,8 +147,16 @@ impl Redis {
                 let score_key = ZSetsScoreKey::new(key, version, sm.score, &sm.member).encode()?;
                 let member_value = BaseDataValue::new(format!("{}", sm.score));
                 let score_value = BaseDataValue::new("");
-                batch.put_cf(&cf_data, &member_key, member_value.encode());
-                batch.put_cf(&cf_score, &score_key, score_value.encode());
+                batch.put(
+                    ColumnFamilyIndex::ZsetsDataCF,
+                    &member_key,
+                    &member_value.encode(),
+                )?;
+                batch.put(
+                    ColumnFamilyIndex::ZsetsScoreCF,
+                    &score_key,
+                    &score_value.encode(),
+                )?;
                 if not_found {
                     count += 1;
                 }
@@ -167,8 +171,12 @@ impl Redis {
                 });
             }
             parsed_zset_meta.modify_count(count);
-            batch.put(base_meta_key.encode()?, parsed_zset_meta.encoded());
-            db.write(batch).context(RocksSnafu)?;
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &base_meta_key.encode()?,
+                parsed_zset_meta.encoded(),
+            )?;
+            batch.commit()?;
             *ret = count as i32;
         } else {
             // ZSet does not exist, create new one
@@ -177,19 +185,31 @@ impl Redis {
             ));
             zset_meta.inner.data_type = DataType::ZSet;
             let version = zset_meta.update_version();
-            let mut batch = WriteBatch::default();
+            let mut batch = self.create_batch()?;
             // Add meta value
-            batch.put(base_meta_key.encode()?, zset_meta.encode());
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &base_meta_key.encode()?,
+                &zset_meta.encode(),
+            )?;
             // Add all members
             for sm in &filtered_score_members {
                 let member_key = MemberDataKey::new(key, version, &sm.member).encode()?;
                 let score_key = ZSetsScoreKey::new(key, version, sm.score, &sm.member).encode()?;
                 let member_value = BaseDataValue::new(format!("{}", sm.score));
                 let score_value = BaseDataValue::new("");
-                batch.put_cf(&cf_data, &member_key, member_value.encode());
-                batch.put_cf(&cf_score, &score_key, score_value.encode());
+                batch.put(
+                    ColumnFamilyIndex::ZsetsDataCF,
+                    &member_key,
+                    &member_value.encode(),
+                )?;
+                batch.put(
+                    ColumnFamilyIndex::ZsetsScoreCF,
+                    &score_key,
+                    &score_value.encode(),
+                )?;
             }
-            db.write(batch).context(RocksSnafu)?;
+            batch.commit()?;
             *ret = filtered_score_members.len() as i32;
         }
 
@@ -298,12 +318,7 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
-        // Get column family handles
-        let cf_score = self
-            .get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF)
-            .context(OptionNoneSnafu {
-                message: "cf score is not initialized".to_string(),
-            })?;
+        // Get column family handle for data reads
         let cf_data =
             self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF)
                 .context(OptionNoneSnafu {
@@ -365,12 +380,12 @@ impl Redis {
                         }
 
                         // Update the member with new score
-                        let mut batch = WriteBatch::default();
+                        let mut batch = self.create_batch()?;
 
                         // Delete old score key
                         let old_score_key =
                             ZSetsScoreKey::new(key, version, current_score, member).encode()?;
-                        batch.delete_cf(&cf_score, &old_score_key);
+                        batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &old_score_key)?;
 
                         // Add new score key and update member value
                         let new_score_key = crate::zset_score_key_format::ZSetsScoreKey::new(
@@ -380,10 +395,18 @@ impl Redis {
                         let member_value = BaseDataValue::new(format!("{}", new_score));
                         let score_value = BaseDataValue::new("");
 
-                        batch.put_cf(&cf_data, &member_key, member_value.encode());
-                        batch.put_cf(&cf_score, &new_score_key, score_value.encode());
+                        batch.put(
+                            ColumnFamilyIndex::ZsetsDataCF,
+                            &member_key,
+                            &member_value.encode(),
+                        )?;
+                        batch.put(
+                            ColumnFamilyIndex::ZsetsScoreCF,
+                            &new_score_key,
+                            &score_value.encode(),
+                        )?;
 
-                        db.write(batch).context(RocksSnafu)?;
+                        batch.commit()?;
                     }
                     Err(_) => {
                         return Err(RedisErr {
@@ -766,11 +789,7 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
-        let cf_score = self
-            .get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF)
-            .context(OptionNoneSnafu {
-                message: "cf score is not initialized".to_string(),
-            })?;
+        // Get column family handle for data reads
         let cf_data =
             self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF)
                 .context(OptionNoneSnafu {
@@ -802,7 +821,7 @@ impl Redis {
         }
 
         let version = zset_meta.version();
-        let mut batch = WriteBatch::default();
+        let mut batch = self.create_batch()?;
         let mut deleted_count = 0u64;
 
         for member in members {
@@ -823,10 +842,10 @@ impl Redis {
                     Ok(score) => {
                         // Delete score key
                         let score_key = ZSetsScoreKey::new(key, version, score, member).encode()?;
-                        batch.delete_cf(&cf_score, &score_key);
+                        batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &score_key)?;
 
                         // Delete member key
-                        batch.delete_cf(&cf_data, &member_key);
+                        batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
 
                         deleted_count += 1;
                     }
@@ -845,12 +864,16 @@ impl Redis {
             let new_count = zset_meta.count() - deleted_count;
             if new_count == 0 {
                 // Remove the entire zset if no members left
-                batch.delete(base_meta_key.encode()?);
+                batch.delete(ColumnFamilyIndex::MetaCF, &base_meta_key.encode()?)?;
             } else {
                 zset_meta.set_count(new_count);
-                batch.put(base_meta_key.encode()?, zset_meta.encoded());
+                batch.put(
+                    ColumnFamilyIndex::MetaCF,
+                    &base_meta_key.encode()?,
+                    zset_meta.encoded(),
+                )?;
             }
-            db.write(batch).context(RocksSnafu)?;
+            batch.commit()?;
 
             // Update statistics
             self.update_specific_key_statistics(DataType::ZSet, &key_str, deleted_count)?;
@@ -1207,13 +1230,8 @@ impl Redis {
                 if dest_meta.is_valid() {
                     // Delete all members from destination
                     let dest_version = dest_meta.version();
-                    let cf_data = self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF).context(
-                        OptionNoneSnafu {
-                            message: "cf data is not initialized".to_string(),
-                        },
-                    )?;
 
-                    let mut batch = WriteBatch::default();
+                    let mut batch = self.create_batch()?;
 
                     // Delete all score keys
                     let min_score_key =
@@ -1234,16 +1252,16 @@ impl Redis {
                         }
 
                         // Delete score key and member key
-                        batch.delete_cf(&cf_score, &raw_key);
+                        batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
                         let member_key =
                             MemberDataKey::new(destination, dest_version, score_key.member())
                                 .encode()?;
-                        batch.delete_cf(&cf_data, &member_key);
+                        batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
                     }
 
                     // Delete meta key
-                    batch.delete(dest_meta_key.encode()?);
-                    db.write(batch).context(RocksSnafu)?;
+                    batch.delete(ColumnFamilyIndex::MetaCF, &dest_meta_key.encode()?)?;
+                    batch.commit()?;
                 }
             }
             // Lock is released here when _lock goes out of scope
@@ -1452,16 +1470,12 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
+        // Get column family handle for score iterations
         let cf_score = self
             .get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF)
             .context(OptionNoneSnafu {
                 message: "cf score is not initialized".to_string(),
             })?;
-        let cf_data =
-            self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF)
-                .context(OptionNoneSnafu {
-                    message: "cf data is not initialized".to_string(),
-                })?;
 
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
@@ -1530,25 +1544,29 @@ impl Redis {
             return Ok(());
         }
 
-        let mut batch = WriteBatch::default();
+        let mut batch = self.create_batch()?;
         for (member, score) in &to_delete {
             let member_key = MemberDataKey::new(key, version, member).encode()?;
             let score_key = ZSetsScoreKey::new(key, version, *score, member).encode()?;
-            batch.delete_cf(&cf_data, &member_key);
-            batch.delete_cf(&cf_score, &score_key);
+            batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
+            batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &score_key)?;
         }
 
         let deleted_count = to_delete.len() as u64;
         let new_count = zset_meta.count().saturating_sub(deleted_count);
 
         if new_count == 0 {
-            batch.delete(base_meta_key.encode()?);
+            batch.delete(ColumnFamilyIndex::MetaCF, &base_meta_key.encode()?)?;
         } else {
             zset_meta.set_count(new_count);
-            batch.put(base_meta_key.encode()?, zset_meta.encoded());
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &base_meta_key.encode()?,
+                zset_meta.encoded(),
+            )?;
         }
 
-        db.write(batch).context(RocksSnafu)?;
+        batch.commit()?;
         *ret = deleted_count as i32;
 
         self.update_specific_key_statistics(DataType::ZSet, &key_str, deleted_count)?;
@@ -1567,11 +1585,6 @@ impl Redis {
             .context(OptionNoneSnafu {
                 message: "cf score is not initialized".to_string(),
             })?;
-        let cf_data =
-            self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF)
-                .context(OptionNoneSnafu {
-                    message: "cf data is not initialized".to_string(),
-                })?;
 
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
@@ -1654,25 +1667,29 @@ impl Redis {
             return Ok(());
         }
 
-        let mut batch = WriteBatch::default();
+        let mut batch = self.create_batch()?;
         for (member, score) in &to_delete {
             let member_key = MemberDataKey::new(key, version, member).encode()?;
             let score_key = ZSetsScoreKey::new(key, version, *score, member).encode()?;
-            batch.delete_cf(&cf_data, &member_key);
-            batch.delete_cf(&cf_score, &score_key);
+            batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
+            batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &score_key)?;
         }
 
         let deleted_count = to_delete.len() as u64;
         let new_count = zset_meta.count().saturating_sub(deleted_count);
 
         if new_count == 0 {
-            batch.delete(base_meta_key.encode()?);
+            batch.delete(ColumnFamilyIndex::MetaCF, &base_meta_key.encode()?)?;
         } else {
             zset_meta.set_count(new_count);
-            batch.put(base_meta_key.encode()?, zset_meta.encoded());
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &base_meta_key.encode()?,
+                zset_meta.encoded(),
+            )?;
         }
 
-        db.write(batch).context(RocksSnafu)?;
+        batch.commit()?;
         *ret = deleted_count as i32;
 
         self.update_specific_key_statistics(DataType::ZSet, &key_str, deleted_count)?;
@@ -1692,16 +1709,12 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
+        // Get column family handle for score iterations
         let cf_score = self
             .get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF)
             .context(OptionNoneSnafu {
                 message: "cf score is not initialized".to_string(),
             })?;
-        let cf_data =
-            self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF)
-                .context(OptionNoneSnafu {
-                    message: "cf data is not initialized".to_string(),
-                })?;
 
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
@@ -1757,25 +1770,29 @@ impl Redis {
             return Ok(());
         }
 
-        let mut batch = WriteBatch::default();
+        let mut batch = self.create_batch()?;
         for (member, score) in &to_delete {
             let member_key = MemberDataKey::new(key, version, member).encode()?;
             let score_key = ZSetsScoreKey::new(key, version, *score, member).encode()?;
-            batch.delete_cf(&cf_data, &member_key);
-            batch.delete_cf(&cf_score, &score_key);
+            batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
+            batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &score_key)?;
         }
 
         let deleted_count = to_delete.len() as u64;
         let new_count = zset_meta.count().saturating_sub(deleted_count);
 
         if new_count == 0 {
-            batch.delete(base_meta_key.encode()?);
+            batch.delete(ColumnFamilyIndex::MetaCF, &base_meta_key.encode()?)?;
         } else {
             zset_meta.set_count(new_count);
-            batch.put(base_meta_key.encode()?, zset_meta.encoded());
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &base_meta_key.encode()?,
+                zset_meta.encoded(),
+            )?;
         }
 
-        db.write(batch).context(RocksSnafu)?;
+        batch.commit()?;
         *ret = deleted_count as i32;
 
         self.update_specific_key_statistics(DataType::ZSet, &key_str, deleted_count)?;

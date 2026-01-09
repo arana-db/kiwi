@@ -317,6 +317,48 @@ impl Redis {
         None
     }
 
+    /// Create a new batch for atomic write operations.
+    ///
+    /// This method creates a batch appropriate for the current deployment mode:
+    /// - In standalone mode, returns a `RocksBatch` for direct RocksDB writes
+    /// - In cluster mode, returns a `BinlogBatch` for Raft consensus (TODO)
+    ///
+    /// # Returns
+    /// A boxed `Batch` trait object that can be used for atomic write operations.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut batch = redis.create_batch();
+    /// batch.put(ColumnFamilyIndex::MetaCF, key, value);
+    /// batch.commit()?;
+    /// ```
+    pub fn create_batch(&self) -> Result<Box<dyn crate::batch::Batch + '_>> {
+        // TODO: Check if in cluster mode and return BinlogBatch
+        // if self.append_log_fn.is_some() {
+        //     return Ok(Box::new(BinlogBatch::new(...)));
+        // }
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "Database is not initialized".to_string(),
+        })?;
+
+        // Collect all column family handles
+        let cf_handles: Vec<Option<Arc<rocksdb::BoundColumnFamily<'_>>>> = vec![
+            self.get_cf_handle(ColumnFamilyIndex::MetaCF),
+            self.get_cf_handle(ColumnFamilyIndex::HashesDataCF),
+            self.get_cf_handle(ColumnFamilyIndex::SetsDataCF),
+            self.get_cf_handle(ColumnFamilyIndex::ListsDataCF),
+            self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF),
+            self.get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF),
+        ];
+
+        Ok(Box::new(crate::batch::RocksBatch::new(
+            db.as_ref(),
+            &self.write_options,
+            cf_handles,
+        )))
+    }
+
     pub fn update_specific_key_duration(
         &self,
         dtype: DataType,

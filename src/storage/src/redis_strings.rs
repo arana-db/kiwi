@@ -315,15 +315,13 @@ impl Redis {
         string_value.set_ctime(ctime);
         string_value.set_etime(etime);
 
-        let cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "cf is not initialized".to_string(),
-            })?;
-        let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        let mut batch = self.create_batch()?;
+        batch.put(
+            ColumnFamilyIndex::MetaCF,
+            &string_key.encode()?,
+            &string_value.encode(),
+        )?;
+        batch.commit()?;
 
         Ok(new_len as i32)
     }
@@ -388,15 +386,13 @@ impl Redis {
         string_value.set_ctime(ctime);
         string_value.set_etime(etime);
 
-        let cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "cf is not initialized".to_string(),
-            })?;
-        let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        let mut batch = self.create_batch()?;
+        batch.put(
+            ColumnFamilyIndex::MetaCF,
+            &string_key.encode()?,
+            &string_value.encode(),
+        )?;
+        batch.commit()?;
 
         Ok(new_len as i32)
     }
@@ -582,19 +578,13 @@ impl Redis {
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
 
-        let cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "cf is not initialized".to_string(),
-            })?;
-        let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
-
-        let db = self.db.as_ref().context(OptionNoneSnafu {
-            message: "db is not initialized".to_string(),
-        })?;
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        let mut batch = self.create_batch()?;
+        batch.put(
+            ColumnFamilyIndex::MetaCF,
+            &string_key.encode()?,
+            &string_value.encode(),
+        )?;
+        batch.commit()?;
 
         Ok(())
     }
@@ -642,19 +632,13 @@ impl Redis {
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
 
-        let cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "cf is not initialized".to_string(),
-            })?;
-        let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
-
-        let db = self.db.as_ref().context(OptionNoneSnafu {
-            message: "db is not initialized".to_string(),
-        })?;
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        let mut batch = self.create_batch()?;
+        batch.put(
+            ColumnFamilyIndex::MetaCF,
+            &string_key.encode()?,
+            &string_value.encode(),
+        )?;
+        batch.commit()?;
 
         Ok(())
     }
@@ -711,19 +695,13 @@ impl Redis {
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
 
-        let cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "cf is not initialized".to_string(),
-            })?;
-        let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
-
-        let db = self.db.as_ref().context(OptionNoneSnafu {
-            message: "db is not initialized".to_string(),
-        })?;
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        let mut batch = self.create_batch()?;
+        batch.put(
+            ColumnFamilyIndex::MetaCF,
+            &string_key.encode()?,
+            &string_value.encode(),
+        )?;
+        batch.commit()?;
 
         Ok(())
     }
@@ -778,15 +756,13 @@ impl Redis {
         // Key doesn't exist or is expired, set the value
         let string_value = StringValue::new(value.to_owned());
 
-        let cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "cf is not initialized".to_string(),
-            })?;
-        let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        let mut batch = self.create_batch()?;
+        batch.put(
+            ColumnFamilyIndex::MetaCF,
+            &string_key.encode()?,
+            &string_value.encode(),
+        )?;
+        batch.commit()?;
 
         Ok(1)
     }
@@ -852,15 +828,13 @@ impl Redis {
         // Set the new value
         let string_value = StringValue::new(value.to_owned());
 
-        let cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "cf is not initialized".to_string(),
-            })?;
-        let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        let mut batch = self.create_batch()?;
+        batch.put(
+            ColumnFamilyIndex::MetaCF,
+            &string_key.encode()?,
+            &string_value.encode(),
+        )?;
+        batch.commit()?;
 
         Ok(old_value)
     }
@@ -1086,31 +1060,22 @@ impl Redis {
     /// MSET key1 "Hello" key2 "World"  // Sets both keys atomically
     /// ```
     pub fn mset(&self, kvs: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
-        let db = self.db.as_ref().context(OptionNoneSnafu {
-            message: "db is not initialized".to_string(),
-        })?;
-
-        let cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "cf is not initialized".to_string(),
-            })?;
-
-        // Use WriteBatch for atomic operation
-        let mut batch = rocksdb::WriteBatch::default();
+        // Use Batch for atomic operation
+        let mut batch = self.create_batch()?;
 
         // Process all key-value pairs
         for (key, value) in kvs {
             let string_key = BaseKey::new(key);
             let string_value = StringValue::new(value.to_owned());
-            batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &string_key.encode()?,
+                &string_value.encode(),
+            )?;
         }
 
         // Atomic write of all key-value pairs
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
-
-        Ok(())
+        batch.commit()
     }
 
     /// MSETNX key value [key value ...]
@@ -1138,7 +1103,7 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
-        let cf = self
+        let _cf = self
             .get_cf_handle(ColumnFamilyIndex::MetaCF)
             .context(OptionNoneSnafu {
                 message: "cf is not initialized".to_string(),
@@ -1170,18 +1135,21 @@ impl Redis {
         }
 
         // All keys don't exist or are expired, set them all
-        let mut batch = rocksdb::WriteBatch::default();
+        let mut batch = self.create_batch()?;
 
         // Process all key-value pairs
         for (key, value) in kvs {
             let string_key = BaseKey::new(key);
             let string_value = StringValue::new(value.to_owned());
-            batch.put_cf(&cf, string_key.encode()?, string_value.encode());
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &string_key.encode()?,
+                &string_value.encode(),
+            )?;
         }
 
         // Atomic write of all key-value pairs
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        batch.commit()?;
 
         Ok(true)
     }
@@ -1241,15 +1209,13 @@ impl Redis {
             let mut string_value = StringValue::new(format!("{}", value).to_owned());
             string_value.set_ctime(ctime);
             string_value.set_etime(etime);
-            let cf = self
-                .get_cf_handle(ColumnFamilyIndex::MetaCF)
-                .context(OptionNoneSnafu {
-                    message: "cf is not initialized".to_string(),
-                })?;
-            let mut batch = rocksdb::WriteBatch::default();
-            batch.put_cf(&cf, string_key.encode()?, string_value.encode());
-            db.write_opt(batch, &self.write_options)
-                .context(RocksSnafu)?;
+            let mut batch = self.create_batch()?;
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &string_key.encode()?,
+                &string_value.encode(),
+            )?;
+            batch.commit()?;
         }
 
         Ok(value)
@@ -1315,15 +1281,13 @@ impl Redis {
             let mut string_value = StringValue::new(format!("{}", value).to_owned());
             string_value.set_ctime(ctime);
             string_value.set_etime(etime);
-            let cf = self
-                .get_cf_handle(ColumnFamilyIndex::MetaCF)
-                .context(OptionNoneSnafu {
-                    message: "cf is not initialized".to_string(),
-                })?;
-            let mut batch = rocksdb::WriteBatch::default();
-            batch.put_cf(&cf, string_key.encode()?, string_value.encode());
-            db.write_opt(batch, &self.write_options)
-                .context(RocksSnafu)?;
+            let mut batch = self.create_batch()?;
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &string_key.encode()?,
+                &string_value.encode(),
+            )?;
+            batch.commit()?;
         }
 
         Ok(value)
@@ -1462,15 +1426,13 @@ impl Redis {
         string_value.set_ctime(ctime);
         string_value.set_etime(etime);
 
-        let cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "cf is not initialized".to_string(),
-            })?;
-        let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(&cf, string_key.encode()?, string_value.encode());
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        let mut batch = self.create_batch()?;
+        batch.put(
+            ColumnFamilyIndex::MetaCF,
+            &string_key.encode()?,
+            &string_value.encode(),
+        )?;
+        batch.commit()?;
 
         Ok(old_bit)
     }
@@ -1871,15 +1833,13 @@ impl Redis {
                 string_value.set_etime(0); // No expiration by default
 
                 let dest_string_key = BaseKey::new(dest_key);
-                let cf =
-                    self.get_cf_handle(ColumnFamilyIndex::MetaCF)
-                        .context(OptionNoneSnafu {
-                            message: "cf is not initialized".to_string(),
-                        })?;
-                let mut batch = rocksdb::WriteBatch::default();
-                batch.put_cf(&cf, dest_string_key.encode()?, string_value.encode());
-                db.write_opt(batch, &self.write_options)
-                    .context(RocksSnafu)?;
+                let mut batch = self.create_batch()?;
+                batch.put(
+                    ColumnFamilyIndex::MetaCF,
+                    &dest_string_key.encode()?,
+                    &string_value.encode(),
+                )?;
+                batch.commit()?;
                 return Ok(0);
             }
 
@@ -1893,15 +1853,13 @@ impl Redis {
                 string_value.set_etime(0); // No expiration by default
 
                 let dest_string_key = BaseKey::new(dest_key);
-                let cf =
-                    self.get_cf_handle(ColumnFamilyIndex::MetaCF)
-                        .context(OptionNoneSnafu {
-                            message: "cf is not initialized".to_string(),
-                        })?;
-                let mut batch = rocksdb::WriteBatch::default();
-                batch.put_cf(&cf, dest_string_key.encode()?, string_value.encode());
-                db.write_opt(batch, &self.write_options)
-                    .context(RocksSnafu)?;
+                let mut batch = self.create_batch()?;
+                batch.put(
+                    ColumnFamilyIndex::MetaCF,
+                    &dest_string_key.encode()?,
+                    &string_value.encode(),
+                )?;
+                batch.commit()?;
                 return Ok(0);
             }
 
@@ -1916,15 +1874,13 @@ impl Redis {
             string_value.set_etime(0); // No expiration by default
 
             let dest_string_key = BaseKey::new(dest_key);
-            let cf = self
-                .get_cf_handle(ColumnFamilyIndex::MetaCF)
-                .context(OptionNoneSnafu {
-                    message: "cf is not initialized".to_string(),
-                })?;
-            let mut batch = rocksdb::WriteBatch::default();
-            batch.put_cf(&cf, dest_string_key.encode()?, string_value.encode());
-            db.write_opt(batch, &self.write_options)
-                .context(RocksSnafu)?;
+            let mut batch = self.create_batch()?;
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &dest_string_key.encode()?,
+                &string_value.encode(),
+            )?;
+            batch.commit()?;
 
             return Ok(string_value.user_value_len() as i64);
         }
@@ -1979,15 +1935,13 @@ impl Redis {
             string_value.set_etime(0); // No expiration by default
 
             let dest_string_key = BaseKey::new(dest_key);
-            let cf = self
-                .get_cf_handle(ColumnFamilyIndex::MetaCF)
-                .context(OptionNoneSnafu {
-                    message: "cf is not initialized".to_string(),
-                })?;
-            let mut batch = rocksdb::WriteBatch::default();
-            batch.put_cf(&cf, dest_string_key.encode()?, string_value.encode());
-            db.write_opt(batch, &self.write_options)
-                .context(RocksSnafu)?;
+            let mut batch = self.create_batch()?;
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &dest_string_key.encode()?,
+                &string_value.encode(),
+            )?;
+            batch.commit()?;
             return Ok(0);
         }
 
@@ -2022,15 +1976,13 @@ impl Redis {
         string_value.set_etime(0); // No expiration by default
 
         let dest_string_key = BaseKey::new(dest_key);
-        let cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "cf is not initialized".to_string(),
-            })?;
-        let mut batch = rocksdb::WriteBatch::default();
-        batch.put_cf(&cf, dest_string_key.encode()?, string_value.encode());
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        let mut batch = self.create_batch()?;
+        batch.put(
+            ColumnFamilyIndex::MetaCF,
+            &dest_string_key.encode()?,
+            &string_value.encode(),
+        )?;
+        batch.commit()?;
 
         Ok(string_value.user_value_len() as i64)
     }
@@ -2153,16 +2105,17 @@ impl Redis {
             .is_some();
 
         if string_existed || meta_existed {
-            let mut batch = rocksdb::WriteBatch::default();
-
             let encoded = string_key.encode()?;
+
+            // Collect all keys to delete first (to avoid borrow conflicts)
+            let mut keys_to_delete: Vec<(ColumnFamilyIndex, Vec<u8>)> = Vec::new();
 
             // Delete from MetaCF
             if string_existed {
-                batch.delete_cf(&meta_cf, &encoded);
+                keys_to_delete.push((ColumnFamilyIndex::MetaCF, encoded.to_vec()));
             }
             if meta_existed {
-                batch.delete_cf(&meta_cf, meta_key.encode()?);
+                keys_to_delete.push((ColumnFamilyIndex::MetaCF, meta_key.encode()?.to_vec()));
             }
 
             // For composite data types, perform prefix scan to delete all related entries
@@ -2184,13 +2137,17 @@ impl Redis {
                         if !k.starts_with(&encoded) {
                             break;
                         }
-                        batch.delete_cf(&cf, k);
+                        keys_to_delete.push((cf_index, k.to_vec()));
                     }
                 }
             }
 
-            db.write_opt(batch, &self.write_options)
-                .context(RocksSnafu)?;
+            // Now create batch and delete all collected keys
+            let mut batch = self.create_batch()?;
+            for (cf_idx, key) in keys_to_delete {
+                batch.delete(cf_idx, &key)?;
+            }
+            batch.commit()?;
             Ok(true)
         } else {
             Ok(false)
@@ -2266,15 +2223,15 @@ impl Redis {
             message: "db is not initialized".to_string(),
         })?;
 
-        // Delete all keys from all column families
-        let mut batch = rocksdb::WriteBatch::default();
+        // Collect all keys to delete first (to avoid borrow conflicts)
+        let mut keys_to_delete: Vec<(ColumnFamilyIndex, Vec<u8>)> = Vec::new();
 
         // Clear MetaCF (where string and metadata keys are stored)
         if let Some(meta_cf) = self.get_cf_handle(ColumnFamilyIndex::MetaCF) {
             let iter = db.iterator_cf(&meta_cf, rocksdb::IteratorMode::Start);
             for item in iter {
                 let (key_bytes, _) = item.context(RocksSnafu)?;
-                batch.delete_cf(&meta_cf, &key_bytes);
+                keys_to_delete.push((ColumnFamilyIndex::MetaCF, key_bytes.to_vec()));
             }
         }
 
@@ -2290,13 +2247,17 @@ impl Redis {
                 let iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
                 for item in iter {
                     let (key_bytes, _) = item.context(RocksSnafu)?;
-                    batch.delete_cf(&cf, &key_bytes);
+                    keys_to_delete.push((cf_index, key_bytes.to_vec()));
                 }
             }
         }
 
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        // Now create batch and delete all collected keys
+        let mut batch = self.create_batch()?;
+        for (cf_idx, key) in keys_to_delete {
+            batch.delete(cf_idx, &key)?;
+        }
+        batch.commit()?;
         Ok(())
     }
 

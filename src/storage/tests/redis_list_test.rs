@@ -595,28 +595,26 @@ mod redis_list_test {
         let redis = create_test_redis();
         let key = b"test_list";
 
-        // Create an empty list and delete its contents (empty list case)
+        // Create a list and delete its contents (list becomes empty and is deleted per Redis behavior)
         redis
             .rpush(key, &[b"temp".to_vec()])
             .expect("rpush should succeed");
-        redis.lpop(key, None).expect("lpop should succeed"); // List is now empty but exists
+        redis.lpop(key, None).expect("lpop should succeed"); // List is now empty and deleted
 
-        // Verify list is empty but exists
+        // Verify list is deleted (key no longer exists) - consistent with Redis behavior
         let len = redis.llen(key).expect("llen should succeed");
         assert_eq!(len, 0);
 
-        // Test lpushx on empty list - should work (list exists, even if empty)
+        // Test lpushx on deleted list - should return 0 (key doesn't exist)
+        // This is consistent with Redis behavior: LPUSHX only works on existing lists
         let result = redis
             .lpushx(key, &[b"new_value".to_vec()])
             .expect("lpushx should succeed");
-        assert_eq!(result, 1);
+        assert_eq!(result, 0);
 
+        // List should still not exist
         let len = redis.llen(key).expect("llen should succeed");
-        assert_eq!(len, 1);
-
-        let result = redis.lrange(key, 0, -1).expect("lrange should succeed");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], b"new_value");
+        assert_eq!(len, 0);
     }
 
     #[tokio::test]
@@ -624,28 +622,26 @@ mod redis_list_test {
         let redis = create_test_redis();
         let key = b"test_list";
 
-        // Create an empty list and delete its contents (empty list case)
+        // Create a list and delete its contents (list becomes empty and is deleted per Redis behavior)
         redis
             .rpush(key, &[b"temp".to_vec()])
             .expect("rpush should succeed");
-        redis.lpop(key, None).expect("lpop should succeed"); // List is now empty but exists
+        redis.lpop(key, None).expect("lpop should succeed"); // List is now empty and deleted
 
-        // Verify list is empty but exists
+        // Verify list is deleted (key no longer exists) - consistent with Redis behavior
         let len = redis.llen(key).expect("llen should succeed");
         assert_eq!(len, 0);
 
-        // Test rpushx on empty list - should work (list exists, even if empty)
+        // Test rpushx on deleted list - should return 0 (key doesn't exist)
+        // This is consistent with Redis behavior: RPUSHX only works on existing lists
         let result = redis
             .rpushx(key, &[b"new_value".to_vec()])
             .expect("rpushx should succeed");
-        assert_eq!(result, 1);
+        assert_eq!(result, 0);
 
+        // List should still not exist
         let len = redis.llen(key).expect("llen should succeed");
-        assert_eq!(len, 1);
-
-        let result = redis.lrange(key, 0, -1).expect("lrange should succeed");
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], b"new_value");
+        assert_eq!(len, 0);
     }
 
     #[tokio::test]

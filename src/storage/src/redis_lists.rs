@@ -19,7 +19,6 @@
 //! This module provides list operations for Redis storage
 
 use bytes::BytesMut;
-use rocksdb::WriteBatch;
 use snafu::{OptionExt, ResultExt};
 
 use crate::{
@@ -103,7 +102,10 @@ impl Redis {
             }
         };
 
-        let mut batch = WriteBatch::default();
+        // Collect batch operations
+        let mut puts: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        let mut deletes: Vec<Vec<u8>> = Vec::new();
+
         let current_version = parsed_meta.version();
         let current_count = parsed_meta.count();
 
@@ -120,7 +122,7 @@ impl Redis {
                     let data_value = BaseDataValue::new(value.clone());
                     let encoded_data_value = data_value.encode();
 
-                    batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                    puts.push((encoded_data_key, encoded_data_value.to_vec()));
                 }
 
                 // Update metadata
@@ -151,7 +153,7 @@ impl Redis {
                     let storage_index = parsed_meta.left_index() + i + 1;
                     let data_key = ListsDataKey::new(key, current_version, storage_index);
                     let encoded_data_key = data_key.encode()?;
-                    batch.delete_cf(lists_data_cf, encoded_data_key);
+                    deletes.push(encoded_data_key);
                 }
 
                 // Update version only when reorganizing the entire list
@@ -167,7 +169,7 @@ impl Redis {
                     let data_value = BaseDataValue::new(value.clone());
                     let encoded_data_value = data_value.encode();
 
-                    batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                    puts.push((encoded_data_key, encoded_data_value.to_vec()));
                 }
 
                 // Store existing elements after the new ones
@@ -179,7 +181,7 @@ impl Redis {
                     let data_value = BaseDataValue::new(value.clone());
                     let encoded_data_value = data_value.encode();
 
-                    batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                    puts.push((encoded_data_key, encoded_data_value.to_vec()));
                 }
 
                 // Update metadata - adjust left_index to accommodate new elements at head
@@ -203,7 +205,7 @@ impl Redis {
                     let data_value = BaseDataValue::new(value.clone());
                     let encoded_data_value = data_value.encode();
 
-                    batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                    puts.push((encoded_data_key, encoded_data_value.to_vec()));
                 }
 
                 // Update right_index to point to the last element
@@ -219,7 +221,7 @@ impl Redis {
                     let data_value = BaseDataValue::new(value.clone());
                     let encoded_data_value = data_value.encode();
 
-                    batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                    puts.push((encoded_data_key, encoded_data_value.to_vec()));
                 }
 
                 // Update right_index to point to the last element
@@ -231,8 +233,16 @@ impl Redis {
             parsed_meta.modify_count(values.len() as u64);
         }
 
-        batch.put(&meta_key, parsed_meta.value());
-        db.write(batch).context(RocksSnafu)?;
+        // Commit batch
+        let mut batch = self.create_batch()?;
+        for key_to_del in deletes {
+            batch.delete(ColumnFamilyIndex::ListsDataCF, &key_to_del)?;
+        }
+        for (k, v) in puts {
+            batch.put(ColumnFamilyIndex::ListsDataCF, &k, &v)?;
+        }
+        batch.put(ColumnFamilyIndex::MetaCF, &meta_key, parsed_meta.value())?;
+        batch.commit()?;
 
         // Update statistics
         self.update_specific_key_statistics(
@@ -306,7 +316,7 @@ impl Redis {
 
         let pop_count = count.unwrap_or(1).min(parsed_meta.count() as usize);
         let mut result = Vec::with_capacity(pop_count);
-        let mut batch = WriteBatch::default();
+        let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
 
         // Pop elements from the left (head)
         for i in 0..pop_count {
@@ -320,7 +330,7 @@ impl Redis {
             {
                 let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
                 result.push(parsed_data.user_value().to_vec());
-                batch.delete_cf(lists_data_cf, encoded_data_key);
+                keys_to_delete.push(encoded_data_key);
             }
         }
 
@@ -328,10 +338,19 @@ impl Redis {
         parsed_meta.set_left_index(parsed_meta.left_index() + pop_count as u64);
         parsed_meta.set_count(parsed_meta.count() - pop_count as u64);
 
-        // Always preserve the metadata for empty lists to allow lpushx/rpushx operations
-        batch.put(&meta_key, parsed_meta.value());
-
-        db.write(batch).context(RocksSnafu)?;
+        // Commit batch
+        let mut batch = self.create_batch()?;
+        for key_to_del in keys_to_delete {
+            batch.delete(ColumnFamilyIndex::ListsDataCF, &key_to_del)?;
+        }
+        // Delete metadata when list becomes empty (consistent with Redis behavior)
+        // This ensures EXISTS returns false and LPUSHX/RPUSHX won't work on empty lists
+        if parsed_meta.count() == 0 {
+            batch.delete(ColumnFamilyIndex::MetaCF, &meta_key)?;
+        } else {
+            batch.put(ColumnFamilyIndex::MetaCF, &meta_key, parsed_meta.value())?;
+        }
+        batch.commit()?;
 
         // Update statistics
         self.update_specific_key_statistics(
@@ -373,7 +392,7 @@ impl Redis {
 
         let pop_count = count.unwrap_or(1).min(parsed_meta.count() as usize);
         let mut result = Vec::with_capacity(pop_count);
-        let mut batch = WriteBatch::default();
+        let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
 
         // Pop elements from the right (tail)
         for i in 0..pop_count {
@@ -387,7 +406,7 @@ impl Redis {
             {
                 let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
                 result.push(parsed_data.user_value().to_vec());
-                batch.delete_cf(lists_data_cf, encoded_data_key);
+                keys_to_delete.push(encoded_data_key);
             }
         }
 
@@ -395,10 +414,19 @@ impl Redis {
         parsed_meta.set_right_index(parsed_meta.right_index() - pop_count as u64);
         parsed_meta.set_count(parsed_meta.count() - pop_count as u64);
 
-        // Always preserve the metadata for empty lists to allow lpushx/rpushx operations
-        batch.put(&meta_key, parsed_meta.value());
-
-        db.write(batch).context(RocksSnafu)?;
+        // Commit batch
+        let mut batch = self.create_batch()?;
+        for key_to_del in keys_to_delete {
+            batch.delete(ColumnFamilyIndex::ListsDataCF, &key_to_del)?;
+        }
+        // Delete metadata when list becomes empty (consistent with Redis behavior)
+        // This ensures EXISTS returns false and LPUSHX/RPUSHX won't work on empty lists
+        if parsed_meta.count() == 0 {
+            batch.delete(ColumnFamilyIndex::MetaCF, &meta_key)?;
+        } else {
+            batch.put(ColumnFamilyIndex::MetaCF, &meta_key, parsed_meta.value())?;
+        }
+        batch.commit()?;
 
         // Update statistics
         self.update_specific_key_statistics(
@@ -440,7 +468,7 @@ impl Redis {
 
         let pop_count = count.unwrap_or(1).min(parsed_meta.count() as usize);
         let mut result = Vec::with_capacity(pop_count);
-        let mut batch = WriteBatch::default();
+        let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
 
         // Pop elements from the right (tail)
         for i in 0..pop_count {
@@ -454,7 +482,7 @@ impl Redis {
             {
                 let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
                 result.push(parsed_data.user_value().to_vec());
-                batch.delete_cf(lists_data_cf, encoded_data_key);
+                keys_to_delete.push(encoded_data_key);
             }
         }
 
@@ -462,10 +490,19 @@ impl Redis {
         parsed_meta.set_right_index(parsed_meta.right_index() - pop_count as u64);
         parsed_meta.set_count(parsed_meta.count() - pop_count as u64);
 
-        // Always preserve the metadata for empty lists to allow lpushx/rpushx operations
-        batch.put(&meta_key, parsed_meta.value());
-
-        db.write(batch).context(RocksSnafu)?;
+        // Commit batch
+        let mut batch = self.create_batch()?;
+        for key_to_del in keys_to_delete {
+            batch.delete(ColumnFamilyIndex::ListsDataCF, &key_to_del)?;
+        }
+        // Delete metadata when list becomes empty (consistent with Redis behavior)
+        // This ensures EXISTS returns false and LPUSHX/RPUSHX won't work on empty lists
+        if parsed_meta.count() == 0 {
+            batch.delete(ColumnFamilyIndex::MetaCF, &meta_key)?;
+        } else {
+            batch.put(ColumnFamilyIndex::MetaCF, &meta_key, parsed_meta.value())?;
+        }
+        batch.commit()?;
 
         // Update statistics
         self.update_specific_key_statistics(
@@ -693,8 +730,7 @@ impl Redis {
         let key_str = String::from_utf8_lossy(key);
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
 
-        let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
-        let lists_data_cf = &cfs[0];
+        let (db, _cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
 
         let base_meta_key = BaseMetaKey::new(key);
         let meta_key = base_meta_key.encode()?;
@@ -730,7 +766,9 @@ impl Redis {
             stop.min(list_len - 1)
         };
 
-        let mut batch = WriteBatch::default();
+        let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
+        let mut delete_meta = false;
+        let mut update_meta = false;
 
         if real_start > real_stop || real_start >= list_len {
             // Delete all elements
@@ -738,16 +776,16 @@ impl Redis {
                 let storage_index = parsed_meta.left_index() + i + 1;
                 let data_key = ListsDataKey::new(key, parsed_meta.version(), storage_index);
                 let encoded_data_key = data_key.encode()?;
-                batch.delete_cf(lists_data_cf, encoded_data_key);
+                keys_to_delete.push(encoded_data_key);
             }
-            batch.delete(&meta_key);
+            delete_meta = true;
         } else {
             // Delete elements before start
             for i in 0..real_start {
                 let storage_index = parsed_meta.left_index() + i as u64 + 1;
                 let data_key = ListsDataKey::new(key, parsed_meta.version(), storage_index);
                 let encoded_data_key = data_key.encode()?;
-                batch.delete_cf(lists_data_cf, encoded_data_key);
+                keys_to_delete.push(encoded_data_key);
             }
 
             // Delete elements after stop
@@ -755,7 +793,7 @@ impl Redis {
                 let storage_index = parsed_meta.left_index() + i as u64 + 1;
                 let data_key = ListsDataKey::new(key, parsed_meta.version(), storage_index);
                 let encoded_data_key = data_key.encode()?;
-                batch.delete_cf(lists_data_cf, encoded_data_key);
+                keys_to_delete.push(encoded_data_key);
             }
 
             // Update metadata
@@ -765,10 +803,21 @@ impl Redis {
             parsed_meta.set_left_index(new_left_index);
             parsed_meta.set_right_index(new_left_index + new_count);
 
-            batch.put(&meta_key, parsed_meta.value());
+            update_meta = true;
         }
 
-        db.write(batch).context(RocksSnafu)?;
+        // Commit batch
+        let mut batch = self.create_batch()?;
+        for key_to_del in keys_to_delete {
+            batch.delete(ColumnFamilyIndex::ListsDataCF, &key_to_del)?;
+        }
+        if delete_meta {
+            batch.delete(ColumnFamilyIndex::MetaCF, &meta_key)?;
+        }
+        if update_meta {
+            batch.put(ColumnFamilyIndex::MetaCF, &meta_key, parsed_meta.value())?;
+        }
+        batch.commit()?;
 
         Ok(())
     }
@@ -802,7 +851,6 @@ impl Redis {
         }
 
         let mut removed_count = 0i64;
-        let mut batch = WriteBatch::default();
 
         // Determine removal direction
 
@@ -852,17 +900,22 @@ impl Redis {
         }
 
         if removed_count > 0 {
+            // Collect batch operations
+            let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
+            let mut puts: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+            let mut delete_meta = false;
+
             // Clear all existing elements
             for i in 0..parsed_meta.count() {
                 let storage_index = parsed_meta.left_index() + i + 1;
                 let data_key = ListsDataKey::new(key, parsed_meta.version(), storage_index);
                 let encoded_data_key = data_key.encode()?;
-                batch.delete_cf(lists_data_cf, encoded_data_key);
+                keys_to_delete.push(encoded_data_key);
             }
 
             if remaining_elements.is_empty() {
                 // List is now empty
-                batch.delete(&meta_key);
+                delete_meta = true;
             } else {
                 // Write remaining elements contiguously
                 for (i, element) in remaining_elements.iter().enumerate() {
@@ -873,17 +926,29 @@ impl Redis {
                     let data_value = BaseDataValue::new(element.clone());
                     let encoded_data_value = data_value.encode();
 
-                    batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+                    puts.push((encoded_data_key, encoded_data_value.to_vec()));
                 }
 
                 // Update count and right_index
                 parsed_meta.set_count(remaining_elements.len() as u64);
                 parsed_meta
                     .set_right_index(parsed_meta.left_index() + remaining_elements.len() as u64);
-                batch.put(&meta_key, parsed_meta.value());
             }
 
-            db.write(batch).context(RocksSnafu)?;
+            // Commit batch
+            let mut batch = self.create_batch()?;
+            for key_to_del in keys_to_delete {
+                batch.delete(ColumnFamilyIndex::ListsDataCF, &key_to_del)?;
+            }
+            for (k, v) in puts {
+                batch.put(ColumnFamilyIndex::ListsDataCF, &k, &v)?;
+            }
+            if delete_meta {
+                batch.delete(ColumnFamilyIndex::MetaCF, &meta_key)?;
+            } else {
+                batch.put(ColumnFamilyIndex::MetaCF, &meta_key, parsed_meta.value())?;
+            }
+            batch.commit()?;
 
             // Update statistics
             self.update_specific_key_statistics(
@@ -979,13 +1044,16 @@ impl Redis {
         // Insert the new value at the calculated position
         all_elements.insert(insert_position, value.to_vec());
 
+        // Collect batch operations
+        let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
+        let mut puts: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+
         // Clear existing elements
-        let mut batch = WriteBatch::default();
         for i in 0..parsed_meta.count() {
             let storage_index = parsed_meta.left_index() + i + 1;
             let data_key = ListsDataKey::new(key, parsed_meta.version(), storage_index);
             let encoded_data_key = data_key.encode()?;
-            batch.delete_cf(lists_data_cf, encoded_data_key);
+            keys_to_delete.push(encoded_data_key);
         }
 
         // Update version for consistency
@@ -1000,15 +1068,23 @@ impl Redis {
             let data_value = BaseDataValue::new(element.clone());
             let encoded_data_value = data_value.encode();
 
-            batch.put_cf(lists_data_cf, encoded_data_key, encoded_data_value);
+            puts.push((encoded_data_key, encoded_data_value.to_vec()));
         }
 
         // Update metadata
         parsed_meta.set_count(all_elements.len() as u64);
         parsed_meta.set_right_index(parsed_meta.left_index() + all_elements.len() as u64);
-        batch.put(&meta_key, parsed_meta.value());
 
-        db.write(batch).context(RocksSnafu)?;
+        // Commit batch
+        let mut batch = self.create_batch()?;
+        for key_to_del in keys_to_delete {
+            batch.delete(ColumnFamilyIndex::ListsDataCF, &key_to_del)?;
+        }
+        for (k, v) in puts {
+            batch.put(ColumnFamilyIndex::ListsDataCF, &k, &v)?;
+        }
+        batch.put(ColumnFamilyIndex::MetaCF, &meta_key, parsed_meta.value())?;
+        batch.commit()?;
 
         // Update statistics
         self.update_specific_key_statistics(DataType::List, &String::from_utf8_lossy(key), 1)?;
