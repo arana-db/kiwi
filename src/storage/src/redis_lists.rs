@@ -660,8 +660,7 @@ impl Redis {
         let key_str = String::from_utf8_lossy(key);
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
 
-        let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
-        let lists_data_cf = &cfs[0];
+        let (db, _cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::ListsDataCF);
 
         let base_meta_key = BaseMetaKey::new(key);
         let meta_key = base_meta_key.encode()?;
@@ -717,9 +716,14 @@ impl Redis {
         let data_value = BaseDataValue::new(value);
         let encoded_data_value = data_value.encode();
 
-        // Update the element
-        db.put_cf(lists_data_cf, &encoded_data_key, &encoded_data_value)
-            .context(RocksSnafu)?;
+        // Update the element using batch for consistency with cluster mode
+        let mut batch = self.create_batch()?;
+        batch.put(
+            ColumnFamilyIndex::ListsDataCF,
+            &encoded_data_key,
+            &encoded_data_value,
+        )?;
+        batch.commit()?;
 
         Ok(())
     }

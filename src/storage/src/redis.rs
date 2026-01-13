@@ -57,6 +57,11 @@ pub enum ColumnFamilyIndex {
 }
 
 impl ColumnFamilyIndex {
+    /// Total number of column families.
+    /// Update this constant when adding new column families.
+    /// This constant is used by batch.rs for validation.
+    pub const COUNT: usize = 6;
+
     pub fn name(&self) -> &'static str {
         match self {
             ColumnFamilyIndex::MetaCF => "default",

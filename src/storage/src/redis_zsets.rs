@@ -114,9 +114,11 @@ impl Redis {
                             ParsedBaseDataValue::new(&existing_member_val[..])?;
                         parsed_base_data_val.strip_suffix();
                         not_found = false;
-                        match String::from_utf8_lossy(&parsed_base_data_val.user_value()).parse() {
+                        match String::from_utf8_lossy(&parsed_base_data_val.user_value())
+                            .parse::<f64>()
+                        {
                             Ok(existing_score) => {
-                                if (existing_score, sm.score).1.abs() < f64::EPSILON {
+                                if (existing_score - sm.score).abs() < f64::EPSILON {
                                     // Score is the same, skip
                                     continue;
                                 } else {
@@ -1092,6 +1094,13 @@ impl Redis {
     }
 
     /// Internal helper for ZINTERSTORE and ZUNIONSTORE
+    ///
+    /// This function performs all operations atomically in a single batch:
+    /// 1. Collects members from source zsets
+    /// 2. Deletes any existing destination data
+    /// 3. Writes new result data
+    ///
+    /// All operations are committed in one batch for atomicity.
     fn zset_store_operation(
         &self,
         destination: &[u8],
@@ -1211,69 +1220,98 @@ impl Redis {
             }
         }
 
-        // Store the result in destination
-        {
-            let dest_str = String::from_utf8_lossy(destination).to_string();
-            let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &dest_str);
+        // Perform all operations atomically in a single batch
+        let dest_str = String::from_utf8_lossy(destination).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &dest_str);
 
-            // Get destination meta to check if it exists
-            let dest_meta_key = BaseMetaKey::new(destination);
-            let dest_meta_val = db
-                .get_opt(&dest_meta_key.encode()?, &self.read_options)
-                .context(RocksSnafu)?
-                .unwrap_or_else(Vec::new);
+        let dest_meta_key = BaseMetaKey::new(destination);
+        let dest_meta_val = db
+            .get_opt(&dest_meta_key.encode()?, &self.read_options)
+            .context(RocksSnafu)?
+            .unwrap_or_else(Vec::new);
 
-            // Delete destination if it exists
-            if !dest_meta_val.is_empty() {
-                self.check_type(&dest_meta_val, DataType::ZSet)?;
-                let dest_meta = ParsedZSetsMetaValue::new(&dest_meta_val[..])?;
-                if dest_meta.is_valid() {
-                    // Delete all members from destination
-                    let dest_version = dest_meta.version();
+        let mut batch = self.create_batch()?;
 
-                    let mut batch = self.create_batch()?;
+        // Delete existing destination data if it exists
+        if !dest_meta_val.is_empty() {
+            self.check_type(&dest_meta_val, DataType::ZSet)?;
+            let dest_meta = ParsedZSetsMetaValue::new(&dest_meta_val[..])?;
+            if dest_meta.is_valid() {
+                let dest_version = dest_meta.version();
 
-                    // Delete all score keys
-                    let min_score_key =
-                        ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
-                            .encode_seek_key()?;
-                    let iter = db.iterator_cf_opt(
-                        &cf_score,
-                        ReadOptions::default(),
-                        IteratorMode::From(&min_score_key, Direction::Forward),
-                    );
+                // Delete all score keys and member keys
+                let min_score_key =
+                    ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
+                        .encode_seek_key()?;
+                let iter = db.iterator_cf_opt(
+                    &cf_score,
+                    ReadOptions::default(),
+                    IteratorMode::From(&min_score_key, Direction::Forward),
+                );
 
-                    for item in iter {
-                        let (raw_key, _) = item.context(RocksSnafu)?;
-                        let score_key = ParsedZSetsScoreKey::new(&raw_key)?;
+                for item in iter {
+                    let (raw_key, _) = item.context(RocksSnafu)?;
+                    let score_key = ParsedZSetsScoreKey::new(&raw_key)?;
 
-                        if destination != score_key.key() || dest_version != score_key.version() {
-                            break;
-                        }
-
-                        // Delete score key and member key
-                        batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
-                        let member_key =
-                            MemberDataKey::new(destination, dest_version, score_key.member())
-                                .encode()?;
-                        batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
+                    if destination != score_key.key() || dest_version != score_key.version() {
+                        break;
                     }
 
-                    // Delete meta key
-                    batch.delete(ColumnFamilyIndex::MetaCF, &dest_meta_key.encode()?)?;
-                    batch.commit()?;
+                    // Delete score key and member key
+                    batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
+                    let member_key =
+                        MemberDataKey::new(destination, dest_version, score_key.member())
+                            .encode()?;
+                    batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
                 }
             }
-            // Lock is released here when _lock goes out of scope
         }
 
-        // Add all result members (lock is released, so zadd can acquire it)
-        if !result_members.is_empty() {
-            let mut add_count = 0;
-            self.zadd(destination, &result_members, &mut add_count)?;
-            Ok(result_members.len() as i32)
-        } else {
+        // Add new result members or delete meta if empty
+        if result_members.is_empty() {
+            // Delete meta key if destination existed
+            if !dest_meta_val.is_empty() {
+                batch.delete(ColumnFamilyIndex::MetaCF, &dest_meta_key.encode()?)?;
+            }
+            batch.commit()?;
             Ok(0)
+        } else {
+            // Create new zset meta with result members
+            let mut new_zset_meta = ZSetsMetaValue::new(bytes::Bytes::copy_from_slice(
+                &(result_members.len() as u64).to_le_bytes(),
+            ));
+            new_zset_meta.inner.data_type = DataType::ZSet;
+            let new_version = new_zset_meta.update_version();
+
+            // Add meta value
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &dest_meta_key.encode()?,
+                &new_zset_meta.encode(),
+            )?;
+
+            // Add all members
+            for sm in &result_members {
+                let member_key =
+                    MemberDataKey::new(destination, new_version, &sm.member).encode()?;
+                let score_key =
+                    ZSetsScoreKey::new(destination, new_version, sm.score, &sm.member).encode()?;
+                let member_value = BaseDataValue::new(format!("{}", sm.score));
+                let score_value = BaseDataValue::new("");
+                batch.put(
+                    ColumnFamilyIndex::ZsetsDataCF,
+                    &member_key,
+                    &member_value.encode(),
+                )?;
+                batch.put(
+                    ColumnFamilyIndex::ZsetsScoreCF,
+                    &score_key,
+                    &score_value.encode(),
+                )?;
+            }
+
+            batch.commit()?;
+            Ok(result_members.len() as i32)
         }
     }
 

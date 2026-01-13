@@ -2080,6 +2080,9 @@ impl Redis {
 
     /// Delete a key (works for all data types)
     pub fn del_key(&self, key: &[u8]) -> Result<bool> {
+        use crate::storage_define::{PREFIX_RESERVE_LENGTH, encode_user_key};
+        use bytes::BufMut;
+
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -2107,6 +2110,15 @@ impl Redis {
         if string_existed || meta_existed {
             let encoded = string_key.encode()?;
 
+            // Build correct prefix for data CF scanning:
+            // Data keys format: | reserve1 (8B) | encoded_user_key | version (8B) | data | reserve2 |
+            // We need prefix: | reserve1 (8B) | encoded_user_key (with \x00\x00 delimiter) |
+            // Note: BaseKey.encode() includes reserve2, which would not match data keys.
+            let mut data_key_prefix =
+                bytes::BytesMut::with_capacity(PREFIX_RESERVE_LENGTH + key.len() * 2 + 2);
+            data_key_prefix.put_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
+            encode_user_key(key, &mut data_key_prefix)?;
+
             // Collect all keys to delete first (to avoid borrow conflicts)
             let mut keys_to_delete: Vec<(ColumnFamilyIndex, Vec<u8>)> = Vec::new();
 
@@ -2130,11 +2142,11 @@ impl Redis {
                     // Prefix-scan data CF and delete all derived keys
                     let iter = db.iterator_cf(
                         &cf,
-                        rocksdb::IteratorMode::From(&encoded, rocksdb::Direction::Forward),
+                        rocksdb::IteratorMode::From(&data_key_prefix, rocksdb::Direction::Forward),
                     );
                     for item in iter {
                         let (k, _) = item.context(RocksSnafu)?;
-                        if !k.starts_with(&encoded) {
+                        if !k.starts_with(&data_key_prefix) {
                             break;
                         }
                         keys_to_delete.push((cf_index, k.to_vec()));
@@ -2219,45 +2231,56 @@ impl Redis {
 
     /// Flush all keys from the current database
     pub fn flush_db(&self) -> Result<()> {
+        // Use chunked deletion to avoid memory issues with large databases.
+        // Each chunk is deleted in a separate batch to prevent excessive memory usage
+        // and allow progress to be made incrementally.
+        const CHUNK_SIZE: usize = 1000;
+
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
 
-        // Collect all keys to delete first (to avoid borrow conflicts)
-        let mut keys_to_delete: Vec<(ColumnFamilyIndex, Vec<u8>)> = Vec::new();
-
-        // Clear MetaCF (where string and metadata keys are stored)
-        if let Some(meta_cf) = self.get_cf_handle(ColumnFamilyIndex::MetaCF) {
-            let iter = db.iterator_cf(&meta_cf, rocksdb::IteratorMode::Start);
-            for item in iter {
-                let (key_bytes, _) = item.context(RocksSnafu)?;
-                keys_to_delete.push((ColumnFamilyIndex::MetaCF, key_bytes.to_vec()));
-            }
-        }
-
-        // Also clear other column families
-        for cf_index in [
+        // Process each column family separately to limit memory usage
+        let all_cf_indexes = [
+            ColumnFamilyIndex::MetaCF,
             ColumnFamilyIndex::HashesDataCF,
             ColumnFamilyIndex::SetsDataCF,
             ColumnFamilyIndex::ListsDataCF,
             ColumnFamilyIndex::ZsetsDataCF,
             ColumnFamilyIndex::ZsetsScoreCF,
-        ] {
+        ];
+
+        for cf_index in all_cf_indexes {
             if let Some(cf) = self.get_cf_handle(cf_index) {
+                let mut keys_chunk: Vec<Vec<u8>> = Vec::with_capacity(CHUNK_SIZE);
+
                 let iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
                 for item in iter {
                     let (key_bytes, _) = item.context(RocksSnafu)?;
-                    keys_to_delete.push((cf_index, key_bytes.to_vec()));
+                    keys_chunk.push(key_bytes.to_vec());
+
+                    // When chunk is full, delete and clear
+                    if keys_chunk.len() >= CHUNK_SIZE {
+                        let mut batch = self.create_batch()?;
+                        for key in &keys_chunk {
+                            batch.delete(cf_index, key)?;
+                        }
+                        batch.commit()?;
+                        keys_chunk.clear();
+                    }
+                }
+
+                // Delete remaining keys in the last chunk
+                if !keys_chunk.is_empty() {
+                    let mut batch = self.create_batch()?;
+                    for key in &keys_chunk {
+                        batch.delete(cf_index, key)?;
+                    }
+                    batch.commit()?;
                 }
             }
         }
 
-        // Now create batch and delete all collected keys
-        let mut batch = self.create_batch()?;
-        for (cf_idx, key) in keys_to_delete {
-            batch.delete(cf_idx, &key)?;
-        }
-        batch.commit()?;
         Ok(())
     }
 

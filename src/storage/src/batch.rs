@@ -92,11 +92,6 @@ pub trait Batch: Send {
 /// Type alias for column family handles used in batch operations.
 pub type CfHandles<'a> = Vec<Option<Arc<BoundColumnFamily<'a>>>>;
 
-/// Expected number of column families.
-/// This must match the number of variants in ColumnFamilyIndex enum.
-/// Update this constant when adding new column families.
-pub const EXPECTED_CF_COUNT: usize = 6;
-
 /// RocksDB batch implementation for standalone mode.
 ///
 /// This implementation directly uses RocksDB's WriteBatch for atomic writes.
@@ -117,7 +112,7 @@ impl<'a> RocksBatch<'a> {
     /// * `cf_handles` - Column family handles for all column families
     ///
     /// # Panics
-    /// Panics if cf_handles length doesn't match EXPECTED_CF_COUNT.
+    /// Panics if cf_handles length doesn't match ColumnFamilyIndex::COUNT.
     /// This is a programming error that should be caught during development.
     pub fn new(
         db: &'a dyn Engine,
@@ -129,11 +124,11 @@ impl<'a> RocksBatch<'a> {
         // at batch creation time rather than during put/delete operations.
         assert_eq!(
             cf_handles.len(),
-            EXPECTED_CF_COUNT,
-            "cf_handles length ({}) must match EXPECTED_CF_COUNT ({}). \
-             Update EXPECTED_CF_COUNT when adding new column families.",
+            ColumnFamilyIndex::COUNT,
+            "cf_handles length ({}) must match ColumnFamilyIndex::COUNT ({}). \
+             Update ColumnFamilyIndex::COUNT when adding new column families.",
             cf_handles.len(),
-            EXPECTED_CF_COUNT
+            ColumnFamilyIndex::COUNT
         );
 
         Self {
