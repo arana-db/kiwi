@@ -390,16 +390,13 @@ impl MessageEnvelope {
             RaftMessage::InstallSnapshot(_) => "InstallSnapshot".to_string(),
             RaftMessage::InstallSnapshotResponse(_) => "InstallSnapshotResponse".to_string(),
             RaftMessage::Heartbeat { from, term } => format!("Heartbeat:{}:{}", from, term),
-            RaftMessage::HeartbeatResponse { from, success } =>
-                format!("HeartbeatResponse:{}:{}", from, success),
+            RaftMessage::HeartbeatResponse { from, success } => {
+                format!("HeartbeatResponse:{}:{}", from, success)
+            }
         };
         let data_for_hmac = format!(
             "{}:{}:{}:{}:{}",
-            self.message_id,
-            self.from,
-            self.to,
-            self.timestamp,
-            message_str
+            self.message_id, self.from, self.to, self.timestamp, message_str
         );
 
         self.hmac = Some(auth.generate_hmac(data_for_hmac.as_bytes())?);
@@ -417,18 +414,14 @@ impl MessageEnvelope {
                 RaftMessage::VoteResponse(_) => "VoteResponse".to_string(),
                 RaftMessage::InstallSnapshot(_) => "InstallSnapshot".to_string(),
                 RaftMessage::InstallSnapshotResponse(_) => "InstallSnapshotResponse".to_string(),
-                RaftMessage::Heartbeat { from, term } =>
-                    format!("Heartbeat:{}:{}", from, term),
-                RaftMessage::HeartbeatResponse { from, success } =>
-                    format!("HeartbeatResponse:{}:{}", from, success),
+                RaftMessage::Heartbeat { from, term } => format!("Heartbeat:{}:{}", from, term),
+                RaftMessage::HeartbeatResponse { from, success } => {
+                    format!("HeartbeatResponse:{}:{}", from, success)
+                }
             };
             let data_for_hmac = format!(
                 "{}:{}:{}:{}:{}",
-                self.message_id,
-                self.from,
-                self.to,
-                self.timestamp,
-                message_str
+                self.message_id, self.from, self.to, self.timestamp, message_str
             );
 
             auth.verify_hmac(data_for_hmac.as_bytes(), expected_hmac)
