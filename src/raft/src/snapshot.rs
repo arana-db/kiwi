@@ -175,7 +175,7 @@ impl SnapshotManager {
 
             // Write batch when it gets too large
             if batch_size >= BATCH_SIZE_LIMIT {
-                snapshot_db.write(batch).map_err(|e| {
+                snapshot_db.write(&batch).map_err(|e| {
                     RaftError::state_machine(format!("Failed to write batch: {}", e))
                 })?;
                 batch = rocksdb::WriteBatch::default();
@@ -185,7 +185,7 @@ impl SnapshotManager {
 
         // Write remaining batch
         if batch_size > 0 {
-            snapshot_db.write(batch).map_err(|e| {
+            snapshot_db.write(&batch).map_err(|e| {
                 RaftError::state_machine(format!("Failed to write final batch: {}", e))
             })?;
         }
