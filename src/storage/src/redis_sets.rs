@@ -22,7 +22,7 @@ use std::collections::HashSet;
 
 use bytes::{BufMut, Bytes};
 use kstd::lock_mgr::ScopeRecordLock;
-use rocksdb::{Direction, IteratorMode, ReadOptions, WriteBatch};
+use rocksdb::{Direction, IteratorMode, ReadOptions};
 use snafu::{OptionExt, ResultExt};
 
 use crate::{
@@ -75,7 +75,6 @@ impl Redis {
                 .context(OptionNoneSnafu {
                     message: "cf data is not initialized".to_string(),
                 })?;
-        let mut batch = WriteBatch::default();
         let base_meta_key = BaseMetaKey::new(key).encode()?;
         let meta_get = db.get_cf(&cf, &base_meta_key).context(RocksSnafu)?;
         let (mut set_meta_value, version, is_new_set) = match meta_get {
@@ -149,20 +148,24 @@ impl Redis {
         }
         set_meta_value.modify_count(add_count);
 
-        batch.put_cf(&cf, base_meta_key, set_meta_value.encoded());
+        let mut batch = self.create_batch()?;
+        batch.put(
+            ColumnFamilyIndex::MetaCF,
+            &base_meta_key,
+            set_meta_value.encoded(),
+        )?;
 
         for member in &members_to_add {
             let set_member_key = MemberDataKey::new(key, version, member);
             let iter_value = BaseDataValue::new("");
             let key_encoded = set_member_key.encode()?;
             let val_encoded = iter_value.encode();
-            batch.put_cf(&cf_data, key_encoded.as_ref(), val_encoded.as_ref());
+            batch.put(ColumnFamilyIndex::SetsDataCF, &key_encoded, &val_encoded)?;
         }
 
         let added = members_to_add.len() as i32;
         // Write batch to DB
-        db.write_opt(batch, &self.write_options)
-            .context(RocksSnafu)?;
+        batch.commit()?;
 
         Ok(added)
     }
@@ -466,7 +469,7 @@ impl Redis {
 
         let version = set_meta.version();
         let mut removed_count = 0i32;
-        let mut batch = WriteBatch::default();
+        let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
 
         // Remove each member
         for member in members {
@@ -486,25 +489,34 @@ impl Redis {
                 .context(RocksSnafu)?
                 .is_some()
             {
-                batch.delete_cf(&cf_data, &member_key);
+                keys_to_delete.push(member_key.to_vec());
                 removed_count += 1;
             }
         }
 
         if removed_count > 0 {
+            let mut batch = self.create_batch()?;
+            for key_to_del in &keys_to_delete {
+                batch.delete(ColumnFamilyIndex::SetsDataCF, key_to_del)?;
+            }
+
             // Update set metadata
             let new_count = set_meta.count() - removed_count as u64;
             if new_count == 0 {
                 // Remove the entire set if no members left
-                batch.delete_cf(&cf_meta, &base_meta_key);
+                batch.delete(ColumnFamilyIndex::MetaCF, &base_meta_key)?;
             } else {
                 // Update the count in metadata
                 set_meta.set_count(new_count);
-                batch.put_cf(&cf_meta, &base_meta_key, set_meta.encoded());
+                batch.put(
+                    ColumnFamilyIndex::MetaCF,
+                    &base_meta_key,
+                    set_meta.encoded(),
+                )?;
             }
 
             // Write the batch
-            db.write(batch).context(RocksSnafu)?;
+            batch.commit()?;
         }
 
         Ok(removed_count)
@@ -620,26 +632,30 @@ impl Redis {
         }
 
         // Remove selected members
-        let mut batch = WriteBatch::default();
+        let mut batch = self.create_batch()?;
         let removed_count = members_to_pop.len() as u64;
 
         for (_, member_key) in &members_to_pop {
-            batch.delete_cf(&cf_data, member_key);
+            batch.delete(ColumnFamilyIndex::SetsDataCF, member_key)?;
         }
 
         // Update set metadata
         let new_count = set_meta.count() - removed_count;
         if new_count == 0 {
             // Remove the entire set if no members left
-            batch.delete_cf(&cf_meta, &base_meta_key);
+            batch.delete(ColumnFamilyIndex::MetaCF, &base_meta_key)?;
         } else {
             // Update the count in metadata
             set_meta.set_count(new_count);
-            batch.put_cf(&cf_meta, &base_meta_key, set_meta.encoded());
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &base_meta_key,
+                set_meta.encoded(),
+            )?;
         }
 
         // Write the batch
-        db.write(batch).context(RocksSnafu)?;
+        batch.commit()?;
 
         // Return the popped members
         Ok(members_to_pop
@@ -776,24 +792,32 @@ impl Redis {
             .context(RocksSnafu)?
             .is_some();
 
-        let mut batch = WriteBatch::default();
+        let mut batch = self.create_batch()?;
 
         // Remove from source
-        batch.delete_cf(&cf_data, &source_member_key);
+        batch.delete(ColumnFamilyIndex::SetsDataCF, &source_member_key)?;
         let new_source_count = source_meta.count() - 1;
         if new_source_count == 0 {
             // Remove source set if empty
-            batch.delete_cf(&cf_meta, &source_meta_key);
+            batch.delete(ColumnFamilyIndex::MetaCF, &source_meta_key)?;
         } else {
             // Update source count
             source_meta.set_count(new_source_count);
-            batch.put_cf(&cf_meta, &source_meta_key, source_meta.encoded());
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &source_meta_key,
+                source_meta.encoded(),
+            )?;
         }
 
         // Add to destination (if not already there)
         if !member_exists_in_dest {
             let iter_value = BaseDataValue::new("");
-            batch.put_cf(&cf_data, &dest_member_key, iter_value.encode().as_ref());
+            batch.put(
+                ColumnFamilyIndex::SetsDataCF,
+                &dest_member_key,
+                &iter_value.encode(),
+            )?;
 
             // Update destination count
             if dest_exists && dest_meta.is_valid() {
@@ -801,11 +825,15 @@ impl Redis {
             } else {
                 dest_meta.set_count(1);
             }
-            batch.put_cf(&cf_meta, &dest_meta_key, dest_meta.encoded());
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &dest_meta_key,
+                dest_meta.encoded(),
+            )?;
         }
 
         // Write the batch
-        db.write(batch).context(RocksSnafu)?;
+        batch.commit()?;
 
         Ok(true)
     }
@@ -2155,81 +2183,11 @@ impl Redis {
             .fail();
         }
 
-        let db = self.db.as_ref().context(OptionNoneSnafu {
-            message: "db is not initialized".to_string(),
-        })?;
-
-        let cf_meta = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "cf is not initialized".to_string(),
-            })?;
-        let cf_data =
-            self.get_cf_handle(ColumnFamilyIndex::SetsDataCF)
-                .context(OptionNoneSnafu {
-                    message: "cf data is not initialized".to_string(),
-                })?;
-
         // Calculate the difference
         let diff_members = self.sdiff(keys)?;
 
-        // Clear the destination key first (if it exists)
-        let dest_base_meta_key = BaseMetaKey::new(destination).encode()?;
-        let mut batch = WriteBatch::default();
-
-        // Delete existing destination set metadata and data
-        let meta_val = db
-            .get_cf(&cf_meta, &dest_base_meta_key)
-            .context(RocksSnafu)?;
-        if let Some(val) = meta_val {
-            if val.first().copied() == Some(DataType::Set as u8) {
-                let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-                if set_meta.is_valid() {
-                    let version = set_meta.version();
-
-                    // Delete all existing members
-                    let mut prefix = bytes::BytesMut::with_capacity(
-                        PREFIX_RESERVE_LENGTH + 8 + destination.len() * 2,
-                    );
-                    prefix.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-                    prefix.put_u64(version);
-                    encode_user_key(&bytes::Bytes::copy_from_slice(destination), &mut prefix)?;
-
-                    let iter = db.iterator_cf_opt(
-                        &cf_data,
-                        ReadOptions::default(),
-                        IteratorMode::From(&prefix, Direction::Forward),
-                    );
-
-                    for item in iter {
-                        let (raw_key, _) = item.context(RocksSnafu)?;
-                        if !raw_key.starts_with(&prefix) {
-                            break;
-                        }
-                        batch.delete_cf(&cf_data, &raw_key);
-                    }
-                }
-            }
-            // Delete the metadata
-            batch.delete_cf(&cf_meta, &dest_base_meta_key);
-        }
-
-        // If there are no members in the difference, just clear and return 0
-        if diff_members.is_empty() {
-            db.write(batch).context(RocksSnafu)?;
-            return Ok(0);
-        }
-
-        // Add all difference members to the destination set
-        let member_refs: Vec<&[u8]> = diff_members.iter().map(|s| s.as_bytes()).collect();
-
-        // Write the batch to clear destination first
-        db.write(batch).context(RocksSnafu)?;
-
-        // Now add the new members
-        let added = self.sadd(destination, &member_refs)?;
-
-        Ok(added)
+        // Clear destination and store the result atomically
+        self.clear_and_store_set(destination, &diff_members)
     }
 
     /// Store the intersection of all the given sets into a destination key
@@ -2264,7 +2222,11 @@ impl Redis {
         self.clear_and_store_set(destination, &union_members)
     }
 
-    /// Helper method to clear a destination set and store new members
+    /// Helper method to clear a destination set and store new members atomically
+    ///
+    /// This method performs all operations (delete old data + add new members) in a single
+    /// batch commit to ensure atomicity. This prevents intermediate states where the
+    /// destination is empty or partially written.
     fn clear_and_store_set(&self, destination: &[u8], members: &[String]) -> Result<i32> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
@@ -2287,7 +2249,7 @@ impl Redis {
 
         // Clear the destination key first (if it exists)
         let dest_base_meta_key = BaseMetaKey::new(destination).encode()?;
-        let mut batch = WriteBatch::default();
+        let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
 
         // Delete existing destination set metadata and data
         let meta_val = db
@@ -2318,28 +2280,73 @@ impl Redis {
                         if !raw_key.starts_with(&prefix) {
                             break;
                         }
-                        batch.delete_cf(&cf_data, &raw_key);
+                        keys_to_delete.push(raw_key.to_vec());
                     }
                 }
             }
-            // Delete the metadata
-            batch.delete_cf(&cf_meta, &dest_base_meta_key);
         }
 
-        // If there are no members, just clear and return 0
+        // Create a single batch for all operations (atomic)
+        let mut batch = self.create_batch()?;
+
+        // Delete old member data keys
+        for key_to_del in &keys_to_delete {
+            batch.delete(ColumnFamilyIndex::SetsDataCF, key_to_del)?;
+        }
+
+        // If there are no members, delete meta and return 0
         if members.is_empty() {
-            db.write(batch).context(RocksSnafu)?;
+            // Delete the old metadata (if any)
+            batch.delete(ColumnFamilyIndex::MetaCF, &dest_base_meta_key)?;
+            batch.commit()?;
             return Ok(0);
         }
 
-        // Write the batch to clear destination first
-        db.write(batch).context(RocksSnafu)?;
+        // Deduplicate members
+        let mut unique = HashSet::new();
+        let mut filtered_members: Vec<&[u8]> = Vec::new();
+        for member in members {
+            let member_bytes = member.as_bytes();
+            if unique.insert(member.clone()) {
+                filtered_members.push(member_bytes);
+            }
+        }
 
-        // Now add the new members
-        let member_refs: Vec<&[u8]> = members.iter().map(|s| s.as_bytes()).collect();
-        let added = self.sadd(destination, &member_refs)?;
+        let member_count = filtered_members.len() as u64;
 
-        Ok(added)
+        // Create new set metadata
+        // Note: initial_meta_value() resets count to 0, so we use set_count() afterwards
+        // to set the exact count. This is semantically correct since we're initializing,
+        // not incrementing an existing count.
+        let count_bytes = 0u64.to_le_bytes().to_vec();
+        let mut new_meta = BaseMetaValue::new(Bytes::from(count_bytes));
+        new_meta.inner.data_type = DataType::Set;
+        let encoded = new_meta.encode();
+        let mut new_set_meta = ParsedSetsMetaValue::new(encoded)?;
+        let version = new_set_meta.initial_meta_value();
+        // Set the exact member count after initialization
+        new_set_meta.set_count(member_count);
+
+        // Write new metadata
+        batch.put(
+            ColumnFamilyIndex::MetaCF,
+            &dest_base_meta_key,
+            new_set_meta.encoded(),
+        )?;
+
+        // Write all new members
+        for member in &filtered_members {
+            let set_member_key = MemberDataKey::new(destination, version, member);
+            let iter_value = BaseDataValue::new("");
+            let key_encoded = set_member_key.encode()?;
+            let val_encoded = iter_value.encode();
+            batch.put(ColumnFamilyIndex::SetsDataCF, &key_encoded, &val_encoded)?;
+        }
+
+        // Commit all operations atomically
+        batch.commit()?;
+
+        Ok(filtered_members.len() as i32)
     }
 
     /// Scan set members with cursor-based iteration

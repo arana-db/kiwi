@@ -20,7 +20,7 @@
 
 use bytes::Bytes;
 use kstd::lock_mgr::ScopeRecordLock;
-use rocksdb::{ReadOptions, WriteBatch};
+use rocksdb::ReadOptions;
 use snafu::{OptionExt, ResultExt};
 
 use crate::base_data_value_format::{BaseDataValue, ParsedBaseDataValue};
@@ -52,7 +52,6 @@ impl Redis {
             .map(|f| f.as_slice())
             .collect();
 
-        let mut batch = WriteBatch::default();
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
 
@@ -84,15 +83,18 @@ impl Redis {
                 let version = meta_val.version();
                 let mut del_cnt = 0i32;
 
+                // Collect keys to delete
+                let mut keys_to_delete: Vec<Vec<u8>> = Vec::new();
                 for field in filtered_fields {
                     let data_key = MemberDataKey::new(key, version, field);
+                    let encoded_key = data_key.encode()?;
                     if db
-                        .get_cf_opt(data_cf, &data_key.encode()?, &read_options)
+                        .get_cf_opt(data_cf, &encoded_key, &read_options)
                         .context(RocksSnafu)?
                         .is_some()
                     {
                         del_cnt += 1;
-                        batch.delete_cf(data_cf, data_key.encode()?);
+                        keys_to_delete.push(encoded_key.to_vec());
                     }
                 }
 
@@ -106,9 +108,17 @@ impl Redis {
                         .fail();
                     }
                     meta_val.set_count(current - to_del);
-                    batch.put_cf(meta_cf, &base_meta_key, meta_val.encoded());
-                    db.write_opt(batch, &self.write_options)
-                        .context(RocksSnafu)?;
+
+                    let mut batch = self.create_batch()?;
+                    for key_to_del in keys_to_delete {
+                        batch.delete(ColumnFamilyIndex::HashesDataCF, &key_to_del)?;
+                    }
+                    batch.put(
+                        ColumnFamilyIndex::MetaCF,
+                        &base_meta_key,
+                        meta_val.encoded(),
+                    )?;
+                    batch.commit()?;
                 }
 
                 Ok(del_cnt)
@@ -276,26 +286,32 @@ impl Redis {
         let meta_cf = &cfs[0];
         let data_cf = &cfs[1];
 
-        let mut batch = WriteBatch::default();
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
         let base_meta_key = BaseMetaKey::new(key).encode()?;
 
-        let create_new_hash =
-            |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: &[u8]| -> Result<()> {
-                let mut hashes_meta =
-                    HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
-                hashes_meta.inner.data_type = DataType::Hash;
-                let version = hashes_meta.update_version();
+        // Helper to create a new hash
+        let create_new_hash = |this: &Self, key: &[u8], field: &[u8], value: &[u8]| -> Result<()> {
+            let mut hashes_meta = HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
+            hashes_meta.inner.data_type = DataType::Hash;
+            let version = hashes_meta.update_version();
 
-                batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
+            let data_key = MemberDataKey::new(key, version, field);
+            let data_value = BaseDataValue::new(value.to_vec());
 
-                let data_key = MemberDataKey::new(key, version, field);
-                let data_value = BaseDataValue::new(value.to_vec());
-                batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
-
-                Ok(())
-            };
+            let mut batch = this.create_batch()?;
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &base_meta_key,
+                &hashes_meta.encode(),
+            )?;
+            batch.put(
+                ColumnFamilyIndex::HashesDataCF,
+                &data_key.encode()?,
+                &data_value.encode(),
+            )?;
+            batch.commit()
+        };
 
         match db
             .get_cf_opt(meta_cf, &base_meta_key, &self.read_options)
@@ -306,9 +322,7 @@ impl Redis {
 
                 if parsed_meta.data_type() != DataType::Hash {
                     if parsed_meta.is_stale() {
-                        create_new_hash(&mut batch, key, field, value)?;
-                        db.write_opt(batch, &self.write_options)
-                            .context(RocksSnafu)?;
+                        create_new_hash(self, key, field, value)?;
                         return Ok(1);
                     } else {
                         return RedisErrSnafu {
@@ -325,14 +339,22 @@ impl Redis {
                 if parsed_meta.is_stale() || parsed_meta.count() == 0 {
                     let version = parsed_meta.initial_meta_value();
                     parsed_meta.set_count(1);
-                    batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
 
                     let data_key = MemberDataKey::new(key, version, field);
                     let data_value = BaseDataValue::new(value.to_vec());
-                    batch.put_cf(data_cf, data_key.encode()?, data_value.encode());
 
-                    db.write_opt(batch, &self.write_options)
-                        .context(RocksSnafu)?;
+                    let mut batch = self.create_batch()?;
+                    batch.put(
+                        ColumnFamilyIndex::MetaCF,
+                        &base_meta_key,
+                        parsed_meta.encoded(),
+                    )?;
+                    batch.put(
+                        ColumnFamilyIndex::HashesDataCF,
+                        &data_key.encode()?,
+                        &data_value.encode(),
+                    )?;
+                    batch.commit()?;
                     Ok(1)
                 } else {
                     let version = parsed_meta.version();
@@ -351,10 +373,13 @@ impl Redis {
                                 Ok(0)
                             } else {
                                 let data_value = BaseDataValue::new(value.to_vec());
-                                batch.put_cf(data_cf, data_key.encode()?, data_value.encode());
-
-                                db.write_opt(batch, &self.write_options)
-                                    .context(RocksSnafu)?;
+                                let mut batch = self.create_batch()?;
+                                batch.put(
+                                    ColumnFamilyIndex::HashesDataCF,
+                                    &data_key.encode()?,
+                                    &data_value.encode(),
+                                )?;
+                                batch.commit()?;
                                 Ok(0)
                             }
                         }
@@ -366,22 +391,27 @@ impl Redis {
                                 .fail();
                             }
                             parsed_meta.modify_count(1);
-                            batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
 
                             let data_value = BaseDataValue::new(value.to_vec());
-                            batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
-
-                            db.write_opt(batch, &self.write_options)
-                                .context(RocksSnafu)?;
+                            let mut batch = self.create_batch()?;
+                            batch.put(
+                                ColumnFamilyIndex::MetaCF,
+                                &base_meta_key,
+                                parsed_meta.encoded(),
+                            )?;
+                            batch.put(
+                                ColumnFamilyIndex::HashesDataCF,
+                                &data_key.encode()?,
+                                &data_value.encode(),
+                            )?;
+                            batch.commit()?;
                             Ok(1)
                         }
                     }
                 }
             }
             None => {
-                create_new_hash(&mut batch, key, field, value)?;
-                db.write_opt(batch, &self.write_options)
-                    .context(RocksSnafu)?;
+                create_new_hash(self, key, field, value)?;
                 Ok(1)
             }
         }
@@ -600,12 +630,12 @@ impl Redis {
             field_map.insert(field.clone(), value.clone());
         }
 
-        let mut batch = WriteBatch::default();
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
         let base_meta_key = BaseMetaKey::new(key).encode()?;
 
-        let create_new_hash = |batch: &mut WriteBatch,
+        // Helper to create new hash
+        let create_new_hash = |this: &Self,
                                key: &[u8],
                                field_map: &std::collections::HashMap<Vec<u8>, Vec<u8>>|
          -> Result<()> {
@@ -615,14 +645,23 @@ impl Redis {
             hashes_meta.inner.data_type = DataType::Hash;
             let version = hashes_meta.update_version();
 
-            batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
+            let mut batch = this.create_batch()?;
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &base_meta_key,
+                &hashes_meta.encode(),
+            )?;
 
             for (field, value) in field_map {
                 let data_key = MemberDataKey::new(key, version, field);
                 let data_value = BaseDataValue::new(value.clone());
-                batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
+                batch.put(
+                    ColumnFamilyIndex::HashesDataCF,
+                    &data_key.encode()?,
+                    &data_value.encode(),
+                )?;
             }
-            Ok(())
+            batch.commit()
         };
 
         match db
@@ -634,9 +673,7 @@ impl Redis {
 
                 if parsed_meta.data_type() != DataType::Hash {
                     if parsed_meta.is_stale() {
-                        create_new_hash(&mut batch, key, &field_map)?;
-                        db.write_opt(batch, &self.write_options)
-                            .context(RocksSnafu)?;
+                        create_new_hash(self, key, &field_map)?;
                         return Ok(());
                     } else {
                         return RedisErrSnafu {
@@ -653,21 +690,35 @@ impl Redis {
                 if parsed_meta.is_stale() || parsed_meta.count() == 0 {
                     let version = parsed_meta.initial_meta_value();
                     parsed_meta.set_count(field_map.len() as u64);
-                    batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
+
+                    let mut batch = self.create_batch()?;
+                    batch.put(
+                        ColumnFamilyIndex::MetaCF,
+                        &base_meta_key,
+                        parsed_meta.encoded(),
+                    )?;
 
                     for (field, value) in &field_map {
                         let data_key = MemberDataKey::new(key, version, field);
                         let data_value = BaseDataValue::new(value.clone());
-                        batch.put_cf(data_cf, data_key.encode()?, data_value.encode());
+                        batch.put(
+                            ColumnFamilyIndex::HashesDataCF,
+                            &data_key.encode()?,
+                            &data_value.encode(),
+                        )?;
                     }
+                    batch.commit()?;
                 } else {
                     let version = parsed_meta.version();
                     let mut new_fields_count = 0i32;
 
+                    // Collect data to write
+                    let mut data_to_write: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
                     for (field, value) in &field_map {
                         let data_key = MemberDataKey::new(key, version, field);
+                        let encoded_key = data_key.encode()?;
                         let exists = db
-                            .get_cf_opt(data_cf, &data_key.encode()?, &self.read_options)
+                            .get_cf_opt(data_cf, &encoded_key, &self.read_options)
                             .context(RocksSnafu)?
                             .is_some();
 
@@ -676,7 +727,7 @@ impl Redis {
                         }
 
                         let data_value = BaseDataValue::new(value.clone());
-                        batch.put_cf(data_cf, data_key.encode()?, data_value.encode());
+                        data_to_write.push((encoded_key.to_vec(), data_value.encode().to_vec()));
                     }
 
                     if new_fields_count > 0 {
@@ -687,17 +738,24 @@ impl Redis {
                             .fail();
                         }
                         parsed_meta.modify_count(new_fields_count as u64);
-                        batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
                     }
-                }
 
-                db.write_opt(batch, &self.write_options)
-                    .context(RocksSnafu)?;
+                    let mut batch = self.create_batch()?;
+                    for (k, v) in data_to_write {
+                        batch.put(ColumnFamilyIndex::HashesDataCF, &k, &v)?;
+                    }
+                    if new_fields_count > 0 {
+                        batch.put(
+                            ColumnFamilyIndex::MetaCF,
+                            &base_meta_key,
+                            parsed_meta.encoded(),
+                        )?;
+                    }
+                    batch.commit()?;
+                }
             }
             None => {
-                create_new_hash(&mut batch, key, &field_map)?;
-                db.write_opt(batch, &self.write_options)
-                    .context(RocksSnafu)?;
+                create_new_hash(self, key, &field_map)?;
             }
         }
         Ok(())
@@ -714,25 +772,32 @@ impl Redis {
         let meta_cf = &cfs[0];
         let data_cf = &cfs[1];
 
-        let mut batch = WriteBatch::default();
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
         let base_meta_key = BaseMetaKey::new(key).encode()?;
 
-        let create_new_hash =
-            |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: &[u8]| -> Result<()> {
-                let mut hashes_meta =
-                    HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
-                hashes_meta.inner.data_type = DataType::Hash;
-                let version = hashes_meta.update_version();
+        // Helper to create new hash
+        let create_new_hash = |this: &Self, key: &[u8], field: &[u8], value: &[u8]| -> Result<()> {
+            let mut hashes_meta = HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
+            hashes_meta.inner.data_type = DataType::Hash;
+            let version = hashes_meta.update_version();
 
-                batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
+            let data_key = MemberDataKey::new(key, version, field);
+            let data_value = BaseDataValue::new(value.to_vec());
 
-                let data_key = MemberDataKey::new(key, version, field);
-                let data_value = BaseDataValue::new(value.to_vec());
-                batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
-                Ok(())
-            };
+            let mut batch = this.create_batch()?;
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &base_meta_key,
+                &hashes_meta.encode(),
+            )?;
+            batch.put(
+                ColumnFamilyIndex::HashesDataCF,
+                &data_key.encode()?,
+                &data_value.encode(),
+            )?;
+            batch.commit()
+        };
 
         match db
             .get_cf_opt(meta_cf, &base_meta_key, &self.read_options)
@@ -743,9 +808,7 @@ impl Redis {
 
                 if parsed_meta.data_type() != DataType::Hash {
                     if parsed_meta.is_stale() {
-                        create_new_hash(&mut batch, key, field, value)?;
-                        db.write_opt(batch, &self.write_options)
-                            .context(RocksSnafu)?;
+                        create_new_hash(self, key, field, value)?;
                         return Ok(1);
                     } else {
                         return RedisErrSnafu {
@@ -762,14 +825,22 @@ impl Redis {
                 if parsed_meta.is_stale() || parsed_meta.count() == 0 {
                     let version = parsed_meta.initial_meta_value();
                     parsed_meta.set_count(1);
-                    batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
 
                     let data_key = MemberDataKey::new(key, version, field);
                     let data_value = BaseDataValue::new(value.to_vec());
-                    batch.put_cf(data_cf, data_key.encode()?, data_value.encode());
 
-                    db.write_opt(batch, &self.write_options)
-                        .context(RocksSnafu)?;
+                    let mut batch = self.create_batch()?;
+                    batch.put(
+                        ColumnFamilyIndex::MetaCF,
+                        &base_meta_key,
+                        parsed_meta.encoded(),
+                    )?;
+                    batch.put(
+                        ColumnFamilyIndex::HashesDataCF,
+                        &data_key.encode()?,
+                        &data_value.encode(),
+                    )?;
+                    batch.commit()?;
                     Ok(1)
                 } else {
                     let version = parsed_meta.version();
@@ -788,22 +859,28 @@ impl Redis {
                                 .fail();
                             }
                             parsed_meta.modify_count(1);
-                            batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
 
                             let data_value = BaseDataValue::new(value.to_vec());
-                            batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
 
-                            db.write_opt(batch, &self.write_options)
-                                .context(RocksSnafu)?;
+                            let mut batch = self.create_batch()?;
+                            batch.put(
+                                ColumnFamilyIndex::MetaCF,
+                                &base_meta_key,
+                                parsed_meta.encoded(),
+                            )?;
+                            batch.put(
+                                ColumnFamilyIndex::HashesDataCF,
+                                &data_key.encode()?,
+                                &data_value.encode(),
+                            )?;
+                            batch.commit()?;
                             Ok(1)
                         }
                     }
                 }
             }
             None => {
-                create_new_hash(&mut batch, key, field, value)?;
-                db.write_opt(batch, &self.write_options)
-                    .context(RocksSnafu)?;
+                create_new_hash(self, key, field, value)?;
                 Ok(1)
             }
         }
@@ -820,26 +897,33 @@ impl Redis {
         let meta_cf = &cfs[0];
         let data_cf = &cfs[1];
 
-        let mut batch = WriteBatch::default();
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
         let base_meta_key = BaseMetaKey::new(key).encode()?;
 
-        let create_new_hash =
-            |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: i64| -> Result<()> {
-                let mut hashes_meta =
-                    HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
-                hashes_meta.inner.data_type = DataType::Hash;
-                let version = hashes_meta.update_version();
+        // Helper to create new hash
+        let create_new_hash = |this: &Self, key: &[u8], field: &[u8], value: i64| -> Result<()> {
+            let mut hashes_meta = HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
+            hashes_meta.inner.data_type = DataType::Hash;
+            let version = hashes_meta.update_version();
 
-                batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
+            let data_key = MemberDataKey::new(key, version, field);
+            let value_str = value.to_string();
+            let data_value = BaseDataValue::new(value_str.into_bytes());
 
-                let data_key = MemberDataKey::new(key, version, field);
-                let value_str = value.to_string();
-                let data_value = BaseDataValue::new(value_str.into_bytes());
-                batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
-                Ok(())
-            };
+            let mut batch = this.create_batch()?;
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &base_meta_key,
+                &hashes_meta.encode(),
+            )?;
+            batch.put(
+                ColumnFamilyIndex::HashesDataCF,
+                &data_key.encode()?,
+                &data_value.encode(),
+            )?;
+            batch.commit()
+        };
 
         match db
             .get_cf_opt(meta_cf, &base_meta_key, &self.read_options)
@@ -850,9 +934,7 @@ impl Redis {
 
                 if parsed_meta.data_type() != DataType::Hash {
                     if parsed_meta.is_stale() {
-                        create_new_hash(&mut batch, key, field, increment)?;
-                        db.write_opt(batch, &self.write_options)
-                            .context(RocksSnafu)?;
+                        create_new_hash(self, key, field, increment)?;
                         return Ok(increment);
                     } else {
                         return RedisErrSnafu {
@@ -869,15 +951,23 @@ impl Redis {
                 if parsed_meta.is_stale() || parsed_meta.count() == 0 {
                     let version = parsed_meta.initial_meta_value();
                     parsed_meta.set_count(1);
-                    batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
 
                     let data_key = MemberDataKey::new(key, version, field);
                     let value_str = increment.to_string();
                     let data_value = BaseDataValue::new(value_str.into_bytes());
-                    batch.put_cf(data_cf, data_key.encode()?, data_value.encode());
 
-                    db.write_opt(batch, &self.write_options)
-                        .context(RocksSnafu)?;
+                    let mut batch = self.create_batch()?;
+                    batch.put(
+                        ColumnFamilyIndex::MetaCF,
+                        &base_meta_key,
+                        parsed_meta.encoded(),
+                    )?;
+                    batch.put(
+                        ColumnFamilyIndex::HashesDataCF,
+                        &data_key.encode()?,
+                        &data_value.encode(),
+                    )?;
+                    batch.commit()?;
                     Ok(increment)
                 } else {
                     let version = parsed_meta.version();
@@ -906,10 +996,14 @@ impl Redis {
 
                             let new_val_str = new_val.to_string();
                             let data_value = BaseDataValue::new(new_val_str.into_bytes());
-                            batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
 
-                            db.write_opt(batch, &self.write_options)
-                                .context(RocksSnafu)?;
+                            let mut batch = self.create_batch()?;
+                            batch.put(
+                                ColumnFamilyIndex::HashesDataCF,
+                                &data_key.encode()?,
+                                &data_value.encode(),
+                            )?;
+                            batch.commit()?;
                             Ok(new_val)
                         }
                         None => {
@@ -920,23 +1014,29 @@ impl Redis {
                                 .fail();
                             }
                             parsed_meta.modify_count(1);
-                            batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
 
                             let value_str = increment.to_string();
                             let data_value = BaseDataValue::new(value_str.into_bytes());
-                            batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
 
-                            db.write_opt(batch, &self.write_options)
-                                .context(RocksSnafu)?;
+                            let mut batch = self.create_batch()?;
+                            batch.put(
+                                ColumnFamilyIndex::MetaCF,
+                                &base_meta_key,
+                                parsed_meta.encoded(),
+                            )?;
+                            batch.put(
+                                ColumnFamilyIndex::HashesDataCF,
+                                &data_key.encode()?,
+                                &data_value.encode(),
+                            )?;
+                            batch.commit()?;
                             Ok(increment)
                         }
                     }
                 }
             }
             None => {
-                create_new_hash(&mut batch, key, field, increment)?;
-                db.write_opt(batch, &self.write_options)
-                    .context(RocksSnafu)?;
+                create_new_hash(self, key, field, increment)?;
                 Ok(increment)
             }
         }
@@ -953,26 +1053,33 @@ impl Redis {
         let meta_cf = &cfs[0];
         let data_cf = &cfs[1];
 
-        let mut batch = WriteBatch::default();
         let key_str = String::from_utf8_lossy(key).to_string();
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
         let base_meta_key = BaseMetaKey::new(key).encode()?;
 
-        let create_new_hash =
-            |batch: &mut WriteBatch, key: &[u8], field: &[u8], value: f64| -> Result<()> {
-                let mut hashes_meta =
-                    HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
-                hashes_meta.inner.data_type = DataType::Hash;
-                let version = hashes_meta.update_version();
+        // Helper to create new hash
+        let create_new_hash = |this: &Self, key: &[u8], field: &[u8], value: f64| -> Result<()> {
+            let mut hashes_meta = HashesMetaValue::new(Bytes::copy_from_slice(&1u64.to_le_bytes()));
+            hashes_meta.inner.data_type = DataType::Hash;
+            let version = hashes_meta.update_version();
 
-                batch.put_cf(meta_cf, &base_meta_key, hashes_meta.encode());
+            let data_key = MemberDataKey::new(key, version, field);
+            let value_str = value.to_string();
+            let data_value = BaseDataValue::new(value_str.into_bytes());
 
-                let data_key = MemberDataKey::new(key, version, field);
-                let value_str = value.to_string();
-                let data_value = BaseDataValue::new(value_str.into_bytes());
-                batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
-                Ok(())
-            };
+            let mut batch = this.create_batch()?;
+            batch.put(
+                ColumnFamilyIndex::MetaCF,
+                &base_meta_key,
+                &hashes_meta.encode(),
+            )?;
+            batch.put(
+                ColumnFamilyIndex::HashesDataCF,
+                &data_key.encode()?,
+                &data_value.encode(),
+            )?;
+            batch.commit()
+        };
 
         match db
             .get_cf_opt(meta_cf, &base_meta_key, &self.read_options)
@@ -983,9 +1090,7 @@ impl Redis {
 
                 if parsed_meta.data_type() != DataType::Hash {
                     if parsed_meta.is_stale() {
-                        create_new_hash(&mut batch, key, field, increment)?;
-                        db.write_opt(batch, &self.write_options)
-                            .context(RocksSnafu)?;
+                        create_new_hash(self, key, field, increment)?;
                         return Ok(increment);
                     } else {
                         return RedisErrSnafu {
@@ -1002,15 +1107,23 @@ impl Redis {
                 if parsed_meta.is_stale() || parsed_meta.count() == 0 {
                     let version = parsed_meta.initial_meta_value();
                     parsed_meta.set_count(1);
-                    batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
 
                     let data_key = MemberDataKey::new(key, version, field);
                     let value_str = increment.to_string();
                     let data_value = BaseDataValue::new(value_str.into_bytes());
-                    batch.put_cf(data_cf, data_key.encode()?, data_value.encode());
 
-                    db.write_opt(batch, &self.write_options)
-                        .context(RocksSnafu)?;
+                    let mut batch = self.create_batch()?;
+                    batch.put(
+                        ColumnFamilyIndex::MetaCF,
+                        &base_meta_key,
+                        parsed_meta.encoded(),
+                    )?;
+                    batch.put(
+                        ColumnFamilyIndex::HashesDataCF,
+                        &data_key.encode()?,
+                        &data_value.encode(),
+                    )?;
+                    batch.commit()?;
                     Ok(increment)
                 } else {
                     let version = parsed_meta.version();
@@ -1042,10 +1155,14 @@ impl Redis {
 
                             let new_val_str = new_val.to_string();
                             let data_value = BaseDataValue::new(new_val_str.into_bytes());
-                            batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
 
-                            db.write_opt(batch, &self.write_options)
-                                .context(RocksSnafu)?;
+                            let mut batch = self.create_batch()?;
+                            batch.put(
+                                ColumnFamilyIndex::HashesDataCF,
+                                &data_key.encode()?,
+                                &data_value.encode(),
+                            )?;
+                            batch.commit()?;
                             Ok(new_val)
                         }
                         None => {
@@ -1056,23 +1173,29 @@ impl Redis {
                                 .fail();
                             }
                             parsed_meta.modify_count(1);
-                            batch.put_cf(meta_cf, &base_meta_key, parsed_meta.encoded());
 
                             let value_str = increment.to_string();
                             let data_value = BaseDataValue::new(value_str.into_bytes());
-                            batch.put_cf(data_cf, &data_key.encode()?, data_value.encode());
 
-                            db.write_opt(batch, &self.write_options)
-                                .context(RocksSnafu)?;
+                            let mut batch = self.create_batch()?;
+                            batch.put(
+                                ColumnFamilyIndex::MetaCF,
+                                &base_meta_key,
+                                parsed_meta.encoded(),
+                            )?;
+                            batch.put(
+                                ColumnFamilyIndex::HashesDataCF,
+                                &data_key.encode()?,
+                                &data_value.encode(),
+                            )?;
+                            batch.commit()?;
                             Ok(increment)
                         }
                     }
                 }
             }
             None => {
-                create_new_hash(&mut batch, key, field, increment)?;
-                db.write_opt(batch, &self.write_options)
-                    .context(RocksSnafu)?;
+                create_new_hash(self, key, field, increment)?;
                 Ok(increment)
             }
         }
