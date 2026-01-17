@@ -334,7 +334,7 @@ impl StorageBackend for RocksDBBackend {
                 }
             }
 
-            db.write(batch).map_err(|e| {
+            db.write(&batch).map_err(|e| {
                 RaftError::Storage(crate::error::StorageError::rocksdb_with_context(
                     e,
                     "RocksDB batch write error",

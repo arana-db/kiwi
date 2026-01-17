@@ -382,8 +382,7 @@ impl MessageEnvelope {
     /// Add authentication to the message
     pub fn add_authentication(&mut self, auth: &NodeAuth) -> RaftResult<()> {
         // Create serializable data without HMAC for authentication
-        // Use a simplified message representation for HMAC
-        let msg_type = match &self.message {
+        let message_str = match &self.message {
             RaftMessage::AppendEntries(_) => "AppendEntries".to_string(),
             RaftMessage::AppendEntriesResponse(_) => "AppendEntriesResponse".to_string(),
             RaftMessage::Vote(_) => "Vote".to_string(),
@@ -397,7 +396,7 @@ impl MessageEnvelope {
         };
         let data_for_hmac = format!(
             "{}:{}:{}:{}:{}",
-            self.message_id, self.from, self.to, self.timestamp, msg_type
+            self.message_id, self.from, self.to, self.timestamp, message_str
         );
 
         self.hmac = Some(auth.generate_hmac(data_for_hmac.as_bytes())?);
@@ -408,7 +407,7 @@ impl MessageEnvelope {
     pub fn verify_authentication(&self, auth: &NodeAuth) -> bool {
         if let Some(ref expected_hmac) = self.hmac {
             // Recreate the same data format used for HMAC generation
-            let msg_type = match &self.message {
+            let message_str = match &self.message {
                 RaftMessage::AppendEntries(_) => "AppendEntries".to_string(),
                 RaftMessage::AppendEntriesResponse(_) => "AppendEntriesResponse".to_string(),
                 RaftMessage::Vote(_) => "Vote".to_string(),
@@ -422,7 +421,7 @@ impl MessageEnvelope {
             };
             let data_for_hmac = format!(
                 "{}:{}:{}:{}:{}",
-                self.message_id, self.from, self.to, self.timestamp, msg_type
+                self.message_id, self.from, self.to, self.timestamp, message_str
             );
 
             auth.verify_hmac(data_for_hmac.as_bytes(), expected_hmac)

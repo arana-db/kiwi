@@ -71,11 +71,11 @@ impl Engine for RocksdbEngine {
     }
 
     fn write(&self, batch: WriteBatch) -> Result<()> {
-        self.db.write(batch)
+        self.db.write(&batch)
     }
 
     fn write_opt(&self, batch: WriteBatch, writeopts: &WriteOptions) -> Result<()> {
-        self.db.write_opt(batch, writeopts)
+        self.db.write_opt(&batch, writeopts)
     }
 
     fn set_options(&self, options: &[(&str, &str)]) -> Result<()> {
