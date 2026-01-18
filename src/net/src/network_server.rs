@@ -47,8 +47,6 @@ pub struct NetworkResources {
     pub storage_client: Arc<StorageClient>,
     pub cmd_table: Arc<CmdTable>,
     pub executor: Arc<CmdExecutor>,
-    pub cluster_mode: crate::raft_network_handle::ClusterMode,
-    pub raft_router: Option<Arc<raft::RequestRouter>>,
 }
 
 /// NetworkServer replaces TcpServer with dual runtime architecture support
@@ -58,7 +56,6 @@ pub struct NetworkResources {
 ///
 /// # Requirements
 /// - Requirement 6.1: Network layer SHALL identify read/write operation types
-/// - Requirement 6.2: Write operations SHALL route to RaftNode.propose()
 pub struct NetworkServer {
     /// Address to bind the server to
     addr: String,
@@ -70,16 +67,12 @@ pub struct NetworkServer {
     executor: Arc<CmdExecutor>,
     /// Connection pool for managing network resources
     connection_pool: Arc<ConnectionPool<NetworkResources>>,
-    /// Cluster mode for routing decisions
-    cluster_mode: crate::raft_network_handle::ClusterMode,
-    /// Optional raft request router for cluster mode
-    raft_router: Option<Arc<raft::RequestRouter>>,
 }
 
 impl NetworkServer {
     /// Create a new NetworkServer with the given configuration
     ///
-    /// Defaults to single-node mode. Use `with_cluster_mode` to enable cluster mode.
+    /// Defaults to single-node mode.
     pub fn new(
         addr: Option<String>,
         storage_client: Arc<StorageClient>,
@@ -94,8 +87,6 @@ impl NetworkServer {
             cmd_table: cmd_table.clone(),
             executor: executor.clone(),
             connection_pool: Arc::new(ConnectionPool::new(pool_config)),
-            cluster_mode: crate::raft_network_handle::ClusterMode::Single,
-            raft_router: None,
         })
     }
 
@@ -113,29 +104,7 @@ impl NetworkServer {
             cmd_table: cmd_table.clone(),
             executor: executor.clone(),
             connection_pool: Arc::new(ConnectionPool::new(pool_config)),
-            cluster_mode: crate::raft_network_handle::ClusterMode::Single,
-            raft_router: None,
         })
-    }
-
-    /// Set the cluster mode for this server
-    ///
-    /// # Requirements
-    /// - Requirement 6.1: Network layer SHALL support mode switching
-    pub fn set_cluster_mode(&mut self, mode: crate::raft_network_handle::ClusterMode) {
-        info!("Setting cluster mode to: {:?}", mode);
-        self.cluster_mode = mode;
-    }
-    pub fn set_raft_router(&mut self, router: Arc<raft::RequestRouter>) {
-        self.raft_router = Some(router);
-    }
-    pub fn raft_router(&self) -> Option<Arc<raft::RequestRouter>> {
-        self.raft_router.clone()
-    }
-
-    /// Get the current cluster mode
-    pub fn cluster_mode(&self) -> crate::raft_network_handle::ClusterMode {
-        self.cluster_mode
     }
 
     /// Start background task for connection pool cleanup
@@ -200,9 +169,6 @@ impl ServerTrait for NetworkServer {
             let cmd_table = self.cmd_table.clone();
             let executor = self.executor.clone();
 
-            let cluster_mode = self.cluster_mode;
-            let raft_router = self.raft_router.clone();
-
             tokio::spawn(async move {
                 // Get or create resources from the pool
                 let pooled_resources = match pool
@@ -211,8 +177,6 @@ impl ServerTrait for NetworkServer {
                             storage_client: storage_client.clone(),
                             cmd_table: cmd_table.clone(),
                             executor: executor.clone(),
-                            cluster_mode,
-                            raft_router: raft_router.clone(),
                         })
                     })
                     .await
@@ -231,14 +195,12 @@ impl ServerTrait for NetworkServer {
                 let stream = TcpStreamWrapper::new(socket);
                 let client = Arc::new(Client::new(Box::new(stream)));
 
-                // Process the connection using Raft-aware handler
-                let result = crate::raft_network_handle::process_raft_aware_connection(
+                // Process the connection
+                let result = crate::handle::process_connection_with_storage_client(
                     client,
                     pooled_resources.inner().storage_client.clone(),
                     pooled_resources.inner().cmd_table.clone(),
                     pooled_resources.inner().executor.clone(),
-                    pooled_resources.inner().cluster_mode,
-                    pooled_resources.inner().raft_router.clone(),
                 )
                 .await;
 
@@ -287,10 +249,6 @@ mod tests {
         let server = server.unwrap();
         assert_eq!(server.addr(), "127.0.0.1:0");
         assert!(server.is_healthy());
-        assert_eq!(
-            server.cluster_mode(),
-            crate::raft_network_handle::ClusterMode::Single
-        );
     }
 
     #[tokio::test]
@@ -342,45 +300,5 @@ mod tests {
         assert!(server.is_ok());
         let server = server.unwrap();
         assert_eq!(server.addr(), "127.0.0.1:7379");
-    }
-
-    #[tokio::test]
-    async fn test_network_server_cluster_mode_switching() {
-        let message_channel = Arc::new(MessageChannel::new(1000));
-        let runtime_client = Arc::new(RuntimeStorageClient::new(
-            message_channel,
-            Duration::from_secs(30),
-        ));
-        let storage_client = Arc::new(crate::storage_client::StorageClient::new(runtime_client));
-        let cmd_table = Arc::new(create_command_table());
-        let executor = Arc::new(CmdExecutorBuilder::new().build());
-
-        let mut server = NetworkServer::new(
-            Some("127.0.0.1:0".to_string()),
-            storage_client,
-            cmd_table,
-            executor,
-        )
-        .unwrap();
-
-        // Default should be single mode
-        assert_eq!(
-            server.cluster_mode(),
-            crate::raft_network_handle::ClusterMode::Single
-        );
-
-        // Switch to cluster mode
-        server.set_cluster_mode(crate::raft_network_handle::ClusterMode::Cluster);
-        assert_eq!(
-            server.cluster_mode(),
-            crate::raft_network_handle::ClusterMode::Cluster
-        );
-
-        // Switch back to single mode
-        server.set_cluster_mode(crate::raft_network_handle::ClusterMode::Single);
-        assert_eq!(
-            server.cluster_mode(),
-            crate::raft_network_handle::ClusterMode::Single
-        );
     }
 }

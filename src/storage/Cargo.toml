@@ -47,6 +47,5 @@ engine.workspace = true
 foyer.workspace = true
 rand.workspace = true
 
-# Raft integration
-raft = { path = "../raft" }
+# Raft integration (removed: src/raft no longer exists)
 

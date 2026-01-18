@@ -20,7 +20,6 @@ pub mod append;
 pub mod bitcount;
 pub mod bitop;
 pub mod bitpos;
-pub mod cluster;
 pub mod decr;
 pub mod decrby;
 pub mod del;
@@ -137,7 +136,6 @@ bitflags! {
         const MODULE_NO_CLUSTER  = 1 << 13; // No cluster mode support
         const NO_MULTI           = 1 << 14; // Cannot be pipelined
         const EXCLUSIVE          = 1 << 15; // May change Storage pointer
-        const RAFT               = 1 << 16; // raft
     }
 }
 
@@ -165,7 +163,6 @@ bitflags! {
         const CONNECTION    = 1 << 18;
         const TRANSACTION   = 1 << 19;
         const SCRIPTING     = 1 << 20;
-        const RAFT          = 1 << 21;
     }
 }
 

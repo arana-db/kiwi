@@ -18,31 +18,12 @@
 use clap::Parser;
 use conf::config::Config;
 use log::{debug, error, info, warn};
-// ServerFactory is used via net::ServerFactory::create_server_with_mode
+// ServerFactory is used via net::ServerFactory::create_server
 use runtime::{DualRuntimeError, RuntimeConfig, RuntimeManager, StorageServer};
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage::StorageOptions;
 use storage::storage::Storage;
-
-/// Convert conf::config::ClusterConfig to raft::types::ClusterConfig
-///
-/// This provides a unified entry point for cluster configuration conversion,
-/// following the pattern used in kiwi-cpp where configuration is mapped
-/// at the server initialization layer.
-fn convert_cluster_config(config: &conf::config::ClusterConfig) -> raft::types::ClusterConfig {
-    raft::types::ClusterConfig {
-        enabled: config.enabled,
-        node_id: config.node_id,
-        cluster_members: config.cluster_members.clone(),
-        data_dir: config.data_dir.clone(),
-        heartbeat_interval_ms: config.heartbeat_interval_ms,
-        election_timeout_min_ms: config.election_timeout_min_ms,
-        election_timeout_max_ms: config.election_timeout_max_ms,
-        snapshot_threshold: config.snapshot_threshold,
-        max_payload_entries: config.max_payload_entries,
-    }
-}
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
 #[derive(Parser)]
@@ -54,11 +35,11 @@ struct Args {
     #[arg(short, long)]
     config: Option<String>,
 
-    /// Force single-node mode (disable cluster even if configured)
+    /// Force single-node mode (no-op; cluster mode is removed)
     #[arg(long)]
     single_node: bool,
 
-    /// Initialize a new cluster (only for the first node)
+    /// Initialize a new cluster (no-op; cluster mode is removed)
     #[arg(long)]
     init_cluster: bool,
 }
@@ -153,96 +134,15 @@ fn main() -> std::io::Result<()> {
     let result = network_handle.block_on(async {
         info!("Storage server started in background");
 
-        // Determine if we should run in cluster mode using the new method
-        let cluster_mode = config.should_run_cluster_mode(args.single_node);
+        // NOTE: Raft/cluster mode has been removed from this repo.
+        // We always run in single-node mode.
+        info!("Starting Kiwi server in single-node mode on {}", addr);
 
-        if cluster_mode {
-            info!("Starting Kiwi server in cluster mode");
-
-            // Get cluster information
-            let cluster_info = config.get_cluster_info();
-            info!("Node ID: {}", cluster_info.node_id);
-            info!("Cluster members: {:?}", config.cluster.cluster_members);
-            info!("Self endpoint: {:?}", cluster_info.self_endpoint);
-            info!("Peer endpoints: {:?}", cluster_info.peer_endpoints);
-
-            // Validate cluster configuration for startup
-            if let Err(e) = config.validate_cluster_startup(args.init_cluster) {
-                error!("Cluster configuration validation failed: {}", e);
-                return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, e));
-            }
-
-            // Check if cluster configuration is valid
-            if !cluster_info.is_valid_cluster {
-                error!("Invalid cluster configuration detected");
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "Invalid cluster configuration. Please check node ID and cluster members.",
-                ));
-            }
-
-            // Create Raft cluster configuration from the validated config
-            let raft_cluster_config = convert_cluster_config(&config.cluster);
-
-            // Initialize Raft node
-            info!(
-                "Initializing Raft node with configuration: {:?}",
-                raft_cluster_config
-            );
-            let raft_node = match raft::RaftNode::new(raft_cluster_config).await {
-                Ok(node) => {
-                    info!("Raft node initialized successfully");
-                    Arc::new(node)
-                }
-                Err(e) => {
-                    error!("Failed to initialize Raft node: {}", e);
-                    return Err(std::io::Error::other(format!(
-                        "Failed to initialize Raft node: {}",
-                        e
-                    )));
-                }
-            };
-
-            // Start Raft node
-            info!("Starting Raft node (init_cluster: {})", args.init_cluster);
-            if let Err(e) = raft_node.start(args.init_cluster).await {
-                error!("Failed to start Raft node: {}", e);
-                return Err(std::io::Error::other(format!(
-                    "Failed to start Raft node: {}",
-                    e
-                )));
-            }
-
-            info!("Raft node started successfully");
-
-            // Start server in cluster mode with raft node injected
-            match start_server_with_mode(
-                protocol,
-                &addr,
-                &mut runtime_manager,
-                true,
-                Some(Arc::clone(&raft_node)),
-            )
-            .await
-            {
-                Ok(_) => info!("Server started successfully in cluster mode"),
-                Err(e) => {
-                    error!("Failed to start server: {}", e);
-                    return Err(e);
-                }
-            }
-        } else {
-            if config.cluster.enabled {
-                warn!("Cluster mode disabled by --single-node flag");
-            }
-            info!("Starting Kiwi server in single-node mode on {}", addr);
-
-            match start_server_with_mode(protocol, &addr, &mut runtime_manager, false, None).await {
-                Ok(_) => info!("Server started successfully"),
-                Err(e) => {
-                    error!("Failed to start server: {}", e);
-                    return Err(e);
-                }
+        match start_server(protocol, &addr, &mut runtime_manager).await {
+            Ok(_) => info!("Server started successfully"),
+            Err(e) => {
+                error!("Failed to start server: {}", e);
+                return Err(e);
             }
         }
 
@@ -301,34 +201,14 @@ async fn initialize_storage_server(
     Ok(())
 }
 
-/// Start the server with proper error handling and cluster mode support
-///
-/// # Requirements
-/// - Requirement 6.1: Network layer SHALL support mode switching
-async fn start_server_with_mode(
+async fn start_server(
     protocol: &str,
     addr: &str,
     runtime_manager: &mut RuntimeManager,
-    cluster_mode: bool,
-    raft_node_opt: Option<Arc<raft::RaftNode>>,
 ) -> std::io::Result<()> {
-    let mode = if cluster_mode {
-        net::raft_network_handle::ClusterMode::Cluster
-    } else {
-        net::raft_network_handle::ClusterMode::Single
-    };
-
-    info!("Starting server in {:?} mode", mode);
-
-    if let Some(server) = net::ServerFactory::create_server_with_mode(
-        protocol,
-        Some(addr.to_string()),
-        runtime_manager,
-        mode,
-        raft_node_opt,
-    ) {
-        // If cluster mode, set raft router from a globally accessible RaftNode if available
-        // For now, server will run without explicit router unless provided via ServerFactory
+    if let Some(server) =
+        net::ServerFactory::create_server(protocol, Some(addr.to_string()), runtime_manager)
+    {
         server.run().await.map_err(|e| {
             std::io::Error::other(format!(
                 "Failed to start the server on {}: {}. Please check the server configuration and ensure the address is available.",

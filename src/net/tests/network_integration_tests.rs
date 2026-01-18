@@ -15,9 +15,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Integration tests for network layer with Raft awareness
+// Integration tests for command classification helpers.
 
-use net::raft_network_handle::{ClusterMode, is_read_command, is_write_command};
+use net::network_handle::{is_read_command, is_write_command};
 
 #[test]
 fn test_command_classification_integration() {
@@ -57,16 +57,6 @@ fn test_command_classification_integration() {
             cmd
         );
     }
-}
-
-#[test]
-fn test_cluster_mode_values() {
-    let single = ClusterMode::Single;
-    let cluster = ClusterMode::Cluster;
-
-    assert_ne!(single, cluster);
-    assert_eq!(single, ClusterMode::Single);
-    assert_eq!(cluster, ClusterMode::Cluster);
 }
 
 #[test]

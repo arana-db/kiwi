@@ -51,23 +51,16 @@ mod redis_lists;
 mod redis_sets;
 mod redis_strings;
 
-pub mod cluster_storage;
 pub mod error;
 pub mod options;
 pub mod storage;
 mod zset_score_key_format;
 
-// Raft integration modules
-pub mod raft_integration;
-mod redis_for_raft;
-
-pub use redis_for_raft::RedisForRaft;
-mod redis_zsets;
+pub mod redis_zsets;
 
 pub use base_key_format::BaseMetaKey;
 pub use base_value_format::*;
 pub use batch::{Batch, BinlogBatch, RocksBatch};
-pub use cluster_storage::ClusterStorage;
 pub use error::Result;
 pub use expiration_manager::ExpirationManager;
 pub use options::StorageOptions;
