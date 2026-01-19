@@ -53,7 +53,7 @@ fmt-check:
 
 lint:
 	@echo "Linting code..."
-	@cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings
+	@cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings -D clippy::unwrap_used
 
 help:
 	@echo "Available commands:"
