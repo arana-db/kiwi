@@ -25,6 +25,10 @@ use std::sync::Arc;
 use storage::StorageOptions;
 use storage::storage::Storage;
 
+use actix_web::{App, HttpServer, web};
+use raft::api::{RaftAppData, add_learner, change_membership, init, leader, metrics, read, write};
+use raft::node::{RaftConfig, create_raft_node};
+
 /// Kiwi - A Redis-compatible key-value database built in Rust
 #[derive(Parser)]
 #[command(name = "kiwi-server")]
@@ -108,37 +112,41 @@ fn main() -> std::io::Result<()> {
             std::io::Error::other(format!("Failed to initialize storage components: {}", e))
         })?;
 
-    info!("Storage components initialized, starting storage server...");
-
-    // Initialize storage server in storage runtime (runs in background)
-
-    storage_handle.spawn(async move {
-        info!("Initializing storage server...");
-        match initialize_storage_server(storage_receiver).await {
-            Ok(_) => {
-                error!("Storage server exited unexpectedly - this should never happen!");
-            }
-            Err(e) => {
-                error!("Storage server failed: {}", e);
-            }
-        }
-    });
-
-    // Store the handle to monitor the task (optional)
-    // You could add this to RuntimeManager to track the storage server task
-
-    // Give storage server a moment to initialize
-    std::thread::sleep(std::time::Duration::from_millis(100));
-
     // Use the network runtime to run the main server logic
     let result = network_handle.block_on(async {
+        let storage = initialize_storage()
+            .await
+            .map_err(|e| std::io::Error::other(format!("Failed to initialize storage: {}", e)))?;
+
+        info!("Storage components initialized, starting storage server...");
+
+        // Initialize storage server in storage runtime (runs in background)
+
+        storage_handle.spawn(async move {
+            info!("Initializing storage server...");
+            match initialize_storage_server(storage_receiver).await {
+                Ok(_) => {
+                    error!("Storage server exited unexpectedly - this should never happen!");
+                }
+                Err(e) => {
+                    error!("Storage server failed: {}", e);
+                }
+            }
+        });
+
+        // Store the handle to monitor the task (optional)
+        // You could add this to RuntimeManager to track the storage server task
+
+        // Give storage server a moment to initialize
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
         info!("Storage server started in background");
 
         // NOTE: Raft/cluster mode has been removed from this repo.
         // We always run in single-node mode.
         info!("Starting Kiwi server in single-node mode on {}", addr);
 
-        match start_server(protocol, &addr, &mut runtime_manager).await {
+        match start_server(protocol, &addr, &mut runtime_manager, &storage, &config).await {
             Ok(_) => info!("Server started successfully"),
             Err(e) => {
                 error!("Failed to start server: {}", e);
@@ -155,6 +163,31 @@ fn main() -> std::io::Result<()> {
     }
 
     result
+}
+
+async fn initialize_storage() -> Result<Arc<Storage>, DualRuntimeError> {
+    info!("Initializing storage...");
+
+    let storage_options = Arc::new(StorageOptions::default());
+    let db_path = PathBuf::from("./db");
+
+    let mut storage = Storage::new(1, 0);
+
+    info!("Opening storage at path: {:?}", db_path);
+    let bg_task_receiver = storage
+        .open(storage_options, &db_path)
+        .map_err(|e| DualRuntimeError::storage_runtime(format!("Failed to open storage: {}", e)))?;
+    info!("Storage opened successfully");
+
+    tokio::spawn(async move {
+        let mut receiver = bg_task_receiver;
+        while let Some(_task) = receiver.recv().await {
+            debug!("Processing background task");
+        }
+        info!("Background task receiver closed");
+    });
+
+    Ok(Arc::new(storage))
 }
 
 /// Initialize the storage server in the storage runtime
@@ -205,16 +238,62 @@ async fn start_server(
     protocol: &str,
     addr: &str,
     runtime_manager: &mut RuntimeManager,
+    storage: &Arc<Storage>,
+    config: &Config,
 ) -> std::io::Result<()> {
     if let Some(server) =
         net::ServerFactory::create_server(protocol, Some(addr.to_string()), runtime_manager)
     {
-        server.run().await.map_err(|e| {
-            std::io::Error::other(format!(
-                "Failed to start the server on {}: {}. Please check the server configuration and ensure the address is available.",
-                addr, e
-            ))
-        })
+        tokio::spawn(async move {
+            if let Err(e) = server.run().await {
+                error!("Redis server error: {}", e);
+            }
+        });
+
+        if let Some(raft_config) = &config.raft {
+            info!("Starting Raft HTTP server on {}", raft_config.raft_addr);
+
+            let raft_config = RaftConfig {
+                node_id: raft_config.node_id,
+                raft_addr: raft_config.raft_addr.clone(),
+                resp_addr: raft_config.resp_addr.clone(),
+                data_dir: PathBuf::from(&raft_config.data_dir),
+                ..Default::default()
+            };
+
+            let raft_app = create_raft_node(raft_config, storage.clone())
+                .await
+                .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
+
+            let raft_addr = raft_app.raft_addr.clone();
+            let app_data = web::Data::new(RaftAppData { app: raft_app });
+
+            tokio::spawn(async move {
+                info!("Starting Raft HTTP server...");
+                if let Err(e) = HttpServer::new(move || {
+                    App::new()
+                        .app_data(app_data.clone())
+                        .service(write)
+                        .service(read)
+                        .service(metrics)
+                        .service(leader)
+                        .service(init)
+                        .service(add_learner)
+                        .service(change_membership)
+                })
+                .bind(&raft_addr)
+                .map_err(|e| {
+                    std::io::Error::other(format!("Failed to bind Raft HTTP server: {}", e))
+                })?
+                .run()
+                .await
+                {
+                    error!("Raft HTTP server error: {}", e);
+                }
+            });
+        }
+
+        Ok(())
     } else {
         Err(std::io::Error::other(format!(
             "Failed to create server for protocol '{}' on address '{}'",

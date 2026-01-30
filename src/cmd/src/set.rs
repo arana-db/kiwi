@@ -23,6 +23,8 @@ use storage::storage::Storage;
 
 use crate::{Cmd, CmdFlags, CmdMeta};
 use crate::{impl_cmd_clone_box, impl_cmd_meta};
+use raft::types::{Binlog, BinlogEntry, ColumnFamilyIndex as RaftCfIndex, OperateType};
+use storage::slot_indexer::key_to_slot_id;
 
 #[derive(Clone, Default)]
 pub struct SetCmd {
@@ -34,8 +36,8 @@ impl SetCmd {
         Self {
             meta: CmdMeta {
                 name: "set".to_string(),
-                arity: 3, // SET key value
-                flags: CmdFlags::WRITE,
+                arity: 3,
+                flags: CmdFlags::WRITE | CmdFlags::RAFT,
                 ..Default::default()
             },
         }
@@ -71,5 +73,25 @@ impl Cmd for SetCmd {
                 client.set_reply(RespData::Error(format!("ERR {e}").into()));
             }
         }
+    }
+
+    fn to_binlog(&self, client: &Client) -> Option<Binlog> {
+        let key = client.key();
+        let value = &client.argv()[2];
+
+        let slot_id = key_to_slot_id(key) as u32;
+
+        let entry = BinlogEntry {
+            cf_idx: RaftCfIndex::MetaCF as u32,
+            op_type: OperateType::Put,
+            key: key.clone(),
+            value: Some(value.clone()),
+        };
+
+        Some(Binlog {
+            db_id: 0,
+            slot_idx: slot_id,
+            entries: vec![entry],
+        })
     }
 }

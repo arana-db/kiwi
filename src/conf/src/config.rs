@@ -53,7 +53,16 @@ pub struct Config {
     pub log_dir: String,
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
-    // Cluster configuration removed
+    pub raft: Option<RaftClusterConfig>,
+}
+
+#[derive(Debug, Validate, Clone)]
+pub struct RaftClusterConfig {
+    #[validate(range(min = 1))]
+    pub node_id: u64,
+    pub raft_addr: String,
+    pub resp_addr: String,
+    pub data_dir: String,
 }
 
 // set default value for config
@@ -86,6 +95,7 @@ impl Default for Config {
             db_instance_num: 3,
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
+            raft: None,
         }
     }
 }
@@ -102,6 +112,12 @@ impl Config {
 
         // Create config from parsed values
         let mut config = Config::default();
+
+        let mut raft_node_id: Option<u64> = None;
+        let mut raft_addr: Option<String> = None;
+        let mut raft_resp_addr: Option<String> = None;
+        let mut raft_data_dir: Option<String> = None;
+
         // Parse each configuration value
         for (key, value) in config_map {
             match key.as_str() {
@@ -295,11 +311,39 @@ impl Config {
                             )),
                         })?;
                 }
+                "raft-node-id" => {
+                    raft_node_id = Some(value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!(
+                            "Invalid raft-node-id: {}",
+                            e
+                        )),
+                    })?);
+                }
+                "raft-addr" => {
+                    raft_addr = Some(value);
+                }
+                "raft-resp-addr" => {
+                    raft_resp_addr = Some(value);
+                }
+                "raft-data-dir" => {
+                    raft_data_dir = Some(value);
+                }
                 _ => {
                     // Unknown configuration key, skip it
                     continue;
                 }
             }
+        }
+
+        if let (Some(node_id), Some(addr), Some(resp_addr), Some(data_dir)) =
+            (raft_node_id, raft_addr, raft_resp_addr, raft_data_dir)
+        {
+            config.raft = Some(RaftClusterConfig {
+                node_id,
+                raft_addr: addr,
+                resp_addr,
+                data_dir,
+            });
         }
 
         config

@@ -30,7 +30,8 @@ use crate::error::{Error, MpscSnafu, Result};
 use crate::expiration_manager::ExpirationManager;
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
-use crate::{Redis, StorageOptions, data_type_to_tag};
+use crate::{ColumnFamilyIndex, Redis, StorageOptions, data_type_to_tag};
+use conf::raft_type::{Binlog, OperateType};
 
 pub enum TaskType {
     None = 0,
@@ -415,4 +416,47 @@ impl Storage {
         self.cursors_store.insert(index_key, index_value);
         Ok(())
     }
+
+    pub fn on_binlog_write(&self, binlog: &Binlog) -> Result<()> {
+        let slot_id = binlog.slot_idx as usize;
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let instance = &self.insts[instance_id];
+
+        let mut batch = instance.create_batch()?;
+
+        for entry in &binlog.entries {
+            let cf_idx = match entry.cf_idx {
+                0 => ColumnFamilyIndex::MetaCF,
+                1 => ColumnFamilyIndex::HashesDataCF,
+                2 => ColumnFamilyIndex::SetsDataCF,
+                3 => ColumnFamilyIndex::ListsDataCF,
+                4 => ColumnFamilyIndex::ZsetsDataCF,
+                5 => ColumnFamilyIndex::ZsetsScoreCF,
+                _ => {
+                    return Err(crate::error::Error::RedisErr {
+                        message: format!("Invalid column family index: {}", entry.cf_idx),
+                        location: snafu::location!(),
+                    });
+                }
+            };
+
+            match entry.op_type {
+                OperateType::Put => {
+                    if let Some(value) = &entry.value {
+                        batch.put(cf_idx, &entry.key, value)?;
+                    }
+                }
+                OperateType::Delete => {
+                    batch.delete(cf_idx, &entry.key)?;
+                }
+                OperateType::NoOp => {}
+            }
+        }
+
+        Box::new(batch).commit()?;
+        Ok(())
+    }
+
+
+
 }

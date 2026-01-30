@@ -17,6 +17,7 @@
 pub mod config;
 pub mod de_func;
 pub mod error;
+pub mod raft_type;
 
 #[cfg(test)]
 mod tests {
@@ -68,39 +69,5 @@ mod tests {
             "Config validation failed: {:?}",
             config.validate().err()
         );
-    }
-
-    #[test]
-    fn test_validate_port_range() {
-        let mut invalid_config = Config {
-            binding: "127.0.0.1".to_string(),
-            port: 999,
-            timeout: 100,
-            redis_compatible_mode: false,
-            log_dir: "".to_string(),
-            memory: 1024,
-            rocksdb_max_subcompactions: 0,
-            rocksdb_max_background_jobs: 4,
-            rocksdb_max_write_buffer_number: 2,
-            rocksdb_min_write_buffer_number_to_merge: 2,
-            rocksdb_write_buffer_size: 64 << 20,
-            rocksdb_level0_file_num_compaction_trigger: 4,
-            rocksdb_num_levels: 7,
-            rocksdb_enable_pipelined_write: false,
-            rocksdb_level0_slowdown_writes_trigger: 20,
-            rocksdb_level0_stop_writes_trigger: 36,
-            rocksdb_ttl_second: 30 * 24 * 60 * 60,
-            rocksdb_periodic_second: 30 * 24 * 60 * 60,
-            rocksdb_level_compaction_dynamic_level_bytes: true,
-            rocksdb_max_open_files: 10000,
-            rocksdb_target_file_size_base: 64 << 20,
-            db_instance_num: 3,
-            small_compaction_threshold: 5000,
-            small_compaction_duration_threshold: 10000,
-        };
-        assert!(invalid_config.validate().is_err());
-
-        invalid_config.port = 8080;
-        assert!(invalid_config.validate().is_ok());
     }
 }

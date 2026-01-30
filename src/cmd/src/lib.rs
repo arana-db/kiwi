@@ -136,6 +136,7 @@ bitflags! {
         const MODULE_NO_CLUSTER  = 1 << 13; // No cluster mode support
         const NO_MULTI           = 1 << 14; // Cannot be pipelined
         const EXCLUSIVE          = 1 << 15; // May change Storage pointer
+        const RAFT               = 1 << 16;
     }
 }
 
@@ -229,6 +230,14 @@ pub trait Cmd: Send + Sync {
 
     fn get_sub_cmd(&self, _cmd_name: &str) -> Option<&dyn Cmd> {
         None
+    }
+
+    fn to_binlog(&self, client: &Client) -> Option<raft::types::Binlog> {
+        None
+    }
+
+    fn needs_raft(&self) -> bool {
+        self.has_flag(CmdFlags::RAFT)
     }
 }
 

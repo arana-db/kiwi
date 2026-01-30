@@ -1,0 +1,107 @@
+use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
+use openraft::{Config, Raft};
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+use crate::log_store::LogStore;
+use crate::network::KiwiNetworkFactory;
+use crate::state_machine::KiwiStateMachine;
+use storage::storage::Storage;
+
+pub struct RaftApp {
+    pub node_id: u64,
+    pub raft_addr: String,
+    pub resp_addr: String,
+    pub raft: Raft<KiwiTypeConfig>,
+    pub storage: Arc<Storage>,
+}
+
+impl RaftApp {
+    pub fn is_leader(&self) -> bool {
+        let metrics = self.raft.metrics();
+        matches!(metrics.borrow().current_leader, Some(id) if id == self.node_id)
+    }
+
+    pub fn get_leader(&self) -> Option<(u64, KiwiNode)> {
+        let metrics = self.raft.metrics().borrow();
+        if let Some(leader_id) = metrics.current_leader {
+            if let Some(membership) = &metrics.membership_config.membership() {
+                if let Some(node) = membership.get_node(&leader_id) {
+                    return Some((leader_id, node.clone()));
+                }
+            }
+        }
+        None
+    }
+
+    pub async fn client_write(&self, binlog: Binlog) -> Result<BinlogResponse, anyhow::Error> {
+        let res = self.raft.client_write(binlog).await?;
+        Ok(res.data)
+    }
+}
+
+pub struct RaftConfig {
+    pub node_id: u64,
+    pub raft_addr: String,
+    pub resp_addr: String,
+    pub data_dir: PathBuf,
+    pub heartbeat_interval: u64,
+    pub election_timeout_min: u64,
+    pub election_timeout_max: u64,
+}
+
+impl Default for RaftConfig {
+    fn default() -> Self {
+        Self {
+            node_id: 1,
+            raft_addr: "127.0.0.1:8081".to_string(),
+            resp_addr: "127.0.0.1:6379".to_string(),
+            data_dir: PathBuf::from("/tmp/kiwi/raft"),
+            heartbeat_interval: 200,
+            election_timeout_min: 500,
+            election_timeout_max: 1000,
+        }
+    }
+}
+
+pub async fn create_raft_node(
+    config: RaftConfig,
+    storage: Arc<Storage>,
+) -> Result<Arc<RaftApp>, anyhow::Error> {
+    let raft_config = Config {
+        heartbeat_interval: config.heartbeat_interval,
+        election_timeout_min: config.election_timeout_min,
+        election_timeout_max: config.election_timeout_max,
+        ..Default::default()
+    };
+    let raft_config = Arc::new(raft_config.validate()?);
+
+    let log_store_path = config.data_dir.join("raft_logs");
+    std::fs::create_dir_all(&log_store_path)?;
+
+    let log_store = LogStore::new();
+
+    let state_machine = Arc::new(RwLock::new(KiwiStateMachine::new(config.node_id, storage)));
+
+    let network = KiwiNetworkFactory::new();
+
+    let raft = Raft::new(
+        config.node_id,
+        raft_config,
+        network,
+        log_store,
+        state_machine,
+    )
+    .await?;
+
+    let app = Arc::new(RaftApp {
+        node_id: config.node_id,
+        raft_addr: config.raft_addr,
+        resp_addr: config.resp_addr,
+        raft,
+        storage,
+    });
+
+    Ok(app)
+}
