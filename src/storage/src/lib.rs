@@ -35,7 +35,7 @@ mod lists_data_key_format;
 
 mod coding;
 mod expiration_manager;
-mod slot_indexer;
+pub mod slot_indexer;
 mod statistics;
 mod util;
 

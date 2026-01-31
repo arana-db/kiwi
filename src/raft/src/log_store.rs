@@ -5,13 +5,15 @@
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;
-use std::io;
 use std::ops::RangeBounds;
 use std::sync::Arc;
 
+use openraft::Entry;
+use openraft::LogId;
 use openraft::LogState;
 use openraft::RaftLogReader;
-use openraft::RaftTypeConfig;
+use openraft::StorageError;
+use openraft::Vote;
 use openraft::storage::LogFlushed;
 
 use conf::raft_type::KiwiTypeConfig;
@@ -25,16 +27,16 @@ pub struct LogStore {
 #[derive(Debug)]
 struct LogStoreInner {
     /// 最后清理的日志 ID
-    last_purged_log_id: Option<LogIdOf<KiwiTypeConfig>>,
+    last_purged_log_id: Option<LogId<u64>>,
 
     /// Raft 日志条目
-    logs: BTreeMap<u64, EntryOf<KiwiTypeConfig>>,
+    logs: BTreeMap<u64, Entry<KiwiTypeConfig>>,
 
     /// 当前授予的投票
-    vote: Option<VoteOf<KiwiTypeConfig>>,
+    vote: Option<Vote<u64>>,
 
     /// 已提交的日志 ID
-    committed: Option<LogIdOf<KiwiTypeConfig>>,
+    committed: Option<LogId<u64>>,
 }
 
 impl Default for LogStoreInner {
@@ -61,7 +63,7 @@ impl LogStoreInner {
     async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug>(
         &mut self,
         range: RB,
-    ) -> Result<Vec<EntryOf<KiwiTypeConfig>>, io::Error> {
+    ) -> Result<Vec<Entry<KiwiTypeConfig>>, StorageError<u64>> {
         let response = self
             .logs
             .range(range.clone())
@@ -70,8 +72,8 @@ impl LogStoreInner {
         Ok(response)
     }
 
-    async fn get_log_state(&mut self) -> Result<LogState<KiwiTypeConfig>, io::Error> {
-        let last = self.logs.iter().next_back().map(|(_, ent)| ent.log_id());
+    async fn get_log_state(&mut self) -> Result<LogState<KiwiTypeConfig>, StorageError<u64>> {
+        let last = self.logs.iter().next_back().map(|(_, ent)| ent.log_id);
 
         let last_purged = self.last_purged_log_id.clone();
 
@@ -88,51 +90,45 @@ impl LogStoreInner {
 
     async fn save_committed(
         &mut self,
-        committed: Option<LogIdOf<KiwiTypeConfig>>,
-    ) -> Result<(), io::Error> {
+        committed: Option<LogId<u64>>,
+    ) -> Result<(), StorageError<u64>> {
         self.committed = committed;
         Ok(())
     }
 
-    async fn read_committed(&mut self) -> Result<Option<LogIdOf<KiwiTypeConfig>>, io::Error> {
+    async fn read_committed(&mut self) -> Result<Option<LogId<u64>>, StorageError<u64>> {
         Ok(self.committed.clone())
     }
 
-    async fn save_vote(&mut self, vote: &VoteOf<KiwiTypeConfig>) -> Result<(), io::Error> {
+    async fn save_vote(&mut self, vote: &Vote<u64>) -> Result<(), StorageError<u64>> {
         self.vote = Some(vote.clone());
         Ok(())
     }
 
-    async fn read_vote(&mut self) -> Result<Option<VoteOf<KiwiTypeConfig>>, io::Error> {
+    async fn read_vote(&mut self) -> Result<Option<Vote<u64>>, StorageError<u64>> {
         Ok(self.vote.clone())
     }
 
     async fn append<I>(
         &mut self,
         entries: I,
-        callback: IOFlushed<KiwiTypeConfig>,
-    ) -> Result<(), io::Error>
+        callback: LogFlushed<KiwiTypeConfig>,
+    ) -> Result<(), StorageError<u64>>
     where
-        I: IntoIterator<Item = EntryOf<KiwiTypeConfig>>,
+        I: IntoIterator<Item = Entry<KiwiTypeConfig>>,
     {
         // 简单实现：直接追加到内存，不进行磁盘持久化
         // POC 阶段可以接受，生产环境需要持久化
         for entry in entries {
-            self.logs.insert(entry.index(), entry);
+            self.logs.insert(entry.log_id.index, entry);
         }
-        callback.io_completed(Ok(()));
+        callback.log_io_completed(Ok(()));
 
         Ok(())
     }
 
-    async fn truncate_after(
-        &mut self,
-        last_log_id: Option<LogIdOf<KiwiTypeConfig>>,
-    ) -> Result<(), io::Error> {
-        let start_index = match last_log_id {
-            Some(log_id) => log_id.index() + 1,
-            None => 0,
-        };
+    async fn truncate(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
+        let start_index = log_id.index;
 
         let keys = self
             .logs
@@ -146,7 +142,7 @@ impl LogStoreInner {
         Ok(())
     }
 
-    async fn purge(&mut self, log_id: LogIdOf<KiwiTypeConfig>) -> Result<(), io::Error> {
+    async fn purge(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
         {
             let ld = &mut self.last_purged_log_id;
             assert!(ld.as_ref() <= Some(&log_id));
@@ -156,7 +152,7 @@ impl LogStoreInner {
         {
             let keys = self
                 .logs
-                .range(..=log_id.index())
+                .range(..=log_id.index)
                 .map(|(k, _v)| *k)
                 .collect::<Vec<_>>();
             for key in keys {
@@ -172,59 +168,61 @@ impl RaftLogReader<KiwiTypeConfig> for LogStore {
     async fn try_get_log_entries<RB: RangeBounds<u64> + Clone + Debug>(
         &mut self,
         range: RB,
-    ) -> Result<Vec<EntryOf<KiwiTypeConfig>>, io::Error> {
+    ) -> Result<Vec<Entry<KiwiTypeConfig>>, StorageError<u64>> {
         let mut inner = self.inner.lock().await;
         inner.try_get_log_entries(range).await
     }
 }
 
-impl openraft::RaftLogStorage<KiwiTypeConfig> for LogStore {
+impl openraft::storage::RaftLogStorage<KiwiTypeConfig> for LogStore {
     type LogReader = Self;
 
-    async fn get_log_state(&mut self) -> Result<LogState<KiwiTypeConfig>, io::Error> {
+    async fn get_log_state(&mut self) -> Result<LogState<KiwiTypeConfig>, StorageError<u64>> {
         let mut inner = self.inner.lock().await;
         inner.get_log_state().await
     }
 
     async fn save_committed(
         &mut self,
-        committed: Option<LogIdOf<KiwiTypeConfig>>,
-    ) -> Result<(), io::Error> {
+        committed: Option<LogId<u64>>,
+    ) -> Result<(), StorageError<u64>> {
         let mut inner = self.inner.lock().await;
         inner.save_committed(committed).await
     }
 
-    async fn read_committed(&mut self) -> Result<Option<LogIdOf<KiwiTypeConfig>>, io::Error> {
+    async fn read_committed(&mut self) -> Result<Option<LogId<u64>>, StorageError<u64>> {
         let mut inner = self.inner.lock().await;
         inner.read_committed().await
     }
 
-    async fn save_vote(&mut self, vote: &VoteOf<KiwiTypeConfig>) -> Result<(), io::Error> {
+    async fn save_vote(&mut self, vote: &Vote<u64>) -> Result<(), StorageError<u64>> {
         let mut inner = self.inner.lock().await;
         inner.save_vote(vote).await
+    }
+
+    async fn read_vote(&mut self) -> Result<Option<Vote<u64>>, StorageError<u64>> {
+        let mut inner = self.inner.lock().await;
+        inner.read_vote().await
     }
 
     async fn append<I>(
         &mut self,
         entries: I,
-        callback: IOFlushed<KiwiTypeConfig>,
-    ) -> Result<(), io::Error>
+        callback: LogFlushed<KiwiTypeConfig>,
+    ) -> Result<(), StorageError<u64>>
     where
-        I: IntoIterator<Item = EntryOf<KiwiTypeConfig>>,
+        I: IntoIterator<Item = Entry<KiwiTypeConfig>>,
     {
         let mut inner = self.inner.lock().await;
         inner.append(entries, callback).await
     }
 
-    async fn truncate_after(
-        &mut self,
-        last_log_id: Option<LogIdOf<KiwiTypeConfig>>,
-    ) -> Result<(), io::Error> {
+    async fn truncate(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
         let mut inner = self.inner.lock().await;
-        inner.truncate_after(last_log_id).await
+        inner.truncate(log_id).await
     }
 
-    async fn purge(&mut self, log_id: LogIdOf<KiwiTypeConfig>) -> Result<(), io::Error> {
+    async fn purge(&mut self, log_id: LogId<u64>) -> Result<(), StorageError<u64>> {
         let mut inner = self.inner.lock().await;
         inner.purge(log_id).await
     }

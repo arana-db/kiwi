@@ -2,7 +2,6 @@ use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
 use openraft::{Config, Raft};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use crate::log_store::LogStore;
 use crate::network::KiwiNetworkFactory;
@@ -20,16 +19,17 @@ pub struct RaftApp {
 impl RaftApp {
     pub fn is_leader(&self) -> bool {
         let metrics = self.raft.metrics();
-        matches!(metrics.borrow().current_leader, Some(id) if id == self.node_id)
+        let guard = metrics.borrow();
+        matches!(guard.current_leader, Some(id) if id == self.node_id)
     }
 
     pub fn get_leader(&self) -> Option<(u64, KiwiNode)> {
-        let metrics = self.raft.metrics().borrow();
-        if let Some(leader_id) = metrics.current_leader {
-            if let Some(membership) = &metrics.membership_config.membership() {
-                if let Some(node) = membership.get_node(&leader_id) {
-                    return Some((leader_id, node.clone()));
-                }
+        let metrics = self.raft.metrics();
+        let guard = metrics.borrow();
+        if let Some(leader_id) = guard.current_leader {
+            let membership = guard.membership_config.membership();
+            if let Some(node) = membership.get_node(&leader_id) {
+                return Some((leader_id, node.clone()));
             }
         }
         None
@@ -82,7 +82,7 @@ pub async fn create_raft_node(
 
     let log_store = LogStore::new();
 
-    let state_machine = Arc::new(RwLock::new(KiwiStateMachine::new(config.node_id, storage)));
+    let state_machine = KiwiStateMachine::new(config.node_id, storage.clone());
 
     let network = KiwiNetworkFactory::new();
 

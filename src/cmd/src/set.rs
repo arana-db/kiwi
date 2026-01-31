@@ -23,7 +23,7 @@ use storage::storage::Storage;
 
 use crate::{Cmd, CmdFlags, CmdMeta};
 use crate::{impl_cmd_clone_box, impl_cmd_meta};
-use raft::types::{Binlog, BinlogEntry, ColumnFamilyIndex as RaftCfIndex, OperateType};
+use conf::raft_type::{Binlog, BinlogEntry, ColumnFamilyIndex as RaftCfIndex, OperateType};
 use storage::slot_indexer::key_to_slot_id;
 
 #[derive(Clone, Default)]
@@ -79,7 +79,7 @@ impl Cmd for SetCmd {
         let key = client.key();
         let value = &client.argv()[2];
 
-        let slot_id = key_to_slot_id(key) as u32;
+        let slot_id = key_to_slot_id(&key) as u32;
 
         let entry = BinlogEntry {
             cf_idx: RaftCfIndex::MetaCF as u32,

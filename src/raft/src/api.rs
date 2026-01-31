@@ -1,13 +1,15 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
+
+use conf::raft_type::{Binlog, KiwiNode};
+use openraft::ChangeMembers;
+use serde::{Deserialize, Serialize};
 
 use crate::node::RaftApp;
 use actix_web::{
     HttpResponse, Responder, get, post,
     web::{self, Json},
 };
-use conf::raft_type::{Binlog, KiwiNode};
-use log::{error, info};
-use serde::{Deserialize, Serialize};
 
 #[derive(Clone)]
 pub struct RaftAppData {
@@ -120,9 +122,10 @@ pub async fn read(app_data: web::Data<RaftAppData>, req: Json<ReadRequest>) -> i
 #[get("/raft/metrics")]
 pub async fn metrics(app_data: web::Data<RaftAppData>) -> impl Responder {
     let is_leader = app_data.app.is_leader();
-    let leader = app_data.app.get_leader();
+    let leader_info = app_data.app.get_leader();
 
-    let replication_lag = leader.and_then(|(leader_id, _)| if !is_leader { Some(0) } else { None });
+    let replication_lag =
+        leader_info.and_then(|(leader_id, _)| if !is_leader { Some(0) } else { None });
 
     HttpResponse::Ok().json(ApiResponse::success(MetricsResponse {
         is_leader,
@@ -146,9 +149,11 @@ pub async fn leader(app_data: web::Data<RaftAppData>) -> impl Responder {
 pub async fn init(app_data: web::Data<RaftAppData>, req: Json<InitRequest>) -> impl Responder {
     log::info!("Initializing cluster with {} nodes", req.nodes.len());
 
-    let mut raft = app_data.app.raft.clone();
+    let raft = app_data.app.raft.clone();
+    let init_req = req.into_inner();
+    let nodes: BTreeMap<u64, KiwiNode> = init_req.nodes.into_iter().collect();
 
-    match raft.initialize(req.nodes).await {
+    match raft.initialize(nodes).await {
         Ok(_) => HttpResponse::Ok().json(ApiResponse::success(())),
         Err(e) => {
             log::error!("Failed to initialize cluster: {}", e);
@@ -162,11 +167,11 @@ pub async fn add_learner(
     app_data: web::Data<RaftAppData>,
     req: Json<AddLearnerRequest>,
 ) -> impl Responder {
-    log::info!("Adding learner node: {}", req.node_id);
+    let add_req = req.into_inner();
+    log::info!("Adding learner node: {}", add_req.node_id);
+    let raft = app_data.app.raft.clone();
 
-    let mut raft = app_data.app.raft.clone();
-
-    match raft.add_learner(req.node_id, req.node, true).await {
+    match raft.add_learner(add_req.node_id, add_req.node, true).await {
         Ok(_) => HttpResponse::Ok().json(ApiResponse::success(())),
         Err(e) => {
             log::error!("Failed to add learner: {}", e);
@@ -180,15 +185,18 @@ pub async fn change_membership(
     app_data: web::Data<RaftAppData>,
     req: Json<ChangeMembershipRequest>,
 ) -> impl Responder {
+    let change_req = req.into_inner();
     log::info!(
         "Changing membership with {} members, retain={}",
-        req.members.len(),
-        req.retain
+        change_req.members.len(),
+        change_req.retain
     );
 
-    let mut raft = app_data.app.raft.clone();
+    let raft = app_data.app.raft.clone();
+    let members_map: BTreeMap<u64, KiwiNode> = change_req.members.into_iter().collect();
+    let changes = ChangeMembers::ReplaceAllNodes(members_map);
 
-    match raft.change_membership(req.members, req.retain).await {
+    match raft.change_membership(changes, change_req.retain).await {
         Ok(_) => HttpResponse::Ok().json(ApiResponse::success(())),
         Err(e) => {
             log::error!("Failed to change membership: {}", e);

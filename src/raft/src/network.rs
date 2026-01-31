@@ -8,7 +8,6 @@ use openraft::raft::{
 };
 use reqwest::Client;
 use std::io;
-use std::sync::Arc;
 
 pub struct KiwiNetworkFactory {
     client: Client,
@@ -50,13 +49,7 @@ impl KiwiNetwork {
         &self,
         endpoint: &str,
         req: &Req,
-    ) -> Result<
-        Res,
-        RPCError<
-            <KiwiTypeConfig as openraft::RaftTypeConfig>::NodeId,
-            <KiwiTypeConfig as openraft::RaftTypeConfig>::Node,
-        >,
-    >
+    ) -> Result<Res, RPCError<KiwiTypeConfig>>
     where
         Req: serde::Serialize,
         Res: serde::de::DeserializeOwned,
@@ -99,7 +92,13 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
             openraft::error::RaftError<<KiwiTypeConfig as openraft::RaftTypeConfig>::NodeId>,
         >,
     > {
-        self.post("/raft/append", &rpc).await
+        // post() returns RPCError<NodeId, Node, Infallible>
+        // Trait requires RPCError<NodeId, Node, RaftError<NodeId>>
+        // Since RaftError<NodeId> defaults to RaftError<NodeId, Infallible>,
+        // we use a map to convert the error type appropriately
+        self.post("/raft/append", &rpc)
+            .await
+            .map_err(|e| e.with_raft_error::<openraft::error::Infallible>())
     }
 
     async fn install_snapshot(
@@ -111,10 +110,23 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
         RPCError<
             <KiwiTypeConfig as openraft::RaftTypeConfig>::NodeId,
             <KiwiTypeConfig as openraft::RaftTypeConfig>::Node,
-            openraft::error::RaftError<<KiwiTypeConfig as openraft::RaftTypeConfig>::NodeId>,
+            openraft::error::RaftError<
+                <KiwiTypeConfig as openraft::RaftTypeConfig>::NodeId,
+                openraft::error::InstallSnapshotError,
+            >,
         >,
     > {
-        todo!("Install snapshot not implemented")
+        Err(RPCError::Network(NetworkError::new(&io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Install snapshot not implemented",
+        )))
+        .map_err(|e| match e {
+            RPCError::Network(ne) => RPCError::Network(ne),
+            RPCError::Timeout(_) => RPCError::Timeout(_),
+            RPCError::Unreachable(_) => RPCError::Unreachable(_),
+            RPCError::PayloadTooLarge(_) => RPCError::PayloadTooLarge(_),
+            RPCError::RemoteError(re) => RPCError::RemoteError(re),
+        }))
     }
 
     async fn vote(
@@ -129,6 +141,8 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
             openraft::error::RaftError<<KiwiTypeConfig as openraft::RaftTypeConfig>::NodeId>,
         >,
     > {
-        self.post("/raft/vote", &rpc).await
+        self.post("/raft/vote", &rpc)
+            .await
+            .map_err(|e| e.with_raft_error::<openraft::error::Infallible>())
     }
 }
