@@ -122,9 +122,10 @@ fn main() -> std::io::Result<()> {
 
         // Initialize storage server in storage runtime (runs in background)
 
+        let storage_for_server = storage.clone();
         storage_handle.spawn(async move {
             info!("Initializing storage server...");
-            match initialize_storage_server(storage_receiver).await {
+            match initialize_storage_server(storage_receiver, storage_for_server).await {
                 Ok(_) => {
                     error!("Storage server exited unexpectedly - this should never happen!");
                 }
@@ -153,6 +154,13 @@ fn main() -> std::io::Result<()> {
                 return Err(e);
             }
         }
+
+        // Block until Ctrl+C so the process does not exit immediately
+        info!("Press Ctrl+C to stop.");
+        tokio::signal::ctrl_c()
+            .await
+            .map_err(|e| std::io::Error::other(format!("Failed to listen for shutdown signal: {}", e)))?;
+        info!("Received shutdown signal, stopping...");
 
         Ok(())
     });
@@ -190,40 +198,15 @@ async fn initialize_storage() -> Result<Arc<Storage>, DualRuntimeError> {
     Ok(Arc::new(storage))
 }
 
-/// Initialize the storage server in the storage runtime
+/// Initialize the storage server in the storage runtime.
+/// Uses the already-opened storage from `initialize_storage()` to avoid opening RocksDB twice.
 async fn initialize_storage_server(
     request_receiver: tokio::sync::mpsc::Receiver<runtime::StorageRequest>,
+    storage: Arc<Storage>,
 ) -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
 
-    // Create storage options and path
-    let storage_options = Arc::new(StorageOptions::default());
-    let db_path = PathBuf::from("./db");
-
-    // Create storage instance (not yet opened)
-    let mut storage = Storage::new(1, 0); // Single instance, db_id 0
-
-    // Open storage to initialize actual RocksDB instances
-    info!("Opening storage at path: {:?}", db_path);
-    let bg_task_receiver = storage
-        .open(storage_options, &db_path)
-        .map_err(|e| DualRuntimeError::storage_runtime(format!("Failed to open storage: {}", e)))?;
-    info!("Storage opened successfully");
-
-    // Start background task handler for storage maintenance
-    tokio::spawn(async move {
-        let mut receiver = bg_task_receiver;
-        while let Some(_task) = receiver.recv().await {
-            debug!("Processing background task");
-            // Background tasks are handled by Storage internally
-        }
-        info!("Background task receiver closed");
-    });
-
-    // Wrap storage in Arc for sharing
-    let storage = Arc::new(storage);
-
-    // Create and start storage server with the receiver
+    // Create and start storage server with the shared storage (already opened in initialize_storage)
     let storage_server = StorageServer::new(storage, request_receiver);
 
     info!("Storage server created, starting processing...");
@@ -270,7 +253,7 @@ async fn start_server(
 
             tokio::spawn(async move {
                 info!("Starting Raft HTTP server...");
-                if let Err(e) = HttpServer::new(move || {
+                let server = match HttpServer::new(move || {
                     App::new()
                         .app_data(app_data.clone())
                         .service(write)
@@ -282,12 +265,14 @@ async fn start_server(
                         .service(change_membership)
                 })
                 .bind(&raft_addr)
-                .map_err(|e| {
-                    std::io::Error::other(format!("Failed to bind Raft HTTP server: {}", e))
-                })?
-                .run()
-                .await
                 {
+                    Ok(s) => s,
+                    Err(e) => {
+                        error!("Failed to bind Raft HTTP server: {}", e);
+                        return;
+                    }
+                };
+                if let Err(e) = server.run().await {
                     error!("Raft HTTP server error: {}", e);
                 }
             });

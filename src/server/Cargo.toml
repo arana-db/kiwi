@@ -20,7 +20,8 @@ log.workspace = true
 conf.workspace = true
 clap = { version = "4.0", features = ["derive"] }
 raft.workspace = true
-# raft.workspace = true # removed: src/raft no longer exists
+actix-web = "4"
+
 
 [lints]
 workspace = true
