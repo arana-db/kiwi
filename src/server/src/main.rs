@@ -26,7 +26,10 @@ use storage::StorageOptions;
 use storage::storage::Storage;
 
 use actix_web::{App, HttpServer, web};
-use raft::api::{RaftAppData, add_learner, change_membership, init, leader, metrics, read, write};
+use raft::api::{
+    RaftAppData, add_learner, change_membership, init, leader, metrics, raft_append, raft_vote,
+    read, write,
+};
 use raft::node::{RaftConfig, create_raft_node};
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
@@ -263,6 +266,8 @@ async fn start_server(
                         .service(init)
                         .service(add_learner)
                         .service(change_membership)
+                        .service(raft_vote)
+                        .service(raft_append)
                 })
                 .bind(&raft_addr)
                 {

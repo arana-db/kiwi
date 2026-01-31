@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use conf::raft_type::{Binlog, KiwiNode};
+use conf::raft_type::{Binlog, KiwiNode, KiwiTypeConfig};
+use openraft::raft::{AppendEntriesRequest, VoteRequest};
 use openraft::ChangeMembers;
 use serde::{Deserialize, Serialize};
 
@@ -202,5 +203,29 @@ pub async fn change_membership(
             log::error!("Failed to change membership: {}", e);
             HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string()))
         }
+    }
+}
+
+// --- Raft protocol RPC (used by KiwiNetwork when nodes talk to each other)
+
+#[post("/raft/vote")]
+pub async fn raft_vote(
+    app_data: web::Data<RaftAppData>,
+    req: Json<VoteRequest<<KiwiTypeConfig as openraft::RaftTypeConfig>::NodeId>>,
+) -> impl Responder {
+    match app_data.app.raft.vote(req.0).await {
+        Ok(res) => HttpResponse::Ok().json(res),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
+    }
+}
+
+#[post("/raft/append")]
+pub async fn raft_append(
+    app_data: web::Data<RaftAppData>,
+    req: Json<AppendEntriesRequest<KiwiTypeConfig>>,
+) -> impl Responder {
+    match app_data.app.raft.append_entries(req.0).await {
+        Ok(res) => HttpResponse::Ok().json(res),
+        Err(e) => HttpResponse::InternalServerError().body(e.to_string()),
     }
 }
