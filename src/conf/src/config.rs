@@ -63,6 +63,9 @@ pub struct RaftClusterConfig {
     pub raft_addr: String,
     pub resp_addr: String,
     pub data_dir: String,
+    pub heartbeat_interval_ms: Option<u64>,
+    pub election_timeout_min_ms: Option<u64>,
+    pub election_timeout_max_ms: Option<u64>,
 }
 
 // set default value for config
@@ -117,6 +120,9 @@ impl Config {
         let mut raft_addr: Option<String> = None;
         let mut raft_resp_addr: Option<String> = None;
         let mut raft_data_dir: Option<String> = None;
+        let mut raft_heartbeat_interval: Option<u64> = None;
+        let mut raft_election_timeout_min: Option<u64> = None;
+        let mut raft_election_timeout_max: Option<u64> = None;
 
         // Parse each configuration value
         for (key, value) in config_map {
@@ -311,7 +317,7 @@ impl Config {
                             )),
                         })?;
                 }
-                "raft-node-id" => {
+                "raft-node-id" | "cluster-node-id" => {
                     raft_node_id = Some(value.parse().map_err(|e| Error::InvalidConfig {
                         source: serde_ini::de::Error::Custom(format!(
                             "Invalid raft-node-id: {}",
@@ -319,14 +325,38 @@ impl Config {
                         )),
                     })?);
                 }
-                "raft-addr" => {
+                "raft-addr" | "cluster-addr" => {
                     raft_addr = Some(value);
                 }
-                "raft-resp-addr" => {
+                "raft-resp-addr" | "cluster-resp-addr" => {
                     raft_resp_addr = Some(value);
                 }
-                "raft-data-dir" => {
+                "raft-data-dir" | "cluster-data-dir" => {
                     raft_data_dir = Some(value);
+                }
+                "raft-heartbeat-interval" | "cluster-heartbeat-interval" => {
+                    raft_heartbeat_interval = Some(value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!(
+                            "Invalid raft-heartbeat-interval: {}",
+                            e
+                        )),
+                    })?);
+                }
+                "raft-election-timeout-min" | "cluster-election-timeout-min" => {
+                    raft_election_timeout_min = Some(value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!(
+                            "Invalid raft-election-timeout-min: {}",
+                            e
+                        )),
+                    })?);
+                }
+                "raft-election-timeout-max" | "cluster-election-timeout-max" => {
+                    raft_election_timeout_max = Some(value.parse().map_err(|e| Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(format!(
+                            "Invalid raft-election-timeout-max: {}",
+                            e
+                        )),
+                    })?);
                 }
                 _ => {
                     // Unknown configuration key, skip it
@@ -343,6 +373,9 @@ impl Config {
                 raft_addr: addr,
                 resp_addr,
                 data_dir,
+                heartbeat_interval_ms: raft_heartbeat_interval,
+                election_timeout_min_ms: raft_election_timeout_min,
+                election_timeout_max_ms: raft_election_timeout_max,
             });
         }
 

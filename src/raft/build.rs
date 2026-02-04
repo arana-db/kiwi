@@ -15,15 +15,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod log_store;
-pub mod network;
-pub mod node;
-pub mod state_machine;
-pub mod grpc;
-pub mod conversion;
-pub mod raft_proto {
-    tonic::include_proto!("raft_proto"); 
+use std::path::PathBuf;
+use std::env;
 
-     pub const FILE_DESCRIPTOR_SET: &[u8] =
-        tonic::include_file_descriptor_set!("raft_proto_descriptor");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
+    tonic_prost_build::configure()
+        .file_descriptor_set_path(out_dir.join("raft_proto_descriptor.bin"))
+        .build_server(true)
+        .build_client(true)
+        .compile_protos(
+            &[
+                "proto/types.proto",
+                "proto/raft.proto",
+                "proto/admin.proto",
+                "proto/client.proto",
+            ],
+            &["proto"],
+        )?;
+    Ok(())
 }

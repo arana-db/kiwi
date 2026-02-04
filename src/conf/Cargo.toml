@@ -13,3 +13,6 @@ validator = { version = "0.16", features = ["derive"] }
 snafu = "0.8.5"
 rocksdb.workspace = true
 openraft.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
