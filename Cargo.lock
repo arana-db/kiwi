@@ -718,6 +718,7 @@ dependencies = [
  "bitflags",
  "bytes",
  "client",
+ "conf",
  "log",
  "num-traits",
  "resp",
@@ -3105,11 +3106,13 @@ dependencies = [
 name = "server"
 version = "0.1.0"
 dependencies = [
+ "actix-web",
  "clap",
  "conf",
  "env_logger",
  "log",
  "net",
+ "raft",
  "runtime",
  "storage",
  "tokio",

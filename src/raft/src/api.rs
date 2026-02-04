@@ -110,13 +110,33 @@ pub async fn read(app_data: web::Data<RaftAppData>, req: Json<ReadRequest>) -> i
             .json(ApiResponse::<()>::error("No leader available".to_string()));
     }
 
-    let value = app_data.app.storage.get(&req.key);
-    match value {
-        Ok(v) => HttpResponse::Ok().json(ApiResponse::success(ReadResponse { value: Some(v) })),
-        Err(e) => {
-            log::error!("Failed to read from storage: {}", e);
-            HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string()))
+    // 计算实例 ID
+    use storage::slot_indexer::key_to_slot_id;
+    let slot_id = key_to_slot_id(&req.key);
+    let instance_id = app_data.app.storage.slot_indexer.get_instance_id(slot_id);
+    let instance = &app_data.app.storage.insts[instance_id];
+
+    // 从 MetaCF 读取（与写入路径一致）
+    use storage::ColumnFamilyIndex;
+    match instance.get_cf_handle(ColumnFamilyIndex::MetaCF) {
+        Some(cf) => {
+            let db = instance.db.as_ref().unwrap();
+            match db.get_cf(&cf, &req.key) {
+                Ok(Some(val)) => {
+                    let value = String::from_utf8_lossy(&val).to_string();
+                    HttpResponse::Ok().json(ApiResponse::success(ReadResponse { value: Some(value) }))
+                }
+                Ok(None) => HttpResponse::NotFound().json(
+                    ApiResponse::<()>::error(format!("Key not found: {:?}", String::from_utf8_lossy(&req.key)))
+                ),
+                Err(e) => HttpResponse::InternalServerError().json(
+                    ApiResponse::<()>::error(e.to_string())
+                )
+            }
         }
+        None => HttpResponse::InternalServerError().json(
+            ApiResponse::<()>::error("MetaCF not found".to_string())
+        )
     }
 }
 

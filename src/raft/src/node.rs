@@ -58,9 +58,13 @@ impl Default for RaftConfig {
             raft_addr: "127.0.0.1:8081".to_string(),
             resp_addr: "127.0.0.1:6379".to_string(),
             data_dir: PathBuf::from("/tmp/kiwi/raft"),
-            heartbeat_interval: 200,
-            election_timeout_min: 500,
-            election_timeout_max: 1000,
+            // 心跳间隔：500ms，同时也是 RPC 超时时间
+            // 太短会导致在网络延迟高时出现超时错误
+            heartbeat_interval: 500,
+            // 选举超时最小值：1500ms，应该 >= heartbeat_interval * 2
+            election_timeout_min: 1500,
+            // 选举超时最大值：3000ms
+            election_timeout_max: 3000,
         }
     }
 }
