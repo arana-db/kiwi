@@ -89,7 +89,8 @@ message AppendEntriesRequest {
     LogId leader_commit = 4;
 }
 message AppendEntriesResponse {
-
+    bool success = 1;
+    // 其他字段暂时留空，基础版本只需要 success
 }
 
 message InstallSnapshotRequest {

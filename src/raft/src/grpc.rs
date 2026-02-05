@@ -1,9 +1,10 @@
+// gRPC 服务实现，用于处理 Raft 协议的 RPC 调用
 use conf::raft_type::KiwiTypeConfig;
 use openraft::Raft;
 
-use crate::raft_proto::raft_service_server::RaftService;
 // 导入 proto 生成的类型，简化代码
 use crate::raft_proto::{VoteRequest, VoteResponse, AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse};
+use crate::raft_proto::raft_service_server::RaftService;
 
 // 定义响应流类型用于双向流式 RPC
 type AppendEntriesResponseStream = std::pin::Pin<
@@ -34,13 +35,23 @@ impl RaftService for RaftServiceImpl {
         &self,
         request: tonic::Request<VoteRequest>,
     ) -> Result<tonic::Response<VoteResponse>, tonic::Status> {
-        // Handle vote request
-        unimplemented!()
+        // Proto → OpenRaft (使用 TryInto trait)
+        let proto_req = request.into_inner();
+        let raft_req = (&proto_req).try_into()?;
+
+        // 调用 OpenRaft
+        let raft_resp = self.raft.vote(raft_req).await.map_err(|e| {
+            tonic::Status::internal(format!("Raft vote error: {}", e))
+        })?;
+
+        // OpenRaft → Proto (使用 From trait)
+        let proto_resp = VoteResponse::from(raft_resp);
+        Ok(tonic::Response::new(proto_resp))
     }
 
     async fn append_entries(
         &self,
-        request: tonic::Request<AppendEntriesRequest>,
+        _request: tonic::Request<AppendEntriesRequest>,
     ) -> Result<tonic::Response<AppendEntriesResponse>, tonic::Status> {
         // Handle append entries request
         unimplemented!()
@@ -48,7 +59,7 @@ impl RaftService for RaftServiceImpl {
 
     async fn install_snapshot(
         &self,
-        request: tonic::Request<tonic::Streaming<InstallSnapshotRequest>>,
+        _request: tonic::Request<tonic::Streaming<InstallSnapshotRequest>>,
     ) -> Result<tonic::Response<InstallSnapshotResponse>, tonic::Status> {
         // Handle install snapshot request
         unimplemented!()
@@ -56,7 +67,7 @@ impl RaftService for RaftServiceImpl {
 
     async fn stream_append(
         &self,
-        request: tonic::Request<tonic::Streaming<AppendEntriesRequest>>,
+        _request: tonic::Request<tonic::Streaming<AppendEntriesRequest>>,
     ) -> Result<tonic::Response<Self::StreamAppendStream>, tonic::Status> {
         // Handle stream append request
         unimplemented!()

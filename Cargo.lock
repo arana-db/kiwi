@@ -2819,6 +2819,7 @@ dependencies = [
  "actix-web",
  "anyhow",
  "async-trait",
+ "bincode",
  "conf",
  "log",
  "openraft",
