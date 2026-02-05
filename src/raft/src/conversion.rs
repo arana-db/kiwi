@@ -15,35 +15,35 @@ use std::convert::TryInto;
 // 辅助函数：创建 LeaderId、LogId 和 Vote
 // ============================================================================
 
-fn proto_to_leader_id(lid: &Option<&proto::LeaderId>) -> LeaderId<u64> {
+pub fn proto_to_leader_id(lid: &Option<&proto::LeaderId>) -> LeaderId<u64> {
     match lid {
         Some(l) => LeaderId::new(l.term, l.node_id.as_ref().map(|n| n.id).unwrap_or(0)),
         None => LeaderId::default(),
     }
 }
 
-fn leader_id_to_proto(lid: &LeaderId<u64>) -> proto::LeaderId {
+pub fn leader_id_to_proto(lid: &LeaderId<u64>) -> proto::LeaderId {
     proto::LeaderId {
         term: lid.term,
         node_id: Some(proto::NodeId { id: lid.node_id }),
     }
 }
 
-fn proto_to_committed_leader_id(lid: &Option<&proto::LeaderId>) -> CommittedLeaderId<u64> {
+pub fn proto_to_committed_leader_id(lid: &Option<&proto::LeaderId>) -> CommittedLeaderId<u64> {
     match lid {
         Some(l) => CommittedLeaderId::new(l.term, l.node_id.as_ref().map(|n| n.id).unwrap_or(0)),
         None => CommittedLeaderId::default(),
     }
 }
 
-fn proto_to_log_id(lid: &Option<&proto::LogId>) -> Option<LogId<u64>> {
+pub fn proto_to_log_id(lid: &Option<&proto::LogId>) -> Option<LogId<u64>> {
     lid.map(|l| LogId {
         leader_id: proto_to_committed_leader_id(&l.leader_id.as_ref()),
         index: l.index,
     })
 }
 
-fn log_id_to_proto(lid: &LogId<u64>) -> proto::LogId {
+pub fn log_id_to_proto(lid: &LogId<u64>) -> proto::LogId {
     proto::LogId {
         leader_id: Some(proto::LeaderId {
             term: lid.leader_id.term,
@@ -53,11 +53,11 @@ fn log_id_to_proto(lid: &LogId<u64>) -> proto::LogId {
     }
 }
 
-fn log_id_option_to_proto(lid: &Option<LogId<u64>>) -> Option<proto::LogId> {
+pub fn log_id_option_to_proto(lid: &Option<LogId<u64>>) -> Option<proto::LogId> {
     lid.as_ref().map(log_id_to_proto)
 }
 
-fn proto_to_vote(vote: &Option<&proto::Vote>) -> Vote<u64> {
+pub fn proto_to_vote(vote: &Option<&proto::Vote>) -> Vote<u64> {
     match vote {
         Some(v) => {
             let term = v.leader_id.as_ref().map(|l| l.term).unwrap_or(0);
@@ -72,7 +72,7 @@ fn proto_to_vote(vote: &Option<&proto::Vote>) -> Vote<u64> {
     }
 }
 
-fn vote_to_proto(vote: &Vote<u64>) -> proto::Vote {
+pub fn vote_to_proto(vote: &Vote<u64>) -> proto::Vote {
     proto::Vote {
         leader_id: Some(leader_id_to_proto(&vote.leader_id)),
         committed: vote.committed,
@@ -165,8 +165,8 @@ impl TryInto<Entry<KiwiTypeConfig>> for &proto::Entry {
                     let mut nodes = std::collections::BTreeMap::new();
                     for node_config in &membership.nodes {
                         let kiwi_node = KiwiNode {
-                            raft_addr: node_config.rpc_addr.clone(),
-                            resp_addr: String::new(), // 需要从 proto 扩展
+                            raft_addr: node_config.raft_addr.clone(),
+                            resp_addr: node_config.resp_addr.clone(),
                         };
                         nodes.insert(node_config.node_id, kiwi_node);
                     }
@@ -285,7 +285,8 @@ impl TryInto<proto::Entry> for Entry<KiwiTypeConfig> {
                     .nodes()
                     .map(|(id, node)| proto::NodeConfig {
                         node_id: *id,
-                        rpc_addr: node.raft_addr.clone(),
+                        raft_addr: node.raft_addr.clone(),
+                        resp_addr: node.resp_addr.clone(),
                     })
                     .collect();
 

@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package raft_proto;
+
+import "types.proto";
+
+// ============================================================================
+// RaftClientService - 客户端服务
+// 用途：客户端读写数据
+// ============================================================================
+
+service RaftClientService {
+    // 写入数据（通过 Raft 共识）
+    rpc Write (WriteRequest) returns (WriteResponse);
+
+    // 读取数据
+    rpc Read (ReadRequest) returns (ReadResponse);
+}
+
+// ============================================================================
+// RaftMetricsService - 集群状态服务
+// 用途：查询集群状态、leader 信息等
+// ============================================================================
+
+service RaftMetricsService {
+    // 获取集群指标
+    rpc Metrics (MetricsRequest) returns (MetricsResponse);
+
+    // 获取 Leader 信息
+    rpc Leader (LeaderRequest) returns (LeaderResponse);
+
+    // 获取集群成员列表
+    rpc Members (MembersRequest) returns (MembersResponse);
+}
+
+// ============================================================================
+// Write / Read - 客户端读写
+// ============================================================================
+
+message WriteRequest {
+    Binlog binlog = 1;
+}
+
+message WriteResponse {
+    Response response = 1;
+    LogId log_id = 2;
+}
+
+message ReadRequest {
+    bytes key = 1;
+}
+
+message ReadResponse {
+    Response response = 1;
+    bytes value = 2;
+}
+
+// ============================================================================
+// Metrics / Leader / Members - 集群状态查询
+// ============================================================================
+
+message MetricsRequest {}
+
+message MetricsResponse {
+    Response response = 1;
+    bool is_leader = 2;
+    uint64 replication_lag = 3;
+    uint64 current_leader = 4;
+}
+
+message LeaderRequest {}
+
+message LeaderResponse {
+    Response response = 1;
+    uint64 leader_id = 2;
+    NodeConfig leader_node = 3;
+}
+
+message MembersRequest {}
+
+message MembersResponse {
+    Response response = 1;
+    repeated NodeConfig members = 2;
+    repeated uint64 learners = 3;
+}

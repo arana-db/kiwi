@@ -1,5 +1,5 @@
 use conf::raft_type::{KiwiNode, KiwiTypeConfig};
-use openraft::error::{NetworkError, RaftError};
+use openraft::error::{NetworkError, RaftError, Unreachable};
 use openraft::network::{RPCOption, RaftNetwork, RaftNetworkFactory};
 use openraft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
@@ -9,11 +9,11 @@ use std::io;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::raft_proto::raft_service_client::RaftServiceClient;
+use crate::raft_proto::raft_core_service_client::RaftCoreServiceClient;
 use tonic::transport::Channel;
+use tonic::Request as TonicRequest;
 
-
-// 类型别名，简化 RaftNetwork 的返回类型（参考 openraft 示例）
+// 类型别名，简化 RaftNetwork 的返回类型
 type NodeId = <KiwiTypeConfig as openraft::RaftTypeConfig>::NodeId;
 type Node = KiwiNode;
 type RPCErr = openraft::error::RPCError<NodeId, Node, RaftError<NodeId>>;
@@ -24,8 +24,8 @@ type RPCErrSnapshot = openraft::error::RPCError<
 >;
 
 pub struct KiwiNetworkFactory {
-    // Connection pool: NodeId -> RaftServiceClient<Channel>(gRPC Client)
-    clients: Arc<RwLock<HashMap<NodeId, RaftServiceClient<Channel>>>>,
+    // Connection pool: NodeId -> RaftCoreServiceClient<Channel>(gRPC Client)
+    clients: Arc<RwLock<HashMap<NodeId, RaftCoreServiceClient<Channel>>>>,
     // NodeId -> raft address
     node_addrs: Arc<RwLock<HashMap<NodeId, String>>>,
     // The current node id
@@ -56,7 +56,7 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
             let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
                 .unwrap()
                 .connect_lazy();
-            let client = RaftServiceClient::new(endpoint);
+            let client = RaftCoreServiceClient::new(endpoint);
             clients_guard.insert(target, client.clone());
             client
         };
@@ -70,23 +70,43 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
 
 pub struct KiwiNetwork {
     target_id: u64,
-    client: RaftServiceClient<Channel>,
+    client: RaftCoreServiceClient<Channel>,
     target_addr: String,
 }
-
-// TODO: Change to tonic(gRPC)
 
 // Impl the RaftNetwork trait for KiwiNetwork according to openraft requirements
 impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
     async fn append_entries(
         &mut self,
-        _rpc: AppendEntriesRequest<KiwiTypeConfig>,
+        rpc: AppendEntriesRequest<KiwiTypeConfig>,
         _option: RPCOption,
     ) -> Result<AppendEntriesResponse<NodeId>, RPCErr> {
-       Err(RPCErr::Network(NetworkError::new(&io::Error::new(
-            io::ErrorKind::Unsupported,
-            "Append entries rpc version not implemented",
-        ))))
+        // OpenRaft → Proto
+        let proto_req: crate::raft_proto::AppendEntriesRequest = rpc.into();
+
+        // 调用 gRPC
+        let response = self
+            .client
+            .append_entries(TonicRequest::new(proto_req))
+            .await
+            .map_err(|e| {
+                RPCErr::Network(NetworkError::new(&io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    format!("gRPC error: {}", e),
+                )))
+            })?;
+
+        let proto_resp = response.into_inner();
+
+        // Proto → OpenRaft
+        if proto_resp.success {
+            Ok(openraft::raft::AppendEntriesResponse::Success)
+        } else {
+            Err(RPCErr::Network(NetworkError::new(&io::Error::new(
+                io::ErrorKind::Other,
+                "AppendEntries failed",
+            ))))
+        }
     }
 
     async fn install_snapshot(
@@ -102,9 +122,33 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
 
     async fn vote(
         &mut self,
-        _rpc: VoteRequest<NodeId>,
+        rpc: VoteRequest<NodeId>,
         _option: RPCOption,
     ) -> Result<VoteResponse<NodeId>, RPCErr> {
-       todo!() 
+        // OpenRaft → Proto
+        let proto_req: crate::raft_proto::VoteRequest = rpc.into();
+
+        // 调用 gRPC
+        let response = self
+            .client
+            .vote(TonicRequest::new(proto_req))
+            .await
+            .map_err(|e| {
+                RPCErr::Network(NetworkError::new(&io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    format!("gRPC error: {}", e),
+                )))
+            })?;
+
+        let proto_resp = response.into_inner();
+
+        // Proto → OpenRaft
+        use crate::conversion;
+        (&proto_resp).try_into().map_err(|e| {
+            RPCErr::Network(NetworkError::new(&io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Failed to convert vote response: {}", e),
+            )))
+        })
     }
 }

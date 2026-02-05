@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package raft_proto;
+
+import "types.proto";
+
+// ============================================================================
+// RaftAdminService - 集群管理服务
+// 用途：集群初始化、成员变更等管理操作
+// ============================================================================
+
+service RaftAdminService {
+    // 初始化集群
+    rpc Initialize (InitializeRequest) returns (InitializeResponse);
+
+    // 添加学习者节点
+    rpc AddLearner (AddLearnerRequest) returns (AddLearnerResponse);
+
+    // 修改集群成员
+    rpc ChangeMembership (ChangeMembershipRequest) returns (ChangeMembershipResponse);
+
+    // 移除节点
+    rpc RemoveNode (RemoveNodeRequest) returns (RemoveNodeResponse);
+}
+
+// ============================================================================
+// Initialize - 初始化集群
+// ============================================================================
+
+message InitializeRequest {
+    repeated NodeConfig nodes = 1;
+}
+
+message InitializeResponse {
+    Response response = 1;
+    uint64 leader_id = 2;
+}
+
+// ============================================================================
+// AddLearner - 添加学习者节点
+// ============================================================================
+
+message AddLearnerRequest {
+    uint64 node_id = 1;
+    NodeConfig node = 2;
+}
+
+message AddLearnerResponse {
+    Response response = 1;
+}
+
+// ============================================================================
+// ChangeMembership - 修改集群成员
+// ============================================================================
+
+message ChangeMembershipRequest {
+    repeated NodeConfig members = 1;
+    bool retain = 2;
+}
+
+message ChangeMembershipResponse {
+    Response response = 1;
+}
+
+// ============================================================================
+// RemoveNode - 移除节点
+// ============================================================================
+
+message RemoveNodeRequest {
+    uint64 node_id = 1;
+}
+
+message RemoveNodeResponse {
+    Response response = 1;
+}

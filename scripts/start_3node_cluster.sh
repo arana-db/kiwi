@@ -4,6 +4,7 @@
 # Script to start a 3-node Raft cluster for testing Kiwi
 # Each node runs in its own directory with separate storage
 # Logs are written to files, viewable with tail -f
+# Uses gRPC for cluster management (grpcurl required)
 
 # Colors for output
 RED='\033[0;31m'
@@ -18,6 +19,57 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 CLUSTER_BASE_DIR="$PROJECT_ROOT/cluster_test"
 BINARY_PATH="$PROJECT_ROOT/target/debug/kiwi"
 
+# Check if grpcurl is installed
+GRPCURL=""
+PROTOSET=""
+find_grpcurl() {
+    # Try to find grpcurl in various locations
+    if command -v grpcurl &> /dev/null; then
+        GRPCURL="grpcurl"
+    elif [ -f "$HOME/go/bin/grpcurl" ]; then
+        GRPCURL="$HOME/go/bin/grpcurl"
+    elif [ -f "/usr/local/bin/grpcurl" ]; then
+        GRPCURL="/usr/local/bin/grpcurl"
+    else
+        echo -e "${RED}Error: grpcurl is not installed${NC}"
+        echo -e "${YELLOW}Install grpcurl:${NC}"
+        echo "  go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest"
+        echo "  or: brew install grpcurl (macOS)"
+        echo -e "\n${YELLOW}Then make sure \$HOME/go/bin is in your PATH:${NC}"
+        echo "  export PATH=\"\$PATH:\$HOME/go/bin\""
+        exit 1
+    fi
+}
+
+# Generate proto descriptor set for grpcurl
+generate_protoset() {
+    local proto_dir="$PROJECT_ROOT/src/raft/proto"
+    local protoset_file="/tmp/raft.desc"
+
+    if [ ! -f "$protoset_file" ]; then
+        echo -e "${YELLOW}Generating proto descriptor set...${NC}"
+        if ! command -v protoc &> /dev/null; then
+            echo -e "${RED}Error: protoc is not installed${NC}"
+            echo -e "${YELLOW}Install protoc (protobuf compiler):${NC}"
+            echo "  apt install protobuf-compiler  # Ubuntu/Debian"
+            echo "  brew install protobuf           # macOS"
+            exit 1
+        fi
+
+        (cd "$proto_dir" && protoc --descriptor_set_out="$protoset_file" \
+            --include_imports --proto_path=. \
+            types.proto raft.proto admin.proto client.proto 2>/dev/null)
+
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Failed to generate proto descriptor${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Proto descriptor generated: $protoset_file${NC}"
+    fi
+
+    PROTOSET="-protoset $protoset_file"
+}
+
 # Check if binary exists
 if [ ! -f "$BINARY_PATH" ]; then
     echo -e "${RED}Error: Binary not found at $BINARY_PATH${NC}"
@@ -28,6 +80,12 @@ if [ ! -f "$BINARY_PATH" ]; then
         exit 1
     fi
 fi
+
+# Find grpcurl
+find_grpcurl
+
+# Generate proto descriptor set
+generate_protoset
 
 # Node configurations
 # Format: "node_id:raft_port:resp_port"
@@ -121,50 +179,67 @@ start_node() {
     echo -e "${YELLOW}  Log: $log_file${NC}"
 }
 
-# Function to initialize the cluster
+# Function to initialize the cluster using gRPC
 init_cluster() {
     echo -e "\n${YELLOW}Waiting for nodes to initialize...${NC}"
     sleep 3
 
-    echo -e "${YELLOW}Initializing Raft cluster...${NC}"
+    echo -e "${YELLOW}Initializing Raft cluster via gRPC...${NC}"
 
     # Get the first node's Raft address
     local first_node_raft="127.0.0.1:8081"
 
-    # Initialize the cluster through node 1
+    # Initialize the cluster through node 1 using gRPC
     echo -e "${BLUE}Initializing cluster via node 1...${NC}"
-    local init_result=$(curl --noproxy "*" -s -X POST "http://$first_node_raft/raft/init" \
-        -H "Content-Type: application/json" \
-        -d '{"nodes": [[1, {"raft_addr": "http://127.0.0.1:8081", "resp_addr": "127.0.0.1:7379"}]]}')
+    local init_result=$($GRPCURL $PROTOSET -plaintext -d '{
+        "nodes": [
+            {"node_id": 1, "raft_addr": "127.0.0.1:8081", "resp_addr": "127.0.0.1:7379"},
+            {"node_id": 2, "raft_addr": "127.0.0.1:8082", "resp_addr": "127.0.0.1:7380"},
+            {"node_id": 3, "raft_addr": "127.0.0.1:8083", "resp_addr": "127.0.0.1:7381"}
+        ]
+    }' "$first_node_raft" raft_proto.RaftAdminService/Initialize 2>/dev/null || echo "error")
 
     echo "  Init result: $init_result"
 
-    # Add other nodes as learners
-    echo -e "${BLUE}Adding node 2 as learner...${NC}"
-    local learner2_result=$(curl --noproxy "*" -s -X POST "http://$first_node_raft/raft/add_learner" \
-        -H "Content-Type: application/json" \
-        -d '{"node_id": 2, "node": {"raft_addr": "http://127.0.0.1:8082", "resp_addr": "127.0.0.1:7380"}}')
-    echo "  Add learner 2 result: $learner2_result"
+    # If init failed, try adding nodes step by step
+    if [[ "$init_result" == *"error"* ]] || [[ "$init_result" == *"failed"* ]]; then
+        echo -e "${YELLOW}Direct init may have failed, trying step-by-step setup...${NC}"
 
-    echo -e "${BLUE}Adding node 3 as learner...${NC}"
-    local learner3_result=$(curl --noproxy "*" -s -X POST "http://$first_node_raft/raft/add_learner" \
-        -H "Content-Type: application/json" \
-        -d '{"node_id": 3, "node": {"raft_addr": "http://127.0.0.1:8083", "resp_addr": "127.0.0.1:7381"}}')
-    echo "  Add learner 3 result: $learner3_result"
+        # Try adding node 2 as learner
+        echo -e "${BLUE}Adding node 2 as learner...${NC}"
+        local learner2_result=$($GRPCURL $PROTOSET -plaintext -d '{
+            "node_id": 2,
+            "node": {"raft_addr": "127.0.0.1:8082", "resp_addr": "127.0.0.1:7380"}
+        }' "$first_node_raft" raft_proto.RaftAdminService/AddLearner 2>/dev/null || echo "error")
+        echo "  Add learner 2 result: $learner2_result"
 
-    # Change membership to include all nodes
-    echo -e "${BLUE}Changing cluster membership...${NC}"
-    local membership_result=$(curl --noproxy "*" -s -X POST "http://$first_node_raft/raft/change_membership" \
-        -H "Content-Type: application/json" \
-        -d '{"members": [[1, {"raft_addr": "http://127.0.0.1:8081", "resp_addr": "127.0.0.1:7379"}], [2, {"raft_addr": "http://127.0.0.1:8082", "resp_addr": "127.0.0.1:7380"}], [3, {"raft_addr": "http://127.0.0.1:8083", "resp_addr": "127.0.0.1:7381"}]], "retain": false}')
-    echo "  Membership result: $membership_result"
+        # Try adding node 3 as learner
+        echo -e "${BLUE}Adding node 3 as learner...${NC}"
+        local learner3_result=$($GRPCURL $PROTOSET -plaintext -d '{
+            "node_id": 3,
+            "node": {"raft_addr": "127.0.0.1:8083", "resp_addr": "127.0.0.1:7381"}
+        }' "$first_node_raft" raft_proto.RaftAdminService/AddLearner 2>/dev/null || echo "error")
+        echo "  Add learner 3 result: $learner3_result"
+
+        # Change membership to include all nodes
+        echo -e "${BLUE}Changing cluster membership...${NC}"
+        local membership_result=$($GRPCURL $PROTOSET -plaintext -d '{
+            "members": [
+                {"node_id": 1, "raft_addr": "127.0.0.1:8081", "resp_addr": "127.0.0.1:7379"},
+                {"node_id": 2, "raft_addr": "127.0.0.1:8082", "resp_addr": "127.0.0.1:7380"},
+                {"node_id": 3, "raft_addr": "127.0.0.1:8083", "resp_addr": "127.0.0.1:7381"}
+            ],
+            "retain": false
+        }' "$first_node_raft" raft_proto.RaftAdminService/ChangeMembership 2>/dev/null || echo "error")
+        echo "  Membership result: $membership_result"
+    fi
 
     sleep 2
 
     echo -e "${GREEN}Cluster initialization complete${NC}"
 }
 
-# Function to show cluster status
+# Function to show cluster status using gRPC
 show_status() {
     echo -e "\n${YELLOW}Cluster Status:${NC}"
 
@@ -186,9 +261,9 @@ show_status() {
 
         # Check if port is listening
         if nc -z 127.0.0.1 "$raft_port" 2>/dev/null; then
-            echo -e "  ${GREEN}✓ Raft API listening on port $raft_port${NC}"
+            echo -e "  ${GREEN}✓ gRPC listening on port $raft_port${NC}"
         else
-            echo -e "  ${RED}✗ Raft API not responding on port $raft_port${NC}"
+            echo -e "  ${RED}✗ gRPC not responding on port $raft_port${NC}"
         fi
 
         if nc -z 127.0.0.1 "$resp_port" 2>/dev/null; then
@@ -197,15 +272,21 @@ show_status() {
             echo -e "  ${RED}✗ RESP not responding on port $resp_port${NC}"
         fi
 
-        # Check leader
-        local leader=$(curl --noproxy "*" -s "http://127.0.0.1:$raft_port/raft/leader" 2>/dev/null || echo "error")
+        # Check leader via gRPC
+        local leader=$($GRPCURL $PROTOSET -plaintext "127.0.0.1:$raft_port" raft_proto.RaftMetricsService/Leader 2>/dev/null || echo "error")
         if [ "$leader" != "error" ] && [ "$leader" != "null" ]; then
             echo -e "  Leader info: $leader"
+        fi
+
+        # Check metrics via gRPC
+        local metrics=$($GRPCURL $PROTOSET -plaintext "127.0.0.1:$raft_port" raft_proto.RaftMetricsService/Metrics 2>/dev/null || echo "error")
+        if [ "$metrics" != "error" ] && [ "$metrics" != "null" ]; then
+            echo -e "  Metrics: $metrics"
         fi
     done
 }
 
-# Function to run tests
+# Function to run tests using gRPC
 run_tests() {
     echo -e "\n${YELLOW}Running basic Raft tests...${NC}"
 
@@ -215,12 +296,15 @@ run_tests() {
 
     for node_info in "${NODES[@]}"; do
         IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
-        local leader_check=$(curl --noproxy "*" -s "http://127.0.0.1:$raft_port/raft/leader" 2>/dev/null || echo "error")
-        if [ "$leader_check" != "error" ] && [ "$leader_check" != "null" ]; then
-            leader_raft="127.0.0.1:$raft_port"
-            leader_id="$node_id"
-            echo -e "${GREEN}Leader is node $node_id (port $raft_port)${NC}"
-            break
+        local leader_check=$($GRPCURL $PROTOSET -plaintext "127.0.0.1:$raft_port" raft_proto.RaftMetricsService/Metrics 2>/dev/null || echo "error")
+        if [ "$leader_check" != "error" ] && [[ "$leader_check" == *"isLeader"* ]]; then
+            # Check if this node is the leader (isLeader: true)
+            if [[ "$leader_check" == *"isLeader\": true"* ]]; then
+                leader_raft="127.0.0.1:$raft_port"
+                leader_id="$node_id"
+                echo -e "${GREEN}Leader is node $node_id (port $raft_port)${NC}"
+                break
+            fi
         fi
     done
 
@@ -229,11 +313,22 @@ run_tests() {
         return
     fi
 
-    # Test write operation
+    # Test write operation via gRPC
     echo -e "${BLUE}Testing write operation via leader ($leader_raft)...${NC}"
-    local write_response=$(curl --noproxy "*" -s -X POST "http://$leader_raft/raft/write" \
-        -H "Content-Type: application/json" \
-        -d '{"binlog": {"db_id": 0, "slot_idx": 0, "entries": [{"cf_idx": 0, "op_type": "Put", "key": [116,101,115,116,95,107], "value": [116,101,115,116,95,118]}]}}' 2>/dev/null || echo "error")
+    local write_response=$($GRPCURL $PROTOSET -plaintext -d '{
+        "binlog": {
+            "db_id": 0,
+            "slot_idx": 0,
+            "entries": [
+                {
+                    "cf_idx": 0,
+                    "op_type": "Put",
+                    "key": "dGVzdF9r",
+                    "value": "dGVzdF92"
+                }
+            ]
+        }
+    }' "$leader_raft" raft_proto.RaftClientService/Write 2>/dev/null || echo "error")
 
     if [ "$write_response" != "error" ]; then
         echo -e "${GREEN}Write response: $write_response${NC}"
@@ -241,11 +336,11 @@ run_tests() {
         echo -e "${RED}Write failed${NC}"
     fi
 
-    # Test read operation
+    # Test read operation via gRPC
     echo -e "${BLUE}Testing read operation...${NC}"
-    local read_response=$(curl --noproxy "*" -s -X POST "http://$leader_raft/raft/read" \
-        -H "Content-Type: application/json" \
-        -d '{"key": [116,101,115,116,95,107]}' 2>/dev/null || echo "error")
+    local read_response=$($GRPCURL $PROTOSET -plaintext -d '{
+        "key": "dGVzdF9r"
+    }' "$leader_raft" raft_proto.RaftClientService/Read 2>/dev/null || echo "error")
 
     if [ "$read_response" != "error" ]; then
         echo -e "${GREEN}Read response: $read_response${NC}"
@@ -258,6 +353,7 @@ run_tests() {
 main() {
     echo -e "${GREEN}========================================${NC}"
     echo -e "${GREEN}  Kiwi 3-Node Raft Cluster Starter${NC}"
+    echo -e "${GREEN}  (using gRPC for cluster management)${NC}"
     echo -e "${GREEN}========================================${NC}"
 
     # Clean up any existing cluster
@@ -310,10 +406,10 @@ main() {
         IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
         local node_dir="$CLUSTER_BASE_DIR/node$node_id"
         echo -e "  ${BLUE}Node $node_id:${NC}"
-        echo -e "    Raft API: http://127.0.0.1:$raft_port"
-        echo -e "    RESP:    127.0.0.1:$resp_port"
-        echo -e "    Log:     $node_dir/kiwi.log"
-        echo -e "    Data:    $node_dir"
+        echo -e "    gRPC:   127.0.0.1:$raft_port"
+        echo -e "    RESP:   127.0.0.1:$resp_port"
+        echo -e "    Log:    $node_dir/kiwi.log"
+        echo -e "    Data:   $node_dir"
     done
 
     echo -e "\n${YELLOW}View logs with:${NC}"
@@ -322,6 +418,13 @@ main() {
     echo -e "  ${BLUE}tail -f $CLUSTER_BASE_DIR/node3/kiwi.log${NC}"
     echo -e "\n${YELLOW}Or view all at once:${NC}"
     echo -e "  ${BLUE}tail -f $CLUSTER_BASE_DIR/node*/kiwi.log${NC}"
+
+    echo -e "\n${YELLOW}gRPC service examples:${NC}"
+    echo -e "  ${BLUE}$GRPCURL $PROTOSET -plaintext 127.0.0.1:8081 raft_proto.RaftMetricsService/Leader${NC}"
+    echo -e "  ${BLUE}$GRPCURL $PROTOSET -plaintext 127.0.0.1:8081 raft_proto.RaftMetricsService/Metrics${NC}"
+    echo -e "  ${BLUE}$GRPCURL $PROTOSET -plaintext 127.0.0.1:8081 raft_proto.RaftMetricsService/Members${NC}"
+    echo -e "  ${BLUE}$GRPCURL $PROTOSET -plaintext 127.0.0.1:8081 list${NC}"
+
     echo -e "\n${YELLOW}Press Ctrl+C to stop the cluster${NC}"
 
     # Keep script running

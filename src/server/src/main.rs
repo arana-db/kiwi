@@ -25,11 +25,7 @@ use std::sync::Arc;
 use storage::StorageOptions;
 use storage::storage::Storage;
 
-use raft::api::{
-    RaftAppData, add_learner, change_membership, init, leader, metrics, raft_append, raft_vote,
-    read, write,
-};
-use raft::node::{RaftConfig, create_raft_node};
+use raft::node::{RaftConfig, create_raft_node, RaftApp};
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
 #[derive(Parser)]
@@ -249,21 +245,27 @@ async fn start_server(
                 .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
 
             let raft_addr = raft_app.raft_addr.clone();
-            let app_data = web::Data::new(RaftAppData { app: raft_app });
+            let grpc_addr = raft_addr.parse::<std::net::SocketAddr>().map_err(|e| {
+                std::io::Error::other(format!("Invalid Raft address '{}': {}", raft_addr, e))
+            })?;
 
-            // TODO: Start gRPC server for Raft communication between nodes
-            let grpc_server = raft_app.create_grpc_server()
-                .await
-                .map_err(|e| std::io::Error::other(format!("Failed to create Raft gRPC server: {}", e)))?;
-            info!("Starting Raft gRPC server on {}", raft_config.raft_addr);
+            // 创建所有 gRPC 服务
+            let (core_svc, admin_svc, client_svc, metrics_svc) = RaftApp::create_grpc_services(raft_app.clone());
 
-            tokio::spwan(async move {
+            info!("Starting Raft gRPC server on {}", raft_addr);
+
+            // 启动 gRPC 服务器
+            tokio::spawn(async move {
+                use tonic::transport::Server;
                 Server::builder()
-                    .add_service(grpc_server)
-                    .serve(raft_addr.parse().unwrap())
+                    .add_service(core_svc)
+                    .add_service(admin_svc)
+                    .add_service(client_svc)
+                    .add_service(metrics_svc)
+                    .serve(grpc_addr)
                     .await
                     .unwrap();
-            })
+            });
         }
 
         Ok(())

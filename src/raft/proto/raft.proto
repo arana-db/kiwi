@@ -2,85 +2,45 @@ syntax = "proto3";
 
 package raft_proto;
 
-// Raft RPC service definition
-service RaftService {
-    // RequestVote RPC
+import "types.proto";
+
+// ============================================================================
+// RaftCoreService - Raft 协议核心服务
+// 用途：节点间通信，实现 Raft 共识算法
+// ============================================================================
+
+service RaftCoreService {
+    // 请求投票 RPC - 选举阶段使用
     rpc Vote (VoteRequest) returns (VoteResponse);
 
-    // AppendEntries RPC
+    // 追加日志条目 RPC - 日志复制使用
     rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
-    
-    // 流式追加日志 RPC (pipeline 复制) - 生产阶段使用
-    rpc StreamAppend(stream AppendEntriesRequest) returns (stream AppendEntriesResponse);
-  
-    // 安装快照 RPC (流式传输) - POC 不实现
-    rpc InstallSnapshot(stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
+
+    // 流式追加日志 RPC - pipeline 复制（生产阶段使用）
+    rpc StreamAppend (stream AppendEntriesRequest) returns (stream AppendEntriesResponse);
+
+    // 安装快照 RPC - 流式传输（POC 不实现）
+    rpc InstallSnapshot (stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
 }
 
-message NodeId {
-    uint64 id = 1;
-}
+// ============================================================================
+// Vote RPC - 请求投票
+// ============================================================================
 
 message VoteRequest {
     Vote vote = 1;
     LogId last_log_id = 2;
 }
+
 message VoteResponse {
     Vote vote = 1;
     bool vote_granted = 2;
     LogId last_log_id = 3;
 }
 
-message LeaderId {
-    uint64 term = 1;
-    NodeId node_id = 2;
-}
-
-message Vote {
-    LeaderId leader_id = 1;
-    bool committed = 2;
-}
-
-message LogId {
-    // committed leader id
-    LeaderId leader_id = 1;
-    uint64 index = 2;
-}
-
-// 对应 EntryPayload::Blank
-message BlankPayload {}
-
-// 对应 EntryPayload::Normal(C::D)
-// C::D 是用户自定义数据，用 bytes 包装
-message NormalPayload {
-    bytes data = 1;
-}
-
-// 对应 Membership
-message Membership {
-    repeated uint64 node_ids = 1; // 或 string，取决于你的 NodeId 类型
-    repeated NodeConfig nodes = 2; // 如果 C::Node 包含额外信息
-}
-
-message NodeConfig {
-    uint64 node_id = 1;
-    string rpc_addr = 2; // 根据你的 Node 结构定义
-    // ... 其他字段
-}
-
-// 最终的 Payload - 用 oneof 实现 enum
-message EntryPayload {
-    oneof payload {
-        BlankPayload blank = 1;
-        NormalPayload normal = 2;
-        Membership membership = 3;
-    }
-}
-
-message Entry {
-    LogId log_id = 1;
-    EntryPayload payload = 2;
-}
+// ============================================================================
+// AppendEntries RPC - 追加日志条目
+// ============================================================================
 
 message AppendEntriesRequest {
     Vote vote = 1;
@@ -88,24 +48,24 @@ message AppendEntriesRequest {
     repeated Entry entries = 3;
     LogId leader_commit = 4;
 }
+
 message AppendEntriesResponse {
     bool success = 1;
-    // 其他字段暂时留空，基础版本只需要 success
 }
 
+// ============================================================================
+// InstallSnapshot RPC - 安装快照
+// ============================================================================
+
 message InstallSnapshotRequest {
-  
+    uint64 term = 1;
+    uint64 leader_id = 2;
+    uint64 last_included_index = 3;
+    uint64 last_included_term = 4;
+    bytes data = 5;
+    bool done = 6;
 }
 
 message InstallSnapshotResponse {
-  
+    bool success = 1;
 }
-
-message LogEntry {
-  int64 term = 1;
-  int64 index = 2;
-  string command = 3;
-}
-
-
-
