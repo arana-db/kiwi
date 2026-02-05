@@ -146,7 +146,7 @@ pub async fn metrics(app_data: web::Data<RaftAppData>) -> impl Responder {
     let leader_info = app_data.app.get_leader();
 
     let replication_lag =
-        leader_info.and_then(|(leader_id, _)| if !is_leader { Some(0) } else { None });
+        leader_info.and_then(|(_leader_id, _)| if !is_leader { Some(0) } else { None });
 
     HttpResponse::Ok().json(ApiResponse::success(MetricsResponse {
         is_leader,
@@ -174,8 +174,23 @@ pub async fn init(app_data: web::Data<RaftAppData>, req: Json<InitRequest>) -> i
     let init_req = req.into_inner();
     let nodes: BTreeMap<u64, KiwiNode> = init_req.nodes.into_iter().collect();
 
+    // 打印所有将要建立通信的节点信息
+    log::info!("Cluster nodes configuration:");
+    for (node_id, node) in &nodes {
+        log::info!("  Node {}: raft_addr={}, resp_addr={}",
+            node_id, node.raft_addr, node.resp_addr);
+    }
+
     match raft.initialize(nodes).await {
-        Ok(_) => HttpResponse::Ok().json(ApiResponse::success(())),
+        Ok(_) => {
+            log::info!("Cluster initialized successfully");
+            if let Some((leader_id, node)) = app_data.app.get_leader() {
+                log::info!("Current leader: Node {} at {}", leader_id, node.raft_addr);
+            } else {
+                log::info!("No leader elected yet");
+            }
+            HttpResponse::Ok().json(ApiResponse::success(()))
+        }
         Err(e) => {
             log::error!("Failed to initialize cluster: {}", e);
             HttpResponse::InternalServerError().json(ApiResponse::<()>::error(e.to_string()))

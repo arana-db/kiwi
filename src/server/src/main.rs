@@ -25,7 +25,6 @@ use std::sync::Arc;
 use storage::StorageOptions;
 use storage::storage::Storage;
 
-use actix_web::{App, HttpServer, web};
 use raft::api::{
     RaftAppData, add_learner, change_membership, init, leader, metrics, raft_append, raft_vote,
     read, write,
@@ -237,8 +236,6 @@ async fn start_server(
         });
 
         if let Some(raft_config) = &config.raft {
-            info!("Starting Raft HTTP server on {}", raft_config.raft_addr);
-
             let raft_config = RaftConfig {
                 node_id: raft_config.node_id,
                 raft_addr: raft_config.raft_addr.clone(),
@@ -254,33 +251,19 @@ async fn start_server(
             let raft_addr = raft_app.raft_addr.clone();
             let app_data = web::Data::new(RaftAppData { app: raft_app });
 
-            tokio::spawn(async move {
-                info!("Starting Raft HTTP server...");
-                let server = match HttpServer::new(move || {
-                    App::new()
-                        .app_data(app_data.clone())
-                        .service(write)
-                        .service(read)
-                        .service(metrics)
-                        .service(leader)
-                        .service(init)
-                        .service(add_learner)
-                        .service(change_membership)
-                        .service(raft_vote)
-                        .service(raft_append)
-                })
-                .bind(&raft_addr)
-                {
-                    Ok(s) => s,
-                    Err(e) => {
-                        error!("Failed to bind Raft HTTP server: {}", e);
-                        return;
-                    }
-                };
-                if let Err(e) = server.run().await {
-                    error!("Raft HTTP server error: {}", e);
-                }
-            });
+            // TODO: Start gRPC server for Raft communication between nodes
+            let grpc_server = raft_app.create_grpc_server()
+                .await
+                .map_err(|e| std::io::Error::other(format!("Failed to create Raft gRPC server: {}", e)))?;
+            info!("Starting Raft gRPC server on {}", raft_config.raft_addr);
+
+            tokio::spwan(async move {
+                Server::builder()
+                    .add_service(grpc_server)
+                    .serve(raft_addr.parse().unwrap())
+                    .await
+                    .unwrap();
+            })
         }
 
         Ok(())

@@ -7,6 +7,8 @@ use crate::log_store::LogStore;
 use crate::network::KiwiNetworkFactory;
 use crate::state_machine::KiwiStateMachine;
 use storage::storage::Storage;
+use crate::grpc;
+use crate::raft_proto::raft_service_server::RaftServiceServer;
 
 pub struct RaftApp {
     pub node_id: u64,
@@ -38,6 +40,10 @@ impl RaftApp {
     pub async fn client_write(&self, binlog: Binlog) -> Result<BinlogResponse, anyhow::Error> {
         let res = self.raft.client_write(binlog).await?;
         Ok(res.data)
+    }
+
+    pub fn create_grpc_server(&self) -> RaftServiceServer<grpc::RaftServiceImpl> {
+        RaftServiceServer::new(grpc::RaftServiceImpl::new(self.raft.clone()))
     }
 }
 
@@ -88,7 +94,7 @@ pub async fn create_raft_node(
 
     let state_machine = KiwiStateMachine::new(config.node_id, storage.clone());
 
-    let network = KiwiNetworkFactory::new();
+    let network = KiwiNetworkFactory::new(config.node_id);
 
     let raft = Raft::new(
         config.node_id,

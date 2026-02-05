@@ -5,8 +5,13 @@ use openraft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
     VoteRequest, VoteResponse,
 };
-use reqwest::Client;
 use std::io;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use crate::raft_proto::raft_service_client::RaftServiceClient;
+use tonic::transport::Channel;
+
 
 // 类型别名，简化 RaftNetwork 的返回类型（参考 openraft 示例）
 type NodeId = <KiwiTypeConfig as openraft::RaftTypeConfig>::NodeId;
@@ -19,16 +24,20 @@ type RPCErrSnapshot = openraft::error::RPCError<
 >;
 
 pub struct KiwiNetworkFactory {
-    client: Client,
+    // Connection pool: NodeId -> RaftServiceClient<Channel>(gRPC Client)
+    clients: Arc<RwLock<HashMap<NodeId, RaftServiceClient<Channel>>>>,
+    // NodeId -> raft address
+    node_addrs: Arc<RwLock<HashMap<NodeId, String>>>,
+    // The current node id
+    node_id: NodeId,
 }
 
 impl KiwiNetworkFactory {
-    pub fn new() -> Self {
+    pub fn new(node_id: NodeId) -> Self {
         Self {
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(5))
-                .build()
-                .expect("Failed to create HTTP client"),
+            clients: Arc::new(RwLock::new(HashMap::new())),
+            node_addrs: Arc::new(RwLock::new(HashMap::new())),
+            node_id,
         }
     }
 }
@@ -36,57 +45,48 @@ impl KiwiNetworkFactory {
 impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
     type Network = KiwiNetwork;
 
-    async fn new_client(&mut self, _target: NodeId, node: &Node) -> Self::Network {
+    async fn new_client(&mut self, target: NodeId, node: &Node) -> Self::Network {
+        // Get or create gRPC client for the target node
+        let addr = node.raft_addr.clone();
+
+        let mut clients_guard = self.clients.write().await;
+        let client = if let Some(client) = clients_guard.get(&target) {
+            client.clone()
+        } else {
+            let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
+                .unwrap()
+                .connect_lazy();
+            let client = RaftServiceClient::new(endpoint);
+            clients_guard.insert(target, client.clone());
+            client
+        };
         KiwiNetwork {
-            client: self.client.clone(),
-            target_addr: node.raft_addr.clone(),
+            target_id: target,
+            client,
+            target_addr: addr,
         }
     }
 }
 
 pub struct KiwiNetwork {
-    client: Client,
+    target_id: u64,
+    client: RaftServiceClient<Channel>,
     target_addr: String,
 }
 
-impl KiwiNetwork {
-    async fn post<Req, Res>(&self, endpoint: &str, req: &Req) -> Result<Res, RPCErr>
-    where
-        Req: serde::Serialize,
-        Res: serde::de::DeserializeOwned,
-    {
-        let url = format!("{}{}", self.target_addr, endpoint);
+// TODO: Change to tonic(gRPC)
 
-        let resp = self
-            .client
-            .post(&url)
-            .json(req)
-            .send()
-            .await
-            .map_err(|e| RPCErr::Network(NetworkError::new(&e)))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(RPCErr::Network(NetworkError::new(&io::Error::new(
-                io::ErrorKind::Other,
-                format!("HTTP error {}: {}", status, body),
-            ))));
-        }
-
-        resp.json()
-            .await
-            .map_err(|e| RPCErr::Network(NetworkError::new(&e)))
-    }
-}
-
+// Impl the RaftNetwork trait for KiwiNetwork according to openraft requirements
 impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
     async fn append_entries(
         &mut self,
-        rpc: AppendEntriesRequest<KiwiTypeConfig>,
+        _rpc: AppendEntriesRequest<KiwiTypeConfig>,
         _option: RPCOption,
     ) -> Result<AppendEntriesResponse<NodeId>, RPCErr> {
-        self.post("/raft/append", &rpc).await
+       Err(RPCErr::Network(NetworkError::new(&io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Append entries rpc version not implemented",
+        ))))
     }
 
     async fn install_snapshot(
@@ -102,9 +102,9 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
 
     async fn vote(
         &mut self,
-        rpc: VoteRequest<NodeId>,
+        _rpc: VoteRequest<NodeId>,
         _option: RPCOption,
     ) -> Result<VoteResponse<NodeId>, RPCErr> {
-        self.post("/raft/vote", &rpc).await
+       todo!() 
     }
 }

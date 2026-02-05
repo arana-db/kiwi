@@ -63,6 +63,8 @@ pub struct RaftClusterConfig {
     pub raft_addr: String,
     pub resp_addr: String,
     pub data_dir: String,
+    /// 是否使用 gRPC 进行节点间通信（默认 false 使用 HTTP）
+    pub use_grpc: bool,
 }
 
 // set default value for config
@@ -343,6 +345,7 @@ impl Config {
                 raft_addr: addr,
                 resp_addr,
                 data_dir,
+                use_grpc: false, // 默认使用 HTTP，可后续通过配置文件读取
             });
         }
 
