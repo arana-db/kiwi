@@ -26,6 +26,7 @@ use storage::StorageOptions;
 use storage::storage::Storage;
 
 use raft::node::{RaftConfig, create_raft_node, RaftApp};
+use raft::raft_proto;
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
 #[derive(Parser)]
@@ -254,10 +255,16 @@ async fn start_server(
 
             info!("Starting Raft gRPC server on {}", raft_addr);
 
+            let reflect_svc = tonic_reflection::server::Builder::configure()
+                .register_encoded_file_descriptor_set(raft_proto::FILE_DESCRIPTOR_SET)
+                .build_v1()
+                .unwrap();
+
             // 启动 gRPC 服务器
             tokio::spawn(async move {
                 use tonic::transport::Server;
                 Server::builder()
+                    .add_service(reflect_svc)
                     .add_service(core_svc)
                     .add_service(admin_svc)
                     .add_service(client_svc)

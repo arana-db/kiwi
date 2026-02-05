@@ -25,6 +25,7 @@ tonic = "0.14"
 http-body = "1"
 hyper = "1"
 tower = "0.4"
+tonic-reflection = { version = "0.14", features = ["server"] }
 
 
 [lints]
