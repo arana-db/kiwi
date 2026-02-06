@@ -463,24 +463,8 @@ main() {
 
     echo -e "\n${YELLOW}Press Ctrl+C to stop the cluster${NC}"
 
-    # # Keep script running
-    # echo -e "\n${GREEN}Monitoring cluster...${NC}"
-    # while true; do
-    #     sleep 5
-    #     # Check if all nodes are still running
-    #     local all_running=true
-    #     for pid in "${PIDS[@]}"; do
-    #         if ! kill -0 "$pid" 2>/dev/null; then
-    #             all_running=false
-    #             break
-    #         fi
-    #     done
-    #     if [ "$all_running" = "false" ]; then
-    #         echo -e "\n${RED}A node has stopped, cleaning up...${NC}"
-    #         cleanup
-    #         exit 1
-    #     fi
-    # done
+    # Wait indefinitely for user to press Ctrl+C
+    wait
 }
 
 # Run main

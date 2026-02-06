@@ -24,8 +24,6 @@ type RPCErrSnapshot = openraft::error::RPCError<
 >;
 
 pub struct KiwiNetworkFactory {
-    // Connection pool: NodeId -> RaftCoreServiceClient<Channel>(gRPC Client)
-    clients: Arc<RwLock<HashMap<NodeId, RaftCoreServiceClient<Channel>>>>,
     // NodeId -> raft address
     node_addrs: Arc<RwLock<HashMap<NodeId, String>>>,
     // The current node id
@@ -35,7 +33,6 @@ pub struct KiwiNetworkFactory {
 impl KiwiNetworkFactory {
     pub fn new(node_id: NodeId) -> Self {
         Self {
-            clients: Arc::new(RwLock::new(HashMap::new())),
             node_addrs: Arc::new(RwLock::new(HashMap::new())),
             node_id,
         }
@@ -49,17 +46,14 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
         // Get or create gRPC client for the target node
         let addr = node.raft_addr.clone();
 
-        let mut clients_guard = self.clients.write().await;
-        let client = if let Some(client) = clients_guard.get(&target) {
-            client.clone()
-        } else {
-            let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
-                .unwrap()
-                .connect_lazy();
-            let client = RaftCoreServiceClient::new(endpoint);
-            clients_guard.insert(target, client.clone());
-            client
-        };
+        
+        let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
+            .expect("Invalid gRPC endpoint")
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_lazy();
+        let client = RaftCoreServiceClient::new(endpoint);
+
         KiwiNetwork {
             target_id: target,
             client,

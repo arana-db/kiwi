@@ -11,10 +11,7 @@ use openraft::LogId;
 use openraft::Vote;
 use std::convert::TryInto;
 
-// ============================================================================
 // 辅助函数：创建 LeaderId、LogId 和 Vote
-// ============================================================================
-
 pub fn proto_to_leader_id(lid: &Option<&proto::LeaderId>) -> LeaderId<u64> {
     match lid {
         Some(l) => LeaderId::new(l.term, l.node_id.as_ref().map(|n| n.id).unwrap_or(0)),
@@ -79,10 +76,7 @@ pub fn vote_to_proto(vote: &Vote<u64>) -> proto::Vote {
     }
 }
 
-// ============================================================================
 // Proto → OpenRaft 转换 (gRPC Server 使用)
-// ============================================================================
-
 // ----- VoteRequest -----
 
 impl TryInto<VoteRequest<u64>> for &proto::VoteRequest {
@@ -183,10 +177,7 @@ impl TryInto<Entry<KiwiTypeConfig>> for &proto::Entry {
     }
 }
 
-// ============================================================================
 // OpenRaft → Proto 转换 (gRPC Server 响应使用)
-// ============================================================================
-
 // ----- VoteResponse -----
 
 impl From<VoteResponse<u64>> for proto::VoteResponse {
@@ -210,9 +201,9 @@ impl From<AppendEntriesResponse<u64>> for proto::AppendEntriesResponse {
     }
 }
 
-// ============================================================================
+
 // OpenRaft → Proto 转换 (gRPC Client 请求使用)
-// ============================================================================
+
 
 // ----- VoteRequest -----
 
@@ -303,10 +294,7 @@ impl TryInto<proto::Entry> for Entry<KiwiTypeConfig> {
     }
 }
 
-// ============================================================================
 // Proto → OpenRaft 转换 (gRPC Client 响应使用)
-// ============================================================================
-
 // ----- VoteResponse -----
 
 impl TryInto<VoteResponse<u64>> for &proto::VoteResponse {

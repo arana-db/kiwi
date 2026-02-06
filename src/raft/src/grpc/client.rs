@@ -81,10 +81,7 @@ fn log_id_to_proto(log_id: Option<openraft::LogId<u64>>) -> Option<LogId> {
     })
 }
 
-// ============================================================================
 // RaftClientService 实现
-// ============================================================================
-
 #[tonic::async_trait]
 impl RaftClientService for RaftClientServiceImpl {
     /// 写入数据（通过 Raft 共识）
@@ -172,10 +169,7 @@ impl RaftClientService for RaftClientServiceImpl {
     }
 }
 
-// ============================================================================
 // RaftMetricsService 实现
-// ============================================================================
-
 #[tonic::async_trait]
 impl RaftMetricsService for RaftMetricsServiceImpl {
     /// 获取集群指标
@@ -253,10 +247,7 @@ impl RaftMetricsService for RaftMetricsServiceImpl {
     }
 }
 
-// ============================================================================
 // 辅助函数
-// ============================================================================
-
 /// Proto Binlog → 实际 Binlog
 fn proto_binlog_to_binlog(proto_binlog: Option<crate::raft_proto::Binlog>) -> Result<Binlog, Status> {
     let proto_binlog = proto_binlog.ok_or_else(|| {

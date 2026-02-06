@@ -4,11 +4,7 @@ package raft_proto;
 
 import "types.proto";
 
-// ============================================================================
 // RaftCoreService - Raft 协议核心服务
-// 用途：节点间通信，实现 Raft 共识算法
-// ============================================================================
-
 service RaftCoreService {
     // 请求投票 RPC - 选举阶段使用
     rpc Vote (VoteRequest) returns (VoteResponse);
@@ -23,10 +19,7 @@ service RaftCoreService {
     rpc InstallSnapshot (stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
 }
 
-// ============================================================================
 // Vote RPC - 请求投票
-// ============================================================================
-
 message VoteRequest {
     Vote vote = 1;
     LogId last_log_id = 2;
@@ -38,10 +31,7 @@ message VoteResponse {
     LogId last_log_id = 3;
 }
 
-// ============================================================================
 // AppendEntries RPC - 追加日志条目
-// ============================================================================
-
 message AppendEntriesRequest {
     Vote vote = 1;
     LogId prev_log_id = 2;
@@ -53,10 +43,7 @@ message AppendEntriesResponse {
     bool success = 1;
 }
 
-// ============================================================================
 // InstallSnapshot RPC - 安装快照
-// ============================================================================
-
 message InstallSnapshotRequest {
     uint64 term = 1;
     uint64 leader_id = 2;

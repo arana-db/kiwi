@@ -258,12 +258,17 @@ async fn start_server(
             let reflect_svc = tonic_reflection::server::Builder::configure()
                 .register_encoded_file_descriptor_set(raft_proto::FILE_DESCRIPTOR_SET)
                 .build_v1()
-                .unwrap();
+                .map_err(|e| {
+                    std::io::Error::other(format!("Failed to create reflection service: {}", e))
+                })?;
 
             // 启动 gRPC 服务器
             tokio::spawn(async move {
                 use tonic::transport::Server;
-                Server::builder()
+                
+                info!("Raft gRPC server listening on {}", grpc_addr);
+                
+                if let Err(e) = Server::builder()
                     .add_service(reflect_svc)
                     .add_service(core_svc)
                     .add_service(admin_svc)
@@ -271,7 +276,9 @@ async fn start_server(
                     .add_service(metrics_svc)
                     .serve(grpc_addr)
                     .await
-                    .unwrap();
+                    {
+                        error!("Raft gRPC server error: {}", e);
+                    }
             });
         }
 

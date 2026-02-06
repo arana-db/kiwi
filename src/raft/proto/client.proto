@@ -4,11 +4,7 @@ package raft_proto;
 
 import "types.proto";
 
-// ============================================================================
 // RaftClientService - 客户端服务
-// 用途：客户端读写数据
-// ============================================================================
-
 service RaftClientService {
     // 写入数据（通过 Raft 共识）
     rpc Write (WriteRequest) returns (WriteResponse);
@@ -17,11 +13,7 @@ service RaftClientService {
     rpc Read (ReadRequest) returns (ReadResponse);
 }
 
-// ============================================================================
 // RaftMetricsService - 集群状态服务
-// 用途：查询集群状态、leader 信息等
-// ============================================================================
-
 service RaftMetricsService {
     // 获取集群指标
     rpc Metrics (MetricsRequest) returns (MetricsResponse);
@@ -33,10 +25,7 @@ service RaftMetricsService {
     rpc Members (MembersRequest) returns (MembersResponse);
 }
 
-// ============================================================================
 // Write / Read - 客户端读写
-// ============================================================================
-
 message WriteRequest {
     Binlog binlog = 1;
 }
@@ -55,10 +44,7 @@ message ReadResponse {
     bytes value = 2;
 }
 
-// ============================================================================
 // Metrics / Leader / Members - 集群状态查询
-// ============================================================================
-
 message MetricsRequest {}
 
 message MetricsResponse {
