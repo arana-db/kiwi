@@ -53,6 +53,7 @@ pub struct Config {
     pub log_dir: String,
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
+    pub db_path: String,
     pub raft: Option<RaftClusterConfig>,
 }
 
@@ -93,6 +94,7 @@ impl Default for Config {
             rocksdb_target_file_size_base: 64 << 20, // 64MB
 
             db_instance_num: 3,
+            db_path: "./db".to_string(),
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
             raft: None,
@@ -327,6 +329,9 @@ impl Config {
                 }
                 "raft-data-dir" => {
                     raft_data_dir = Some(value);
+                }
+                "db-path" => {
+                    config.db_path = value;
                 }
                 _ => {
                     // Unknown configuration key, skip it

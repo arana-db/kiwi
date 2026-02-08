@@ -456,7 +456,4 @@ impl Storage {
         Box::new(batch).commit()?;
         Ok(())
     }
-
-
-
 }
