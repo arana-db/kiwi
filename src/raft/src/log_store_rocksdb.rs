@@ -276,7 +276,10 @@ impl RocksdbLogStoreInner {
         };
 
         // 创建迭代器从起始键开始
-        let iter = self.engine.iterator_cf(&logs_cf, IteratorMode::From(&start_key, rocksdb::Direction::Forward));
+        let iter = self.engine.iterator_cf(
+            &logs_cf,
+            IteratorMode::From(&start_key, rocksdb::Direction::Forward),
+        );
 
         let mut entries = Vec::new();
 
@@ -316,10 +319,7 @@ impl RocksdbLogStoreInner {
     /// # 返回
     ///
     /// 成功时返回 `Ok(())`，失败时返回 `StorageError`
-    async fn save_vote(
-        &mut self,
-        vote: &openraft::Vote<u64>,
-    ) -> Result<(), StorageError<u64>> {
+    async fn save_vote(&mut self, vote: &openraft::Vote<u64>) -> Result<(), StorageError<u64>> {
         // 获取 state_cf 列族句柄
         let state_cf = self.engine.cf_handle(STATE_CF).ok_or_else(|| {
             let err = std::io::Error::new(
@@ -335,12 +335,14 @@ impl RocksdbLogStoreInner {
         let value = serialize(vote)?;
 
         // 写入到 RocksDB
-        self.engine.put_cf(&state_cf, VOTE_KEY, &value).map_err(|e| {
-            let io_err = std::io::Error::new(std::io::ErrorKind::Other, e);
-            StorageError::IO {
-                source: openraft::StorageIOError::write(&io_err),
-            }
-        })?;
+        self.engine
+            .put_cf(&state_cf, VOTE_KEY, &value)
+            .map_err(|e| {
+                let io_err = std::io::Error::new(std::io::ErrorKind::Other, e);
+                StorageError::IO {
+                    source: openraft::StorageIOError::write(&io_err),
+                }
+            })?;
 
         Ok(())
     }
@@ -412,12 +414,14 @@ impl RocksdbLogStoreInner {
         let value = serialize(&committed)?;
 
         // 写入到 RocksDB
-        self.engine.put_cf(&state_cf, COMMITTED_KEY, &value).map_err(|e| {
-            let io_err = std::io::Error::new(std::io::ErrorKind::Other, e);
-            StorageError::IO {
-                source: openraft::StorageIOError::write(&io_err),
-            }
-        })?;
+        self.engine
+            .put_cf(&state_cf, COMMITTED_KEY, &value)
+            .map_err(|e| {
+                let io_err = std::io::Error::new(std::io::ErrorKind::Other, e);
+                StorageError::IO {
+                    source: openraft::StorageIOError::write(&io_err),
+                }
+            })?;
 
         Ok(())
     }
@@ -472,7 +476,7 @@ impl RocksdbLogStoreInner {
     ///
     /// 成功时返回 `Ok(())`，失败时返回 `StorageError`
     async fn truncate(&mut self, log_id: openraft::LogId<u64>) -> Result<(), StorageError<u64>> {
-        use rocksdb::{WriteBatch, IteratorMode};
+        use rocksdb::{IteratorMode, WriteBatch};
 
         // 获取 logs_cf 列族句柄
         let logs_cf = self.engine.cf_handle(LOGS_CF).ok_or_else(|| {
@@ -490,7 +494,10 @@ impl RocksdbLogStoreInner {
 
         // 从截断索引开始迭代
         let start_key = encode_log_key(log_id.index);
-        let iter = self.engine.iterator_cf(&logs_cf, IteratorMode::From(&start_key, rocksdb::Direction::Forward));
+        let iter = self.engine.iterator_cf(
+            &logs_cf,
+            IteratorMode::From(&start_key, rocksdb::Direction::Forward),
+        );
 
         // 收集需要删除的键
         for item in iter {
@@ -533,7 +540,7 @@ impl RocksdbLogStoreInner {
     ///
     /// 如果清理的 LogId 小于等于当前最后清理的 LogId，将会 panic
     async fn purge(&mut self, log_id: openraft::LogId<u64>) -> Result<(), StorageError<u64>> {
-        use rocksdb::{WriteBatch, IteratorMode};
+        use rocksdb::{IteratorMode, WriteBatch};
 
         // 获取 meta_cf 列族句柄以读取当前最后清理的日志 ID
         let meta_cf = self.engine.cf_handle(META_CF).ok_or_else(|| {
@@ -547,16 +554,16 @@ impl RocksdbLogStoreInner {
         })?;
 
         // 读取当前最后清理的日志 ID
-        let current_last_purged = self.engine.get_cf(&meta_cf, LAST_PURGED_KEY)
+        let current_last_purged = self
+            .engine
+            .get_cf(&meta_cf, LAST_PURGED_KEY)
             .map_err(|e| {
                 let io_err = std::io::Error::new(std::io::ErrorKind::Other, e);
                 StorageError::IO {
                     source: openraft::StorageIOError::write(&io_err),
                 }
             })?
-            .and_then(|bytes| {
-                deserialize::<Option<openraft::LogId<u64>>>(&bytes).ok()?
-            });
+            .and_then(|bytes| deserialize::<Option<openraft::LogId<u64>>>(&bytes).ok()?);
 
         // 验证清理的 LogId 大于当前最后清理的 LogId
         if let Some(last_purged) = current_last_purged {
@@ -584,7 +591,10 @@ impl RocksdbLogStoreInner {
 
         // 从开始迭代到清理索引（包含）
         let start_key = encode_log_key(0);
-        let iter = self.engine.iterator_cf(&logs_cf, IteratorMode::From(&start_key, rocksdb::Direction::Forward));
+        let iter = self.engine.iterator_cf(
+            &logs_cf,
+            IteratorMode::From(&start_key, rocksdb::Direction::Forward),
+        );
 
         // 收集需要删除的键
         for item in iter {
@@ -630,7 +640,9 @@ impl RocksdbLogStoreInner {
     /// # 返回
     ///
     /// 成功时返回 `LogState`，失败时返回 `StorageError`
-    async fn get_log_state(&mut self) -> Result<openraft::LogState<KiwiTypeConfig>, StorageError<u64>> {
+    async fn get_log_state(
+        &mut self,
+    ) -> Result<openraft::LogState<KiwiTypeConfig>, StorageError<u64>> {
         use rocksdb::IteratorMode;
 
         // 获取 logs_cf 列族句柄
@@ -673,7 +685,9 @@ impl RocksdbLogStoreInner {
             }
         })?;
 
-        let last_purged_log_id = self.engine.get_cf(&meta_cf, LAST_PURGED_KEY)
+        let last_purged_log_id = self
+            .engine
+            .get_cf(&meta_cf, LAST_PURGED_KEY)
             .map_err(|e| {
                 let io_err = std::io::Error::new(std::io::ErrorKind::Other, e);
                 StorageError::IO {
@@ -789,7 +803,9 @@ impl openraft::RaftLogReader<KiwiTypeConfig> for RocksdbLogStore {
 impl openraft::storage::RaftLogStorage<KiwiTypeConfig> for RocksdbLogStore {
     type LogReader = Self;
 
-    async fn get_log_state(&mut self) -> Result<openraft::LogState<KiwiTypeConfig>, StorageError<u64>> {
+    async fn get_log_state(
+        &mut self,
+    ) -> Result<openraft::LogState<KiwiTypeConfig>, StorageError<u64>> {
         let mut inner = self.inner.lock().await;
         inner.get_log_state().await
     }
@@ -998,10 +1014,10 @@ fn decode_log_key(key: &[u8]) -> Result<u64, StorageError<u64>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openraft::{Entry, EntryPayload, LogId, Vote};
-    use openraft::LeaderId;
-    use proptest::prelude::*;
     use conf::raft_type::{Binlog, BinlogEntry, OperateType};
+    use openraft::LeaderId;
+    use openraft::{Entry, EntryPayload, LogId, Vote};
+    use proptest::prelude::*;
 
     // 单元测试：编码解码
 
@@ -1036,16 +1052,16 @@ mod tests {
         // 验证编码后的键保持字典序
         let indices = vec![1u64, 10, 100, 1000, 10000];
         let mut encoded_keys: Vec<[u8; 8]> = indices.iter().map(|&i| encode_log_key(i)).collect();
-        
+
         // 字典序排序
         encoded_keys.sort();
-        
+
         // 解码并验证顺序
         let decoded: Vec<u64> = encoded_keys
             .iter()
             .map(|k| decode_log_key(k).unwrap())
             .collect();
-        
+
         assert_eq!(decoded, indices);
     }
 
@@ -1058,16 +1074,13 @@ mod tests {
 
     // 生成随机 LogId 的策略
     fn arb_log_id() -> impl Strategy<Value = LogId<u64>> {
-        (1u64..1000, 1u64..10000).prop_map(|(term, index)| {
-            LogId::new(LeaderId::new(term, 1), index)
-        })
+        (1u64..1000, 1u64..10000)
+            .prop_map(|(term, index)| LogId::new(LeaderId::new(term, 1), index))
     }
 
     // 生成随机 Vote 的策略
     fn arb_vote() -> impl Strategy<Value = Vote<u64>> {
-        (1u64..1000, 1u64..10).prop_map(|(term, node_id)| {
-            Vote::new(term, node_id)
-        })
+        (1u64..1000, 1u64..10).prop_map(|(term, node_id)| Vote::new(term, node_id))
     }
 
     // 生成随机 OperateType 的策略
@@ -1086,14 +1099,13 @@ mod tests {
             arb_operate_type(),
             prop::collection::vec(prop::num::u8::ANY, 1..20),
             prop::option::of(prop::collection::vec(prop::num::u8::ANY, 0..50)),
-        ).prop_map(|(cf_idx, op_type, key, value)| {
-            BinlogEntry {
+        )
+            .prop_map(|(cf_idx, op_type, key, value)| BinlogEntry {
                 cf_idx,
                 op_type,
                 key,
                 value,
-            }
-        })
+            })
     }
 
     // 生成随机 Binlog 的策略
@@ -1102,22 +1114,19 @@ mod tests {
             0u32..100,
             0u32..16384,
             prop::collection::vec(arb_binlog_entry(), 0..5),
-        ).prop_map(|(db_id, slot_idx, entries)| {
-            Binlog {
+        )
+            .prop_map(|(db_id, slot_idx, entries)| Binlog {
                 db_id,
                 slot_idx,
                 entries,
-            }
-        })
+            })
     }
 
     // 生成随机 Entry 的策略
     fn arb_entry() -> impl Strategy<Value = Entry<conf::raft_type::KiwiTypeConfig>> {
-        (arb_log_id(), arb_binlog()).prop_map(|(log_id, payload)| {
-            Entry {
-                log_id,
-                payload: EntryPayload::Normal(payload),
-            }
+        (arb_log_id(), arb_binlog()).prop_map(|(log_id, payload)| Entry {
+            log_id,
+            payload: EntryPayload::Normal(payload),
         })
     }
 
@@ -1159,9 +1168,9 @@ mod tests {
 
     // Unit tests for initialization
 
-    use rocksdb::{DB, Options, ColumnFamilyDescriptor};
-    use tempfile::TempDir;
     use engine::RocksdbEngine;
+    use rocksdb::{ColumnFamilyDescriptor, DB, Options};
+    use tempfile::TempDir;
 
     /// Helper function to create a test database with required column families
     fn create_test_db_with_cfs() -> (TempDir, Arc<dyn Engine>) {
@@ -1177,9 +1186,9 @@ mod tests {
             ColumnFamilyDescriptor::new(STATE_CF, Options::default()),
         ];
 
-        let db = DB::open_cf_descriptors(&opts, temp_dir.path(), cfs)
-            .expect("Failed to open database");
-        
+        let db =
+            DB::open_cf_descriptors(&opts, temp_dir.path(), cfs).expect("Failed to open database");
+
         let engine: Arc<dyn Engine> = Arc::new(RocksdbEngine::new(db));
         (temp_dir, engine)
     }
@@ -1199,10 +1208,13 @@ mod tests {
     fn test_initialization_success() {
         // Test normal initialization with all required column families
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        
+
         let result = RocksdbLogStore::new(engine);
-        assert!(result.is_ok(), "Initialization should succeed with all column families present");
-        
+        assert!(
+            result.is_ok(),
+            "Initialization should succeed with all column families present"
+        );
+
         let log_store = result.unwrap();
         // Verify the log store is usable by checking it can be cloned
         let _cloned = log_store.clone();
@@ -1212,14 +1224,19 @@ mod tests {
     fn test_initialization_missing_logs_cf() {
         // Test initialization fails when logs_cf is missing
         let (_temp_dir, engine) = create_test_db_without_cfs();
-        
+
         let result = RocksdbLogStore::new(engine);
-        assert!(result.is_err(), "Initialization should fail when logs_cf is missing");
-        
+        assert!(
+            result.is_err(),
+            "Initialization should fail when logs_cf is missing"
+        );
+
         if let Err(StorageError::IO { source }) = result {
             let error_msg = format!("{:?}", source);
-            assert!(error_msg.contains("logs") || error_msg.contains("not found"), 
-                    "Error should mention missing column family");
+            assert!(
+                error_msg.contains("logs") || error_msg.contains("not found"),
+                "Error should mention missing column family"
+            );
         } else {
             panic!("Expected StorageError::IO");
         }
@@ -1234,30 +1251,30 @@ mod tests {
         opts.create_missing_column_families(true);
 
         // Create only logs_cf, missing meta_cf and state_cf
-        let cfs = vec![
-            ColumnFamilyDescriptor::new(LOGS_CF, Options::default()),
-        ];
+        let cfs = vec![ColumnFamilyDescriptor::new(LOGS_CF, Options::default())];
 
-        let db = DB::open_cf_descriptors(&opts, temp_dir.path(), cfs)
-            .expect("Failed to open database");
-        
+        let db =
+            DB::open_cf_descriptors(&opts, temp_dir.path(), cfs).expect("Failed to open database");
+
         let engine: Arc<dyn Engine> = Arc::new(RocksdbEngine::new(db));
-        
+
         let result = RocksdbLogStore::new(engine);
-        assert!(result.is_err(), "Initialization should fail when not all column families are present");
+        assert!(
+            result.is_err(),
+            "Initialization should fail when not all column families are present"
+        );
     }
 
     #[test]
     fn test_initialization_allows_basic_operations() {
         // Test that after successful initialization, basic operations can be performed
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
-        
+
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
+
         // Verify we can clone the log store (required for multi-threaded usage)
         let cloned_store = log_store.clone();
-        
+
         // Both stores should be independent but share the same underlying data
         // This is a basic sanity check that the Arc<Mutex<>> structure works
         drop(cloned_store);
@@ -1268,15 +1285,23 @@ mod tests {
     fn test_column_family_handles_accessible() {
         // Test that all column family handles are accessible after initialization
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        
+
         // Verify all column families are accessible through the engine
-        assert!(engine.cf_handle(LOGS_CF).is_some(), "logs_cf should be accessible");
-        assert!(engine.cf_handle(META_CF).is_some(), "meta_cf should be accessible");
-        assert!(engine.cf_handle(STATE_CF).is_some(), "state_cf should be accessible");
-        
+        assert!(
+            engine.cf_handle(LOGS_CF).is_some(),
+            "logs_cf should be accessible"
+        );
+        assert!(
+            engine.cf_handle(META_CF).is_some(),
+            "meta_cf should be accessible"
+        );
+        assert!(
+            engine.cf_handle(STATE_CF).is_some(),
+            "state_cf should be accessible"
+        );
+
         // Now create the log store
-        let _log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let _log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
     }
 
     // Property tests for append functionality
@@ -1298,8 +1323,7 @@ mod tests {
         // Create test database
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Create test entries
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -1324,7 +1348,7 @@ mod tests {
         // Create a callback - we'll use a channel to verify it's called
         // For this unit test, we'll just verify the write/read works
         // and skip the callback verification since LogFlushed is hard to construct in tests
-        
+
         // Clone entries for comparison
         let expected_entries = entries.clone();
 
@@ -1332,36 +1356,41 @@ mod tests {
         // This tests the core functionality even if we can't test the callback
         {
             let _inner = log_store.inner.lock().await;
-            
+
             // Manually write entries using RocksDB directly
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
         // Read back the entries
         let read_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=2).await
+            inner
+                .try_get_log_entries(1..=2)
+                .await
                 .expect("Read should succeed")
         };
 
         // Verify we got the same number of entries
-        assert_eq!(expected_entries.len(), read_entries.len(), 
-            "Should read back the same number of entries");
+        assert_eq!(
+            expected_entries.len(),
+            read_entries.len(),
+            "Should read back the same number of entries"
+        );
 
         // Verify each entry matches
         for (expected, actual) in expected_entries.iter().zip(read_entries.iter()) {
             assert_eq!(expected.log_id, actual.log_id, "Log IDs should match");
-            
+
             // Compare payloads
             match (&expected.payload, &actual.payload) {
                 (EntryPayload::Normal(b1), EntryPayload::Normal(b2)) => {
@@ -1409,7 +1438,7 @@ mod tests {
                 // Sort entries by index and assign sequential indices
                 let mut sorted_entries = entries.clone();
                 sorted_entries.sort_by_key(|e| e.log_id.index);
-                
+
                 // Reassign sequential indices starting from 1
                 let mut sequential_entries: Vec<Entry<KiwiTypeConfig>> = Vec::new();
                 for (i, entry) in sorted_entries.iter().enumerate() {
@@ -1424,13 +1453,13 @@ mod tests {
                     use rocksdb::WriteBatch;
                     let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
                     let mut batch = WriteBatch::default();
-                    
+
                     for entry in &sequential_entries {
                         let key = encode_log_key(entry.log_id.index);
                         let value = serialize(&entry).unwrap();
                         batch.put_cf(&logs_cf, &key, &value);
                     }
-                    
+
                     engine_clone.write(batch).unwrap();
                 }
 
@@ -1468,7 +1497,7 @@ mod tests {
 
                     // Verify count matches
                     prop_assert_eq!(
-                        expected_entries.len(), 
+                        expected_entries.len(),
                         read_entries.len(),
                         "Range {}..={} should return {} entries, got {}",
                         start, end, expected_entries.len(), read_entries.len()
@@ -1477,12 +1506,12 @@ mod tests {
                     // Verify all entries are present and in order
                     for (expected, actual) in expected_entries.iter().zip(read_entries.iter()) {
                         prop_assert_eq!(
-                            expected.log_id.index, 
+                            expected.log_id.index,
                             actual.log_id.index,
                             "Entry indices should match"
                         );
                         prop_assert_eq!(
-                            expected.log_id.leader_id.term, 
+                            expected.log_id.leader_id.term,
                             actual.log_id.leader_id.term,
                             "Entry terms should match"
                         );
@@ -1508,13 +1537,14 @@ mod tests {
     async fn test_empty_range_query() {
         // Test querying an empty range returns empty list
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Query empty database
         let entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=10).await
+            inner
+                .try_get_log_entries(1..=10)
+                .await
                 .expect("Read should succeed")
         };
 
@@ -1526,8 +1556,7 @@ mod tests {
         // Test querying indices that don't exist
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write entries at indices 1, 2, 3
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -1562,33 +1591,45 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
         // Query range that doesn't exist (100..=200)
         let read_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(100..=200).await
+            inner
+                .try_get_log_entries(100..=200)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(read_entries.len(), 0, "Nonexistent range should return empty list");
+        assert_eq!(
+            read_entries.len(),
+            0,
+            "Nonexistent range should return empty list"
+        );
 
         // Query range partially overlapping (2..=100)
         let read_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(2..=100).await
+            inner
+                .try_get_log_entries(2..=100)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(read_entries.len(), 2, "Should return only existing entries in range");
+        assert_eq!(
+            read_entries.len(),
+            2,
+            "Should return only existing entries in range"
+        );
         assert_eq!(read_entries[0].log_id.index, 2);
         assert_eq!(read_entries[1].log_id.index, 3);
     }
@@ -1598,19 +1639,18 @@ mod tests {
         // Test that corrupted data returns an error
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write corrupted data directly to database
         {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             let key = encode_log_key(1);
             let corrupted_value = vec![0xFF, 0xFF, 0xFF, 0xFF]; // Invalid JSON
             batch.put_cf(&logs_cf, &key, &corrupted_value);
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -1620,8 +1660,11 @@ mod tests {
             inner.try_get_log_entries(1..=1).await
         };
 
-        assert!(result.is_err(), "Reading corrupted data should return error");
-        
+        assert!(
+            result.is_err(),
+            "Reading corrupted data should return error"
+        );
+
         if let Err(StorageError::IO { source }) = result {
             let error_msg = format!("{:?}", source);
             assert!(
@@ -1638,8 +1681,7 @@ mod tests {
         // Test querying when there are gaps in the indices
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write entries at indices 1, 3, 5, 7 (with gaps)
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -1682,24 +1724,30 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
         // Query range 1..=7 should return all 4 entries
         let read_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=7).await
+            inner
+                .try_get_log_entries(1..=7)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(read_entries.len(), 4, "Should return all entries in range despite gaps");
+        assert_eq!(
+            read_entries.len(),
+            4,
+            "Should return all entries in range despite gaps"
+        );
         assert_eq!(read_entries[0].log_id.index, 1);
         assert_eq!(read_entries[1].log_id.index, 3);
         assert_eq!(read_entries[2].log_id.index, 5);
@@ -1708,11 +1756,17 @@ mod tests {
         // Query range 2..=6 should return entries 3 and 5
         let read_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(2..=6).await
+            inner
+                .try_get_log_entries(2..=6)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(read_entries.len(), 2, "Should return only entries within range");
+        assert_eq!(
+            read_entries.len(),
+            2,
+            "Should return only entries within range"
+        );
         assert_eq!(read_entries[0].log_id.index, 3);
         assert_eq!(read_entries[1].log_id.index, 5);
     }
@@ -1722,8 +1776,7 @@ mod tests {
         // Test querying a single entry
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write a single entry
         let entry = Entry {
@@ -1739,18 +1792,20 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             let key = encode_log_key(entry.log_id.index);
             let value = serialize(&entry).unwrap();
             batch.put_cf(&logs_cf, &key, &value);
-            
+
             engine_clone.write(batch).unwrap();
         }
 
         // Query exactly that entry
         let read_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(5..=5).await
+            inner
+                .try_get_log_entries(5..=5)
+                .await
                 .expect("Read should succeed")
         };
 
@@ -1790,7 +1845,7 @@ mod tests {
                 // Verify the vote was read back correctly
                 prop_assert!(read_vote.is_some(), "Vote should exist after saving");
                 let read_vote = read_vote.unwrap();
-                
+
                 prop_assert_eq!(vote.leader_id().term, read_vote.leader_id().term, "Vote term should match");
                 prop_assert_eq!(vote.leader_id().node_id, read_vote.leader_id().node_id, "Vote node_id should match");
                 prop_assert_eq!(vote.committed, read_vote.committed, "Vote committed should match");
@@ -1855,31 +1910,33 @@ mod tests {
     async fn test_read_nonexistent_vote() {
         // Test reading vote when none has been saved
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Read vote from empty database
         let vote = {
             let mut inner = log_store.inner.lock().await;
-            inner.read_vote().await
-                .expect("Read should succeed")
+            inner.read_vote().await.expect("Read should succeed")
         };
 
-        assert!(vote.is_none(), "Reading nonexistent vote should return None");
+        assert!(
+            vote.is_none(),
+            "Reading nonexistent vote should return None"
+        );
     }
 
     #[tokio::test]
     async fn test_vote_overwrite() {
         // Test that saving a new vote overwrites the old one
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Save first vote
         let vote1 = Vote::new(1, 1);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.save_vote(&vote1).await
+            inner
+                .save_vote(&vote1)
+                .await
                 .expect("Save vote should succeed");
         }
 
@@ -1887,48 +1944,58 @@ mod tests {
         let vote2 = Vote::new(2, 2);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.save_vote(&vote2).await
+            inner
+                .save_vote(&vote2)
+                .await
                 .expect("Save vote should succeed");
         }
 
         // Read back and verify it's the second vote
         let read_vote = {
             let mut inner = log_store.inner.lock().await;
-            inner.read_vote().await
-                .expect("Read should succeed")
+            inner.read_vote().await.expect("Read should succeed")
         };
 
         assert!(read_vote.is_some(), "Vote should exist");
         let read_vote = read_vote.unwrap();
-        assert_eq!(read_vote.leader_id().term, 2, "Should have term from second vote");
-        assert_eq!(read_vote.leader_id().node_id, 2, "Should have node_id from second vote");
+        assert_eq!(
+            read_vote.leader_id().term,
+            2,
+            "Should have term from second vote"
+        );
+        assert_eq!(
+            read_vote.leader_id().node_id,
+            2,
+            "Should have node_id from second vote"
+        );
     }
 
     #[tokio::test]
     async fn test_vote_persistence_across_instances() {
         // Test that vote persists when creating a new log store instance
         let (temp_dir, engine) = create_test_db_with_cfs();
-        
+
         // Save vote with first instance
         let vote = Vote::new(5, 3);
         {
-            let log_store = RocksdbLogStore::new(engine.clone())
-                .expect("Initialization should succeed");
-            
+            let log_store =
+                RocksdbLogStore::new(engine.clone()).expect("Initialization should succeed");
+
             let mut inner = log_store.inner.lock().await;
-            inner.save_vote(&vote).await
+            inner
+                .save_vote(&vote)
+                .await
                 .expect("Save vote should succeed");
         }
 
         // Create new instance and read vote
         {
-            let log_store = RocksdbLogStore::new(engine.clone())
-                .expect("Initialization should succeed");
-            
+            let log_store =
+                RocksdbLogStore::new(engine.clone()).expect("Initialization should succeed");
+
             let read_vote = {
                 let mut inner = log_store.inner.lock().await;
-                inner.read_vote().await
-                    .expect("Read should succeed")
+                inner.read_vote().await.expect("Read should succeed")
             };
 
             assert!(read_vote.is_some(), "Vote should persist across instances");
@@ -1947,31 +2014,33 @@ mod tests {
     async fn test_read_nonexistent_committed() {
         // Test reading committed log ID when none has been saved
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Read committed from empty database
         let committed = {
             let mut inner = log_store.inner.lock().await;
-            inner.read_committed().await
-                .expect("Read should succeed")
+            inner.read_committed().await.expect("Read should succeed")
         };
 
-        assert!(committed.is_none(), "Reading nonexistent committed log ID should return None");
+        assert!(
+            committed.is_none(),
+            "Reading nonexistent committed log ID should return None"
+        );
     }
 
     #[tokio::test]
     async fn test_committed_overwrite() {
         // Test that saving a new committed log ID overwrites the old one
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Save first committed log ID
         let committed1 = Some(LogId::new(LeaderId::new(1, 1), 10));
         {
             let mut inner = log_store.inner.lock().await;
-            inner.save_committed(committed1).await
+            inner
+                .save_committed(committed1)
+                .await
                 .expect("Save committed should succeed");
         }
 
@@ -1979,92 +2048,110 @@ mod tests {
         let committed2 = Some(LogId::new(LeaderId::new(2, 2), 20));
         {
             let mut inner = log_store.inner.lock().await;
-            inner.save_committed(committed2).await
+            inner
+                .save_committed(committed2)
+                .await
                 .expect("Save committed should succeed");
         }
 
         // Read back and verify it's the second committed log ID
         let read_committed = {
             let mut inner = log_store.inner.lock().await;
-            inner.read_committed().await
-                .expect("Read should succeed")
+            inner.read_committed().await.expect("Read should succeed")
         };
 
         assert!(read_committed.is_some(), "Committed log ID should exist");
         let read_committed = read_committed.unwrap();
-        assert_eq!(read_committed.leader_id.term, 2, "Should have term from second committed");
-        assert_eq!(read_committed.leader_id.node_id, 2, "Should have node_id from second committed");
-        assert_eq!(read_committed.index, 20, "Should have index from second committed");
+        assert_eq!(
+            read_committed.leader_id.term, 2,
+            "Should have term from second committed"
+        );
+        assert_eq!(
+            read_committed.leader_id.node_id, 2,
+            "Should have node_id from second committed"
+        );
+        assert_eq!(
+            read_committed.index, 20,
+            "Should have index from second committed"
+        );
     }
 
     #[tokio::test]
     async fn test_committed_none_value() {
         // Test that saving None as committed log ID works correctly
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // First save a committed log ID
         let committed1 = Some(LogId::new(LeaderId::new(1, 1), 10));
         {
             let mut inner = log_store.inner.lock().await;
-            inner.save_committed(committed1).await
+            inner
+                .save_committed(committed1)
+                .await
                 .expect("Save committed should succeed");
         }
 
         // Verify it was saved
         let read_committed = {
             let mut inner = log_store.inner.lock().await;
-            inner.read_committed().await
-                .expect("Read should succeed")
+            inner.read_committed().await.expect("Read should succeed")
         };
         assert!(read_committed.is_some(), "Committed log ID should exist");
 
         // Now save None
         {
             let mut inner = log_store.inner.lock().await;
-            inner.save_committed(None).await
+            inner
+                .save_committed(None)
+                .await
                 .expect("Save committed None should succeed");
         }
 
         // Read back and verify it's None
         let read_committed = {
             let mut inner = log_store.inner.lock().await;
-            inner.read_committed().await
-                .expect("Read should succeed")
+            inner.read_committed().await.expect("Read should succeed")
         };
 
-        assert!(read_committed.is_none(), "Committed log ID should be None after saving None");
+        assert!(
+            read_committed.is_none(),
+            "Committed log ID should be None after saving None"
+        );
     }
 
     #[tokio::test]
     async fn test_committed_persistence_across_instances() {
         // Test that committed log ID persists when creating a new log store instance
         let (temp_dir, engine) = create_test_db_with_cfs();
-        
+
         // Save committed with first instance
         let committed = Some(LogId::new(LeaderId::new(5, 3), 100));
         {
-            let log_store = RocksdbLogStore::new(engine.clone())
-                .expect("Initialization should succeed");
-            
+            let log_store =
+                RocksdbLogStore::new(engine.clone()).expect("Initialization should succeed");
+
             let mut inner = log_store.inner.lock().await;
-            inner.save_committed(committed).await
+            inner
+                .save_committed(committed)
+                .await
                 .expect("Save committed should succeed");
         }
 
         // Create new instance and read committed
         {
-            let log_store = RocksdbLogStore::new(engine.clone())
-                .expect("Initialization should succeed");
-            
+            let log_store =
+                RocksdbLogStore::new(engine.clone()).expect("Initialization should succeed");
+
             let read_committed = {
                 let mut inner = log_store.inner.lock().await;
-                inner.read_committed().await
-                    .expect("Read should succeed")
+                inner.read_committed().await.expect("Read should succeed")
             };
 
-            assert!(read_committed.is_some(), "Committed log ID should persist across instances");
+            assert!(
+                read_committed.is_some(),
+                "Committed log ID should persist across instances"
+            );
             let read_committed = read_committed.unwrap();
             assert_eq!(read_committed.leader_id.term, 5, "Term should match");
             assert_eq!(read_committed.leader_id.node_id, 3, "Node ID should match");
@@ -2096,7 +2183,7 @@ mod tests {
                 // Sort entries by index and assign sequential indices
                 let mut sorted_entries = entries.clone();
                 sorted_entries.sort_by_key(|e| e.log_id.index);
-                
+
                 // Reassign sequential indices starting from 1
                 let mut sequential_entries: Vec<Entry<KiwiTypeConfig>> = Vec::new();
                 for (i, entry) in sorted_entries.iter().enumerate() {
@@ -2115,13 +2202,13 @@ mod tests {
                     use rocksdb::WriteBatch;
                     let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
                     let mut batch = WriteBatch::default();
-                    
+
                     for entry in &sequential_entries {
                         let key = encode_log_key(entry.log_id.index);
                         let value = serialize(&entry).unwrap();
                         batch.put_cf(&logs_cf, &key, &value);
                     }
-                    
+
                     engine_clone.write(batch).unwrap();
                 }
 
@@ -2138,14 +2225,14 @@ mod tests {
                 // Verify last_log_id matches the last entry
                 prop_assert!(log_state.last_log_id.is_some(), "last_log_id should be Some when entries exist");
                 let last_log_id = log_state.last_log_id.unwrap();
-                
+
                 prop_assert_eq!(
-                    last_log_id.index, 
+                    last_log_id.index,
                     expected_last.log_id.index,
                     "last_log_id index should match the last entry's index"
                 );
                 prop_assert_eq!(
-                    last_log_id.leader_id.term, 
+                    last_log_id.leader_id.term,
                     expected_last.log_id.leader_id.term,
                     "last_log_id term should match the last entry's term"
                 );
@@ -2177,7 +2264,7 @@ mod tests {
                 // Sort entries by index and assign sequential indices
                 let mut sorted_entries = entries.clone();
                 sorted_entries.sort_by_key(|e| e.log_id.index);
-                
+
                 // Reassign sequential indices starting from 1
                 let mut sequential_entries: Vec<Entry<KiwiTypeConfig>> = Vec::new();
                 for (i, entry) in sorted_entries.iter().enumerate() {
@@ -2196,20 +2283,20 @@ mod tests {
                     use rocksdb::WriteBatch;
                     let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
                     let mut batch = WriteBatch::default();
-                    
+
                     for entry in &sequential_entries {
                         let key = encode_log_key(entry.log_id.index);
                         let value = serialize(&entry).unwrap();
                         batch.put_cf(&logs_cf, &key, &value);
                     }
-                    
+
                     engine_clone.write(batch).unwrap();
                 }
 
                 // Determine which entry to purge up to (must be within valid range)
                 let max_index = sequential_entries.len() as u64;
                 let purge_up_to_index = std::cmp::min(purge_index, max_index);
-                
+
                 if purge_up_to_index == 0 {
                     return Ok(());
                 }
@@ -2233,14 +2320,14 @@ mod tests {
                 // Verify last_purged_log_id matches the purged LogId
                 prop_assert!(log_state.last_purged_log_id.is_some(), "last_purged_log_id should be Some after purge");
                 let last_purged = log_state.last_purged_log_id.unwrap();
-                
+
                 prop_assert_eq!(
-                    last_purged.index, 
+                    last_purged.index,
                     purge_log_id.index,
                     "last_purged_log_id index should match the purged index"
                 );
                 prop_assert_eq!(
-                    last_purged.leader_id.term, 
+                    last_purged.leader_id.term,
                     purge_log_id.leader_id.term,
                     "last_purged_log_id term should match the purged term"
                 );
@@ -2272,7 +2359,7 @@ mod tests {
                 // Sort entries by index and assign sequential indices
                 let mut sorted_entries = entries.clone();
                 sorted_entries.sort_by_key(|e| e.log_id.index);
-                
+
                 // Reassign sequential indices starting from 1
                 let mut sequential_entries: Vec<Entry<KiwiTypeConfig>> = Vec::new();
                 for (i, entry) in sorted_entries.iter().enumerate() {
@@ -2291,20 +2378,20 @@ mod tests {
                     use rocksdb::WriteBatch;
                     let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
                     let mut batch = WriteBatch::default();
-                    
+
                     for entry in &sequential_entries {
                         let key = encode_log_key(entry.log_id.index);
                         let value = serialize(&entry).unwrap();
                         batch.put_cf(&logs_cf, &key, &value);
                     }
-                    
+
                     engine_clone.write(batch).unwrap();
                 }
 
                 // Determine which entry to purge up to (must be within valid range)
                 let max_index = sequential_entries.len() as u64;
                 let purge_up_to_index = std::cmp::min(purge_index_offset, max_index);
-                
+
                 if purge_up_to_index == 0 {
                     return Ok(());
                 }
@@ -2327,7 +2414,7 @@ mod tests {
 
                 // Expected entries are those with index > purge_up_to_index
                 let expected_count = (max_index - purge_up_to_index) as usize;
-                
+
                 prop_assert_eq!(
                     remaining_entries.len(),
                     expected_count,
@@ -2379,9 +2466,9 @@ mod tests {
 
                 prop_assert!(log_state.last_purged_log_id.is_some(), "last_purged_log_id should be Some after purge");
                 let last_purged = log_state.last_purged_log_id.unwrap();
-                
+
                 prop_assert_eq!(
-                    last_purged.index, 
+                    last_purged.index,
                     purge_log_id.index,
                     "last_purged_log_id index should match the purged index"
                 );
@@ -2413,7 +2500,7 @@ mod tests {
                 // Sort entries by index and assign sequential indices
                 let mut sorted_entries = entries.clone();
                 sorted_entries.sort_by_key(|e| e.log_id.index);
-                
+
                 // Reassign sequential indices starting from 1
                 let mut sequential_entries: Vec<Entry<KiwiTypeConfig>> = Vec::new();
                 for (i, entry) in sorted_entries.iter().enumerate() {
@@ -2432,20 +2519,20 @@ mod tests {
                     use rocksdb::WriteBatch;
                     let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
                     let mut batch = WriteBatch::default();
-                    
+
                     for entry in &sequential_entries {
                         let key = encode_log_key(entry.log_id.index);
                         let value = serialize(&entry).unwrap();
                         batch.put_cf(&logs_cf, &key, &value);
                     }
-                    
+
                     engine_clone.write(batch).unwrap();
                 }
 
                 // Determine which entry to truncate at (must be within valid range)
                 let max_index = sequential_entries.len() as u64;
                 let truncate_at_index = std::cmp::min(truncate_index_offset, max_index);
-                
+
                 if truncate_at_index == 0 {
                     return Ok(());
                 }
@@ -2468,7 +2555,7 @@ mod tests {
 
                 // Expected entries are those with index < truncate_at_index
                 let expected_count = (truncate_at_index - 1) as usize;
-                
+
                 prop_assert_eq!(
                     remaining_entries.len(),
                     expected_count,
@@ -2523,8 +2610,7 @@ mod tests {
         // Test truncating at an index that doesn't exist should succeed
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write entries at indices 1, 2, 3
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -2559,13 +2645,13 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -2577,19 +2663,28 @@ mod tests {
         };
 
         // Should succeed even though index doesn't exist
-        assert!(result.is_ok(), "Truncating nonexistent index should succeed");
+        assert!(
+            result.is_ok(),
+            "Truncating nonexistent index should succeed"
+        );
 
         // Since we're truncating at index 100 which is >= 100, all entries with index >= 100 should be removed
         // But since all our entries (1, 2, 3) are < 100, they should remain
         // However, the iterator starts at 100, so it won't find any entries to delete
         let remaining_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=3).await
+            inner
+                .try_get_log_entries(1..=3)
+                .await
                 .expect("Read should succeed")
         };
 
         // All entries should remain because they are all < 100
-        assert_eq!(remaining_entries.len(), 3, "All entries should remain when truncating beyond last index");
+        assert_eq!(
+            remaining_entries.len(),
+            3,
+            "All entries should remain when truncating beyond last index"
+        );
     }
 
     #[tokio::test]
@@ -2597,8 +2692,7 @@ mod tests {
         // Test truncating at an index in a gap (between existing entries)
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write entries at indices 1, 3, 5 (with gaps at 2, 4)
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -2633,13 +2727,13 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -2647,7 +2741,9 @@ mod tests {
         let truncate_log_id = LogId::new(LeaderId::new(1, 1), 4);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.truncate(truncate_log_id).await
+            inner
+                .truncate(truncate_log_id)
+                .await
                 .expect("Truncate should succeed");
         }
 
@@ -2655,11 +2751,17 @@ mod tests {
         // Should keep entries at indices 1 and 3 (since 1 < 4 and 3 < 4)
         let remaining_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=5).await
+            inner
+                .try_get_log_entries(1..=5)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(remaining_entries.len(), 2, "Should have 2 entries remaining after truncating at gap");
+        assert_eq!(
+            remaining_entries.len(),
+            2,
+            "Should have 2 entries remaining after truncating at gap"
+        );
         assert_eq!(remaining_entries[0].log_id.index, 1);
         assert_eq!(remaining_entries[1].log_id.index, 3);
     }
@@ -2669,8 +2771,7 @@ mod tests {
         // Test truncating at the first entry removes all entries
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write entries at indices 1, 2, 3
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -2705,13 +2806,13 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -2719,18 +2820,26 @@ mod tests {
         let truncate_log_id = LogId::new(LeaderId::new(1, 1), 1);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.truncate(truncate_log_id).await
+            inner
+                .truncate(truncate_log_id)
+                .await
                 .expect("Truncate should succeed");
         }
 
         // All entries should be removed
         let remaining_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=3).await
+            inner
+                .try_get_log_entries(1..=3)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(remaining_entries.len(), 0, "All entries should be removed when truncating at first entry");
+        assert_eq!(
+            remaining_entries.len(),
+            0,
+            "All entries should be removed when truncating at first entry"
+        );
     }
 
     #[tokio::test]
@@ -2738,8 +2847,7 @@ mod tests {
         // Test truncating at a middle entry keeps earlier entries
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write entries at indices 1, 2, 3, 4, 5
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -2790,13 +2898,13 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -2804,18 +2912,26 @@ mod tests {
         let truncate_log_id = LogId::new(LeaderId::new(1, 1), 3);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.truncate(truncate_log_id).await
+            inner
+                .truncate(truncate_log_id)
+                .await
                 .expect("Truncate should succeed");
         }
 
         // Should have entries 1 and 2 remaining
         let remaining_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=5).await
+            inner
+                .try_get_log_entries(1..=5)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(remaining_entries.len(), 2, "Should have 2 entries remaining after truncating at index 3");
+        assert_eq!(
+            remaining_entries.len(),
+            2,
+            "Should have 2 entries remaining after truncating at index 3"
+        );
         assert_eq!(remaining_entries[0].log_id.index, 1);
         assert_eq!(remaining_entries[1].log_id.index, 2);
     }
@@ -2824,8 +2940,7 @@ mod tests {
     async fn test_truncate_empty_database() {
         // Test truncating an empty database succeeds
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Truncate at index 1 on empty database
         let truncate_log_id = LogId::new(LeaderId::new(1, 1), 1);
@@ -2844,21 +2959,26 @@ mod tests {
     async fn test_empty_database_log_state() {
         // Test that querying log state on an empty database returns None for both fields
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Get log state from empty database
         let log_state = {
             let mut inner = log_store.inner.lock().await;
-            inner.get_log_state().await
+            inner
+                .get_log_state()
+                .await
                 .expect("Get log state should succeed")
         };
 
         // Both last_log_id and last_purged_log_id should be None
-        assert!(log_state.last_log_id.is_none(), 
-            "last_log_id should be None for empty database");
-        assert!(log_state.last_purged_log_id.is_none(), 
-            "last_purged_log_id should be None when no purge has been performed");
+        assert!(
+            log_state.last_log_id.is_none(),
+            "last_log_id should be None for empty database"
+        );
+        assert!(
+            log_state.last_purged_log_id.is_none(),
+            "last_purged_log_id should be None when no purge has been performed"
+        );
     }
 
     #[tokio::test]
@@ -2866,8 +2986,7 @@ mod tests {
         // Test that log state correctly reflects entries when no purge has been performed
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write some entries
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -2902,32 +3021,42 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
         // Get log state
         let log_state = {
             let mut inner = log_store.inner.lock().await;
-            inner.get_log_state().await
+            inner
+                .get_log_state()
+                .await
                 .expect("Get log state should succeed")
         };
 
         // last_log_id should be the last entry (index 3)
-        assert!(log_state.last_log_id.is_some(), "last_log_id should be Some when entries exist");
+        assert!(
+            log_state.last_log_id.is_some(),
+            "last_log_id should be Some when entries exist"
+        );
         let last_log_id = log_state.last_log_id.unwrap();
         assert_eq!(last_log_id.index, 3, "last_log_id should be the last entry");
-        assert_eq!(last_log_id.leader_id.term, 1, "last_log_id term should match");
+        assert_eq!(
+            last_log_id.leader_id.term, 1,
+            "last_log_id term should match"
+        );
 
         // last_purged_log_id should still be None
-        assert!(log_state.last_purged_log_id.is_none(), 
-            "last_purged_log_id should be None when no purge has been performed");
+        assert!(
+            log_state.last_purged_log_id.is_none(),
+            "last_purged_log_id should be None when no purge has been performed"
+        );
     }
 
     #[tokio::test]
@@ -2935,8 +3064,7 @@ mod tests {
         // Test log state with exactly one entry
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write a single entry
         let entry = Entry {
@@ -2952,39 +3080,50 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             let key = encode_log_key(entry.log_id.index);
             let value = serialize(&entry).unwrap();
             batch.put_cf(&logs_cf, &key, &value);
-            
+
             engine_clone.write(batch).unwrap();
         }
 
         // Get log state
         let log_state = {
             let mut inner = log_store.inner.lock().await;
-            inner.get_log_state().await
+            inner
+                .get_log_state()
+                .await
                 .expect("Get log state should succeed")
         };
 
         // Verify the single entry is reflected correctly
-        assert!(log_state.last_log_id.is_some(), "last_log_id should be Some");
+        assert!(
+            log_state.last_log_id.is_some(),
+            "last_log_id should be Some"
+        );
         let last_log_id = log_state.last_log_id.unwrap();
         assert_eq!(last_log_id.index, 100, "last_log_id index should match");
-        assert_eq!(last_log_id.leader_id.term, 5, "last_log_id term should match");
-        assert_eq!(last_log_id.leader_id.node_id, 2, "last_log_id node_id should match");
+        assert_eq!(
+            last_log_id.leader_id.term, 5,
+            "last_log_id term should match"
+        );
+        assert_eq!(
+            last_log_id.leader_id.node_id, 2,
+            "last_log_id node_id should match"
+        );
     }
 
     #[tokio::test]
     async fn test_log_state_persistence_across_instances() {
         // Test that log state persists when creating a new log store instance
         let (temp_dir, engine) = create_test_db_with_cfs();
-        
+
         // Write entries with first instance
         {
             let engine_clone = engine.clone();
-            let _log_store = RocksdbLogStore::new(engine.clone())
-                .expect("Initialization should succeed");
+            let _log_store =
+                RocksdbLogStore::new(engine.clone()).expect("Initialization should succeed");
 
             let entries: Vec<Entry<KiwiTypeConfig>> = vec![
                 Entry {
@@ -3008,29 +3147,34 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
         // Create new instance and check log state
         {
-            let log_store = RocksdbLogStore::new(engine.clone())
-                .expect("Initialization should succeed");
-            
+            let log_store =
+                RocksdbLogStore::new(engine.clone()).expect("Initialization should succeed");
+
             let log_state = {
                 let mut inner = log_store.inner.lock().await;
-                inner.get_log_state().await
+                inner
+                    .get_log_state()
+                    .await
                     .expect("Get log state should succeed")
             };
 
             // Verify log state persists
-            assert!(log_state.last_log_id.is_some(), "last_log_id should persist across instances");
+            assert!(
+                log_state.last_log_id.is_some(),
+                "last_log_id should persist across instances"
+            );
             let last_log_id = log_state.last_log_id.unwrap();
             assert_eq!(last_log_id.index, 2, "last_log_id should be the last entry");
         }
@@ -3047,8 +3191,7 @@ mod tests {
         // Test that purging with a LogId smaller than the current last_purged_log_id panics
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write entries at indices 1, 2, 3, 4, 5
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -3099,13 +3242,13 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -3113,7 +3256,9 @@ mod tests {
         let purge_log_id_1 = LogId::new(LeaderId::new(1, 1), 3);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.purge(purge_log_id_1).await
+            inner
+                .purge(purge_log_id_1)
+                .await
                 .expect("First purge should succeed");
         }
 
@@ -3121,7 +3266,9 @@ mod tests {
         let purge_log_id_2 = LogId::new(LeaderId::new(1, 1), 2);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.purge(purge_log_id_2).await
+            inner
+                .purge(purge_log_id_2)
+                .await
                 .expect("This should panic before reaching here");
         }
     }
@@ -3132,8 +3279,7 @@ mod tests {
         // Test that purging with a LogId equal to the current last_purged_log_id panics
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write entries at indices 1, 2, 3
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -3168,13 +3314,13 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -3182,14 +3328,18 @@ mod tests {
         let purge_log_id = LogId::new(LeaderId::new(1, 1), 2);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.purge(purge_log_id).await
+            inner
+                .purge(purge_log_id)
+                .await
                 .expect("First purge should succeed");
         }
 
         // Try to purge with the same LogId again - this should panic
         {
             let mut inner = log_store.inner.lock().await;
-            inner.purge(purge_log_id).await
+            inner
+                .purge(purge_log_id)
+                .await
                 .expect("This should panic before reaching here");
         }
     }
@@ -3199,8 +3349,7 @@ mod tests {
         // Test purging just the first entry
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write entries at indices 1, 2, 3
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -3235,13 +3384,13 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -3249,29 +3398,42 @@ mod tests {
         let purge_log_id = LogId::new(LeaderId::new(1, 1), 1);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.purge(purge_log_id).await
+            inner
+                .purge(purge_log_id)
+                .await
                 .expect("Purge should succeed");
         }
 
         // Should have entries 2 and 3 remaining
         let remaining_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=3).await
+            inner
+                .try_get_log_entries(1..=3)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(remaining_entries.len(), 2, "Should have 2 entries remaining after purging first entry");
+        assert_eq!(
+            remaining_entries.len(),
+            2,
+            "Should have 2 entries remaining after purging first entry"
+        );
         assert_eq!(remaining_entries[0].log_id.index, 2);
         assert_eq!(remaining_entries[1].log_id.index, 3);
 
         // Verify metadata was updated
         let log_state = {
             let mut inner = log_store.inner.lock().await;
-            inner.get_log_state().await
+            inner
+                .get_log_state()
+                .await
                 .expect("Get log state should succeed")
         };
 
-        assert!(log_state.last_purged_log_id.is_some(), "last_purged_log_id should be set");
+        assert!(
+            log_state.last_purged_log_id.is_some(),
+            "last_purged_log_id should be set"
+        );
         let last_purged = log_state.last_purged_log_id.unwrap();
         assert_eq!(last_purged.index, 1, "last_purged_log_id should be 1");
     }
@@ -3281,8 +3443,7 @@ mod tests {
         // Test purging all entries
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write entries at indices 1, 2, 3
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -3317,13 +3478,13 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -3331,33 +3492,48 @@ mod tests {
         let purge_log_id = LogId::new(LeaderId::new(1, 1), 3);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.purge(purge_log_id).await
+            inner
+                .purge(purge_log_id)
+                .await
                 .expect("Purge should succeed");
         }
 
         // Should have no entries remaining
         let remaining_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=3).await
+            inner
+                .try_get_log_entries(1..=3)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(remaining_entries.len(), 0, "Should have no entries remaining after purging all");
+        assert_eq!(
+            remaining_entries.len(),
+            0,
+            "Should have no entries remaining after purging all"
+        );
 
         // Verify metadata was updated
         let log_state = {
             let mut inner = log_store.inner.lock().await;
-            inner.get_log_state().await
+            inner
+                .get_log_state()
+                .await
                 .expect("Get log state should succeed")
         };
 
-        assert!(log_state.last_purged_log_id.is_some(), "last_purged_log_id should be set");
+        assert!(
+            log_state.last_purged_log_id.is_some(),
+            "last_purged_log_id should be set"
+        );
         let last_purged = log_state.last_purged_log_id.unwrap();
         assert_eq!(last_purged.index, 3, "last_purged_log_id should be 3");
-        
+
         // last_log_id should equal last_purged_log_id when all entries are purged
-        assert_eq!(log_state.last_log_id, log_state.last_purged_log_id, 
-            "last_log_id should equal last_purged_log_id when all entries are purged");
+        assert_eq!(
+            log_state.last_log_id, log_state.last_purged_log_id,
+            "last_log_id should equal last_purged_log_id when all entries are purged"
+        );
     }
 
     #[tokio::test]
@@ -3365,8 +3541,7 @@ mod tests {
         // Test purging when there are gaps in the indices
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write entries at indices 1, 3, 5, 7 (with gaps)
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -3409,13 +3584,13 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -3423,18 +3598,26 @@ mod tests {
         let purge_log_id = LogId::new(LeaderId::new(1, 1), 4);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.purge(purge_log_id).await
+            inner
+                .purge(purge_log_id)
+                .await
                 .expect("Purge should succeed");
         }
 
         // Should have entries 5 and 7 remaining
         let remaining_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=7).await
+            inner
+                .try_get_log_entries(1..=7)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(remaining_entries.len(), 2, "Should have 2 entries remaining after purging up to gap");
+        assert_eq!(
+            remaining_entries.len(),
+            2,
+            "Should have 2 entries remaining after purging up to gap"
+        );
         assert_eq!(remaining_entries[0].log_id.index, 5);
         assert_eq!(remaining_entries[1].log_id.index, 7);
     }
@@ -3443,12 +3626,12 @@ mod tests {
     async fn test_purge_persistence_across_instances() {
         // Test that purge metadata persists when creating a new log store instance
         let (temp_dir, engine) = create_test_db_with_cfs();
-        
+
         // Write and purge with first instance
         {
             let engine_clone = engine.clone();
-            let log_store = RocksdbLogStore::new(engine.clone())
-                .expect("Initialization should succeed");
+            let log_store =
+                RocksdbLogStore::new(engine.clone()).expect("Initialization should succeed");
 
             let entries: Vec<Entry<KiwiTypeConfig>> = vec![
                 Entry {
@@ -3480,42 +3663,51 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
 
             // Purge up to index 2
             let purge_log_id = LogId::new(LeaderId::new(1, 1), 2);
             let mut inner = log_store.inner.lock().await;
-            inner.purge(purge_log_id).await
+            inner
+                .purge(purge_log_id)
+                .await
                 .expect("Purge should succeed");
         }
 
         // Create new instance and verify purge persisted
         {
-            let log_store = RocksdbLogStore::new(engine.clone())
-                .expect("Initialization should succeed");
-            
+            let log_store =
+                RocksdbLogStore::new(engine.clone()).expect("Initialization should succeed");
+
             let log_state = {
                 let mut inner = log_store.inner.lock().await;
-                inner.get_log_state().await
+                inner
+                    .get_log_state()
+                    .await
                     .expect("Get log state should succeed")
             };
 
             // Verify purge metadata persists
-            assert!(log_state.last_purged_log_id.is_some(), "last_purged_log_id should persist across instances");
+            assert!(
+                log_state.last_purged_log_id.is_some(),
+                "last_purged_log_id should persist across instances"
+            );
             let last_purged = log_state.last_purged_log_id.unwrap();
             assert_eq!(last_purged.index, 2, "last_purged_log_id should be 2");
 
             // Verify purged entries are still gone
             let remaining_entries = {
                 let mut inner = log_store.inner.lock().await;
-                inner.try_get_log_entries(1..=3).await
+                inner
+                    .try_get_log_entries(1..=3)
+                    .await
                     .expect("Read should succeed")
             };
 
@@ -3533,8 +3725,7 @@ mod tests {
     async fn test_clone_basic() {
         // Test that cloning creates an independent handle to the same data
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Clone the log store
         let cloned_store = log_store.clone();
@@ -3549,8 +3740,7 @@ mod tests {
         // Test that cloned instances share the same underlying data
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write an entry using the original store
         let entry = Entry {
@@ -3566,11 +3756,11 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             let key = encode_log_key(entry.log_id.index);
             let value = serialize(&entry).unwrap();
             batch.put_cf(&logs_cf, &key, &value);
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -3580,11 +3770,17 @@ mod tests {
         // Read from the cloned store - should see the same data
         let read_entries = {
             let mut inner = cloned_store.inner.lock().await;
-            inner.try_get_log_entries(1..=1).await
+            inner
+                .try_get_log_entries(1..=1)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(read_entries.len(), 1, "Cloned store should see the same data");
+        assert_eq!(
+            read_entries.len(),
+            1,
+            "Cloned store should see the same data"
+        );
         assert_eq!(read_entries[0].log_id.index, 1);
     }
 
@@ -3593,8 +3789,7 @@ mod tests {
         // Test using cloned stores in different async tasks
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write some initial entries
         let entries: Vec<Entry<KiwiTypeConfig>> = vec![
@@ -3620,13 +3815,13 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
                 batch.put_cf(&logs_cf, &key, &value);
             }
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -3637,7 +3832,9 @@ mod tests {
         let task_handle = tokio::spawn(async move {
             let read_entries = {
                 let mut inner = cloned_store.inner.lock().await;
-                inner.try_get_log_entries(1..=2).await
+                inner
+                    .try_get_log_entries(1..=2)
+                    .await
                     .expect("Read should succeed")
             };
             read_entries.len()
@@ -3646,12 +3843,16 @@ mod tests {
         // Use the original store in this task
         let read_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=2).await
+            inner
+                .try_get_log_entries(1..=2)
+                .await
                 .expect("Read should succeed")
         };
 
         // Wait for the spawned task to complete
-        let task_result = task_handle.await.expect("Task should complete successfully");
+        let task_result = task_handle
+            .await
+            .expect("Task should complete successfully");
 
         // Both should see the same data
         assert_eq!(read_entries.len(), 2, "Original store should see 2 entries");
@@ -3663,8 +3864,7 @@ mod tests {
         // Test that modifications through one clone are visible through another
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Clone the store
         let cloned_store = log_store.clone();
@@ -3683,22 +3883,28 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             let key = encode_log_key(entry1.log_id.index);
             let value = serialize(&entry1).unwrap();
             batch.put_cf(&logs_cf, &key, &value);
-            
+
             engine_clone.write(batch).unwrap();
         }
 
         // Read from the cloned store - should see the new entry
         let read_entries = {
             let mut inner = cloned_store.inner.lock().await;
-            inner.try_get_log_entries(1..=1).await
+            inner
+                .try_get_log_entries(1..=1)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(read_entries.len(), 1, "Cloned store should see entry written by original");
+        assert_eq!(
+            read_entries.len(),
+            1,
+            "Cloned store should see entry written by original"
+        );
         assert_eq!(read_entries[0].log_id.index, 1);
 
         // Write another entry through the cloned store
@@ -3715,22 +3921,28 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             let key = encode_log_key(entry2.log_id.index);
             let value = serialize(&entry2).unwrap();
             batch.put_cf(&logs_cf, &key, &value);
-            
+
             engine_clone.write(batch).unwrap();
         }
 
         // Read from the original store - should see both entries
         let read_entries = {
             let mut inner = log_store.inner.lock().await;
-            inner.try_get_log_entries(1..=2).await
+            inner
+                .try_get_log_entries(1..=2)
+                .await
                 .expect("Read should succeed")
         };
 
-        assert_eq!(read_entries.len(), 2, "Original store should see entry written by clone");
+        assert_eq!(
+            read_entries.len(),
+            2,
+            "Original store should see entry written by clone"
+        );
         assert_eq!(read_entries[0].log_id.index, 1);
         assert_eq!(read_entries[1].log_id.index, 2);
     }
@@ -3740,8 +3952,7 @@ mod tests {
         // Test that cloning multiple times works correctly
         let (_temp_dir, engine) = create_test_db_with_cfs();
         let engine_clone = engine.clone();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Write an entry
         let entry = Entry {
@@ -3757,11 +3968,11 @@ mod tests {
             use rocksdb::WriteBatch;
             let logs_cf = engine_clone.cf_handle(LOGS_CF).unwrap();
             let mut batch = WriteBatch::default();
-            
+
             let key = encode_log_key(entry.log_id.index);
             let value = serialize(&entry).unwrap();
             batch.put_cf(&logs_cf, &key, &value);
-            
+
             engine_clone.write(batch).unwrap();
         }
 
@@ -3774,7 +3985,9 @@ mod tests {
         for (i, store) in [&log_store, &clone1, &clone2, &clone3].iter().enumerate() {
             let read_entries = {
                 let mut inner = store.inner.lock().await;
-                inner.try_get_log_entries(1..=1).await
+                inner
+                    .try_get_log_entries(1..=1)
+                    .await
                     .expect("Read should succeed")
             };
 
@@ -3787,14 +4000,15 @@ mod tests {
     async fn test_clone_with_vote_and_committed() {
         // Test that clones share vote and committed state
         let (_temp_dir, engine) = create_test_db_with_cfs();
-        let log_store = RocksdbLogStore::new(engine)
-            .expect("Initialization should succeed");
+        let log_store = RocksdbLogStore::new(engine).expect("Initialization should succeed");
 
         // Save vote using original store
         let vote = Vote::new(5, 3);
         {
             let mut inner = log_store.inner.lock().await;
-            inner.save_vote(&vote).await
+            inner
+                .save_vote(&vote)
+                .await
                 .expect("Save vote should succeed");
         }
 
@@ -3802,7 +4016,9 @@ mod tests {
         let committed = Some(LogId::new(LeaderId::new(5, 3), 100));
         {
             let mut inner = log_store.inner.lock().await;
-            inner.save_committed(committed).await
+            inner
+                .save_committed(committed)
+                .await
                 .expect("Save committed should succeed");
         }
 
@@ -3812,8 +4028,7 @@ mod tests {
         // Read vote from cloned store
         let read_vote = {
             let mut inner = cloned_store.inner.lock().await;
-            inner.read_vote().await
-                .expect("Read vote should succeed")
+            inner.read_vote().await.expect("Read vote should succeed")
         };
 
         assert!(read_vote.is_some(), "Cloned store should see the vote");
@@ -3824,11 +4039,16 @@ mod tests {
         // Read committed from cloned store
         let read_committed = {
             let mut inner = cloned_store.inner.lock().await;
-            inner.read_committed().await
+            inner
+                .read_committed()
+                .await
                 .expect("Read committed should succeed")
         };
 
-        assert!(read_committed.is_some(), "Cloned store should see the committed log ID");
+        assert!(
+            read_committed.is_some(),
+            "Cloned store should see the committed log ID"
+        );
         let read_committed = read_committed.unwrap();
         assert_eq!(read_committed.index, 100);
     }

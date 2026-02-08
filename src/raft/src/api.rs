@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use conf::raft_type::{Binlog, KiwiNode, KiwiTypeConfig};
-use openraft::raft::{AppendEntriesRequest, VoteRequest};
 use openraft::ChangeMembers;
+use openraft::raft::{AppendEntriesRequest, VoteRequest};
 use serde::{Deserialize, Serialize};
 
 use crate::node::RaftApp;

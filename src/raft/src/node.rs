@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::log_store::LogStore;
+use crate::log_store_rocksdb::RocksdbLogStore;
 use crate::network::KiwiNetworkFactory;
 use crate::state_machine::KiwiStateMachine;
 use storage::storage::Storage;
@@ -81,6 +82,68 @@ pub async fn create_raft_node(
     std::fs::create_dir_all(&log_store_path)?;
 
     let log_store = LogStore::new();
+
+    let state_machine = KiwiStateMachine::new(config.node_id, storage.clone());
+
+    let network = KiwiNetworkFactory::new();
+
+    let raft = Raft::new(
+        config.node_id,
+        raft_config,
+        network,
+        log_store,
+        state_machine,
+    )
+    .await?;
+
+    let app = Arc::new(RaftApp {
+        node_id: config.node_id,
+        raft_addr: config.raft_addr,
+        resp_addr: config.resp_addr,
+        raft,
+        storage,
+    });
+
+    Ok(app)
+}
+
+pub async fn create_raft_node_with_rocksdb(
+    config: RaftConfig,
+    storage: Arc<Storage>,
+) -> Result<Arc<RaftApp>, anyhow::Error> {
+    use engine::RocksdbEngine;
+    use rocksdb::{ColumnFamilyDescriptor, DB, Options};
+
+    let raft_config = Config {
+        heartbeat_interval: config.heartbeat_interval,
+        election_timeout_min: config.election_timeout_min,
+        election_timeout_max: config.election_timeout_max,
+        ..Default::default()
+    };
+    let raft_config = Arc::new(raft_config.validate()?);
+
+    // 创建 RocksDB 日志存储目录
+    let log_store_path = config.data_dir.join("raft_logs_rocksdb");
+    std::fs::create_dir_all(&log_store_path)?;
+
+    // 配置 RocksDB 选项
+    let mut opts = Options::default();
+    opts.create_if_missing(true);
+    opts.create_missing_column_families(true);
+
+    // 创建所需的列族
+    let cfs = vec![
+        ColumnFamilyDescriptor::new("logs", Options::default()),
+        ColumnFamilyDescriptor::new("meta", Options::default()),
+        ColumnFamilyDescriptor::new("state", Options::default()),
+    ];
+
+    // 打开 RocksDB 数据库
+    let db = DB::open_cf_descriptors(&opts, &log_store_path, cfs)?;
+    let engine = Arc::new(RocksdbEngine::new(db));
+
+    // 创建 RocksDB 日志存储
+    let log_store = RocksdbLogStore::new(engine)?;
 
     let state_machine = KiwiStateMachine::new(config.node_id, storage.clone());
 

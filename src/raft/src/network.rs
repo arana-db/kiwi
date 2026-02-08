@@ -55,7 +55,7 @@ impl KiwiNetwork {
         Req: serde::Serialize,
         Res: serde::de::DeserializeOwned,
     {
-        let url = format!("{}{}", self.target_addr, endpoint);
+        let url = format!("http://{}{}", self.target_addr, endpoint);
 
         let resp = self
             .client

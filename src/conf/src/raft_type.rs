@@ -1,9 +1,7 @@
-use std::io::Cursor;
-use std::fmt;
-use serde::{Deserialize, Serialize};
 use openraft::declare_raft_types;
-
-
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::io::Cursor;
 
 /// Binlog operation type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -24,20 +22,11 @@ pub struct BinlogEntry {
 
 /// Binlog - Complete version, supports multi-CF operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct Binlog {
     pub db_id: u32,                // Database ID
     pub slot_idx: u32,             // Slot index
     pub entries: Vec<BinlogEntry>, // Operation list
-}
-
-impl Default for Binlog {
-    fn default() -> Self {
-        Self {
-            db_id: 0,
-            slot_idx: 0,
-            entries: Vec::new(),
-        }
-    }
 }
 
 impl fmt::Display for Binlog {
