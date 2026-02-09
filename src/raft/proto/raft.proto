@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package raft_proto;
+
+import "types.proto";
+
+// RaftCoreService - Raft 协议核心服务
+service RaftCoreService {
+    // 请求投票 RPC - 选举阶段使用
+    rpc Vote (VoteRequest) returns (VoteResponse);
+
+    // 追加日志条目 RPC - 日志复制使用
+    rpc AppendEntries (AppendEntriesRequest) returns (AppendEntriesResponse);
+
+    // 流式追加日志 RPC - pipeline 复制（生产阶段使用）
+    rpc StreamAppend (stream AppendEntriesRequest) returns (stream AppendEntriesResponse);
+
+    // 安装快照 RPC - 流式传输（POC 不实现）
+    rpc InstallSnapshot (stream InstallSnapshotRequest) returns (InstallSnapshotResponse);
+}
+
+// Vote RPC - 请求投票
+message VoteRequest {
+    Vote vote = 1;
+    LogId last_log_id = 2;
+}
+
+message VoteResponse {
+    Vote vote = 1;
+    bool vote_granted = 2;
+    LogId last_log_id = 3;
+}
+
+// AppendEntries RPC - 追加日志条目
+message AppendEntriesRequest {
+    Vote vote = 1;
+    LogId prev_log_id = 2;
+    repeated Entry entries = 3;
+    LogId leader_commit = 4;
+}
+
+message AppendEntriesResponse {
+    bool success = 1;
+}
+
+// InstallSnapshot RPC - 安装快照
+message InstallSnapshotRequest {
+    uint64 term = 1;
+    uint64 leader_id = 2;
+    uint64 last_included_index = 3;
+    uint64 last_included_term = 4;
+    bytes data = 5;
+    bool done = 6;
+}
+
+message InstallSnapshotResponse {
+    bool success = 1;
+}

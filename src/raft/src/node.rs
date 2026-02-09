@@ -1,3 +1,20 @@
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
 use openraft::{Config, Raft};
 use std::path::PathBuf;
@@ -7,6 +24,11 @@ use crate::log_store::LogStore;
 use crate::network::KiwiNetworkFactory;
 use crate::state_machine::KiwiStateMachine;
 use storage::storage::Storage;
+use crate::grpc::{create_core_service, create_admin_service, create_client_service, create_metrics_service};
+use crate::raft_proto::raft_core_service_server::RaftCoreServiceServer;
+use crate::raft_proto::raft_admin_service_server::RaftAdminServiceServer;
+use crate::raft_proto::raft_client_service_server::RaftClientServiceServer;
+use crate::raft_proto::raft_metrics_service_server::RaftMetricsServiceServer;
 
 pub struct RaftApp {
     pub node_id: u64,
@@ -39,6 +61,21 @@ impl RaftApp {
         let res = self.raft.client_write(binlog).await?;
         Ok(res.data)
     }
+
+    /// 创建所有 gRPC 服务
+    pub fn create_grpc_services(app: Arc<RaftApp>) -> (
+        RaftCoreServiceServer<crate::grpc::core::RaftCoreServiceImpl>,
+        RaftAdminServiceServer<crate::grpc::admin::RaftAdminServiceImpl>,
+        RaftClientServiceServer<crate::grpc::client::RaftClientServiceImpl>,
+        RaftMetricsServiceServer<crate::grpc::client::RaftMetricsServiceImpl>,
+    ) {
+        (
+            create_core_service(app.raft.clone()),
+            create_admin_service(app.clone()),
+            create_client_service(app.clone()),
+            create_metrics_service(app),
+        )
+    }
 }
 
 pub struct RaftConfig {
@@ -58,9 +95,13 @@ impl Default for RaftConfig {
             raft_addr: "127.0.0.1:8081".to_string(),
             resp_addr: "127.0.0.1:6379".to_string(),
             data_dir: PathBuf::from("/tmp/kiwi/raft"),
-            heartbeat_interval: 200,
-            election_timeout_min: 500,
-            election_timeout_max: 1000,
+            // 心跳间隔：500ms，同时也是 RPC 超时时间
+            // 太短会导致在网络延迟高时出现超时错误
+            heartbeat_interval: 500,
+            // 选举超时最小值：1500ms，应该 >= heartbeat_interval * 2
+            election_timeout_min: 1500,
+            // 选举超时最大值：3000ms
+            election_timeout_max: 3000,
         }
     }
 }

@@ -25,12 +25,8 @@ use std::sync::Arc;
 use storage::StorageOptions;
 use storage::storage::Storage;
 
-use actix_web::{App, HttpServer, web};
-use raft::api::{
-    RaftAppData, add_learner, change_membership, init, leader, metrics, raft_append, raft_vote,
-    read, write,
-};
-use raft::node::{RaftConfig, create_raft_node};
+use raft::node::{RaftConfig, create_raft_node, RaftApp};
+use raft::raft_proto;
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
 #[derive(Parser)]
@@ -237,8 +233,6 @@ async fn start_server(
         });
 
         if let Some(raft_config) = &config.raft {
-            info!("Starting Raft HTTP server on {}", raft_config.raft_addr);
-
             let raft_config = RaftConfig {
                 node_id: raft_config.node_id,
                 raft_addr: raft_config.raft_addr.clone(),
@@ -252,34 +246,39 @@ async fn start_server(
                 .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
 
             let raft_addr = raft_app.raft_addr.clone();
-            let app_data = web::Data::new(RaftAppData { app: raft_app });
+            let grpc_addr = raft_addr.parse::<std::net::SocketAddr>().map_err(|e| {
+                std::io::Error::other(format!("Invalid Raft address '{}': {}", raft_addr, e))
+            })?;
 
+            // 创建所有 gRPC 服务
+            let (core_svc, admin_svc, client_svc, metrics_svc) = RaftApp::create_grpc_services(raft_app.clone());
+
+            info!("Starting Raft gRPC server on {}", raft_addr);
+
+            let reflect_svc = tonic_reflection::server::Builder::configure()
+                .register_encoded_file_descriptor_set(raft_proto::FILE_DESCRIPTOR_SET)
+                .build_v1()
+                .map_err(|e| {
+                    std::io::Error::other(format!("Failed to create reflection service: {}", e))
+                })?;
+
+            // 启动 gRPC 服务器
             tokio::spawn(async move {
-                info!("Starting Raft HTTP server...");
-                let server = match HttpServer::new(move || {
-                    App::new()
-                        .app_data(app_data.clone())
-                        .service(write)
-                        .service(read)
-                        .service(metrics)
-                        .service(leader)
-                        .service(init)
-                        .service(add_learner)
-                        .service(change_membership)
-                        .service(raft_vote)
-                        .service(raft_append)
-                })
-                .bind(&raft_addr)
-                {
-                    Ok(s) => s,
-                    Err(e) => {
-                        error!("Failed to bind Raft HTTP server: {}", e);
-                        return;
+                use tonic::transport::Server;
+                
+                info!("Raft gRPC server listening on {}", grpc_addr);
+                
+                if let Err(e) = Server::builder()
+                    .add_service(reflect_svc)
+                    .add_service(core_svc)
+                    .add_service(admin_svc)
+                    .add_service(client_svc)
+                    .add_service(metrics_svc)
+                    .serve(grpc_addr)
+                    .await
+                    {
+                        error!("Raft gRPC server error: {}", e);
                     }
-                };
-                if let Err(e) = server.run().await {
-                    error!("Raft HTTP server error: {}", e);
-                }
             });
         }
 
