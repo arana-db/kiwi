@@ -1,3 +1,20 @@
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // RaftAdminService 实现 - 集群管理服务
 // 用途：集群初始化、成员变更等管理操作
 
@@ -94,7 +111,10 @@ impl RaftAdminService for RaftAdminServiceImpl {
             }
             Err(e) => {
                 log::error!("Failed to initialize cluster: {}", e);
-                Err(Status::internal(format!("Failed to initialize cluster: {}", e)))
+                Ok(TonicResponse::new(InitializeResponse {
+                    response: Some(error_response(format!("Failed to initialize cluster: {}", e))),
+                    leader_id: 0,
+                }))
             }
         }
     }
@@ -110,7 +130,11 @@ impl RaftAdminService for RaftAdminServiceImpl {
 
         let node = match proto_req.node {
             Some(n) => proto_to_node(&n),
-            None => return Err(Status::invalid_argument("Missing node config")),
+            None => {
+                return Ok(TonicResponse::new(AddLearnerResponse {
+                    response: Some(error_response("Missing node config".to_string())),
+                }))
+            }
         };
 
         match self.app.raft.add_learner(proto_req.node_id, node, true).await {
@@ -122,7 +146,9 @@ impl RaftAdminService for RaftAdminServiceImpl {
             }
             Err(e) => {
                 log::error!("Failed to add learner: {}", e);
-                Err(Status::internal(format!("Failed to add learner: {}", e)))
+                Ok(TonicResponse::new(AddLearnerResponse {
+                    response: Some(error_response(format!("Failed to add learner: {}", e))),
+                }))
             }
         }
     }
@@ -158,7 +184,9 @@ impl RaftAdminService for RaftAdminServiceImpl {
             }
             Err(e) => {
                 log::error!("Failed to change membership: {}", e);
-                Err(Status::internal(format!("Failed to change membership: {}", e)))
+                Ok(TonicResponse::new(ChangeMembershipResponse {
+                    response: Some(error_response(format!("Failed to change membership: {}", e))),
+                }))
             }
         }
     }
@@ -201,7 +229,9 @@ impl RaftAdminService for RaftAdminServiceImpl {
             }
             Err(e) => {
                 log::error!("Failed to remove node: {}", e);
-                Err(Status::internal(format!("Failed to remove node: {}", e)))
+                Ok(TonicResponse::new(RemoveNodeResponse {
+                    response: Some(error_response(format!("Failed to remove node: {}", e))),
+                }))
             }
         }
     }

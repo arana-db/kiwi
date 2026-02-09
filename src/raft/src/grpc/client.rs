@@ -1,8 +1,24 @@
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // RaftClientService 和 RaftMetricsService 实现
 // 用途：客户端读写数据、查询集群状态
 
 use conf::raft_type::{Binlog, BinlogEntry, OperateType};
-use openraft::Raft;
 use std::sync::Arc;
 use storage::slot_indexer::key_to_slot_id;
 use storage::ColumnFamilyIndex;
@@ -183,10 +199,14 @@ impl RaftMetricsService for RaftMetricsServiceImpl {
         let current_leader = guard.current_leader.unwrap_or(0);
         drop(guard);
 
+        // TODO: 实现 replication_lag 计算
+        // 需要获取 state_machine.last_applied 与 committed 的差异
+        let replication_lag = 0;
+
         Ok(TonicResponse::new(MetricsResponse {
             response: Some(ok_response()),
             is_leader,
-            replication_lag: if !is_leader { 0 } else { 0 },
+            replication_lag,
             current_leader,
         }))
     }

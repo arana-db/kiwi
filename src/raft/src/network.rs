@@ -1,14 +1,28 @@
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use conf::raft_type::{KiwiNode, KiwiTypeConfig};
-use openraft::error::{NetworkError, RaftError, Unreachable};
+use openraft::error::{NetworkError, RaftError};
 use openraft::network::{RPCOption, RaftNetwork, RaftNetworkFactory};
 use openraft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
     VoteRequest, VoteResponse,
 };
 use std::io;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use crate::raft_proto::raft_core_service_client::RaftCoreServiceClient;
 use tonic::transport::Channel;
 use tonic::Request as TonicRequest;
@@ -23,29 +37,26 @@ type RPCErrSnapshot = openraft::error::RPCError<
     RaftError<NodeId, openraft::error::InstallSnapshotError>,
 >;
 
-pub struct KiwiNetworkFactory {
-    // NodeId -> raft address
-    node_addrs: Arc<RwLock<HashMap<NodeId, String>>>,
-    // The current node id
-    node_id: NodeId,
-}
+pub struct KiwiNetworkFactory;
 
 impl KiwiNetworkFactory {
-    pub fn new(node_id: NodeId) -> Self {
-        Self {
-            node_addrs: Arc::new(RwLock::new(HashMap::new())),
-            node_id,
-        }
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for KiwiNetworkFactory {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
     type Network = KiwiNetwork;
 
-    async fn new_client(&mut self, target: NodeId, node: &Node) -> Self::Network {
+    async fn new_client(&mut self, _target: NodeId, node: &Node) -> Self::Network {
         // Get or create gRPC client for the target node
         let addr = node.raft_addr.clone();
-
         
         let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
             .expect("Invalid gRPC endpoint")
@@ -54,18 +65,12 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
             .connect_lazy();
         let client = RaftCoreServiceClient::new(endpoint);
 
-        KiwiNetwork {
-            target_id: target,
-            client,
-            target_addr: addr,
-        }
+        KiwiNetwork { client }
     }
 }
 
 pub struct KiwiNetwork {
-    target_id: u64,
     client: RaftCoreServiceClient<Channel>,
-    target_addr: String,
 }
 
 // Impl the RaftNetwork trait for KiwiNetwork according to openraft requirements
@@ -96,8 +101,7 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
         if proto_resp.success {
             Ok(openraft::raft::AppendEntriesResponse::Success)
         } else {
-            Err(RPCErr::Network(NetworkError::new(&io::Error::new(
-                io::ErrorKind::Other,
+            Err(RPCErr::Network(NetworkError::new(&io::Error::other(
                 "AppendEntries failed",
             ))))
         }
@@ -137,7 +141,6 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
         let proto_resp = response.into_inner();
 
         // Proto → OpenRaft
-        use crate::conversion;
         (&proto_resp).try_into().map_err(|e| {
             RPCErr::Network(NetworkError::new(&io::Error::new(
                 io::ErrorKind::InvalidData,
