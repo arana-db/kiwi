@@ -21,7 +21,6 @@ pub mod raft_type;
 
 #[cfg(test)]
 mod tests {
-    use config::Config;
     use validator::Validate;
 
     use super::*;
