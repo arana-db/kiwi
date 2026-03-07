@@ -1,3 +1,20 @@
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use openraft::declare_raft_types;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -21,21 +38,11 @@ pub struct BinlogEntry {
 }
 
 /// Binlog - Complete version, supports multi-CF operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Binlog {
     pub db_id: u32,                // Database ID
     pub slot_idx: u32,             // Slot index
     pub entries: Vec<BinlogEntry>, // Operation list
-}
-
-impl Default for Binlog {
-    fn default() -> Self {
-        Self {
-            db_id: 0,
-            slot_idx: 0,
-            entries: Vec::new(),
-        }
-    }
 }
 
 impl fmt::Display for Binlog {
