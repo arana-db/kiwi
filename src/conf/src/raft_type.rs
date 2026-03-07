@@ -1,9 +1,7 @@
-use std::io::Cursor;
-use std::fmt;
-use serde::{Deserialize, Serialize};
 use openraft::declare_raft_types;
-
-
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::io::Cursor;
 
 /// Binlog operation type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
