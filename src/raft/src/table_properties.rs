@@ -77,6 +77,11 @@ impl TablePropertiesCollector for LogIndexTablePropertiesCollector {
     ) {
         if seq > self.largest_seqno {
             self.largest_seqno = seq;
+            // WARNING: The cache is not invalidated here. If `get_readable_properties()` was
+            // called before this update, the cached `log_index` was computed for the old
+            // `largest_seqno`. This can cause `finish()` to write stale data. Consider
+            // clearing `self.cache = None` whenever `largest_seqno` is updated, or
+            // avoid caching altogether to prevent this inconsistency.
         }
     }
 

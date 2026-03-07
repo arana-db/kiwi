@@ -108,12 +108,6 @@ impl Clone for LogIndexSeqnoPair {
     }
 }
 
-impl PartialEq for LogIndexSeqnoPair {
-    fn eq(&self, other: &Self) -> bool {
-        self.eq_seqno(other)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,10 +138,8 @@ mod tests {
         assert!(p.lt_seqno(&q));
         assert!(p.le_seqno(&q));
         assert!(!p.ge_seqno(&q));
-        assert!(p != q);
 
         let r = LogIndexSeqnoPair::new(0, 60);
         assert!(p.eq_seqno(&r));
-        assert!(p == r);
     }
 }
