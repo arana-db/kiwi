@@ -48,10 +48,7 @@ impl KiwiStateMachine {
 impl KiwiStateMachine {
     async fn apply_binlog(&self, binlog: &Binlog, _log_idx: u64) -> Result<(), io::Error> {
         self.storage.on_binlog_write(binlog).map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::Other,
-                format!("Failed to apply binlog: {}", e),
-            )
+            io::Error::other(format!("Failed to apply binlog: {}", e))
         })
     }
 }

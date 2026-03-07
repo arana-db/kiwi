@@ -50,6 +50,12 @@ impl KiwiNetworkFactory {
     }
 }
 
+impl Default for KiwiNetworkFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
     type Network = KiwiNetwork;
 
@@ -85,8 +91,7 @@ impl KiwiNetwork {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(RPCErr::Network(NetworkError::new(&io::Error::new(
-                io::ErrorKind::Other,
+            return Err(RPCErr::Network(NetworkError::new(&io::Error::other(
                 format!("HTTP error {}: {}", status, body),
             ))));
         }

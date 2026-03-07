@@ -41,7 +41,7 @@ pub struct LogStore {
     inner: Arc<tokio::sync::Mutex<LogStoreInner>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct LogStoreInner {
     /// 最后清理的日志 ID
     last_purged_log_id: Option<LogId<u64>>,
@@ -54,17 +54,6 @@ struct LogStoreInner {
 
     /// 已提交的日志 ID
     committed: Option<LogId<u64>>,
-}
-
-impl Default for LogStoreInner {
-    fn default() -> Self {
-        Self {
-            last_purged_log_id: None,
-            logs: BTreeMap::new(),
-            committed: None,
-            vote: None,
-        }
-    }
 }
 
 impl LogStore {
@@ -92,10 +81,10 @@ impl LogStoreInner {
     async fn get_log_state(&mut self) -> Result<LogState<KiwiTypeConfig>, StorageError<u64>> {
         let last = self.logs.iter().next_back().map(|(_, ent)| ent.log_id);
 
-        let last_purged = self.last_purged_log_id.clone();
+        let last_purged = self.last_purged_log_id;
 
         let last = match last {
-            None => last_purged.clone(),
+            None => last_purged,
             Some(x) => Some(x),
         };
 
@@ -114,16 +103,16 @@ impl LogStoreInner {
     }
 
     async fn read_committed(&mut self) -> Result<Option<LogId<u64>>, StorageError<u64>> {
-        Ok(self.committed.clone())
+        Ok(self.committed)
     }
 
     async fn save_vote(&mut self, vote: &Vote<u64>) -> Result<(), StorageError<u64>> {
-        self.vote = Some(vote.clone());
+        self.vote = Some(*vote);
         Ok(())
     }
 
     async fn read_vote(&mut self) -> Result<Option<Vote<u64>>, StorageError<u64>> {
-        Ok(self.vote.clone())
+        Ok(self.vote)
     }
 
     async fn append<I>(
@@ -163,7 +152,7 @@ impl LogStoreInner {
         {
             let ld = &mut self.last_purged_log_id;
             assert!(ld.as_ref() <= Some(&log_id));
-            *ld = Some(log_id.clone());
+            *ld = Some(log_id);
         }
 
         {
