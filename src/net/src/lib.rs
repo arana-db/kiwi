@@ -110,11 +110,6 @@ impl ServerFactory {
         let cmd_table = Arc::new(create_command_table());
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
-        NetworkServer::new(
-            addr,
-            storage_client,
-            cmd_table,
-            executor,
-        )
+        NetworkServer::new(addr, storage_client, cmd_table, executor)
     }
 }

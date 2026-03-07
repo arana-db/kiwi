@@ -264,12 +264,29 @@ pub fn is_read_command(cmd: &str) -> bool {
     let cmd_lower = cmd.to_lowercase();
     matches!(
         cmd_lower.as_str(),
-        "get" | "mget" | "strlen" | "getrange"
-            | "lindex" | "llen" | "lrange"
-            | "scard" | "sismember" | "smembers"
-            | "zscore" | "zrank" | "zrange"
-            | "hlen" | "hexists" | "hget" | "hgetall" | "hkeys" | "hvals"
-            | "type" | "ttl" | "pttl" | "exists"
+        "get"
+            | "mget"
+            | "strlen"
+            | "getrange"
+            | "lindex"
+            | "llen"
+            | "lrange"
+            | "scard"
+            | "sismember"
+            | "smembers"
+            | "zscore"
+            | "zrank"
+            | "zrange"
+            | "hlen"
+            | "hexists"
+            | "hget"
+            | "hgetall"
+            | "hkeys"
+            | "hvals"
+            | "type"
+            | "ttl"
+            | "pttl"
+            | "exists"
             | "ping"
     )
 }
@@ -277,17 +294,43 @@ pub fn is_read_command(cmd: &str) -> bool {
 /// Check if a command is a write operation
 pub fn is_write_command(cmd: &str) -> bool {
     let cmd_lower = cmd.to_lowercase();
-    !is_read_command(cmd) || matches!(
-        cmd_lower.as_str(),
-        "set" | "del" | "mset"
-            | "incr" | "decr" | "incrby" | "decrby"
-            | "append" | "setrange"
-            | "lpush" | "rpush" | "lpop" | "rpop" | "lset" | "lrem" | "ltrim"
-            | "sadd" | "srem" | "spop" | "smove"
-            | "zadd" | "zrem" | "zincrby" | "zpopmin" | "zpopmax"
-            | "hset" | "hdel" | "hincrby" | "hincrbyfloat"
-            | "expire" | "pexpire" | "persist" | "expireat"
-    )
+    !is_read_command(cmd)
+        || matches!(
+            cmd_lower.as_str(),
+            "set"
+                | "del"
+                | "mset"
+                | "incr"
+                | "decr"
+                | "incrby"
+                | "decrby"
+                | "append"
+                | "setrange"
+                | "lpush"
+                | "rpush"
+                | "lpop"
+                | "rpop"
+                | "lset"
+                | "lrem"
+                | "ltrim"
+                | "sadd"
+                | "srem"
+                | "spop"
+                | "smove"
+                | "zadd"
+                | "zrem"
+                | "zincrby"
+                | "zpopmin"
+                | "zpopmax"
+                | "hset"
+                | "hdel"
+                | "hincrby"
+                | "hincrbyfloat"
+                | "expire"
+                | "pexpire"
+                | "persist"
+                | "expireat"
+        )
 }
 
 /// Process a batch of commands, potentially in parallel for read operations
