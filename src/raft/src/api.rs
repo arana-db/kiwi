@@ -126,7 +126,7 @@ pub async fn metrics(app_data: web::Data<RaftAppData>) -> impl Responder {
     let leader_info = app_data.app.get_leader();
 
     let replication_lag =
-        leader_info.and_then(|(leader_id, _)| if !is_leader { Some(0) } else { None });
+        leader_info.and_then(|(_leader_id, _)| if !is_leader { Some(0) } else { None });
 
     HttpResponse::Ok().json(ApiResponse::success(MetricsResponse {
         is_leader,

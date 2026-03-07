@@ -9,7 +9,7 @@ use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
 use storage::storage::Storage;
 
 pub struct KiwiStateMachine {
-    node_id: u64,
+    _node_id: u64,
     storage: Arc<Storage>,
     last_applied: Option<LogId<u64>>,
     last_membership: StoredMembership<u64, KiwiNode>,
@@ -19,7 +19,7 @@ pub struct KiwiStateMachine {
 impl KiwiStateMachine {
     pub fn new(node_id: u64, storage: Arc<Storage>) -> Self {
         Self {
-            node_id,
+            _node_id: node_id,
             storage,
             last_applied: None,
             last_membership: StoredMembership::default(),
@@ -29,7 +29,7 @@ impl KiwiStateMachine {
 }
 
 impl KiwiStateMachine {
-    async fn apply_binlog(&self, binlog: &Binlog, log_idx: u64) -> Result<(), io::Error> {
+    async fn apply_binlog(&self, binlog: &Binlog, _log_idx: u64) -> Result<(), io::Error> {
         self.storage.on_binlog_write(binlog).map_err(|e| {
             io::Error::new(
                 io::ErrorKind::Other,
