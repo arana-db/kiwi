@@ -57,11 +57,12 @@ impl LogIndexAndSequenceCollector {
             return 0;
         }
         let list = self.list.read();
-        if list.is_empty() || seqno < list.front().unwrap().seqno() {
+        if list.is_empty() || seqno < list.front().expect("non-empty after is_empty check").seqno() {
             return 0;
         }
-        if seqno >= list.back().unwrap().seqno() {
-            return list.back().unwrap().applied_log_index();
+        let back = list.back().expect("non-empty after is_empty check");
+        if seqno >= back.seqno() {
+            return back.applied_log_index();
         }
         // partition_point: the first position where predicate is false
         // i.e., the index of the first element where seqno() > seqno

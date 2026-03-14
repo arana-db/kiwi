@@ -222,8 +222,8 @@ impl LogIndexOfColumnFamilies {
         if s.len() == 1 {
             return 0;
         }
-        let first = *s.first().unwrap();
-        let last = *s.last().unwrap();
+        let first = *s.first().expect("BTreeSet has at least 2 elements");
+        let last = *s.last().expect("BTreeSet has at least 2 elements");
         last.saturating_sub(first) as u64
     }
 
