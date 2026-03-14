@@ -18,6 +18,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use chrono::Utc;
@@ -41,7 +42,7 @@ use crate::error::Error::RedisErr;
 use crate::error::InvalidFormatSnafu;
 use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
 use crate::meta_compaction_filter::MetaCompactionFilterFactory;
-use crate::options::{OptionType, StorageOptions};
+use crate::options::{AppendLogFunction, OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
 use crate::storage_define::TYPE_LENGTH;
@@ -114,6 +115,9 @@ pub struct Redis {
 
     // For startup state tracking
     pub is_starting: AtomicBool,
+
+    // For Raft cluster mode
+    append_log_fn: RwLock<Option<AppendLogFunction>>,
 }
 
 impl Redis {
@@ -150,6 +154,8 @@ impl Redis {
 
             small_compaction_threshold: std::sync::atomic::AtomicU64::new(5000),
             small_compaction_duration_threshold: std::sync::atomic::AtomicU64::new(10000),
+
+            append_log_fn: RwLock::new(None),
         }
     }
 
@@ -321,32 +327,11 @@ impl Redis {
         None
     }
 
-    /// Create a new batch for atomic write operations.
-    ///
-    /// This method creates a batch appropriate for the current deployment mode:
-    /// - In standalone mode, returns a `RocksBatch` for direct RocksDB writes
-    /// - In cluster mode, returns a `BinlogBatch` for Raft consensus (TODO)
-    ///
-    /// # Returns
-    /// A boxed `Batch` trait object that can be used for atomic write operations.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let mut batch = redis.create_batch();
-    /// batch.put(ColumnFamilyIndex::MetaCF, key, value);
-    /// batch.commit()?;
-    /// ```
-    pub fn create_batch(&self) -> Result<Box<dyn crate::batch::Batch + '_>> {
-        // TODO: Check if in cluster mode and return BinlogBatch
-        // if self.append_log_fn.is_some() {
-        //     return Ok(Box::new(BinlogBatch::new(...)));
-        // }
-
+    fn create_rocks_batch(&self) -> Result<Box<dyn crate::batch::Batch + '_>> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "Database is not initialized".to_string(),
         })?;
 
-        // Collect all column family handles
         let cf_handles: Vec<Option<Arc<rocksdb::BoundColumnFamily<'_>>>> = vec![
             self.get_cf_handle(ColumnFamilyIndex::MetaCF),
             self.get_cf_handle(ColumnFamilyIndex::HashesDataCF),
@@ -361,6 +346,29 @@ impl Redis {
             &self.write_options,
             cf_handles,
         )))
+    }
+
+    pub fn create_batch(&self) -> Result<Box<dyn crate::batch::Batch + '_>> {
+        if let Some(append_log_fn) = self.append_log_fn.read().unwrap().as_ref() {
+            return Ok(Box::new(crate::batch::BinlogBatch::new(
+                self.index as u32,
+                append_log_fn.clone(),
+            )));
+        }
+
+        self.create_rocks_batch()
+    }
+
+    pub fn create_local_batch(&self) -> Result<Box<dyn crate::batch::Batch + '_>> {
+        self.create_rocks_batch()
+    }
+
+    pub fn set_append_log_fn(&self, f: AppendLogFunction) {
+        *self.append_log_fn.write().unwrap() = Some(f);
+    }
+
+    pub fn is_raft_mode(&self) -> bool {
+        self.append_log_fn.read().unwrap().is_some()
     }
 
     pub fn update_specific_key_duration(

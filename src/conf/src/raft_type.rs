@@ -1,9 +1,7 @@
-use std::io::Cursor;
-use std::fmt;
-use serde::{Deserialize, Serialize};
 use openraft::declare_raft_types;
-
-
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::io::Cursor;
 
 /// Binlog operation type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -73,21 +71,22 @@ impl fmt::Display for KiwiNode {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BinlogResponse {
     pub success: bool,
-    pub message: Option<String>,
+    #[serde(alias = "message")]
+    pub error_message: Option<String>,
 }
 
 impl BinlogResponse {
     pub fn ok() -> Self {
         Self {
             success: true,
-            message: None,
+            error_message: None,
         }
     }
 
     pub fn error(msg: impl Into<String>) -> Self {
         Self {
             success: false,
-            message: Some(msg.into()),
+            error_message: Some(msg.into()),
         }
     }
 }

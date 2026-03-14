@@ -53,6 +53,8 @@ pub struct Config {
     pub log_dir: String,
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
+    /// RocksDB storage data directory (per-node in cluster to avoid LOCK conflict)
+    pub storage_data_dir: String,
     pub raft: Option<RaftClusterConfig>,
 }
 
@@ -93,6 +95,7 @@ impl Default for Config {
             rocksdb_target_file_size_base: 64 << 20, // 64MB
 
             db_instance_num: 3,
+            storage_data_dir: "./db".to_string(),
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
             raft: None,
@@ -153,6 +156,9 @@ impl Config {
                             e
                         )),
                     })?;
+                }
+                "data-dir" => {
+                    config.storage_data_dir = value;
                 }
                 "memory" => {
                     config.memory =

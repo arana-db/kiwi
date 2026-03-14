@@ -8,7 +8,6 @@ use openraft::raft::{
 use reqwest::Client;
 use std::io;
 
-// 类型别名，简化 RaftNetwork 的返回类型（参考 openraft 示例）
 type NodeId = <KiwiTypeConfig as openraft::RaftTypeConfig>::NodeId;
 type Node = KiwiNode;
 type RPCErr = openraft::error::RPCError<NodeId, Node, RaftError<NodeId>>;
@@ -55,7 +54,13 @@ impl KiwiNetwork {
         Req: serde::Serialize,
         Res: serde::de::DeserializeOwned,
     {
-        let url = format!("{}{}", self.target_addr, endpoint);
+        let base = match self.target_addr.starts_with("http://")
+            || self.target_addr.starts_with("https://")
+        {
+            true => self.target_addr.clone(),
+            false => format!("http://{}", self.target_addr),
+        };
+        let url = format!("{}{}", base, endpoint);
 
         let resp = self
             .client

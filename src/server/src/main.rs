@@ -26,6 +26,7 @@ use storage::StorageOptions;
 use storage::storage::Storage;
 
 use actix_web::{App, HttpServer, web};
+use raft::adapter::create_append_log_fn;
 use raft::api::{
     RaftAppData, add_learner, change_membership, init, leader, metrics, raft_append, raft_vote,
     read, write,
@@ -116,8 +117,9 @@ fn main() -> std::io::Result<()> {
         })?;
 
     // Use the network runtime to run the main server logic
+    let db_path = PathBuf::from(&config.storage_data_dir);
     let result = network_handle.block_on(async {
-        let storage = initialize_storage()
+        let storage = initialize_storage(&db_path)
             .await
             .map_err(|e| std::io::Error::other(format!("Failed to initialize storage: {}", e)))?;
 
@@ -160,9 +162,9 @@ fn main() -> std::io::Result<()> {
 
         // Block until Ctrl+C so the process does not exit immediately
         info!("Press Ctrl+C to stop.");
-        tokio::signal::ctrl_c()
-            .await
-            .map_err(|e| std::io::Error::other(format!("Failed to listen for shutdown signal: {}", e)))?;
+        tokio::signal::ctrl_c().await.map_err(|e| {
+            std::io::Error::other(format!("Failed to listen for shutdown signal: {}", e))
+        })?;
         info!("Received shutdown signal, stopping...");
 
         Ok(())
@@ -176,17 +178,16 @@ fn main() -> std::io::Result<()> {
     result
 }
 
-async fn initialize_storage() -> Result<Arc<Storage>, DualRuntimeError> {
+async fn initialize_storage(db_path: &PathBuf) -> Result<Arc<Storage>, DualRuntimeError> {
     info!("Initializing storage...");
 
     let storage_options = Arc::new(StorageOptions::default());
-    let db_path = PathBuf::from("./db");
 
     let mut storage = Storage::new(1, 0);
 
     info!("Opening storage at path: {:?}", db_path);
     let bg_task_receiver = storage
-        .open(storage_options, &db_path)
+        .open(storage_options, db_path)
         .map_err(|e| DualRuntimeError::storage_runtime(format!("Failed to open storage: {}", e)))?;
     info!("Storage opened successfully");
 
@@ -250,6 +251,10 @@ async fn start_server(
             let raft_app = create_raft_node(raft_config, storage.clone())
                 .await
                 .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
+
+            let append_log_fn = create_append_log_fn(raft_app.clone());
+            storage.set_append_log_fn_for_all(append_log_fn);
+            info!("Raft write adapter installed for storage batch path");
 
             let raft_addr = raft_app.raft_addr.clone();
             let app_data = web::Data::new(RaftAppData { app: raft_app });

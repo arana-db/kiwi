@@ -232,7 +232,8 @@ pub trait Cmd: Send + Sync {
         None
     }
 
-    fn to_binlog(&self, client: &Client) -> Option<conf::raft_type::Binlog> {
+    #[deprecated(since = "0.1.0", note = "Use Batch abstraction instead")]
+    fn to_binlog(&self, _client: &Client) -> Option<conf::raft_type::Binlog> {
         None
     }
 
