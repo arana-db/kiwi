@@ -23,6 +23,8 @@
 //! 3. The locking strategy prevents deadlocks
 //! 4. Performance is acceptable under concurrent load
 
+#![allow(clippy::unwrap_used)]
+
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;

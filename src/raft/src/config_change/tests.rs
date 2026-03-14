@@ -17,6 +17,8 @@
 
 //! Tests for configuration change safety mechanisms
 
+#![allow(clippy::unwrap_used)]
+
 #[cfg(test)]
 mod tests {
     use super::super::*;

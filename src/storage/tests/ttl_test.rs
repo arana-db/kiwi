@@ -15,6 +15,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(clippy::unwrap_used)]
+
 use std::sync::Arc;
 
 use storage::{StorageOptions, storage::Storage, unique_test_db_path};

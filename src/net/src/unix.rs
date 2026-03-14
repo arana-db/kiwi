@@ -38,7 +38,7 @@ impl UnixServer {
         let storage_options = Arc::new(StorageOptions::default());
         let db_path = PathBuf::from("./db");
         let mut storage = Storage::new(1, 0);
-        storage.open(storage_options, db_path).unwrap();
+        storage.open(storage_options, db_path).expect("failed to open storage");
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
         Self {

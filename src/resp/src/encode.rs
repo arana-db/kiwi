@@ -557,6 +557,7 @@ impl RespEncode for RespEncoder {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

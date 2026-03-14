@@ -26,8 +26,10 @@ pub use adaptor::*;
 pub use backend::*;
 pub use core::*;
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod adaptor_tests;
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod tests;

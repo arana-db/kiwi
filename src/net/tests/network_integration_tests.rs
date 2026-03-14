@@ -17,6 +17,8 @@
 
 //! Integration tests for network layer with Raft awareness
 
+#![allow(clippy::unwrap_used)]
+
 use net::raft_network_handle::{ClusterMode, is_read_command, is_write_command};
 
 #[test]

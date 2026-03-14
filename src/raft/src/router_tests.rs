@@ -17,6 +17,8 @@
 
 //! Tests for the RequestRouter
 
+#![allow(clippy::unwrap_used)]
+
 #[cfg(test)]
 mod tests {
     use crate::node::RaftNode;

@@ -17,6 +17,8 @@
 
 //! Unit tests for Redis list operations
 
+#![allow(clippy::unwrap_used)]
+
 #[cfg(test)]
 mod redis_list_test {
     use std::sync::Arc;

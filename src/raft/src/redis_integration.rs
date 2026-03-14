@@ -751,6 +751,7 @@ impl RaftRedisHandler {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod read_routing_tests {
     use super::*;
@@ -858,6 +859,7 @@ mod read_routing_tests {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

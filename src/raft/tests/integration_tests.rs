@@ -16,3 +16,5 @@
 // limitations under the License.
 
 //! Raft integration tests
+
+#![allow(clippy::unwrap_used)]

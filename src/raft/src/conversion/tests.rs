@@ -17,6 +17,8 @@
 
 //! Unit tests for type conversion functions
 
+#![allow(clippy::unwrap_used)]
+
 use super::*;
 use bytes::Bytes;
 use openraft::{CommittedLeaderId, Entry, EntryPayload, LogId};

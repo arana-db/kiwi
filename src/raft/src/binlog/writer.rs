@@ -93,6 +93,7 @@ impl Default for BinlogWriter {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,5 +116,6 @@ mod tests {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 use super::entry::OperationType;

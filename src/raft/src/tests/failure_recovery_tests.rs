@@ -22,6 +22,8 @@
 //! - Snapshot recovery correctness
 //! - Log replay after restart
 
+#![allow(clippy::unwrap_used)]
+
 use crate::node::{RaftNode, RaftNodeInterface};
 use crate::types::{
     ClientRequest, ClusterConfig, ConsistencyLevel, NodeId, RedisCommand, RequestId,

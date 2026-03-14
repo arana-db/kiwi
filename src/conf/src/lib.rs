@@ -18,6 +18,7 @@ pub mod config;
 pub mod de_func;
 pub mod error;
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use config::Config;

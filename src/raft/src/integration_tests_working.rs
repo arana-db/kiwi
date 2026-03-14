@@ -17,6 +17,8 @@
 
 // Working integration tests that avoid OpenRaft lifetime issues
 
+#![allow(clippy::unwrap_used)]
+
 use bytes::Bytes;
 use std::sync::Arc;
 

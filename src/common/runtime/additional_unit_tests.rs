@@ -24,6 +24,8 @@
 //! - Request/response serialization and correlation
 //! - Configuration validation and defaults
 
+#![allow(clippy::unwrap_used)]
+
 use std::time::Duration;
 
 use serde_json;

@@ -15,6 +15,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(clippy::unwrap_used)]
+
 mod redis_zset_test {
     use kstd::lock_mgr::LockMgr;
     use std::sync::Arc;

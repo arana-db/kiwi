@@ -414,7 +414,7 @@ impl Redis {
                     let count_usize = (-count_val) as usize;
                     let mut result = Vec::with_capacity(count_usize);
                     for _ in 0..count_usize {
-                        let member = all_members.choose(&mut rng).unwrap();
+                        let member = all_members.choose(&mut rng).expect("all_members is non-empty");
                         result.push(member.clone());
                     }
                     Ok(result)
@@ -2078,7 +2078,7 @@ impl Redis {
                 return Ok(result);
             }
 
-            let val = meta_val.unwrap();
+            let val = meta_val.expect("meta_val checked non-None above");
             // Type check
             self.check_type(&val, DataType::Set)?;
 
@@ -2496,6 +2496,7 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     match_recursive(&pattern_chars, &text_chars, 0, 0)
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod glob_tests {
     use super::glob_match;

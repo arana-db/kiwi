@@ -575,7 +575,7 @@ impl ConsistencyHandler {
                     }
 
                     return Ok(ConsistencyValidation::RequiresRedirect {
-                        leader_id: leader_id.unwrap(),
+                        leader_id: leader_id.expect("leader_id checked non-None above"),
                     });
                 }
 
@@ -602,6 +602,7 @@ impl ConsistencyHandler {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

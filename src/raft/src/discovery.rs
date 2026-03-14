@@ -1723,6 +1723,7 @@ pub struct ReplicationLagSummary {
     pub critical_lag_nodes: Vec<NodeId>,
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
