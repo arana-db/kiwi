@@ -24,7 +24,7 @@
 //!
 //! The batch system is designed with two implementations:
 //! - `RocksBatch`: For standalone mode, directly writes to RocksDB
-//! - `BinlogBatch`: For cluster mode, writes through Raft consensus (TODO)
+//! - `BinlogBatch`: For cluster mode, writes through Raft consensus
 //!
 //! # Usage
 //!
@@ -37,64 +37,30 @@
 
 use std::sync::Arc;
 
+#[cfg(test)]
+use std::{future::Future, pin::Pin};
+
 use rocksdb::{BoundColumnFamily, WriteBatch, WriteOptions};
 use snafu::ResultExt;
 
 use crate::ColumnFamilyIndex;
-use crate::error::{BatchSnafu, Result, RocksSnafu};
+use crate::error::{Result, RocksSnafu};
+use crate::options::AppendLogFunction;
+use conf::raft_type::{Binlog, BinlogEntry, OperateType};
 use engine::Engine;
 
 /// Trait for batch write operations.
-///
-/// This trait abstracts the batch write mechanism to support both standalone
-/// (RocksDB direct write) and cluster (Raft consensus) modes.
-///
-/// # Error Handling
-///
-/// All operations return `Result<()>` to properly propagate errors instead of
-/// panicking. This is important for production stability in storage systems.
 pub trait Batch: Send {
-    /// Add a put operation to the batch.
-    ///
-    /// # Arguments
-    /// * `cf_idx` - The column family index to write to
-    /// * `key` - The key to write
-    /// * `value` - The value to write
-    ///
-    /// # Errors
-    /// Returns an error if the column family index is invalid.
     fn put(&mut self, cf_idx: ColumnFamilyIndex, key: &[u8], value: &[u8]) -> Result<()>;
-
-    /// Add a delete operation to the batch.
-    ///
-    /// # Arguments
-    /// * `cf_idx` - The column family index to delete from
-    /// * `key` - The key to delete
-    ///
-    /// # Errors
-    /// Returns an error if the column family index is invalid.
     fn delete(&mut self, cf_idx: ColumnFamilyIndex, key: &[u8]) -> Result<()>;
-
-    /// Commit all operations in the batch atomically.
-    ///
-    /// # Returns
-    /// * `Ok(())` - if all operations were committed successfully
-    /// * `Err(_)` - if the commit failed
     fn commit(self: Box<Self>) -> Result<()>;
-
-    /// Get the number of operations in the batch.
     fn count(&self) -> u32;
-
-    /// Clear all operations from the batch.
     fn clear(&mut self);
 }
 
-/// Type alias for column family handles used in batch operations.
 pub type CfHandles<'a> = Vec<Option<Arc<BoundColumnFamily<'a>>>>;
 
 /// RocksDB batch implementation for standalone mode.
-///
-/// This implementation directly uses RocksDB's WriteBatch for atomic writes.
 pub struct RocksBatch<'a> {
     inner: WriteBatch,
     db: &'a dyn Engine,
@@ -104,29 +70,15 @@ pub struct RocksBatch<'a> {
 }
 
 impl<'a> RocksBatch<'a> {
-    /// Create a new RocksBatch.
-    ///
-    /// # Arguments
-    /// * `db` - Reference to the database engine
-    /// * `write_options` - Write options for the batch commit
-    /// * `cf_handles` - Column family handles for all column families
-    ///
-    /// # Panics
-    /// Panics if cf_handles length doesn't match ColumnFamilyIndex::COUNT.
-    /// This is a programming error that should be caught during development.
     pub fn new(
         db: &'a dyn Engine,
         write_options: &'a WriteOptions,
         cf_handles: CfHandles<'a>,
     ) -> Self {
-        // Validate cf_handles length matches expected column family count.
-        // This catches mismatches between ColumnFamilyIndex enum and cf_handles vec
-        // at batch creation time rather than during put/delete operations.
         assert_eq!(
             cf_handles.len(),
             ColumnFamilyIndex::COUNT,
-            "cf_handles length ({}) must match ColumnFamilyIndex::COUNT ({}). \
-             Update ColumnFamilyIndex::COUNT when adding new column families.",
+            "cf_handles length ({}) must match ColumnFamilyIndex::COUNT ({})",
             cf_handles.len(),
             ColumnFamilyIndex::COUNT
         );
@@ -141,11 +93,6 @@ impl<'a> RocksBatch<'a> {
     }
 }
 
-/// Convert ColumnFamilyIndex to its corresponding array index.
-///
-/// This function uses an explicit match to ensure compile-time safety.
-/// When a new ColumnFamilyIndex variant is added, the compiler will
-/// require this match to be updated.
 #[inline]
 fn cf_index_to_usize(cf_idx: ColumnFamilyIndex) -> usize {
     match cf_idx {
@@ -158,17 +105,6 @@ fn cf_index_to_usize(cf_idx: ColumnFamilyIndex) -> usize {
     }
 }
 
-/// Get the column family handle from the handles vector.
-///
-/// This function provides validated access to column family handles,
-/// ensuring the handle exists at the given index.
-///
-/// # Arguments
-/// * `cf_handles` - The vector of column family handles
-/// * `cf_idx` - The column family index to look up
-///
-/// # Returns
-/// A reference to the column family handle, or an error if invalid.
 fn get_cf_handle<'a>(
     cf_handles: &'a CfHandles<'a>,
     cf_idx: ColumnFamilyIndex,
@@ -180,8 +116,7 @@ fn get_cf_handle<'a>(
         .and_then(|opt| opt.as_ref())
         .ok_or_else(|| crate::error::Error::Batch {
             message: format!(
-                "Column family handle is None for {:?} (index {}) - \
-                 this indicates a bug in initialization",
+                "Column family handle is None for {:?} (index {})",
                 cf_idx, idx
             ),
             location: snafu::Location::new(file!(), line!(), column!()),
@@ -221,57 +156,86 @@ impl<'a> Batch for RocksBatch<'a> {
 
 /// Binlog batch implementation for cluster (Raft) mode.
 ///
-/// This implementation serializes operations to a binlog format and commits
-/// through the Raft consensus layer.
-///
-/// TODO: Implement when Raft integration is ready.
-#[allow(dead_code)]
+/// Serializes operations to binlog format and commits through Raft consensus.
 pub struct BinlogBatch {
-    // TODO: Add binlog entries
-    // entries: Vec<BinlogEntry>,
-    // append_log_fn: AppendLogFunction,
+    entries: Vec<BinlogEntry>,
+    db_id: u32,
+    slot_idx: u32,
+    append_log_fn: AppendLogFunction,
     count: u32,
 }
 
-#[allow(dead_code)]
 impl BinlogBatch {
-    /// Create a new BinlogBatch.
-    ///
-    /// # Arguments
-    /// * `append_log_fn` - Function to append log entries to Raft
-    pub fn new() -> Self {
-        Self { count: 0 }
+    pub fn new(db_id: u32, append_log_fn: AppendLogFunction) -> Self {
+        Self {
+            entries: Vec::new(),
+            db_id,
+            slot_idx: 0,
+            append_log_fn,
+            count: 0,
+        }
     }
-}
 
-impl Default for BinlogBatch {
-    fn default() -> Self {
-        Self::new()
+    fn calculate_slot_from_key(key: &[u8]) -> u32 {
+        crate::slot_indexer::key_to_slot_id(key) as u32
     }
 }
 
 impl Batch for BinlogBatch {
-    fn put(&mut self, _cf_idx: ColumnFamilyIndex, _key: &[u8], _value: &[u8]) -> Result<()> {
-        // TODO: Implement when Raft integration is ready
-        // Create binlog entry and add to entries
+    fn put(&mut self, cf_idx: ColumnFamilyIndex, key: &[u8], value: &[u8]) -> Result<()> {
+        if self.entries.is_empty() {
+            self.slot_idx = Self::calculate_slot_from_key(key);
+        }
+        self.entries.push(BinlogEntry {
+            cf_idx: cf_idx as u32,
+            op_type: OperateType::Put,
+            key: key.to_vec(),
+            value: Some(value.to_vec()),
+        });
         self.count += 1;
         Ok(())
     }
 
-    fn delete(&mut self, _cf_idx: ColumnFamilyIndex, _key: &[u8]) -> Result<()> {
-        // TODO: Implement when Raft integration is ready
-        // Create binlog entry and add to entries
+    fn delete(&mut self, cf_idx: ColumnFamilyIndex, key: &[u8]) -> Result<()> {
+        if self.entries.is_empty() {
+            self.slot_idx = Self::calculate_slot_from_key(key);
+        }
+        self.entries.push(BinlogEntry {
+            cf_idx: cf_idx as u32,
+            op_type: OperateType::Delete,
+            key: key.to_vec(),
+            value: None,
+        });
         self.count += 1;
         Ok(())
     }
 
     fn commit(self: Box<Self>) -> Result<()> {
-        // BinlogBatch commit is not yet implemented.
-        // Return an error to prevent silent data loss.
-        BatchSnafu {
-            message: "BinlogBatch commit is not implemented - Raft integration pending".to_string(),
+        if self.entries.is_empty() {
+            return Ok(());
         }
-        .fail()
+
+        let binlog = Binlog {
+            db_id: self.db_id,
+            slot_idx: self.slot_idx,
+            entries: self.entries,
+        };
+
+        let future = (self.append_log_fn)(binlog);
+
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => tokio::task::block_in_place(|| handle.block_on(future)),
+            Err(_) => {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| crate::error::Error::Batch {
+                        message: format!("Failed to create runtime for Raft commit: {e}"),
+                        location: snafu::Location::new(file!(), line!(), column!()),
+                    })?;
+                rt.block_on(future)
+            }
+        }
     }
 
     fn count(&self) -> u32 {
@@ -279,7 +243,7 @@ impl Batch for BinlogBatch {
     }
 
     fn clear(&mut self) {
-        // TODO: Clear entries
+        self.entries.clear();
         self.count = 0;
     }
 }
@@ -287,17 +251,44 @@ impl Batch for BinlogBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    #[test]
-    fn test_binlog_batch_default() {
-        let batch = BinlogBatch::default();
-        assert_eq!(batch.count(), 0);
+    fn create_mock_append_fn() -> AppendLogFunction {
+        let called = Arc::new(AtomicUsize::new(0));
+        let called_clone = called.clone();
+
+        Arc::new(move |_binlog: Binlog| {
+            called_clone.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(()) }) as Pin<Box<dyn Future<Output = Result<()>> + Send>>
+        })
     }
 
     #[test]
-    fn test_binlog_batch_commit_returns_error() {
-        let batch = BinlogBatch::default();
-        let result = Box::new(batch).commit();
-        assert!(result.is_err());
+    fn test_binlog_batch_put_and_delete() {
+        let append_fn = create_mock_append_fn();
+
+        let mut batch = BinlogBatch::new(0, append_fn);
+        batch
+            .put(ColumnFamilyIndex::MetaCF, b"key1", b"value1")
+            .unwrap();
+        batch
+            .delete(ColumnFamilyIndex::HashesDataCF, b"key2")
+            .unwrap();
+
+        assert_eq!(batch.count(), 2);
+    }
+
+    #[test]
+    fn test_binlog_batch_clear() {
+        let append_fn = create_mock_append_fn();
+
+        let mut batch = BinlogBatch::new(0, append_fn);
+        batch
+            .put(ColumnFamilyIndex::MetaCF, b"key1", b"value1")
+            .unwrap();
+        assert_eq!(batch.count(), 1);
+
+        batch.clear();
+        assert_eq!(batch.count(), 0);
     }
 }

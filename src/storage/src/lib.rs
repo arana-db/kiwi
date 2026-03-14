@@ -63,7 +63,7 @@ pub use base_value_format::*;
 pub use batch::{Batch, BinlogBatch, RocksBatch};
 pub use error::Result;
 pub use expiration_manager::ExpirationManager;
-pub use options::StorageOptions;
+pub use options::{AppendLogFunction, StorageOptions};
 pub use redis::{ColumnFamilyIndex, Redis};
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};

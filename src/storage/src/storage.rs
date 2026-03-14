@@ -422,7 +422,7 @@ impl Storage {
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         let instance = &self.insts[instance_id];
 
-        let mut batch = instance.create_batch()?;
+        let mut batch = instance.create_local_batch()?;
 
         for entry in &binlog.entries {
             let cf_idx = match entry.cf_idx {
@@ -457,6 +457,9 @@ impl Storage {
         Ok(())
     }
 
-
-
+    pub fn set_append_log_fn_for_all(&self, f: crate::options::AppendLogFunction) {
+        for instance in &self.insts {
+            instance.set_append_log_fn(f.clone());
+        }
+    }
 }

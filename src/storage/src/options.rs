@@ -17,9 +17,36 @@
 
 //! Storage engine options and configurations
 
+use std::{future::Future, pin::Pin, sync::Arc};
+
 use rocksdb::{BlockBasedOptions, Options};
 
 use crate::error::{OptionNotDynamicallyModifiableSnafu, Result};
+use conf::raft_type::Binlog;
+
+/// Function type for appending binlog entries to Raft consensus.
+///
+/// When set on Redis, the storage layer will use BinlogBatch instead
+/// of RocksBatch, routing all writes through Raft.
+///
+/// # Arguments
+/// * `Binlog` - The binlog containing write operations
+///
+/// # Returns
+/// * `Result<()>` - Ok if consensus achieved, Err otherwise
+///
+/// # Example
+/// ```ignore
+/// let append_fn: AppendLogFunction = Arc::new(|binlog| {
+///     Box::pin(async move {
+///         raft_app.client_write(binlog).await?;
+///         Ok(())
+///     })
+/// });
+/// redis.set_append_log_fn(append_fn);
+/// ```
+pub type AppendLogFunction =
+    Arc<dyn Fn(Binlog) -> Pin<Box<dyn Future<Output = Result<()>> + Send>> + Send + Sync>;
 
 /// Dynamic database options that can be modified at runtime
 const DYNAMIC_DB_OPTIONS: &[&str] = &[
