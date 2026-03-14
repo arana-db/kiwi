@@ -57,7 +57,13 @@ impl LogIndexAndSequenceCollector {
             return 0;
         }
         let list = self.list.read();
-        if list.is_empty() || seqno < list.front().expect("non-empty after is_empty check").seqno() {
+        if list.is_empty()
+            || seqno
+                < list
+                    .front()
+                    .expect("non-empty after is_empty check")
+                    .seqno()
+        {
             return 0;
         }
         let back = list.back().expect("non-empty after is_empty check");
