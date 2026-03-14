@@ -33,10 +33,7 @@ pub struct UnixServer {
 }
 
 impl UnixServer {
-    pub fn new(
-        path: Option<String>,
-        db_dir: Option<&str>,
-    ) -> Result<Self, Box<dyn Error>> {
+    pub fn new(path: Option<String>, db_dir: Option<&str>) -> Result<Self, Box<dyn Error>> {
         let path = path.unwrap_or_else(|| "/tmp/kiwidb.sock".to_string());
         let storage_options = Arc::new(StorageOptions::default());
         let db_path = PathBuf::from(db_dir.unwrap_or("./db"));
