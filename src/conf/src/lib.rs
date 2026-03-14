@@ -117,7 +117,8 @@ mod tests {
     fn test_db_dir_from_config_file() {
         use std::io::Write;
 
-        let config_path = "/tmp/kiwi_test_db_dir.conf";
+        let tmp = std::env::temp_dir().join("kiwi_test_db_dir.conf");
+        let config_path = tmp.to_str().unwrap();
         let mut f = std::fs::File::create(config_path).unwrap();
         writeln!(f, "port 7379").unwrap();
         writeln!(f, "db-dir /data/kiwi/db").unwrap();
