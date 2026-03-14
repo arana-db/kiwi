@@ -115,7 +115,3 @@ mod tests {
         assert!(!buffer.is_empty());
     }
 }
-
-#[allow(clippy::unwrap_used)]
-#[cfg(test)]
-use super::entry::OperationType;

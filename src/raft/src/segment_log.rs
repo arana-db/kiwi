@@ -262,7 +262,9 @@ impl SegmentLog {
             *segment_file = Some(file);
         }
 
-        let file = segment_file.as_mut().expect("segment file was just opened above");
+        let file = segment_file
+            .as_mut()
+            .expect("segment file was just opened above");
 
         // Write header and data
         file.write_all(&header_bytes)

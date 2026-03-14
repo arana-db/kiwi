@@ -43,7 +43,9 @@ pub struct MonitoringApiConfig {
 impl Default for MonitoringApiConfig {
     fn default() -> Self {
         Self {
-            bind_address: "127.0.0.1:8080".parse().expect("parse failed"),
+            bind_address: "127.0.0.1:8080"
+                .parse()
+                .expect("hard-coded default bind address must be a valid SocketAddr"),
             enable_cors: true,
             api_key: None,
         }

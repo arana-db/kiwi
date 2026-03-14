@@ -23,11 +23,13 @@ use crate::{
 };
 
 pub fn lists_data_key_comparator_name() -> CString {
-    CString::new("floyd.ListsDataKeyComparator").expect("CString::new failed")
+    CString::new("floyd.ListsDataKeyComparator")
+        .expect("hard-coded comparator name contains no NUL bytes")
 }
 
 pub fn zsets_score_key_comparator_name() -> CString {
-    CString::new("floyd.ZSetsScoreKeyComparator").expect("CString::new failed")
+    CString::new("floyd.ZSetsScoreKeyComparator")
+        .expect("hard-coded comparator name contains no NUL bytes")
 }
 
 /// ## ListsDataKey format

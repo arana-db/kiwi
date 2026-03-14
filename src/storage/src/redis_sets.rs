@@ -414,7 +414,9 @@ impl Redis {
                     let count_usize = (-count_val) as usize;
                     let mut result = Vec::with_capacity(count_usize);
                     for _ in 0..count_usize {
-                        let member = all_members.choose(&mut rng).expect("all_members is non-empty");
+                        let member = all_members
+                            .choose(&mut rng)
+                            .expect("all_members is non-empty");
                         result.push(member.clone());
                     }
                     Ok(result)
