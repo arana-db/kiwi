@@ -130,10 +130,10 @@ fn main() -> std::io::Result<()> {
     info!("Storage components initialized, starting storage server...");
 
     // Initialize storage server in storage runtime (runs in background)
-
+    let db_dir = config.db_dir.clone();
     storage_handle.spawn(async move {
         info!("Initializing storage server...");
-        match initialize_storage_server(storage_receiver).await {
+        match initialize_storage_server(storage_receiver, &db_dir).await {
             Ok(_) => {
                 error!("Storage server exited unexpectedly - this should never happen!");
             }
@@ -260,12 +260,13 @@ fn main() -> std::io::Result<()> {
 /// Initialize the storage server in the storage runtime
 async fn initialize_storage_server(
     request_receiver: tokio::sync::mpsc::Receiver<runtime::StorageRequest>,
+    db_dir: &str,
 ) -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
 
     // Create storage options and path
     let storage_options = Arc::new(StorageOptions::default());
-    let db_path = PathBuf::from("./db");
+    let db_path = PathBuf::from(db_dir);
 
     // Create storage instance (not yet opened)
     let mut storage = Storage::new(1, 0); // Single instance, db_id 0

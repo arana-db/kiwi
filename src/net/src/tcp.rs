@@ -115,10 +115,9 @@ pub struct TcpServer {
 }
 
 impl TcpServer {
-    pub fn new(addr: Option<String>) -> Result<Self, Box<dyn Error>> {
-        // TODO: Get storage options from config
+    pub fn new(addr: Option<String>, db_dir: Option<&str>) -> Result<Self, Box<dyn Error>> {
         let storage_options = Arc::new(StorageOptions::default());
-        let db_path = PathBuf::from("./db");
+        let db_path = PathBuf::from(db_dir.unwrap_or("./db"));
         let mut storage = Storage::new(1, 0);
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
@@ -165,10 +164,10 @@ impl ClusterTcpServer {
     pub fn new(
         addr: Option<String>,
         raft_node: Arc<dyn Send + Sync>,
+        db_dir: Option<&str>,
     ) -> Result<Self, Box<dyn Error>> {
-        // TODO: Get storage options from config
         let storage_options = Arc::new(StorageOptions::default());
-        let db_path = PathBuf::from("./db");
+        let db_path = PathBuf::from(db_dir.unwrap_or("./db"));
         let mut storage = Storage::new(1, 0);
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 

@@ -60,6 +60,7 @@ mod tests {
 
         assert_eq!(50, config.timeout);
         assert_eq!("/data/kiwi_rs/logs", config.log_dir);
+        assert_eq!("./db", config.db_dir);
         assert!(!config.redis_compatible_mode);
         assert_eq!(3, config.db_instance_num);
 
@@ -78,6 +79,7 @@ mod tests {
             timeout: 100,
             redis_compatible_mode: false,
             log_dir: "".to_string(),
+            db_dir: "./db".to_string(),
             memory: 1024,
             rocksdb_max_subcompactions: 0,
             rocksdb_max_background_jobs: 4,
@@ -103,5 +105,27 @@ mod tests {
 
         invalid_config.port = 8080;
         assert!(invalid_config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_db_dir_default() {
+        let config = Config::default();
+        assert_eq!("./db", config.db_dir);
+    }
+
+    #[test]
+    fn test_db_dir_from_config_file() {
+        use std::io::Write;
+
+        let config_path = "/tmp/kiwi_test_db_dir.conf";
+        let mut f = std::fs::File::create(config_path).unwrap();
+        writeln!(f, "port 7379").unwrap();
+        writeln!(f, "db-dir /data/kiwi/db").unwrap();
+        drop(f);
+
+        let config = Config::load(config_path).unwrap();
+        assert_eq!("/data/kiwi/db", config.db_dir);
+
+        let _ = std::fs::remove_file(config_path);
     }
 }

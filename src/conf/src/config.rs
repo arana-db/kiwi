@@ -226,6 +226,7 @@ pub struct Config {
     pub binding: String,
     pub timeout: u32,
     pub log_dir: String,
+    pub db_dir: String,
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
 
@@ -242,6 +243,7 @@ impl Default for Config {
             timeout: 50,
             memory: 1024 * 1024 * 1024, // 1GB
             log_dir: "/data/kiwi_rs/logs".to_string(),
+            db_dir: "./db".to_string(),
             redis_compatible_mode: false,
 
             rocksdb_max_subcompactions: 0,
@@ -346,6 +348,9 @@ impl Config {
                 }
                 "log-dir" => {
                     config.log_dir = value;
+                }
+                "db-dir" => {
+                    config.db_dir = value;
                 }
                 "redis-compatible-mode" => {
                     config.redis_compatible_mode =

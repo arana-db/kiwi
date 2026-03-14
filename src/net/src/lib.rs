@@ -99,7 +99,7 @@ impl ServerFactory {
                 }
             }
             #[cfg(unix)]
-            "unix" => Some(Box::new(unix::UnixServer::new(addr))),
+            "unix" => Some(Box::new(unix::UnixServer::new(addr, None))),
             #[cfg(not(unix))]
             "unix" => None,
             _ => None,
@@ -110,13 +110,14 @@ impl ServerFactory {
     pub fn create_legacy_server(
         protocol: &str,
         addr: Option<String>,
+        db_dir: Option<&str>,
     ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
-            "tcp" => TcpServer::new(addr)
+            "tcp" => TcpServer::new(addr, db_dir)
                 .ok()
                 .map(|s| Box::new(s) as Box<dyn ServerTrait>),
             #[cfg(unix)]
-            "unix" => Some(Box::new(unix::UnixServer::new(addr))),
+            "unix" => Some(Box::new(unix::UnixServer::new(addr, db_dir))),
             #[cfg(not(unix))]
             "unix" => None,
             _ => None,
@@ -172,9 +173,10 @@ impl ServerFactory {
         protocol: &str,
         addr: Option<String>,
         raft_node: Arc<dyn Send + Sync>,
+        db_dir: Option<&str>,
     ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
-            "tcp" => ClusterTcpServer::new(addr, raft_node)
+            "tcp" => ClusterTcpServer::new(addr, raft_node, db_dir)
                 .ok()
                 .map(|s| Box::new(s) as Box<dyn ServerTrait>),
             _ => None,
