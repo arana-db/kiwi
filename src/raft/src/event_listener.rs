@@ -16,15 +16,29 @@
 // limitations under the License.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use rocksdb::event_listener::{EventListener, FlushJobInfo};
-use tokio::time::sleep;
 
 use crate::cf_tracker::LogIndexOfColumnFamilies;
 use crate::collector::LogIndexAndSequenceCollector;
 use crate::{COLUMN_FAMILY_COUNT, cf_name_to_index};
+
+/// Empty state for manual_flushing_cf (no flush in progress).
+const EMPTY: u64 = u64::MAX;
+
+/// Pack generation (high 32 bits) and cf_id (low 32 bits) to avoid ABA in watchdog.
+#[inline]
+fn pack(gen: u64, cf_id: u32) -> u64 {
+    (gen << 32) | (cf_id as u64)
+}
+
+/// Extract cf_id from packed value.
+#[inline]
+fn unpack_cf_id(packed: u64) -> u32 {
+    (packed & 0xFFFFFFFF) as u32
+}
 
 /// Snapshot callback: `(log_index, is_manual)`
 pub type SnapshotCallback = Box<dyn Fn(i64, bool) + Send + Sync>;
@@ -39,7 +53,8 @@ pub struct LogIndexAndSequenceCollectorPurger {
     callback: SnapshotCallback,
     flush_trigger: Option<FlushTrigger>,
     count: AtomicU64,
-    manual_flushing_cf: Arc<AtomicI64>,
+    next_generation: AtomicU64,
+    manual_flushing_cf: Arc<AtomicU64>,
 }
 
 impl LogIndexAndSequenceCollectorPurger {
@@ -55,18 +70,30 @@ impl LogIndexAndSequenceCollectorPurger {
             callback,
             flush_trigger,
             count: AtomicU64::new(0),
-            manual_flushing_cf: Arc::new(AtomicI64::new(-1)),
+            next_generation: AtomicU64::new(0),
+            manual_flushing_cf: Arc::new(AtomicU64::new(EMPTY)),
         }
     }
 
     /// Set the CF currently being manually flushed (used to skip duplicate triggers)
     pub fn set_manual_flushing_cf(&self, cf_id: i64) {
-        self.manual_flushing_cf.store(cf_id, Ordering::SeqCst);
+        if cf_id < 0 {
+            self.manual_flushing_cf.store(EMPTY, Ordering::SeqCst);
+        } else {
+            let gen = self.next_generation.fetch_add(1, Ordering::SeqCst);
+            self.manual_flushing_cf
+                .store(pack(gen, cf_id as u32), Ordering::SeqCst);
+        }
     }
 
     /// Get the CF currently being manually flushed (for testing/debugging)
     pub fn get_manual_flushing_cf(&self) -> i64 {
-        self.manual_flushing_cf.load(Ordering::SeqCst)
+        let v = self.manual_flushing_cf.load(Ordering::SeqCst);
+        if v == EMPTY {
+            -1
+        } else {
+            unpack_cf_id(v) as i64
+        }
     }
 }
 
@@ -106,12 +133,18 @@ impl EventListener for LogIndexAndSequenceCollectorPurger {
             (self.callback)(res.smallest_flushed_log_index, false);
         }
 
-        if cf_id as i64 == self.manual_flushing_cf.load(Ordering::SeqCst) {
-            self.manual_flushing_cf.store(-1, Ordering::SeqCst);
+        let current = self.manual_flushing_cf.load(Ordering::SeqCst);
+        if current != EMPTY && unpack_cf_id(current) == cf_id as u32 {
+            let _ = self.manual_flushing_cf.compare_exchange(
+                current,
+                EMPTY,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
         }
 
         let flushing_cf = self.manual_flushing_cf.load(Ordering::SeqCst);
-        if flushing_cf != -1 || !self.collector.is_flush_pending() {
+        if flushing_cf != EMPTY || !self.collector.is_flush_pending() {
             return;
         }
 
@@ -124,10 +157,13 @@ impl EventListener for LogIndexAndSequenceCollectorPurger {
             return;
         };
 
+        let gen = self.next_generation.fetch_add(1, Ordering::SeqCst);
+        let packed = pack(gen, target_cf as u32);
+
         // Attempt to claim manual-flush state; abort if another flush is already in progress
         if self
             .manual_flushing_cf
-            .compare_exchange(-1, target_cf as i64, Ordering::SeqCst, Ordering::SeqCst)
+            .compare_exchange(EMPTY, packed, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
             return;
@@ -135,20 +171,24 @@ impl EventListener for LogIndexAndSequenceCollectorPurger {
 
         if target_cf >= COLUMN_FAMILY_COUNT {
             // Invalid CF index: we must release it immediately.
-            self.manual_flushing_cf.store(-1, Ordering::SeqCst);
+            self.manual_flushing_cf.store(EMPTY, Ordering::SeqCst);
             return;
         }
 
-        let cf_id = target_cf as i64;
         let manual_flushing_cf = Arc::clone(&self.manual_flushing_cf);
 
         // Spawn watchdog to reset state if the flush never completes (e.g., async DB error).
-        // Uses compare_exchange so it won't clobber a legitimately started subsequent flush.
-        tokio::spawn(async move {
+        // Uses compare_exchange(packed, EMPTY) so it only resets when generation matches,
+        // avoiding ABA: a new flush of the same CF would have a different generation.
+        std::thread::spawn(move || {
             const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(30);
-            sleep(WATCHDOG_TIMEOUT).await;
-            let _ =
-                manual_flushing_cf.compare_exchange(cf_id, -1, Ordering::SeqCst, Ordering::SeqCst);
+            std::thread::sleep(WATCHDOG_TIMEOUT);
+            let _ = manual_flushing_cf.compare_exchange(
+                packed,
+                EMPTY,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
         });
 
         // If trigger panics synchronously, reset immediately rather than waiting for the watchdog.
@@ -157,7 +197,12 @@ impl EventListener for LogIndexAndSequenceCollectorPurger {
                 "flush trigger panicked for CF {}, resetting manual_flushing_cf",
                 target_cf
             );
-            self.manual_flushing_cf.store(-1, Ordering::SeqCst);
+            let _ = self.manual_flushing_cf.compare_exchange(
+                packed,
+                EMPTY,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
         }
     }
 }
