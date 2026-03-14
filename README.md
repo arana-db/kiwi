@@ -179,6 +179,12 @@ For detailed integration documentation, see [docs/raft/OPENRAFT_INTEGRATION.md](
 - 🚧 Comprehensive development documentation and user guides
 - 🚧 Comprehensive metrics and monitoring
 
+## Dependencies
+
+### RocksDB (Temporary Fork)
+
+This project currently uses a [customized fork of rust-rocksdb](https://github.com/arana-db/rust-rocksdb/tree/addtableproperties) because the official crate does not yet support the TablePropertiesCollector FFI functions required for LogIndex tracking in the Raft module. The upstream merge of these changes may take some time. Once the required functionality is available in the official [rust-rocksdb](https://github.com/rust-rocksdb/rust-rocksdb) repository, we will switch back to the official crate.
+
 ## Documentation
 
 - [Quick Start Guide](docs/QUICK_START.md) - Detailed getting started guide

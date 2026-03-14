@@ -22,7 +22,6 @@ pub mod raft_type;
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    use config::Config;
     use validator::Validate;
 
     use super::*;

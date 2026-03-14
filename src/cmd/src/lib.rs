@@ -232,7 +232,7 @@ pub trait Cmd: Send + Sync {
         None
     }
 
-    fn to_binlog(&self, client: &Client) -> Option<conf::raft_type::Binlog> {
+    fn to_binlog(&self, _client: &Client) -> Option<conf::raft_type::Binlog> {
         None
     }
 

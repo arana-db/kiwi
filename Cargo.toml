@@ -42,7 +42,15 @@ quote = "1.0"
 syn = { version = "2.0", features = ["extra-traits", "full"] }
 env_logger = "0.11"
 log = "0.4"
-rocksdb = { package = "rust-rocksdb", git = "https://github.com/zaidoon1/rust-rocksdb", branch = "master", features = ["multi-threaded-cf"] }
+# TODO / Future:
+# Currently using a customized fork of rust-rocksdb for this module.
+# The official RocksDB version does not yet support the FFI functions
+# required by TablePropertiesCollector.
+# We are actively working to merge the necessary TableCollector FFI functions
+# into the official RocksDB repository to enable a smooth migration in the future.
+# Once the required functionality is available upstream, we plan to replace
+# this fork with the official version.
+rocksdb = { package = "rust-rocksdb", git = "https://github.com/arana-db/rust-rocksdb", rev = "f7abb18c64fac810f3c4736aef833c340396449b", features = ["multi-threaded-cf"] }
 thiserror = "1.0"
 serde = "1.0"
 serde_json = "1.0"

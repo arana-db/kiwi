@@ -160,9 +160,9 @@ fn main() -> std::io::Result<()> {
 
         // Block until Ctrl+C so the process does not exit immediately
         info!("Press Ctrl+C to stop.");
-        tokio::signal::ctrl_c()
-            .await
-            .map_err(|e| std::io::Error::other(format!("Failed to listen for shutdown signal: {}", e)))?;
+        tokio::signal::ctrl_c().await.map_err(|e| {
+            std::io::Error::other(format!("Failed to listen for shutdown signal: {}", e))
+        })?;
         info!("Received shutdown signal, stopping...");
 
         Ok(())
