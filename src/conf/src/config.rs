@@ -350,7 +350,15 @@ impl Config {
                     config.log_dir = value;
                 }
                 "db-dir" => {
-                    config.db_dir = value;
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        return Err(Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(
+                                "db-dir must not be empty".to_string(),
+                            ),
+                        });
+                    }
+                    config.db_dir = trimmed.to_string();
                 }
                 "redis-compatible-mode" => {
                     config.redis_compatible_mode =

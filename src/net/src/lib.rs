@@ -99,7 +99,9 @@ impl ServerFactory {
                 }
             }
             #[cfg(unix)]
-            "unix" => Some(Box::new(unix::UnixServer::new(addr, None))),
+            "unix" => unix::UnixServer::new(addr, None)
+                .ok()
+                .map(|s| Box::new(s) as Box<dyn ServerTrait>),
             #[cfg(not(unix))]
             "unix" => None,
             _ => None,
@@ -117,7 +119,9 @@ impl ServerFactory {
                 .ok()
                 .map(|s| Box::new(s) as Box<dyn ServerTrait>),
             #[cfg(unix)]
-            "unix" => Some(Box::new(unix::UnixServer::new(addr, db_dir))),
+            "unix" => unix::UnixServer::new(addr, db_dir)
+                .ok()
+                .map(|s| Box::new(s) as Box<dyn ServerTrait>),
             #[cfg(not(unix))]
             "unix" => None,
             _ => None,
