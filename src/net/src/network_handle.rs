@@ -295,7 +295,7 @@ pub fn is_read_command(cmd: &str) -> bool {
 pub fn is_write_command(cmd: &str) -> bool {
     let cmd_lower = cmd.to_lowercase();
     !is_read_command(cmd)
-        || matches!(
+        && matches!(
             cmd_lower.as_str(),
             "set"
                 | "del"
