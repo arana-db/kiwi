@@ -19,6 +19,8 @@
 //!
 //! Tests for adding and removing nodes from the Raft cluster
 
+#![allow(clippy::unwrap_used)]
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Duration;

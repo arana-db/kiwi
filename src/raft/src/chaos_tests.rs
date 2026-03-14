@@ -16,3 +16,4 @@
 // limitations under the License.
 
 //! Chaos testing for Raft implementation
+#![allow(clippy::unwrap_used)]

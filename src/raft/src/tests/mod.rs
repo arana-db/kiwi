@@ -17,6 +17,8 @@
 
 //! Test modules for Raft implementation
 
+#![allow(clippy::unwrap_used)]
+
 pub mod concurrent_tests;
 
 // Integration tests for task 9: Openraft Adaptor integration

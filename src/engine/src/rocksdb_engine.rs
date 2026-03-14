@@ -203,6 +203,7 @@ impl Drop for RocksdbEngine {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use rocksdb::{DB, Options};

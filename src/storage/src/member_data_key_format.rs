@@ -113,7 +113,7 @@ impl ParsedMemberDataKey {
         // version
         let version_end_idx = key_end_idx + size_of::<u64>();
         let version_slice = &encoded_key[key_end_idx..version_end_idx];
-        let version = u64::from_be_bytes(version_slice.try_into().unwrap());
+        let version = u64::from_be_bytes(version_slice.try_into().expect("slice length mismatch"));
 
         // data
         let data_slice = &encoded_key[version_end_idx..end_idx];
@@ -146,6 +146,7 @@ impl ParsedMemberDataKey {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

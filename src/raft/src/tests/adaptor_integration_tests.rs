@@ -19,6 +19,8 @@
 //!
 //! These tests verify basic functionality without relying on problematic trait implementations.
 
+#![allow(clippy::unwrap_used)]
+
 use crate::state_machine::KiwiStateMachine;
 use crate::storage::RaftStorage;
 use crate::types::{ClientRequest, ConsistencyLevel, RedisCommand, RequestId};

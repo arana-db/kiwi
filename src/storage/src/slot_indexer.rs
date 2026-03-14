@@ -64,6 +64,7 @@ pub fn key_to_slot_id(key: &[u8]) -> usize {
     State::<ARC>::calculate(key) as usize
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -53,11 +53,7 @@ fmt-check:
 
 lint:
 	@echo "Linting code..."
-	@cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings
-
-lint-unwrap:
-	@echo "Checking for unwrap usage..."
-	@cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D clippy::unwrap_used
+	@cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings -D clippy::unwrap_used
 
 help:
 	@echo "Available commands:"
@@ -67,7 +63,6 @@ help:
 	@echo "  clean         - Clean the project"
 	@echo "  fmt           - Format the code"
 	@echo "  lint          - Lint the code"
-	@echo "  lint-unwrap   - Check for unwrap usage"
 	@echo "  help          - Show this help message"
 
-.PHONY: build release run test clean fmt lint lint-unwrap help
+.PHONY: build release run test clean fmt lint help

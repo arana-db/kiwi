@@ -173,7 +173,7 @@ impl ClusterHealthMonitor {
             active_anomalies: Vec::new(),
             last_updated: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .expect("system time before UNIX epoch")
                 .as_secs(),
             cluster_health: ClusterHealth {
                 total_members: 1,
@@ -201,7 +201,7 @@ impl ClusterHealthMonitor {
     /// Start the health monitoring loop
     pub async fn start(&self) -> RaftResult<()> {
         {
-            let mut running = self.running.write().unwrap();
+            let mut running = self.running.write().expect("lock poisoned");
             if *running {
                 return Ok(());
             }
@@ -219,7 +219,7 @@ impl ClusterHealthMonitor {
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(config.check_interval_secs));
 
-            while *running.read().unwrap() {
+            while *running.read().expect("lock poisoned") {
                 interval.tick().await;
 
                 if let Err(e) = Self::perform_health_check(
@@ -242,18 +242,18 @@ impl ClusterHealthMonitor {
 
     /// Stop the health monitoring
     pub fn stop(&self) {
-        let mut running = self.running.write().unwrap();
+        let mut running = self.running.write().expect("lock poisoned");
         *running = false;
     }
 
     /// Get current health status
     pub fn get_current_status(&self) -> ClusterHealthStatus {
-        self.current_status.read().unwrap().clone()
+        self.current_status.read().expect("lock poisoned").clone()
     }
 
     /// Get health history
     pub fn get_health_history(&self, limit: Option<usize>) -> Vec<HealthRecord> {
-        let history = self.health_history.read().unwrap();
+        let history = self.health_history.read().expect("lock poisoned");
         let limit = limit.unwrap_or(history.len());
         history.iter().rev().take(limit).cloned().collect()
     }
@@ -262,7 +262,7 @@ impl ClusterHealthMonitor {
     pub fn get_active_anomalies(&self) -> Vec<Anomaly> {
         self.anomalies
             .read()
-            .unwrap()
+            .expect("lock poisoned")
             .iter()
             .filter(|a| a.active)
             .cloned()
@@ -276,11 +276,11 @@ impl ClusterHealthMonitor {
 
     /// Update cluster health information
     pub fn update_cluster_health(&self, cluster_health: ClusterHealth) {
-        let mut status = self.current_status.write().unwrap();
+        let mut status = self.current_status.write().expect("lock poisoned");
         status.cluster_health = cluster_health;
         status.last_updated = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs();
     }
 
@@ -296,7 +296,7 @@ impl ClusterHealthMonitor {
         let metrics = metrics_collector.get_metrics();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs();
 
         // Detect anomalies
@@ -433,7 +433,7 @@ impl ClusterHealthMonitor {
 
         // Update anomalies
         {
-            let mut anomalies_guard = anomalies.write().unwrap();
+            let mut anomalies_guard = anomalies.write().expect("lock poisoned");
 
             // Mark existing anomalies as inactive if they're resolved
             for anomaly in anomalies_guard.iter_mut() {
@@ -501,7 +501,7 @@ impl ClusterHealthMonitor {
 
         // Update current status
         let updated_status = {
-            let mut status = current_status.write().unwrap();
+            let mut status = current_status.write().expect("lock poisoned");
             status.overall_status = overall_status;
             status.active_anomalies = detected_anomalies.clone();
             status.last_updated = now;
@@ -528,7 +528,7 @@ impl ClusterHealthMonitor {
 
         // Add to health history
         {
-            let mut history = health_history.write().unwrap();
+            let mut history = health_history.write().expect("lock poisoned");
             let record = HealthRecord {
                 timestamp: now,
                 status: overall_status,
@@ -575,6 +575,7 @@ impl ClusterHealthMonitor {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

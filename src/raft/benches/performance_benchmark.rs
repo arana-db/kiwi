@@ -27,6 +27,8 @@
 //! - P99 Latency: < 10ms
 //! - Adaptor overhead: < 1ms
 
+#![allow(clippy::unwrap_used)]
+
 use bytes::Bytes;
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
 use raft::error::RaftResult;

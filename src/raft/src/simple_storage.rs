@@ -53,6 +53,7 @@ pub fn create_simple_raft_storage_with_engine<P: AsRef<Path>>(
     })
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

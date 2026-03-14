@@ -23,6 +23,8 @@
 //! - Data consistency during failover
 //! - Multiple leader failures
 
+#![allow(clippy::unwrap_used)]
+
 use std::time::Duration;
 use tokio::time::sleep;
 

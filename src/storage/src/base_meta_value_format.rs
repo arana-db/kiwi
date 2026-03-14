@@ -236,6 +236,7 @@ impl ParsedBaseMetaValue {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod base_meta_value_tests {
     use bytes::Buf;
@@ -324,6 +325,7 @@ mod base_meta_value_tests {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod parsed_base_meta_value_tests {
     use bytes::BytesMut;

@@ -50,9 +50,11 @@ use openraft::Config;
 
 pub mod binlog;
 pub mod cluster_config;
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod cluster_tests;
 pub mod config_change;
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod config_change_tests;
 pub mod consistency;
@@ -60,6 +62,7 @@ pub mod consistency_handler;
 pub mod conversion;
 pub mod discovery;
 pub mod error;
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod failover_tests;
 pub mod health_monitor;
@@ -111,6 +114,7 @@ pub fn default_raft_config() -> Config {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod unit_tests {
     use super::*;
@@ -142,12 +146,15 @@ mod unit_tests {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod integration_tests;
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod integration_tests_working;
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 #[path = "tests/mod.rs"]
 mod test_harness;

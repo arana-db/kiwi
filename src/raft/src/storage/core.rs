@@ -1025,7 +1025,7 @@ impl RaftSnapshotBuilder<TypeConfig> for Arc<RaftStorage> {
         let snapshot_id = format!("snapshot-{}-{}", last_log_term, last_log_index);
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs() as i64;
 
         let stored_meta = StoredSnapshotMeta {
@@ -1107,7 +1107,7 @@ impl RaftSnapshotBuilder<TypeConfig> for RaftStorage {
         let snapshot_id = format!("snapshot-{}-{}", last_log_term, last_log_index);
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs() as i64;
 
         let stored_meta = StoredSnapshotMeta {
@@ -1166,6 +1166,7 @@ impl RaftSnapshotBuilder<TypeConfig> for RaftStorage {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod raft_log_reader_tests {
     use super::*;
@@ -1253,6 +1254,7 @@ mod raft_log_reader_tests {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod raft_snapshot_builder_tests {
     use super::*;

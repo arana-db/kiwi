@@ -23,6 +23,8 @@
 //! - State machine application
 //! - Leader election
 
+#![allow(clippy::unwrap_used)]
+
 use crate::node::{RaftNode, RaftNodeInterface};
 use crate::types::{
     ClientRequest, ClusterConfig, ConsistencyLevel, NodeId, RedisCommand, RequestId,

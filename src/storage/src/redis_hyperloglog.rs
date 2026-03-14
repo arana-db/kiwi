@@ -61,7 +61,7 @@ impl Redis {
                 
                 // Check if it's the right type
                 if parsed_meta.data_type() != DataType::HyperLogLog {
-                    if parsed_meta.is_expired(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()) {
+                    if parsed_meta.is_expired(SystemTime::now().duration_since(UNIX_EPOCH).expect("system time before UNIX epoch").as_secs()) {
                         // Treat as not found if expired
                         // Initialize new HyperLogLog
                         for element in elements {
@@ -72,7 +72,7 @@ impl Redis {
                     } else {
                         return Err(StorageError::InvalidFormat(format!("Wrong type for key: {}", String::from_utf8_lossy(key))));
                     }
-                } else if parsed_meta.is_expired(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()) {
+                } else if parsed_meta.is_expired(SystemTime::now().duration_since(UNIX_EPOCH).expect("system time before UNIX epoch").as_secs()) {
                     // Initialize new HyperLogLog if expired
                     for element in elements {
                         if self.hll_add_to_registers(&mut registers, element) {
@@ -137,7 +137,7 @@ impl Redis {
                     }
                     
                     // Check if expired
-                    if parsed_meta.is_expired(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()) {
+                    if parsed_meta.is_expired(SystemTime::now().duration_since(UNIX_EPOCH).expect("system time before UNIX epoch").as_secs()) {
                         *ret = 0;
                         return Ok(());
                     }
@@ -170,7 +170,7 @@ impl Redis {
                     }
                     
                     // Check if expired
-                    if parsed_meta.is_expired(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()) {
+                    if parsed_meta.is_expired(SystemTime::now().duration_since(UNIX_EPOCH).expect("system time before UNIX epoch").as_secs()) {
                         continue;
                     }
                     
@@ -223,7 +223,7 @@ impl Redis {
                     }
                     
                     // Check if expired
-                    if parsed_meta.is_expired(SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()) {
+                    if parsed_meta.is_expired(SystemTime::now().duration_since(UNIX_EPOCH).expect("system time before UNIX epoch").as_secs()) {
                         continue;
                     }
                     

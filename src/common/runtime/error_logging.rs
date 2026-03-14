@@ -570,6 +570,7 @@ macro_rules! log_dual_runtime_error {
     };
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

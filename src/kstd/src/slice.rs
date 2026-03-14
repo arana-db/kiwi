@@ -81,7 +81,7 @@ impl Slice {
                 .iter()
                 .fold(String::with_capacity(slice.len() * 2), |mut acc, byte| {
                     use std::fmt::Write;
-                    write!(&mut acc, "{byte:02X}").unwrap();
+                    write!(&mut acc, "{byte:02X}").expect("write to String cannot fail");
                     acc
                 })
         } else {
@@ -111,6 +111,7 @@ impl Slice {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

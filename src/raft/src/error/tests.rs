@@ -17,6 +17,8 @@
 
 //! Unit tests for error types
 
+#![allow(clippy::unwrap_used)]
+
 #[cfg(test)]
 mod tests {
     use super::super::*;
