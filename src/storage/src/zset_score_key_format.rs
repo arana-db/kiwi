@@ -131,12 +131,12 @@ impl ParsedZSetsScoreKey {
 
         // version (little-endian)
         let version_slice = &encoded_key[key_end_idx..key_end_idx + size_of::<u64>()];
-        let version = u64::from_le_bytes(version_slice.try_into().unwrap());
+        let version = u64::from_le_bytes(version_slice.try_into().expect("slice length mismatch"));
         let version_end_idx = key_end_idx + size_of::<u64>();
 
         // score (little-endian, decode from raw IEEE 754 bits)
         let score_slice = &encoded_key[version_end_idx..version_end_idx + size_of::<u64>()];
-        let score_bits = u64::from_le_bytes(score_slice.try_into().unwrap());
+        let score_bits = u64::from_le_bytes(score_slice.try_into().expect("slice length mismatch"));
         let score = f64::from_bits(score_bits);
         let score_end_idx = version_end_idx + size_of::<u64>();
 

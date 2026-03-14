@@ -171,6 +171,7 @@ impl ParsedStringsValue {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests_string_value {
     use super::*;
@@ -221,7 +222,9 @@ mod tests_string_value {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[allow(dead_code)]
+#[cfg(test)]
 mod tests_parsed_string_value {
     use super::*;
 

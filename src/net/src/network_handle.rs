@@ -388,6 +388,7 @@ fn generate_storage_error_response(error: &DualRuntimeError, command: &str) -> R
     RespData::Error(error_message.into())
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

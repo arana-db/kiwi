@@ -28,12 +28,15 @@ pub mod message;
 pub mod metrics;
 pub mod storage_server;
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests;
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod additional_unit_tests;
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod stress_tests;
 

@@ -494,6 +494,7 @@ impl Drop for RespParse {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::Bytes;
