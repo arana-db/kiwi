@@ -97,6 +97,7 @@ impl Default for BinlogWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binlog::entry::OperationType;
     use bytes::Bytes;
 
     #[test]
