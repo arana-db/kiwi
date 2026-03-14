@@ -1204,7 +1204,7 @@ impl RaftConnection {
             }
         }
 
-        Err(last_error.unwrap())
+        Err(last_error.expect("at least one attempt was made"))
     }
 
     /// Send a message to the connected node
@@ -1575,7 +1575,7 @@ impl RaftNetworkClient {
             }
         }
 
-        Err(last_error.unwrap())
+        Err(last_error.expect("at least one attempt was made"))
     }
 
     /// Single HTTP request attempt
@@ -1788,6 +1788,7 @@ impl OpenRaftNetwork<TypeConfig> for RaftNetworkClient {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     // TODO: Add tests for KiwiRaftNetworkFactory and RaftNetworkClient

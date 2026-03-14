@@ -103,7 +103,7 @@ impl ConsistencyChecker {
     ) -> RaftResult<ConsistencyStatus> {
         let current_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs();
 
         // Get current applied index from state machine
@@ -218,7 +218,7 @@ impl ConsistencyChecker {
     pub async fn recover_consistency(&self, target_index: LogIndex) -> RaftResult<()> {
         let current_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs();
 
         log::info!(
@@ -391,6 +391,7 @@ impl ConsistencyMonitor {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

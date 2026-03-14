@@ -828,6 +828,7 @@ impl Cmd for RPoplpushCmd {
 
 // Tests are covered by the comprehensive storage layer tests in src/storage/tests/redis_list_test.rs
 // The command layer is a thin wrapper around the storage operations
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

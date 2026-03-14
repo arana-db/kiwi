@@ -17,6 +17,8 @@
 
 //! Integration tests for Raft cluster functionality
 
+#![allow(clippy::unwrap_used)]
+
 use crate::error::RaftResult;
 use crate::network::KiwiRaftNetworkFactory;
 use crate::state_machine::{KiwiStateMachine, StorageEngine};

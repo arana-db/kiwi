@@ -397,6 +397,7 @@ pub fn is_read_command(cmd_name: &str) -> bool {
     )
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -148,6 +148,7 @@ impl LogIndexEventListener {
 // For now, we remove it to allow the code to compile
 // TODO: Re-implement using the correct RocksDB event listener API for version 0.23.0
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

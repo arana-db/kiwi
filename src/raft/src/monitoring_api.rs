@@ -43,7 +43,9 @@ pub struct MonitoringApiConfig {
 impl Default for MonitoringApiConfig {
     fn default() -> Self {
         Self {
-            bind_address: "127.0.0.1:8080".parse().unwrap(),
+            bind_address: "127.0.0.1:8080"
+                .parse()
+                .expect("hard-coded default bind address must be a valid SocketAddr"),
             enable_cors: true,
             api_key: None,
         }
@@ -67,7 +69,7 @@ impl<T> ApiResponse<T> {
             error: None,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("system time before UNIX epoch")
                 .as_secs(),
         }
     }
@@ -79,7 +81,7 @@ impl<T> ApiResponse<T> {
             error: Some(message),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .expect("system time before UNIX epoch")
                 .as_secs(),
         }
     }
@@ -319,7 +321,7 @@ async fn export_data(
         health_history,
         export_timestamp: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs(),
     };
 
@@ -506,6 +508,7 @@ async fn handle_rejection(
     Ok(warp::reply::with_status(json, code))
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

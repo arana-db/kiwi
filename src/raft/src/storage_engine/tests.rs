@@ -17,6 +17,8 @@
 
 //! Tests for the storage engine module
 
+#![allow(clippy::unwrap_used)]
+
 #[cfg(test)]
 mod tests {
     use super::super::*;

@@ -462,6 +462,7 @@ pub fn create_raft_storage_with_engine(
     Ok((log_storage, state_machine))
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

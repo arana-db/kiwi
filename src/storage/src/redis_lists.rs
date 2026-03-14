@@ -1041,8 +1041,8 @@ impl Redis {
         }
 
         let insert_position = match before_or_after {
-            BeforeOrAfter::Before => pivot_index.unwrap(),
-            BeforeOrAfter::After => pivot_index.unwrap() + 1,
+            BeforeOrAfter::Before => pivot_index.expect("pivot_index checked non-None above"),
+            BeforeOrAfter::After => pivot_index.expect("pivot_index checked non-None above") + 1,
         };
 
         // Insert the new value at the calculated position

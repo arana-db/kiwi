@@ -17,6 +17,8 @@
 
 //! Comprehensive unit tests for Raft storage layer
 
+#![allow(clippy::unwrap_used)]
+
 use super::*;
 use crate::error::StorageError;
 use crate::{LogIndex, NodeId, RaftError, Term};

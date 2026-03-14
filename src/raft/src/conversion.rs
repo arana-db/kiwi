@@ -373,5 +373,6 @@ pub fn from_storage_error(err: OpenraftStorageError<NodeId>) -> RaftError {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests;

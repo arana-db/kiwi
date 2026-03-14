@@ -17,6 +17,8 @@
 
 // Simple state machine tests using working Adaptor pattern
 
+#![allow(clippy::unwrap_used)]
+
 use super::*;
 use bytes::Bytes;
 // Removed unused imports

@@ -23,11 +23,13 @@ use crate::{
 };
 
 pub fn lists_data_key_comparator_name() -> CString {
-    CString::new("floyd.ListsDataKeyComparator").unwrap()
+    CString::new("floyd.ListsDataKeyComparator")
+        .expect("hard-coded comparator name contains no NUL bytes")
 }
 
 pub fn zsets_score_key_comparator_name() -> CString {
-    CString::new("floyd.ZSetsScoreKeyComparator").unwrap()
+    CString::new("floyd.ZSetsScoreKeyComparator")
+        .expect("hard-coded comparator name contains no NUL bytes")
 }
 
 /// ## ListsDataKey format
@@ -195,6 +197,7 @@ pub fn zsets_score_key_compare(a: &[u8], b: &[u8]) -> Ordering {
     a_rest.cmp(b_rest)
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -441,6 +441,7 @@ impl RequestRouter {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,6 +483,7 @@ mod tests {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 #[path = "router_tests.rs"]
 mod router_tests;

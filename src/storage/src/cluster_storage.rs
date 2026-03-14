@@ -102,6 +102,7 @@ impl std::ops::Deref for ClusterStorage {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

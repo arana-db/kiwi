@@ -17,6 +17,8 @@
 
 // Simple test to verify OpenRaft Adaptor pattern works
 
+#![allow(clippy::unwrap_used)]
+
 use std::io::Cursor;
 use std::ops::RangeBounds;
 

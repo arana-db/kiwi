@@ -128,6 +128,7 @@ pub fn seek_userkey_delim(data: &[u8]) -> usize {
     data.len()
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

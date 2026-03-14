@@ -1,0 +1,46 @@
+# Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Delete all Actions caches associated with a PR branch after the PR is closed.
+# This prevents Cargo caches from accumulating across merged/closed PRs
+# and consuming repository storage quota.
+name: Cleanup PR Caches
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Delete PR branch caches
+      run: |
+        gh extension install actions/gh-actions-cache
+        BRANCH="refs/pull/${{ github.event.pull_request.number }}/merge"
+        echo "Cleaning caches for branch: ${BRANCH}"
+        for key in $(gh actions-cache list -R "$REPO" -B "$BRANCH" -L 100 | cut -f 1); do
+          gh actions-cache delete "$key" -R "$REPO" -B "$BRANCH" --confirm
+          echo "Deleted cache: $key"
+        done
+        echo "Done."
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REPO: ${{ github.repository }}

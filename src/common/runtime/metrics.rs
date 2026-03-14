@@ -388,12 +388,12 @@ impl MetricsCollector {
                     health_status,
                     timestamp: SystemTime::now()
                         .duration_since(UNIX_EPOCH)
-                        .unwrap()
+                        .expect("system time before UNIX epoch")
                         .as_secs(),
                 };
 
                 // Store the latest metrics
-                *last_metrics.write().unwrap() = Some(runtime_metrics.clone());
+                *last_metrics.write().expect("lock poisoned") = Some(runtime_metrics.clone());
 
                 // Log key metrics periodically
                 if let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) {
@@ -419,7 +419,7 @@ impl MetricsCollector {
 
     /// Get the latest metrics snapshot
     pub fn get_metrics(&self) -> Option<RuntimeMetrics> {
-        self.last_metrics.read().unwrap().clone()
+        self.last_metrics.read().expect("lock poisoned").clone()
     }
 
     /// Get network metrics tracker for recording network events
@@ -451,7 +451,7 @@ impl MetricsCollector {
         self.channel_tracker.reset().await;
         self.health_monitor.reset().await;
 
-        *self.last_metrics.write().unwrap() = None;
+        *self.last_metrics.write().expect("lock poisoned") = None;
     }
 }
 /// Network metrics tracker for recording network runtime events
@@ -1279,10 +1279,10 @@ impl HealthMonitor {
 
     /// Get current health status
     pub async fn get_health_status(&self) -> HealthStatus {
-        let network_health = self.network_health.read().unwrap().clone();
-        let storage_health = self.storage_health.read().unwrap().clone();
-        let channel_health = self.channel_health.read().unwrap().clone();
-        let _last_check = *self.last_health_check.read().unwrap();
+        let network_health = self.network_health.read().expect("lock poisoned").clone();
+        let storage_health = self.storage_health.read().expect("lock poisoned").clone();
+        let channel_health = self.channel_health.read().expect("lock poisoned").clone();
+        let _last_check = *self.last_health_check.read().expect("lock poisoned");
 
         // Determine overall system health
         let overall_health =
@@ -1295,7 +1295,7 @@ impl HealthMonitor {
             overall_health,
             last_health_check: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .expect("system time before UNIX epoch")
                 .as_secs(),
         }
     }
@@ -1375,6 +1375,7 @@ impl HealthMonitor {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1645,7 +1646,7 @@ impl HealthCheckEndpoints {
     ) -> HealthCheckResponse {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs();
 
         let metrics = metrics_collector.get_metrics();
@@ -1704,7 +1705,7 @@ impl HealthCheckEndpoints {
     ) -> HealthCheckResponse {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs();
 
         // Liveness check is basic - just check if the system is running
@@ -1919,6 +1920,7 @@ impl HealthCheckEndpoints {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod health_tests {
     use super::*;

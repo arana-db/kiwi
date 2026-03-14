@@ -2530,5 +2530,6 @@ pub struct SafetyCheckpoint {
     pub raft_metrics_snapshot: Option<openraft::RaftMetrics<NodeId, BasicNode>>,
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests;

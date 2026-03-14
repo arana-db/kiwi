@@ -262,6 +262,7 @@ pub enum PoolError {
     CreateFailed(Box<dyn std::error::Error + Send + Sync>),
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

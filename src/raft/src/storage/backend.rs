@@ -625,6 +625,7 @@ pub fn create_backend_with_options<P: AsRef<Path>>(
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

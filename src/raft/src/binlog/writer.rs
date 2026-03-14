@@ -93,9 +93,11 @@ impl Default for BinlogWriter {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::binlog::entry::OperationType;
     use bytes::Bytes;
 
     #[test]
@@ -114,6 +116,3 @@ mod tests {
         assert!(!buffer.is_empty());
     }
 }
-
-#[cfg(test)]
-use super::entry::OperationType;

@@ -180,7 +180,7 @@ impl MetricsCollector {
     pub fn new(node_id: NodeId) -> Self {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs();
 
         let initial_metrics = RaftMetrics {
@@ -246,10 +246,10 @@ impl MetricsCollector {
 
     /// Update metrics from openraft metrics
     pub fn update_from_openraft(&self, openraft_metrics: &OpenRaftMetrics) {
-        let mut metrics = self.metrics.write().unwrap();
+        let mut metrics = self.metrics.write().expect("lock poisoned");
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs();
 
         // Update state metrics
@@ -323,7 +323,7 @@ impl MetricsCollector {
         cluster_size: usize,
         last_heartbeat_ms: u64,
     ) {
-        let mut metrics = self.metrics.write().unwrap();
+        let mut metrics = self.metrics.write().expect("lock poisoned");
         metrics.state.current_term = current_term;
         metrics.state.current_leader = current_leader;
         metrics.state.node_state = node_state.to_string();
@@ -342,7 +342,7 @@ impl MetricsCollector {
         last_contact_ms: u64,
         replication_latency_ms: f64,
     ) {
-        let mut metrics = self.metrics.write().unwrap();
+        let mut metrics = self.metrics.write().expect("lock poisoned");
         metrics
             .replication
             .replication_lag
@@ -359,7 +359,7 @@ impl MetricsCollector {
 
     /// Record replication failure for a follower
     pub fn record_replication_failure(&self, follower_id: NodeId) {
-        let mut metrics = self.metrics.write().unwrap();
+        let mut metrics = self.metrics.write().expect("lock poisoned");
         let failures = metrics
             .replication
             .replication_failures
@@ -381,7 +381,7 @@ impl MetricsCollector {
 
     /// Update network RTT for a node
     pub fn update_network_rtt(&self, node_id: NodeId, rtt_ms: f64) {
-        let mut metrics = self.metrics.write().unwrap();
+        let mut metrics = self.metrics.write().expect("lock poisoned");
         metrics.network.rtt_ms.insert(node_id, rtt_ms);
     }
 
@@ -393,7 +393,7 @@ impl MetricsCollector {
         snapshots_count: u64,
         snapshot_size_bytes: u64,
     ) {
-        let mut metrics = self.metrics.write().unwrap();
+        let mut metrics = self.metrics.write().expect("lock poisoned");
         metrics.storage.log_entries_count = log_entries_count;
         metrics.storage.log_size_bytes = log_size_bytes;
         metrics.storage.snapshots_count = snapshots_count;
@@ -402,7 +402,7 @@ impl MetricsCollector {
 
     /// Get current metrics snapshot
     pub fn get_metrics(&self) -> RaftMetrics {
-        let mut metrics = self.metrics.read().unwrap().clone();
+        let mut metrics = self.metrics.read().expect("lock poisoned").clone();
 
         // Update performance metrics from tracker
         let perf_stats = self.performance_tracker.get_stats();
@@ -426,7 +426,7 @@ impl MetricsCollector {
 
         metrics.timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("system time before UNIX epoch")
             .as_secs();
 
         metrics
@@ -466,7 +466,7 @@ impl PerformanceTracker {
             .fetch_add(latency_ms, Ordering::Relaxed);
 
         // Keep only recent latencies (last 1000 requests)
-        let mut latencies = self.latencies.write().unwrap();
+        let mut latencies = self.latencies.write().expect("lock poisoned");
         latencies.push(latency_ms);
         if latencies.len() > 1000 {
             latencies.remove(0);
@@ -476,7 +476,7 @@ impl PerformanceTracker {
     fn get_stats(&self) -> PerformanceMetrics {
         let count = self.request_count.load(Ordering::Relaxed);
         let total_latency = self.total_latency_ms.load(Ordering::Relaxed);
-        let elapsed = self.last_reset.read().unwrap().elapsed();
+        let elapsed = self.last_reset.read().expect("lock poisoned").elapsed();
 
         let avg_latency = if count > 0 {
             total_latency as f64 / count as f64
@@ -491,7 +491,7 @@ impl PerformanceTracker {
         };
 
         // Calculate percentiles
-        let latencies = self.latencies.read().unwrap();
+        let latencies = self.latencies.read().expect("lock poisoned");
         let mut sorted_latencies = latencies.clone();
         sorted_latencies.sort_unstable();
 
@@ -529,8 +529,8 @@ impl PerformanceTracker {
     fn reset(&self) {
         self.request_count.store(0, Ordering::Relaxed);
         self.total_latency_ms.store(0, Ordering::Relaxed);
-        self.latencies.write().unwrap().clear();
-        *self.last_reset.write().unwrap() = Instant::now();
+        self.latencies.write().expect("lock poisoned").clear();
+        *self.last_reset.write().expect("lock poisoned") = Instant::now();
     }
 }
 
@@ -618,7 +618,7 @@ impl StorageTracker {
     fn get_stats(&self) -> StorageStats {
         let count = self.operation_count.load(Ordering::Relaxed);
         let total_latency = self.total_latency_ms.load(Ordering::Relaxed);
-        let elapsed = self.last_reset.read().unwrap().elapsed();
+        let elapsed = self.last_reset.read().expect("lock poisoned").elapsed();
 
         let avg_latency = if count > 0 {
             total_latency as f64 / count as f64
@@ -641,7 +641,7 @@ impl StorageTracker {
     fn reset(&self) {
         self.operation_count.store(0, Ordering::Relaxed);
         self.total_latency_ms.store(0, Ordering::Relaxed);
-        *self.last_reset.write().unwrap() = Instant::now();
+        *self.last_reset.write().expect("lock poisoned") = Instant::now();
     }
 }
 
@@ -678,17 +678,17 @@ impl ErrorTracker {
 
         // Update error counts by type
         {
-            let mut errors_by_type = self.errors_by_type.write().unwrap();
+            let mut errors_by_type = self.errors_by_type.write().expect("lock poisoned");
             *errors_by_type.entry(error_type.to_string()).or_insert(0) += 1;
         }
 
         // Add to recent errors (keep last 100)
         {
-            let mut recent_errors = self.recent_errors.write().unwrap();
+            let mut recent_errors = self.recent_errors.write().expect("lock poisoned");
             let error_sample = ErrorSample {
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
-                    .unwrap()
+                    .expect("system time before UNIX epoch")
                     .as_secs(),
                 error_type: error_type.to_string(),
                 message: message.to_string(),
@@ -716,19 +716,20 @@ impl ErrorTracker {
             total_operations: total,
             failed_operations: failed,
             error_rate_percent: error_rate,
-            errors_by_type: self.errors_by_type.read().unwrap().clone(),
-            recent_errors: self.recent_errors.read().unwrap().clone(),
+            errors_by_type: self.errors_by_type.read().expect("lock poisoned").clone(),
+            recent_errors: self.recent_errors.read().expect("lock poisoned").clone(),
         }
     }
 
     fn reset(&self) {
         self.total_operations.store(0, Ordering::Relaxed);
         self.failed_operations.store(0, Ordering::Relaxed);
-        self.errors_by_type.write().unwrap().clear();
-        self.recent_errors.write().unwrap().clear();
+        self.errors_by_type.write().expect("lock poisoned").clear();
+        self.recent_errors.write().expect("lock poisoned").clear();
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

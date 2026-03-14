@@ -305,7 +305,7 @@ impl ReplicationPipeline {
 
         if let Some(queue) = follower_queue {
             if let Some(pos) = queue.iter().position(|req| req.request_id == request_id) {
-                let request = queue.remove(pos).unwrap();
+                let request = queue.remove(pos).expect("position was just found");
                 let latency = request.sent_at.elapsed();
 
                 // Update stats
@@ -356,7 +356,7 @@ impl ReplicationPipeline {
         for (follower_id, queue) in inflight.iter_mut() {
             while let Some(request) = queue.front() {
                 if now.duration_since(request.sent_at) > request.timeout {
-                    let expired = queue.pop_front().unwrap();
+                    let expired = queue.pop_front().expect("front was just checked");
                     expired_requests.push((*follower_id, expired.request_id));
 
                     // Update stats

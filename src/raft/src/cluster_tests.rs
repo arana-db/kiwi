@@ -22,6 +22,8 @@
 //! - Failover and recovery tests
 //! - Data consistency verification tests
 
+#![allow(clippy::unwrap_used)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;

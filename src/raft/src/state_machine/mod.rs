@@ -21,5 +21,6 @@ pub mod core;
 
 pub use core::{KiwiStateMachine, StateMachineSnapshot, StorageEngine};
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 pub mod tests;

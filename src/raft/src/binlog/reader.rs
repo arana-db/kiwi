@@ -83,6 +83,7 @@ fn read_varint(data: &[u8]) -> Result<(u32, usize), RaftError> {
     Ok((value, offset))
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
