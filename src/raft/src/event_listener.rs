@@ -15,9 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::time::Duration;
 
 use rocksdb::event_listener::{EventListener, FlushJobInfo};
+use tokio::time::sleep;
 
 use crate::cf_tracker::LogIndexOfColumnFamilies;
 use crate::collector::LogIndexAndSequenceCollector;
@@ -36,7 +39,7 @@ pub struct LogIndexAndSequenceCollectorPurger {
     callback: SnapshotCallback,
     flush_trigger: Option<FlushTrigger>,
     count: AtomicU64,
-    manual_flushing_cf: AtomicI64,
+    manual_flushing_cf: Arc<AtomicI64>,
 }
 
 impl LogIndexAndSequenceCollectorPurger {
@@ -52,13 +55,18 @@ impl LogIndexAndSequenceCollectorPurger {
             callback,
             flush_trigger,
             count: AtomicU64::new(0),
-            manual_flushing_cf: AtomicI64::new(-1),
+            manual_flushing_cf: Arc::new(AtomicI64::new(-1)),
         }
     }
 
     /// Set the CF currently being manually flushed (used to skip duplicate triggers)
     pub fn set_manual_flushing_cf(&self, cf_id: i64) {
         self.manual_flushing_cf.store(cf_id, Ordering::SeqCst);
+    }
+
+    /// Get the CF currently being manually flushed (for testing/debugging)
+    pub fn get_manual_flushing_cf(&self) -> i64 {
+        self.manual_flushing_cf.load(Ordering::SeqCst)
     }
 }
 
@@ -125,8 +133,31 @@ impl EventListener for LogIndexAndSequenceCollectorPurger {
             return;
         }
 
-        if target_cf < COLUMN_FAMILY_COUNT {
-            trigger(target_cf);
+        if target_cf >= COLUMN_FAMILY_COUNT {
+            // Invalid CF index: we must release it immediately.
+            self.manual_flushing_cf.store(-1, Ordering::SeqCst);
+            return;
+        }
+
+        let cf_id = target_cf as i64;
+        let manual_flushing_cf = Arc::clone(&self.manual_flushing_cf);
+
+        // Spawn watchdog to reset state if the flush never completes (e.g., async DB error).
+        // Uses compare_exchange so it won't clobber a legitimately started subsequent flush.
+        tokio::spawn(async move {
+            const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(30);
+            sleep(WATCHDOG_TIMEOUT).await;
+            let _ =
+                manual_flushing_cf.compare_exchange(cf_id, -1, Ordering::SeqCst, Ordering::SeqCst);
+        });
+
+        // If trigger panics synchronously, reset immediately rather than waiting for the watchdog.
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| trigger(target_cf))).is_err() {
+            log::error!(
+                "flush trigger panicked for CF {}, resetting manual_flushing_cf",
+                target_cf
+            );
+            self.manual_flushing_cf.store(-1, Ordering::SeqCst);
         }
     }
 }

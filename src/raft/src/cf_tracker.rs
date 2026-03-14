@@ -39,6 +39,20 @@ impl Default for LogIndexPair {
     }
 }
 
+struct CfTrackerState {
+    last_flush_index: (LogIndex, SequenceNumber),
+    cf: [LogIndexPair; COLUMN_FAMILY_COUNT],
+}
+
+impl Default for CfTrackerState {
+    fn default() -> Self {
+        Self {
+            last_flush_index: (0, 0),
+            cf: std::array::from_fn(|_| LogIndexPair::default()),
+        }
+    }
+}
+
 /// Return result of GetSmallestLogIndex
 #[derive(Debug, Clone)]
 pub struct SmallestIndexRes {
@@ -63,15 +77,13 @@ impl Default for SmallestIndexRes {
 
 /// Tracks log index state for all Column Families
 pub struct LogIndexOfColumnFamilies {
-    cf: RwLock<[LogIndexPair; COLUMN_FAMILY_COUNT]>,
-    last_flush_index: LogIndexSeqnoPair,
+    state: RwLock<CfTrackerState>,
 }
 
 impl Default for LogIndexOfColumnFamilies {
     fn default() -> Self {
         Self {
-            cf: RwLock::new(std::array::from_fn(|_| LogIndexPair::default())),
-            last_flush_index: LogIndexSeqnoPair::new(0, 0),
+            state: RwLock::new(CfTrackerState::default()),
         }
     }
 }
@@ -87,14 +99,14 @@ impl LogIndexOfColumnFamilies {
 
     /// Restore applied/flushed state from each CF's SST
     pub fn init<D: DbCfAccess>(&self, db: &D) -> Result<()> {
+        let state = self.state.write();
         for i in 0..COLUMN_FAMILY_COUNT {
             let collection = db.get_properties_of_all_tables_cf(i)?;
             if let Some(pair) = get_largest_log_index_from_collection(&collection) {
                 let log_index = pair.applied_log_index();
                 let seqno = pair.seqno();
-                let cf = self.cf.write();
-                cf[i].applied_index.set(log_index, seqno);
-                cf[i].flushed_index.set(log_index, seqno);
+                state.cf[i].applied_index.set(log_index, seqno);
+                state.cf[i].flushed_index.set(log_index, seqno);
             }
         }
         Ok(())
@@ -105,18 +117,22 @@ impl LogIndexOfColumnFamilies {
     /// `flush_cf`: index of CF currently being flushed, `None` means none
     pub fn get_smallest_log_index(&self, flush_cf: Option<usize>) -> SmallestIndexRes {
         let mut res = SmallestIndexRes::default();
-        let cf = self.cf.read();
+        let state = self.state.read();
 
         for i in 0..COLUMN_FAMILY_COUNT {
-            let skip = flush_cf
-                .is_some_and(|fc| i != fc && cf[i].flushed_index.ge_seqno(&cf[i].applied_index));
+            let skip = flush_cf.is_some_and(|fc| {
+                i != fc
+                    && state.cf[i]
+                        .flushed_index
+                        .ge_seqno(&state.cf[i].applied_index)
+            });
             if skip {
                 continue;
             }
 
-            let applied = cf[i].applied_index.log_index();
-            let flushed = cf[i].flushed_index.log_index();
-            let flushed_seqno = cf[i].flushed_index.seqno();
+            let applied = state.cf[i].applied_index.log_index();
+            let flushed = state.cf[i].flushed_index.log_index();
+            let flushed_seqno = state.cf[i].flushed_index.seqno();
 
             if applied < res.smallest_applied_log_index {
                 res.smallest_applied_log_index = applied;
@@ -135,28 +151,27 @@ impl LogIndexOfColumnFamilies {
         if !Self::is_valid_cf_id(cf_id) {
             return;
         }
-        let cf = self.cf.write();
-        let li = cf[cf_id].flushed_index.log_index();
-        let seq = cf[cf_id].flushed_index.seqno();
-        cf[cf_id]
+        let state = self.state.write();
+        let li = state.cf[cf_id].flushed_index.log_index();
+        let seq = state.cf[cf_id].flushed_index.seqno();
+        state.cf[cf_id]
             .flushed_index
             .set(log_index.max(li), seqno.max(seq));
     }
 
     pub fn set_flushed_log_index_global(&self, log_index: LogIndex, seqno: SequenceNumber) {
-        self.set_last_flush_index(log_index, seqno);
-        let cf = self.cf.write();
+        let mut state = self.state.write();
+        let (li, seq) = state.last_flush_index;
+        state.last_flush_index = (li.max(log_index), seq.max(seqno));
+        let (last_li, last_seq) = state.last_flush_index;
+
         for i in 0..COLUMN_FAMILY_COUNT {
-            if cf[i].flushed_index.le_seqno(&self.last_flush_index) {
-                let flush_li = cf[i]
+            let fl = state.cf[i].flushed_index.log_index();
+            let fs = state.cf[i].flushed_index.seqno();
+            if fs <= last_seq {
+                state.cf[i]
                     .flushed_index
-                    .log_index()
-                    .max(self.last_flush_index.log_index());
-                let flush_seq = cf[i]
-                    .flushed_index
-                    .seqno()
-                    .max(self.last_flush_index.seqno());
-                cf[i].flushed_index.set(flush_li, flush_seq);
+                    .set(fl.max(last_li), fs.max(last_seq));
             }
         }
     }
@@ -166,7 +181,7 @@ impl LogIndexOfColumnFamilies {
         if !Self::is_valid_cf_id(cf_id) {
             return false;
         }
-        cur_log_index < self.cf.read()[cf_id].applied_index.log_index()
+        cur_log_index < self.state.read().cf[cf_id].applied_index.log_index()
     }
 
     /// Update applied_index on write; if flushed==applied, also update flushed
@@ -174,21 +189,18 @@ impl LogIndexOfColumnFamilies {
         if !Self::is_valid_cf_id(cf_id) {
             return;
         }
-        let cf = self.cf.write();
-        if cf[cf_id].flushed_index.le_seqno(&self.last_flush_index)
-            && cf[cf_id].flushed_index.eq_seqno(&cf[cf_id].applied_index)
-        {
-            let flush_li = cf[cf_id]
+        let state = self.state.write();
+        let fl = state.cf[cf_id].flushed_index.log_index();
+        let fs = state.cf[cf_id].flushed_index.seqno();
+        let aseq = state.cf[cf_id].applied_index.seqno();
+        let (last_li, last_seq) = state.last_flush_index;
+
+        if fs <= last_seq && fs == aseq {
+            state.cf[cf_id]
                 .flushed_index
-                .log_index()
-                .max(self.last_flush_index.log_index());
-            let flush_seq = cf[cf_id]
-                .flushed_index
-                .seqno()
-                .max(self.last_flush_index.seqno());
-            cf[cf_id].flushed_index.set(flush_li, flush_seq);
+                .set(fl.max(last_li), fs.max(last_seq));
         }
-        cf[cf_id].applied_index.set(cur_log_index, cur_seqno);
+        state.cf[cf_id].applied_index.set(cur_log_index, cur_seqno);
     }
 
     /// Whether there is a CF that needs flush (gap > 0)
@@ -198,11 +210,11 @@ impl LogIndexOfColumnFamilies {
 
     /// max - min of all applied/flushed log indexes
     pub fn get_pending_flush_gap(&self) -> u64 {
-        let cf = self.cf.read();
+        let state = self.state.read();
         let mut s: BTreeSet<LogIndex> = BTreeSet::new();
         for i in 0..COLUMN_FAMILY_COUNT {
-            s.insert(cf[i].applied_index.log_index());
-            s.insert(cf[i].flushed_index.log_index());
+            s.insert(state.cf[i].applied_index.log_index());
+            s.insert(state.cf[i].flushed_index.log_index());
         }
         if s.is_empty() {
             return 0;
@@ -216,13 +228,14 @@ impl LogIndexOfColumnFamilies {
     }
 
     pub fn set_last_flush_index(&self, log_index: LogIndex, seqno: SequenceNumber) {
-        let li = self.last_flush_index.log_index().max(log_index);
-        let seq = self.last_flush_index.seqno().max(seqno);
-        self.last_flush_index.set(li, seq);
+        let mut state = self.state.write();
+        let (li, seq) = state.last_flush_index;
+        state.last_flush_index = (li.max(log_index), seq.max(seqno));
     }
 
     pub fn get_last_flush_index(&self) -> LogIndexSeqnoPair {
-        self.last_flush_index.clone()
+        let (li, seq) = self.state.read().last_flush_index;
+        LogIndexSeqnoPair::new(li, seq)
     }
 
     /// Get state of specified CF (for testing or debugging)
@@ -231,10 +244,10 @@ impl LogIndexOfColumnFamilies {
         if !Self::is_valid_cf_id(cf_id) {
             return (0, 0);
         }
-        let cf = self.cf.read();
+        let state = self.state.read();
         (
-            cf[cf_id].applied_index.log_index(),
-            cf[cf_id].applied_index.seqno(),
+            state.cf[cf_id].applied_index.log_index(),
+            state.cf[cf_id].applied_index.seqno(),
         )
     }
 
@@ -243,10 +256,10 @@ impl LogIndexOfColumnFamilies {
         if !Self::is_valid_cf_id(cf_id) {
             return (0, 0);
         }
-        let cf = self.cf.read();
+        let state = self.state.read();
         (
-            cf[cf_id].flushed_index.log_index(),
-            cf[cf_id].flushed_index.seqno(),
+            state.cf[cf_id].flushed_index.log_index(),
+            state.cf[cf_id].flushed_index.seqno(),
         )
     }
 }

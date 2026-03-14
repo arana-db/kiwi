@@ -15,14 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use parking_lot::Mutex;
 
 /// Raft log index
 pub type LogIndex = i64;
 
 pub type SequenceNumber = u64;
-
-const ORDERING: Ordering = Ordering::SeqCst;
 
 /// Value object: stores the binding relationship between (LogIndex, SequenceNumber)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,49 +54,48 @@ impl LogIndexAndSequencePair {
     }
 }
 
-/// Atomic (log_index, seqno), supports comparison based on seqno
+/// Atomic (log_index, seqno) pair. Uses Mutex to ensure both fields are updated
+/// together, avoiding torn reads that would corrupt purge boundaries.
 #[derive(Debug, Default)]
 pub struct LogIndexSeqnoPair {
-    log_index: AtomicI64,
-    seqno: AtomicU64,
+    inner: Mutex<(LogIndex, SequenceNumber)>,
 }
 
 impl LogIndexSeqnoPair {
     pub fn new(log_index: LogIndex, seqno: SequenceNumber) -> Self {
         Self {
-            log_index: AtomicI64::new(log_index),
-            seqno: AtomicU64::new(seqno),
+            inner: Mutex::new((log_index, seqno)),
         }
     }
 
     pub fn log_index(&self) -> LogIndex {
-        self.log_index.load(ORDERING)
+        self.inner.lock().0
     }
 
     pub fn seqno(&self) -> SequenceNumber {
-        self.seqno.load(ORDERING)
+        self.inner.lock().1
     }
 
+    /// Single atomic store of both fields; readers always see a consistent pair.
     pub fn set(&self, log_index: LogIndex, seqno: SequenceNumber) {
-        self.log_index.store(log_index, ORDERING);
-        self.seqno.store(seqno, ORDERING);
+        *self.inner.lock() = (log_index, seqno);
     }
 
     /// Compare based on seqno
     pub fn eq_seqno(&self, other: &Self) -> bool {
-        self.seqno.load(ORDERING) == other.seqno.load(ORDERING)
+        self.seqno() == other.seqno()
     }
 
     pub fn le_seqno(&self, other: &Self) -> bool {
-        self.seqno.load(ORDERING) <= other.seqno.load(ORDERING)
+        self.seqno() <= other.seqno()
     }
 
     pub fn ge_seqno(&self, other: &Self) -> bool {
-        self.seqno.load(ORDERING) >= other.seqno.load(ORDERING)
+        self.seqno() >= other.seqno()
     }
 
     pub fn lt_seqno(&self, other: &Self) -> bool {
-        self.seqno.load(ORDERING) < other.seqno.load(ORDERING)
+        self.seqno() < other.seqno()
     }
 }
 
