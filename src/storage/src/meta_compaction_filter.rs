@@ -125,6 +125,7 @@ impl CompactionFilterFactory for MetaCompactionFilterFactory {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use chrono::Utc;

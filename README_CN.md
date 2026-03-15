@@ -173,6 +173,12 @@ Kiwi 集成了 **OpenRaft** 库以提供分布式共识和高可用性：
 - 🚧 完善的开发文档和用户指南
 - 🚧 全面的指标和监控
 
+## 依赖说明
+
+### RocksDB（临时 Fork）
+
+本项目目前使用 [rust-rocksdb 的自定义 fork](https://github.com/arana-db/rust-rocksdb/tree/addtableproperties)，因为官方 crate 尚不支持 Raft 模块中 LogIndex 追踪所需的 TablePropertiesCollector FFI 函数。相关改动合并到上游可能需要较长时间。一旦官方 [rust-rocksdb](https://github.com/rust-rocksdb/rust-rocksdb) 仓库提供所需功能，我们将切换回官方 crate。
+
 ## 文档
 
 - [快速开始指南](docs/QUICK_START.md)

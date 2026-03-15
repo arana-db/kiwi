@@ -355,6 +355,7 @@ pub struct OptimizedHandlerStats {
     pub buffer_stats: crate::buffer::BufferStats,
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -47,7 +47,7 @@ impl Redis {
                 let parsed_meta = ParsedInternalValue::new(&meta_value);
                 
                 // Check if expired
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("system time before UNIX epoch").as_secs();
                 if parsed_meta.is_expired(now) {
                     return Ok(0);
                 }
@@ -138,7 +138,7 @@ impl Redis {
                 let parsed_meta = ParsedInternalValue::new(&meta_value);
                 
                 // Check if expired
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("system time before UNIX epoch").as_secs();
                 if parsed_meta.is_expired(now) {
                     return Ok(false);
                 }
@@ -171,7 +171,7 @@ impl Redis {
                 let mut parsed_meta = ParsedInternalValue::new(&meta_value);
                 
                 // Check if expired
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("system time before UNIX epoch").as_secs();
                 if parsed_meta.is_expired(now) {
                     return Ok(0);
                 }
@@ -209,7 +209,7 @@ impl Redis {
                 }
                 
                 // Calculate TTL
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("system time before UNIX epoch").as_secs();
                 if etime <= now {
                     // Key has expired
                     return Ok(-2);
@@ -244,7 +244,7 @@ impl Redis {
                 let parsed_meta = ParsedInternalValue::new(&meta_value);
                 
                 // Check if expired
-                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).expect("system time before UNIX epoch").as_secs();
                 if parsed_meta.is_expired(now) {
                     return Err(StorageError::KeyNotFound(String::from_utf8_lossy(key).to_string()));
                 }
@@ -396,7 +396,7 @@ impl Redis {
                             // Get score from value
                             let parsed_value = ParsedInternalValue::new(&value);
                             let score_bytes = parsed_value.user_value();
-                            let score = f64::from_be_bytes(score_bytes[0..8].try_into().unwrap());
+                            let score = f64::from_be_bytes(score_bytes[0..8].try_into().expect("slice length mismatch"));
                             
                             // Create score key
                             let new_score_key = self.encode_zsets_score_key(new_key, version, score, member);

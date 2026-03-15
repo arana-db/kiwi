@@ -2625,7 +2625,7 @@ dependencies = [
  "engine",
  "log",
  "openraft",
- "proptest",
+ "parking_lot",
  "reqwest",
  "rust-rocksdb",
  "serde",
@@ -2907,7 +2907,7 @@ dependencies = [
 [[package]]
 name = "rust-librocksdb-sys"
 version = "0.41.0+10.9.1"
-source = "git+https://github.com/zaidoon1/rust-rocksdb?branch=master#4f973bf6d94d8a3b32a39697b63092de08106974"
+source = "git+https://github.com/arana-db/rust-rocksdb?rev=f7abb18c64fac810f3c4736aef833c340396449b#f7abb18c64fac810f3c4736aef833c340396449b"
 dependencies = [
  "bindgen",
  "bzip2-sys",
@@ -2922,7 +2922,7 @@ dependencies = [
 [[package]]
 name = "rust-rocksdb"
 version = "0.45.0"
-source = "git+https://github.com/zaidoon1/rust-rocksdb?branch=master#4f973bf6d94d8a3b32a39697b63092de08106974"
+source = "git+https://github.com/arana-db/rust-rocksdb?rev=f7abb18c64fac810f3c4736aef833c340396449b#f7abb18c64fac810f3c4736aef833c340396449b"
 dependencies = [
  "libc",
  "parking_lot",

@@ -91,6 +91,7 @@ impl Cmd for IncrbyFloatCmd {
         }
     }
 }
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

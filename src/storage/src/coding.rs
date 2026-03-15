@@ -35,7 +35,7 @@ macro_rules! impl_fixed_int_32 {
                 }
 
                 fn from_le_bytes(bytes: &[u8]) -> Self {
-                    let arr: [u8; 4] = bytes.try_into().unwrap();
+                    let arr: [u8; 4] = bytes.try_into().expect("slice length mismatch");
                     u32::from_le_bytes(arr) as Self
                 }
             }
@@ -52,7 +52,7 @@ macro_rules! impl_fixed_int_64 {
                 }
 
                 fn from_le_bytes(bytes: &[u8]) -> Self {
-                    let arr: [u8; 8] = bytes.try_into().unwrap();
+                    let arr: [u8; 8] = bytes.try_into().expect("slice length mismatch");
                     u64::from_le_bytes(arr) as Self
                 }
             }
@@ -79,6 +79,7 @@ pub fn decode_fixed<T: FixedInt>(buf: &[u8]) -> T {
     T::from_le_bytes(&buf[..size])
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
 

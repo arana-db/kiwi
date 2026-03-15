@@ -24,7 +24,10 @@ use crate::error_variant::ErrorVariant;
 pub fn stack_trace_style_impl(args: TokenStream2, input: TokenStream2) -> TokenStream2 {
     let input_cloned: TokenStream2 = input.clone();
 
-    let error_enum_definition: ItemEnum = syn::parse2(input_cloned).unwrap();
+    let error_enum_definition: ItemEnum = match syn::parse2(input_cloned) {
+        Ok(v) => v,
+        Err(e) => return e.to_compile_error(),
+    };
     let enum_name = error_enum_definition.ident;
 
     let mut variants = vec![];

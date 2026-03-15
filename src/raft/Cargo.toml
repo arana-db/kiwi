@@ -27,7 +27,13 @@ anyhow = "1.0"
 tracing = "0.1"
 log.workspace = true
 
+# LogIndex / RocksDB
+rocksdb.workspace = true
+parking_lot.workspace = true
+
 [dev-dependencies]
-proptest.workspace = true
 tempfile.workspace = true
 
+[[test]]
+name = "logindex_integration"
+path = "tests/logindex_integration.rs"

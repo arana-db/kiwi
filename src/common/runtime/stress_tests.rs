@@ -25,6 +25,8 @@
 //!
 //! Requirements covered: 6.1, 6.2, 6.3, 6.4, 6.5
 
+#![allow(clippy::unwrap_used)]
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
