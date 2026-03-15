@@ -21,8 +21,7 @@ pub struct BinlogEntry {
 }
 
 /// Binlog - Complete version, supports multi-CF operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Binlog {
     pub db_id: u32,                // Database ID
     pub slot_idx: u32,             // Slot index
