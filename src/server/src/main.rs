@@ -30,7 +30,7 @@ use raft::api::{
     RaftAppData, add_learner, change_membership, init, leader, metrics, raft_append, raft_vote,
     read, write,
 };
-use raft::node::{RaftConfig, create_raft_node, create_raft_node_with_rocksdb};
+use raft::node::{RaftConfig, create_raft_node};
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
 #[derive(Parser)]
@@ -244,10 +244,11 @@ async fn start_server(
                 raft_addr: raft_config.raft_addr.clone(),
                 resp_addr: raft_config.resp_addr.clone(),
                 data_dir: PathBuf::from(&raft_config.data_dir),
+                use_memory_log_store: raft_config.use_memory_log_store,
                 ..Default::default()
             };
 
-            let raft_app = create_raft_node_with_rocksdb(raft_config, storage.clone())
+            let raft_app = create_raft_node(raft_config, storage.clone())
                 .await
                 .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
 

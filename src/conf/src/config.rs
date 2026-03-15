@@ -64,6 +64,8 @@ pub struct RaftClusterConfig {
     pub raft_addr: String,
     pub resp_addr: String,
     pub data_dir: String,
+    /// 是否使用内存日志存储，默认 false（使用 RocksDB 持久化存储）
+    pub use_memory_log_store: bool,
 }
 
 // set default value for config
@@ -119,6 +121,7 @@ impl Config {
         let mut raft_addr: Option<String> = None;
         let mut raft_resp_addr: Option<String> = None;
         let mut raft_data_dir: Option<String> = None;
+        let mut raft_use_memory_log_store: bool = false;
 
         // Parse each configuration value
         for (key, value) in config_map {
@@ -330,6 +333,15 @@ impl Config {
                 "raft-data-dir" => {
                     raft_data_dir = Some(value);
                 }
+                "raft-use-memory-log-store" => {
+                    raft_use_memory_log_store =
+                        parse_bool_from_string(&value).map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid raft-use-memory-log-store: {}",
+                                e
+                            )),
+                        })?;
+                }
                 "db-path" => {
                     config.db_path = value;
                 }
@@ -348,6 +360,7 @@ impl Config {
                 raft_addr: addr,
                 resp_addr,
                 data_dir,
+                use_memory_log_store: raft_use_memory_log_store,
             });
         }
 

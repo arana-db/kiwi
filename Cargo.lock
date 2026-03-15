@@ -2626,6 +2626,7 @@ dependencies = [
  "log",
  "openraft",
  "parking_lot",
+ "proptest",
  "reqwest",
  "rust-rocksdb",
  "serde",

@@ -28,11 +28,11 @@ tracing = "0.1"
 log.workspace = true
 
 # LogIndex / RocksDB
-rocksdb.workspace = true
 parking_lot.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+proptest = "1"
 
 [[test]]
 name = "logindex_integration"
