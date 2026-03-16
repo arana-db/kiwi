@@ -117,7 +117,7 @@ fn main() -> std::io::Result<()> {
 
     // Use the network runtime to run the main server logic
     let result = network_handle.block_on(async {
-        let storage = initialize_storage()
+        let storage = initialize_storage(&config)
             .await
             .map_err(|e| std::io::Error::other(format!("Failed to initialize storage: {}", e)))?;
 
@@ -176,11 +176,11 @@ fn main() -> std::io::Result<()> {
     result
 }
 
-async fn initialize_storage() -> Result<Arc<Storage>, DualRuntimeError> {
+async fn initialize_storage(config: &Config) -> Result<Arc<Storage>, DualRuntimeError> {
     info!("Initializing storage...");
 
     let storage_options = Arc::new(StorageOptions::default());
-    let db_path = PathBuf::from("./db");
+    let db_path = PathBuf::from(&config.db_path);
 
     let mut storage = Storage::new(1, 0);
 
@@ -244,6 +244,7 @@ async fn start_server(
                 raft_addr: raft_config.raft_addr.clone(),
                 resp_addr: raft_config.resp_addr.clone(),
                 data_dir: PathBuf::from(&raft_config.data_dir),
+                use_memory_log_store: raft_config.use_memory_log_store,
                 ..Default::default()
             };
 

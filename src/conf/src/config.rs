@@ -53,6 +53,7 @@ pub struct Config {
     pub log_dir: String,
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
+    pub db_path: String,
     pub raft: Option<RaftClusterConfig>,
 }
 
@@ -63,6 +64,8 @@ pub struct RaftClusterConfig {
     pub raft_addr: String,
     pub resp_addr: String,
     pub data_dir: String,
+    /// 是否使用内存日志存储，默认 false（使用 RocksDB 持久化存储）
+    pub use_memory_log_store: bool,
 }
 
 // set default value for config
@@ -93,6 +96,7 @@ impl Default for Config {
             rocksdb_target_file_size_base: 64 << 20, // 64MB
 
             db_instance_num: 3,
+            db_path: "./db".to_string(),
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
             raft: None,
@@ -117,6 +121,7 @@ impl Config {
         let mut raft_addr: Option<String> = None;
         let mut raft_resp_addr: Option<String> = None;
         let mut raft_data_dir: Option<String> = None;
+        let mut raft_use_memory_log_store: bool = false;
 
         // Parse each configuration value
         for (key, value) in config_map {
@@ -328,6 +333,18 @@ impl Config {
                 "raft-data-dir" => {
                     raft_data_dir = Some(value);
                 }
+                "raft-use-memory-log-store" => {
+                    raft_use_memory_log_store =
+                        parse_bool_from_string(&value).map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid raft-use-memory-log-store: {}",
+                                e
+                            )),
+                        })?;
+                }
+                "db-path" => {
+                    config.db_path = value;
+                }
                 _ => {
                     // Unknown configuration key, skip it
                     continue;
@@ -343,6 +360,7 @@ impl Config {
                 raft_addr: addr,
                 resp_addr,
                 data_dir,
+                use_memory_log_store: raft_use_memory_log_store,
             });
         }
 
