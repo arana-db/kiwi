@@ -126,6 +126,15 @@ impl Engine for RocksdbEngine {
         self.db.delete_cf(cf, key)
     }
 
+    fn delete_range_cf<'a>(
+        &'a self,
+        cf: &ColumnFamilyRef<'a>,
+        from: &[u8],
+        to: &[u8],
+    ) -> Result<()> {
+        self.db.delete_range_cf(cf, from, to)
+    }
+
     fn delete_cf_opt<'a>(
         &'a self,
         cf: &ColumnFamilyRef<'a>,
@@ -203,6 +212,7 @@ impl Drop for RocksdbEngine {
     }
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use rocksdb::{DB, Options};

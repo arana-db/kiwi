@@ -277,6 +277,7 @@ macro_rules! delegate_parsed_value {
     };
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

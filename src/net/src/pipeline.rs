@@ -198,7 +198,7 @@ impl CommandPipeline {
 
                                     // Process batch if full
                                     if batch.is_full(config.max_batch_size) {
-                                        let batch_to_process = current_batch.take().unwrap();
+                                        let batch_to_process = current_batch.take().expect("batch was just checked Some");
                                         Self::process_batch(
                                             batch_to_process,
                                             storage.clone(),
@@ -395,6 +395,7 @@ pub enum PipelineError {
     Timeout,
 }
 
+#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;

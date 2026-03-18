@@ -530,7 +530,7 @@ impl Redis {
         Ok(self
             .scan_cursors_store
             .lock()
-            .unwrap()
+            .expect("lock poisoned")
             .get(&index_key)
             .map(|entry| entry.value().clone()))
     }

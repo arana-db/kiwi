@@ -113,7 +113,7 @@ fn main() -> std::io::Result<()> {
 
     // Use the network runtime to run the main server logic
     let result = network_handle.block_on(async {
-        let storage = initialize_storage()
+        let storage = initialize_storage(&config)
             .await
             .map_err(|e| std::io::Error::other(format!("Failed to initialize storage: {}", e)))?;
 
@@ -156,9 +156,9 @@ fn main() -> std::io::Result<()> {
 
         // Block until Ctrl+C so the process does not exit immediately
         info!("Press Ctrl+C to stop.");
-        tokio::signal::ctrl_c()
-            .await
-            .map_err(|e| std::io::Error::other(format!("Failed to listen for shutdown signal: {}", e)))?;
+        tokio::signal::ctrl_c().await.map_err(|e| {
+            std::io::Error::other(format!("Failed to listen for shutdown signal: {}", e))
+        })?;
         info!("Received shutdown signal, stopping...");
 
         Ok(())
@@ -172,11 +172,11 @@ fn main() -> std::io::Result<()> {
     result
 }
 
-async fn initialize_storage() -> Result<Arc<Storage>, DualRuntimeError> {
+async fn initialize_storage(config: &Config) -> Result<Arc<Storage>, DualRuntimeError> {
     info!("Initializing storage...");
 
     let storage_options = Arc::new(StorageOptions::default());
-    let db_path = PathBuf::from("./db");
+    let db_path = PathBuf::from(&config.db_path);
 
     let mut storage = Storage::new(1, 0);
 
@@ -242,6 +242,8 @@ async fn start_server(
                 heartbeat_interval: raft_config.heartbeat_interval_ms.unwrap_or(200),
                 election_timeout_min: raft_config.election_timeout_min_ms.unwrap_or(500),
                 election_timeout_max: raft_config.election_timeout_max_ms.unwrap_or(1500),
+                use_memory_log_store: raft_config.use_memory_log_store,
+                ..Default::default()
             };
 
             let raft_app = create_raft_node(raft_config, storage.clone())
