@@ -27,16 +27,17 @@ pub mod state_machine;
 pub mod grpc;
 pub mod conversion;
 pub mod raft_proto {
-    tonic::include_proto!("raft_proto"); 
-
-     pub const FILE_DESCRIPTOR_SET: &[u8] =
+    tonic::include_proto!("raft_proto");
+    pub const FILE_DESCRIPTOR_SET: &[u8] =
         tonic::include_file_descriptor_set!("raft_proto_descriptor");
+}
+
 pub mod table_properties;
 pub mod types;
 
-pub use cf_tracker::{LogIndexOfColumnFamilies, SmallestIndexRes};
-pub use collector::LogIndexAndSequenceCollector;
-pub use event_listener::LogIndexAndSequenceCollectorPurger;
+pub use crate::cf_tracker::{LogIndexOfColumnFamilies, SmallestIndexRes};
+pub use crate::collector::LogIndexAndSequenceCollector;
+pub use crate::event_listener::LogIndexAndSequenceCollectorPurger;
 pub use table_properties::{
     LogIndexTablePropertiesCollectorFactory, PROPERTY_KEY, get_largest_log_index_from_collection,
     read_stats_from_table_props,

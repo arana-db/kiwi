@@ -28,7 +28,7 @@ mod tests {
 
     #[test]
     fn test_config_parsing() {
-        let config = config::Config::load("./kiwi.conf");
+        let config = config::Config::load("./kiwi.conf").unwrap();
         assert!(
             config.is_ok(),
             "Config loading failed: {:?}",

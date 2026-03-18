@@ -379,6 +379,7 @@ impl Config {
                     // Unknown configuration key, skip it
                     continue;
                 }
+            }
         }
 
         if let (Some(node_id), Some(addr), Some(resp_addr), Some(data_dir)) =
@@ -402,7 +403,9 @@ impl Config {
 
         Ok(config)
     }
+}
 
+impl Config {
     // TODO: Due to API issues, the rocksdb_ttl_second parameter is temporarily missing
     pub fn get_rocksdb_options(&self) -> rocksdb::Options {
         let mut options = rocksdb::Options::default();

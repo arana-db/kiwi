@@ -23,6 +23,7 @@ async-trait = "0.1.89"
 anyhow = "1.0.100"
 tracing = "0.1.44"
 log.workspace = true
+parking_lot.workspace = true
 
 tonic = "0.14.3"
 prost = "0.14.3"
@@ -31,8 +32,6 @@ tokio-stream = "0.1"
 
 [build-dependencies]
 tonic-prost-build = "0.14.3"
-# LogIndex / RocksDB
-parking_lot.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

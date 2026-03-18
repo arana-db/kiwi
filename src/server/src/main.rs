@@ -243,7 +243,6 @@ async fn start_server(
                 election_timeout_min: raft_config.election_timeout_min_ms.unwrap_or(500),
                 election_timeout_max: raft_config.election_timeout_max_ms.unwrap_or(1500),
                 use_memory_log_store: raft_config.use_memory_log_store,
-                ..Default::default()
             };
 
             let raft_app = create_raft_node(raft_config, storage.clone())

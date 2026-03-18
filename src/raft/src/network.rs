@@ -56,12 +56,6 @@ impl Default for KiwiNetworkFactory {
     }
 }
 
-impl Default for KiwiNetworkFactory {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
     type Network = KiwiNetwork;
 
