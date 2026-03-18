@@ -25,7 +25,7 @@ use std::sync::Arc;
 use storage::StorageOptions;
 use storage::storage::Storage;
 
-use raft::node::{RaftConfig, create_raft_node, RaftApp};
+use raft::node::{RaftApp, RaftConfig, create_raft_node};
 use raft::raft_proto;
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
@@ -255,7 +255,8 @@ async fn start_server(
             })?;
 
             // 创建所有 gRPC 服务
-            let (core_svc, admin_svc, client_svc, metrics_svc) = RaftApp::create_grpc_services(raft_app.clone());
+            let (core_svc, admin_svc, client_svc, metrics_svc) =
+                RaftApp::create_grpc_services(raft_app.clone());
 
             info!("Starting Raft gRPC server on {}", raft_addr);
 
@@ -269,9 +270,9 @@ async fn start_server(
             // 启动 gRPC 服务器
             tokio::spawn(async move {
                 use tonic::transport::Server;
-                
+
                 info!("Raft gRPC server listening on {}", grpc_addr);
-                
+
                 if let Err(e) = Server::builder()
                     .add_service(reflect_svc)
                     .add_service(core_svc)
@@ -280,9 +281,9 @@ async fn start_server(
                     .add_service(metrics_svc)
                     .serve(grpc_addr)
                     .await
-                    {
-                        error!("Raft gRPC server error: {}", e);
-                    }
+                {
+                    error!("Raft gRPC server error: {}", e);
+                }
             });
         }
 

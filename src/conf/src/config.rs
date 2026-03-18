@@ -340,28 +340,31 @@ impl Config {
                     raft_data_dir = Some(value);
                 }
                 "raft-heartbeat-interval" | "cluster-heartbeat-interval" => {
-                    raft_heartbeat_interval = Some(value.parse().map_err(|e| Error::InvalidConfig {
-                        source: serde_ini::de::Error::Custom(format!(
-                            "Invalid raft-heartbeat-interval: {}",
-                            e
-                        )),
-                    })?);
+                    raft_heartbeat_interval =
+                        Some(value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid raft-heartbeat-interval: {}",
+                                e
+                            )),
+                        })?);
                 }
                 "raft-election-timeout-min" | "cluster-election-timeout-min" => {
-                    raft_election_timeout_min = Some(value.parse().map_err(|e| Error::InvalidConfig {
-                        source: serde_ini::de::Error::Custom(format!(
-                            "Invalid raft-election-timeout-min: {}",
-                            e
-                        )),
-                    })?);
+                    raft_election_timeout_min =
+                        Some(value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid raft-election-timeout-min: {}",
+                                e
+                            )),
+                        })?);
                 }
                 "raft-election-timeout-max" | "cluster-election-timeout-max" => {
-                    raft_election_timeout_max = Some(value.parse().map_err(|e| Error::InvalidConfig {
-                        source: serde_ini::de::Error::Custom(format!(
-                            "Invalid raft-election-timeout-max: {}",
-                            e
-                        )),
-                    })?);
+                    raft_election_timeout_max =
+                        Some(value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid raft-election-timeout-max: {}",
+                                e
+                            )),
+                        })?);
                 }
                 "raft-use-memory-log-store" => {
                     raft_use_memory_log_store =

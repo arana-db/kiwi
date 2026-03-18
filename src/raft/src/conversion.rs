@@ -18,14 +18,12 @@
 // 类型转换模块：Proto 类型 ↔ OpenRaft 类型
 use crate::raft_proto as proto;
 use conf::raft_type::{Binlog, KiwiNode, KiwiTypeConfig};
-use openraft::entry::{Entry, EntryPayload};
-use openraft::raft::{
-    AppendEntriesRequest, AppendEntriesResponse, VoteRequest, VoteResponse,
-};
 use openraft::CommittedLeaderId;
 use openraft::LeaderId;
 use openraft::LogId;
 use openraft::Vote;
+use openraft::entry::{Entry, EntryPayload};
+use openraft::raft::{AppendEntriesRequest, AppendEntriesResponse, VoteRequest, VoteResponse};
 use std::convert::TryInto;
 
 // 辅助函数：创建 LeaderId、LogId 和 Vote
@@ -61,7 +59,9 @@ pub fn log_id_to_proto(lid: &LogId<u64>) -> proto::LogId {
     proto::LogId {
         leader_id: Some(proto::LeaderId {
             term: lid.leader_id.term,
-            node_id: Some(proto::NodeId { id: lid.leader_id.node_id }),
+            node_id: Some(proto::NodeId {
+                id: lid.leader_id.node_id,
+            }),
         }),
         index: lid.index,
     }
@@ -75,7 +75,11 @@ pub fn proto_to_vote(vote: &Option<&proto::Vote>) -> Vote<u64> {
     match vote {
         Some(v) => {
             let term = v.leader_id.as_ref().map(|l| l.term).unwrap_or(0);
-            let node_id = v.leader_id.as_ref().and_then(|l| l.node_id.as_ref().map(|n| n.id)).unwrap_or(0);
+            let node_id = v
+                .leader_id
+                .as_ref()
+                .and_then(|l| l.node_id.as_ref().map(|n| n.id))
+                .unwrap_or(0);
             if v.committed {
                 Vote::new_committed(term, node_id)
             } else {
@@ -125,7 +129,7 @@ impl TryInto<AppendEntriesRequest<KiwiTypeConfig>> for &proto::AppendEntriesRequ
                     return Err(tonic::Status::invalid_argument(format!(
                         "invalid entry: {}",
                         e
-                    )))
+                    )));
                 }
             }
         }
@@ -159,7 +163,7 @@ impl TryInto<Entry<KiwiTypeConfig>> for &proto::Entry {
                             return Err(tonic::Status::invalid_argument(format!(
                                 "failed to deserialize binlog: {}",
                                 e
-                            )))
+                            )));
                         }
                     }
                 }
@@ -218,9 +222,7 @@ impl From<AppendEntriesResponse<u64>> for proto::AppendEntriesResponse {
     }
 }
 
-
 // OpenRaft → Proto 转换 (gRPC Client 请求使用)
-
 
 // ----- VoteRequest -----
 
@@ -273,9 +275,9 @@ impl TryInto<proto::Entry> for Entry<KiwiTypeConfig> {
                 // 序列化 Binlog
                 let data = bincode::serialize(&binlog)?;
                 Some(proto::EntryPayload {
-                    payload: Some(proto::entry_payload::Payload::Normal(proto::NormalPayload {
-                        data,
-                    })),
+                    payload: Some(proto::entry_payload::Payload::Normal(
+                        proto::NormalPayload { data },
+                    )),
                 })
             }
             EntryPayload::Membership(membership) => {
@@ -299,10 +301,9 @@ impl TryInto<proto::Entry> for Entry<KiwiTypeConfig> {
                     .collect();
 
                 Some(proto::EntryPayload {
-                    payload: Some(proto::entry_payload::Payload::Membership(proto::Membership {
-                        node_ids,
-                        nodes,
-                    })),
+                    payload: Some(proto::entry_payload::Payload::Membership(
+                        proto::Membership { node_ids, nodes },
+                    )),
                 })
             }
         };
@@ -338,7 +339,7 @@ impl TryInto<AppendEntriesResponse<u64>> for &proto::AppendEntriesResponse {
             Ok(AppendEntriesResponse::Success)
         } else {
             Err(tonic::Status::aborted(
-                "AppendEntries failed: leader rejected the entries"
+                "AppendEntries failed: leader rejected the entries",
             ))
         }
     }

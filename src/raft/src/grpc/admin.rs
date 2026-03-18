@@ -25,12 +25,10 @@ use std::sync::Arc;
 
 // 导入 proto 生成的类型
 use crate::raft_proto::{
-    raft_admin_service_server::{RaftAdminService, RaftAdminServiceServer},
-    InitializeRequest, InitializeResponse,
-    AddLearnerRequest, AddLearnerResponse,
-    ChangeMembershipRequest, ChangeMembershipResponse,
-    RemoveNodeRequest, RemoveNodeResponse,
+    AddLearnerRequest, AddLearnerResponse, ChangeMembershipRequest, ChangeMembershipResponse,
+    InitializeRequest, InitializeResponse, RemoveNodeRequest, RemoveNodeResponse,
     Response as ProtoResponse,
+    raft_admin_service_server::{RaftAdminService, RaftAdminServiceServer},
 };
 use tonic::{Request, Response as TonicResponse, Status};
 
@@ -91,8 +89,12 @@ impl RaftAdminService for RaftAdminServiceImpl {
         let mut nodes = BTreeMap::new();
         for node_config in &proto_req.nodes {
             let node = proto_to_node(node_config);
-            log::info!("  Node {}: raft_addr={}, resp_addr={}",
-                node_config.node_id, node_config.raft_addr, node_config.resp_addr);
+            log::info!(
+                "  Node {}: raft_addr={}, resp_addr={}",
+                node_config.node_id,
+                node_config.raft_addr,
+                node_config.resp_addr
+            );
             nodes.insert(node_config.node_id, node);
         }
 
@@ -112,7 +114,10 @@ impl RaftAdminService for RaftAdminServiceImpl {
             Err(e) => {
                 log::error!("Failed to initialize cluster: {}", e);
                 Ok(TonicResponse::new(InitializeResponse {
-                    response: Some(error_response(format!("Failed to initialize cluster: {}", e))),
+                    response: Some(error_response(format!(
+                        "Failed to initialize cluster: {}",
+                        e
+                    ))),
                     leader_id: 0,
                 }))
             }
@@ -133,11 +138,16 @@ impl RaftAdminService for RaftAdminServiceImpl {
             None => {
                 return Ok(TonicResponse::new(AddLearnerResponse {
                     response: Some(error_response("Missing node config".to_string())),
-                }))
+                }));
             }
         };
 
-        match self.app.raft.add_learner(proto_req.node_id, node, true).await {
+        match self
+            .app
+            .raft
+            .add_learner(proto_req.node_id, node, true)
+            .await
+        {
             Ok(_) => {
                 log::info!("Learner node {} added successfully", proto_req.node_id);
                 Ok(TonicResponse::new(AddLearnerResponse {
@@ -175,7 +185,12 @@ impl RaftAdminService for RaftAdminServiceImpl {
 
         let changes = ChangeMembers::ReplaceAllNodes(members);
 
-        match self.app.raft.change_membership(changes, proto_req.retain).await {
+        match self
+            .app
+            .raft
+            .change_membership(changes, proto_req.retain)
+            .await
+        {
             Ok(_) => {
                 log::info!("Membership changed successfully");
                 Ok(TonicResponse::new(ChangeMembershipResponse {
@@ -185,7 +200,10 @@ impl RaftAdminService for RaftAdminServiceImpl {
             Err(e) => {
                 log::error!("Failed to change membership: {}", e);
                 Ok(TonicResponse::new(ChangeMembershipResponse {
-                    response: Some(error_response(format!("Failed to change membership: {}", e))),
+                    response: Some(error_response(format!(
+                        "Failed to change membership: {}",
+                        e
+                    ))),
                 }))
             }
         }

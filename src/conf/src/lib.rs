@@ -28,11 +28,11 @@ mod tests {
 
     #[test]
     fn test_config_parsing() {
-        let config = config::Config::load("./kiwi.conf").unwrap();
+        let config = config::Config::load("./kiwi.conf");
         assert!(
             config.is_ok(),
             "Config loading failed: {:?}",
-            config.err().unwrap()
+            config.as_ref().err()
         );
 
         let config = config.unwrap();

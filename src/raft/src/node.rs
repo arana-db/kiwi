@@ -20,16 +20,18 @@ use openraft::{Config, Raft};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::grpc::{
+    create_admin_service, create_client_service, create_core_service, create_metrics_service,
+};
 use crate::log_store::LogStore;
 use crate::log_store_rocksdb::RocksdbLogStore;
 use crate::network::KiwiNetworkFactory;
-use crate::state_machine::KiwiStateMachine;
-use storage::storage::Storage;
-use crate::grpc::{create_core_service, create_admin_service, create_client_service, create_metrics_service};
-use crate::raft_proto::raft_core_service_server::RaftCoreServiceServer;
 use crate::raft_proto::raft_admin_service_server::RaftAdminServiceServer;
 use crate::raft_proto::raft_client_service_server::RaftClientServiceServer;
+use crate::raft_proto::raft_core_service_server::RaftCoreServiceServer;
 use crate::raft_proto::raft_metrics_service_server::RaftMetricsServiceServer;
+use crate::state_machine::KiwiStateMachine;
+use storage::storage::Storage;
 
 pub struct RaftApp {
     pub node_id: u64,
@@ -64,7 +66,9 @@ impl RaftApp {
     }
 
     /// 创建所有 gRPC 服务
-    pub fn create_grpc_services(app: Arc<RaftApp>) -> (
+    pub fn create_grpc_services(
+        app: Arc<RaftApp>,
+    ) -> (
         RaftCoreServiceServer<crate::grpc::core::RaftCoreServiceImpl>,
         RaftAdminServiceServer<crate::grpc::admin::RaftAdminServiceImpl>,
         RaftClientServiceServer<crate::grpc::client::RaftClientServiceImpl>,

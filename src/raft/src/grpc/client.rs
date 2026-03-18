@@ -20,19 +20,16 @@
 
 use conf::raft_type::{Binlog, BinlogEntry, OperateType};
 use std::sync::Arc;
-use storage::slot_indexer::key_to_slot_id;
 use storage::ColumnFamilyIndex;
+use storage::slot_indexer::key_to_slot_id;
 
 // 导入 proto 生成的类型
 use crate::raft_proto::{
+    LeaderRequest, LeaderResponse, LogId, MembersRequest, MembersResponse, MetricsRequest,
+    MetricsResponse, NodeConfig, ReadRequest, ReadResponse, Response as ProtoResponse,
+    WriteRequest, WriteResponse,
     raft_client_service_server::{RaftClientService, RaftClientServiceServer},
     raft_metrics_service_server::{RaftMetricsService, RaftMetricsServiceServer},
-    WriteRequest, WriteResponse,
-    ReadRequest, ReadResponse,
-    MetricsRequest, MetricsResponse,
-    LeaderRequest, LeaderResponse,
-    MembersRequest, MembersResponse,
-    Response as ProtoResponse, LogId, NodeConfig,
 };
 use tonic::{Request, Response as TonicResponse, Status};
 
@@ -66,7 +63,9 @@ impl RaftMetricsServiceImpl {
 }
 
 /// 创建 RaftMetricsService 服务器
-pub fn create_metrics_service(app: Arc<RaftApp>) -> RaftMetricsServiceServer<RaftMetricsServiceImpl> {
+pub fn create_metrics_service(
+    app: Arc<RaftApp>,
+) -> RaftMetricsServiceServer<RaftMetricsServiceImpl> {
     RaftMetricsServiceServer::new(RaftMetricsServiceImpl::new(app))
 }
 
@@ -91,7 +90,9 @@ fn log_id_to_proto(log_id: Option<openraft::LogId<u64>>) -> Option<LogId> {
     log_id.map(|lid| LogId {
         leader_id: Some(crate::raft_proto::LeaderId {
             term: lid.leader_id.term,
-            node_id: Some(crate::raft_proto::NodeId { id: lid.leader_id.node_id }),
+            node_id: Some(crate::raft_proto::NodeId {
+                id: lid.leader_id.node_id,
+            }),
         }),
         index: lid.index,
     })
@@ -112,15 +113,19 @@ impl RaftClientService for RaftClientServiceImpl {
 
         match self.app.client_write(binlog).await {
             Ok(response) => {
-               let proto_response = if response.success {
+                let proto_response = if response.success {
                     ok_response()
                 } else {
-                    error_response(response.message.unwrap_or_else(|| "Unknown error".to_string()))
+                    error_response(
+                        response
+                            .message
+                            .unwrap_or_else(|| "Unknown error".to_string()),
+                    )
                 };
                 Ok(TonicResponse::new(WriteResponse {
                     response: Some(proto_response),
                     log_id: log_id_to_proto(None), // TODO: 返回实际 LogId
-                })) 
+                }))
             }
             Err(e) => {
                 log::error!("Failed to write to Raft: {}", e);
@@ -141,7 +146,8 @@ impl RaftClientService for RaftClientServiceImpl {
         if !self.app.is_leader() {
             if let Some((_, node)) = self.app.get_leader() {
                 return Err(Status::failed_precondition(format!(
-                    "Not leader, redirect to: {}", node.raft_addr
+                    "Not leader, redirect to: {}",
+                    node.raft_addr
                 )));
             }
             return Err(Status::unavailable("No leader available".to_string()));
@@ -155,33 +161,26 @@ impl RaftClientService for RaftClientServiceImpl {
         // 从 MetaCF 读取
         match instance.get_cf_handle(ColumnFamilyIndex::MetaCF) {
             Some(cf) => {
-                let db = instance.db.as_ref().ok_or_else(|| {
-                    Status::internal("Database not initialized".to_string())
-                })?;
+                let db = instance
+                    .db
+                    .as_ref()
+                    .ok_or_else(|| Status::internal("Database not initialized".to_string()))?;
                 match db.get_cf(&cf, key) {
-                    Ok(Some(val)) => {
-                        Ok(TonicResponse::new(ReadResponse {
-                            response: Some(ok_response()),
-                            value: val,
-                        }))
-                    }
-                    Ok(None) => {
-                        Ok(TonicResponse::new(ReadResponse {
-                            response: Some(error_response(format!(
-                                "Key not found: {:?}",
-                                String::from_utf8_lossy(key)
-                            ))),
-                            value: vec![],
-                        }))
-                    }
-                    Err(e) => {
-                        Err(Status::internal(format!("Read failed: {}", e)))
-                    }
+                    Ok(Some(val)) => Ok(TonicResponse::new(ReadResponse {
+                        response: Some(ok_response()),
+                        value: val,
+                    })),
+                    Ok(None) => Ok(TonicResponse::new(ReadResponse {
+                        response: Some(error_response(format!(
+                            "Key not found: {:?}",
+                            String::from_utf8_lossy(key)
+                        ))),
+                        value: vec![],
+                    })),
+                    Err(e) => Err(Status::internal(format!("Read failed: {}", e))),
                 }
             }
-            None => {
-                Err(Status::internal("MetaCF not found".to_string()))
-            }
+            None => Err(Status::internal("MetaCF not found".to_string())),
         }
     }
 }
@@ -218,20 +217,16 @@ impl RaftMetricsService for RaftMetricsServiceImpl {
         _request: Request<LeaderRequest>,
     ) -> Result<TonicResponse<LeaderResponse>, Status> {
         match self.app.get_leader() {
-            Some((leader_id, node)) => {
-                Ok(TonicResponse::new(LeaderResponse {
-                    response: Some(ok_response()),
-                    leader_id,
-                    leader_node: Some(NodeConfig {
-                        node_id: leader_id,
-                        raft_addr: node.raft_addr.clone(),
-                        resp_addr: node.resp_addr.clone(),
-                    }),
-                }))
-            }
-            None => {
-                Err(Status::unavailable("No leader available".to_string()))
-            }
+            Some((leader_id, node)) => Ok(TonicResponse::new(LeaderResponse {
+                response: Some(ok_response()),
+                leader_id,
+                leader_node: Some(NodeConfig {
+                    node_id: leader_id,
+                    raft_addr: node.raft_addr.clone(),
+                    resp_addr: node.resp_addr.clone(),
+                }),
+            })),
+            None => Err(Status::unavailable("No leader available".to_string())),
         }
     }
 
@@ -270,10 +265,11 @@ impl RaftMetricsService for RaftMetricsServiceImpl {
 
 // 辅助函数
 /// Proto Binlog → 实际 Binlog
-fn proto_binlog_to_binlog(proto_binlog: Option<crate::raft_proto::Binlog>) -> Result<Binlog, Status> {
-    let proto_binlog = proto_binlog.ok_or_else(|| {
-        Status::invalid_argument("Missing binlog".to_string())
-    })?;
+fn proto_binlog_to_binlog(
+    proto_binlog: Option<crate::raft_proto::Binlog>,
+) -> Result<Binlog, Status> {
+    let proto_binlog =
+        proto_binlog.ok_or_else(|| Status::invalid_argument("Missing binlog".to_string()))?;
 
     // 转换 Proto Binlog → 实际 Binlog
     let entries: Vec<BinlogEntry> = proto_binlog

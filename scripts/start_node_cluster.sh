@@ -1,19 +1,28 @@
 #!/bin/bash
-# Copyright (c) 2024-present, arana-db Community. All rights reserved.
+# Copyright (c) 2024-present, arana-db Community.  All rights reserved.
 #
-# Script to start a multi-node Raft cluster for testing Kiwi
-# Each node runs in its own directory with separate storage
-# Logs are written to files, viewable with tail -f
-# Uses gRPC for cluster management (grpcurl required)
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Script to start a multi-node Raft cluster for testing Kiwi.
+# Each node runs in its own directory with separate storage.
+# Logs are written to files, viewable with `tail -f`.
+# Uses gRPC for cluster management (`grpcurl` required).
 #
 # Usage: ./start_node_cluster.sh [NODE_COUNT]
 #   NODE_COUNT: Number of nodes to start (default: 3, range: 1-9)
-# IMPORTANT: This script is a TEMPORARY workaround for multi-node testing.
-# It copies the kiwi binary to different directories because the config system
-# is not yet finalized. This approach will change when the application supports
-# loading config files properly.
-#
-# DO NOT use this as a reference for production deployment.
 
 
 # Colors for output

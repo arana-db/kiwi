@@ -15,6 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::raft_proto::raft_core_service_client::RaftCoreServiceClient;
 use conf::raft_type::{KiwiNode, KiwiTypeConfig};
 use openraft::error::{NetworkError, RaftError};
 use openraft::network::{RPCOption, RaftNetwork, RaftNetworkFactory};
@@ -22,13 +23,12 @@ use openraft::raft::{
     AppendEntriesRequest, AppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
     VoteRequest, VoteResponse,
 };
-use tokio::sync::RwLock;
-use tokio::sync::Mutex;
 use std::io;
-use crate::raft_proto::raft_core_service_client::RaftCoreServiceClient;
-use tonic::transport::Channel;
-use tonic::Request as TonicRequest;
 use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::sync::RwLock;
+use tonic::Request as TonicRequest;
+use tonic::transport::Channel;
 
 // 类型别名，简化 RaftNetwork 的返回类型
 type NodeId = <KiwiTypeConfig as openraft::RaftTypeConfig>::NodeId;
@@ -46,7 +46,9 @@ pub struct KiwiNetworkFactory {
 
 impl KiwiNetworkFactory {
     pub fn new() -> Self {
-        Self { networks: Arc::new(RwLock::new(std::collections::HashMap::new())) }
+        Self {
+            networks: Arc::new(RwLock::new(std::collections::HashMap::new())),
+        }
     }
 }
 
@@ -63,9 +65,9 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
         // Get the read lock to check if a client already exists for the target node
         let networks = self.networks.read().await;
         if let Some(network) = networks.get(&target) {
-            return KiwiNetwork{
+            return KiwiNetwork {
                 client: Arc::clone(&network.client),
-            }
+            };
         }
 
         // Drop the read lock before acquiring the write lock
@@ -76,24 +78,21 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
 
         // Double-check if another async task has already created the client while we were waiting for the write lock
         if let Some(network) = networks.get(&target) {
-            return KiwiNetwork{
+            return KiwiNetwork {
                 client: Arc::clone(&network.client),
             };
         }
 
         // Get or create gRPC client for the target node
         let addr = node.raft_addr.clone();
-        
+
         let endpoint = match tonic::transport::Endpoint::from_shared(format!("http://{}", addr)) {
             Ok(ep) => ep,
-            Err(_err) => {
-                tonic::transport::Endpoint::from_static("http://127.0.0.1:0")
-            }
+            Err(_err) => tonic::transport::Endpoint::from_static("http://127.0.0.1:0"),
         };
-            
 
-
-        let endpoint = endpoint.connect_timeout(std::time::Duration::from_secs(5))
+        let endpoint = endpoint
+            .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(30))
             .connect_lazy();
         let client = RaftCoreServiceClient::new(endpoint);
@@ -120,7 +119,6 @@ impl Clone for KiwiNetwork {
         }
     }
 }
-
 
 // Impl the RaftNetwork trait for KiwiNetwork according to openraft requirements
 impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {

@@ -19,23 +19,21 @@
 // 用途：节点间通信，实现 Raft 共识算法
 
 use conf::raft_type::KiwiTypeConfig;
-use openraft::{Raft};
+use openraft::Raft;
 use std::pin::Pin;
 use tokio_stream::Stream;
 
 // 导入 proto 生成的类型
 use crate::raft_proto::{
+    AppendEntriesRequest, AppendEntriesResponse, Entry as ProtoEntry, InstallSnapshotRequest,
+    InstallSnapshotResponse, VoteRequest, VoteResponse, entry_payload,
     raft_core_service_server::{RaftCoreService, RaftCoreServiceServer},
-    VoteRequest, VoteResponse,
-    AppendEntriesRequest, AppendEntriesResponse,
-    InstallSnapshotRequest, InstallSnapshotResponse,
-    Entry as ProtoEntry,
-    entry_payload,
 };
 use tonic::{Request, Response, Status};
 
 // 定义流式响应类型
-type StreamAppendStream = Pin<Box<dyn Stream<Item = Result<AppendEntriesResponse, Status>> + Send + 'static>>;
+type StreamAppendStream =
+    Pin<Box<dyn Stream<Item = Result<AppendEntriesResponse, Status>> + Send + 'static>>;
 
 /// Raft 核心服务实现
 pub struct RaftCoreServiceImpl {
@@ -49,7 +47,9 @@ impl RaftCoreServiceImpl {
 }
 
 /// 创建 RaftCoreService 服务器
-pub fn create_core_service(raft: Raft<KiwiTypeConfig>) -> RaftCoreServiceServer<RaftCoreServiceImpl> {
+pub fn create_core_service(
+    raft: Raft<KiwiTypeConfig>,
+) -> RaftCoreServiceServer<RaftCoreServiceImpl> {
     RaftCoreServiceServer::new(RaftCoreServiceImpl::new(raft))
 }
 
@@ -58,11 +58,10 @@ impl RaftCoreService for RaftCoreServiceImpl {
     type StreamAppendStream = StreamAppendStream;
 
     /// 请求投票 RPC - 选举阶段使用
-    async fn vote(
-        &self,
-        request: Request<VoteRequest>,
-    ) -> Result<Response<VoteResponse>, Status> {
-        use crate::conversion::{proto_to_vote, proto_to_log_id, vote_to_proto, log_id_option_to_proto};
+    async fn vote(&self, request: Request<VoteRequest>) -> Result<Response<VoteResponse>, Status> {
+        use crate::conversion::{
+            log_id_option_to_proto, proto_to_log_id, proto_to_vote, vote_to_proto,
+        };
         use openraft::raft::VoteRequest as OpenRaftVoteRequest;
 
         // Proto → OpenRaft
@@ -70,15 +69,14 @@ impl RaftCoreService for RaftCoreServiceImpl {
         let vote = proto_to_vote(&proto_req.vote.as_ref());
         let last_log_id = proto_to_log_id(&proto_req.last_log_id.as_ref());
 
-        let raft_req = OpenRaftVoteRequest {
-            vote,
-            last_log_id,
-        };
+        let raft_req = OpenRaftVoteRequest { vote, last_log_id };
 
         // 调用 OpenRaft
-        let raft_resp = self.raft.vote(raft_req).await.map_err(|e| {
-            Status::internal(format!("Raft vote error: {}", e))
-        })?;
+        let raft_resp = self
+            .raft
+            .vote(raft_req)
+            .await
+            .map_err(|e| Status::internal(format!("Raft vote error: {}", e)))?;
 
         // OpenRaft → Proto
         let proto_resp = VoteResponse {
@@ -95,7 +93,7 @@ impl RaftCoreService for RaftCoreServiceImpl {
         &self,
         request: Request<AppendEntriesRequest>,
     ) -> Result<Response<AppendEntriesResponse>, Status> {
-        use crate::conversion::{proto_to_vote, proto_to_log_id};
+        use crate::conversion::{proto_to_log_id, proto_to_vote};
         use openraft::raft::AppendEntriesResponse as OpenRaftAppendEntriesResponse;
 
         // Proto → OpenRaft
@@ -120,9 +118,11 @@ impl RaftCoreService for RaftCoreServiceImpl {
         };
 
         // 调用 OpenRaft
-        let raft_resp = self.raft.append_entries(raft_req).await.map_err(|e| {
-            Status::internal(format!("Raft append_entries error: {}", e))
-        })?;
+        let raft_resp = self
+            .raft
+            .append_entries(raft_req)
+            .await
+            .map_err(|e| Status::internal(format!("Raft append_entries error: {}", e)))?;
 
         // OpenRaft → Proto
         // 这些都应该返回 success=false，而不是 gRPC 错误
@@ -160,25 +160,27 @@ impl RaftCoreService for RaftCoreServiceImpl {
         request: Request<tonic::Streaming<InstallSnapshotRequest>>,
     ) -> Result<Response<InstallSnapshotResponse>, Status> {
         // TODO: 实现快照安装
-        // 当前部署未实现快照安装逻辑。为确保 RPC 被正确处理，我们消费输入流并返回  
-        // 一个明确的错误，而不是 gRPC 层面的 UNIMPLEMENTED。  
-        let mut stream = request.into_inner();  
-        while let Some(_chunk) = stream.message().await? {  
-            // 丢弃所有快照分片；这里可以在将来实现真正的快照安装逻辑。  
-        }  
-        
-        Err(Status::failed_precondition(  
-            "InstallSnapshot RPC is not supported: snapshot installation is not implemented in this deployment",  
-        ))  
+        // 当前部署未实现快照安装逻辑。为确保 RPC 被正确处理，我们消费输入流并返回
+        // 一个明确的错误，而不是 gRPC 层面的 UNIMPLEMENTED。
+        let mut stream = request.into_inner();
+        while let Some(_chunk) = stream.message().await? {
+            // 丢弃所有快照分片；这里可以在将来实现真正的快照安装逻辑。
+        }
+
+        Err(Status::failed_precondition(
+            "InstallSnapshot RPC is not supported: snapshot installation is not implemented in this deployment",
+        ))
     }
 }
 
 /// 转换 Proto Entry 到 OpenRaft Entry
-fn convert_proto_entry(proto_entry: &ProtoEntry) -> Result<openraft::entry::Entry<KiwiTypeConfig>, Status> {
-    use conf::raft_type::Binlog;
+fn convert_proto_entry(
+    proto_entry: &ProtoEntry,
+) -> Result<openraft::entry::Entry<KiwiTypeConfig>, Status> {
     use crate::conversion::proto_to_log_id;
-    use openraft::entry::{Entry, EntryPayload};
+    use conf::raft_type::Binlog;
     use openraft::Membership;
+    use openraft::entry::{Entry, EntryPayload};
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
 
@@ -196,7 +198,7 @@ fn convert_proto_entry(proto_entry: &ProtoEntry) -> Result<openraft::entry::Entr
                         return Err(Status::invalid_argument(format!(
                             "failed to deserialize binlog: {}",
                             e
-                        )))
+                        )));
                     }
                 }
             }

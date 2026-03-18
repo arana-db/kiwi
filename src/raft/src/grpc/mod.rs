@@ -22,11 +22,11 @@
 // - admin: RaftAdminService (Initialize, AddLearner, ChangeMembership, RemoveNode)
 // - client: RaftClientService + RaftMetricsService (Write, Read, Metrics, Leader, Members)
 
-pub mod core;
 pub mod admin;
 pub mod client;
+pub mod core;
 
 // 导出服务创建器，便于 main.rs 使用
-pub use core::create_core_service;
 pub use admin::create_admin_service;
 pub use client::{create_client_service, create_metrics_service};
+pub use core::create_core_service;
