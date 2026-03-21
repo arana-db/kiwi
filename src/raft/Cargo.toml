@@ -37,3 +37,7 @@ proptest = "1"
 [[test]]
 name = "logindex_integration"
 path = "tests/logindex_integration.rs"
+
+[[test]]
+name = "openraft_suite"
+path = "tests/openraft_suite.rs"
