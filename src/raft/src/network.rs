@@ -139,14 +139,12 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
         _option: RPCOption,
     ) -> Result<AppendEntriesResponse<NodeId>, RPCErr> {
         // OpenRaft → Proto
-        let proto_req: crate::raft_proto::AppendEntriesRequest = rpc
-            .try_into()
-            .map_err(|e| {
-                RPCErr::Network(NetworkError::new(&io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("failed to convert AppendEntriesRequest: {}", e),
-                )))
-            })?;
+        let proto_req: crate::raft_proto::AppendEntriesRequest = rpc.try_into().map_err(|e| {
+            RPCErr::Network(NetworkError::new(&io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("failed to convert AppendEntriesRequest: {}", e),
+            )))
+        })?;
 
         // 调用 gRPC
         let mut client = self.client.lock().await;

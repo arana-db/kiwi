@@ -110,11 +110,9 @@ impl RaftClientService for RaftClientServiceImpl {
                     )
                 };
                 // 返回实际提交的 log_id（index 来自 response，term 信息不可用故设为 None）
-                let log_id = response.log_id.map(|idx| {
-                    crate::raft_proto::LogId {
-                        leader_id: None,
-                        index: idx,
-                    }
+                let log_id = response.log_id.map(|idx| crate::raft_proto::LogId {
+                    leader_id: None,
+                    index: idx,
                 });
                 Ok(TonicResponse::new(WriteResponse {
                     response: Some(proto_response),
