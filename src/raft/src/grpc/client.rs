@@ -25,7 +25,7 @@ use storage::slot_indexer::key_to_slot_id;
 
 // 导入 proto 生成的类型
 use crate::raft_proto::{
-    LeaderRequest, LeaderResponse, LogId, MembersRequest, MembersResponse, MetricsRequest,
+    LeaderRequest, LeaderResponse, MembersRequest, MembersResponse, MetricsRequest,
     MetricsResponse, NodeConfig, ReadRequest, ReadResponse, Response as ProtoResponse,
     WriteRequest, WriteResponse,
     raft_client_service_server::{RaftClientService, RaftClientServiceServer},
@@ -85,19 +85,6 @@ fn error_response(msg: String) -> ProtoResponse {
     }
 }
 
-/// LogId 转 Proto
-fn log_id_to_proto(log_id: Option<openraft::LogId<u64>>) -> Option<LogId> {
-    log_id.map(|lid| LogId {
-        leader_id: Some(crate::raft_proto::LeaderId {
-            term: lid.leader_id.term,
-            node_id: Some(crate::raft_proto::NodeId {
-                id: lid.leader_id.node_id,
-            }),
-        }),
-        index: lid.index,
-    })
-}
-
 // RaftClientService 实现
 #[tonic::async_trait]
 impl RaftClientService for RaftClientServiceImpl {
@@ -122,9 +109,16 @@ impl RaftClientService for RaftClientServiceImpl {
                             .unwrap_or_else(|| "Unknown error".to_string()),
                     )
                 };
+                // 返回实际提交的 log_id（index 来自 response，term 信息不可用故设为 None）
+                let log_id = response.log_id.map(|idx| {
+                    crate::raft_proto::LogId {
+                        leader_id: None,
+                        index: idx,
+                    }
+                });
                 Ok(TonicResponse::new(WriteResponse {
                     response: Some(proto_response),
-                    log_id: log_id_to_proto(None), // TODO: 返回实际 LogId
+                    log_id,
                 }))
             }
             Err(e) => {

@@ -24,6 +24,8 @@
 # Usage: ./start_node_cluster.sh [NODE_COUNT]
 #   NODE_COUNT: Number of nodes to start (default: 3, range: 1-9)
 
+# Exit on error, undefined variables, and pipe failures
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -102,8 +104,7 @@ find_grpcurl() {
 if [ ! -f "$BINARY_PATH" ]; then
     echo -e "${RED}Error: Binary not found at $BINARY_PATH${NC}"
     echo -e "${YELLOW}Building the project...${NC}"
-    cd "$PROJECT_ROOT" && cargo build --bin kiwi
-    if [ $? -ne 0 ]; then
+    if ! (cd "$PROJECT_ROOT" && cargo build --bin kiwi); then
         echo -e "${RED}Failed to build project${NC}"
         exit 1
     fi

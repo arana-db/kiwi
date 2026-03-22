@@ -86,10 +86,14 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
         // Get or create gRPC client for the target node
         let addr = node.raft_addr.clone();
 
-        let endpoint = match tonic::transport::Endpoint::from_shared(format!("http://{}", addr)) {
-            Ok(ep) => ep,
-            Err(_err) => tonic::transport::Endpoint::from_static("http://127.0.0.1:0"),
-        };
+        // 地址格式错误时直接 panic，而不是静默 fallback 到无效地址
+        let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
+            .unwrap_or_else(|e| {
+                panic!(
+                    "invalid raft address '{}': failed to parse as gRPC endpoint: {}",
+                    addr, e
+                )
+            });
 
         let endpoint = endpoint
             .connect_timeout(std::time::Duration::from_secs(5))
@@ -109,9 +113,16 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
     }
 }
 
+/// KiwiNetwork 实现 RaftNetwork trait，用于与远程 Raft 节点通信。
+///
+/// 注意：此结构体不能跨线程共享。内部使用 `Arc<Mutex<...>>` 来让 gRPC 客户端
+/// 可在被多个 async task 共享的同时保持线程安全，但 Clone 实现是私有的，
+/// 防止外部代码克隆并造成并发 mutability 问题。
 pub struct KiwiNetwork {
     client: Arc<Mutex<RaftCoreServiceClient<Channel>>>,
 }
+
+// 私有 Clone 实现，仅供内部工厂使用
 impl Clone for KiwiNetwork {
     fn clone(&self) -> Self {
         Self {
@@ -128,7 +139,14 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
         _option: RPCOption,
     ) -> Result<AppendEntriesResponse<NodeId>, RPCErr> {
         // OpenRaft → Proto
-        let proto_req: crate::raft_proto::AppendEntriesRequest = rpc.into();
+        let proto_req: crate::raft_proto::AppendEntriesRequest = rpc
+            .try_into()
+            .map_err(|e| {
+                RPCErr::Network(NetworkError::new(&io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("failed to convert AppendEntriesRequest: {}", e),
+                )))
+            })?;
 
         // 调用 gRPC
         let mut client = self.client.lock().await;

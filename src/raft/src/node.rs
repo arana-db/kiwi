@@ -62,7 +62,13 @@ impl RaftApp {
 
     pub async fn client_write(&self, binlog: Binlog) -> Result<BinlogResponse, anyhow::Error> {
         let res = self.raft.client_write(binlog).await?;
-        Ok(res.data)
+        // 从响应中提取 log_id
+        let log_id = Some(res.log_id.index);
+        Ok(BinlogResponse {
+            success: res.data.success,
+            message: res.data.message,
+            log_id,
+        })
     }
 
     /// 创建所有 gRPC 服务

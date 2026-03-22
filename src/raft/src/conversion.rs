@@ -150,7 +150,8 @@ impl TryInto<Entry<KiwiTypeConfig>> for &proto::Entry {
     type Error = tonic::Status;
 
     fn try_into(self) -> Result<Entry<KiwiTypeConfig>, Self::Error> {
-        let log_id = proto_to_log_id(&self.log_id.as_ref()).unwrap_or_default();
+        let log_id = proto_to_log_id(&self.log_id.as_ref())
+            .ok_or_else(|| tonic::Status::invalid_argument("missing log_id in entry"))?;
 
         let payload = match &self.payload {
             Some(p) => match &p.payload {
@@ -237,26 +238,38 @@ impl From<VoteRequest<u64>> for proto::VoteRequest {
 
 // ----- AppendEntriesRequest -----
 
-impl From<AppendEntriesRequest<KiwiTypeConfig>> for proto::AppendEntriesRequest {
-    fn from(req: AppendEntriesRequest<KiwiTypeConfig>) -> Self {
+impl TryFrom<AppendEntriesRequest<KiwiTypeConfig>> for proto::AppendEntriesRequest {
+    type Error = tonic::Status;
+
+    fn try_from(req: AppendEntriesRequest<KiwiTypeConfig>) -> Result<Self, Self::Error> {
         let vote = Some(vote_to_proto(&req.vote));
         let prev_log_id = log_id_option_to_proto(&req.prev_log_id);
 
-        // 转换 entries
-        let entries: Vec<proto::Entry> = req
-            .entries
-            .into_iter()
-            .filter_map(|e| e.try_into().ok())
-            .collect();
+        // 转换 entries，记录转换失败的条目而非静默丢弃
+        let mut entries = Vec::new();
+        let mut errors = Vec::new();
+        for (idx, e) in req.entries.into_iter().enumerate() {
+            match e.try_into() {
+                Ok(entry) => entries.push(entry),
+                Err(e) => errors.push(format!("entry[{}]: {}", idx, e)),
+            }
+        }
+        if !errors.is_empty() {
+            return Err(tonic::Status::invalid_argument(format!(
+                "failed to convert {} entries: {}",
+                errors.len(),
+                errors.join("; ")
+            )));
+        }
 
         let leader_commit = log_id_option_to_proto(&req.leader_commit);
 
-        proto::AppendEntriesRequest {
+        Ok(proto::AppendEntriesRequest {
             vote,
             prev_log_id,
             entries,
             leader_commit,
-        }
+        })
     }
 }
 
