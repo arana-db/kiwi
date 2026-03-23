@@ -58,27 +58,27 @@ Allowed types: `feat`, `fix`, `test`, `refactor`, `chore`, `upgrade`, `bump`, `s
 src/server/    → Entry point (main.rs): CLI args, runtime init, server startup
 src/net/       → Network layer: TCP server, connection handling, cluster routing
 src/cmd/       → Command definitions: Cmd trait, CmdMeta, command table
-src/executor/  → Command executor: thread pool that processes CmdExecution jobs
+src/executor/  → Command executor: tokio async task pool via async_channel
 src/storage/   → Storage layer: multi-instance RocksDB, column families, TTL
 src/engine/    → Engine trait abstraction over RocksDB
 src/resp/      → RESP protocol: parser, encoder, RespData types
 src/raft/      → Raft consensus: OpenRaft integration, state machine, router
 src/conf/      → Configuration: TOML loading, validation, ClusterConfig
 src/client/    → Client context: connection state, argv, reply buffer
-src/common/runtime/ → Dual runtime: separate tokio runtimes for net & storage
+src/common/runtime/ → Runtime management: async channel between net & storage
 src/common/macro/   → Proc macros: #[stack_trace_debug] for error types
 src/kstd/      → Utilities: LockMgr (sharded key-level locking), slice, status
 ```
 
-### Dual Runtime Architecture
+### Runtime Architecture
 
-Network I/O and storage operations run in **separate tokio runtimes** connected by an async message channel. The `RuntimeManager` (in `src/common/runtime/`) creates both runtimes. The network runtime uses a `StorageClient` to send requests; the `StorageServer` in the storage runtime receives them, executes against RocksDB, and responds via oneshot channels.
+Network I/O and storage operations communicate via an **async message channel**. The `RuntimeManager` (in `src/common/runtime/`) manages the lifecycle. The network side uses a `StorageClient` to send requests; the `StorageServer` receives them, executes against RocksDB, and responds via oneshot channels.
 
 ### Request Flow
 
 ```
 Client → TCP accept (net) → RESP parse (resp) → Command lookup (cmd table)
-  → CmdExecutor worker pool (executor) → Cmd.execute() → Storage ops (storage/engine)
+  → CmdExecutor async tasks (executor) → Cmd.execute() → Storage ops (storage/engine)
   → RESP encode response → write back to client
 ```
 
@@ -100,8 +100,8 @@ To add a new command:
 ### Storage Model
 
 `Storage` holds multiple `Redis` instances (default 3), each backed by a RocksDB database with 6 column families:
-- `MetaCF` (0): metadata & strings
-- `HashesDataCF` (1), `SetsDataCF` (2), `ListsDataCF` (3), `ZsetsDataCF` (4), `ZsetsScoreCF` (5)
+- `MetaCF`: metadata & strings
+- `HashesDataCF`, `SetsDataCF`, `ListsDataCF`, `ZsetsDataCF`, `ZsetsScoreCF`
 
 A `SlotIndexer` hashes keys to distribute across instances. `LockMgr` provides sharded key-level locking for consistency.
 
@@ -124,9 +124,15 @@ CI runs on Linux, macOS, and Windows:
 
 ## Testing
 
-- **Unit tests**: In each crate, run with `cargo test --package <crate>`
+- **Unit tests**: In each crate, run with `cargo test --package <crate>` (e.g. storage, cmd, executor, raft)
 - **Integration tests**: `tests/` directory contains Rust integration tests and Python tests (`tests/python/`)
-- **Python integration tests** require a running Kiwi server and `pip install redis pytest`
+- **Python integration tests** require a running Kiwi server and `pip install redis pytest`:
+  ```bash
+  # Terminal 1: start server
+  cargo run --bin kiwi
+  # Terminal 2: run tests
+  pytest tests/python/ -v
+  ```
 - Storage tests use `tempfile::tempdir()` for isolated RocksDB instances — see `src/storage/src/util.rs` for `unique_test_db_path()` and `safe_cleanup_test_db()`
 
 ## Gotchas
