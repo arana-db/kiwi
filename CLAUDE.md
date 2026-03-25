@@ -20,7 +20,7 @@ cargo build --release          # Release build
 
 # Run
 cargo run --bin kiwi           # Run server (debug)
-cargo run --release            # Run server (release)
+cargo run --release --bin kiwi # Run server (release)
 
 # Test
 cargo test                     # All unit tests
