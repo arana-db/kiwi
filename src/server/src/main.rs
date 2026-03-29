@@ -179,7 +179,7 @@ fn main() -> std::io::Result<()> {
 async fn initialize_storage(config: &Config) -> Result<Arc<Storage>, DualRuntimeError> {
     info!("Initializing storage...");
 
-    let storage_options = Arc::new(StorageOptions::default());
+    let storage_options = Arc::new(StorageOptions::from_config(config));
     let db_path = PathBuf::from(&config.db_path);
 
     let mut storage = Storage::new(1, 0);

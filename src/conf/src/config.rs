@@ -20,6 +20,49 @@ use validator::Validate;
 use crate::de_func::{parse_bool_from_string, parse_memory, parse_redis_config};
 use crate::error::Error;
 
+/// Compression algorithm for RocksDB column families.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompressionType {
+    None,
+    Snappy,
+    Lz4,
+    Zstd,
+    Zlib,
+    Bz2,
+}
+
+impl CompressionType {
+    pub fn to_rocksdb(&self) -> rocksdb::DBCompressionType {
+        match self {
+            CompressionType::None => rocksdb::DBCompressionType::None,
+            CompressionType::Snappy => rocksdb::DBCompressionType::Snappy,
+            CompressionType::Lz4 => rocksdb::DBCompressionType::Lz4,
+            CompressionType::Zstd => rocksdb::DBCompressionType::Zstd,
+            CompressionType::Zlib => rocksdb::DBCompressionType::Zlib,
+            CompressionType::Bz2 => rocksdb::DBCompressionType::Bz2,
+        }
+    }
+}
+
+impl std::str::FromStr for CompressionType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "none" | "no" => Ok(CompressionType::None),
+            "snappy" => Ok(CompressionType::Snappy),
+            "lz4" => Ok(CompressionType::Lz4),
+            "zstd" => Ok(CompressionType::Zstd),
+            "zlib" => Ok(CompressionType::Zlib),
+            "bz2" => Ok(CompressionType::Bz2),
+            _ => Err(format!(
+                "unknown compression type '{}', valid values: none, snappy, lz4, zstd, zlib, bz2",
+                s
+            )),
+        }
+    }
+}
+
 const DEFAULT_BINDING: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 7379; // Redis-compatible port (7xxx variant of 6379)
 // config struct define - keeping original config items but using Redis-style format
@@ -46,6 +89,9 @@ pub struct Config {
     pub rocksdb_level_compaction_dynamic_level_bytes: bool,
     pub rocksdb_max_open_files: i32,
     pub rocksdb_target_file_size_base: u64,
+    /// Compression algorithm applied to all column families.
+    /// Supported values: none, lz4, snappy, zstd, zlib, bz2. Default: lz4.
+    pub rocksdb_compression_type: CompressionType,
 
     // Additional fields from original config
     pub binding: String,
@@ -94,6 +140,7 @@ impl Default for Config {
             rocksdb_level_compaction_dynamic_level_bytes: true,
             rocksdb_max_open_files: 10000,
             rocksdb_target_file_size_base: 64 << 20, // 64MB
+            rocksdb_compression_type: CompressionType::Lz4,
 
             db_instance_num: 3,
             db_path: "./db".to_string(),
@@ -316,6 +363,15 @@ impl Config {
                             )),
                         })?;
                 }
+                "rocksdb-compression-type" => {
+                    config.rocksdb_compression_type =
+                        value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid rocksdb-compression-type: {}",
+                                e
+                            )),
+                        })?;
+                }
                 "raft-node-id" => {
                     raft_node_id = Some(value.parse().map_err(|e| Error::InvalidConfig {
                         source: serde_ini::de::Error::Custom(format!(
@@ -394,6 +450,10 @@ impl Config {
         );
         options.set_max_open_files(self.rocksdb_max_open_files);
         options.set_target_file_size_base(self.rocksdb_target_file_size_base);
+
+        // Apply compression to all levels (level 0 uses no compression, levels 1+ use configured type)
+        let compression = self.rocksdb_compression_type.to_rocksdb();
+        options.set_compression_type(compression);
 
         if self.rocksdb_periodic_second > 0 {
             options.set_periodic_compaction_seconds(self.rocksdb_periodic_second);
