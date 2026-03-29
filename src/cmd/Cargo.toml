@@ -13,6 +13,7 @@ bytes = { workspace = true }
 storage = { path = "../storage" }
 client = { path = "../client" }
 resp = { path = "../resp" }
+conf = { path = "../conf" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

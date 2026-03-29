@@ -112,7 +112,7 @@ pub struct Redis {
     pub scan_cursors_store: Mutex<Cache<String, String>>,
     pub spop_counts_store: Mutex<Cache<String, u64>>,
 
-    // For raft
+    // For startup state tracking
     pub is_starting: AtomicBool,
 }
 
@@ -153,7 +153,6 @@ impl Redis {
         }
     }
 
-    // TODO: add raft support
     pub fn open(&mut self, db_path: &str) -> Result<()> {
         self.small_compaction_threshold.store(
             self.storage.small_compaction_threshold as u64,

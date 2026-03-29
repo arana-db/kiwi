@@ -7,7 +7,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,146 +15,75 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Raft consensus implementation for Kiwi database
-//!
-//! This module provides strong consistency guarantees for distributed Kiwi deployments
-//! using the Raft consensus algorithm via the openraft library.
-
-#![allow(clippy::result_large_err)]
-#![allow(clippy::new_without_default)]
-#![allow(clippy::derivable_impls)]
-#![allow(clippy::for_kv_map)]
-#![allow(clippy::useless_format)]
-#![allow(clippy::redundant_pattern_matching)]
-#![allow(clippy::large_enum_variant)]
-#![allow(clippy::type_complexity)]
-#![allow(clippy::unnecessary_cast)]
-#![allow(clippy::io_other_error)]
-#![allow(clippy::redundant_closure)]
-#![allow(clippy::needless_return)]
-#![allow(clippy::needless_borrow)]
-#![allow(clippy::should_implement_trait)]
-#![allow(clippy::needless_question_mark)]
-#![allow(clippy::single_match)]
-#![allow(clippy::unnecessary_lazy_evaluations)]
-#![allow(clippy::useless_conversion)]
-#![allow(clippy::needless_borrows_for_generic_args)]
-#![allow(clippy::manual_is_multiple_of)]
-#![allow(clippy::if_same_then_else)]
-#![allow(clippy::identity_op)]
-#![allow(clippy::wildcard_in_or_patterns)]
-#![allow(clippy::doc_lazy_continuation)]
-#![allow(clippy::len_without_is_empty)]
-
-use openraft::Config;
-
-pub mod binlog;
-pub mod cluster_config;
-#[allow(clippy::unwrap_used)]
-#[cfg(test)]
-pub mod cluster_tests;
-pub mod config_change;
-#[allow(clippy::unwrap_used)]
-#[cfg(test)]
-pub mod config_change_tests;
-pub mod consistency;
-pub mod consistency_handler;
-pub mod conversion;
-pub mod discovery;
-pub mod error;
-#[allow(clippy::unwrap_used)]
-#[cfg(test)]
-pub mod failover_tests;
-pub mod health_monitor;
-pub mod logging;
-pub mod metrics;
-pub mod monitoring_api;
+pub mod api;
+pub mod cf_tracker;
+pub mod collector;
+pub mod db_access;
+pub mod event_listener;
+pub mod log_store;
+pub mod log_store_rocksdb;
 pub mod network;
 pub mod node;
-pub mod openraft_compatibility;
-pub mod performance;
-pub mod placeholder_types;
-pub mod protocol_compatibility;
-pub mod redis_integration;
-pub mod replication_mode;
-pub mod rocksdb_integration;
-pub mod router;
-pub mod segment_log;
-pub mod sequence_mapping;
-pub mod serialization;
-pub mod simple_mem_store; // Simple memory store using Adaptor pattern
-pub mod simple_storage;
-pub mod snapshot;
 pub mod state_machine;
-pub mod storage;
-pub mod storage_engine;
+pub mod table_properties;
 pub mod types;
 
-// Re-export commonly used types
-pub use error::RaftError;
-pub use node::{RaftNode, RaftNodeInterface};
-pub use router::{ClusterMode, RedisResponse, RequestRouter};
-pub use state_machine::KiwiStateMachine;
-pub use storage::{RaftStorage, RaftStorageAdaptor, create_raft_storage_adaptor};
-pub use storage_engine::RedisStorageEngine;
-pub use types::*;
+pub use cf_tracker::{LogIndexOfColumnFamilies, SmallestIndexRes};
+pub use collector::LogIndexAndSequenceCollector;
+pub use event_listener::LogIndexAndSequenceCollectorPurger;
+pub use table_properties::{
+    LogIndexTablePropertiesCollectorFactory, PROPERTY_KEY, get_largest_log_index_from_collection,
+    read_stats_from_table_props,
+};
+pub use types::{LogIndex, LogIndexAndSequencePair, LogIndexSeqnoPair, SequenceNumber};
 
-// Re-export simple storage functions
-pub use simple_storage::{create_simple_raft_storage, create_simple_raft_storage_with_engine};
+/// Number of column families, consistent with storage::ColumnFamilyIndex::COUNT
+pub const COLUMN_FAMILY_COUNT: usize = storage::ColumnFamilyIndex::COUNT;
 
-/// Create default Raft configuration
-pub fn default_raft_config() -> Config {
-    Config {
-        heartbeat_interval: 150,
-        election_timeout_min: 300,
-        election_timeout_max: 600,
-        max_payload_entries: 300,
-        snapshot_policy: openraft::SnapshotPolicy::LogsSinceLast(3000),
-        ..Default::default()
-    }
+/// List of CF names, in the same order as storage::ColumnFamilyIndex
+pub const CF_NAMES: [&str; COLUMN_FAMILY_COUNT] = [
+    "default",       // MetaCF = 0
+    "hash_data_cf",  // HashesDataCF = 1
+    "set_data_cf",   // SetsDataCF = 2
+    "list_data_cf",  // ListsDataCF = 3
+    "zset_data_cf",  // ZsetsDataCF = 4
+    "zset_score_cf", // ZsetsScoreCF = 5
+];
+
+const _: () = assert!(
+    CF_NAMES.len() == storage::ColumnFamilyIndex::COUNT,
+    "CF_NAMES length must match storage::ColumnFamilyIndex::COUNT"
+);
+
+/// Convert CF name to index
+pub fn cf_name_to_index(name: &[u8]) -> Option<usize> {
+    CF_NAMES.iter().position(|n| n.as_bytes() == name)
 }
 
-#[allow(clippy::unwrap_used)]
 #[cfg(test)]
-mod unit_tests {
+mod tests {
     use super::*;
 
     #[test]
-    fn test_type_config_consistency() {
-        // Ensure our type configuration is properly set up
-        let _config: Config = default_raft_config();
-        assert_eq!(ConsistencyLevel::default(), ConsistencyLevel::Linearizable);
-    }
-
-    #[test]
-    fn test_client_request_serialization() {
-        let request = ClientRequest {
-            id: RequestId::new(),
-            command: RedisCommand::from_bytes(
-                "SET".to_string(),
-                vec![b"key".to_vec(), b"value".to_vec()],
-            ),
-            consistency_level: ConsistencyLevel::Linearizable,
-        };
-
-        let serialized = serde_json::to_string(&request).unwrap();
-        let deserialized: ClientRequest = serde_json::from_str(&serialized).unwrap();
-
-        assert_eq!(request.id, deserialized.id);
-        assert_eq!(request.command.command, deserialized.command.command);
-        assert_eq!(request.consistency_level, deserialized.consistency_level);
+    fn test_cf_names_match_storage() {
+        use storage::ColumnFamilyIndex;
+        let variants: [ColumnFamilyIndex; ColumnFamilyIndex::COUNT] = [
+            ColumnFamilyIndex::MetaCF,
+            ColumnFamilyIndex::HashesDataCF,
+            ColumnFamilyIndex::SetsDataCF,
+            ColumnFamilyIndex::ListsDataCF,
+            ColumnFamilyIndex::ZsetsDataCF,
+            ColumnFamilyIndex::ZsetsScoreCF,
+        ];
+        for (i, cf_index) in variants.iter().enumerate() {
+            assert_eq!(
+                cf_index.name(),
+                CF_NAMES[i],
+                "CF_NAMES[{}] mismatch: expected '{}', got '{}'",
+                i,
+                cf_index.name(),
+                CF_NAMES[i]
+            );
+        }
     }
 }
-
-#[allow(clippy::unwrap_used)]
-#[cfg(test)]
-pub mod integration_tests;
-
-#[allow(clippy::unwrap_used)]
-#[cfg(test)]
-pub mod integration_tests_working;
-
-#[allow(clippy::unwrap_used)]
-#[cfg(test)]
-#[path = "tests/mod.rs"]
-mod test_harness;

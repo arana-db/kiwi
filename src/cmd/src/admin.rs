@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Administrative commands for cluster management
+//! Administrative commands
 
 use std::sync::Arc;
 
@@ -66,25 +66,8 @@ impl Cmd for InfoCmd {
         match section.as_str() {
             "cluster" => {
                 info.push_str("# Cluster\r\n");
-                info.push_str("cluster_enabled:1\r\n");
-                info.push_str("cluster_state:ok\r\n");
-                info.push_str("cluster_slots_assigned:16384\r\n");
-                info.push_str("cluster_slots_ok:16384\r\n");
-                info.push_str("cluster_slots_pfail:0\r\n");
-                info.push_str("cluster_slots_fail:0\r\n");
-                info.push_str("cluster_known_nodes:1\r\n");
-                info.push_str("cluster_size:1\r\n");
-                info.push_str("cluster_current_epoch:1\r\n");
-                info.push_str("cluster_my_epoch:1\r\n");
-            }
-            "raft" => {
-                info.push_str("# Raft\r\n");
-                info.push_str("raft_state:follower\r\n");
-                info.push_str("raft_term:1\r\n");
-                info.push_str("raft_leader:none\r\n");
-                info.push_str("raft_commit_index:0\r\n");
-                info.push_str("raft_last_applied:0\r\n");
-                info.push_str("raft_log_size:0\r\n");
+                info.push_str("cluster_enabled:0\r\n");
+                info.push_str("cluster_state:disabled\r\n");
             }
             "server" | "default" => {
                 info.push_str("# Server\r\n");
@@ -92,7 +75,7 @@ impl Cmd for InfoCmd {
                 info.push_str("redis_git_sha1:00000000\r\n");
                 info.push_str("redis_git_dirty:0\r\n");
                 info.push_str("redis_build_id:0\r\n");
-                info.push_str("redis_mode:cluster\r\n");
+                info.push_str("redis_mode:standalone\r\n");
                 info.push_str("os:Windows\r\n");
                 info.push_str("arch_bits:64\r\n");
                 info.push_str("multiplexing_api:select\r\n");
@@ -110,17 +93,15 @@ impl Cmd for InfoCmd {
 
                 if section == "default" {
                     info.push_str("\r\n# Cluster\r\n");
-                    info.push_str("cluster_enabled:1\r\n");
-                    info.push_str("cluster_state:ok\r\n");
-                    info.push_str("cluster_known_nodes:1\r\n");
-                    info.push_str("cluster_size:1\r\n");
+                    info.push_str("cluster_enabled:0\r\n");
+                    info.push_str("cluster_state:disabled\r\n");
                 }
             }
             _ => {
                 // Default to server info for unknown sections
                 info.push_str("# Server\r\n");
                 info.push_str("redis_version:7.0.0\r\n");
-                info.push_str("redis_mode:cluster\r\n");
+                info.push_str("redis_mode:standalone\r\n");
             }
         }
 
@@ -177,20 +158,19 @@ impl Cmd for ConfigCmd {
 
                 let parameter = String::from_utf8_lossy(&client.argv()[2]).to_lowercase();
 
-                // Return cluster-related configuration
+                // Return configuration (cluster mode is removed; report disabled)
                 match parameter.as_str() {
                     "cluster-enabled" => {
                         let result = vec![
                             RespData::BulkString(Some(Bytes::from("cluster-enabled"))),
-                            RespData::BulkString(Some(Bytes::from("yes"))),
+                            RespData::BulkString(Some(Bytes::from("no"))),
                         ];
                         client.set_reply(RespData::Array(Some(result)));
                     }
                     "*" => {
-                        // Return all configuration parameters
                         let result = vec![
                             RespData::BulkString(Some(Bytes::from("cluster-enabled"))),
-                            RespData::BulkString(Some(Bytes::from("yes"))),
+                            RespData::BulkString(Some(Bytes::from("no"))),
                             RespData::BulkString(Some(Bytes::from("port"))),
                             RespData::BulkString(Some(Bytes::from("7379"))),
                         ];

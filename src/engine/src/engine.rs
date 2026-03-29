@@ -38,6 +38,13 @@ pub trait Engine: Send + Sync {
 
     fn delete_opt(&self, key: &[u8], writeopts: &WriteOptions) -> Result<()>;
 
+    fn delete_range_cf<'a>(
+        &'a self,
+        cf: &ColumnFamilyRef<'a>,
+        from: &[u8],
+        to: &[u8],
+    ) -> Result<()>;
+
     fn write(&self, batch: WriteBatch) -> Result<()>;
 
     fn write_opt(&self, batch: WriteBatch, writeopts: &WriteOptions) -> Result<()>;

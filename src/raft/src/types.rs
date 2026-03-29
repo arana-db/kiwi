@@ -7,7 +7,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,224 +15,128 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Core type definitions for Raft consensus implementation
+use parking_lot::Mutex;
 
-use bytes::Bytes;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-use std::fmt;
+/// Raft log index
+pub type LogIndex = i64;
 
-/// Node identifier type
-pub type NodeId = u64;
+pub type SequenceNumber = u64;
 
-/// Term identifier type  
-pub type Term = u64;
-
-/// Log index type
-pub type LogIndex = u64;
-
-/// Log identifier combining term and index
-pub type LogId = openraft::LogId<NodeId>;
-
-/// Request identifier for client operations
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct RequestId(pub u64);
-
-impl RequestId {
-    /// Create a new unique request ID
-    pub fn new() -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static COUNTER: AtomicU64 = AtomicU64::new(1);
-        Self(COUNTER.fetch_add(1, Ordering::Relaxed))
-    }
-
-    /// Get the raw ID value
-    pub fn as_u64(&self) -> u64 {
-        self.0
-    }
+/// Value object: stores the binding relationship between (LogIndex, SequenceNumber)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogIndexAndSequencePair {
+    applied_log_index: LogIndex,
+    seqno: SequenceNumber,
 }
 
-impl Default for RequestId {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl fmt::Display for RequestId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Basic node information for cluster membership
-pub type BasicNode = openraft::BasicNode;
-
-/// Raft metrics for monitoring and observability
-pub type RaftMetrics = openraft::RaftMetrics<NodeId, BasicNode>;
-
-/// Raft configuration change for cluster membership
-pub type ConfigChange = openraft::ChangeMembers<NodeId, BasicNode>;
-
-/// Entry type for Raft log
-pub type Entry<T> = openraft::Entry<T>;
-
-/// Snapshot metadata
-#[derive(Debug, Clone)]
-pub struct SnapshotMetadata {
-    pub last_log_id: Option<LogId>,
-    pub last_membership: openraft::EffectiveMembership<NodeId, BasicNode>,
-    pub snapshot_id: String,
-}
-
-/// Redis command representation for Raft log entries
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RedisCommand {
-    pub command: String,
-    pub args: Vec<Bytes>,
-}
-
-impl RedisCommand {
-    pub fn new(command: String, args: Vec<Bytes>) -> Self {
-        Self { command, args }
-    }
-
-    /// Create from string arguments
-    pub fn from_strings(command: String, args: Vec<String>) -> Self {
-        let byte_args = args.into_iter().map(|s| Bytes::from(s)).collect();
+impl LogIndexAndSequencePair {
+    pub fn new(applied_log_index: LogIndex, seqno: SequenceNumber) -> Self {
         Self {
-            command,
-            args: byte_args,
+            applied_log_index,
+            seqno,
         }
     }
 
-    /// Create from byte vector arguments
-    pub fn from_bytes(command: String, args: Vec<Vec<u8>>) -> Self {
-        let byte_args = args.into_iter().map(|v| Bytes::from(v)).collect();
-        Self {
-            command,
-            args: byte_args,
-        }
+    pub fn applied_log_index(&self) -> LogIndex {
+        self.applied_log_index
+    }
+
+    pub fn seqno(&self) -> SequenceNumber {
+        self.seqno
+    }
+
+    pub fn set_applied_log_index(&mut self, v: LogIndex) {
+        self.applied_log_index = v;
+    }
+
+    pub fn set_seqno(&mut self, v: SequenceNumber) {
+        self.seqno = v;
     }
 }
 
-/// Client request for Raft operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientRequest {
-    pub id: RequestId,
-    pub command: RedisCommand,
-    pub consistency_level: ConsistencyLevel,
+/// Atomic (log_index, seqno) pair. Uses Mutex to ensure both fields are updated
+/// together, avoiding torn reads that would corrupt purge boundaries.
+#[derive(Debug, Default)]
+pub struct LogIndexSeqnoPair {
+    inner: Mutex<(LogIndex, SequenceNumber)>,
 }
 
-/// Client response from Raft operations
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClientResponse {
-    pub id: RequestId,
-    pub result: Result<Bytes, String>,
-    pub leader_id: Option<NodeId>,
-}
-
-impl ClientResponse {
-    /// Create a successful response
-    pub fn success(id: RequestId, data: Bytes, leader_id: Option<NodeId>) -> Self {
+impl LogIndexSeqnoPair {
+    pub fn new(log_index: LogIndex, seqno: SequenceNumber) -> Self {
         Self {
-            id,
-            result: Ok(data),
-            leader_id,
+            inner: Mutex::new((log_index, seqno)),
         }
     }
 
-    /// Create an error response
-    pub fn error(id: RequestId, error: String, leader_id: Option<NodeId>) -> Self {
-        Self {
-            id,
-            result: Err(error),
-            leader_id,
-        }
+    pub fn log_index(&self) -> LogIndex {
+        self.inner.lock().0
+    }
+
+    pub fn seqno(&self) -> SequenceNumber {
+        self.inner.lock().1
+    }
+
+    /// Single atomic store of both fields; readers always see a consistent pair.
+    pub fn set(&self, log_index: LogIndex, seqno: SequenceNumber) {
+        *self.inner.lock() = (log_index, seqno);
+    }
+
+    /// Compare based on seqno
+    pub fn eq_seqno(&self, other: &Self) -> bool {
+        self.seqno() == other.seqno()
+    }
+
+    pub fn le_seqno(&self, other: &Self) -> bool {
+        self.seqno() <= other.seqno()
+    }
+
+    pub fn ge_seqno(&self, other: &Self) -> bool {
+        self.seqno() >= other.seqno()
+    }
+
+    pub fn lt_seqno(&self, other: &Self) -> bool {
+        self.seqno() < other.seqno()
     }
 }
 
-/// Type configuration for openraft
-#[derive(
-    Debug, Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize,
-)]
-pub struct TypeConfig;
-
-impl fmt::Display for TypeConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TypeConfig")
+impl Clone for LogIndexSeqnoPair {
+    fn clone(&self) -> Self {
+        Self::new(self.log_index(), self.seqno())
     }
 }
 
-impl openraft::RaftTypeConfig for TypeConfig {
-    type D = ClientRequest;
-    type R = ClientResponse;
-    type NodeId = NodeId;
-    type Node = BasicNode;
-    type Entry = openraft::Entry<TypeConfig>;
-    type SnapshotData = std::io::Cursor<Vec<u8>>;
-    type AsyncRuntime = openraft::TokioRuntime;
-    type Responder = openraft::impls::OneshotResponder<TypeConfig>;
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// Raft network type alias
-pub type RaftNetwork = crate::network::RaftNetworkClient;
+    #[test]
+    fn test_log_index_and_sequence_pair() {
+        let mut p = LogIndexAndSequencePair::new(233333, 5);
+        assert_eq!(p.applied_log_index(), 233333);
+        assert_eq!(p.seqno(), 5);
 
-/// Read consistency levels
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ConsistencyLevel {
-    /// Linearizable reads - confirm leadership before responding
-    Linearizable,
-    /// Eventual consistency - read from local state
-    Eventual,
-}
+        p.set_applied_log_index(100);
+        p.set_seqno(10);
+        assert_eq!(p.applied_log_index(), 100);
+        assert_eq!(p.seqno(), 10);
+    }
 
-impl Default for ConsistencyLevel {
-    fn default() -> Self {
-        ConsistencyLevel::Linearizable
+    #[test]
+    fn test_log_index_seqno_pair() {
+        let p = LogIndexSeqnoPair::new(100, 50);
+        assert_eq!(p.log_index(), 100);
+        assert_eq!(p.seqno(), 50);
+
+        p.set(200, 60);
+        assert_eq!(p.log_index(), 200);
+        assert_eq!(p.seqno(), 60);
+
+        let q = LogIndexSeqnoPair::new(0, 70);
+        assert!(p.lt_seqno(&q));
+        assert!(p.le_seqno(&q));
+        assert!(!p.ge_seqno(&q));
+
+        let r = LogIndexSeqnoPair::new(0, 60);
+        assert!(p.eq_seqno(&r));
     }
 }
-
-/// Cluster configuration for Raft node initialization
-#[derive(Debug, Clone)]
-pub struct ClusterConfig {
-    pub enabled: bool,
-    pub node_id: NodeId,
-    pub cluster_members: BTreeSet<String>, // Format: "node_id:host:port"
-    pub data_dir: String,
-    pub heartbeat_interval_ms: u64,
-    pub election_timeout_min_ms: u64,
-    pub election_timeout_max_ms: u64,
-    pub snapshot_threshold: u64,
-    pub max_payload_entries: u64,
-}
-
-impl Default for ClusterConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            node_id: 1,
-            cluster_members: BTreeSet::new(),
-            data_dir: "./raft_data".to_string(),
-            heartbeat_interval_ms: 1000,
-            election_timeout_min_ms: 3000,
-            election_timeout_max_ms: 6000,
-            snapshot_threshold: 1000,
-            max_payload_entries: 100,
-        }
-    }
-}
-
-/// Cluster health information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClusterHealth {
-    pub total_members: usize,
-    pub healthy_members: usize,
-    pub learners: usize,
-    pub partitioned_nodes: usize,
-    pub current_leader: Option<NodeId>,
-    pub is_healthy: bool,
-    pub last_log_index: u64,
-    pub commit_index: u64,
-}
-
-pub mod tests;
