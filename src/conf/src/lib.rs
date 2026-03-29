@@ -25,7 +25,7 @@ mod tests {
     use validator::Validate;
 
     use super::*;
-    use crate::config::{Config, RaftClusterConfig};
+    use crate::config::Config;
 
     #[test]
     fn test_config_parsing() {
