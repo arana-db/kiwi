@@ -25,6 +25,7 @@ mod tests {
     use validator::Validate;
 
     use super::*;
+    use crate::config::{Config, RaftClusterConfig};
 
     #[test]
     fn test_config_parsing() {
@@ -100,7 +101,8 @@ mod tests {
             db_instance_num: 3,
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
-            cluster: config::ClusterConfig::default(),
+            db_path: "./db".to_string(),
+            raft: None,
         };
         assert!(invalid_config.validate().is_err());
 
