@@ -22,10 +22,9 @@ use bytes::{Buf, Bytes, BytesMut};
 use nom::Parser;
 use nom::{
     IResult,
-    bytes::streaming::{take, take_while1},
-    character::streaming::{char, digit1, line_ending, not_line_ending, space1},
-    combinator::{map, map_res, opt, recognize},
-    multi::separated_list0,
+    bytes::streaming::take,
+    character::streaming::{char, digit1, line_ending, not_line_ending},
+    combinator::{map_res, opt, recognize},
     sequence::terminated,
 };
 
@@ -106,17 +105,13 @@ impl RespParse {
     }
 
     fn parse_inline(input: &[u8]) -> IResult<&[u8], RespData> {
-        let mut parse_parts = separated_list0(
-            space1,
-            map(
-                take_while1(|c| c != b' ' && c != b'\r' && c != b'\n'),
-                |s: &[u8]| Bytes::copy_from_slice(s),
-            ),
-        );
+        let (input, line) = terminated(not_line_ending, line_ending).parse(input)?;
 
-        let (input, parts) = parse_parts.parse(input)?;
-
-        let (input, _) = line_ending(input)?;
+        let parts = line
+            .split(|byte| byte.is_ascii_whitespace())
+            .filter(|part| !part.is_empty())
+            .map(Bytes::copy_from_slice)
+            .collect::<Vec<_>>();
 
         if parts.is_empty() {
             return Err(nom::Err::Error(nom::error::Error::new(
@@ -125,7 +120,27 @@ impl RespParse {
             )));
         }
 
-        Ok((input, RespData::Inline(parts)))
+        Ok((
+            input,
+            RespData::Array(Some(
+                parts
+                    .into_iter()
+                    .map(|part| RespData::BulkString(Some(part)))
+                    .collect(),
+            )),
+        ))
+    }
+
+    fn skip_empty_lines(&mut self) {
+        loop {
+            if self.buffer.starts_with(b"\r\n") {
+                self.buffer.advance(2);
+            } else if self.buffer.starts_with(b"\n") {
+                self.buffer.advance(1);
+            } else {
+                break;
+            }
+        }
     }
 
     fn parse_simple_string(input: &[u8]) -> IResult<&[u8], RespData> {
@@ -432,6 +447,8 @@ impl RespParse {
     }
 
     fn process_buffer(&mut self) -> RespParseResult {
+        self.skip_empty_lines();
+
         if self.buffer.is_empty() {
             return RespParseResult::Incomplete;
         }
@@ -497,6 +514,8 @@ impl Drop for RespParse {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
+    use crate::command::CommandType;
+
     use super::Bytes;
     use super::{Parse, RespData, RespParse, RespParseResult, RespVersion};
 
@@ -533,37 +552,78 @@ mod tests {
         let res = parser.parse(Bytes::from("ping\r\n"));
         assert_eq!(
             res,
-            RespParseResult::Complete(RespData::Inline(vec![Bytes::from("ping")]))
+            RespParseResult::Complete(RespData::Array(Some(vec![RespData::BulkString(Some(
+                Bytes::from("ping"),
+            ))])))
         );
         parser.reset();
 
         let res = parser.parse(Bytes::from("PING\r\n\r\n"));
         assert_eq!(
             res,
-            RespParseResult::Complete(RespData::Inline(vec![Bytes::from("PING")]))
+            RespParseResult::Complete(RespData::Array(Some(vec![RespData::BulkString(Some(
+                Bytes::from("PING"),
+            ))])))
         );
         parser.reset();
 
         let res = parser.parse(Bytes::from("PING\n"));
         assert_eq!(
             res,
-            RespParseResult::Complete(RespData::Inline(vec![Bytes::from("PING")]))
+            RespParseResult::Complete(RespData::Array(Some(vec![RespData::BulkString(Some(
+                Bytes::from("PING"),
+            ))])))
         );
         parser.reset();
 
         let res = parser.parse(Bytes::from("PING\n\n"));
         assert_eq!(
             res,
-            RespParseResult::Complete(RespData::Inline(vec![Bytes::from("PING")]))
+            RespParseResult::Complete(RespData::Array(Some(vec![RespData::BulkString(Some(
+                Bytes::from("PING"),
+            ))])))
         );
         parser.reset();
 
         let res = parser.parse(Bytes::from("PING\r\n\n"));
         assert_eq!(
             res,
-            RespParseResult::Complete(RespData::Inline(vec![Bytes::from("PING")]))
+            RespParseResult::Complete(RespData::Array(Some(vec![RespData::BulkString(Some(
+                Bytes::from("PING"),
+            ))])))
         );
         parser.reset();
+    }
+
+    #[test]
+    fn test_parse_inline_info_command() {
+        let mut parser = RespParse::new(RespVersion::RESP2);
+        let res = parser.parse(Bytes::from("info\r\n"));
+        assert_eq!(
+            res,
+            RespParseResult::Complete(RespData::Array(Some(vec![RespData::BulkString(Some(
+                Bytes::from("info"),
+            ))])))
+        );
+
+        let command = parser.next_command().unwrap().unwrap();
+        assert_eq!(command.command_type, CommandType::Info);
+        assert!(command.args.is_empty());
+    }
+
+    #[test]
+    fn test_parse_inline_with_surrounding_whitespace() {
+        let mut parser = RespParse::new(RespVersion::RESP2);
+        let res = parser.parse(Bytes::from(" \tinfo \t\r\n"));
+        assert_eq!(
+            res,
+            RespParseResult::Complete(RespData::Array(Some(vec![RespData::BulkString(Some(
+                Bytes::from("info"),
+            ))])))
+        );
+
+        let command = parser.next_command().unwrap().unwrap();
+        assert_eq!(command.command_type, CommandType::Info);
     }
 
     #[test]
@@ -572,13 +632,13 @@ mod tests {
         let res = parser.parse(Bytes::from("hmget fruit apple banana watermelon\r\n"));
         assert_eq!(
             res,
-            RespParseResult::Complete(RespData::Inline(vec![
-                Bytes::from("hmget"),
-                Bytes::from("fruit"),
-                Bytes::from("apple"),
-                Bytes::from("banana"),
-                Bytes::from("watermelon")
-            ]))
+            RespParseResult::Complete(RespData::Array(Some(vec![
+                RespData::BulkString(Some(Bytes::from("hmget"))),
+                RespData::BulkString(Some(Bytes::from("fruit"))),
+                RespData::BulkString(Some(Bytes::from("apple"))),
+                RespData::BulkString(Some(Bytes::from("banana"))),
+                RespData::BulkString(Some(Bytes::from("watermelon"))),
+            ])))
         );
     }
 
@@ -591,20 +651,49 @@ mod tests {
         ));
         assert_eq!(
             res,
-            RespParseResult::Complete(RespData::Inline(vec![Bytes::from("ping")]))
+            RespParseResult::Complete(RespData::Array(Some(vec![RespData::BulkString(Some(
+                Bytes::from("ping"),
+            ))])))
         );
 
         let res = parser.parse(Bytes::new());
         assert_eq!(
             res,
-            RespParseResult::Complete(RespData::Inline(vec![
-                Bytes::from("hmget"),
-                Bytes::from("fruit"),
-                Bytes::from("apple"),
-                Bytes::from("banana"),
-                Bytes::from("watermelon")
-            ]))
+            RespParseResult::Complete(RespData::Array(Some(vec![
+                RespData::BulkString(Some(Bytes::from("hmget"))),
+                RespData::BulkString(Some(Bytes::from("fruit"))),
+                RespData::BulkString(Some(Bytes::from("apple"))),
+                RespData::BulkString(Some(Bytes::from("banana"))),
+                RespData::BulkString(Some(Bytes::from("watermelon"))),
+            ])))
         );
+    }
+
+    #[test]
+    fn test_parse_multiple_inline_with_blank_lines() {
+        let mut parser = RespParse::new(RespVersion::RESP2);
+
+        let res = parser.parse(Bytes::from("ping\r\n\r\ninfo\r\n"));
+        assert_eq!(
+            res,
+            RespParseResult::Complete(RespData::Array(Some(vec![RespData::BulkString(Some(
+                Bytes::from("ping"),
+            ))])))
+        );
+
+        let res = parser.parse(Bytes::new());
+        assert_eq!(
+            res,
+            RespParseResult::Complete(RespData::Array(Some(vec![RespData::BulkString(Some(
+                Bytes::from("info"),
+            ))])))
+        );
+
+        let command = parser.next_command().unwrap().unwrap();
+        assert_eq!(command.command_type, CommandType::Ping);
+
+        let command = parser.next_command().unwrap().unwrap();
+        assert_eq!(command.command_type, CommandType::Info);
     }
 
     #[test]
