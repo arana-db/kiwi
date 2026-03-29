@@ -20,10 +20,10 @@
 //! Redis sorted sets operations implementation
 //! This module provides sorted set operations for Redis storage
 
-use crate::base_data_value_format::{BaseDataValue, ParsedBaseDataValue};
-use crate::base_meta_value_format::{ParsedZSetsMetaValue, ZSetsMetaValue};
 use crate::error::Error::RedisErr;
 use crate::error::{OptionNoneSnafu, RocksSnafu};
+use crate::format_base_data_value::{BaseDataValue, ParsedBaseDataValue};
+use crate::format_base_meta_value::{ParsedZSetsMetaValue, ZSetsMetaValue};
 use crate::redis::Redis;
 use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Result};
 use kstd::lock_mgr::ScopeRecordLock;
@@ -32,8 +32,8 @@ use snafu::OptionExt;
 use snafu::ResultExt;
 use std::collections::HashSet;
 
-use crate::member_data_key_format::MemberDataKey;
-use crate::zset_score_key_format::{ParsedZSetsScoreKey, ScoreMember, ZSetsScoreKey};
+use crate::format_member_data_key::MemberDataKey;
+use crate::format_zset_score_key::{ParsedZSetsScoreKey, ScoreMember, ZSetsScoreKey};
 
 impl Redis {
     /// Add one or more members to a sorted set, or update its score if it already exists
@@ -390,7 +390,7 @@ impl Redis {
                         batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &old_score_key)?;
 
                         // Add new score key and update member value
-                        let new_score_key = crate::zset_score_key_format::ZSetsScoreKey::new(
+                        let new_score_key = crate::format_zset_score_key::ZSetsScoreKey::new(
                             key, version, new_score, member,
                         )
                         .encode()?;

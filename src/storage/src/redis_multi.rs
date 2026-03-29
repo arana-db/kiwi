@@ -396,7 +396,7 @@ impl Redis {
                             // Get score from value
                             let parsed_value = ParsedInternalValue::new(&value);
                             let score_bytes = parsed_value.user_value();
-                            let score = f64::from_be_bytes(score_bytes[0..8].try_into().expect("slice length mismatch"));
+                            let score = f64::from_le_bytes(score_bytes[0..8].try_into().expect("slice length mismatch"));
                             
                             // Create score key
                             let new_score_key = self.encode_zsets_score_key(new_key, version, score, member);

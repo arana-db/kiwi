@@ -19,9 +19,9 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use snafu::ensure;
 
 use crate::{
-    base_value_format::{DataType, InternalValue, ParsedInternalValue},
     delegate_internal_value, delegate_parsed_value,
     error::{InvalidFormatSnafu, Result},
+    format_base_value::{DataType, InternalValue, ParsedInternalValue},
     storage_define::{SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH},
 };
 

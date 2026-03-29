@@ -153,10 +153,10 @@ mod is_stale_tests {
     use chrono::Utc;
     use kstd::lock_mgr::LockMgr;
     use std::sync::Arc;
-    use storage::base_meta_value_format::HashesMetaValue;
-    use storage::base_value_format::DataType;
-    use storage::list_meta_value_format::ListsMetaValue;
-    use storage::strings_value_format::StringValue;
+    use storage::format_base_meta_value::HashesMetaValue;
+    use storage::format_base_value::DataType;
+    use storage::format_list_meta_value::ListsMetaValue;
+    use storage::format_strings_value::StringValue;
     use storage::{BgTaskHandler, Redis, StorageOptions};
 
     fn now_micros() -> u64 {

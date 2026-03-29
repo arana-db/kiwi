@@ -22,9 +22,9 @@ use chrono::Utc;
 use snafu::ensure;
 
 use crate::{
-    base_value_format::{DataType, InternalValue, ParsedInternalValue},
     delegate_internal_value, delegate_parsed_value,
     error::{InvalidFormatSnafu, Result},
+    format_base_value::{DataType, InternalValue, ParsedInternalValue},
     storage_define::{
         BASE_META_VALUE_COUNT_LENGTH, BASE_META_VALUE_LENGTH, SUFFIX_RESERVE_LENGTH,
         TIMESTAMP_LENGTH, TYPE_LENGTH, VERSION_LENGTH,
@@ -331,7 +331,7 @@ mod parsed_base_meta_value_tests {
     use bytes::BytesMut;
 
     use super::*;
-    use crate::base_value_format::DataType;
+    use crate::format_base_value::DataType;
 
     const TEST_VERSION: u64 = 123456789;
     const TEST_CTIME: u64 = 1620000000;
