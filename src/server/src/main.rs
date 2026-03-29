@@ -180,7 +180,7 @@ async fn initialize_storage(config: &Config) -> Result<Arc<Storage>, DualRuntime
     info!("Initializing storage...");
 
     let storage_options = Arc::new(StorageOptions::default());
-    let db_path = PathBuf::from(&config.db_path);
+    let db_path = PathBuf::from(&config.db_dir);
 
     let mut storage = Storage::new(1, 0);
 
