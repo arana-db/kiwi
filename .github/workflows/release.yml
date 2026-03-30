@@ -1,0 +1,164 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: kiwi-rs
+            asset_name: kiwi-rs-linux-amd64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: kiwi-rs
+            asset_name: kiwi-rs-linux-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: kiwi-rs
+            asset_name: kiwi-rs-macos-amd64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: kiwi-rs
+            asset_name: kiwi-rs-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: kiwi-rs.exe
+            asset_name: kiwi-rs-windows-amd64.exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Free disk space (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo rm -rf /usr/local/.ghcup /usr/share/dotnet /usr/local/lib/android \
+                      /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.8
+
+      - name: Configure sccache
+        run: |
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      - name: Install protoc (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Install protoc (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install protobuf
+
+      - name: Install protoc (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          $protocVersion = "27.1"
+          $protocZip = "protoc-$protocVersion-win64.zip"
+          $protocUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/$protocZip"
+          $protocPath = "$env:RUNNER_TEMP\protoc"
+          Invoke-WebRequest -Uri $protocUrl -OutFile "$env:RUNNER_TEMP\$protocZip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\$protocZip" -DestinationPath $protocPath
+          echo "$protocPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Strip binary (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+
+      - name: Create tarball (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          VERSION="${{ github.ref_name }}"
+          NAME="${{ matrix.asset_name }}-${VERSION}"
+          STAGE="dist/${NAME}"
+          
+          mkdir -p "${STAGE}"
+          cp target/${{ matrix.target }}/release/${{ matrix.artifact_name }} "${STAGE}/"
+          cp README.md LICENSE "${STAGE}/" || true
+          
+          cd dist
+          tar -czf "${NAME}.tar.gz" "${NAME}"
+          sha256sum "${NAME}.tar.gz" | awk '{print $1}' > "${NAME}.tar.gz.sha256"
+
+      - name: Create zip (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          $VERSION = "${{ github.ref_name }}"
+          $NAME = "${{ matrix.asset_name }}-${VERSION}"
+          $STAGE = "dist\${NAME}"
+          
+          New-Item -ItemType Directory -Force -Path $STAGE
+          Copy-Item "target\${{ matrix.target }}\release\${{ matrix.artifact_name }}" -Destination "${STAGE}\"
+          Copy-Item "README.md", "LICENSE" -Destination "${STAGE}\" -ErrorAction SilentlyContinue
+          
+          Compress-Archive -Path $STAGE -DestinationPath "dist\${NAME}.zip"
+          (Get-FileHash "dist\${NAME}.zip" -Algorithm SHA256).Hash.ToLower() | Out-File -FilePath "dist\${NAME}.zip.sha256" -NoNewline
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.asset_name }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            dist/*.zip
+            dist/*.zip.sha256
+          retention-days: 7
+
+      - name: Show sccache stats
+        run: sccache --show-stats
+
+  release:
+    name: Publish GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v8
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "Kiwi-rs ${{ github.ref_name }}"
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            dist/*.zip
+            dist/*.zip.sha256
