@@ -54,14 +54,6 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
 
-      - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.8
-
-      - name: Configure sccache
-        run: |
-          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
-          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
-
       - name: Install cross-compilation tools (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
@@ -135,9 +127,6 @@ jobs:
             dist/*.zip
             dist/*.zip.sha256
           retention-days: 7
-
-      - name: Show sccache stats
-        run: sccache --show-stats
 
   release:
     name: Publish GitHub Release
