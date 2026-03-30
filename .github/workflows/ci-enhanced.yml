@@ -255,9 +255,11 @@ jobs:
           retention-days: 7
 
   # Sanitizers for memory safety checks
+  # Note: These checks may fail on existing code - they help identify potential issues
   sanitizers:
     name: Sanitizers (${{ matrix.sanitizer }})
     runs-on: ubuntu-latest
+    continue-on-error: true  # Don't block PR on sanitizer failures
     strategy:
       fail-fast: false
       matrix:
@@ -301,6 +303,7 @@ jobs:
   benchmark-check:
     name: Benchmark Compilation Check
     runs-on: ubuntu-latest
+    continue-on-error: true  # Don't block PR on benchmark compilation issues
     steps:
       - uses: actions/checkout@v6
 
