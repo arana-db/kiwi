@@ -66,7 +66,9 @@ impl ServerFactory {
                 }
             },
             #[cfg(unix)]
-            "unix" => Some(Box::new(unix::UnixServer::new(addr))),
+            "unix" => unix::UnixServer::new(addr, None)
+                .ok()
+                .map(|s| Box::new(s) as Box<dyn ServerTrait>),
             #[cfg(not(unix))]
             "unix" => None,
             _ => None,
@@ -77,13 +79,16 @@ impl ServerFactory {
     pub fn create_legacy_server(
         protocol: &str,
         addr: Option<String>,
+        db_dir: Option<&str>,
     ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
-            "tcp" => TcpServer::new(addr)
+            "tcp" => TcpServer::new(addr, db_dir)
                 .ok()
                 .map(|s| Box::new(s) as Box<dyn ServerTrait>),
             #[cfg(unix)]
-            "unix" => Some(Box::new(unix::UnixServer::new(addr))),
+            "unix" => unix::UnixServer::new(addr, db_dir)
+                .ok()
+                .map(|s| Box::new(s) as Box<dyn ServerTrait>),
             #[cfg(not(unix))]
             "unix" => None,
             _ => None,
