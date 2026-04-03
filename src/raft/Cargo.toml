@@ -26,9 +26,12 @@ async-trait = "0.1"
 anyhow = "1.0"
 tracing = "0.1"
 log.workspace = true
+tar = "0.4"
+tempfile.workspace = true
 
 # LogIndex / RocksDB
 parking_lot.workspace = true
+snafu.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

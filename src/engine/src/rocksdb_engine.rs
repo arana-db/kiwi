@@ -196,6 +196,17 @@ impl Engine for RocksdbEngine {
     fn snapshot(&self) -> Snapshot<'_> {
         self.db.snapshot()
     }
+
+    fn create_checkpoint(&self, path: &std::path::Path) -> Result<()> {
+        use rocksdb::checkpoint::Checkpoint;
+        let cp = Checkpoint::new(self.db.as_ref())?;
+        cp.create_checkpoint(path)?;
+        Ok(())
+    }
+
+    fn latest_sequence_number(&self) -> u64 {
+        self.db.latest_sequence_number()
+    }
 }
 
 impl Clone for RocksdbEngine {

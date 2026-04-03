@@ -244,6 +244,7 @@ async fn start_server(
                 raft_addr: raft_config.raft_addr.clone(),
                 resp_addr: raft_config.resp_addr.clone(),
                 data_dir: PathBuf::from(&raft_config.data_dir),
+                db_path: PathBuf::from(&config.db_path),
                 use_memory_log_store: raft_config.use_memory_log_store,
                 ..Default::default()
             };
