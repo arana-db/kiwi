@@ -27,9 +27,10 @@ pub mod network;
 pub mod node;
 pub mod state_machine;
 pub mod raft_proto {
-    tonic::include_proto!("raft_proto");
+    // 使用版本化的 proto 包名 kiwi.raft.v1
+    tonic::include_proto!("kiwi.raft.v1");
     pub const FILE_DESCRIPTOR_SET: &[u8] =
-        tonic::include_file_descriptor_set!("raft_proto_descriptor");
+        tonic::include_file_descriptor_set!("kiwi.raft.v1_descriptor");
 }
 
 pub mod table_properties;
