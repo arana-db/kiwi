@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
 use raft::state_machine::KiwiStateMachine;
@@ -42,9 +43,11 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
 
     storage.set(b"k_l2", b"before")?;
 
+    let storage_swap = Arc::new(ArcSwap::from(storage.clone()));
+
     let mut sm = KiwiStateMachine::new(
         1,
-        Arc::clone(&storage),
+        storage_swap.clone(),
         src_db_path.clone(),
         snap_root.clone(),
     );
@@ -68,7 +71,8 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
     // install_snapshot will restore the checkpoint directly to db_path, bypassing
     // the normal open flow. The storage is opened after install_snapshot completes.
     let target_storage = Arc::new(Storage::new(1, 0));
-    let mut sm2 = KiwiStateMachine::new(2, target_storage, restore_db_path.clone(), snap_root);
+    let target_swap = Arc::new(ArcSwap::from(target_storage));
+    let mut sm2 = KiwiStateMachine::new(2, target_swap.clone(), restore_db_path.clone(), snap_root);
     sm2.install_snapshot(&meta, Box::new(std::io::Cursor::new(bytes)))
         .await?;
 
@@ -78,9 +82,9 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
         .expect("OpenRaft requires current snapshot after install");
     assert_eq!(cur2.meta, meta);
 
-    let mut restored = Storage::new(1, 0);
-    let options = Arc::new(StorageOptions::default());
-    let _rx = restored.open(options, &restore_db_path)?;
+    // Verify restored data using the Storage held by ArcSwap.
+    // The install_snapshot has already swapped in a new Storage with restored data.
+    let restored = target_swap.load();
     assert_eq!(restored.get(b"k_l2")?, "before");
 
     Ok(())
@@ -106,9 +110,10 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     source_storage.set(b"key2", b"value2")?;
 
     // Build snapshot from source
+    let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
     let mut sm_source = KiwiStateMachine::new(
         1,
-        Arc::clone(&source_storage),
+        source_swap.clone(),
         src_db_path.clone(),
         snap_root.clone(),
     );
@@ -132,9 +137,10 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
 
     // Install the snapshot - this should REPLACE the old data.
     let target_storage = Arc::new(Storage::new(1, 0));
+    let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
     let mut sm_target = KiwiStateMachine::new(
         2,
-        Arc::clone(&target_storage),
+        target_swap.clone(),
         restore_db_path.clone(),
         snap_root,
     );
@@ -146,16 +152,9 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
         )
         .await?;
 
-    // Drop all references before opening restored storage
-    drop(sm_target);
-    drop(target_storage);
-
-    // Open fresh storage to verify restored data
-    let mut restored = Storage::new(1, 0);
-    let options = Arc::new(StorageOptions::default());
-    let _rx = restored.open(options, &restore_db_path)?;
-
-    // Verify snapshot data is present
+    // Verify snapshot data using the Storage held by ArcSwap.
+    // The install_snapshot has already swapped in a new Storage with restored data.
+    let restored = target_swap.load();
     assert_eq!(restored.get(b"key1")?, "value1");
     assert_eq!(restored.get(b"key2")?, "value2");
 

@@ -17,9 +17,11 @@
 
 //! Storage server for dedicated storage processing in the storage runtime
 
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
+use arc_swap::ArcSwap;
 use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
 
@@ -28,15 +30,76 @@ use storage::error::{InvalidFormatSnafu, SystemSnafu};
 use storage::storage::Storage;
 
 use crate::error::DualRuntimeError;
+use crate::global_storage::GlobalStorage;
 use crate::message::{
     RequestPriority, StorageCommand, StorageRequest, StorageResponse, StorageStats,
 };
 use crate::metrics::StorageMetricsTracker;
 
+/// Pause controller for coordinating with StorageServer during snapshot installation.
+/// This struct holds the necessary Arc fields to control pause/resume without owning StorageServer.
+#[derive(Clone)]
+pub struct StorageServerPauseController {
+    paused: Arc<AtomicBool>,
+    pending_count: Arc<AtomicU64>,
+    pause_notify: Arc<tokio::sync::Notify>,
+}
+
+impl StorageServerPauseController {
+    /// Create a new pause controller with default state (not paused)
+    pub fn new() -> Self {
+        Self {
+            paused: Arc::new(AtomicBool::new(false)),
+            pending_count: Arc::new(AtomicU64::new(0)),
+            pause_notify: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    /// Request pause: wait for all pending requests to complete.
+    pub async fn request_pause(&self) {
+        log::info!("StorageServerPauseController: requesting pause for snapshot installation");
+        self.paused.store(true, Ordering::SeqCst);
+
+        // Wait for all pending requests to complete
+        while self.pending_count.load(Ordering::SeqCst) > 0 {
+            self.pause_notify.notified().await;
+        }
+        log::info!("StorageServerPauseController: pause complete, all pending requests finished");
+    }
+
+    /// Resume: allow new requests to proceed.
+    pub fn resume(&self) {
+        log::info!("StorageServerPauseController: resuming after snapshot installation");
+        self.paused.store(false, Ordering::SeqCst);
+        self.pause_notify.notify_waiters();
+    }
+
+    /// Get the paused flag Arc (for StorageServer initialization)
+    pub fn paused_arc(&self) -> Arc<AtomicBool> {
+        self.paused.clone()
+    }
+
+    /// Get the pending count Arc (for StorageServer initialization)
+    pub fn pending_count_arc(&self) -> Arc<AtomicU64> {
+        self.pending_count.clone()
+    }
+
+    /// Get the pause notify Arc (for StorageServer initialization)
+    pub fn pause_notify_arc(&self) -> Arc<tokio::sync::Notify> {
+        self.pause_notify.clone()
+    }
+}
+
+impl Default for StorageServerPauseController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Storage server that processes storage requests in the dedicated storage runtime
 pub struct StorageServer {
-    /// The underlying storage instance
-    storage: Arc<Storage>,
+    /// Global storage wrapper for hot-swapping during snapshot installation
+    global_storage: GlobalStorage,
     /// Receiver for storage requests from the network runtime
     request_receiver: Option<mpsc::Receiver<StorageRequest>>,
     /// Batch processor for optimizing storage operations
@@ -47,6 +110,14 @@ pub struct StorageServer {
     metrics_tracker: Option<Arc<StorageMetricsTracker>>,
     /// Server configuration
     config: StorageServerConfig,
+
+    // --- Pause mechanism for snapshot installation ---
+    /// Pause flag: when true, new requests wait for resume
+    paused: Arc<AtomicBool>,
+    /// Count of pending requests being processed
+    pending_count: Arc<AtomicU64>,
+    /// Notify for waiting paused requests
+    pause_notify: Arc<tokio::sync::Notify>,
 }
 
 /// Configuration for the storage server
@@ -77,26 +148,39 @@ impl Default for StorageServerConfig {
 }
 
 impl StorageServer {
-    /// Create a new storage server with the given storage instance and request receiver
-    pub fn new(storage: Arc<Storage>, request_receiver: mpsc::Receiver<StorageRequest>) -> Self {
-        Self::with_config(storage, request_receiver, StorageServerConfig::default())
+    /// Create a new storage server with the given GlobalStorage and request receiver
+    pub fn new(global_storage: GlobalStorage, request_receiver: mpsc::Receiver<StorageRequest>) -> Self {
+        Self::with_config(global_storage, request_receiver, StorageServerConfig::default())
+    }
+
+    /// Create a new storage server with a pause controller
+    pub fn with_pause_controller(
+        global_storage: GlobalStorage,
+        request_receiver: mpsc::Receiver<StorageRequest>,
+        pause_controller: StorageServerPauseController,
+    ) -> Self {
+        let mut server = Self::with_config(global_storage, request_receiver, StorageServerConfig::default());
+        server.paused = pause_controller.paused_arc();
+        server.pending_count = pause_controller.pending_count_arc();
+        server.pause_notify = pause_controller.pause_notify_arc();
+        server
     }
 
     /// Create a new storage server with metrics tracking
     pub fn with_metrics(
-        storage: Arc<Storage>,
+        global_storage: GlobalStorage,
         request_receiver: mpsc::Receiver<StorageRequest>,
         metrics_tracker: Arc<StorageMetricsTracker>,
     ) -> Self {
         let mut server =
-            Self::with_config(storage, request_receiver, StorageServerConfig::default());
+            Self::with_config(global_storage, request_receiver, StorageServerConfig::default());
         server.metrics_tracker = Some(metrics_tracker);
         server
     }
 
     /// Create a new storage server with custom configuration
     pub fn with_config(
-        storage: Arc<Storage>,
+        global_storage: GlobalStorage,
         request_receiver: mpsc::Receiver<StorageRequest>,
         config: StorageServerConfig,
     ) -> Self {
@@ -110,19 +194,48 @@ impl StorageServer {
         };
 
         let background_task_manager = if config.enable_background_tasks {
-            Some(BackgroundTaskManager::new(Arc::clone(&storage)))
+            Some(BackgroundTaskManager::new(global_storage.load()))
         } else {
             None
         };
 
         Self {
-            storage,
+            global_storage,
             request_receiver: Some(request_receiver),
             batch_processor,
             background_task_manager,
             metrics_tracker: None,
             config,
+            paused: Arc::new(AtomicBool::new(false)),
+            pending_count: Arc::new(AtomicU64::new(0)),
+            pause_notify: Arc::new(tokio::sync::Notify::new()),
         }
+    }
+
+    /// Request pause: wait for all pending requests to complete.
+    /// Called by KiwiStateMachine during install_snapshot.
+    pub async fn request_pause(&self) {
+        info!("StorageServer: requesting pause for snapshot installation");
+        self.paused.store(true, Ordering::SeqCst);
+
+        // Wait for all pending requests to complete
+        while self.pending_count.load(Ordering::SeqCst) > 0 {
+            self.pause_notify.notified().await;
+        }
+        info!("StorageServer: pause complete, all pending requests finished");
+    }
+
+    /// Resume: allow new requests to proceed.
+    /// Called by KiwiStateMachine after snapshot installation completes.
+    pub fn resume(&self) {
+        info!("StorageServer: resuming after snapshot installation");
+        self.paused.store(false, Ordering::SeqCst);
+        self.pause_notify.notify_waiters();
+    }
+
+    /// Get the ArcSwap for direct access (used by KiwiStateMachine)
+    pub fn arc_swap(&self) -> &ArcSwap<Storage> {
+        self.global_storage.arc_swap()
     }
 
     /// Start the storage server and begin processing requests
@@ -207,12 +320,32 @@ impl StorageServer {
         while let Some(request) = request_receiver.recv().await {
             debug!("Received storage request: {:?}", request.id);
 
-            // Process request immediately
-            tokio::spawn({
-                let storage = Arc::clone(&self.storage);
-                let metrics_tracker = self.metrics_tracker.clone();
-                async move {
-                    Self::process_single_request(storage, request, metrics_tracker).await;
+            // Check if paused - wait for resume
+            while self.paused.load(Ordering::SeqCst) {
+                debug!("Storage server paused, waiting for resume");
+                self.pause_notify.notified().await;
+            }
+
+            // Increment pending count
+            self.pending_count.fetch_add(1, Ordering::SeqCst);
+
+            // Process request immediately - load current storage
+            let global_storage = self.global_storage.clone();
+            let metrics_tracker = self.metrics_tracker.clone();
+            let paused = self.paused.clone();
+            let pending_count = self.pending_count.clone();
+            let pause_notify = self.pause_notify.clone();
+
+            tokio::spawn(async move {
+                let storage = global_storage.load();
+                Self::process_single_request(storage, request, metrics_tracker).await;
+
+                // Decrement pending count
+                pending_count.fetch_sub(1, Ordering::SeqCst);
+
+                // If paused and all requests complete, notify
+                if paused.load(Ordering::SeqCst) && pending_count.load(Ordering::SeqCst) == 0 {
+                    pause_notify.notify_waiters();
                 }
             });
         }
@@ -228,14 +361,30 @@ impl StorageServer {
 
         debug!("Processing batch of {} requests", batch_size);
 
+        // Increment pending count for all requests in batch
+        self.pending_count.fetch_add(batch_size as u64, Ordering::SeqCst);
+
         // Process requests in parallel within the batch
         let mut handles = Vec::new();
 
         for request in batch {
-            let storage = Arc::clone(&self.storage);
+            // Load current storage for each request
+            let storage = self.global_storage.load();
             let metrics_tracker = self.metrics_tracker.clone();
+            let paused = self.paused.clone();
+            let pending_count = self.pending_count.clone();
+            let pause_notify = self.pause_notify.clone();
+
             let handle = tokio::spawn(async move {
                 Self::process_single_request(storage, request, metrics_tracker).await;
+
+                // Decrement pending count
+                pending_count.fetch_sub(1, Ordering::SeqCst);
+
+                // If paused and all requests complete, notify
+                if paused.load(Ordering::SeqCst) && pending_count.load(Ordering::SeqCst) == 0 {
+                    pause_notify.notify_waiters();
+                }
             });
             handles.push(handle);
         }

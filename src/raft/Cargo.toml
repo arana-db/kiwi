@@ -33,6 +33,9 @@ tempfile.workspace = true
 parking_lot.workspace = true
 snafu.workspace = true
 
+# ArcSwap for hot storage swap
+arc-swap = { workspace = true }
+
 [dev-dependencies]
 tempfile.workspace = true
 proptest = "1"

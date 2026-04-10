@@ -217,6 +217,50 @@ impl Storage {
         }
     }
 
+    /// Close all RocksDB instances and release file handles.
+    /// Used before reopening Storage after snapshot installation.
+    pub fn close(&mut self) {
+        log::info!("Closing Storage (releasing RocksDB file handles)");
+
+        // Stop background tasks first
+        if let Some(handle) = self.bg_task.take() {
+            handle.abort();
+        }
+        self.bg_task_handler = None;
+
+        // Stop expiration cleanup task
+        if let Some(handle) = self.expiration_cleanup_task.take() {
+            handle.abort();
+        }
+        self.expiration_manager = None;
+
+        // Set need_close flag for all Redis instances so they close RocksDB on drop
+        for inst in &self.insts {
+            inst.set_need_close(true);
+        }
+        // Clear the vector to drop all Redis instances (closes RocksDB)
+        self.insts.clear();
+
+        self.is_opened.store(false, Ordering::SeqCst);
+        log::info!("Storage closed successfully");
+    }
+
+    /// Atomic operation: close old DB + open new DB at given path.
+    /// Used during snapshot installation to switch to restored data.
+    pub fn reopen(
+        &mut self,
+        options: Arc<StorageOptions>,
+        db_path: impl AsRef<Path>,
+    ) -> Result<mpsc::Receiver<BgTask>> {
+        log::info!("Reopening Storage at path: {:?}", db_path.as_ref());
+
+        // Close existing instances first
+        self.close();
+
+        // Open new instances at the new path
+        self.open(options, db_path)
+    }
+
     pub fn get_current_task_type(&self) -> String {
         let task_type = self.current_task_type.load(Ordering::Relaxed);
         match task_type.into() {

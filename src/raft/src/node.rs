@@ -21,10 +21,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
+
 use crate::log_store::LogStore;
 use crate::log_store_rocksdb::RocksdbLogStore;
 use crate::network::KiwiNetworkFactory;
-use crate::state_machine::KiwiStateMachine;
+use crate::state_machine::{KiwiStateMachine, PauseController};
 use storage::storage::Storage;
 
 pub struct RaftApp {
@@ -32,7 +34,7 @@ pub struct RaftApp {
     pub raft_addr: String,
     pub resp_addr: String,
     pub raft: Raft<KiwiTypeConfig>,
-    pub storage: Arc<Storage>,
+    pub storage_swap: Arc<ArcSwap<Storage>>,
 }
 
 impl RaftApp {
@@ -138,17 +140,25 @@ fn build_raft_config(config: &RaftConfig) -> Result<Arc<Config>, anyhow::Error> 
 /// Uses RocksDB log store by default; set `raft-use-memory-log-store yes` in config to use in-memory log store (for testing).
 pub async fn create_raft_node(
     config: RaftConfig,
-    storage: Arc<Storage>,
+    storage_swap: Arc<ArcSwap<Storage>>,
+    pause_controller: Option<Arc<dyn PauseController>>,
 ) -> Result<Arc<RaftApp>, anyhow::Error> {
     let raft_config = build_raft_config(&config)?;
     let snapshot_work_dir = config.data_dir.join("snapshots");
     fs::create_dir_all(&snapshot_work_dir)?;
-    let state_machine = KiwiStateMachine::new(
+
+    let mut state_machine = KiwiStateMachine::new(
         config.node_id,
-        storage.clone(),
+        storage_swap.clone(),
         config.db_path.clone(),
         snapshot_work_dir,
     );
+
+    // Set pause controller for snapshot installation
+    if let Some(ctrl) = pause_controller {
+        state_machine.set_pause_controller(ctrl);
+    }
+
     let network = KiwiNetworkFactory::new();
 
     let raft = if config.use_memory_log_store {
@@ -182,6 +192,6 @@ pub async fn create_raft_node(
         raft_addr: config.raft_addr,
         resp_addr: config.resp_addr,
         raft,
-        storage,
+        storage_swap,
     }))
 }

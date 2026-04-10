@@ -23,6 +23,7 @@
 pub mod config;
 pub mod error;
 pub mod error_logging;
+pub mod global_storage;
 pub mod manager;
 pub mod message;
 pub mod metrics;
@@ -63,5 +64,6 @@ pub use metrics::{
 };
 pub use storage_server::{
     BackgroundTaskConfig, BackgroundTaskManager, BackgroundTaskStats, BatchConfig, BatchProcessor,
-    BatchStats, RocksDbStats, StorageServer, StorageServerConfig,
+    BatchStats, RocksDbStats, StorageServer, StorageServerConfig, StorageServerPauseController,
 };
+pub use global_storage::GlobalStorage;
