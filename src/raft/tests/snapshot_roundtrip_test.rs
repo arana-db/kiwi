@@ -138,12 +138,8 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     // Install the snapshot - this should REPLACE the old data.
     let target_storage = Arc::new(Storage::new(1, 0));
     let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
-    let mut sm_target = KiwiStateMachine::new(
-        2,
-        target_swap.clone(),
-        restore_db_path.clone(),
-        snap_root,
-    );
+    let mut sm_target =
+        KiwiStateMachine::new(2, target_swap.clone(), restore_db_path.clone(), snap_root);
 
     sm_target
         .install_snapshot(

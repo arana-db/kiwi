@@ -17,8 +17,8 @@
 
 //! Storage server for dedicated storage processing in the storage runtime
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 use arc_swap::ArcSwap;
@@ -149,8 +149,15 @@ impl Default for StorageServerConfig {
 
 impl StorageServer {
     /// Create a new storage server with the given GlobalStorage and request receiver
-    pub fn new(global_storage: GlobalStorage, request_receiver: mpsc::Receiver<StorageRequest>) -> Self {
-        Self::with_config(global_storage, request_receiver, StorageServerConfig::default())
+    pub fn new(
+        global_storage: GlobalStorage,
+        request_receiver: mpsc::Receiver<StorageRequest>,
+    ) -> Self {
+        Self::with_config(
+            global_storage,
+            request_receiver,
+            StorageServerConfig::default(),
+        )
     }
 
     /// Create a new storage server with a pause controller
@@ -159,7 +166,11 @@ impl StorageServer {
         request_receiver: mpsc::Receiver<StorageRequest>,
         pause_controller: StorageServerPauseController,
     ) -> Self {
-        let mut server = Self::with_config(global_storage, request_receiver, StorageServerConfig::default());
+        let mut server = Self::with_config(
+            global_storage,
+            request_receiver,
+            StorageServerConfig::default(),
+        );
         server.paused = pause_controller.paused_arc();
         server.pending_count = pause_controller.pending_count_arc();
         server.pause_notify = pause_controller.pause_notify_arc();
@@ -172,8 +183,11 @@ impl StorageServer {
         request_receiver: mpsc::Receiver<StorageRequest>,
         metrics_tracker: Arc<StorageMetricsTracker>,
     ) -> Self {
-        let mut server =
-            Self::with_config(global_storage, request_receiver, StorageServerConfig::default());
+        let mut server = Self::with_config(
+            global_storage,
+            request_receiver,
+            StorageServerConfig::default(),
+        );
         server.metrics_tracker = Some(metrics_tracker);
         server
     }
@@ -362,7 +376,8 @@ impl StorageServer {
         debug!("Processing batch of {} requests", batch_size);
 
         // Increment pending count for all requests in batch
-        self.pending_count.fetch_add(batch_size as u64, Ordering::SeqCst);
+        self.pending_count
+            .fetch_add(batch_size as u64, Ordering::SeqCst);
 
         // Process requests in parallel within the batch
         let mut handles = Vec::new();

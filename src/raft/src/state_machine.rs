@@ -38,7 +38,7 @@ use openraft::{
     SnapshotMeta, StorageError, StoredMembership, storage::RaftStateMachine,
 };
 use storage::storage::Storage;
-use storage::{RaftSnapshotMeta, restore_checkpoint_layout, StorageOptions};
+use storage::{RaftSnapshotMeta, StorageOptions, restore_checkpoint_layout};
 
 use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
 
@@ -133,7 +133,10 @@ fn load_current_snapshot(
 /// On Unix: rename is atomic.
 /// On Windows: must delete target first, then rename.
 #[allow(clippy::result_large_err)]
-fn atomic_replace_file(src: &std::path::Path, dst: &std::path::Path) -> Result<(), StorageError<u64>> {
+fn atomic_replace_file(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+) -> Result<(), StorageError<u64>> {
     #[cfg(unix)]
     {
         std::fs::rename(src, dst).map_err(|e| {
@@ -159,7 +162,8 @@ fn atomic_replace_file(src: &std::path::Path, dst: &std::path::Path) -> Result<(
 /// Pause controller for coordinating with StorageServer during snapshot installation.
 pub trait PauseController: Send + Sync {
     /// Request pause: wait for all pending requests to complete.
-    fn request_pause(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>>;
+    fn request_pause(&self)
+    -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>>;
 
     /// Resume: allow new requests to proceed.
     fn resume(&self);
@@ -315,21 +319,27 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         let expected_term = meta.last_log_id.map(|l| l.leader_id.term).unwrap_or(0);
 
         if file_meta.last_included_index != expected_index
-            || file_meta.last_included_term != expected_term {
+            || file_meta.last_included_term != expected_term
+        {
             cleanup_on_error();
             return Err(StorageError::from_io_error(
                 ErrorSubject::Snapshot(None),
                 ErrorVerb::Read,
                 io::Error::other(format!(
                     "Snapshot metadata mismatch: file=(index={}, term={}), expected=(index={}, term={})",
-                    file_meta.last_included_index, file_meta.last_included_term,
-                    expected_index, expected_term
+                    file_meta.last_included_index,
+                    file_meta.last_included_term,
+                    expected_index,
+                    expected_term
                 )),
             ));
         }
 
-        log::info!("Snapshot metadata validated: index={}, term={}",
-            file_meta.last_included_index, file_meta.last_included_term);
+        log::info!(
+            "Snapshot metadata validated: index={}, term={}",
+            file_meta.last_included_index,
+            file_meta.last_included_term
+        );
 
         // ========== Phase 3: Close old Storage (release RocksDB lock) ==========
         let current_storage = self.storage_swap.load_full();
@@ -364,14 +374,12 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
 
         // ========== Phase 4: Restore checkpoint (atomic operation) ==========
         // Now we can safely restore checkpoint since placeholder Storage holds no lock.
-        restore_checkpoint_layout(
-            &checkpoint_root,
-            &self.db_path,
-            db_instance_num,
-        ).map_err(|e| {
-            cleanup_on_error();
-            io_err_to_raft(e)
-        })?;
+        restore_checkpoint_layout(&checkpoint_root, &self.db_path, db_instance_num).map_err(
+            |e| {
+                cleanup_on_error();
+                io_err_to_raft(e)
+            },
+        )?;
 
         // ========== Phase 5: Create new Storage and open ==========
         let mut new_storage = Storage::new(db_instance_num, db_id);

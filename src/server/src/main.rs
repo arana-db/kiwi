@@ -19,7 +19,10 @@ use clap::Parser;
 use conf::config::Config;
 use log::{debug, error, info, warn};
 // ServerFactory is used via net::ServerFactory::create_server
-use runtime::{DualRuntimeError, GlobalStorage, RuntimeConfig, RuntimeManager, StorageServer, StorageServerPauseController};
+use runtime::{
+    DualRuntimeError, GlobalStorage, RuntimeConfig, RuntimeManager, StorageServer,
+    StorageServerPauseController,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage::StorageOptions;
@@ -40,7 +43,9 @@ use raft::state_machine::PauseController;
 struct PauseControllerWrapper(StorageServerPauseController);
 
 impl PauseController for PauseControllerWrapper {
-    fn request_pause(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+    fn request_pause(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(self.0.request_pause())
     }
 
@@ -149,7 +154,9 @@ fn main() -> std::io::Result<()> {
         let storage_for_server = storage.clone();
         storage_handle.spawn(async move {
             info!("Initializing storage server...");
-            match initialize_storage_server(storage_receiver, storage_for_server, pause_controller).await {
+            match initialize_storage_server(storage_receiver, storage_for_server, pause_controller)
+                .await
+            {
                 Ok(_) => {
                     error!("Storage server exited unexpectedly - this should never happen!");
                 }
@@ -171,7 +178,16 @@ fn main() -> std::io::Result<()> {
         // We always run in single-node mode.
         info!("Starting Kiwi server in single-node mode on {}", addr);
 
-        match start_server(protocol, &addr, &mut runtime_manager, &storage, &config, pause_controller_for_raft).await {
+        match start_server(
+            protocol,
+            &addr,
+            &mut runtime_manager,
+            &storage,
+            &config,
+            pause_controller_for_raft,
+        )
+        .await
+        {
             Ok(_) => info!("Server started successfully"),
             Err(e) => {
                 error!("Failed to start server: {}", e);
@@ -232,7 +248,8 @@ async fn initialize_storage_server(
     info!("Initializing storage server...");
 
     // Create and start storage server with the shared storage (already opened in initialize_storage)
-    let storage_server = StorageServer::with_pause_controller(global_storage, request_receiver, pause_controller);
+    let storage_server =
+        StorageServer::with_pause_controller(global_storage, request_receiver, pause_controller);
 
     info!("Storage server created, starting processing...");
 
@@ -278,9 +295,12 @@ async fn start_server(
             // Create pause controller wrapper for RaftNode
             let pause_controller_wrapper = Arc::new(PauseControllerWrapper(pause_controller));
 
-            let raft_app = create_raft_node(raft_config, storage_swap, Some(pause_controller_wrapper))
-                .await
-                .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
+            let raft_app =
+                create_raft_node(raft_config, storage_swap, Some(pause_controller_wrapper))
+                    .await
+                    .map_err(|e| {
+                        std::io::Error::other(format!("Failed to create Raft node: {}", e))
+                    })?;
 
             let raft_addr = raft_app.raft_addr.clone();
             let app_data = web::Data::new(RaftAppData { app: raft_app });
