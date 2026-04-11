@@ -121,4 +121,10 @@ pub trait Engine: Send + Sync {
 
     // Snapshot
     fn snapshot(&self) -> Snapshot<'_>;
+
+    /// Create a RocksDB physical checkpoint at `path`.
+    fn create_checkpoint(&self, path: &std::path::Path) -> Result<()>;
+
+    /// Latest sequence number after writes.
+    fn latest_sequence_number(&self) -> u64;
 }

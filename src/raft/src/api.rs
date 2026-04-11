@@ -127,7 +127,8 @@ pub async fn read(app_data: web::Data<RaftAppData>, req: Json<ReadRequest>) -> i
             .json(ApiResponse::<()>::error("No leader available".to_string()));
     }
 
-    let value = app_data.app.storage.get(&req.key);
+    let storage = app_data.app.storage_swap.load();
+    let value = storage.get(&req.key);
     match value {
         Ok(v) => HttpResponse::Ok().json(ApiResponse::success(ReadResponse { value: Some(v) })),
         Err(e) => {

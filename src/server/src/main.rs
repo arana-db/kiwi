@@ -19,7 +19,10 @@ use clap::Parser;
 use conf::config::Config;
 use log::{debug, error, info, warn};
 // ServerFactory is used via net::ServerFactory::create_server
-use runtime::{DualRuntimeError, RuntimeConfig, RuntimeManager, StorageServer};
+use runtime::{
+    DualRuntimeError, GlobalStorage, RuntimeConfig, RuntimeManager, StorageServer,
+    StorageServerPauseController,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage::StorageOptions;
@@ -31,6 +34,23 @@ use raft::api::{
     read, write,
 };
 use raft::node::{RaftConfig, create_raft_node};
+use raft::state_machine::PauseController;
+
+/// Wrapper for StorageServerPauseController that implements PauseController trait
+/// This is needed because PauseController is in raft crate and StorageServerPauseController is in runtime crate
+struct PauseControllerWrapper(StorageServerPauseController);
+
+impl PauseController for PauseControllerWrapper {
+    fn request_pause(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(self.0.request_pause())
+    }
+
+    fn resume(&self) {
+        self.0.resume();
+    }
+}
 
 /// Kiwi - A Redis-compatible key-value database built in Rust
 #[derive(Parser)]
@@ -123,12 +143,18 @@ fn main() -> std::io::Result<()> {
 
         info!("Storage components initialized, starting storage server...");
 
+        // Create pause controller for coordinating snapshot installation
+        let pause_controller = StorageServerPauseController::new();
+        let pause_controller_for_raft = pause_controller.clone();
+
         // Initialize storage server in storage runtime (runs in background)
 
         let storage_for_server = storage.clone();
         storage_handle.spawn(async move {
             info!("Initializing storage server...");
-            match initialize_storage_server(storage_receiver, storage_for_server).await {
+            match initialize_storage_server(storage_receiver, storage_for_server, pause_controller)
+                .await
+            {
                 Ok(_) => {
                     error!("Storage server exited unexpectedly - this should never happen!");
                 }
@@ -150,7 +176,16 @@ fn main() -> std::io::Result<()> {
         // We always run in single-node mode.
         info!("Starting Kiwi server in single-node mode on {}", addr);
 
-        match start_server(protocol, &addr, &mut runtime_manager, &storage, &config).await {
+        match start_server(
+            protocol,
+            &addr,
+            &mut runtime_manager,
+            &storage,
+            &config,
+            pause_controller_for_raft,
+        )
+        .await
+        {
             Ok(_) => info!("Server started successfully"),
             Err(e) => {
                 error!("Failed to start server: {}", e);
@@ -176,7 +211,7 @@ fn main() -> std::io::Result<()> {
     result
 }
 
-async fn initialize_storage(config: &Config) -> Result<Arc<Storage>, DualRuntimeError> {
+async fn initialize_storage(config: &Config) -> Result<GlobalStorage, DualRuntimeError> {
     info!("Initializing storage...");
 
     let storage_options = Arc::new(StorageOptions::default());
@@ -198,19 +233,21 @@ async fn initialize_storage(config: &Config) -> Result<Arc<Storage>, DualRuntime
         info!("Background task receiver closed");
     });
 
-    Ok(Arc::new(storage))
+    Ok(GlobalStorage::new(storage))
 }
 
 /// Initialize the storage server in the storage runtime.
 /// Uses the already-opened storage from `initialize_storage()` to avoid opening RocksDB twice.
 async fn initialize_storage_server(
     request_receiver: tokio::sync::mpsc::Receiver<runtime::StorageRequest>,
-    storage: Arc<Storage>,
+    global_storage: GlobalStorage,
+    pause_controller: StorageServerPauseController,
 ) -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
 
     // Create and start storage server with the shared storage (already opened in initialize_storage)
-    let storage_server = StorageServer::new(storage, request_receiver);
+    let storage_server =
+        StorageServer::with_pause_controller(global_storage, request_receiver, pause_controller);
 
     info!("Storage server created, starting processing...");
 
@@ -224,8 +261,9 @@ async fn start_server(
     protocol: &str,
     addr: &str,
     runtime_manager: &mut RuntimeManager,
-    storage: &Arc<Storage>,
+    global_storage: &GlobalStorage,
     config: &Config,
+    pause_controller: StorageServerPauseController,
 ) -> std::io::Result<()> {
     if let Some(server) =
         net::ServerFactory::create_server(protocol, Some(addr.to_string()), runtime_manager)
@@ -244,13 +282,25 @@ async fn start_server(
                 raft_addr: raft_config.raft_addr.clone(),
                 resp_addr: raft_config.resp_addr.clone(),
                 data_dir: PathBuf::from(&raft_config.data_dir),
+                db_path: PathBuf::from(&config.db_path),
                 use_memory_log_store: raft_config.use_memory_log_store,
                 ..Default::default()
             };
 
-            let raft_app = create_raft_node(raft_config, storage.clone())
-                .await
-                .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
+            // Use the shared Arc<ArcSwap<Storage>> from GlobalStorage
+            // This ensures all components (StorageServer, Raft) share the same ArcSwap,
+            // so snapshot installation's swap() is visible to all.
+            let storage_swap = global_storage.arc_swap();
+
+            // Create pause controller wrapper for RaftNode
+            let pause_controller_wrapper = Arc::new(PauseControllerWrapper(pause_controller));
+
+            let raft_app =
+                create_raft_node(raft_config, storage_swap, Some(pause_controller_wrapper))
+                    .await
+                    .map_err(|e| {
+                        std::io::Error::other(format!("Failed to create Raft node: {}", e))
+                    })?;
 
             let raft_addr = raft_app.raft_addr.clone();
             let app_data = web::Data::new(RaftAppData { app: raft_app });

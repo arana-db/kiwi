@@ -21,6 +21,7 @@ conf.workspace = true
 clap = { version = "4.0", features = ["derive"] }
 raft.workspace = true
 actix-web = "4"
+arc-swap = { workspace = true }
 
 
 [lints]

@@ -40,6 +40,7 @@ mod statistics;
 mod util;
 
 mod batch;
+pub mod checkpoint;
 mod redis;
 mod storage_define;
 mod storage_impl;
@@ -61,6 +62,7 @@ pub mod redis_zsets;
 pub use base_key_format::BaseMetaKey;
 pub use base_value_format::*;
 pub use batch::{Batch, BinlogBatch, RocksBatch};
+pub use checkpoint::{RAFT_SNAPSHOT_META_FILE, RaftSnapshotMeta, restore_checkpoint_layout};
 pub use error::Result;
 pub use expiration_manager::ExpirationManager;
 pub use options::StorageOptions;

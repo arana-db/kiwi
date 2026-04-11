@@ -113,6 +113,13 @@ pub struct Storage {
     pub scan_keynum_exit: AtomicBool,
 }
 
+impl Drop for Storage {
+    fn drop(&mut self) {
+        // Call internal cleanup method
+        self.release_resources();
+    }
+}
+
 #[allow(dead_code)]
 impl Storage {
     pub fn new(db_instance_num: usize, db_id: usize) -> Self {
@@ -132,6 +139,27 @@ impl Storage {
             expiration_manager: None,
             expiration_cleanup_task: None,
         }
+    }
+
+    /// Internal method to release all resources.
+    /// Called by both `close()` and `Drop::drop()` to avoid code duplication.
+    fn release_resources(&mut self) {
+        // Abort background task handle if present
+        if let Some(handle) = self.bg_task.take() {
+            handle.abort();
+        }
+
+        // Stop expiration cleanup task first
+        if let Some(handle) = self.expiration_cleanup_task.take() {
+            handle.abort();
+        }
+
+        // Set need_close flag for all Redis instances so they close RocksDB on drop
+        for inst in &self.insts {
+            inst.set_need_close(true);
+        }
+        // Clear the vector to drop all Redis instances
+        self.insts.clear();
     }
 
     pub fn open(
@@ -194,6 +222,38 @@ impl Storage {
             handle.abort();
             let _ = handle.await;
         }
+    }
+
+    /// Close all RocksDB instances and release file handles.
+    /// Used before reopening Storage after snapshot installation.
+    pub fn close(&mut self) {
+        log::info!("Closing Storage (releasing RocksDB file handles)");
+
+        // Release all resources (Redis instances, background tasks, etc.)
+        self.release_resources();
+
+        // Clear handler/manager references
+        self.bg_task_handler = None;
+        self.expiration_manager = None;
+
+        self.is_opened.store(false, Ordering::SeqCst);
+        log::info!("Storage closed successfully");
+    }
+
+    /// Atomic operation: close old DB + open new DB at given path.
+    /// Used during snapshot installation to switch to restored data.
+    pub fn reopen(
+        &mut self,
+        options: Arc<StorageOptions>,
+        db_path: impl AsRef<Path>,
+    ) -> Result<mpsc::Receiver<BgTask>> {
+        log::info!("Reopening Storage at path: {:?}", db_path.as_ref());
+
+        // Close existing instances first
+        self.close();
+
+        // Open new instances at the new path
+        self.open(options, db_path)
     }
 
     pub fn get_current_task_type(&self) -> String {
@@ -344,20 +404,25 @@ impl Storage {
         Ok(())
     }
 
-    pub fn create_check_point() {
-        unimplemented!("This function is not implemented yet");
-    }
+    /// Export all DB instances to `checkpoint_root/<i>/` and write `__raft_snapshot_meta`.
+    pub fn create_checkpoint(
+        &self,
+        checkpoint_root: &Path,
+        meta: &crate::RaftSnapshotMeta,
+    ) -> Result<()> {
+        std::fs::create_dir_all(checkpoint_root).context(crate::error::IoSnafu)?;
+        for (i, inst) in self.insts.iter().enumerate() {
+            let sub = checkpoint_root.join(i.to_string());
+            if sub.exists() {
+                std::fs::remove_dir_all(&sub).context(crate::error::IoSnafu)?;
+            }
+            // RocksDB Checkpoint::create_checkpoint requires `sub` to not exist.
+            inst.create_checkpoint(&sub)?;
+        }
 
-    pub fn create_check_point_internal() {
-        unimplemented!("This function is not implemented yet");
-    }
-
-    pub fn load_check_point() {
-        unimplemented!("This function is not implemented yet");
-    }
-
-    pub fn load_check_point_internal() {
-        unimplemented!("This function is not implemented yet");
+        meta.write_to_dir_atomically(checkpoint_root)
+            .context(crate::error::IoSnafu)?;
+        Ok(())
     }
 
     pub fn load_cursor_start_key(&self, dtype: DataType, cursor: i64) -> Result<(char, String)> {
@@ -417,7 +482,7 @@ impl Storage {
         Ok(())
     }
 
-    pub fn on_binlog_write(&self, binlog: &Binlog) -> Result<()> {
+    pub fn on_binlog_write(&self, binlog: &Binlog, _raft_log_index: u64) -> Result<()> {
         let slot_id = binlog.slot_idx as usize;
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         let instance = &self.insts[instance_id];

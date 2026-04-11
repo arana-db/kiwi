@@ -21,6 +21,7 @@ storage = { workspace = true }
 bytes = { workspace = true }
 snafu = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
+arc-swap = { workspace = true }
 
 [dev-dependencies]
 tokio-test = "0.4"

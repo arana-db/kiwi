@@ -23,6 +23,7 @@
 pub mod config;
 pub mod error;
 pub mod error_logging;
+pub mod global_storage;
 pub mod manager;
 pub mod message;
 pub mod metrics;
@@ -46,6 +47,7 @@ pub use error_logging::{
     CorrelationId, ErrorCategory, ErrorEvent, ErrorLogger, ErrorLoggingConfig, ErrorMetrics,
     ErrorRates, RuntimeContext, get_global_error_logger, init_global_error_logger,
 };
+pub use global_storage::GlobalStorage;
 pub use manager::{RuntimeHealth as ManagerRuntimeHealth, RuntimeManager, RuntimeStats};
 pub use message::{
     BackpressureConfig, ChannelStats, CircuitBreaker, MessageChannel, QueueStats, QueuedRequest,
@@ -63,5 +65,5 @@ pub use metrics::{
 };
 pub use storage_server::{
     BackgroundTaskConfig, BackgroundTaskManager, BackgroundTaskStats, BatchConfig, BatchProcessor,
-    BatchStats, RocksDbStats, StorageServer, StorageServerConfig,
+    BatchStats, RocksDbStats, StorageServer, StorageServerConfig, StorageServerPauseController,
 };

@@ -16,14 +16,17 @@
 // limitations under the License.
 
 use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
-use openraft::{Config, Raft};
+use openraft::{Config, Raft, SnapshotPolicy};
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+
+use arc_swap::ArcSwap;
 
 use crate::log_store::LogStore;
 use crate::log_store_rocksdb::RocksdbLogStore;
 use crate::network::KiwiNetworkFactory;
-use crate::state_machine::KiwiStateMachine;
+use crate::state_machine::{KiwiStateMachine, PauseController};
 use storage::storage::Storage;
 
 pub struct RaftApp {
@@ -31,7 +34,7 @@ pub struct RaftApp {
     pub raft_addr: String,
     pub resp_addr: String,
     pub raft: Raft<KiwiTypeConfig>,
-    pub storage: Arc<Storage>,
+    pub storage_swap: Arc<ArcSwap<Storage>>,
 }
 
 impl RaftApp {
@@ -64,12 +67,33 @@ pub struct RaftConfig {
     pub raft_addr: String,
     pub resp_addr: String,
     pub data_dir: PathBuf,
+    /// RocksDB data directory (`<db_path>/0`, …) — must match the opened `Storage` path.
+    pub db_path: PathBuf,
     pub heartbeat_interval: u64,
     pub election_timeout_min: u64,
     pub election_timeout_max: u64,
-    /// 是否使用内存日志存储，默认 false（使用 RocksDB 持久化存储）
+    /// Whether to use in-memory log store, default false (uses RocksDB for persistence)
     pub use_memory_log_store: bool,
+
+    // Snapshot configuration
+    /// Number of logs since last snapshot to trigger a new snapshot
+    pub snapshot_logs_threshold: u64,
+    /// Maximum chunk size for snapshot transfer (bytes)
+    pub snapshot_max_chunk_size: u64,
+    /// Timeout for installing a snapshot (milliseconds)
+    pub install_snapshot_timeout: u64,
+    /// Maximum number of logs to keep that are already in snapshot
+    pub max_in_snapshot_log_to_keep: u64,
+    /// Replication lag threshold to use snapshot for catch-up
+    pub replication_lag_threshold: u64,
 }
+
+// Snapshot configuration defaults
+const SNAPSHOT_LOGS_THRESHOLD: u64 = 5000;
+const SNAPSHOT_MAX_CHUNK_SIZE: u64 = 3 * 1024 * 1024; // 3MB
+const INSTALL_SNAPSHOT_TIMEOUT: u64 = 200; // milliseconds
+const MAX_IN_SNAPSHOT_LOG_TO_KEEP: u64 = 1000;
+const REPLICATION_LAG_THRESHOLD: u64 = 5000;
 
 impl Default for RaftConfig {
     fn default() -> Self {
@@ -78,33 +102,63 @@ impl Default for RaftConfig {
             raft_addr: "127.0.0.1:8081".to_string(),
             resp_addr: "127.0.0.1:6379".to_string(),
             data_dir: PathBuf::from("/tmp/kiwi/raft"),
+            db_path: PathBuf::from("/tmp/kiwi/db"),
             heartbeat_interval: 200,
             election_timeout_min: 500,
             election_timeout_max: 1000,
             use_memory_log_store: false,
+            snapshot_logs_threshold: SNAPSHOT_LOGS_THRESHOLD,
+            snapshot_max_chunk_size: SNAPSHOT_MAX_CHUNK_SIZE,
+            install_snapshot_timeout: INSTALL_SNAPSHOT_TIMEOUT,
+            max_in_snapshot_log_to_keep: MAX_IN_SNAPSHOT_LOG_TO_KEEP,
+            replication_lag_threshold: REPLICATION_LAG_THRESHOLD,
         }
     }
 }
 
-/// 构建通用的 Raft 配置
+/// Build common Raft configuration
 fn build_raft_config(config: &RaftConfig) -> Result<Arc<Config>, anyhow::Error> {
     let raft_config = Config {
         heartbeat_interval: config.heartbeat_interval,
         election_timeout_min: config.election_timeout_min,
         election_timeout_max: config.election_timeout_max,
+
+        // Snapshot configuration
+        snapshot_policy: SnapshotPolicy::LogsSinceLast(config.snapshot_logs_threshold),
+        replication_lag_threshold: config.replication_lag_threshold,
+        snapshot_max_chunk_size: config.snapshot_max_chunk_size,
+        install_snapshot_timeout: config.install_snapshot_timeout,
+        max_in_snapshot_log_to_keep: config.max_in_snapshot_log_to_keep,
+
         ..Default::default()
     };
     Ok(Arc::new(raft_config.validate()?))
 }
 
-/// 构建 RaftApp，根据 RaftConfig.use_memory_log_store 决定使用内存或 RocksDB 日志存储。
-/// 默认使用 RocksDB 持久化存储；可在配置文件中设置 `raft-use-memory-log-store yes` 切换为内存存储（适用于测试）。
+/// Build RaftApp.
+///
+/// Uses RocksDB log store by default; set `raft-use-memory-log-store yes` in config to use in-memory log store (for testing).
 pub async fn create_raft_node(
     config: RaftConfig,
-    storage: Arc<Storage>,
+    storage_swap: Arc<ArcSwap<Storage>>,
+    pause_controller: Option<Arc<dyn PauseController>>,
 ) -> Result<Arc<RaftApp>, anyhow::Error> {
     let raft_config = build_raft_config(&config)?;
-    let state_machine = KiwiStateMachine::new(config.node_id, storage.clone());
+    let snapshot_work_dir = config.data_dir.join("snapshots");
+    fs::create_dir_all(&snapshot_work_dir)?;
+
+    let mut state_machine = KiwiStateMachine::new(
+        config.node_id,
+        storage_swap.clone(),
+        config.db_path.clone(),
+        snapshot_work_dir,
+    );
+
+    // Set pause controller for snapshot installation
+    if let Some(ctrl) = pause_controller {
+        state_machine.set_pause_controller(ctrl);
+    }
+
     let network = KiwiNetworkFactory::new();
 
     let raft = if config.use_memory_log_store {
@@ -138,6 +192,6 @@ pub async fn create_raft_node(
         raft_addr: config.raft_addr,
         resp_addr: config.resp_addr,
         raft,
-        storage,
+        storage_swap,
     }))
 }
