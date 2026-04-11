@@ -79,6 +79,9 @@ impl fmt::Display for KiwiNode {
 pub struct BinlogResponse {
     pub success: bool,
     pub message: Option<String>,
+    /// 写入的日志位置（提交后的 log_id）
+    /// 客户端可以使用此信息追踪写入状态
+    pub log_id: Option<u64>,
 }
 
 impl BinlogResponse {
@@ -86,6 +89,7 @@ impl BinlogResponse {
         Self {
             success: true,
             message: None,
+            log_id: None,
         }
     }
 
@@ -93,6 +97,7 @@ impl BinlogResponse {
         Self {
             success: false,
             message: Some(msg.into()),
+            log_id: None,
         }
     }
 }

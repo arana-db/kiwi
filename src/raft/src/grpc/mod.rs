@@ -25,6 +25,10 @@
 pub mod admin;
 pub mod client;
 pub mod core;
+pub mod error;
+
+// 导出错误类型
+pub use error::{GrpcClientError, GrpcError};
 
 // 导出服务创建器，便于 main.rs 使用
 pub use admin::create_admin_service;

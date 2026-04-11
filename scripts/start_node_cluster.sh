@@ -21,55 +21,72 @@
 # Logs are written to files, viewable with `tail -f`.
 # Uses gRPC for cluster management (`grpcurl` required).
 #
-# Usage: ./start_node_cluster.sh [NODE_COUNT]
+# Usage: ./start_node_cluster.sh [OPTIONS] [NODE_COUNT]
 #   NODE_COUNT: Number of nodes to start (default: 3, range: 1-9)
+#
+# Options:
+#   -h, --help     Show this help message
+#   -v, --verbose  Enable verbose logging (debug level)
+#   -q, --quiet    Suppress non-error output
+#   -n, --no-test  Skip cluster initialization and testing
 
+# Exit on error, undefined variables, and pipe failures
+set -euo pipefail
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-# Base directory for the cluster
+# Load library functions
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-CLUSTER_BASE_DIR="$PROJECT_ROOT/cluster_test"
-BINARY_PATH="$PROJECT_ROOT/target/debug/kiwi"
+# shellcheck source=cluster_lib.sh
+source "$SCRIPT_DIR/cluster_lib.sh"
 
-# Default node count
-NODE_COUNT=3
+# =============================================================================
+# Command Line Parsing
+# =============================================================================
 
-# Base ports
-RAFT_PORT_BASE=8081
-RESP_PORT_BASE=7379
+NODE_COUNT=$DEFAULT_NODE_COUNT
+RUN_TESTS=true
 
-# Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
-            echo "Usage: $0 [NODE_COUNT]"
+            echo "Usage: $0 [OPTIONS] [NODE_COUNT]"
             echo ""
             echo "Arguments:"
             echo "  NODE_COUNT    Number of nodes to start (default: 3, range: 1-9)"
             echo ""
             echo "Options:"
             echo "  -h, --help    Show this help message"
+            echo "  -v, --verbose  Enable verbose logging"
+            echo "  -q, --quiet    Suppress non-error output"
+            echo "  -n, --no-test  Skip cluster initialization and testing"
+            echo ""
+            echo "Environment Variables:"
+            echo "  LOG_LEVEL     Set log level (0=debug, 1=info, 2=warn, 3=error)"
+            echo "  RUST_LOG      Set Rust log level (info, debug, warn, error)"
             echo ""
             echo "Examples:"
-            echo "  $0        # Start 3 nodes (default)"
-            echo "  $0 5      # Start 5 nodes"
-            echo "  $0 1      # Start 1 node (single node mode)"
+            echo "  $0              # Start 3 nodes (default)"
+            echo "  $0 5            # Start 5 nodes"
+            echo "  $0 -v 3         # Start 3 nodes with verbose logging"
+            echo "  $0 -n 3         # Start 3 nodes, skip tests"
             exit 0
             ;;
+        -v|--verbose)
+            LOG_LEVEL=$LOG_LEVEL_DEBUG
+            shift
+            ;;
+        -q|--quiet)
+            LOG_LEVEL=$LOG_LEVEL_ERROR
+            shift
+            ;;
+        -n|--no-test)
+            RUN_TESTS=false
+            shift
+            ;;
         *)
-            if [[ $1 =~ ^[0-9]+$ ]] && [ $1 -ge 1 ] && [ $1 -le 9 ]; then
+            if [[ $1 =~ ^[0-9]+$ ]]; then
                 NODE_COUNT=$1
             else
-                echo -e "${RED}Error: Invalid node count '$1'${NC}"
-                echo -e "${YELLOW}Node count must be between 1 and 9${NC}"
-                echo "Use -h or --help for usage information"
+                log_error "Unknown option: $1"
                 exit 1
             fi
             shift
@@ -77,42 +94,20 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Check if grpcurl is installed
-GRPCURL=""
-find_grpcurl() {
-    # Try to find grpcurl in various locations
-    if command -v grpcurl &> /dev/null; then
-        GRPCURL="grpcurl"
-    elif [ -f "$HOME/go/bin/grpcurl" ]; then
-        GRPCURL="$HOME/go/bin/grpcurl"
-    elif [ -f "/usr/local/bin/grpcurl" ]; then
-        GRPCURL="/usr/local/bin/grpcurl"
-    else
-        echo -e "${RED}Error: grpcurl is not installed${NC}"
-        echo -e "${YELLOW}Install grpcurl:${NC}"
-        echo "  go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest"
-        echo "  or: brew install grpcurl (macOS)"
-        echo -e "\n${YELLOW}Then make sure \$HOME/go/bin is in your PATH:${NC}"
-        echo "  export PATH=\"\$PATH:\$HOME/go/bin\""
-        exit 1
-    fi
-}
+# Validate node count
+validate_node_count "$NODE_COUNT" || exit 1
 
-# Check if binary exists
-if [ ! -f "$BINARY_PATH" ]; then
-    echo -e "${RED}Error: Binary not found at $BINARY_PATH${NC}"
-    echo -e "${YELLOW}Building the project...${NC}"
-    cd "$PROJECT_ROOT" && cargo build --bin kiwi
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Failed to build project${NC}"
-        exit 1
-    fi
-fi
+# Validate binary
+validate_binary || exit 1
 
-# Find grpcurl
-find_grpcurl
+# Check grpcurl
+GRPCURL=$(check_grpcurl) || exit 1
 
-# Dynamically generate node configurations
+# =============================================================================
+# Node Configuration
+# =============================================================================
+
+# Generate node configurations
 # Format: "node_id:raft_port:resp_port"
 NODES=()
 for ((i=1; i<=NODE_COUNT; i++)); do
@@ -121,389 +116,174 @@ for ((i=1; i<=NODE_COUNT; i++)); do
     NODES+=("$i:$raft_port:$resp_port")
 done
 
-# PIDs file for tracking only the PIDs started by this script
-PIDS_FILE="$CLUSTER_BASE_DIR/.pids"
+# =============================================================================
+# Cleanup Handler
+# =============================================================================
 
-# Function to cleanup on exit
-cleanup() {
-    echo -e "\n${YELLOW}Stopping cluster...${NC}"
+# Register cleanup on exit
+trap cleanup_cluster EXIT
 
-    # Kill only the PIDs tracked by this script
-    if [ -f "$PIDS_FILE" ]; then
-        while IFS= read -r pid; do
-            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-                kill "$pid" 2>/dev/null || true
-            fi
-        done < "$PIDS_FILE"
-    fi
+# Also handle Ctrl+C
+trap 'log_info "Interrupted"; cleanup_cluster; exit 130' INT TERM
 
-    sleep 1
+# =============================================================================
+# Cluster Initialization
+# =============================================================================
 
-    # Force kill only the tracked PIDs if any remain
-    if [ -f "$PIDS_FILE" ]; then
-        while IFS= read -r pid; do
-            if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-                kill -9 "$pid" 2>/dev/null || true
-            fi
-        done < "$PIDS_FILE"
-    fi
+# Clean up any existing cluster
+if [ -d "$CLUSTER_BASE_DIR" ]; then
+    log_warn "Removing existing cluster directory..."
+    cleanup_cluster
+fi
 
-    # Remove only the cluster directory (not $PROJECT_ROOT/db)
-    rm -rf "$CLUSTER_BASE_DIR"
+# Create cluster base directory
+mkdir -p "$CLUSTER_BASE_DIR"
+: > "$PIDS_FILE"
 
-    echo -e "${GREEN}Cleanup complete${NC}"
-}
+# Create all nodes
+log_info "Creating $NODE_COUNT nodes..."
+for node_info in "${NODES[@]}"; do
+    IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
+    create_node "$node_id" "$raft_port" "$resp_port" || exit 1
+done
 
-# Register cleanup on Ctrl+C
-trap cleanup INT TERM
+# Start all nodes
+log_info "Starting all nodes..."
+for node_info in "${NODES[@]}"; do
+    IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
+    start_node "$node_id" || exit 1
+done
 
-# Function to create node directory and config
-create_node() {
-    local node_id=$1
-    local raft_port=$2
-    local resp_port=$3
-    local node_dir="$CLUSTER_BASE_DIR/node$node_id"
+# Wait for nodes to be ready
+log_debug "Waiting for nodes to initialize..."
+sleep 3
 
-    echo -e "${BLUE}Creating node $node_id...${NC}"
+# =============================================================================
+# Cluster Setup via gRPC
+# =============================================================================
 
-    # Create node directory
-    mkdir -p "$node_dir"
-
-    # Create config file
-    cat > "$node_dir/config.toml" << EOF
-# Node $node_id configuration
-binding = 127.0.0.1
-port = $resp_port
-network_threads = 1
-storage_threads = 2
-
-raft-node-id = $node_id
-raft-addr = 127.0.0.1:$raft_port
-raft-resp-addr = 127.0.0.1:$resp_port
-raft-data-dir = ./raft_data
-EOF
-
-    # Copy binary to node directory
-    cp "$BINARY_PATH" "$node_dir/kiwi"
-    chmod +x "$node_dir/kiwi"
-
-    echo -e "${GREEN}Node $node_id created at $node_dir${NC}"
-}
-
-# Function to start a node
-start_node() {
-    local node_id=$1
-    local node_dir="$CLUSTER_BASE_DIR/node$node_id"
-    local log_file="$node_dir/kiwi.log"
-
-    echo -e "${BLUE}Starting node $node_id...${NC}"
-
-    # Start node from its own directory (so ./db is per-node)
-    cd "$node_dir"
-    RUST_LOG=info ./kiwi --config config.toml > "$log_file" 2>&1 &
-    local pid=$!
-    cd - > /dev/null
-
-    # Save PID to file for cleanup tracking
-    echo "$pid" >> "$PIDS_FILE"
-    echo "$pid" > "$node_dir/kiwi.pid"
-
-    echo -e "${GREEN}Node $node_id started (PID: $pid)${NC}"
-    echo -e "${YELLOW}  Log: $log_file${NC}"
-}
-
-# Function to build the cluster initialization JSON
-build_cluster_json() {
-    local json="{\"nodes\": ["
-    local first=true
-
-    for node_info in "${NODES[@]}"; do
-        IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
-        if [ "$first" = true ]; then
-            first=false
-        else
-            json+=", "
-        fi
-        json+="{\"node_id\": $node_id, \"raft_addr\": \"127.0.0.1:$raft_port\", \"resp_addr\": \"127.0.0.1:$resp_port\"}"
-    done
-
-    json+="]}"
-    echo "$json"
-}
-
-# Function to build membership JSON
-build_membership_json() {
-    local json="{\"members\": ["
-    local first=true
-
-    for node_info in "${NODES[@]}"; do
-        IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
-        if [ "$first" = true ]; then
-            first=false
-        else
-            json+=", "
-        fi
-        json+="{\"node_id\": $node_id, \"raft_addr\": \"127.0.0.1:$raft_port\", \"resp_addr\": \"127.0.0.1:$resp_port\"}"
-    done
-
-    json+="], \"retain\": false}"
-    echo "$json"
-}
-
-# Function to initialize the cluster using gRPC
 init_cluster() {
-    echo -e "\n${YELLOW}Waiting for nodes to initialize...${NC}"
-    sleep 3
+    log_info "Initializing Raft cluster via gRPC..."
 
-    echo -e "${YELLOW}Initializing Raft cluster via gRPC...${NC}"
-
-    # Get the first node's Raft address
     local first_node_raft="127.0.0.1:$RAFT_PORT_BASE"
+    local cluster_json
+    cluster_json=$(build_cluster_json "${NODES[@]}")
 
-    # Build cluster JSON dynamically
-    local cluster_json=$(build_cluster_json)
+    # Initialize the cluster through node 1
+    log_debug "Calling Initialize on node 1..."
+    local init_result
+    init_result=$(grpc_call "$first_node_raft" "kiwi.raft.v1.RaftAdminService" "Initialize" "$cluster_json" "$GRPCURL")
 
-    # Initialize the cluster through node 1 using gRPC
-    echo -e "${BLUE}Initializing cluster via node 1...${NC}"
-    local init_result=$(echo "$cluster_json" | $GRPCURL -plaintext -d @ "$first_node_raft" raft_proto.RaftAdminService/Initialize 2>/dev/null || echo "error")
-
-    echo "  Init result: $init_result"
-
-    # If init failed, try adding nodes step by step
-    if [[ "$init_result" == *"error"* ]] || [[ "$init_result" == *"failed"* ]]; then
-        echo -e "${YELLOW}Direct init may have failed, trying step-by-step setup...${NC}"
+    if [[ "$init_result" == "error" ]]; then
+        log_warn "Direct init failed, trying step-by-step setup..."
 
         # Add nodes 2..N as learners
         for node_info in "${NODES[@]}"; do
             IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
-            if [ $node_id -ne 1 ]; then
-                echo -e "${BLUE}Adding node $node_id as learner...${NC}"
-                local learner_result=$($GRPCURL -plaintext -d '{
-                    "node_id": '$node_id',
-                    "node": {"raft_addr": "127.0.0.1:'$raft_port'", "resp_addr": "127.0.0.1:'$resp_port'"}
-                }' "$first_node_raft" raft_proto.RaftAdminService/AddLearner 2>/dev/null || echo "error")
-                echo "  Add learner $node_id result: $learner_result"
+            if [ "$node_id" -ne 1 ]; then
+                log_debug "Adding node $node_id as learner..."
+                local learner_data="{\"node_id\": $node_id, \"node\": {\"raft_addr\": \"127.0.0.1:$raft_port\", \"resp_addr\": \"127.0.0.1:$resp_port\"}}"
+                grpc_call "$first_node_raft" "kiwi.raft.v1.RaftAdminService" "AddLearner" "$learner_data" "$GRPCURL" > /dev/null
             fi
         done
 
         # Change membership to include all nodes
-        echo -e "${BLUE}Changing cluster membership...${NC}"
-        local membership_json=$(build_membership_json)
-        local membership_result=$(echo "$membership_json" | $GRPCURL -plaintext -d @ "$first_node_raft" raft_proto.RaftAdminService/ChangeMembership 2>/dev/null || echo "error")
-        echo "  Membership result: $membership_result"
+        log_debug "Changing cluster membership..."
+        local membership_json
+        membership_json=$(build_membership_json "${NODES[@]}")
+        grpc_call "$first_node_raft" "kiwi.raft.v1.RaftAdminService" "ChangeMembership" "$membership_json" "$GRPCURL" > /dev/null
     fi
 
     sleep 2
-
-    echo -e "${GREEN}Cluster initialization complete${NC}"
+    log_info "Cluster initialization complete"
 }
 
-# Function to show cluster status using gRPC
-show_status() {
-    echo -e "\n${YELLOW}Cluster Status:${NC}"
+init_cluster
 
-    for node_info in "${NODES[@]}"; do
-        IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
+# =============================================================================
+# Show Status
+# =============================================================================
 
-        echo -e "\n${BLUE}Node $node_id:${NC}"
+log_info "Cluster Status:"
+for node_info in "${NODES[@]}"; do
+    IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
+    get_node_status "$node_id" "$raft_port" "$resp_port"
+done
 
-        # Check if process is running
-        local node_dir="$CLUSTER_BASE_DIR/node$node_id"
-        if [ -f "$node_dir/kiwi.pid" ]; then
-            local pid=$(cat "$node_dir/kiwi.pid")
-            if kill -0 "$pid" 2>/dev/null; then
-                echo -e "  ${GREEN}✓ Running (PID: $pid)${NC}"
-            else
-                echo -e "  ${RED}✗ Not running${NC}"
-            fi
-        fi
+# =============================================================================
+# Run Tests
+# =============================================================================
 
-        # Check if port is listening
-        if nc -z 127.0.0.1 "$raft_port" 2>/dev/null; then
-            echo -e "  ${GREEN}✓ gRPC listening on port $raft_port${NC}"
-        else
-            echo -e "  ${RED}✗ gRPC not responding on port $raft_port${NC}"
-        fi
-
-        if nc -z 127.0.0.1 "$resp_port" 2>/dev/null; then
-            echo -e "  ${GREEN}✓ RESP listening on port $resp_port${NC}"
-        else
-            echo -e "  ${RED}✗ RESP not responding on port $resp_port${NC}"
-        fi
-
-        # Check leader via gRPC
-        local leader=$($GRPCURL -plaintext "127.0.0.1:$raft_port" raft_proto.RaftMetricsService/Leader 2>/dev/null || echo "error")
-        if [ "$leader" != "error" ] && [ "$leader" != "null" ]; then
-            echo -e "  Leader info: $leader"
-        fi
-
-        # Check metrics via gRPC
-        local metrics=$($GRPCURL -plaintext "127.0.0.1:$raft_port" raft_proto.RaftMetricsService/Metrics 2>/dev/null || echo "error")
-        if [ "$metrics" != "error" ] && [ "$metrics" != "null" ]; then
-            echo -e "  Metrics: $metrics"
-        fi
-    done
-}
-
-# Function to run tests using gRPC
-run_tests() {
-    echo -e "\n${YELLOW}Running basic Raft tests...${NC}"
+if [ "$RUN_TESTS" = "true" ]; then
+    log_info "Running basic Raft tests..."
 
     # Find the leader
     local leader_raft=""
-    local leader_id=""
-
     for node_info in "${NODES[@]}"; do
         IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
-        local leader_check=$($GRPCURL -plaintext "127.0.0.1:$raft_port" raft_proto.RaftMetricsService/Metrics 2>/dev/null || echo "error")
-        if [ "$leader_check" != "error" ] && [[ "$leader_check" == *"isLeader"* ]]; then
-            # Check if this node is the leader (isLeader: true)
-            if [[ "$leader_check" == *"isLeader\": true"* ]]; then
-                leader_raft="127.0.0.1:$raft_port"
-                leader_id="$node_id"
-                echo -e "${GREEN}Leader is node $node_id (port $raft_port)${NC}"
-                break
-            fi
+        local metrics
+        metrics=$(grpc_call "127.0.0.1:$raft_port" "kiwi.raft.v1.RaftMetricsService" "Metrics" "{}" "$GRPCURL")
+        if [[ "$metrics" != "error" ]] && [[ "$metrics" == *"isLeader\": true"* ]]; then
+            leader_raft="127.0.0.1:$raft_port"
+            log_info "Leader is node $node_id (port $raft_port)"
+            break
         fi
     done
 
     if [ -z "$leader_raft" ]; then
-        echo -e "${RED}No leader found, skipping tests${NC}"
-        return
-    fi
-
-    # Test write operation via gRPC
-    echo -e "${BLUE}Testing write operation via leader ($leader_raft)...${NC}"
-    local write_response=$($GRPCURL -plaintext -d '{
-        "binlog": {
-            "db_id": 0,
-            "slot_idx": 0,
-            "entries": [
-                {
-                    "cf_idx": 0,
-                    "op_type": "Put",
-                    "key": "dGVzdF9r",
-                    "value": "dGVzdF92"
-                }
-            ]
-        }
-    }' "$leader_raft" raft_proto.RaftClientService/Write 2>/dev/null || echo "error")
-
-    if [ "$write_response" != "error" ]; then
-        echo -e "${GREEN}Write response: $write_response${NC}"
+        log_warn "No leader found, skipping tests"
     else
-        echo -e "${RED}Write failed${NC}"
-    fi
-
-    # Test read operation via gRPC
-    echo -e "${BLUE}Testing read operation...${NC}"
-    local read_response=$($GRPCURL -plaintext -d '{
-        "key": "dGVzdF9r"
-    }' "$leader_raft" raft_proto.RaftClientService/Read 2>/dev/null || echo "error")
-
-    if [ "$read_response" != "error" ]; then
-        echo -e "${GREEN}Read response: $read_response${NC}"
-    else
-        echo -e "${RED}Read failed${NC}"
-    fi
-}
-
-# Main execution
-main() {
-    set -euo pipefail
-
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}  Kiwi ${NODE_COUNT}-Node Raft Cluster${NC}"
-    echo -e "${GREEN}  (using gRPC for cluster management)${NC}"
-    echo -e "${GREEN}========================================${NC}"
-
-    # Clean up any existing cluster (only within CLUSTER_BASE_DIR)
-    if [ -d "$CLUSTER_BASE_DIR" ]; then
-        echo -e "${YELLOW}Removing existing cluster directory...${NC}"
-
-        # Kill only tracked PIDs from previous run
-        if [ -f "$CLUSTER_BASE_DIR/.pids" ]; then
-            while IFS= read -r pid; do
-                if [ -n "$pid" ]; then
-                    kill "$pid" 2>/dev/null || true
-                fi
-            done < "$CLUSTER_BASE_DIR/.pids"
-            sleep 1
-            while IFS= read -r pid; do
-                if [ -n "$pid" ]; then
-                    kill -9 "$pid" 2>/dev/null || true
-                fi
-            done < "$CLUSTER_BASE_DIR/.pids"
+        # Test write
+        log_debug "Testing write operation..."
+        local write_data='{"binlog": {"db_id": 0, "slot_idx": 0, "entries": [{"cf_idx": 0, "op_type": "Put", "key": "dGVzdF9r", "value": "dGVzdF92"}]}}'
+        local write_response
+        write_response=$(grpc_call "$leader_raft" "kiwi.raft.v1.RaftClientService" "Write" "$write_data" "$GRPCURL")
+        if [[ "$write_response" != "error" ]]; then
+            log_info "Write test: OK"
+        else
+            log_error "Write test: FAILED"
         fi
 
-        rm -rf "$CLUSTER_BASE_DIR"
+        # Test read
+        log_debug "Testing read operation..."
+        local read_response
+        read_response=$(grpc_call "$leader_raft" "kiwi.raft.v1.RaftClientService" "Read" '{"key": "dGVzdF9r"}' "$GRPCURL")
+        if [[ "$read_response" != "error" ]]; then
+            log_info "Read test: OK"
+        else
+            log_error "Read test: FAILED"
+        fi
     fi
+fi
 
-    sleep 1
+# =============================================================================
+# Final Output
+# =============================================================================
 
-    # Create cluster base directory
-    mkdir -p "$CLUSTER_BASE_DIR"
-    # Initialize PIDS_FILE (truncate if exists)
-    : > "$PIDS_FILE"
+echo ""
+log_info "========================================"
+log_info "Cluster is running!"
+log_info "========================================"
+echo ""
 
-    # Create all nodes
-    for node_info in "${NODES[@]}"; do
-        IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
-        create_node "$node_id" "$raft_port" "$resp_port"
-    done
+for node_info in "${NODES[@]}"; do
+    IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
+    echo "Node $node_id:"
+    echo "  gRPC:   127.0.0.1:$raft_port"
+    echo "  RESP:   127.0.0.1:$resp_port"
+    echo ""
+done
 
-    # Start all nodes
-    echo -e "\n${YELLOW}Starting all nodes...${NC}"
-    for node_info in "${NODES[@]}"; do
-        IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
-        start_node "$node_id"
-    done
+echo "View logs with:"
+echo "  tail -f $CLUSTER_BASE_DIR/node1/kiwi.log"
+echo ""
 
-    # Wait for nodes to be ready
-    sleep 3
+echo "gRPC service examples:"
+echo "  $GRPCURL -plaintext 127.0.0.1:$RAFT_PORT_BASE kiwi.raft.v1.RaftMetricsService/Leader"
+echo "  $GRPCURL -plaintext 127.0.0.1:$RAFT_PORT_BASE kiwi.raft.v1.RaftMetricsService/Metrics"
+echo ""
 
-    # Initialize the cluster
-    init_cluster
+echo -e "${YELLOW}Press Ctrl+C to stop the cluster${NC}"
 
-    # Show cluster status
-    show_status
-
-    # Run tests
-    run_tests
-
-    echo -e "\n${GREEN}========================================${NC}"
-    echo -e "${GREEN}Cluster is running!${NC}"
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${YELLOW}Nodes:${NC}"
-    for node_info in "${NODES[@]}"; do
-        IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
-        local node_dir="$CLUSTER_BASE_DIR/node$node_id"
-        echo -e "  ${BLUE}Node $node_id:${NC}"
-        echo -e "    gRPC:   127.0.0.1:$raft_port"
-        echo -e "    RESP:   127.0.0.1:$resp_port"
-        echo -e "    Log:    $node_dir/kiwi.log"
-        echo -e "    Data:   $node_dir"
-    done
-
-    echo -e "\n${YELLOW}View logs with:${NC}"
-    echo -e "  ${BLUE}tail -f $CLUSTER_BASE_DIR/node1/kiwi.log${NC}"
-    for ((i=2; i<=NODE_COUNT; i++)); do
-        echo -e "  ${BLUE}tail -f $CLUSTER_BASE_DIR/node${i}/kiwi.log${NC}"
-    done
-    echo -e "\n${YELLOW}Or view all at once:${NC}"
-    echo -e "  ${BLUE}tail -f $CLUSTER_BASE_DIR/node*/kiwi.log${NC}"
-
-    echo -e "\n${YELLOW}gRPC service examples:${NC}"
-    echo -e "  ${BLUE}$GRPCURL -plaintext 127.0.0.1:$RAFT_PORT_BASE raft_proto.RaftMetricsService/Leader${NC}"
-    echo -e "  ${BLUE}$GRPCURL -plaintext 127.0.0.1:$RAFT_PORT_BASE raft_proto.RaftMetricsService/Metrics${NC}"
-    echo -e "  ${BLUE}$GRPCURL -plaintext 127.0.0.1:$RAFT_PORT_BASE raft_proto.RaftMetricsService/Members${NC}"
-    echo -e "  ${BLUE}$GRPCURL -plaintext 127.0.0.1:$RAFT_PORT_BASE list${NC}"
-
-    echo -e "\n${YELLOW}Press Ctrl+C to stop the cluster${NC}"
-
-    # Wait indefinitely for user to press Ctrl+C
-    wait
-}
-
-# Run main
-main
+# Wait indefinitely for user to press Ctrl+C
+wait

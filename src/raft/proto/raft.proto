@@ -17,7 +17,12 @@
 
 syntax = "proto3";
 
-package raft_proto;
+// 版本化包名
+//
+// 版本历史：
+// - v1: 初始版本，支持基本的 Raft RPC
+// - 未来版本变更将在 ChangeLog 中记录
+package kiwi.raft.v1;
 
 import "types.proto";
 

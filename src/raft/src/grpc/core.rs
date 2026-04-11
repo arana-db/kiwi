@@ -146,29 +146,43 @@ impl RaftCoreService for RaftCoreServiceImpl {
     }
 
     /// 流式追加日志 RPC - pipeline 复制
+    ///
+    /// # 当前状态
+    /// 此 RPC 尚未实现，返回 `Status::unimplemented`。
+    /// openraft 在某些场景下会依赖 stream_append 做 pipeline 复制。
+    /// 如果这个 RPC 不工作，节点间日志复制会回退到同步方式，影响性能。
+    /// 将在后续版本中实现流水线复制优化。
     async fn stream_append(
         &self,
         _request: Request<tonic::Streaming<AppendEntriesRequest>>,
     ) -> Result<Response<Self::StreamAppendStream>, Status> {
-        // TODO: 实现 pipeline 复制
-        Err(Status::unimplemented("StreamAppend not implemented yet"))
+        Err(Status::unimplemented(
+            "StreamAppend RPC is not implemented yet: nodes will use synchronous log replication",
+        ))
     }
 
     /// 安装快照 RPC
+    ///
+    /// # 当前状态 - 临时 workaround
+    /// 此 RPC 尚未实现。当前实现消费整个流然后返回 `failed_precondition` 错误。
+    ///
+    /// ## 已知问题
+    /// - 客户端会接收到 `failed_precondition` 错误，看起来像服务端不支持此 RPC
+    /// - 但实际上服务端接收了所有数据只是丢弃了
+    /// - 如果将来实现了快照安装，这个 workaround 会被删除
     async fn install_snapshot(
         &self,
         request: Request<tonic::Streaming<InstallSnapshotRequest>>,
     ) -> Result<Response<InstallSnapshotResponse>, Status> {
-        // TODO: 实现快照安装
-        // 当前部署未实现快照安装逻辑。为确保 RPC 被正确处理，我们消费输入流并返回
-        // 一个明确的错误，而不是 gRPC 层面的 UNIMPLEMENTED。
+        // FIXME: 实现快照安装
+        // 当前故意丢弃所有快照分片，将来实现时必须删除此 workaround
         let mut stream = request.into_inner();
         while let Some(_chunk) = stream.message().await? {
-            // 丢弃所有快照分片；这里可以在将来实现真正的快照安装逻辑。
+            // 丢弃所有快照分片
         }
 
         Err(Status::failed_precondition(
-            "InstallSnapshot RPC is not supported: snapshot installation is not implemented in this deployment",
+            "InstallSnapshot RPC is not implemented yet: received snapshot data was discarded",
         ))
     }
 }
