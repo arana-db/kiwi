@@ -552,18 +552,6 @@ impl Command for RespData {
 
                 Ok(RespCommand::new(command_type, args, false))
             }
-            RespData::Inline(parts) if !parts.is_empty() => {
-                let command_name = std::str::from_utf8(&parts[0]).map_err(|_| {
-                    RespError::InvalidData("Command name must be a valid UTF-8 string".to_string())
-                })?;
-
-                let command_type =
-                    CommandType::from_str(command_name).unwrap_or(CommandType::Unknown);
-
-                let args = parts.iter().skip(1).cloned().collect();
-
-                Ok(RespCommand::new(command_type, args, false))
-            }
             _ => Err(RespError::InvalidData("Invalid command format".to_string())),
         }
     }

@@ -248,8 +248,7 @@ impl ProtocolNegotiator {
             RespData::SimpleString(_)
             | RespData::Error(_)
             | RespData::Integer(_)
-            | RespData::BulkString(_)
-            | RespData::Inline(_) => data.clone(),
+            | RespData::BulkString(_) => data.clone(),
             RespData::Array(Some(items)) => {
                 // Recursively convert array items
                 let converted_items: Vec<_> = items.iter().map(Self::convert_to_resp2).collect();
