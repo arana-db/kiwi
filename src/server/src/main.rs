@@ -28,8 +28,6 @@ use std::sync::Arc;
 use storage::StorageOptions;
 use storage::storage::Storage;
 
-use arc_swap::ArcSwap;
-
 use actix_web::{App, HttpServer, web};
 use raft::api::{
     RaftAppData, add_learner, change_membership, init, leader, metrics, raft_append, raft_vote,
@@ -289,8 +287,10 @@ async fn start_server(
                 ..Default::default()
             };
 
-            // Create Arc<ArcSwap<Storage>> from GlobalStorage
-            let storage_swap = Arc::new(ArcSwap::from(global_storage.load()));
+            // Use the shared Arc<ArcSwap<Storage>> from GlobalStorage
+            // This ensures all components (StorageServer, Raft) share the same ArcSwap,
+            // so snapshot installation's swap() is visible to all.
+            let storage_swap = global_storage.arc_swap();
 
             // Create pause controller wrapper for RaftNode
             let pause_controller_wrapper = Arc::new(PauseControllerWrapper(pause_controller));

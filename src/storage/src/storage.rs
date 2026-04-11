@@ -115,22 +115,8 @@ pub struct Storage {
 
 impl Drop for Storage {
     fn drop(&mut self) {
-        // Stop expiration cleanup task first
-        if let Some(handle) = self.expiration_cleanup_task.take() {
-            handle.abort();
-        }
-
-        // Set need_close flag for all Redis instances so they close RocksDB on drop
-        for inst in &self.insts {
-            inst.set_need_close(true);
-        }
-        // Clear the vector to drop all Redis instances
-        self.insts.clear();
-
-        // Abort background task handle if present
-        if let Some(handle) = self.bg_task.take() {
-            handle.abort();
-        }
+        // Call internal cleanup method
+        self.release_resources();
     }
 }
 
@@ -153,6 +139,27 @@ impl Storage {
             expiration_manager: None,
             expiration_cleanup_task: None,
         }
+    }
+
+    /// Internal method to release all resources.
+    /// Called by both `close()` and `Drop::drop()` to avoid code duplication.
+    fn release_resources(&mut self) {
+        // Abort background task handle if present
+        if let Some(handle) = self.bg_task.take() {
+            handle.abort();
+        }
+
+        // Stop expiration cleanup task first
+        if let Some(handle) = self.expiration_cleanup_task.take() {
+            handle.abort();
+        }
+
+        // Set need_close flag for all Redis instances so they close RocksDB on drop
+        for inst in &self.insts {
+            inst.set_need_close(true);
+        }
+        // Clear the vector to drop all Redis instances
+        self.insts.clear();
     }
 
     pub fn open(
@@ -222,24 +229,12 @@ impl Storage {
     pub fn close(&mut self) {
         log::info!("Closing Storage (releasing RocksDB file handles)");
 
-        // Stop background tasks first
-        if let Some(handle) = self.bg_task.take() {
-            handle.abort();
-        }
+        // Release all resources (Redis instances, background tasks, etc.)
+        self.release_resources();
+
+        // Clear handler/manager references
         self.bg_task_handler = None;
-
-        // Stop expiration cleanup task
-        if let Some(handle) = self.expiration_cleanup_task.take() {
-            handle.abort();
-        }
         self.expiration_manager = None;
-
-        // Set need_close flag for all Redis instances so they close RocksDB on drop
-        for inst in &self.insts {
-            inst.set_need_close(true);
-        }
-        // Clear the vector to drop all Redis instances (closes RocksDB)
-        self.insts.clear();
 
         self.is_opened.store(false, Ordering::SeqCst);
         log::info!("Storage closed successfully");

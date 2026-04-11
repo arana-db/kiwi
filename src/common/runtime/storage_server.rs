@@ -21,7 +21,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
-use arc_swap::ArcSwap;
 use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
 
@@ -245,11 +244,6 @@ impl StorageServer {
         info!("StorageServer: resuming after snapshot installation");
         self.paused.store(false, Ordering::SeqCst);
         self.pause_notify.notify_waiters();
-    }
-
-    /// Get the ArcSwap for direct access (used by KiwiStateMachine)
-    pub fn arc_swap(&self) -> &ArcSwap<Storage> {
-        self.global_storage.arc_swap()
     }
 
     /// Start the storage server and begin processing requests
