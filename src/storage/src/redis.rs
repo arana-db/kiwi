@@ -238,9 +238,6 @@ impl Redis {
             table_opts.set_block_cache(&cache);
         }
 
-        // Set compression type per CF
-        cf_opts.set_compression_type(storage_options.compression_type);
-
         // Set table factory
         cf_opts.set_block_based_table_factory(&table_opts);
 

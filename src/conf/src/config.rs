@@ -14,14 +14,17 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+use rocksdb::DBCompressionType;
+use serde::{Deserialize, Serialize};
 use snafu::ResultExt;
+use std::fmt::Formatter;
 use validator::Validate;
 
 use crate::de_func::{parse_bool_from_string, parse_memory, parse_redis_config};
 use crate::error::Error;
 
 /// Compression algorithm for RocksDB column families.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CompressionType {
     None,
     Snappy,
@@ -41,6 +44,20 @@ impl CompressionType {
             CompressionType::Zlib => rocksdb::DBCompressionType::Zlib,
             CompressionType::Bz2 => rocksdb::DBCompressionType::Bz2,
         }
+    }
+}
+
+impl std::fmt::Display for CompressionType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            CompressionType::None => "none",
+            CompressionType::Snappy => "snappy",
+            CompressionType::Lz4 => "lz4",
+            CompressionType::Zstd => "zstd",
+            CompressionType::Zlib => "zlib",
+            CompressionType::Bz2 => "bz2",
+        };
+        write!(f, "{}", s)
     }
 }
 
@@ -451,9 +468,13 @@ impl Config {
         options.set_max_open_files(self.rocksdb_max_open_files);
         options.set_target_file_size_base(self.rocksdb_target_file_size_base);
 
-        // Apply compression to all levels (level 0 uses no compression, levels 1+ use configured type)
+        // Apply compression to all levels (level 0 and 1 use no compression, levels 2+ use configured type)
         let compression = self.rocksdb_compression_type.to_rocksdb();
-        options.set_compression_type(compression);
+        let mut compressions = vec![DBCompressionType::None; 3];
+        for _ in 3..self.rocksdb_num_levels {
+            compressions.push(compression);
+        }
+        options.set_compression_per_level(&compressions);
 
         if self.rocksdb_periodic_second > 0 {
             options.set_periodic_compaction_seconds(self.rocksdb_periodic_second);

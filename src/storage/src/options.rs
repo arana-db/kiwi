@@ -74,8 +74,6 @@ pub struct StorageOptions {
     pub max_gap: i64,
     /// Memory manager size
     pub mem_manager_size: usize,
-    /// Compression type for column families
-    pub compression_type: rocksdb::DBCompressionType,
 }
 
 impl Default for StorageOptions {
@@ -102,7 +100,6 @@ impl Default for StorageOptions {
             raft_timeout_s: u32::MAX,
             max_gap: 1000,
             mem_manager_size: 100_000_000,
-            compression_type: rocksdb::DBCompressionType::Lz4,
         }
     }
 }
@@ -116,10 +113,8 @@ impl StorageOptions {
     /// Build StorageOptions from a loaded [`conf::config::Config`].
     pub fn from_config(config: &conf::config::Config) -> Self {
         let rocksdb_opts = config.get_rocksdb_options();
-        let compression = config.rocksdb_compression_type.to_rocksdb();
         Self {
             options: rocksdb_opts,
-            compression_type: compression,
             block_cache_size: config.memory as usize,
             small_compaction_threshold: config.small_compaction_threshold,
             small_compaction_duration_threshold: config.small_compaction_duration_threshold,
