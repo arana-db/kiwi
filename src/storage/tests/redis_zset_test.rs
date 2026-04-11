@@ -87,6 +87,21 @@ mod redis_zset_test {
     }
 
     #[test]
+    fn test_zcard_wrong_type_returns_wrongtype_for_live_string() {
+        let redis = create_test_redis();
+        let key = b"zset_wrongtype_live_short";
+
+        redis.set(key, b"x").unwrap();
+
+        let mut card = 0;
+        let err = redis.zcard(key, &mut card).unwrap_err().to_string();
+        assert!(
+            err.contains("WRONGTYPE"),
+            "expected WRONGTYPE, got: {err}"
+        );
+    }
+
+    #[test]
     fn test_zscan_basic() {
         let redis = create_test_redis();
         let key = b"test_zset";

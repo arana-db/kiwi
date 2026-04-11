@@ -328,6 +328,47 @@ mod redis_string_test {
     }
 
     #[test]
+    fn test_redis_mget_wrong_type_returns_nil_entry() {
+        let test_db_path = unique_test_db_path();
+
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let string_key = b"mget_string_key";
+        let hash_key = b"mget_hash_key";
+        let missing_key = b"mget_missing_key";
+
+        redis.set(string_key, b"value").expect("set failed");
+        redis
+            .hset(hash_key, b"field", b"value")
+            .expect("hset failed");
+
+        let keys = vec![
+            string_key.to_vec(),
+            hash_key.to_vec(),
+            missing_key.to_vec(),
+        ];
+        let values = redis.mget(&keys).expect("mget failed");
+
+        assert_eq!(values.len(), 3);
+        assert_eq!(values[0], Some("value".to_string()));
+        assert_eq!(values[1], None);
+        assert_eq!(values[2], None);
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
     fn test_redis_setrange_with_binary() {
         let test_db_path = unique_test_db_path();
 

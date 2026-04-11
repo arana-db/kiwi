@@ -153,6 +153,35 @@ mod redis_set_test {
     }
 
     #[test]
+    fn test_scard_wrong_type_returns_wrongtype_for_live_string() {
+        let test_db_path = unique_test_db_path();
+
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"set_wrongtype_live_short";
+        redis.set(key, b"x").expect("set failed");
+
+        let err = redis.scard(key).unwrap_err().to_string();
+        assert!(
+            err.contains("WRONGTYPE"),
+            "expected WRONGTYPE, got: {err}"
+        );
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
     fn test_sadd_to_existing_set() {
         let test_db_path = unique_test_db_path();
 
