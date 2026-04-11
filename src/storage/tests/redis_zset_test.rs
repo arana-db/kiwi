@@ -95,10 +95,7 @@ mod redis_zset_test {
 
         let mut card = 0;
         let err = redis.zcard(key, &mut card).unwrap_err().to_string();
-        assert!(
-            err.contains("WRONGTYPE"),
-            "expected WRONGTYPE, got: {err}"
-        );
+        assert!(err.contains("WRONGTYPE"), "expected WRONGTYPE, got: {err}");
     }
 
     #[test]

@@ -350,11 +350,7 @@ mod redis_string_test {
             .hset(hash_key, b"field", b"value")
             .expect("hset failed");
 
-        let keys = vec![
-            string_key.to_vec(),
-            hash_key.to_vec(),
-            missing_key.to_vec(),
-        ];
+        let keys = vec![string_key.to_vec(), hash_key.to_vec(), missing_key.to_vec()];
         let values = redis.mget(&keys).expect("mget failed");
 
         assert_eq!(values.len(), 3);

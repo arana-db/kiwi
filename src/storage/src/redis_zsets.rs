@@ -1228,8 +1228,9 @@ impl Redis {
             let dest_version = dest_meta.version();
 
             // Delete all score keys and member keys
-            let min_score_key = ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
-                .encode_seek_key()?;
+            let min_score_key =
+                ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
+                    .encode_seek_key()?;
             let iter = db.iterator_cf_opt(
                 &cf_score,
                 ReadOptions::default(),

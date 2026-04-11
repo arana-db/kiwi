@@ -170,10 +170,7 @@ mod redis_set_test {
         redis.set(key, b"x").expect("set failed");
 
         let err = redis.scard(key).unwrap_err().to_string();
-        assert!(
-            err.contains("WRONGTYPE"),
-            "expected WRONGTYPE, got: {err}"
-        );
+        assert!(err.contains("WRONGTYPE"), "expected WRONGTYPE, got: {err}");
 
         redis.set_need_close(true);
         drop(redis);
