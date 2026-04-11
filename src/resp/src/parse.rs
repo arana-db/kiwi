@@ -612,6 +612,24 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_inline_command_with_args() {
+        let mut parser = RespParse::new(RespVersion::RESP2);
+        let res = parser.parse(Bytes::from("ping hello\r\n"));
+        assert_eq!(
+            res,
+            RespParseResult::Complete(RespData::Array(Some(vec![
+                RespData::BulkString(Some(Bytes::from("ping"))),
+                RespData::BulkString(Some(Bytes::from("hello"))),
+            ])))
+        );
+
+        let command = parser.next_command().unwrap().unwrap();
+        assert_eq!(command.command_type, CommandType::Ping);
+        assert_eq!(command.arg_count(), 1);
+        assert_eq!(command.arg(0), Some(&Bytes::from("hello")));
+    }
+
+    #[test]
     fn test_parse_inline_with_surrounding_whitespace() {
         let mut parser = RespParse::new(RespVersion::RESP2);
         let res = parser.parse(Bytes::from(" \tinfo \t\r\n"));

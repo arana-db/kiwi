@@ -34,7 +34,6 @@ pub enum RespType {
     Integer,
     BulkString,
     Array,
-    Inline,
     // RESP3 types
     Null,
     Boolean,
@@ -76,7 +75,6 @@ impl RespType {
             RespType::Integer => Some(b':'),
             RespType::BulkString => Some(b'$'),
             RespType::Array => Some(b'*'),
-            RespType::Inline => None,
             // RESP3 types
             RespType::Null => Some(b'_'),
             RespType::Boolean => Some(b'#'),
@@ -98,7 +96,6 @@ pub enum RespData {
     Integer(i64),
     BulkString(Option<Bytes>),
     Array(Option<Vec<RespData>>),
-    Inline(Vec<Bytes>),
     // RESP3 types
     Null,
     Boolean(bool),
@@ -125,7 +122,6 @@ impl RespData {
             RespData::Integer(_) => RespType::Integer,
             RespData::BulkString(_) => RespType::BulkString,
             RespData::Array(_) => RespType::Array,
-            RespData::Inline(_) => RespType::Inline,
             // RESP3 types
             RespData::Null => RespType::Null,
             RespData::Boolean(_) => RespType::Boolean,
@@ -146,9 +142,6 @@ impl RespData {
             RespData::Integer(num) => Some(num.to_string()),
             RespData::BulkString(Some(bytes)) => String::from_utf8(bytes.to_vec()).ok(),
             RespData::BulkString(None) => None,
-            RespData::Inline(parts) if !parts.is_empty() => {
-                String::from_utf8(parts[0].to_vec()).ok()
-            }
             // RESP3 types
             RespData::Null => None,
             RespData::Boolean(b) => Some(b.to_string()),
@@ -167,7 +160,6 @@ impl RespData {
             RespData::Integer(num) => Some(Bytes::from(num.to_string())),
             RespData::BulkString(Some(bytes)) => Some(bytes.clone()),
             RespData::BulkString(None) => None,
-            RespData::Inline(parts) if !parts.is_empty() => Some(parts[0].clone()),
             // RESP3 types
             RespData::Null => None,
             RespData::Boolean(b) => Some(Bytes::from(b.to_string())),
@@ -306,15 +298,6 @@ impl fmt::Debug for RespData {
             RespData::BulkString(None) => write!(f, "BulkString(nil)"),
             RespData::Array(Some(array)) => write!(f, "Array({array:?})"),
             RespData::Array(None) => write!(f, "Array(nil)"),
-            RespData::Inline(parts) => {
-                write!(f, "Inline(")?;
-                let parts_str: Vec<_> = parts
-                    .iter()
-                    .filter_map(|b| std::str::from_utf8(b).ok())
-                    .collect();
-                write!(f, "{parts_str:?}")?;
-                write!(f, ")")
-            }
             // RESP3 types
             RespData::Null => write!(f, "Null"),
             RespData::Boolean(b) => write!(f, "Boolean({b})"),
