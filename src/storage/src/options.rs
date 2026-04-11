@@ -110,6 +110,19 @@ impl StorageOptions {
         Self::default()
     }
 
+    /// Build StorageOptions from a loaded [`conf::config::Config`].
+    pub fn from_config(config: &conf::config::Config) -> Self {
+        let rocksdb_opts = config.get_rocksdb_options();
+        Self {
+            options: rocksdb_opts,
+            block_cache_size: config.memory as usize,
+            small_compaction_threshold: config.small_compaction_threshold,
+            small_compaction_duration_threshold: config.small_compaction_duration_threshold,
+            db_instance_num: config.db_instance_num,
+            ..Self::default()
+        }
+    }
+
     /// Set block cache size
     pub fn set_block_cache_size(&mut self, size: usize) -> &mut Self {
         self.block_cache_size = size;
