@@ -20,7 +20,7 @@ use std::cmp::PartialEq;
 use std::hash::{Hash, Hasher};
 use std::{collections::VecDeque, time::Duration, time::Instant};
 
-use crate::base_value_format::DataType;
+use crate::format_base_value::DataType;
 
 type StatisticsCallback = Box<dyn FnOnce(DataType, String, Duration) + Send>;
 

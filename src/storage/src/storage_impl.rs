@@ -16,9 +16,9 @@
 // limitations under the License.
 
 use crate::error::{Error, InvalidArgumentSnafu, Result};
+use crate::format_zset_score_key::ZsetScoreMember;
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage::Storage;
-use crate::zset_score_key_format::ZsetScoreMember;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeforeOrAfter {
@@ -705,7 +705,7 @@ impl Storage {
 
         match self.insts[instance_id].get_key_type(key) {
             Ok(data_type) => {
-                Ok(crate::base_value_format::data_type_to_string(data_type).to_string())
+                Ok(crate::format_base_value::data_type_to_string(data_type).to_string())
             }
             Err(_) => Ok("none".to_string()), // Key doesn't exist
         }

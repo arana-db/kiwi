@@ -61,7 +61,7 @@ impl MemberDataKey {
 
         dst.put_slice(&self.reserve1);
         encode_user_key(&self.key, &mut dst)?;
-        dst.put_u64(self.version);
+        dst.put_u64_le(self.version);
         dst.put_slice(&self.data);
         dst.put_slice(&self.reserve2);
         Ok(dst)
@@ -78,7 +78,7 @@ impl MemberDataKey {
 
         dst.put_slice(&self.reserve1);
         encode_user_key(&self.key, &mut dst)?;
-        dst.put_u64(self.version);
+        dst.put_u64_le(self.version);
         dst.put_slice(&self.data);
         Ok(dst)
     }
@@ -113,7 +113,7 @@ impl ParsedMemberDataKey {
         // version
         let version_end_idx = key_end_idx + size_of::<u64>();
         let version_slice = &encoded_key[key_end_idx..version_end_idx];
-        let version = u64::from_be_bytes(version_slice.try_into().expect("slice length mismatch"));
+        let version = u64::from_le_bytes(version_slice.try_into().expect("slice length mismatch"));
 
         // data
         let data_slice = &encoded_key[version_end_idx..end_idx];
