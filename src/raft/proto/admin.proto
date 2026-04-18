@@ -1,0 +1,81 @@
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+// 版本化包名
+//
+// 版本历史：
+// - v1: 初始版本，支持基本的 Raft RPC
+// - 未来版本变更将在 ChangeLog 中记录
+package kiwi.raft.v1;
+
+import "types.proto";
+
+// RaftAdminService - 集群管理服务
+service RaftAdminService {
+    // 初始化集群
+    rpc Initialize (InitializeRequest) returns (InitializeResponse);
+
+    // 添加学习者节点
+    rpc AddLearner (AddLearnerRequest) returns (AddLearnerResponse);
+
+    // 修改集群成员
+    rpc ChangeMembership (ChangeMembershipRequest) returns (ChangeMembershipResponse);
+
+    // 移除节点
+    rpc RemoveNode (RemoveNodeRequest) returns (RemoveNodeResponse);
+}
+
+// Initialize - 初始化集群
+message InitializeRequest {
+    repeated NodeConfig nodes = 1;
+}
+
+message InitializeResponse {
+    Response response = 1;
+    uint64 leader_id = 2;
+}
+
+// AddLearner - 添加学习者节点
+message AddLearnerRequest {
+    uint64 node_id = 1;
+    NodeConfig node = 2;
+}
+
+message AddLearnerResponse {
+    Response response = 1;
+}
+
+// ChangeMembership - 修改集群成员
+message ChangeMembershipRequest {
+    repeated NodeConfig members = 1;
+    bool retain = 2;
+}
+
+message ChangeMembershipResponse {
+    Response response = 1;
+}
+
+// RemoveNode - 移除节点
+message RemoveNodeRequest {
+    uint64 node_id = 1;
+}
+
+message RemoveNodeResponse {
+    Response response = 1;
+}

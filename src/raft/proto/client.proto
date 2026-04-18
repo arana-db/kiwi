@@ -1,0 +1,93 @@
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+// 版本化包名
+//
+// 版本历史：
+// - v1: 初始版本，支持基本的 Raft RPC
+// - 未来版本变更将在 ChangeLog 中记录
+package kiwi.raft.v1;
+
+import "types.proto";
+
+// RaftClientService - 客户端服务
+service RaftClientService {
+    // 写入数据（通过 Raft 共识）
+    rpc Write (WriteRequest) returns (WriteResponse);
+
+    // 读取数据
+    rpc Read (ReadRequest) returns (ReadResponse);
+}
+
+// RaftMetricsService - 集群状态服务
+service RaftMetricsService {
+    // 获取集群指标
+    rpc Metrics (MetricsRequest) returns (MetricsResponse);
+
+    // 获取 Leader 信息
+    rpc Leader (LeaderRequest) returns (LeaderResponse);
+
+    // 获取集群成员列表
+    rpc Members (MembersRequest) returns (MembersResponse);
+}
+
+// Write / Read - 客户端读写
+message WriteRequest {
+    Binlog binlog = 1;
+}
+
+message WriteResponse {
+    Response response = 1;
+    LogId log_id = 2;
+}
+
+message ReadRequest {
+    bytes key = 1;
+}
+
+message ReadResponse {
+    Response response = 1;
+    bytes value = 2;
+}
+
+// Metrics / Leader / Members - 集群状态查询
+message MetricsRequest {}
+
+message MetricsResponse {
+    Response response = 1;
+    bool is_leader = 2;
+    uint64 replication_lag = 3;
+    uint64 current_leader = 4;
+}
+
+message LeaderRequest {}
+
+message LeaderResponse {
+    Response response = 1;
+    uint64 leader_id = 2;
+    NodeConfig leader_node = 3;
+}
+
+message MembersRequest {}
+
+message MembersResponse {
+    Response response = 1;
+    repeated NodeConfig members = 2;
+    repeated uint64 learners = 3;
+}
