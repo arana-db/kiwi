@@ -79,16 +79,17 @@ impl Redis {
 
         // ZSet exists, update it
         if !base_meta_val.is_empty() {
-            let mut parsed_zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-
             // Get version and validity
             let version;
             let valid;
+            let mut parsed_zset_meta;
             if self.is_stale(&base_meta_val)? {
+                parsed_zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
                 valid = false;
                 version = parsed_zset_meta.initial_meta_value();
             } else {
                 self.check_type(&base_meta_val, DataType::ZSet)?;
+                parsed_zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
                 valid = true;
                 version = parsed_zset_meta.version();
             }
@@ -1132,6 +1133,7 @@ impl Redis {
         // Collect all members and their scores from each zset
         use std::collections::HashMap;
         let mut member_scores: HashMap<Vec<u8>, Vec<Option<f64>>> = HashMap::new();
+        let mut result_empty = false;
 
         for (idx, key) in keys.iter().enumerate() {
             let base_meta_key = BaseMetaKey::new(key);
@@ -1141,20 +1143,19 @@ impl Redis {
                 .unwrap_or_else(Vec::new);
 
             if base_meta_val.is_empty() {
-                // Key doesn't exist
                 if is_inter {
                     // For intersection, if any key is missing, result is empty
-                    // Delete destination by setting count to 0 (handled below)
-                    return Ok(0);
+                    result_empty = true;
+                    break;
                 }
-                // For union, mark all members from this key as None
                 continue;
             }
 
             if self.is_stale(&base_meta_val)? {
                 if is_inter {
                     // For intersection, if any key is invalid, result is empty
-                    return Ok(0);
+                    result_empty = true;
+                    break;
                 }
                 continue;
             }
@@ -1190,6 +1191,10 @@ impl Redis {
             }
         }
 
+        if result_empty {
+            member_scores.clear();
+        }
+
         // Filter members based on operation type and compute final scores
         let mut result_members: Vec<ScoreMember> = Vec::new();
 
@@ -1221,9 +1226,11 @@ impl Redis {
 
         let mut batch = self.create_batch()?;
 
-        // Delete existing destination data if it exists
-        if !dest_meta_val.is_empty() && !self.is_stale(&dest_meta_val)? {
-            self.check_type(&dest_meta_val, DataType::ZSet)?;
+        // Delete existing destination data if it is a live ZSet
+        if !dest_meta_val.is_empty()
+            && !self.is_stale(&dest_meta_val)?
+            && dest_meta_val.first().copied() == Some(DataType::ZSet as u8)
+        {
             let dest_meta = ParsedZSetsMetaValue::new(&dest_meta_val[..])?;
             let dest_version = dest_meta.version();
 
