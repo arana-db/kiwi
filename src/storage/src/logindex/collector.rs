@@ -15,9 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::types::{LogIndex, LogIndexAndSequencePair, SequenceNumber};
+//! LogIndexAndSequenceCollector: maintains ordered (LogIndex, SequenceNumber) mapping queue
+
+use crate::logindex::types::{LogIndex, LogIndexAndSequencePair, SequenceNumber};
 use parking_lot::RwLock;
 use std::collections::VecDeque;
+
 const DEFAULT_MAX_GAP: u64 = 1000;
 
 /// Maintains an ordered (LogIndex, SequenceNumber) mapping queue
@@ -57,19 +60,24 @@ impl LogIndexAndSequenceCollector {
             return 0;
         }
         let list = self.list.read();
-        if list.is_empty()
-            || seqno
-                < list
-                    .front()
-                    .expect("non-empty after is_empty check")
-                    .seqno()
-        {
+
+        // Check if list is empty or seqno is before the first element
+        let Some(front) = list.front() else {
+            return 0;
+        };
+        if seqno < front.seqno() {
             return 0;
         }
-        let back = list.back().expect("non-empty after is_empty check");
+
+        // Check if seqno is at or after the last element
+        // (back() is guaranteed Some since front() returned Some above for VecDeque)
+        let back = list
+            .back()
+            .expect("back() guaranteed after front() returned Some for VecDeque");
         if seqno >= back.seqno() {
             return back.applied_log_index();
         }
+
         // partition_point: the first position where predicate is false
         // i.e., the index of the first element where seqno() > seqno
         let idx = list.partition_point(|p| p.seqno() <= seqno);
@@ -129,6 +137,18 @@ impl LogIndexAndSequenceCollector {
     #[allow(dead_code)]
     pub fn set_max_gap(&mut self, gap: u64) {
         self.max_gap = gap;
+    }
+
+    /// Export state for snapshot serialization.
+    ///
+    /// Returns a list of `"log_index:seqno"` strings where both values are decimal
+    /// integers. This on-disk format is parsed by `restore_collector_state()` via
+    /// `split_once(':')` and must remain stable across versions.
+    pub fn export_state(&self) -> Vec<String> {
+        let list = self.list.read();
+        list.iter()
+            .map(|pair| format!("{}:{}", pair.applied_log_index(), pair.seqno()))
+            .collect()
     }
 }
 

@@ -23,6 +23,7 @@ use arc_swap::ArcSwap;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
 use raft::state_machine::KiwiStateMachine;
+use storage::logindex::{LogIndexAndSequenceCollector, LogIndexOfColumnFamilies};
 use storage::unique_test_db_path;
 use storage::{StorageOptions, storage::Storage};
 
@@ -45,11 +46,21 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
 
     let storage_swap = Arc::new(ArcSwap::from(storage.clone()));
 
+    // Initialize logindex collector and cf_tracker from storage
+    let collector = storage
+        .get_logindex_collector(0)
+        .expect("stored logindex collector to exist after opening Storage");
+    let cf_tracker = storage
+        .get_logindex_cf_tracker(0)
+        .expect("stored logindex cf_tracker to exist after opening Storage");
+
     let mut sm = KiwiStateMachine::new(
         1,
         storage_swap.clone(),
         src_db_path.clone(),
         snap_root.clone(),
+        collector,
+        cf_tracker,
     );
 
     let mut builder = sm.get_snapshot_builder().await;
@@ -65,14 +76,26 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
     storage.set(b"k_l2", b"after")?;
     assert_eq!(storage.get(b"k_l2")?, "after");
 
+    // Drop source storage references before install_snapshot to release RocksDB lock
     let meta = snap.meta.clone();
     let bytes = snap.snapshot.into_inner();
-    // Create target storage but do NOT open it yet - this is expected because
-    // install_snapshot will restore the checkpoint directly to db_path, bypassing
-    // the normal open flow. The storage is opened after install_snapshot completes.
+    drop(storage);
+    drop(sm);
+
+    // Create target state machine with fresh collector and tracker
     let target_storage = Arc::new(Storage::new(1, 0));
     let target_swap = Arc::new(ArcSwap::from(target_storage));
-    let mut sm2 = KiwiStateMachine::new(2, target_swap.clone(), restore_db_path.clone(), snap_root);
+    let target_collector = Arc::new(LogIndexAndSequenceCollector::new(0));
+    let target_cf_tracker = Arc::new(LogIndexOfColumnFamilies::new());
+
+    let mut sm2 = KiwiStateMachine::new(
+        2,
+        target_swap.clone(),
+        restore_db_path.clone(),
+        snap_root,
+        target_collector,
+        target_cf_tracker,
+    );
     sm2.install_snapshot(&meta, Box::new(std::io::Cursor::new(bytes)))
         .await?;
 
@@ -110,12 +133,15 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     source_storage.set(b"key2", b"value2")?;
 
     // Build snapshot from source
-    let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
+    let source_collector = Arc::new(LogIndexAndSequenceCollector::new(0));
+    let source_cf_tracker = Arc::new(LogIndexOfColumnFamilies::new());
     let mut sm_source = KiwiStateMachine::new(
         1,
-        source_swap.clone(),
+        Arc::new(ArcSwap::from(source_storage.clone())),
         src_db_path.clone(),
         snap_root.clone(),
+        source_collector,
+        source_cf_tracker,
     );
 
     let mut builder = sm_source.get_snapshot_builder().await;
@@ -136,10 +162,18 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     std::fs::write(old_data_dir.join("marker_old_data"), b"stale")?;
 
     // Install the snapshot - this should REPLACE the old data.
+    let target_collector = Arc::new(LogIndexAndSequenceCollector::new(0));
+    let target_cf_tracker = Arc::new(LogIndexOfColumnFamilies::new());
     let target_storage = Arc::new(Storage::new(1, 0));
-    let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
-    let mut sm_target =
-        KiwiStateMachine::new(2, target_swap.clone(), restore_db_path.clone(), snap_root);
+    let target_swap = Arc::new(ArcSwap::from(target_storage));
+    let mut sm_target = KiwiStateMachine::new(
+        2,
+        target_swap.clone(),
+        restore_db_path.clone(),
+        snap_root,
+        target_collector,
+        target_cf_tracker,
+    );
 
     sm_target
         .install_snapshot(

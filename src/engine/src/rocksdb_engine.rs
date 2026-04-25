@@ -207,6 +207,13 @@ impl Engine for RocksdbEngine {
     fn latest_sequence_number(&self) -> u64 {
         self.db.latest_sequence_number()
     }
+
+    fn get_properties_of_all_tables_cf(
+        &self,
+        cf: &ColumnFamilyRef<'_>,
+    ) -> Result<rocksdb::table_properties::TablePropertiesCollection> {
+        self.db.get_properties_of_all_tables_cf(cf)
+    }
 }
 
 impl Clone for RocksdbEngine {
