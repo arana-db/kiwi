@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::Cmd;
+use crate::auth::RequirepassProvider;
 
 pub type CmdTable = HashMap<String, Arc<dyn Cmd>>;
 
@@ -49,7 +50,7 @@ macro_rules! register_group_cmd {
     };
 }
 
-pub fn create_command_table() -> CmdTable {
+pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTable {
     let mut cmd_table: CmdTable = HashMap::new();
 
     register_cmd!(
@@ -151,8 +152,14 @@ pub fn create_command_table() -> CmdTable {
         crate::zunionstore::ZunionstoreCmd,
         // connection commands
         crate::ping::PingCmd,
-        // TODO: add more commands...
     );
+
+    // AuthCmd with requirepass provider
+    {
+        let auth_cmd = crate::auth::AuthCmd::new(requirepass_provider);
+        let cmd_name = auth_cmd.meta().name.clone();
+        cmd_table.insert(cmd_name, Arc::new(auth_cmd));
+    }
 
     register_group_cmd!(
         cmd_table,

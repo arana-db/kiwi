@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use client::Client;
+use cmd::CmdFlags;
 use cmd::table::CmdTable;
 use executor::{CmdExecution, CmdExecutor};
 use log::error;
@@ -93,6 +94,16 @@ async fn handle_command(
 ) {
     // Convert the command name from &[u8] to a lowercase String for lookup
     let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
+
+    // Auth check: deny non-NO_AUTH commands when not authenticated
+    if !client.is_authenticated() {
+        if let Some(cmd) = cmd_table.get(&cmd_name) {
+            if !cmd.has_flag(CmdFlags::NO_AUTH) {
+                client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
+                return;
+            }
+        }
+    }
 
     if let Some(cmd) = cmd_table.get(&cmd_name) {
         let exec = CmdExecution {

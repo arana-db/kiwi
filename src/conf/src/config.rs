@@ -117,6 +117,8 @@ pub struct Config {
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
     pub db_path: String,
+    /// Authentication password. When set, clients must authenticate via AUTH command.
+    pub requirepass: Option<String>,
     pub raft: Option<RaftClusterConfig>,
 }
 
@@ -163,6 +165,7 @@ impl Default for Config {
             db_path: "./db".to_string(),
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
+            requirepass: None,
             raft: None,
         }
     }
@@ -417,6 +420,9 @@ impl Config {
                 }
                 "db-path" => {
                     config.db_path = value;
+                }
+                "requirepass" => {
+                    config.requirepass = Some(value);
                 }
                 _ => {
                     // Unknown configuration key, skip it

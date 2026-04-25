@@ -17,6 +17,7 @@
 
 pub mod admin;
 pub mod append;
+pub mod auth;
 pub mod bitcount;
 pub mod bitop;
 pub mod bitpos;

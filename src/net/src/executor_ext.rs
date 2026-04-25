@@ -22,6 +22,7 @@
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 use executor::CmdExecutor;
@@ -103,6 +104,9 @@ impl CmdExecutorNetworkExt for CmdExecutor {
                 }
                 "ping" => {
                     execute_ping_command(&exec).await?;
+                }
+                "auth" => {
+                    execute_auth_command(&exec).await?;
                 }
                 _ => {
                     // For unsupported commands, return an error
@@ -418,6 +422,17 @@ async fn execute_ping_command(exec: &NetworkCmdExecution) -> Result<(), DualRunt
             "ERR wrong number of arguments for 'ping' command".into(),
         ));
     }
+    Ok(())
+}
+
+/// Execute AUTH command asynchronously (doesn't require storage)
+async fn execute_auth_command(exec: &NetworkCmdExecution) -> Result<(), DualRuntimeError> {
+    debug!("Executing AUTH command");
+
+    // AuthCmd doesn't use storage, so pass a dummy Arc with valid instance number
+    let dummy_storage = Arc::new(storage::storage::Storage::new(1, 0));
+    exec.cmd.execute(&exec.client, dummy_storage);
+
     Ok(())
 }
 
