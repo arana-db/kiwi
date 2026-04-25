@@ -83,7 +83,7 @@ impl std::str::FromStr for CompressionType {
 const DEFAULT_BINDING: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 7379; // Redis-compatible port (7xxx variant of 6379)
 // config struct define - keeping original config items but using Redis-style format
-#[derive(Debug, Validate)]
+#[derive(Validate)]
 pub struct Config {
     // Original config items from config.ini
     #[validate(range(min = 1024, max = 65535))]
@@ -117,7 +117,87 @@ pub struct Config {
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
     pub db_path: String,
+    /// Authentication password. When set, clients must authenticate via AUTH command.
+    pub requirepass: Option<String>,
     pub raft: Option<RaftClusterConfig>,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("port", &self.port)
+            .field("memory", &self.memory)
+            .field(
+                "small_compaction_threshold",
+                &self.small_compaction_threshold,
+            )
+            .field(
+                "small_compaction_duration_threshold",
+                &self.small_compaction_duration_threshold,
+            )
+            .field(
+                "rocksdb_max_subcompactions",
+                &self.rocksdb_max_subcompactions,
+            )
+            .field(
+                "rocksdb_max_background_jobs",
+                &self.rocksdb_max_background_jobs,
+            )
+            .field(
+                "rocksdb_max_write_buffer_number",
+                &self.rocksdb_max_write_buffer_number,
+            )
+            .field(
+                "rocksdb_min_write_buffer_number_to_merge",
+                &self.rocksdb_min_write_buffer_number_to_merge,
+            )
+            .field("rocksdb_write_buffer_size", &self.rocksdb_write_buffer_size)
+            .field(
+                "rocksdb_level0_file_num_compaction_trigger",
+                &self.rocksdb_level0_file_num_compaction_trigger,
+            )
+            .field("rocksdb_num_levels", &self.rocksdb_num_levels)
+            .field(
+                "rocksdb_enable_pipelined_write",
+                &self.rocksdb_enable_pipelined_write,
+            )
+            .field(
+                "rocksdb_level0_slowdown_writes_trigger",
+                &self.rocksdb_level0_slowdown_writes_trigger,
+            )
+            .field(
+                "rocksdb_level0_stop_writes_trigger",
+                &self.rocksdb_level0_stop_writes_trigger,
+            )
+            .field("rocksdb_ttl_second", &self.rocksdb_ttl_second)
+            .field("rocksdb_periodic_second", &self.rocksdb_periodic_second)
+            .field(
+                "rocksdb_level_compaction_dynamic_level_bytes",
+                &self.rocksdb_level_compaction_dynamic_level_bytes,
+            )
+            .field("rocksdb_max_open_files", &self.rocksdb_max_open_files)
+            .field(
+                "rocksdb_target_file_size_base",
+                &self.rocksdb_target_file_size_base,
+            )
+            .field("rocksdb_compression_type", &self.rocksdb_compression_type)
+            .field("binding", &self.binding)
+            .field("timeout", &self.timeout)
+            .field("log_dir", &self.log_dir)
+            .field("redis_compatible_mode", &self.redis_compatible_mode)
+            .field("db_instance_num", &self.db_instance_num)
+            .field("db_path", &self.db_path)
+            .field(
+                "requirepass",
+                if self.requirepass.is_some() {
+                    &"<REDACTED>"
+                } else {
+                    &"<NONE>"
+                },
+            )
+            .field("raft", &self.raft)
+            .finish()
+    }
 }
 
 #[derive(Debug, Validate, Clone)]
@@ -163,6 +243,7 @@ impl Default for Config {
             db_path: "./db".to_string(),
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
+            requirepass: None,
             raft: None,
         }
     }
@@ -417,6 +498,9 @@ impl Config {
                 }
                 "db-path" => {
                     config.db_path = value;
+                }
+                "requirepass" => {
+                    config.requirepass = Some(value);
                 }
                 _ => {
                     // Unknown configuration key, skip it

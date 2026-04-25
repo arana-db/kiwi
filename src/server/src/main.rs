@@ -265,9 +265,12 @@ async fn start_server(
     config: &Config,
     pause_controller: StorageServerPauseController,
 ) -> std::io::Result<()> {
-    if let Some(server) =
-        net::ServerFactory::create_server(protocol, Some(addr.to_string()), runtime_manager)
-    {
+    if let Some(server) = net::ServerFactory::create_server(
+        protocol,
+        Some(addr.to_string()),
+        runtime_manager,
+        config.requirepass.clone(),
+    ) {
         tokio::spawn(async move {
             if let Err(e) = server.run().await {
                 error!("Redis server error: {}", e);
