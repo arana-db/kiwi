@@ -15,6 +15,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! LogIndex table properties collector for RocksDB SST files
+
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::sync::Arc;
@@ -25,8 +27,8 @@ use rocksdb::table_properties_collector_factory::{
     TablePropertiesCollectorContext, TablePropertiesCollectorFactory,
 };
 
-use crate::collector::LogIndexAndSequenceCollector;
-use crate::types::{LogIndex, LogIndexAndSequencePair, SequenceNumber};
+use super::collector::LogIndexAndSequenceCollector;
+use super::types::{LogIndex, LogIndexAndSequencePair, SequenceNumber};
 
 pub const PROPERTY_KEY: &str = "LargestLogIndex/LargestSequenceNumber";
 

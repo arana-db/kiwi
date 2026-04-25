@@ -482,7 +482,7 @@ impl Storage {
         Ok(())
     }
 
-    pub fn on_binlog_write(&self, binlog: &Binlog, _raft_log_index: u64) -> Result<()> {
+    pub fn on_binlog_write(&self, binlog: &Binlog, raft_log_index: u64) -> Result<()> {
         let slot_id = binlog.slot_idx as usize;
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         let instance = &self.insts[instance_id];
@@ -519,6 +519,120 @@ impl Storage {
         }
 
         Box::new(batch).commit()?;
+
+        // Update collector with (log_index, seqno) mapping after successful commit.
+        // This is critical for Raft snapshot integration: enables tracking which
+        // raft logs have been persisted to SST files.
+        //
+        // Note: latest_sequence_number() is called after commit(). In theory,
+        // concurrent writes from other threads could make this seqno slightly
+        // larger than the batch's actual sequence. In practice, Raft apply is
+        // single-threaded so this race does not trigger. A future improvement
+        // would be to use WriteBatch's own sequence number when the rust-rocksdb
+        // API exposes it.
+        if let Some(ref db) = instance.db {
+            let seqno = db.latest_sequence_number();
+            if let Some(ref collector) = instance.logindex_collector {
+                collector.update(raft_log_index as i64, seqno);
+            }
+        }
+
+        Ok(())
+    }
+
+    // ==================== LogIndex getters for Raft snapshot integration ====================
+
+    /// Get logindex collector for specified instance
+    pub fn get_logindex_collector(
+        &self,
+        instance_id: usize,
+    ) -> Option<Arc<crate::logindex::LogIndexAndSequenceCollector>> {
+        self.insts
+            .get(instance_id)
+            .and_then(|inst| inst.logindex_collector.clone())
+    }
+
+    /// Get logindex cf_tracker for specified instance
+    pub fn get_logindex_cf_tracker(
+        &self,
+        instance_id: usize,
+    ) -> Option<Arc<crate::logindex::LogIndexOfColumnFamilies>> {
+        self.insts
+            .get(instance_id)
+            .and_then(|inst| inst.logindex_cf_tracker.clone())
+    }
+
+    /// Get smallest applied log index across all CFs
+    pub fn get_smallest_applied_log_index(&self) -> i64 {
+        let mut min_index = i64::MAX;
+        for inst in &self.insts {
+            if let Some(ref tracker) = inst.logindex_cf_tracker {
+                let res = tracker.get_smallest_log_index(None);
+                if res.smallest_applied_log_index < min_index {
+                    min_index = res.smallest_applied_log_index;
+                }
+            }
+        }
+        if min_index == i64::MAX { 0 } else { min_index }
+    }
+
+    /// Get smallest flushed log index across all instances
+    /// This is the safe upper bound for Raft log purge - we can only
+    /// purge logs that have been flushed in ALL instances.
+    pub fn get_global_smallest_flushed_log_index(&self) -> i64 {
+        let mut min_index = i64::MAX;
+
+        for inst in &self.insts {
+            if let Some(ref tracker) = inst.logindex_cf_tracker {
+                let res = tracker.get_smallest_log_index(None);
+                if res.smallest_flushed_log_index < min_index {
+                    min_index = res.smallest_flushed_log_index;
+                }
+            }
+        }
+
+        if min_index == i64::MAX { 0 } else { min_index }
+    }
+
+    /// Initialize cf_tracker from SST properties for all instances
+    ///
+    /// This should be called after restoring a snapshot to reinitialize
+    /// the cf_tracker with the actual state from the restored SST files.
+    pub fn init_cf_trackers(&self) -> crate::Result<()> {
+        for inst in &self.insts {
+            if let Some(ref cf_tracker) = inst.logindex_cf_tracker {
+                if let Some(ref db) = inst.db {
+                    // Get raw DB pointer from Engine trait object
+                    let engine = db.as_ref();
+                    // Use the engine's iterator_cf method to access CF handles
+                    // We need to get the raw DB to call cf_handle
+                    // For now, use a workaround: get properties via engine interface
+                    for cf_id in 0..crate::logindex::types::cf_metadata::COLUMN_FAMILY_COUNT {
+                        let cf_name = crate::logindex::types::cf_metadata::CF_NAMES_STR[cf_id];
+                        if let Some(cf) = engine.cf_handle(cf_name) {
+                            match engine.get_properties_of_all_tables_cf(&cf) {
+                                Ok(collection) => {
+                                    if let Some(pair) = crate::logindex::table_properties::get_largest_log_index_from_collection(&collection) {
+                                        let log_index = pair.applied_log_index();
+                                        let seqno = pair.seqno();
+                                        cf_tracker.set_flushed_log_index(cf_id, log_index, seqno);
+                                        // On snapshot restore, flushed and applied should be consistent
+                                        cf_tracker.set_applied_log_index(cf_id, log_index, seqno);
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "Failed to get properties for CF {}: {}",
+                                        cf_name,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         Ok(())
     }
 }

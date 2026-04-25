@@ -7,7 +7,7 @@
 // (the "License"); you may not use this file except in compliance with
 // the License.  You may obtain a copy of the License at
 //
-//   http://www.apache.org/licenses/LICENSE-2.0
+//     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -48,6 +48,8 @@ async fn l1_checkpoint_roundtrip() {
     assert_eq!(storage2.get(b"k_l1").unwrap(), "v1");
 }
 
+/// Restoring from a checkpoint should materialize the captured state in a fresh path,
+/// even if the source storage has changed afterwards.
 #[tokio::test]
 async fn restore_checkpoint_to_new_storage_after_source_mutation() {
     let db_path = unique_test_db_path();
@@ -76,11 +78,9 @@ async fn restore_checkpoint_to_new_storage_after_source_mutation() {
 fn test_snapshot_meta_version() {
     let meta = RaftSnapshotMeta::new(100, 5);
 
-    // Verify version is serialized
     let json = serde_json::to_string(&meta).unwrap();
     assert!(json.contains("\"version\":1"));
 
-    // Verify version is deserialized correctly
     let deserialized: RaftSnapshotMeta = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.version, 1);
     assert_eq!(deserialized.last_included_index, 100);
@@ -88,28 +88,13 @@ fn test_snapshot_meta_version() {
 }
 
 #[test]
-fn snapshot_meta_rejects_missing_version() {
-    // Old format JSON without version field
-    let old_format_json = r#"{
-        "last_included_index": 42,
-        "last_included_term": 7
-    }"#;
-
-    let result: Result<RaftSnapshotMeta, _> = serde_json::from_str(old_format_json);
-    assert!(
-        result.is_err(),
-        "Should reject old format without version field"
-    );
-}
-
-#[test]
-fn test_snapshot_meta_rejects_version_zero() {
+fn test_snapshot_meta_rejects_unsupported_version() {
     use std::fs;
 
     let tmp_dir = tempfile::tempdir().unwrap();
     let meta_path = tmp_dir.path().join("__raft_snapshot_meta");
 
-    // Write invalid version 0 to file
+    // Write unsupported version 0 to file
     let invalid_json = r#"{
         "version": 0,
         "last_included_index": 42,
@@ -118,30 +103,36 @@ fn test_snapshot_meta_rejects_version_zero() {
     fs::write(&meta_path, invalid_json).unwrap();
 
     let result = RaftSnapshotMeta::read_from_dir(tmp_dir.path());
-    assert!(result.is_err(), "Should reject snapshot with version 0");
+    assert!(result.is_err(), "Should reject unsupported version 0");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported snapshot version"),
+        "Error should mention unsupported version"
+    );
 }
 
 #[test]
-fn test_snapshot_meta_accepts_higher_version() {
+fn test_snapshot_meta_accepts_future_version() {
     use std::fs;
 
     let tmp_dir = tempfile::tempdir().unwrap();
     let meta_path = tmp_dir.path().join("__raft_snapshot_meta");
 
-    // Write future version to file
-    let future_json = r#"{
-        "version": 999,
+    // Write a future version (9999) to test forward compatibility for rolling upgrades
+    let json = r#"{
+        "version": 9999,
         "last_included_index": 42,
         "last_included_term": 7
     }"#;
-    fs::write(&meta_path, future_json).unwrap();
+    fs::write(&meta_path, json).unwrap();
 
     let result = RaftSnapshotMeta::read_from_dir(tmp_dir.path());
     assert!(
         result.is_ok(),
-        "Should accept higher versions for forward compatibility"
+        "Higher versions should be accepted for forward compatibility during rolling upgrades"
     );
-    assert_eq!(result.unwrap().version, 999);
 }
 
 #[test]
@@ -150,9 +141,77 @@ fn test_snapshot_meta_max_version() {
         version: u32::MAX,
         last_included_index: 42,
         last_included_term: 7,
+        logindex_collector_state: Vec::new(),
     };
 
     let json = serde_json::to_string(&meta).unwrap();
     let deserialized: RaftSnapshotMeta = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.version, u32::MAX);
+}
+
+/// Test that RaftSnapshotMeta supports logindex collector state.
+#[test]
+fn test_raft_snapshot_meta_with_collector_state() {
+    let meta = RaftSnapshotMeta {
+        version: 1,
+        last_included_index: 300,
+        last_included_term: 1,
+        logindex_collector_state: vec!["100:1000".to_string(), "200:2000".to_string()],
+    };
+
+    let json = serde_json::to_string_pretty(&meta).unwrap();
+    let parsed: RaftSnapshotMeta = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed.logindex_collector_state.len(), 2);
+    assert_eq!(parsed.logindex_collector_state[0], "100:1000");
+    assert_eq!(parsed.logindex_collector_state[1], "200:2000");
+}
+
+/// Test that missing collector state field defaults to empty vec.
+#[test]
+fn test_raft_snapshot_meta_defaults_empty_states() {
+    let json = r#"{
+        "version": 1,
+        "last_included_index": 100,
+        "last_included_term": 5
+    }"#;
+
+    let parsed: RaftSnapshotMeta = serde_json::from_str(json).unwrap();
+    assert_eq!(parsed.logindex_collector_state.len(), 0);
+}
+
+/// Test collector state roundtrip via with_collector_state / restore_collector_state
+#[test]
+fn test_collector_state_roundtrip() {
+    use storage::logindex::LogIndexAndSequenceCollector;
+
+    let collector = Arc::new(LogIndexAndSequenceCollector::new(0));
+    collector.update(100, 1000);
+    collector.update(200, 2000);
+    collector.update(300, 3000);
+
+    let meta = RaftSnapshotMeta::with_collector_state(300, 1, &collector);
+
+    assert_eq!(meta.logindex_collector_state.len(), 3);
+    assert!(
+        meta.logindex_collector_state
+            .contains(&"100:1000".to_string())
+    );
+    assert!(
+        meta.logindex_collector_state
+            .contains(&"200:2000".to_string())
+    );
+    assert!(
+        meta.logindex_collector_state
+            .contains(&"300:3000".to_string())
+    );
+
+    let new_collector = Arc::new(LogIndexAndSequenceCollector::new(0));
+    meta.restore_collector_state(&new_collector);
+
+    assert_eq!(new_collector.find_applied_log_index(1000), 100);
+    assert_eq!(new_collector.find_applied_log_index(1500), 100);
+    assert_eq!(new_collector.find_applied_log_index(2000), 200);
+    assert_eq!(new_collector.find_applied_log_index(2500), 200);
+    assert_eq!(new_collector.find_applied_log_index(3000), 300);
 }

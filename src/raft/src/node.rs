@@ -118,6 +118,21 @@ impl Default for RaftConfig {
 
 /// Build common Raft configuration
 fn build_raft_config(config: &RaftConfig) -> Result<Arc<Config>, anyhow::Error> {
+    // Validate snapshot configuration parameters
+    if config.snapshot_logs_threshold == 0 {
+        return Err(anyhow::anyhow!("snapshot_logs_threshold must be > 0"));
+    }
+    if config.snapshot_max_chunk_size == 0 {
+        return Err(anyhow::anyhow!("snapshot_max_chunk_size must be > 0"));
+    }
+    if config.install_snapshot_timeout == 0 {
+        return Err(anyhow::anyhow!("install_snapshot_timeout must be > 0"));
+    }
+    if config.replication_lag_threshold == 0 {
+        return Err(anyhow::anyhow!("replication_lag_threshold must be > 0"));
+    }
+    // max_in_snapshot_log_to_keep: 0 is intentionally allowed (keep no in-snapshot logs)
+
     let raft_config = Config {
         heartbeat_interval: config.heartbeat_interval,
         election_timeout_min: config.election_timeout_min,
@@ -147,11 +162,23 @@ pub async fn create_raft_node(
     let snapshot_work_dir = config.data_dir.join("snapshots");
     fs::create_dir_all(&snapshot_work_dir)?;
 
+    // Initialize logindex collector and cf_tracker from storage.
+    // Use instance 0's collector and tracker for local tracking.
+    let storage = storage_swap.load_full();
+    let collector = storage
+        .get_logindex_collector(0)
+        .ok_or_else(|| anyhow::anyhow!("Storage instance 0 logindex collector not initialized"))?;
+    let cf_tracker = storage
+        .get_logindex_cf_tracker(0)
+        .ok_or_else(|| anyhow::anyhow!("Storage instance 0 cf_tracker not initialized"))?;
+
     let mut state_machine = KiwiStateMachine::new(
         config.node_id,
         storage_swap.clone(),
         config.db_path.clone(),
         snapshot_work_dir,
+        collector,
+        cf_tracker,
     );
 
     // Set pause controller for snapshot installation

@@ -59,6 +59,9 @@ mod zset_score_key_format;
 
 pub mod redis_zsets;
 
+// LogIndex module for Raft snapshot integration
+pub mod logindex;
+
 pub use base_key_format::BaseMetaKey;
 pub use base_value_format::*;
 pub use batch::{Batch, BinlogBatch, RocksBatch};

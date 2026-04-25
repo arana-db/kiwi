@@ -82,32 +82,22 @@ impl Cmd for HScanCmd {
         while i < argv.len() {
             let arg = String::from_utf8_lossy(&argv[i]).to_uppercase();
             match arg.as_str() {
-                "MATCH" => {
-                    if i + 1 < argv.len() {
-                        pattern = Some(String::from_utf8_lossy(&argv[i + 1]).to_string());
-                        i += 2;
-                    } else {
-                        client.set_reply(RespData::Error("ERR syntax error".into()));
-                        return;
-                    }
+                "MATCH" if i + 1 < argv.len() => {
+                    pattern = Some(String::from_utf8_lossy(&argv[i + 1]).to_string());
+                    i += 2;
                 }
-                "COUNT" => {
-                    if i + 1 < argv.len() {
-                        match String::from_utf8_lossy(&argv[i + 1]).parse::<usize>() {
-                            Ok(c) if c > 0 => {
-                                count = Some(c);
-                                i += 2;
-                            }
-                            _ => {
-                                client.set_reply(RespData::Error(
-                                    "ERR value is not an integer or out of range".into(),
-                                ));
-                                return;
-                            }
+                "COUNT" if i + 1 < argv.len() => {
+                    match String::from_utf8_lossy(&argv[i + 1]).parse::<usize>() {
+                        Ok(c) if c > 0 => {
+                            count = Some(c);
+                            i += 2;
                         }
-                    } else {
-                        client.set_reply(RespData::Error("ERR syntax error".into()));
-                        return;
+                        _ => {
+                            client.set_reply(RespData::Error(
+                                "ERR value is not an integer or out of range".into(),
+                            ));
+                            return;
+                        }
                     }
                 }
                 _ => {

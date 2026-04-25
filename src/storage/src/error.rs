@@ -146,4 +146,11 @@ pub enum Error {
         #[snafu(implicit)]
         location: Location,
     },
+
+    #[snafu(display("LogIndex error: {}", message))]
+    LogIndex {
+        message: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
 }

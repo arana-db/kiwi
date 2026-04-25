@@ -41,11 +41,17 @@ use crate::data_compaction_filter::DataCompactionFilterFactory;
 use crate::error::Error::RedisErr;
 use crate::error::InvalidFormatSnafu;
 use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
+use crate::logindex::{
+    FlushTrigger, LogIndexAndSequenceCollector, LogIndexAndSequenceCollectorPurger,
+    LogIndexOfColumnFamilies, LogIndexTablePropertiesCollectorFactory, SnapshotCallback,
+};
 use crate::meta_compaction_filter::MetaCompactionFilterFactory;
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
 use crate::storage_define::TYPE_LENGTH;
+
+// Import logindex types for use in Storage
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnFamilyIndex {
@@ -115,6 +121,10 @@ pub struct Redis {
 
     // For startup state tracking
     pub is_starting: AtomicBool,
+
+    // For LogIndex tracking (Raft snapshot integration)
+    pub logindex_collector: Option<Arc<LogIndexAndSequenceCollector>>,
+    pub logindex_cf_tracker: Option<Arc<LogIndexOfColumnFamilies>>,
 }
 
 impl Redis {
@@ -151,6 +161,10 @@ impl Redis {
 
             small_compaction_threshold: std::sync::atomic::AtomicU64::new(5000),
             small_compaction_duration_threshold: std::sync::atomic::AtomicU64::new(10000),
+
+            // LogIndex tracking initialized in open()
+            logindex_collector: None,
+            logindex_cf_tracker: None,
         }
     }
 
@@ -159,6 +173,38 @@ impl Redis {
             self.storage.small_compaction_threshold as u64,
             std::sync::atomic::Ordering::SeqCst,
         );
+
+        // Initialize LogIndex collector and tracker for Raft snapshot integration
+        let collector = Arc::new(LogIndexAndSequenceCollector::new(0));
+        let cf_tracker = Arc::new(LogIndexOfColumnFamilies::new());
+
+        // Create snapshot callback - will be connected to Raft's snapshot trigger mechanism
+        let snapshot_callback: SnapshotCallback =
+            Box::new(move |log_index: i64, _is_manual: bool| {
+                log::info!(
+                    "LogIndex snapshot callback triggered: log_index={}",
+                    log_index
+                );
+                // TODO(#LOGINDEX-1): Connect to Raft's snapshot trigger mechanism
+            });
+
+        // Create flush trigger callback for manual flush
+        let flush_trigger: FlushTrigger = Box::new(move |cf_id: usize| {
+            log::info!("LogIndex flush trigger for CF {}", cf_id);
+            // TODO(#LOGINDEX-2): Trigger manual flush for the specified CF
+        });
+
+        // Create event listener purger - registered once on DB options (not per-CF)
+        let purger = LogIndexAndSequenceCollectorPurger::new(
+            collector.clone(),
+            cf_tracker.clone(),
+            snapshot_callback,
+            Some(flush_trigger),
+        );
+
+        // Add event listener to DB options (event listeners are DB-level, not CF-level)
+        let mut db_opts = self.storage.options.clone();
+        db_opts.add_event_listener(purger);
 
         const CF_CONFIGS: &[(&str, bool, Option<usize>)] = &[
             ("default", true, None),                   // meta & string: bloom filter
@@ -178,12 +224,12 @@ impl Redis {
                     *use_bloom,
                     *block_size,
                     Some(&db_once_cell),
+                    &collector,
                 )
             })
             .collect();
 
-        let db = DB::open_cf_descriptors(&self.storage.options, db_path, column_families)
-            .context(RocksSnafu)?;
+        let db = DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?;
         let engine = RocksdbEngine::new(db);
         let db_arc = engine.shared_db();
         let _ = db_once_cell.set(Arc::clone(&db_arc));
@@ -196,6 +242,17 @@ impl Redis {
         self.db = Some(Box::new(engine));
         self.is_starting.store(false, Ordering::SeqCst);
 
+        // Initialize cf_tracker from SST properties
+        let rocksdb = db_arc.as_ref();
+        let access = crate::logindex::db_access::DbAccess::new(rocksdb);
+        if let Err(e) = cf_tracker.init(&access) {
+            log::warn!("Failed to initialize cf_tracker from SST properties: {}", e);
+        }
+
+        // Store collector and tracker
+        self.logindex_collector = Some(collector);
+        self.logindex_cf_tracker = Some(cf_tracker);
+
         Ok(())
     }
 
@@ -206,6 +263,7 @@ impl Redis {
         use_bloom_filter: bool,
         block_size: Option<usize>,
         db_once_cell: Option<&Arc<OnceCell<Arc<DB>>>>,
+        collector: &Arc<LogIndexAndSequenceCollector>,
     ) -> ColumnFamilyDescriptor {
         let mut cf_opts = storage_options.options.clone();
         let mut table_opts = BlockBasedOptions::default();
@@ -238,6 +296,10 @@ impl Redis {
             let cache = rocksdb::Cache::new_lru_cache(storage_options.block_cache_size);
             table_opts.set_block_cache(&cache);
         }
+
+        // Set table properties collector factory for LogIndex tracking
+        let factory = LogIndexTablePropertiesCollectorFactory::new(collector.clone());
+        cf_opts.set_table_properties_collector_factory(factory);
 
         // Set table factory
         cf_opts.set_block_based_table_factory(&table_opts);

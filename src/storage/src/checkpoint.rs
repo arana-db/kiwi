@@ -17,9 +17,11 @@
 
 //! Raft snapshot checkpoint layout: one RocksDB checkpoint per DB instance plus `__raft_snapshot_meta`.
 
+use crate::logindex::LogIndexAndSequenceCollector;
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -40,6 +42,10 @@ pub struct RaftSnapshotMeta {
     pub last_included_index: u64,
     /// Last log term included in the snapshot
     pub last_included_term: u64,
+    /// LogIndex collector state.
+    /// Format: Vec<"log_index:seqno">
+    #[serde(default)]
+    pub logindex_collector_state: Vec<String>,
 }
 
 impl RaftSnapshotMeta {
@@ -49,6 +55,41 @@ impl RaftSnapshotMeta {
             version: CURRENT_SNAPSHOT_VERSION,
             last_included_index,
             last_included_term,
+            logindex_collector_state: Vec::new(),
+        }
+    }
+
+    /// Create snapshot meta with collector state
+    pub fn with_collector_state(
+        last_included_index: u64,
+        last_included_term: u64,
+        collector: &Arc<LogIndexAndSequenceCollector>,
+    ) -> Self {
+        Self {
+            version: CURRENT_SNAPSHOT_VERSION,
+            last_included_index,
+            last_included_term,
+            logindex_collector_state: collector.export_state(),
+        }
+    }
+
+    /// Restore collector state from snapshot metadata.
+    ///
+    /// Parses "log_index:seqno" entries exported by `LogIndexAndSequenceCollector::export_state()`.
+    /// Entries that fail to parse are logged and skipped.
+    pub fn restore_collector_state(&self, collector: &Arc<LogIndexAndSequenceCollector>) {
+        for entry in &self.logindex_collector_state {
+            if let Some((log_index_str, seqno_str)) = entry.split_once(':') {
+                if let (Ok(log_index), Ok(seqno)) =
+                    (log_index_str.parse::<i64>(), seqno_str.parse::<u64>())
+                {
+                    collector.update(log_index, seqno);
+                } else {
+                    log::warn!("Failed to parse collector state entry: {:?}", entry);
+                }
+            } else {
+                log::warn!("Invalid collector state format (missing ':'): {:?}", entry);
+            }
         }
     }
 
@@ -59,16 +100,17 @@ impl RaftSnapshotMeta {
         fs::write(path, json)
     }
 
+    /// Write metadata atomically using temp file + rename pattern.
+    /// This ensures that the file is either completely written or not present at all.
+    ///
+    /// Atomic rename (on POSIX systems, rename is atomic if on same filesystem).
     pub fn write_to_dir_atomically(&self, dir: &Path) -> io::Result<()> {
         let path = dir.join(RAFT_SNAPSHOT_META_FILE);
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        // Write to a temporary file first, then atomically rename
         let temp_path = dir.join(format!(".{}.tmp", RAFT_SNAPSHOT_META_FILE));
         fs::write(&temp_path, &json)?;
-
-        // Atomic rename (on POSIX systems, rename is atomic if on same filesystem)
         fs::rename(&temp_path, &path)?;
 
         Ok(())
@@ -80,7 +122,8 @@ impl RaftSnapshotMeta {
         let meta: Self = serde_json::from_slice(&bytes)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        // Validate version
+        // Validate version: reject old unsupported versions for safety,
+        // but allow higher versions for forward compatibility during rolling upgrades.
         if meta.version < CURRENT_SNAPSHOT_VERSION {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -109,9 +152,9 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
 
-        // Skip RocksDB LOCK file - it's runtime state, not persistent data.
-        // Copying it causes "lock held by current process" errors when opening.
         if let Some(file_name) = src_path.file_name().and_then(|n| n.to_str()) {
+            // Skip RocksDB LOCK file - it's runtime state, not persistent data.
+            // Copying it causes "lock held by current process" errors when opening.
             if file_name == ROCKSDB_LOCK_FILE {
                 continue;
             }
@@ -126,6 +169,12 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Copy checkpoint layout from `checkpoint_root` into `target_db_path` (`0/`, `1/`, …).
+///
+/// Uses atomic replacement pattern to avoid data loss:
+/// 1. Validate all source directories exist
+/// 2. Copy to a temporary sibling directory
+/// 3. Atomically swap by removing old and renaming new
 pub fn restore_checkpoint_layout(
     checkpoint_root: &Path,
     target_db_path: &Path,

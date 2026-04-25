@@ -127,4 +127,10 @@ pub trait Engine: Send + Sync {
 
     /// Latest sequence number after writes.
     fn latest_sequence_number(&self) -> u64;
+
+    /// Get properties of all SST files for a column family.
+    fn get_properties_of_all_tables_cf(
+        &self,
+        cf: &ColumnFamilyRef<'_>,
+    ) -> Result<rocksdb::table_properties::TablePropertiesCollection>;
 }
