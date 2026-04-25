@@ -660,10 +660,14 @@ impl RecoveryManager {
         self.consecutive_failures += 1;
 
         match self.state {
-            RecoveryState::Healthy if self.consecutive_failures >= self.recovery_config.failure_threshold / 2 => {
+            RecoveryState::Healthy
+                if self.consecutive_failures >= self.recovery_config.failure_threshold / 2 =>
+            {
                 self.state = RecoveryState::Degraded;
             }
-            RecoveryState::Degraded if self.consecutive_failures >= self.recovery_config.failure_threshold => {
+            RecoveryState::Degraded
+                if self.consecutive_failures >= self.recovery_config.failure_threshold =>
+            {
                 self.state = RecoveryState::Unavailable;
             }
             RecoveryState::Recovering => {
