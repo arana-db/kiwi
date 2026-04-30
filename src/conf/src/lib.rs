@@ -25,6 +25,7 @@ mod tests {
     use validator::Validate;
 
     use super::*;
+    use crate::config::Config;
 
     #[test]
     fn test_config_parsing() {
@@ -32,7 +33,7 @@ mod tests {
         assert!(
             config.is_ok(),
             "Config loading failed: {:?}",
-            config.err().unwrap()
+            config.as_ref().err()
         );
 
         let config = config.unwrap();
@@ -61,6 +62,7 @@ mod tests {
 
         assert_eq!(50, config.timeout);
         assert_eq!("/data/kiwi_rs/logs", config.log_dir);
+        assert_eq!("./db", config.db_dir);
         assert!(!config.redis_compatible_mode);
         assert_eq!(3, config.db_instance_num);
 
@@ -69,5 +71,67 @@ mod tests {
             "Config validation failed: {:?}",
             config.validate().err()
         );
+    }
+
+    #[test]
+    fn test_validate_port_range() {
+        let mut invalid_config = Config {
+            binding: "127.0.0.1".to_string(),
+            port: 999,
+            timeout: 100,
+            redis_compatible_mode: false,
+            log_dir: "".to_string(),
+            db_dir: "./db".to_string(),
+            memory: 1024,
+            rocksdb_max_subcompactions: 0,
+            rocksdb_max_background_jobs: 4,
+            rocksdb_max_write_buffer_number: 2,
+            rocksdb_min_write_buffer_number_to_merge: 2,
+            rocksdb_write_buffer_size: 64 << 20,
+            rocksdb_level0_file_num_compaction_trigger: 4,
+            rocksdb_num_levels: 7,
+            rocksdb_enable_pipelined_write: false,
+            rocksdb_level0_slowdown_writes_trigger: 20,
+            rocksdb_level0_stop_writes_trigger: 36,
+            rocksdb_ttl_second: 30 * 24 * 60 * 60,
+            rocksdb_periodic_second: 30 * 24 * 60 * 60,
+            rocksdb_level_compaction_dynamic_level_bytes: true,
+            rocksdb_max_open_files: 10000,
+            rocksdb_target_file_size_base: 64 << 20,
+            rocksdb_compression_type: config::CompressionType::Lz4,
+            db_instance_num: 3,
+            small_compaction_threshold: 5000,
+            small_compaction_duration_threshold: 10000,
+            db_path: "./db".to_string(),
+            raft: None,
+        };
+        assert!(invalid_config.validate().is_err());
+
+        invalid_config.port = 8080;
+        assert!(invalid_config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_db_dir_default() {
+        let config = Config::default();
+        assert_eq!("./db", config.db_dir);
+    }
+
+    #[test]
+    fn test_db_dir_from_config_file() {
+        use std::io::Write;
+
+        let filename = format!("kiwi_test_db_dir_{}.conf", std::process::id());
+        let tmp = std::env::temp_dir().join(filename);
+        let config_path = tmp.to_str().unwrap();
+        let mut f = std::fs::File::create(config_path).unwrap();
+        writeln!(f, "port 7379").unwrap();
+        writeln!(f, "db-dir /data/kiwi/db").unwrap();
+        drop(f);
+
+        let config = Config::load(config_path).unwrap();
+        assert_eq!("/data/kiwi/db", config.db_dir);
+
+        let _ = std::fs::remove_file(config_path);
     }
 }

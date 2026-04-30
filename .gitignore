@@ -66,3 +66,6 @@ kiwi-cpp
 
 # Setup marker
 .kiwi_setup_done
+
+# Reference materials (not for commit)
+kiwi-github/

@@ -15,23 +15,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod api;
 pub mod cf_tracker;
 pub mod collector;
+pub mod conversion;
 pub mod db_access;
 pub mod event_listener;
+pub mod grpc;
 pub mod log_store;
 pub mod log_store_rocksdb;
 pub mod network;
 pub mod node;
 pub mod snapshot_archive;
 pub mod state_machine;
+pub mod raft_proto {
+    // 使用版本化的 proto 包名 kiwi.raft.v1
+    tonic::include_proto!("kiwi.raft.v1");
+    pub const FILE_DESCRIPTOR_SET: &[u8] =
+        tonic::include_file_descriptor_set!("kiwi.raft.v1_descriptor");
+}
+
 pub mod table_properties;
 pub mod types;
 
-pub use cf_tracker::{LogIndexOfColumnFamilies, SmallestIndexRes};
-pub use collector::LogIndexAndSequenceCollector;
-pub use event_listener::LogIndexAndSequenceCollectorPurger;
+pub use crate::cf_tracker::{LogIndexOfColumnFamilies, SmallestIndexRes};
+pub use crate::collector::LogIndexAndSequenceCollector;
+pub use crate::event_listener::LogIndexAndSequenceCollectorPurger;
 pub use table_properties::{
     LogIndexTablePropertiesCollectorFactory, PROPERTY_KEY, get_largest_log_index_from_collection,
     read_stats_from_table_props,

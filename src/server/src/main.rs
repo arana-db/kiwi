@@ -18,7 +18,6 @@
 use clap::Parser;
 use conf::config::Config;
 use log::{debug, error, info, warn};
-// ServerFactory is used via net::ServerFactory::create_server
 use runtime::{
     DualRuntimeError, GlobalStorage, RuntimeConfig, RuntimeManager, StorageServer,
     StorageServerPauseController,
@@ -28,16 +27,10 @@ use std::sync::Arc;
 use storage::StorageOptions;
 use storage::storage::Storage;
 
-use actix_web::{App, HttpServer, web};
-use raft::api::{
-    RaftAppData, add_learner, change_membership, init, leader, metrics, raft_append, raft_vote,
-    read, write,
-};
-use raft::node::{RaftConfig, create_raft_node};
+use raft::node::{RaftApp, RaftConfig, create_raft_node};
+use raft::raft_proto;
 use raft::state_machine::PauseController;
 
-/// Wrapper for StorageServerPauseController that implements PauseController trait
-/// This is needed because PauseController is in raft crate and StorageServerPauseController is in runtime crate
 struct PauseControllerWrapper(StorageServerPauseController);
 
 impl PauseController for PauseControllerWrapper {
@@ -52,28 +45,22 @@ impl PauseController for PauseControllerWrapper {
     }
 }
 
-/// Kiwi - A Redis-compatible key-value database built in Rust
 #[derive(Parser)]
 #[command(name = "kiwi-server")]
 #[command(about = "A Redis-compatible key-value database built in Rust")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 struct Args {
-    /// Configuration file path
     #[arg(short, long)]
     config: Option<String>,
 
-    /// Force single-node mode (no-op; cluster mode is removed)
     #[arg(long)]
     single_node: bool,
 
-    /// Initialize a new cluster (no-op; cluster mode is removed)
     #[arg(long)]
     init_cluster: bool,
 }
 
 fn main() -> std::io::Result<()> {
-    // init logger
-    // set env RUST_LOG=level to control
     env_logger::init();
 
     let args = Args::parse();
@@ -91,19 +78,15 @@ fn main() -> std::io::Result<()> {
     let addr = format!("{}:{}", config.binding, config.port);
     let protocol = "tcp";
 
-    // Create runtime configuration based on system capabilities
     let runtime_config = RuntimeConfig::default();
     info!(
         "Creating RuntimeManager with {} network threads and {} storage threads",
         runtime_config.network_threads, runtime_config.storage_threads
     );
 
-    // Create and start RuntimeManager
     let mut runtime_manager = RuntimeManager::new(runtime_config)
         .map_err(|e| std::io::Error::other(format!("Failed to create RuntimeManager: {}", e)))?;
 
-    // Start the RuntimeManager first
-    // We need to use a basic runtime to start the RuntimeManager
     let basic_rt = tokio::runtime::Runtime::new()
         .map_err(|e| std::io::Error::other(format!("Failed to create basic runtime: {}", e)))?;
 
@@ -120,7 +103,6 @@ fn main() -> std::io::Result<()> {
 
     info!("RuntimeManager started successfully");
 
-    // Get runtime handles after starting
     let network_handle = runtime_manager
         .network_handle()
         .map_err(|e| std::io::Error::other(format!("Failed to get network handle: {}", e)))?;
@@ -128,14 +110,12 @@ fn main() -> std::io::Result<()> {
         .storage_handle()
         .map_err(|e| std::io::Error::other(format!("Failed to get storage handle: {}", e)))?;
 
-    // Initialize storage components and get the receiver for the storage server
     let storage_receiver = runtime_manager
         .initialize_storage_components()
         .map_err(|e| {
             std::io::Error::other(format!("Failed to initialize storage components: {}", e))
         })?;
 
-    // Use the network runtime to run the main server logic
     let result = network_handle.block_on(async {
         let storage = initialize_storage(&config)
             .await
@@ -143,11 +123,8 @@ fn main() -> std::io::Result<()> {
 
         info!("Storage components initialized, starting storage server...");
 
-        // Create pause controller for coordinating snapshot installation
         let pause_controller = StorageServerPauseController::new();
         let pause_controller_for_raft = pause_controller.clone();
-
-        // Initialize storage server in storage runtime (runs in background)
 
         let storage_for_server = storage.clone();
         storage_handle.spawn(async move {
@@ -164,16 +141,9 @@ fn main() -> std::io::Result<()> {
             }
         });
 
-        // Store the handle to monitor the task (optional)
-        // You could add this to RuntimeManager to track the storage server task
-
-        // Give storage server a moment to initialize
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         info!("Storage server started in background");
-
-        // NOTE: Raft/cluster mode has been removed from this repo.
-        // We always run in single-node mode.
         info!("Starting Kiwi server in single-node mode on {}", addr);
 
         match start_server(
@@ -193,7 +163,6 @@ fn main() -> std::io::Result<()> {
             }
         }
 
-        // Block until Ctrl+C so the process does not exit immediately
         info!("Press Ctrl+C to stop.");
         tokio::signal::ctrl_c().await.map_err(|e| {
             std::io::Error::other(format!("Failed to listen for shutdown signal: {}", e))
@@ -203,7 +172,6 @@ fn main() -> std::io::Result<()> {
         Ok(())
     });
 
-    // Shutdown the runtime manager
     if let Err(e) = network_handle.block_on(runtime_manager.stop()) {
         warn!("Error during RuntimeManager shutdown: {}", e);
     }
@@ -236,8 +204,6 @@ async fn initialize_storage(config: &Config) -> Result<GlobalStorage, DualRuntim
     Ok(GlobalStorage::new(storage))
 }
 
-/// Initialize the storage server in the storage runtime.
-/// Uses the already-opened storage from `initialize_storage()` to avoid opening RocksDB twice.
 async fn initialize_storage_server(
     request_receiver: tokio::sync::mpsc::Receiver<runtime::StorageRequest>,
     global_storage: GlobalStorage,
@@ -245,13 +211,10 @@ async fn initialize_storage_server(
 ) -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
 
-    // Create and start storage server with the shared storage (already opened in initialize_storage)
     let storage_server =
         StorageServer::with_pause_controller(global_storage, request_receiver, pause_controller);
 
     info!("Storage server created, starting processing...");
-
-    // Start the storage server (this will run indefinitely)
     storage_server.run().await?;
 
     Ok(())
@@ -275,24 +238,20 @@ async fn start_server(
         });
 
         if let Some(raft_config) = &config.raft {
-            info!("Starting Raft HTTP server on {}", raft_config.raft_addr);
-
             let raft_config = RaftConfig {
                 node_id: raft_config.node_id,
                 raft_addr: raft_config.raft_addr.clone(),
                 resp_addr: raft_config.resp_addr.clone(),
                 data_dir: PathBuf::from(&raft_config.data_dir),
                 db_path: PathBuf::from(&config.db_path),
+                heartbeat_interval: raft_config.heartbeat_interval_ms.unwrap_or(200),
+                election_timeout_min: raft_config.election_timeout_min_ms.unwrap_or(500),
+                election_timeout_max: raft_config.election_timeout_max_ms.unwrap_or(1500),
                 use_memory_log_store: raft_config.use_memory_log_store,
-                ..Default::default()
+                ..RaftConfig::default()
             };
 
-            // Use the shared Arc<ArcSwap<Storage>> from GlobalStorage
-            // This ensures all components (StorageServer, Raft) share the same ArcSwap,
-            // so snapshot installation's swap() is visible to all.
             let storage_swap = global_storage.arc_swap();
-
-            // Create pause controller wrapper for RaftNode
             let pause_controller_wrapper = Arc::new(PauseControllerWrapper(pause_controller));
 
             let raft_app =
@@ -303,33 +262,48 @@ async fn start_server(
                     })?;
 
             let raft_addr = raft_app.raft_addr.clone();
-            let app_data = web::Data::new(RaftAppData { app: raft_app });
+            let grpc_addr = raft_addr.parse::<std::net::SocketAddr>().map_err(|e| {
+                std::io::Error::other(format!("Invalid Raft address '{}': {}", raft_addr, e))
+            })?;
+
+            let (core_svc, admin_svc, client_svc, metrics_svc) =
+                RaftApp::create_grpc_services(raft_app.clone());
+
+            info!("Starting Raft gRPC server on {}", raft_addr);
+
+            let reflect_svc = tonic_reflection::server::Builder::configure()
+                .register_encoded_file_descriptor_set(raft_proto::FILE_DESCRIPTOR_SET)
+                .build_v1()
+                .map_err(|e| {
+                    std::io::Error::other(format!("Failed to create reflection service: {}", e))
+                })?;
+
+            let grpc_listener = tokio::net::TcpListener::bind(grpc_addr)
+                .await
+                .map_err(|e| {
+                    std::io::Error::other(format!(
+                        "Failed to bind Raft gRPC server on {}: {}",
+                        grpc_addr, e
+                    ))
+                })?;
 
             tokio::spawn(async move {
-                info!("Starting Raft HTTP server...");
-                let server = match HttpServer::new(move || {
-                    App::new()
-                        .app_data(app_data.clone())
-                        .service(write)
-                        .service(read)
-                        .service(metrics)
-                        .service(leader)
-                        .service(init)
-                        .service(add_learner)
-                        .service(change_membership)
-                        .service(raft_vote)
-                        .service(raft_append)
-                })
-                .bind(&raft_addr)
+                use tonic::transport::Server;
+
+                let incoming = tokio_stream::wrappers::TcpListenerStream::new(grpc_listener);
+
+                info!("Raft gRPC server listening on {}", grpc_addr);
+
+                if let Err(e) = Server::builder()
+                    .add_service(reflect_svc)
+                    .add_service(core_svc)
+                    .add_service(admin_svc)
+                    .add_service(client_svc)
+                    .add_service(metrics_svc)
+                    .serve_with_incoming(incoming)
+                    .await
                 {
-                    Ok(s) => s,
-                    Err(e) => {
-                        error!("Failed to bind Raft HTTP server: {}", e);
-                        return;
-                    }
-                };
-                if let Err(e) = server.run().await {
-                    error!("Raft HTTP server error: {}", e);
+                    error!("Raft gRPC server error: {}", e);
                 }
             });
         }
