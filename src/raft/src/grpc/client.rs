@@ -15,15 +15,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// RaftClientService 和 RaftMetricsService 实现
-// 用途：客户端读写数据、查询集群状态
-
 use conf::raft_type::{Binlog, BinlogEntry, OperateType};
 use std::sync::Arc;
-use storage::ColumnFamilyIndex;
 use storage::slot_indexer::key_to_slot_id;
 
-// 导入 proto 生成的类型
+use crate::node::RaftApp;
 use crate::raft_proto::{
     LeaderRequest, LeaderResponse, MembersRequest, MembersResponse, MetricsRequest,
     MetricsResponse, NodeConfig, ReadRequest, ReadResponse, Response as ProtoResponse,
@@ -33,9 +29,6 @@ use crate::raft_proto::{
 };
 use tonic::{Request, Response as TonicResponse, Status};
 
-use crate::node::RaftApp;
-
-/// Raft 客户端服务实现
 pub struct RaftClientServiceImpl {
     app: Arc<RaftApp>,
 }
@@ -46,12 +39,10 @@ impl RaftClientServiceImpl {
     }
 }
 
-/// 创建 RaftClientService 服务器
 pub fn create_client_service(app: Arc<RaftApp>) -> RaftClientServiceServer<RaftClientServiceImpl> {
     RaftClientServiceServer::new(RaftClientServiceImpl::new(app))
 }
 
-/// Raft 指标服务实现
 pub struct RaftMetricsServiceImpl {
     app: Arc<RaftApp>,
 }
@@ -62,14 +53,12 @@ impl RaftMetricsServiceImpl {
     }
 }
 
-/// 创建 RaftMetricsService 服务器
 pub fn create_metrics_service(
     app: Arc<RaftApp>,
 ) -> RaftMetricsServiceServer<RaftMetricsServiceImpl> {
     RaftMetricsServiceServer::new(RaftMetricsServiceImpl::new(app))
 }
 
-/// 成功响应
 fn ok_response() -> ProtoResponse {
     ProtoResponse {
         success: true,
@@ -77,7 +66,6 @@ fn ok_response() -> ProtoResponse {
     }
 }
 
-/// 错误响应
 fn error_response(msg: String) -> ProtoResponse {
     ProtoResponse {
         success: false,
@@ -85,17 +73,13 @@ fn error_response(msg: String) -> ProtoResponse {
     }
 }
 
-// RaftClientService 实现
 #[tonic::async_trait]
 impl RaftClientService for RaftClientServiceImpl {
-    /// 写入数据（通过 Raft 共识）
     async fn write(
         &self,
         request: Request<WriteRequest>,
     ) -> Result<TonicResponse<WriteResponse>, Status> {
         let proto_req = request.into_inner();
-
-        // Proto Binlog → 实际 Binlog
         let binlog = proto_binlog_to_binlog(proto_req.binlog)?;
 
         match self.app.client_write(binlog).await {
@@ -109,11 +93,12 @@ impl RaftClientService for RaftClientServiceImpl {
                             .unwrap_or_else(|| "Unknown error".to_string()),
                     )
                 };
-                // 返回实际提交的 log_id（index 来自 response，term 信息不可用故设为 None）
+
                 let log_id = response.log_id.map(|idx| crate::raft_proto::LogId {
                     leader_id: None,
                     index: idx,
                 });
+
                 Ok(TonicResponse::new(WriteResponse {
                     response: Some(proto_response),
                     log_id,
@@ -126,7 +111,6 @@ impl RaftClientService for RaftClientServiceImpl {
         }
     }
 
-    /// 读取数据
     async fn read(
         &self,
         request: Request<ReadRequest>,
@@ -134,7 +118,6 @@ impl RaftClientService for RaftClientServiceImpl {
         let proto_req = request.into_inner();
         let key = &proto_req.key;
 
-        // 检查是否为 leader
         if !self.app.is_leader() {
             if let Some((_, node)) = self.app.get_leader() {
                 return Err(Status::failed_precondition(format!(
@@ -145,42 +128,42 @@ impl RaftClientService for RaftClientServiceImpl {
             return Err(Status::unavailable("No leader available".to_string()));
         }
 
-        // 计算实例 ID
+        self.app
+            .raft
+            .ensure_linearizable()
+            .await
+            .map_err(|e| Status::failed_precondition(format!("Linearizable read failed: {}", e)))?;
+
         let slot_id = key_to_slot_id(key);
         let instance_id = self.app.storage.slot_indexer.get_instance_id(slot_id);
-        let instance = &self.app.storage.insts[instance_id];
+        let instance = Arc::clone(&self.app.storage.insts[instance_id]);
+        let key = key.to_vec();
 
-        // 从 MetaCF 读取
-        match instance.get_cf_handle(ColumnFamilyIndex::MetaCF) {
-            Some(cf) => {
-                let db = instance
-                    .db
-                    .as_ref()
-                    .ok_or_else(|| Status::internal("Database not initialized".to_string()))?;
-                match db.get_cf(&cf, key) {
-                    Ok(Some(val)) => Ok(TonicResponse::new(ReadResponse {
-                        response: Some(ok_response()),
-                        value: val,
-                    })),
-                    Ok(None) => Ok(TonicResponse::new(ReadResponse {
-                        response: Some(error_response(format!(
-                            "Key not found: {:?}",
-                            String::from_utf8_lossy(key)
-                        ))),
-                        value: vec![],
-                    })),
-                    Err(e) => Err(Status::internal(format!("Read failed: {}", e))),
-                }
-            }
-            None => Err(Status::internal("MetaCF not found".to_string())),
+        let read_result = tokio::task::spawn_blocking(move || instance.get_binary(&key))
+            .await
+            .map_err(|e| Status::internal(format!("Read task failed: {}", e)))?;
+
+        match read_result {
+            Ok(val) => Ok(TonicResponse::new(ReadResponse {
+                response: Some(ok_response()),
+                value: val,
+            })),
+            Err(storage::error::Error::KeyNotFound { .. }) => Ok(TonicResponse::new(
+                ReadResponse {
+                    response: Some(error_response(format!(
+                        "Key not found: {:?}",
+                        String::from_utf8_lossy(&key)
+                    ))),
+                    value: vec![],
+                },
+            )),
+            Err(e) => Err(Status::internal(format!("Read failed: {}", e))),
         }
     }
 }
 
-// RaftMetricsService 实现
 #[tonic::async_trait]
 impl RaftMetricsService for RaftMetricsServiceImpl {
-    /// 获取集群指标
     async fn metrics(
         &self,
         _request: Request<MetricsRequest>,
@@ -191,19 +174,14 @@ impl RaftMetricsService for RaftMetricsServiceImpl {
         let current_leader = guard.current_leader.unwrap_or(0);
         drop(guard);
 
-        // TODO: 实现 replication_lag 计算
-        // 需要获取 state_machine.last_applied 与 committed 的差异
-        let replication_lag = 0;
-
         Ok(TonicResponse::new(MetricsResponse {
             response: Some(ok_response()),
             is_leader,
-            replication_lag,
+            replication_lag: None,
             current_leader,
         }))
     }
 
-    /// 获取 Leader 信息
     async fn leader(
         &self,
         _request: Request<LeaderRequest>,
@@ -222,7 +200,6 @@ impl RaftMetricsService for RaftMetricsServiceImpl {
         }
     }
 
-    /// 获取集群成员列表
     async fn members(
         &self,
         _request: Request<MembersRequest>,
@@ -231,7 +208,6 @@ impl RaftMetricsService for RaftMetricsServiceImpl {
         let guard = metrics.borrow();
         let membership = guard.membership_config.membership();
 
-        // 获取所有节点配置
         let members: Vec<NodeConfig> = membership
             .nodes()
             .map(|(id, node)| NodeConfig {
@@ -241,7 +217,6 @@ impl RaftMetricsService for RaftMetricsServiceImpl {
             })
             .collect();
 
-        // 获取 learner ids
         let learner_ids = membership.learner_ids();
         let learners: Vec<u64> = learner_ids.collect();
 
@@ -255,36 +230,80 @@ impl RaftMetricsService for RaftMetricsServiceImpl {
     }
 }
 
-// 辅助函数
-/// Proto Binlog → 实际 Binlog
 fn proto_binlog_to_binlog(
     proto_binlog: Option<crate::raft_proto::Binlog>,
 ) -> Result<Binlog, Status> {
     let proto_binlog =
         proto_binlog.ok_or_else(|| Status::invalid_argument("Missing binlog".to_string()))?;
 
-    // 转换 Proto Binlog → 实际 Binlog
     let entries: Vec<BinlogEntry> = proto_binlog
         .entries
         .into_iter()
         .map(|proto_entry| {
-            let op_type = match proto_entry.op_type.as_str() {
-                "Put" => OperateType::Put,
-                "Delete" => OperateType::Delete,
-                _ => OperateType::Put, // 默认
+            let (op_type, value) = match proto_entry.op_type.as_str() {
+                "Put" => (OperateType::Put, Some(proto_entry.value)),
+                "Delete" => (OperateType::Delete, None),
+                other => {
+                    return Err(Status::invalid_argument(format!(
+                        "Unsupported op_type: {other}"
+                    )));
+                }
             };
-            BinlogEntry {
+
+            Ok(BinlogEntry {
                 cf_idx: proto_entry.cf_idx,
                 op_type,
                 key: proto_entry.key,
-                value: Some(proto_entry.value),
-            }
+                value,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>, Status>>()?;
 
     Ok(Binlog {
         db_id: proto_binlog.db_id as u32,
         slot_idx: proto_binlog.slot_idx as u32,
         entries,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::raft_proto::{Binlog as ProtoBinlog, BinlogEntry as ProtoBinlogEntry};
+
+    #[test]
+    fn proto_binlog_rejects_unknown_operation() {
+        let err = proto_binlog_to_binlog(Some(ProtoBinlog {
+            db_id: 1,
+            slot_idx: 2,
+            entries: vec![ProtoBinlogEntry {
+                cf_idx: 0,
+                op_type: "NoOp".to_string(),
+                key: b"k".to_vec(),
+                value: b"v".to_vec(),
+            }],
+        }))
+        .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn proto_binlog_clears_delete_value() {
+        let binlog = proto_binlog_to_binlog(Some(ProtoBinlog {
+            db_id: 1,
+            slot_idx: 2,
+            entries: vec![ProtoBinlogEntry {
+                cf_idx: 0,
+                op_type: "Delete".to_string(),
+                key: b"k".to_vec(),
+                value: b"stale".to_vec(),
+            }],
+        }))
+        .unwrap();
+
+        assert_eq!(binlog.entries.len(), 1);
+        assert_eq!(binlog.entries[0].op_type, OperateType::Delete);
+        assert_eq!(binlog.entries[0].value, None);
+    }
 }

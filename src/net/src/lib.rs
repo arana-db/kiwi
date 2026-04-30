@@ -66,9 +66,13 @@ impl ServerFactory {
                 }
             },
             #[cfg(unix)]
-            "unix" => unix::UnixServer::new(addr, None)
-                .ok()
-                .map(|s| Box::new(s) as Box<dyn ServerTrait>),
+            "unix" => match unix::UnixServer::new(addr, None) {
+                Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
+                Err(e) => {
+                    log::error!("Failed to create UnixServer: {}", e);
+                    None
+                }
+            },
             #[cfg(not(unix))]
             "unix" => None,
             _ => None,
@@ -82,13 +86,21 @@ impl ServerFactory {
         db_dir: Option<&str>,
     ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
-            "tcp" => TcpServer::new(addr, db_dir)
-                .ok()
-                .map(|s| Box::new(s) as Box<dyn ServerTrait>),
+            "tcp" => match TcpServer::new(addr, db_dir) {
+                Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
+                Err(e) => {
+                    log::error!("Failed to create TcpServer: {}", e);
+                    None
+                }
+            },
             #[cfg(unix)]
-            "unix" => unix::UnixServer::new(addr, db_dir)
-                .ok()
-                .map(|s| Box::new(s) as Box<dyn ServerTrait>),
+            "unix" => match unix::UnixServer::new(addr, db_dir) {
+                Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
+                Err(e) => {
+                    log::error!("Failed to create UnixServer: {}", e);
+                    None
+                }
+            },
             #[cfg(not(unix))]
             "unix" => None,
             _ => None,

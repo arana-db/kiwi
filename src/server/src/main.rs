@@ -267,9 +267,19 @@ async fn start_server(
                     std::io::Error::other(format!("Failed to create reflection service: {}", e))
                 })?;
 
+            let grpc_listener = tokio::net::TcpListener::bind(grpc_addr)
+                .await
+                .map_err(|e| {
+                    std::io::Error::other(format!(
+                        "Failed to bind Raft gRPC server on {}: {}",
+                        grpc_addr, e
+                    ))
+                })?;
+
             // 启动 gRPC 服务器
             tokio::spawn(async move {
                 use tonic::transport::Server;
+                let incoming = tokio_stream::wrappers::TcpListenerStream::new(grpc_listener);
 
                 info!("Raft gRPC server listening on {}", grpc_addr);
 
@@ -279,7 +289,7 @@ async fn start_server(
                     .add_service(admin_svc)
                     .add_service(client_svc)
                     .add_service(metrics_svc)
-                    .serve(grpc_addr)
+                    .serve_with_incoming(incoming)
                     .await
                 {
                     error!("Raft gRPC server error: {}", e);

@@ -25,8 +25,8 @@ use tokio_stream::Stream;
 
 // 导入 proto 生成的类型
 use crate::raft_proto::{
-    AppendEntriesRequest, AppendEntriesResponse, Entry as ProtoEntry, InstallSnapshotRequest,
-    InstallSnapshotResponse, VoteRequest, VoteResponse, entry_payload,
+    AppendEntriesRequest, AppendEntriesResponse, AppendEntriesResult, Entry as ProtoEntry,
+    InstallSnapshotRequest, InstallSnapshotResponse, VoteRequest, VoteResponse, entry_payload,
     raft_core_service_server::{RaftCoreService, RaftCoreServiceServer},
 };
 use tonic::{Request, Response, Status};
@@ -93,7 +93,7 @@ impl RaftCoreService for RaftCoreServiceImpl {
         &self,
         request: Request<AppendEntriesRequest>,
     ) -> Result<Response<AppendEntriesResponse>, Status> {
-        use crate::conversion::{proto_to_log_id, proto_to_vote};
+        use crate::conversion::{proto_to_log_id, proto_to_vote, vote_to_proto};
         use openraft::raft::AppendEntriesResponse as OpenRaftAppendEntriesResponse;
 
         // Proto → OpenRaft
@@ -127,20 +127,36 @@ impl RaftCoreService for RaftCoreServiceImpl {
         // OpenRaft → Proto
         // 这些都应该返回 success=false，而不是 gRPC 错误
         match raft_resp {
-            OpenRaftAppendEntriesResponse::Success => {
-                Ok(Response::new(AppendEntriesResponse { success: true }))
-            }
+            OpenRaftAppendEntriesResponse::Success => Ok(Response::new(
+                AppendEntriesResponse {
+                    success: true,
+                    result: AppendEntriesResult::Success as i32,
+                    higher_vote: None,
+                },
+            )),
             OpenRaftAppendEntriesResponse::PartialSuccess(_) => {
                 // PartialSuccess 表示部分成功，对客户端来说算成功
-                Ok(Response::new(AppendEntriesResponse { success: true }))
+                Ok(Response::new(AppendEntriesResponse {
+                    success: true,
+                    result: AppendEntriesResult::Success as i32,
+                    higher_vote: None,
+                }))
             }
             OpenRaftAppendEntriesResponse::Conflict => {
                 // Conflict 是正常的协议响应：日志不匹配
-                Ok(Response::new(AppendEntriesResponse { success: false }))
+                Ok(Response::new(AppendEntriesResponse {
+                    success: false,
+                    result: AppendEntriesResult::Conflict as i32,
+                    higher_vote: None,
+                }))
             }
-            OpenRaftAppendEntriesResponse::HigherVote(_) => {
+            OpenRaftAppendEntriesResponse::HigherVote(vote) => {
                 // HigherVote 是正常的协议响应：对方有更高的 term 或 vote
-                Ok(Response::new(AppendEntriesResponse { success: false }))
+                Ok(Response::new(AppendEntriesResponse {
+                    success: false,
+                    result: AppendEntriesResult::HigherVote as i32,
+                    higher_vote: Some(vote_to_proto(&vote)),
+                }))
             }
         }
     }

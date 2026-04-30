@@ -218,8 +218,29 @@ impl From<VoteResponse<u64>> for proto::VoteResponse {
 
 impl From<AppendEntriesResponse<u64>> for proto::AppendEntriesResponse {
     fn from(resp: AppendEntriesResponse<u64>) -> Self {
-        let success = matches!(resp, AppendEntriesResponse::Success);
-        proto::AppendEntriesResponse { success }
+        let (success, result, higher_vote) = match resp {
+            AppendEntriesResponse::Success | AppendEntriesResponse::PartialSuccess(_) => (
+                true,
+                proto::AppendEntriesResult::Success as i32,
+                None,
+            ),
+            AppendEntriesResponse::Conflict => (
+                false,
+                proto::AppendEntriesResult::Conflict as i32,
+                None,
+            ),
+            AppendEntriesResponse::HigherVote(vote) => (
+                false,
+                proto::AppendEntriesResult::HigherVote as i32,
+                Some(vote_to_proto(&vote)),
+            ),
+        };
+
+        proto::AppendEntriesResponse {
+            success,
+            result,
+            higher_vote,
+        }
     }
 }
 
@@ -348,12 +369,87 @@ impl TryInto<AppendEntriesResponse<u64>> for &proto::AppendEntriesResponse {
     type Error = tonic::Status;
 
     fn try_into(self) -> Result<AppendEntriesResponse<u64>, Self::Error> {
-        if self.success {
-            Ok(AppendEntriesResponse::Success)
-        } else {
-            Err(tonic::Status::aborted(
-                "AppendEntries failed: leader rejected the entries",
-            ))
+        match proto::AppendEntriesResult::try_from(self.result)
+            .unwrap_or(proto::AppendEntriesResult::Unspecified)
+        {
+            proto::AppendEntriesResult::Success => Ok(AppendEntriesResponse::Success),
+            proto::AppendEntriesResult::Conflict => Ok(AppendEntriesResponse::Conflict),
+            proto::AppendEntriesResult::HigherVote => {
+                let higher_vote = self
+                    .higher_vote
+                    .as_ref()
+                    .ok_or_else(|| tonic::Status::invalid_argument("missing higher_vote"))?;
+                Ok(AppendEntriesResponse::HigherVote(proto_to_vote(
+                    &Some(higher_vote),
+                )))
+            }
+            proto::AppendEntriesResult::Unspecified => {
+                if self.success {
+                    Ok(AppendEntriesResponse::Success)
+                } else if let Some(higher_vote) = self.higher_vote.as_ref() {
+                    Ok(AppendEntriesResponse::HigherVote(proto_to_vote(
+                        &Some(higher_vote),
+                    )))
+                } else {
+                    Ok(AppendEntriesResponse::Conflict)
+                }
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proto_conflict_maps_to_conflict_response() {
+        let proto = proto::AppendEntriesResponse {
+            success: false,
+            result: proto::AppendEntriesResult::Conflict as i32,
+            higher_vote: None,
+        };
+
+        let resp: AppendEntriesResponse<u64> = (&proto).try_into().unwrap();
+        assert!(matches!(resp, AppendEntriesResponse::Conflict));
+    }
+
+    #[test]
+    fn proto_higher_vote_maps_to_higher_vote_response() {
+        let higher_vote = Vote::new_committed(3, 9);
+        let proto = proto::AppendEntriesResponse {
+            success: false,
+            result: proto::AppendEntriesResult::HigherVote as i32,
+            higher_vote: Some(vote_to_proto(&higher_vote)),
+        };
+
+        let resp: AppendEntriesResponse<u64> = (&proto).try_into().unwrap();
+        match resp {
+            AppendEntriesResponse::HigherVote(vote) => {
+                assert_eq!(vote.leader_id.term, 3);
+                assert_eq!(vote.leader_id.node_id, 9);
+                assert!(vote.committed);
+            }
+            other => panic!("expected HigherVote, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn openraft_higher_vote_preserves_proto_discriminator() {
+        let proto: proto::AppendEntriesResponse =
+            AppendEntriesResponse::HigherVote(Vote::new(7, 11)).into();
+
+        assert!(!proto.success);
+        assert_eq!(proto.result, proto::AppendEntriesResult::HigherVote as i32);
+        assert!(proto.higher_vote.is_some());
+    }
+
+    #[test]
+    fn openraft_success_preserves_proto_success() {
+        let proto: proto::AppendEntriesResponse = AppendEntriesResponse::Success.into();
+
+        assert!(proto.success);
+        assert_eq!(proto.result, proto::AppendEntriesResult::Success as i32);
+        assert!(proto.higher_vote.is_none());
     }
 }

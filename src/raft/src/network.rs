@@ -119,11 +119,13 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
         // Get the read lock to check if a client already exists for the target node
         let networks = self.networks.read().await;
         if let Some(network) = networks.get(&target) {
-            return KiwiNetwork {
-                client: Arc::clone(&network.client),
-                target: node.raft_addr.clone(),
-                config: self.config.clone(),
-            };
+            if network.target == node.raft_addr {
+                return KiwiNetwork {
+                    client: Arc::clone(&network.client),
+                    target: node.raft_addr.clone(),
+                    config: self.config.clone(),
+                };
+            }
         }
 
         // Drop the read lock before acquiring the write lock
@@ -134,12 +136,16 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
 
         // Double-check if another async task has already created the client while we were waiting for the write lock
         if let Some(network) = networks.get(&target) {
-            return KiwiNetwork {
-                client: Arc::clone(&network.client),
-                target: node.raft_addr.clone(),
-                config: self.config.clone(),
-            };
+            if network.target == node.raft_addr {
+                return KiwiNetwork {
+                    client: Arc::clone(&network.client),
+                    target: node.raft_addr.clone(),
+                    config: self.config.clone(),
+                };
+            }
         }
+
+        networks.remove(&target);
 
         // Create new gRPC client for the target node
         let addr = node.raft_addr.clone();
@@ -229,11 +235,12 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
             match client.append_entries(TonicRequest::new(proto_req.clone())).await {
                 Ok(response) => {
                     let proto_resp = response.into_inner();
-                    if proto_resp.success {
-                        return Ok(openraft::raft::AppendEntriesResponse::Success);
-                    } else {
-                        return Ok(openraft::raft::AppendEntriesResponse::Conflict);
-                    }
+                    return (&proto_resp).try_into().map_err(|e| {
+                        RPCErr::Network(NetworkError::new(&io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Failed to convert append_entries response: {}", e),
+                        )))
+                    });
                 }
                 Err(e) => {
                     last_error = Some(e);

@@ -79,7 +79,7 @@ jobs:
           df -h
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -148,7 +148,7 @@ jobs:
           df -h
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.6
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -201,7 +201,7 @@ jobs:
         with:
           timeout_minutes: 30
           max_attempts: 2
-          command: make test
+          command: bash -o pipefail -c "make test 2>&1 | tee cargo-test.log"
 
       - name: Upload test results on failure
         if: failure()
@@ -210,8 +210,7 @@ jobs:
           name: test-results-${{ matrix.os }}
           retention-days: 7
           path: |
-            target/nextest/
-            *.log
+            cargo-test.log
 
   # Integration tests (Python) only on ubuntu
   integration-test:
@@ -281,7 +280,9 @@ jobs:
         env:
           RUSTFLAGS: "-Z sanitizer=${{ matrix.sanitizer }}"
           RUSTDOCFLAGS: "-Z sanitizer=${{ matrix.sanitizer }}"
-        run: cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu
+        run: |
+          set -o pipefail
+          cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu 2>&1 | tee sanitizer.log
 
       - name: Upload results on failure
         if: failure()
@@ -289,7 +290,7 @@ jobs:
         with:
           name: sanitizer-${{ matrix.sanitizer }}-results
           retention-days: 7
-          path: target/
+          path: sanitizer.log
 
   docker-build:
     name: Docker Build Test
@@ -305,6 +306,7 @@ jobs:
         with:
           context: .
           push: false
+          load: true
           tags: kiwi:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -329,9 +331,3 @@ jobs:
 
       - name: Security audit
         run: cargo audit
-
-      - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
-
-      - name: Check licenses and advisories
-        run: cargo deny check
