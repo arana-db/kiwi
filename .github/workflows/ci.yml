@@ -197,7 +197,7 @@ jobs:
         run: make build
 
       - name: Run Unit Test with retry
-        uses: nick-fields/retry-action@v3
+        uses: nick-fields/retry@v3
         with:
           timeout_minutes: 30
           max_attempts: 2

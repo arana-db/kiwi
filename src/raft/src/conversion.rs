@@ -219,16 +219,12 @@ impl From<VoteResponse<u64>> for proto::VoteResponse {
 impl From<AppendEntriesResponse<u64>> for proto::AppendEntriesResponse {
     fn from(resp: AppendEntriesResponse<u64>) -> Self {
         let (success, result, higher_vote) = match resp {
-            AppendEntriesResponse::Success | AppendEntriesResponse::PartialSuccess(_) => (
-                true,
-                proto::AppendEntriesResult::Success as i32,
-                None,
-            ),
-            AppendEntriesResponse::Conflict => (
-                false,
-                proto::AppendEntriesResult::Conflict as i32,
-                None,
-            ),
+            AppendEntriesResponse::Success | AppendEntriesResponse::PartialSuccess(_) => {
+                (true, proto::AppendEntriesResult::Success as i32, None)
+            }
+            AppendEntriesResponse::Conflict => {
+                (false, proto::AppendEntriesResult::Conflict as i32, None)
+            }
             AppendEntriesResponse::HigherVote(vote) => (
                 false,
                 proto::AppendEntriesResult::HigherVote as i32,
@@ -379,17 +375,17 @@ impl TryInto<AppendEntriesResponse<u64>> for &proto::AppendEntriesResponse {
                     .higher_vote
                     .as_ref()
                     .ok_or_else(|| tonic::Status::invalid_argument("missing higher_vote"))?;
-                Ok(AppendEntriesResponse::HigherVote(proto_to_vote(
-                    &Some(higher_vote),
-                )))
+                Ok(AppendEntriesResponse::HigherVote(proto_to_vote(&Some(
+                    higher_vote,
+                ))))
             }
             proto::AppendEntriesResult::Unspecified => {
                 if self.success {
                     Ok(AppendEntriesResponse::Success)
                 } else if let Some(higher_vote) = self.higher_vote.as_ref() {
-                    Ok(AppendEntriesResponse::HigherVote(proto_to_vote(
-                        &Some(higher_vote),
-                    )))
+                    Ok(AppendEntriesResponse::HigherVote(proto_to_vote(&Some(
+                        higher_vote,
+                    ))))
                 } else {
                     Ok(AppendEntriesResponse::Conflict)
                 }

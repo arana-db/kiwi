@@ -139,8 +139,9 @@ impl RaftClientService for RaftClientServiceImpl {
         let instance_id = storage.slot_indexer.get_instance_id(slot_id);
         let instance = Arc::clone(&storage.insts[instance_id]);
         let key = key.to_vec();
+        let key_for_read = key.clone();
 
-        let read_result = tokio::task::spawn_blocking(move || instance.get_binary(&key))
+        let read_result = tokio::task::spawn_blocking(move || instance.get_binary(&key_for_read))
             .await
             .map_err(|e| Status::internal(format!("Read task failed: {}", e)))?;
 
@@ -149,15 +150,15 @@ impl RaftClientService for RaftClientServiceImpl {
                 response: Some(ok_response()),
                 value: val,
             })),
-            Err(storage::error::Error::KeyNotFound { .. }) => Ok(TonicResponse::new(
-                ReadResponse {
+            Err(storage::error::Error::KeyNotFound { .. }) => {
+                Ok(TonicResponse::new(ReadResponse {
                     response: Some(error_response(format!(
                         "Key not found: {:?}",
                         String::from_utf8_lossy(&key)
                     ))),
                     value: vec![],
-                },
-            )),
+                }))
+            }
             Err(e) => Err(Status::internal(format!("Read failed: {}", e))),
         }
     }

@@ -54,7 +54,7 @@ enum AppendEntriesResult {
 }
 
 message AppendEntriesResponse {
-    bool success = 1 [deprecated = true];
+    bool success = 1;
     AppendEntriesResult result = 2;
     Vote higher_vote = 3;
 }

@@ -127,13 +127,11 @@ impl RaftCoreService for RaftCoreServiceImpl {
         // OpenRaft → Proto
         // 这些都应该返回 success=false，而不是 gRPC 错误
         match raft_resp {
-            OpenRaftAppendEntriesResponse::Success => Ok(Response::new(
-                AppendEntriesResponse {
-                    success: true,
-                    result: AppendEntriesResult::Success as i32,
-                    higher_vote: None,
-                },
-            )),
+            OpenRaftAppendEntriesResponse::Success => Ok(Response::new(AppendEntriesResponse {
+                success: true,
+                result: AppendEntriesResult::Success as i32,
+                higher_vote: None,
+            })),
             OpenRaftAppendEntriesResponse::PartialSuccess(_) => {
                 // PartialSuccess 表示部分成功，对客户端来说算成功
                 Ok(Response::new(AppendEntriesResponse {

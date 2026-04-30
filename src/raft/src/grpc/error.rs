@@ -69,7 +69,9 @@ impl GrpcError {
             GrpcError::RpcFailed(e) => Status::internal(format!("RPC failed: {}", e)),
             GrpcError::ServerError(e) => Status::unknown(format!("server error: {}", e)),
             GrpcError::InvalidArgument(e) => Status::invalid_argument(e),
-            GrpcError::SerializationError(e) => Status::invalid_argument(format!("serialization error: {}", e)),
+            GrpcError::SerializationError(e) => {
+                Status::invalid_argument(format!("serialization error: {}", e))
+            }
             GrpcError::NodeUnavailable(e) => Status::unavailable(e),
             GrpcError::NotImplemented(e) => Status::unimplemented(e),
         }

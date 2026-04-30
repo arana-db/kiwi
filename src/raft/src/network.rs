@@ -19,7 +19,7 @@
 //!
 //! 提供 Raft 节点间的 gRPC 通信实现，包括连接缓存和重连机制。
 
-use crate::grpc::{GrpcClientError, GrpcError};
+use crate::grpc::GrpcClientError;
 use crate::raft_proto::raft_core_service_client::RaftCoreServiceClient;
 use conf::raft_type::{KiwiNode, KiwiTypeConfig};
 use openraft::error::{NetworkError, RaftError};
@@ -232,7 +232,10 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
             }
 
             let mut client = self.client.lock().await;
-            match client.append_entries(TonicRequest::new(proto_req.clone())).await {
+            match client
+                .append_entries(TonicRequest::new(proto_req.clone()))
+                .await
+            {
                 Ok(response) => {
                     let proto_resp = response.into_inner();
                     return (&proto_resp).try_into().map_err(|e| {
