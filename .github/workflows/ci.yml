@@ -280,6 +280,12 @@ jobs:
         env:
           RUSTFLAGS: "-Z sanitizer=${{ matrix.sanitizer }}"
           RUSTDOCFLAGS: "-Z sanitizer=${{ matrix.sanitizer }}"
+          # AddressSanitizer enables leak detection by default. Leak checks run in
+          # the dedicated leak sanitizer job, where third-party suppressions are
+          # applied explicitly.
+          ASAN_OPTIONS: "detect_leaks=0"
+          LSAN_OPTIONS: "suppressions=${{ github.workspace }}/.github/lsan.supp"
+          TSAN_OPTIONS: "suppressions=${{ github.workspace }}/.github/tsan.supp"
         run: |
           set -o pipefail
           cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu 2>&1 | tee sanitizer.log

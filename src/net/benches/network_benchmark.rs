@@ -17,6 +17,7 @@
 
 #![allow(clippy::unwrap_used)]
 
+#[allow(unused_imports)]
 #[path = "../tests/performance_tests.rs"]
 mod performance_tests;
 
