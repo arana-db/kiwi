@@ -134,9 +134,10 @@ impl RaftClientService for RaftClientServiceImpl {
             .await
             .map_err(|e| Status::failed_precondition(format!("Linearizable read failed: {}", e)))?;
 
+        let storage = self.app.storage_swap.load_full();
         let slot_id = key_to_slot_id(key);
-        let instance_id = self.app.storage.slot_indexer.get_instance_id(slot_id);
-        let instance = Arc::clone(&self.app.storage.insts[instance_id]);
+        let instance_id = storage.slot_indexer.get_instance_id(slot_id);
+        let instance = Arc::clone(&storage.insts[instance_id]);
         let key = key.to_vec();
 
         let read_result = tokio::task::spawn_blocking(move || instance.get_binary(&key))

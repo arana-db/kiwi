@@ -25,6 +25,7 @@ pub mod log_store;
 pub mod log_store_rocksdb;
 pub mod network;
 pub mod node;
+pub mod snapshot_archive;
 pub mod state_machine;
 pub mod raft_proto {
     // 使用版本化的 proto 包名 kiwi.raft.v1

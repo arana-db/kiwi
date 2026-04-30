@@ -384,15 +384,6 @@ impl RespEncode for RespEncoder {
                 self
             }
             RespData::Array(None) => self.set_array_len(-1),
-            RespData::Inline(parts) => {
-                for (i, part) in parts.iter().enumerate() {
-                    if i > 0 {
-                        self.buffer.extend_from_slice(b" ");
-                    }
-                    self.buffer.extend_from_slice(part);
-                }
-                self.append_crlf()
-            }
             // RESP3 types
             RespData::Null => {
                 self.buffer.extend_from_slice(b"_");

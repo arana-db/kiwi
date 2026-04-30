@@ -98,6 +98,7 @@ mod tests {
             rocksdb_level_compaction_dynamic_level_bytes: true,
             rocksdb_max_open_files: 10000,
             rocksdb_target_file_size_base: 64 << 20,
+            rocksdb_compression_type: config::CompressionType::Lz4,
             db_instance_num: 3,
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,

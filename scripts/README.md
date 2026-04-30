@@ -84,38 +84,6 @@ This script will:
 
 **Run once for maximum build speed!**
 
-### Diagnostics (`diagnose`)
-
-Diagnose build issues and check optimization status.
-
-**Windows:** `scripts\diagnose.cmd`  
-**Linux/macOS:** `./scripts/diagnose.sh`
-
-This will check:
-- sccache installation and configuration
-- Incremental compilation settings
-- Build cache status
-- Cargo configuration
-
-### Fast Build (`fast_build`)
-
-Optimized build script with caching support.
-
-**Windows:** `scripts\fast_build.ps1 [options]`  
-**Linux/macOS:** `./scripts/fast_build.sh [options]`
-
-Options:
-- `--release` - Build in release mode
-- `--clean` - Clean build artifacts
-- `--check` - Run check instead of build
-
-### Setup sccache (`setup_sccache`)
-
-Install and configure sccache only (without cargo-watch).
-
-**Windows:** `scripts\setup_sccache.ps1`  
-**Linux/macOS:** `./scripts/setup_sccache.sh`
-
 ## Automatic Optimizations
 
 The `dev` scripts automatically apply these optimizations:

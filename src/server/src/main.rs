@@ -18,8 +18,10 @@
 use clap::Parser;
 use conf::config::Config;
 use log::{debug, error, info, warn};
-// ServerFactory is used via net::ServerFactory::create_server
-use runtime::{DualRuntimeError, RuntimeConfig, RuntimeManager, StorageServer};
+use runtime::{
+    DualRuntimeError, GlobalStorage, RuntimeConfig, RuntimeManager, StorageServer,
+    StorageServerPauseController,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 use storage::StorageOptions;
@@ -27,29 +29,38 @@ use storage::storage::Storage;
 
 use raft::node::{RaftApp, RaftConfig, create_raft_node};
 use raft::raft_proto;
+use raft::state_machine::PauseController;
 
-/// Kiwi - A Redis-compatible key-value database built in Rust
+struct PauseControllerWrapper(StorageServerPauseController);
+
+impl PauseController for PauseControllerWrapper {
+    fn request_pause(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(self.0.request_pause())
+    }
+
+    fn resume(&self) {
+        self.0.resume();
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "kiwi-server")]
 #[command(about = "A Redis-compatible key-value database built in Rust")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 struct Args {
-    /// Configuration file path
     #[arg(short, long)]
     config: Option<String>,
 
-    /// Force single-node mode (no-op; cluster mode is removed)
     #[arg(long)]
     single_node: bool,
 
-    /// Initialize a new cluster (no-op; cluster mode is removed)
     #[arg(long)]
     init_cluster: bool,
 }
 
 fn main() -> std::io::Result<()> {
-    // init logger
-    // set env RUST_LOG=level to control
     env_logger::init();
 
     let args = Args::parse();
@@ -67,19 +78,15 @@ fn main() -> std::io::Result<()> {
     let addr = format!("{}:{}", config.binding, config.port);
     let protocol = "tcp";
 
-    // Create runtime configuration based on system capabilities
     let runtime_config = RuntimeConfig::default();
     info!(
         "Creating RuntimeManager with {} network threads and {} storage threads",
         runtime_config.network_threads, runtime_config.storage_threads
     );
 
-    // Create and start RuntimeManager
     let mut runtime_manager = RuntimeManager::new(runtime_config)
         .map_err(|e| std::io::Error::other(format!("Failed to create RuntimeManager: {}", e)))?;
 
-    // Start the RuntimeManager first
-    // We need to use a basic runtime to start the RuntimeManager
     let basic_rt = tokio::runtime::Runtime::new()
         .map_err(|e| std::io::Error::other(format!("Failed to create basic runtime: {}", e)))?;
 
@@ -96,7 +103,6 @@ fn main() -> std::io::Result<()> {
 
     info!("RuntimeManager started successfully");
 
-    // Get runtime handles after starting
     let network_handle = runtime_manager
         .network_handle()
         .map_err(|e| std::io::Error::other(format!("Failed to get network handle: {}", e)))?;
@@ -104,14 +110,12 @@ fn main() -> std::io::Result<()> {
         .storage_handle()
         .map_err(|e| std::io::Error::other(format!("Failed to get storage handle: {}", e)))?;
 
-    // Initialize storage components and get the receiver for the storage server
     let storage_receiver = runtime_manager
         .initialize_storage_components()
         .map_err(|e| {
             std::io::Error::other(format!("Failed to initialize storage components: {}", e))
         })?;
 
-    // Use the network runtime to run the main server logic
     let result = network_handle.block_on(async {
         let storage = initialize_storage(&config)
             .await
@@ -119,12 +123,15 @@ fn main() -> std::io::Result<()> {
 
         info!("Storage components initialized, starting storage server...");
 
-        // Initialize storage server in storage runtime (runs in background)
+        let pause_controller = StorageServerPauseController::new();
+        let pause_controller_for_raft = pause_controller.clone();
 
         let storage_for_server = storage.clone();
         storage_handle.spawn(async move {
             info!("Initializing storage server...");
-            match initialize_storage_server(storage_receiver, storage_for_server).await {
+            match initialize_storage_server(storage_receiver, storage_for_server, pause_controller)
+                .await
+            {
                 Ok(_) => {
                     error!("Storage server exited unexpectedly - this should never happen!");
                 }
@@ -134,19 +141,21 @@ fn main() -> std::io::Result<()> {
             }
         });
 
-        // Store the handle to monitor the task (optional)
-        // You could add this to RuntimeManager to track the storage server task
-
-        // Give storage server a moment to initialize
         std::thread::sleep(std::time::Duration::from_millis(100));
 
         info!("Storage server started in background");
-
-        // NOTE: Raft/cluster mode has been removed from this repo.
-        // We always run in single-node mode.
         info!("Starting Kiwi server in single-node mode on {}", addr);
 
-        match start_server(protocol, &addr, &mut runtime_manager, &storage, &config).await {
+        match start_server(
+            protocol,
+            &addr,
+            &mut runtime_manager,
+            &storage,
+            &config,
+            pause_controller_for_raft,
+        )
+        .await
+        {
             Ok(_) => info!("Server started successfully"),
             Err(e) => {
                 error!("Failed to start server: {}", e);
@@ -154,7 +163,6 @@ fn main() -> std::io::Result<()> {
             }
         }
 
-        // Block until Ctrl+C so the process does not exit immediately
         info!("Press Ctrl+C to stop.");
         tokio::signal::ctrl_c().await.map_err(|e| {
             std::io::Error::other(format!("Failed to listen for shutdown signal: {}", e))
@@ -164,7 +172,6 @@ fn main() -> std::io::Result<()> {
         Ok(())
     });
 
-    // Shutdown the runtime manager
     if let Err(e) = network_handle.block_on(runtime_manager.stop()) {
         warn!("Error during RuntimeManager shutdown: {}", e);
     }
@@ -172,11 +179,11 @@ fn main() -> std::io::Result<()> {
     result
 }
 
-async fn initialize_storage(config: &Config) -> Result<Arc<Storage>, DualRuntimeError> {
+async fn initialize_storage(config: &Config) -> Result<GlobalStorage, DualRuntimeError> {
     info!("Initializing storage...");
 
-    let storage_options = Arc::new(StorageOptions::default());
-    let db_path = PathBuf::from(&config.db_dir);
+    let storage_options = Arc::new(StorageOptions::from_config(config));
+    let db_path = PathBuf::from(&config.db_path);
 
     let mut storage = Storage::new(1, 0);
 
@@ -194,23 +201,20 @@ async fn initialize_storage(config: &Config) -> Result<Arc<Storage>, DualRuntime
         info!("Background task receiver closed");
     });
 
-    Ok(Arc::new(storage))
+    Ok(GlobalStorage::new(storage))
 }
 
-/// Initialize the storage server in the storage runtime.
-/// Uses the already-opened storage from `initialize_storage()` to avoid opening RocksDB twice.
 async fn initialize_storage_server(
     request_receiver: tokio::sync::mpsc::Receiver<runtime::StorageRequest>,
-    storage: Arc<Storage>,
+    global_storage: GlobalStorage,
+    pause_controller: StorageServerPauseController,
 ) -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
 
-    // Create and start storage server with the shared storage (already opened in initialize_storage)
-    let storage_server = StorageServer::new(storage, request_receiver);
+    let storage_server =
+        StorageServer::with_pause_controller(global_storage, request_receiver, pause_controller);
 
     info!("Storage server created, starting processing...");
-
-    // Start the storage server (this will run indefinitely)
     storage_server.run().await?;
 
     Ok(())
@@ -220,8 +224,9 @@ async fn start_server(
     protocol: &str,
     addr: &str,
     runtime_manager: &mut RuntimeManager,
-    storage: &Arc<Storage>,
+    global_storage: &GlobalStorage,
     config: &Config,
+    pause_controller: StorageServerPauseController,
 ) -> std::io::Result<()> {
     if let Some(server) =
         net::ServerFactory::create_server(protocol, Some(addr.to_string()), runtime_manager)
@@ -238,23 +243,29 @@ async fn start_server(
                 raft_addr: raft_config.raft_addr.clone(),
                 resp_addr: raft_config.resp_addr.clone(),
                 data_dir: PathBuf::from(&raft_config.data_dir),
-                // 使用配置值或默认值
+                db_path: PathBuf::from(&config.db_path),
                 heartbeat_interval: raft_config.heartbeat_interval_ms.unwrap_or(200),
                 election_timeout_min: raft_config.election_timeout_min_ms.unwrap_or(500),
                 election_timeout_max: raft_config.election_timeout_max_ms.unwrap_or(1500),
                 use_memory_log_store: raft_config.use_memory_log_store,
+                ..RaftConfig::default()
             };
 
-            let raft_app = create_raft_node(raft_config, storage.clone())
-                .await
-                .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
+            let storage_swap = global_storage.arc_swap();
+            let pause_controller_wrapper = Arc::new(PauseControllerWrapper(pause_controller));
+
+            let raft_app =
+                create_raft_node(raft_config, storage_swap, Some(pause_controller_wrapper))
+                    .await
+                    .map_err(|e| {
+                        std::io::Error::other(format!("Failed to create Raft node: {}", e))
+                    })?;
 
             let raft_addr = raft_app.raft_addr.clone();
             let grpc_addr = raft_addr.parse::<std::net::SocketAddr>().map_err(|e| {
                 std::io::Error::other(format!("Invalid Raft address '{}': {}", raft_addr, e))
             })?;
 
-            // 创建所有 gRPC 服务
             let (core_svc, admin_svc, client_svc, metrics_svc) =
                 RaftApp::create_grpc_services(raft_app.clone());
 
@@ -276,9 +287,9 @@ async fn start_server(
                     ))
                 })?;
 
-            // 启动 gRPC 服务器
             tokio::spawn(async move {
                 use tonic::transport::Server;
+
                 let incoming = tokio_stream::wrappers::TcpListenerStream::new(grpc_listener);
 
                 info!("Raft gRPC server listening on {}", grpc_addr);

@@ -24,8 +24,13 @@ anyhow = "1.0.100"
 tracing = "0.1.44"
 log.workspace = true
 parking_lot.workspace = true
-thiserror = "2.0"
+snafu.workspace = true
+thiserror.workspace = true
+tar = "0.4"
+tempfile.workspace = true
 
+# Hot-swappable storage and gRPC
+arc-swap = { workspace = true }
 tonic = "0.14.3"
 prost = "0.14.3"
 tonic-prost = "0.14.3"

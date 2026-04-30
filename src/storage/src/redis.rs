@@ -16,6 +16,7 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -273,6 +274,14 @@ impl Redis {
     pub fn set_need_close(&self, need_close: bool) {
         self.need_close
             .store(need_close, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Create a RocksDB physical checkpoint at `path`.
+    pub fn create_checkpoint(&self, path: &Path) -> Result<()> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "Database is not initialized".to_string(),
+        })?;
+        db.create_checkpoint(path).context(RocksSnafu)
     }
 
     /// Compact database range

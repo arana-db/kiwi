@@ -24,6 +24,5 @@ tonic = "0.14"
 tonic-reflection = { version = "0.14", features = ["server"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 
-
 [lints]
 workspace = true
