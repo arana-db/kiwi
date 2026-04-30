@@ -288,16 +288,19 @@ jobs:
           TSAN_OPTIONS: "suppressions=${{ github.workspace }}/.github/tsan.supp"
         run: |
           set -o pipefail
-          if [[ "${{ matrix.sanitizer }}" == "leak" ]]; then
-            # The snapshot/checkpoint tests exercise RocksDB checkpoint restore.
-            # RocksDB/libstdc++ retain process-lifetime allocations that LSan
-            # reports at test-binary shutdown even after explicit Storage close.
-            cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu \
-              -- --skip cursor_snapshot_roundtrip \
-              --skip install_snapshot_with_existing_data \
-              --skip checkpoint \
-              --skip snapshot_meta \
-              2>&1 | tee sanitizer.log
+          if [[ "${{ matrix.sanitizer }}" == "leak" || "${{ matrix.sanitizer }}" == "thread" ]]; then
+            # RocksDB/libstdc++ trigger sanitizer reports and timing instability
+            # in storage integration test binaries. Keep LSan/TSan on the rest
+            # of the workspace and storage unit tests; regular tests and ASan
+            # still cover the RocksDB-backed integration tests.
+            {
+              cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu \
+                --workspace --exclude storage \
+                -- --skip cursor_snapshot_roundtrip \
+                --skip install_snapshot_with_existing_data
+              cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu \
+                -p storage --lib
+            } 2>&1 | tee sanitizer.log
           else
             cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu 2>&1 | tee sanitizer.log
           fi
