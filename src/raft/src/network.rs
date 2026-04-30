@@ -70,6 +70,20 @@ type RPCErrSnapshot = openraft::error::RPCError<
     RaftError<NodeId, openraft::error::InstallSnapshotError>,
 >;
 
+fn rpc_failed_network_error(target: &str, last_error: Option<tonic::Status>) -> RPCErr {
+    let message = last_error.map(|e| e.to_string()).unwrap_or_else(|| {
+        "RPC failed before any attempt; max_retries may be configured as 0".to_string()
+    });
+    let grpc_err = GrpcClientError::RpcFailed {
+        target: target.to_string(),
+        message,
+    };
+    RPCErr::Network(NetworkError::new(&io::Error::new(
+        io::ErrorKind::ConnectionRefused,
+        grpc_err.to_string(),
+    )))
+}
+
 /// 网络工厂 - 管理所有节点的 gRPC 连接
 ///
 /// 使用连接缓存避免频繁创建连接，支持重连机制。
@@ -252,15 +266,7 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
         }
 
         // 所有重试都失败
-        let err = last_error.unwrap();
-        let grpc_err = GrpcClientError::RpcFailed {
-            target: self.target.clone(),
-            message: err.to_string(),
-        };
-        Err(RPCErr::Network(NetworkError::new(&io::Error::new(
-            io::ErrorKind::ConnectionRefused,
-            grpc_err.to_string(),
-        ))))
+        Err(rpc_failed_network_error(&self.target, last_error))
     }
 
     async fn install_snapshot(
@@ -296,7 +302,7 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
             }
 
             let mut client = self.client.lock().await;
-            match client.vote(TonicRequest::new(proto_req.clone())).await {
+            match client.vote(TonicRequest::new(proto_req)).await {
                 Ok(response) => {
                     let proto_resp = response.into_inner();
                     // Proto → OpenRaft
@@ -314,14 +320,6 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
         }
 
         // 所有重试都失败
-        let err = last_error.unwrap();
-        let grpc_err = GrpcClientError::RpcFailed {
-            target: self.target.clone(),
-            message: err.to_string(),
-        };
-        Err(RPCErr::Network(NetworkError::new(&io::Error::new(
-            io::ErrorKind::ConnectionRefused,
-            grpc_err.to_string(),
-        ))))
+        Err(rpc_failed_network_error(&self.target, last_error))
     }
 }
