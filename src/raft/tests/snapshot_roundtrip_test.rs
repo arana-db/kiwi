@@ -27,8 +27,8 @@ use storage::{StorageOptions, storage::Storage};
 use storage::{safe_cleanup_test_db, unique_test_db_path};
 
 async fn close_storage(storage: Arc<Storage>, name: &str) -> anyhow::Result<()> {
-    let mut storage =
-        Arc::try_unwrap(storage).map_err(|_| anyhow::anyhow!("{name} still has Arc references"))?;
+    let mut storage = Arc::try_unwrap(storage)
+        .map_err(|_| anyhow::Error::msg([name, " still has Arc references"].concat()))?;
     storage.shutdown().await;
     storage.close();
     Ok(())

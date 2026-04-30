@@ -303,7 +303,8 @@ async fn start_server(
                     .serve_with_incoming(incoming)
                     .await
                 {
-                    error!("Raft gRPC server error: {}", e);
+                    let error_message = e.to_string();
+                    error!("Raft gRPC server error: {}", error_message);
                 }
             });
         }
