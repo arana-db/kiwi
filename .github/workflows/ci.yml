@@ -289,11 +289,14 @@ jobs:
         run: |
           set -o pipefail
           if [[ "${{ matrix.sanitizer }}" == "leak" ]]; then
-            # The snapshot roundtrip tests exercise RocksDB checkpoint restore.
+            # The snapshot/checkpoint tests exercise RocksDB checkpoint restore.
             # RocksDB/libstdc++ retain process-lifetime allocations that LSan
             # reports at test-binary shutdown even after explicit Storage close.
             cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu \
-              -- --skip cursor_snapshot_roundtrip --skip install_snapshot_with_existing_data \
+              -- --skip cursor_snapshot_roundtrip \
+              --skip install_snapshot_with_existing_data \
+              --skip checkpoint \
+              --skip snapshot_meta \
               2>&1 | tee sanitizer.log
           else
             cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu 2>&1 | tee sanitizer.log
