@@ -84,7 +84,7 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
     // install_snapshot will restore the checkpoint directly to db_path, bypassing
     // the normal open flow. The storage is opened after install_snapshot completes.
     let target_storage = Arc::new(Storage::new(1, 0));
-    let target_swap = Arc::new(ArcSwap::from(target_storage));
+    let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
     let mut sm2 = KiwiStateMachine::new(
         2,
         target_swap.clone(),
