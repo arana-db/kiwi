@@ -79,7 +79,7 @@ jobs:
           df -h
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -148,7 +148,7 @@ jobs:
           df -h
 
       - name: Setup sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
