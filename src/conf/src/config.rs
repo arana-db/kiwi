@@ -114,6 +114,7 @@ pub struct Config {
     pub binding: String,
     pub timeout: u32,
     pub log_dir: String,
+    pub db_dir: String,
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
     pub db_path: String,
@@ -127,6 +128,9 @@ pub struct RaftClusterConfig {
     pub raft_addr: String,
     pub resp_addr: String,
     pub data_dir: String,
+    pub heartbeat_interval_ms: Option<u64>,
+    pub election_timeout_min_ms: Option<u64>,
+    pub election_timeout_max_ms: Option<u64>,
     /// 是否使用内存日志存储，默认 false（使用 RocksDB 持久化存储）
     pub use_memory_log_store: bool,
 }
@@ -140,6 +144,7 @@ impl Default for Config {
             timeout: 50,
             memory: 1024 * 1024 * 1024, // 1GB
             log_dir: "/data/kiwi_rs/logs".to_string(),
+            db_dir: "./db".to_string(),
             redis_compatible_mode: false,
 
             rocksdb_max_subcompactions: 0,
@@ -185,6 +190,9 @@ impl Config {
         let mut raft_addr: Option<String> = None;
         let mut raft_resp_addr: Option<String> = None;
         let mut raft_data_dir: Option<String> = None;
+        let mut raft_heartbeat_interval: Option<u64> = None;
+        let mut raft_election_timeout_min: Option<u64> = None;
+        let mut raft_election_timeout_max: Option<u64> = None;
         let mut raft_use_memory_log_store: bool = false;
 
         // Parse each configuration value
@@ -205,6 +213,18 @@ impl Config {
                 }
                 "log-dir" => {
                     config.log_dir = value;
+                }
+                "db-dir" => {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        return Err(Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(
+                                "db-dir must not be empty".to_string(),
+                            ),
+                        });
+                    }
+                    config.db_dir = trimmed.to_string();
+                    config.db_path = trimmed.to_string();
                 }
                 "redis-compatible-mode" => {
                     config.redis_compatible_mode =
@@ -389,7 +409,7 @@ impl Config {
                             )),
                         })?;
                 }
-                "raft-node-id" => {
+                "raft-node-id" | "cluster-node-id" => {
                     raft_node_id = Some(value.parse().map_err(|e| Error::InvalidConfig {
                         source: serde_ini::de::Error::Custom(format!(
                             "Invalid raft-node-id: {}",
@@ -397,14 +417,41 @@ impl Config {
                         )),
                     })?);
                 }
-                "raft-addr" => {
+                "raft-addr" | "cluster-addr" => {
                     raft_addr = Some(value);
                 }
-                "raft-resp-addr" => {
+                "raft-resp-addr" | "cluster-resp-addr" => {
                     raft_resp_addr = Some(value);
                 }
-                "raft-data-dir" => {
+                "raft-data-dir" | "cluster-data-dir" => {
                     raft_data_dir = Some(value);
+                }
+                "raft-heartbeat-interval" | "cluster-heartbeat-interval" => {
+                    raft_heartbeat_interval =
+                        Some(value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid raft-heartbeat-interval: {}",
+                                e
+                            )),
+                        })?);
+                }
+                "raft-election-timeout-min" | "cluster-election-timeout-min" => {
+                    raft_election_timeout_min =
+                        Some(value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid raft-election-timeout-min: {}",
+                                e
+                            )),
+                        })?);
+                }
+                "raft-election-timeout-max" | "cluster-election-timeout-max" => {
+                    raft_election_timeout_max =
+                        Some(value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid raft-election-timeout-max: {}",
+                                e
+                            )),
+                        })?);
                 }
                 "raft-use-memory-log-store" => {
                     raft_use_memory_log_store =
@@ -416,7 +463,8 @@ impl Config {
                         })?;
                 }
                 "db-path" => {
-                    config.db_path = value;
+                    config.db_path = value.clone();
+                    config.db_dir = value;
                 }
                 _ => {
                     // Unknown configuration key, skip it
@@ -433,6 +481,9 @@ impl Config {
                 raft_addr: addr,
                 resp_addr,
                 data_dir,
+                heartbeat_interval_ms: raft_heartbeat_interval,
+                election_timeout_min_ms: raft_election_timeout_min,
+                election_timeout_max_ms: raft_election_timeout_max,
                 use_memory_log_store: raft_use_memory_log_store,
             });
         }
@@ -443,7 +494,9 @@ impl Config {
 
         Ok(config)
     }
+}
 
+impl Config {
     // TODO: Due to API issues, the rocksdb_ttl_second parameter is temporarily missing
     pub fn get_rocksdb_options(&self) -> rocksdb::Options {
         let mut options = rocksdb::Options::default();

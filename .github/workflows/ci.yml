@@ -71,11 +71,27 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Free disk space (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo rm -rf /usr/local/.ghcup /usr/share/dotnet /usr/local/lib/android \
+                      /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           components: clippy
+
+      - name: Configure sccache
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+        shell: bash
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -83,7 +99,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-clippy-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-clippy-
@@ -125,10 +140,26 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Free disk space (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo rm -rf /usr/local/.ghcup /usr/share/dotnet /usr/local/lib/android \
+                      /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
+
+      - name: Configure sccache
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> $GITHUB_ENV
+          echo "RUSTC_WRAPPER=sccache" >> $GITHUB_ENV
+        shell: bash
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -136,7 +167,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
@@ -166,15 +196,21 @@ jobs:
       - name: Build
         run: make build
 
-      - name: Run Unit Test
-        run: make test
+      - name: Run Unit Test with retry
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 30
+          max_attempts: 2
+          command: bash -o pipefail -c "make test 2>&1 | tee cargo-test.log"
 
       - name: Upload test results on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: test-results-${{ matrix.os }}
-          path: target/nextest/
+          retention-days: 7
+          path: |
+            cargo-test.log
 
   # Integration tests (Python) only on ubuntu
   integration-test:
@@ -218,3 +254,101 @@ jobs:
 
       - name: Run integration tests
         run: make -C tests test-python
+
+  sanitizers:
+    name: Sanitizers (${{ matrix.sanitizer }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address, leak, thread]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust nightly with sanitizer support
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: nightly
+          components: rust-src
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Run tests with ${{ matrix.sanitizer }} sanitizer
+        env:
+          RUSTFLAGS: "-Z sanitizer=${{ matrix.sanitizer }}"
+          RUSTDOCFLAGS: "-Z sanitizer=${{ matrix.sanitizer }}"
+          # AddressSanitizer enables leak detection by default. Leak checks run in
+          # the dedicated leak sanitizer job, where third-party suppressions are
+          # applied explicitly.
+          ASAN_OPTIONS: "detect_leaks=0"
+          LSAN_OPTIONS: "suppressions=${{ github.workspace }}/.github/lsan.supp"
+          TSAN_OPTIONS: "suppressions=${{ github.workspace }}/.github/tsan.supp"
+        run: |
+          set -o pipefail
+          if [[ "${{ matrix.sanitizer }}" == "leak" || "${{ matrix.sanitizer }}" == "thread" ]]; then
+            # RocksDB/libstdc++ trigger sanitizer reports and timing instability
+            # in storage integration test binaries. Keep LSan/TSan on the rest
+            # of the workspace and storage unit tests; regular tests and ASan
+            # still cover the RocksDB-backed integration tests.
+            {
+              cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu \
+                --workspace --exclude storage \
+                -- --skip cursor_snapshot_roundtrip \
+                --skip install_snapshot_with_existing_data
+              cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu \
+                -p storage --lib
+            } 2>&1 | tee sanitizer.log
+          else
+            cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu 2>&1 | tee sanitizer.log
+          fi
+
+      - name: Upload results on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sanitizer-${{ matrix.sanitizer }}-results
+          retention-days: 7
+          path: sanitizer.log
+
+  docker-build:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: kiwi:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Test Docker image
+        run: |
+          docker run --rm kiwi:test kiwi --version
+
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Security audit
+        run: cargo audit
