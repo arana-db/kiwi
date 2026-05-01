@@ -20,7 +20,7 @@ tokio.workspace = true
 async-trait = "0.1.89"
 
 # Utils
-anyhow = "1.0.100"
+anyhow = "1.0.102"
 tracing = "0.1.44"
 log.workspace = true
 parking_lot.workspace = true
@@ -31,13 +31,13 @@ tempfile.workspace = true
 
 # Hot-swappable storage and gRPC
 arc-swap = { workspace = true }
-tonic = "0.14.3"
+tonic = "0.14.5"
 prost = "0.14.3"
-tonic-prost = "0.14.3"
+tonic-prost = "0.14.5"
 tokio-stream = "0.1"
 
 [build-dependencies]
-tonic-prost-build = "0.14.3"
+tonic-prost-build = "0.14.5"
 
 [dev-dependencies]
 tempfile.workspace = true
