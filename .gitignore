@@ -45,8 +45,9 @@ test_debug_*
 # Documentation comparison files (internal use only)
 STORAGE_COMPARISON.md
 
-# Claude Code configuration
-.claude/
+# Claude Code local configuration (personal settings, not committed)
+.claude/settings.local.json
+.claude/worktrees/
 
 # Claude Spec Workflow configuration
 .spec-workflow/
