@@ -1566,7 +1566,7 @@ dependencies = [
  "rust-rocksdb",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1839,7 +1839,7 @@ dependencies = [
  "runtime",
  "snafu",
  "storage",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
 ]
 
@@ -2293,7 +2293,7 @@ dependencies = [
  "storage",
  "tar",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
  "tonic",
@@ -2461,7 +2461,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "nom 8.0.0",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2514,7 +2514,7 @@ dependencies = [
  "serde_json",
  "snafu",
  "storage",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
  "tokio-test",
  "uuid",
@@ -2824,7 +2824,7 @@ dependencies = [
  "serde_json",
  "snafu",
  "tempfile",
- "thiserror 1.0.69",
+ "thiserror 2.0.18",
  "tokio",
 ]
 
