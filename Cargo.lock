@@ -412,12 +412,6 @@ dependencies = [
 
 [[package]]
 name = "byteorder"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96c8b41881888cc08af32d47ac4edd52bc7fa27fef774be47a92443756451304"
-
-[[package]]
-name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
@@ -1555,7 +1549,7 @@ dependencies = [
 name = "kstd"
 version = "0.1.0"
 dependencies = [
- "byteorder 1.5.0",
+ "byteorder",
  "bytes",
  "chrono",
  "log",
@@ -1800,12 +1794,9 @@ checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
 name = "murmur3"
-version = "0.1.0"
+version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a47543327be02b8c6fdb8b942a1a45cad6a1cf2bc69f556675061da3aec14ab1"
-dependencies = [
- "byteorder 0.4.2",
-]
+checksum = "9252111cf132ba0929b6f8e030cac2a24b507f3a4d6db6fb2896f27b354c714b"
 
 [[package]]
 name = "naive-timer"
@@ -2803,7 +2794,7 @@ name = "storage"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "byteorder 1.5.0",
+ "byteorder",
  "bytes",
  "chrono",
  "common-macro",
