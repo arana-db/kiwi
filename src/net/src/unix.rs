@@ -46,7 +46,7 @@ impl UnixServer {
         Ok(Self {
             path,
             storage: Arc::new(storage),
-            cmd_table: Arc::new(create_command_table()),
+            cmd_table: Arc::new(create_command_table(Arc::new(|| None))),
             executor,
         })
     }
