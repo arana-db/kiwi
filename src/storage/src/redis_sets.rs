@@ -20,20 +20,20 @@
 
 use std::collections::HashSet;
 
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use kstd::lock_mgr::ScopeRecordLock;
 use rocksdb::{Direction, IteratorMode, ReadOptions};
 use snafu::{OptionExt, ResultExt};
 
 use crate::{
     ColumnFamilyIndex, Redis, Result,
-    base_data_value_format::BaseDataValue,
-    base_key_format::BaseMetaKey,
-    base_meta_value_format::{BaseMetaValue, ParsedSetsMetaValue},
-    base_value_format::DataType,
     error::{InvalidArgumentSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
-    member_data_key_format::MemberDataKey,
-    storage_define::{PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, encode_user_key},
+    format_base_data_value::BaseDataValue,
+    format_base_key::BaseMetaKey,
+    format_base_meta_value::{BaseMetaValue, ParsedSetsMetaValue},
+    format_base_value::DataType,
+    format_member_data_key::MemberDataKey,
+    storage_define::SUFFIX_RESERVE_LENGTH,
 };
 
 impl Redis {
@@ -475,16 +475,7 @@ impl Redis {
 
         // Remove each member
         for member in members {
-            // Build member key: reserve(8) + version(8) + encoded(key) + member + reserve(8)
-            let mut member_key = bytes::BytesMut::with_capacity(
-                PREFIX_RESERVE_LENGTH + 8 + key.len() * 2 + member.len() + SUFFIX_RESERVE_LENGTH,
-            );
-            member_key.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-            member_key.put_u64(version);
-            encode_user_key(&bytes::Bytes::copy_from_slice(key), &mut member_key)?;
-            member_key.extend_from_slice(member);
-            member_key.extend_from_slice(&[0u8; SUFFIX_RESERVE_LENGTH]);
-
+            let member_key = MemberDataKey::new(key, version, member).encode()?;
             // Check if member exists before removing
             if db
                 .get_cf(&cf_data, &member_key)
@@ -724,18 +715,7 @@ impl Redis {
         let source_version = source_meta.version();
 
         // Build source member key
-        let mut source_member_key = bytes::BytesMut::with_capacity(
-            PREFIX_RESERVE_LENGTH + 8 + source.len() * 2 + member.len() + SUFFIX_RESERVE_LENGTH,
-        );
-        source_member_key.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-        source_member_key.put_u64(source_version);
-        encode_user_key(
-            &bytes::Bytes::copy_from_slice(source),
-            &mut source_member_key,
-        )?;
-        source_member_key.extend_from_slice(member);
-        source_member_key.extend_from_slice(&[0u8; SUFFIX_RESERVE_LENGTH]);
-
+        let source_member_key = MemberDataKey::new(source, source_version, member).encode()?;
         // Check if member exists in source
         if db
             .get_cf(&cf_data, &source_member_key)
@@ -772,22 +752,7 @@ impl Redis {
         };
 
         // Build destination member key
-        let mut dest_member_key = bytes::BytesMut::with_capacity(
-            PREFIX_RESERVE_LENGTH
-                + 8
-                + destination.len() * 2
-                + member.len()
-                + SUFFIX_RESERVE_LENGTH,
-        );
-        dest_member_key.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-        dest_member_key.put_u64(dest_version);
-        encode_user_key(
-            &bytes::Bytes::copy_from_slice(destination),
-            &mut dest_member_key,
-        )?;
-        dest_member_key.extend_from_slice(member);
-        dest_member_key.extend_from_slice(&[0u8; SUFFIX_RESERVE_LENGTH]);
-
+        let dest_member_key = MemberDataKey::new(destination, dest_version, member).encode()?;
         // Check if member already exists in destination
         let member_exists_in_dest = db
             .get_cf(&cf_data, &dest_member_key)
@@ -2264,13 +2229,7 @@ impl Redis {
                     let version = set_meta.version();
 
                     // Delete all existing members
-                    let mut prefix = bytes::BytesMut::with_capacity(
-                        PREFIX_RESERVE_LENGTH + 8 + destination.len() * 2,
-                    );
-                    prefix.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
-                    prefix.put_u64(version);
-                    encode_user_key(&bytes::Bytes::copy_from_slice(destination), &mut prefix)?;
-
+                    let prefix = MemberDataKey::new(destination, version, &[]).encode_seek_key()?;
                     let iter = db.iterator_cf_opt(
                         &cf_data,
                         ReadOptions::default(),

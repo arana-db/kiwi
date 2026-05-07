@@ -23,7 +23,7 @@ use snafu::OptionExt;
 
 use crate::{
     error::{Error, InvalidFormatSnafu, Result},
-    list_meta_value_format::LISTS_META_VALUE_LENGTH,
+    format_list_meta_value::LISTS_META_VALUE_LENGTH,
     storage_define::{BASE_META_VALUE_LENGTH, STRING_VALUE_SUFFIXLENGTH, TYPE_LENGTH},
 };
 

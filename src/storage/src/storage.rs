@@ -25,9 +25,9 @@ use kstd::lock_mgr::LockMgr;
 use snafu::ResultExt;
 use tokio::sync::mpsc;
 
-use crate::base_value_format::DataType;
 use crate::error::{Error, MpscSnafu, Result};
 use crate::expiration_manager::ExpirationManager;
+use crate::format_base_value::DataType;
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
 use crate::{ColumnFamilyIndex, Redis, StorageOptions, data_type_to_tag};
