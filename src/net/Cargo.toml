@@ -19,7 +19,7 @@ client = { path = "../client" }
 bytes.workspace = true
 executor = { path = "../executor" }
 runtime = { path = "../common/runtime" }
-thiserror = "1.0"
+thiserror = "2.0"
 parking_lot = "0.12"
 # raft = { path = "../raft" } # removed: src/raft no longer exists
 
