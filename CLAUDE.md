@@ -1,141 +1,154 @@
-# CLAUDE.md
+# CLAUDE.md - Kiwi
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## WHAT: Project Overview
 
-## Project Overview
+Kiwi is a Redis-compatible key-value database built in Rust, providing high capacity,
+high performance, and strong consistency through RocksDB and Raft consensus.
 
-Kiwi is a Redis-compatible key-value database built in Rust. It uses RocksDB as the persistent storage backend and integrates OpenRaft for distributed consensus and high availability. The server defaults to `127.0.0.1:7379`.
+**Tech Stack**: Rust (nightly) | Tokio (dual runtime) | RocksDB | OpenRaft 0.9 | RESP (nom)
 
-## Prerequisites
+**Core Crates** (`src/`):
 
-- Rust toolchain (stable)
-- `protoc` (protobuf compiler) — installed by CI on all platforms. Install via `brew install protobuf` (macOS) or `apt install protobuf-compiler` (Linux).
+| Crate | Purpose |
+|-------|---------|
+| `server` | Binary entry point, CLI args (clap), starts RuntimeManager + Raft HTTP |
+| `net` | TCP server, RESP pipeline, async parser, storage client |
+| `storage` | RocksDB engine: Redis data structures (string/hash/list/set/zset), TTL, compaction |
+| `engine` | Low-level RocksDB abstraction |
+| `cmd` | Redis command implementations (90+ files: get.rs, set.rs, hset.rs, zadd.rs, ...) |
+| `executor` | Command execution engine with builder pattern, cluster executor |
+| `resp` | RESP protocol parser/encoder (nom) |
+| `client` | Client abstraction layer |
+| `conf` | Configuration parsing (INI-style), Raft type definitions |
+| `raft` | OpenRaft integration: log store, state machine, snapshot, network |
+| `kstd` | Standard library: env utils, lock manager, slice helpers |
+| `common/macro` | Proc macros |
+| `common/runtime` | Dual runtime architecture: RuntimeManager, channels, metrics, circuit breaker |
 
-## Build & Development Commands
+## WHY: Purpose
+
+- Redis-compatible KV store with persistent storage (RocksDB)
+- Strong consistency via Raft consensus for cluster mode
+- Dual runtime architecture: separate network/storage tokio runtimes for fault isolation
+- Modular crate design: each concern is an independent workspace member
+
+## HOW: Core Commands
 
 ```bash
 # Build
+cargo check                    # Fast syntax check
 cargo build                    # Debug build
-cargo build --release          # Release build
+cargo build --release          # Release build (LTO, size-optimized)
+cargo run --release            # Run server (default: 127.0.0.1:7379)
 
-# Run
-cargo run --bin kiwi           # Run server (debug)
-cargo run --release --bin kiwi # Run server (release)
+# Quality
+cargo fmt --all                # Format code (rustfmt, edition 2024)
+cargo fmt --all -- --check     # Format check only
+cargo clippy --all-features --workspace -- -D warnings -D clippy::unwrap_used  # Lint
 
 # Test
 cargo test                     # All unit tests
-cargo test --package storage   # Tests for a specific crate
-cargo test test_redis_mset     # Run a single test by name
+cargo test --package storage   # Test specific crate
+cargo test test_redis_mset     # Test specific function
+pytest tests/python/ -v        # Python integration tests (requires running server)
 
-# Lint & Format
-make lint                      # clippy with all warnings as errors + unwrap_used denied
-make fmt                       # Format all code
-make fmt-check                 # Check formatting without modifying
+# Convenience (Makefile)
+make build / make release / make run / make test / make fmt / make lint / make clean
+
+# Cluster
+cargo run --release -- --config cluster.conf --init-cluster
+./scripts/start_cluster.sh / ./scripts/stop_cluster.sh / ./scripts/clean_cluster.sh
 ```
 
-The lint command enforces: `cargo clippy --all-features --workspace -- -D warnings -D clippy::unwrap_used`
+## Boundaries
 
-## Lint Rules
+### Constraints
 
-- **`clippy::unwrap_used` is denied project-wide.** Use `expect()` with a descriptive message, or propagate errors with `?`/`Result`. Never use `.unwrap()`.
-  - In test code, add `#![allow(clippy::unwrap_used)]` at the top of the test module or `#[allow(clippy::unwrap_used)]` on individual test functions.
-- `clippy::dbg_macro` and `clippy::implicit_clone` are warnings (see `[workspace.lints.clippy]` in root Cargo.toml).
-- All new `.rs` files must include the Apache 2.0 license header (enforced by CI via `skywalking-eyes`). Copy the header from any existing source file.
+- Rust nightly toolchain (pinned via `rust-toolchain.toml`)
+- Custom RocksDB fork (`arana-db/rust-rocksdb`) for TablePropertiesCollector FFI
+- Integration tests require running server instance
+- Cluster tests require multi-node setup
 
-## PR Title Convention
+### Always Do
 
-PR titles must follow conventional commits format (enforced by CI):
-```
-type(scope): description
-```
-Allowed types: `feat`, `fix`, `test`, `refactor`, `chore`, `upgrade`, `bump`, `style`, `docs`, `perf`, `build`, `ci`, `revert`
+- Read relevant files before modifying code
+- Run `cargo fmt --all` and `cargo clippy` before committing
+- Follow existing code patterns in the same crate
+- Add tests for new functionality
+- Use `Result<T, E>` for error handling -- never `.unwrap()` in production code (clippy enforced)
+- Use `std::sync::LazyLock` -- never `once_cell::sync::Lazy` or `lazy_static` (clippy enforced)
 
-## Architecture
+### Ask First
 
-### Workspace Crates
+- Modifying `conf` crate configuration structures
+- Adding new dependencies to workspace `Cargo.toml`
+- Changing Raft consensus logic (`raft` crate)
+- Changing dual runtime architecture (`common/runtime` crate)
+- Deleting or renaming public APIs
+- Modifying RocksDB column family layout (`storage` crate)
 
-```
-src/server/    → Entry point (main.rs): CLI args, runtime init, server startup
-src/net/       → Network layer: TCP server, connection handling, cluster routing
-src/cmd/       → Command definitions: Cmd trait, CmdMeta, command table
-src/executor/  → Command executor: tokio async task pool via async_channel
-src/storage/   → Storage layer: multi-instance RocksDB, column families, TTL
-src/engine/    → Engine trait abstraction over RocksDB
-src/resp/      → RESP protocol: parser, encoder, RespData types
-src/raft/      → Raft consensus: OpenRaft integration, state machine, router
-src/conf/      → Configuration: TOML loading, validation, ClusterConfig
-src/client/    → Client context: connection state, argv, reply buffer
-src/common/runtime/ → Runtime management: async channel between net & storage
-src/common/macro/   → Proc macros: #[stack_trace_debug] for error types
-src/kstd/      → Utilities: LockMgr (sharded key-level locking), slice, status
-```
+### Never Do
 
-### Runtime Architecture
+- Use `.unwrap()` in non-test code (CI enforces `-D clippy::unwrap_used`)
+- Use `dbg!()` macro (clippy warns)
+- Use `once_cell::sync::Lazy` or `lazy_static!` (use `std::sync::LazyLock`)
+- Hardcode paths or endpoints
+- Skip license headers (Apache 2.0, enforced by SkyWalking Eyes)
 
-Network I/O and storage operations communicate via an **async message channel**. The `RuntimeManager` (in `src/common/runtime/`) manages the lifecycle. The network side uses a `StorageClient` to send requests; the `StorageServer` receives them, executes against RocksDB, and responds via oneshot channels.
+## Progressive Disclosure: Detailed Guides
 
-### Request Flow
+| Task | Reference |
+|------|-----------|
+| Add Redis command | `src/cmd/src/get.rs` (simple), `src/cmd/src/hset.rs` (complex) |
+| Add data structure | `src/storage/src/redis_strings.rs`, `redis_hashes.rs` |
+| Add Column Family | `src/storage/src/storage.rs` (CF definitions), `src/engine/` |
+| Raft integration | `src/raft/src/log_store.rs`, `state_machine.rs`, `network.rs` |
+| Dual Runtime | `src/common/runtime/src/` (RuntimeManager, StorageServer) |
+| RESP protocol | `src/resp/src/` (nom parser) |
+| Configuration | `config.example.toml`, `src/conf/` |
 
-```
-Client → TCP accept (net) → RESP parse (resp) → Command lookup (cmd table)
-  → CmdExecutor async tasks (executor) → Cmd.execute() → Storage ops (storage/engine)
-  → RESP encode response → write back to client
-```
+## Git Workflow
 
-In cluster mode, write commands route through `RequestRouter → RaftNode.propose()` for consensus before applying to the state machine.
+- **Commits**: Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`)
+- **Branches**: `feat/*`, `fix/*`, `chore/*`, `docs/*`, `test/*`
+- **PR title**: Must match `^(feat|fix|test|refactor|chore|upgrade|bump|style|docs|perf|build|ci|revert)(\(.*\))?:.*`
+- **Pre-merge**: CI runs format check, clippy (3 platforms), build+test (3 platforms), license headers
 
-### Command System
+## Extended Configuration
 
-Commands implement the `Cmd` trait (`src/cmd/src/lib.rs`):
-- `meta()` → CmdMeta (name, arity, flags like WRITE/READONLY/RAFT)
-- `clone_box()` → Box<dyn Cmd> (required for cloning trait objects)
-- `do_initial(&self, client)` → validate args, set client key
-- `do_cmd(&self, client, storage)` → business logic
+See `.claude/agents/`, `.claude/skills/`, `.claude/commands/`, and `.claude/rules/` for
+specialized instructions.
 
-To add a new command:
-1. Create `src/cmd/src/yourcommand.rs` — define a struct with `CmdMeta`, implement `Cmd` using `impl_cmd_meta!()` and `impl_cmd_clone_box!()` macros
-2. Add `pub mod yourcommand;` in `src/cmd/src/lib.rs`
-3. Register it in `src/cmd/src/table.rs` via `register_cmd!(cmd_table, YourCmd)`
+### Agents
 
-### Storage Model
+| Agent | Purpose | Activation Trigger |
+|-------|---------|-------------------|
+| `planner` | Implementation planning | Before multi-file changes, new features, architectural decisions |
+| `code-verifier` | Formatting/linting/tests | After code changes, before committing |
+| `code-reviewer` | Quick code quality checks | After code changes, before committing |
+| `storage-expert` | RocksDB storage layer | Storage crate changes or questions |
+| `raft-expert` | Raft consensus | Raft crate changes or questions |
+| `net-expert` | Network/protocol layer | Net/resp/executor crate changes |
+| `runtime-expert` | Dual runtime architecture | Common/runtime crate changes |
+| `cmd-expert` | Redis command implementation | Cmd crate changes or new commands |
 
-`Storage` holds multiple `Redis` instances (default 3), each backed by a RocksDB database with 6 column families:
-- `MetaCF`: metadata & strings
-- `HashesDataCF`, `SetsDataCF`, `ListsDataCF`, `ZsetsDataCF`, `ZsetsScoreCF`
+### Skills (Guided Development Workflows)
 
-A `SlotIndexer` hashes keys to distribute across instances. `LockMgr` provides sharded key-level locking for consistency.
+- `/add-command` - New Redis command implementation guide
+- `/add-column-family` - New RocksDB column family guide
+- `/add-test` - Test development guide
+- `/commit-conventions` - Commit message conventions
+- `/debug-runtime` - Dual runtime debugging guide
 
-### Raft Integration
+### Commands (User-invoked Actions)
 
-`src/raft/` bridges Kiwi with OpenRaft via an adaptor pattern:
-- `RaftNode` wraps the OpenRaft instance
-- `KiwiStateMachine` applies committed entries to storage
-- `RequestRouter` routes commands based on cluster mode and consistency level (Eventual, Strong, Linearizable)
-- `RaftStorage` persists Raft logs to RocksDB
+- `/create-pr` - Rebase, squash commits, and create/update PR
+- `/gen-commit-msg` - Generate commit messages from staged changes
+- `/review-pr` - Intelligent PR code review
 
-## CI
+### Rules (Code Quality Standards)
 
-CI runs on Linux, macOS, and Windows:
-1. License header check (skywalking-eyes)
-2. `cargo fmt --check`
-3. `make lint` (clippy)
-4. `make build` + `make test`
-5. Python integration tests (Ubuntu only, requires running server)
-
-## Testing
-
-- **Unit tests**: In each crate, run with `cargo test --package <crate>` (e.g. storage, cmd, executor, raft)
-- **Integration tests**: `tests/` directory contains Rust integration tests and Python tests (`tests/python/`)
-- **Python integration tests** require a running Kiwi server and `pip install redis pytest`:
-  ```bash
-  # Terminal 1: start server
-  cargo run --bin kiwi
-  # Terminal 2: run tests
-  pytest tests/python/ -v
-  ```
-- Storage tests use `tempfile::tempdir()` for isolated RocksDB instances — see `src/storage/src/util.rs` for `unique_test_db_path()` and `safe_cleanup_test_db()`
-
-## Gotchas
-
-- **RocksDB fork**: The project uses `arana-db/rust-rocksdb` (pinned to a specific rev), not the official `rust-rocksdb` crate. This fork adds TablePropertiesCollector FFI functions. See comment in root `Cargo.toml` near the `rocksdb` dependency.
-- **Binary name is `kiwi`**, not `server` — defined in `src/server/Cargo.toml` as `[[bin]] name = "kiwi"`.
+- `code-style.md` - Coding conventions beyond clippy/rustfmt
+- `rust-patterns.md` - Rust-specific patterns and idioms
+- `testing.md` - Testing strategy and coverage requirements
+- `distributed.md` - Raft and dual runtime patterns
