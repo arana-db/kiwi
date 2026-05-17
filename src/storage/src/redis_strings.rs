@@ -503,21 +503,19 @@ impl Redis {
                 .context(RocksSnafu)?
             {
                 Some(val) => {
-                    // Check type - if not string type, return None (like Redis does)
                     if self.check_type(val.as_slice(), DataType::String).is_err() {
                         results.push(None);
                         continue;
                     }
 
                     let string_value = ParsedStringsValue::new(&val[..])?;
-
-                    // Check if key is expired
                     if string_value.is_stale() {
                         results.push(None);
-                    } else {
-                        let user_value = string_value.user_value();
-                        results.push(Some(String::from_utf8_lossy(&user_value).to_string()));
+                        continue;
                     }
+
+                    let user_value = string_value.user_value();
+                    results.push(Some(String::from_utf8_lossy(&user_value).to_string()));
                 }
                 None => {
                     results.push(None);

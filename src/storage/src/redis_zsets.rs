@@ -79,21 +79,19 @@ impl Redis {
 
         // ZSet exists, update it
         if !base_meta_val.is_empty() {
-            // Check type
-            self.check_type(&base_meta_val, DataType::ZSet)?;
-
-            // Parse existing meta
-            let mut parsed_zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-
             // Get version and validity
             let version;
             let valid;
-            if parsed_zset_meta.is_valid() {
-                valid = true;
-                version = parsed_zset_meta.version();
-            } else {
+            let mut parsed_zset_meta;
+            if self.is_stale(&base_meta_val)? {
+                parsed_zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
                 valid = false;
                 version = parsed_zset_meta.initial_meta_value();
+            } else {
+                self.check_type(&base_meta_val, DataType::ZSet)?;
+                parsed_zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
+                valid = true;
+                version = parsed_zset_meta.version();
             }
 
             // Prepare batch write
@@ -237,12 +235,11 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         *ret = zset_meta.count() as i32;
         Ok(())
@@ -270,12 +267,11 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let version = zset_meta.version();
         let min_score_key = ZSetsScoreKey::new(key, version, min_score, &[]).encode_seek_key()?;
@@ -342,10 +338,7 @@ impl Redis {
 
         if !base_meta_val.is_empty() {
             // ZSet exists, check if member exists
-            self.check_type(&base_meta_val, DataType::ZSet)?;
-
-            let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-            if !zset_meta.is_valid() {
+            if self.is_stale(&base_meta_val)? {
                 // ZSet is invalid, treat as if it doesn't exist
                 let score_member = ScoreMember::new(new_score, member.to_vec());
                 let mut count = 0;
@@ -354,6 +347,8 @@ impl Redis {
                 *ret = format!("{}", new_score).into_bytes();
                 return Ok(());
             }
+            self.check_type(&base_meta_val, DataType::ZSet)?;
+            let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
             let version = zset_meta.version();
             let member_key = MemberDataKey::new(key, version, member).encode()?;
@@ -461,12 +456,11 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let version = zset_meta.version();
         let member_key = MemberDataKey::new(key, version, member).encode()?;
@@ -516,12 +510,11 @@ impl Redis {
             return Ok((0, Vec::new()));
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok((0, Vec::new()));
         }
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let version = zset_meta.version();
         let scan_count = count.unwrap_or(10);
@@ -631,12 +624,12 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let version = zset_meta.version();
 
@@ -723,12 +716,11 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let version = zset_meta.version();
 
@@ -815,12 +807,11 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let version = zset_meta.version();
         let mut batch = self.create_batch()?;
@@ -907,12 +898,12 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         // Parse min and max range specifiers
         let (min_member, min_exclusive) = parse_lex_range(min)?;
@@ -995,12 +986,12 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let count = zset_meta.count() as i64;
         if count == 0 {
@@ -1142,6 +1133,7 @@ impl Redis {
         // Collect all members and their scores from each zset
         use std::collections::HashMap;
         let mut member_scores: HashMap<Vec<u8>, Vec<Option<f64>>> = HashMap::new();
+        let mut result_empty = false;
 
         for (idx, key) in keys.iter().enumerate() {
             let base_meta_key = BaseMetaKey::new(key);
@@ -1151,27 +1143,25 @@ impl Redis {
                 .unwrap_or_else(Vec::new);
 
             if base_meta_val.is_empty() {
-                // Key doesn't exist
                 if is_inter {
                     // For intersection, if any key is missing, result is empty
-                    // Delete destination by setting count to 0 (handled below)
-                    return Ok(0);
+                    result_empty = true;
+                    break;
                 }
-                // For union, mark all members from this key as None
                 continue;
             }
 
-            // Check type
-            self.check_type(&base_meta_val, DataType::ZSet)?;
-
-            let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-            if !zset_meta.is_valid() {
+            if self.is_stale(&base_meta_val)? {
                 if is_inter {
                     // For intersection, if any key is invalid, result is empty
-                    return Ok(0);
+                    result_empty = true;
+                    break;
                 }
                 continue;
             }
+
+            self.check_type(&base_meta_val, DataType::ZSet)?;
+            let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
             let version = zset_meta.version();
             let min_score_key =
@@ -1199,6 +1189,10 @@ impl Redis {
                     .or_insert_with(|| vec![None; keys.len()]);
                 entry[idx] = Some(score);
             }
+        }
+
+        if result_empty {
+            member_scores.clear();
         }
 
         // Filter members based on operation type and compute final scores
@@ -1232,38 +1226,37 @@ impl Redis {
 
         let mut batch = self.create_batch()?;
 
-        // Delete existing destination data if it exists
-        if !dest_meta_val.is_empty() {
-            self.check_type(&dest_meta_val, DataType::ZSet)?;
+        // Delete existing destination data if it is a live ZSet
+        if !dest_meta_val.is_empty()
+            && !self.is_stale(&dest_meta_val)?
+            && dest_meta_val.first().copied() == Some(DataType::ZSet as u8)
+        {
             let dest_meta = ParsedZSetsMetaValue::new(&dest_meta_val[..])?;
-            if dest_meta.is_valid() {
-                let dest_version = dest_meta.version();
+            let dest_version = dest_meta.version();
 
-                // Delete all score keys and member keys
-                let min_score_key =
-                    ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
-                        .encode_seek_key()?;
-                let iter = db.iterator_cf_opt(
-                    &cf_score,
-                    ReadOptions::default(),
-                    IteratorMode::From(&min_score_key, Direction::Forward),
-                );
+            // Delete all score keys and member keys
+            let min_score_key =
+                ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
+                    .encode_seek_key()?;
+            let iter = db.iterator_cf_opt(
+                &cf_score,
+                ReadOptions::default(),
+                IteratorMode::From(&min_score_key, Direction::Forward),
+            );
 
-                for item in iter {
-                    let (raw_key, _) = item.context(RocksSnafu)?;
-                    let score_key = ParsedZSetsScoreKey::new(&raw_key)?;
+            for item in iter {
+                let (raw_key, _) = item.context(RocksSnafu)?;
+                let score_key = ParsedZSetsScoreKey::new(&raw_key)?;
 
-                    if destination != score_key.key() || dest_version != score_key.version() {
-                        break;
-                    }
-
-                    // Delete score key and member key
-                    batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
-                    let member_key =
-                        MemberDataKey::new(destination, dest_version, score_key.member())
-                            .encode()?;
-                    batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
+                if destination != score_key.key() || dest_version != score_key.version() {
+                    break;
                 }
+
+                // Delete score key and member key
+                batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
+                let member_key =
+                    MemberDataKey::new(destination, dest_version, score_key.member()).encode()?;
+                batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
             }
         }
 
@@ -1347,12 +1340,12 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         // Parse min and max range specifiers
         let (min_member, min_exclusive) = parse_lex_range(min)?;
@@ -1447,12 +1440,12 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let version = zset_meta.version();
         let min_score_key = ZSetsScoreKey::new(key, version, min_score, &[]).encode_seek_key()?;
@@ -1530,12 +1523,12 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let (min_member, min_exclusive) = parse_lex_range(min)?;
         let (max_member, max_exclusive) = parse_lex_range(max)?;
@@ -1639,12 +1632,12 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let count = zset_meta.count() as i64;
         if count == 0 {
@@ -1769,12 +1762,12 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let version = zset_meta.version();
         let min_score_key = ZSetsScoreKey::new(key, version, min_score, &[]).encode_seek_key()?;
@@ -1869,12 +1862,12 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let count = zset_meta.count() as i64;
         if count == 0 {
@@ -1968,12 +1961,12 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
-
-        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-        if !zset_meta.is_valid() {
+        if self.is_stale(&base_meta_val)? {
             return Ok(());
         }
+
+        self.check_type(&base_meta_val, DataType::ZSet)?;
+        let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
         let version = zset_meta.version();
         // Start from a position slightly above max_score to ensure we include max_score
