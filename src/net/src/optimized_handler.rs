@@ -114,7 +114,7 @@ impl OptimizedConnectionHandler {
         &self,
     ) -> Result<crate::pool::ActiveConnection<ConnectionResources>, crate::pool::PoolError> {
         let storage = Arc::new(Storage::new(1, 0)); // This should come from config
-        let cmd_table = Arc::new(cmd::table::create_command_table());
+        let cmd_table = Arc::new(cmd::table::create_command_table(Arc::new(|| None)));
         let executor = Arc::new(executor::CmdExecutorBuilder::new().build());
 
         self.resource_pool

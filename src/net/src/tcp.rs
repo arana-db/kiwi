@@ -122,7 +122,7 @@ impl TcpServer {
         let pool_config = default_pool_config();
 
         let storage = Arc::new(storage);
-        let cmd_table = Arc::new(create_command_table());
+        let cmd_table = Arc::new(create_command_table(Arc::new(|| None)));
 
         Ok(Self {
             addr: addr.unwrap_or("127.0.0.1:7379".to_string()),
