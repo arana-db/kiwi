@@ -17,21 +17,21 @@
 
 extern crate core;
 
-mod base_data_value_format;
-mod member_data_key_format;
+mod format_base_data_value;
+mod format_member_data_key;
 
 mod data_compaction_filter;
 mod meta_compaction_filter;
 
-mod base_key_format;
-pub mod base_meta_value_format;
-pub mod base_value_format;
 mod custom_comparator;
+mod format_base_key;
+pub mod format_base_meta_value;
+pub mod format_base_value;
 
-pub mod strings_value_format;
+pub mod format_strings_value;
 
-pub mod list_meta_value_format;
-mod lists_data_key_format;
+pub mod format_list_meta_value;
+mod format_lists_data_key;
 
 mod coding;
 mod expiration_manager;
@@ -53,22 +53,22 @@ mod redis_sets;
 mod redis_strings;
 
 pub mod error;
+mod format_zset_score_key;
 pub mod options;
 pub mod storage;
-mod zset_score_key_format;
 
 pub mod redis_zsets;
 
-pub use base_key_format::BaseMetaKey;
-pub use base_value_format::*;
 pub use batch::{Batch, BinlogBatch, RocksBatch};
 pub use checkpoint::{RAFT_SNAPSHOT_META_FILE, RaftSnapshotMeta, restore_checkpoint_layout};
 pub use error::Result;
 pub use expiration_manager::ExpirationManager;
+pub use format_base_key::BaseMetaKey;
+pub use format_base_value::*;
+pub use format_zset_score_key::{ScoreMember, ZsetScoreMember};
 pub use options::StorageOptions;
 pub use redis::{ColumnFamilyIndex, Redis};
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use storage_impl::BeforeOrAfter;
 pub use util::{safe_cleanup_test_db, unique_test_db_path};
-pub use zset_score_key_format::{ScoreMember, ZsetScoreMember};

@@ -18,10 +18,10 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use snafu::ensure;
 
-use crate::base_value_format::{DataType, InternalValue, ParsedInternalValue};
 use crate::delegate_internal_value;
 use crate::delegate_parsed_value;
 use crate::error::{InvalidFormatSnafu, Result};
+use crate::format_base_value::{DataType, InternalValue, ParsedInternalValue};
 use crate::storage_define::{
     STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
 };

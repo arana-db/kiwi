@@ -25,9 +25,9 @@ use snafu::{OptionExt, ResultExt};
 use crate::error::Error::*;
 use crate::{
     BaseMetaKey, ColumnFamilyIndex, DataType, Redis, Result,
-    base_key_format::BaseKey,
     error::{InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
-    strings_value_format::{ParsedStringsValue, StringValue},
+    format_base_key::BaseKey,
+    format_strings_value::{ParsedStringsValue, StringValue},
 };
 
 impl Redis {
@@ -2032,7 +2032,7 @@ impl Redis {
                 match DataType::try_from(data_type_byte) {
                     Ok(DataType::Hash) => {
                         if let Ok(meta) =
-                            crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..])
+                            crate::format_base_meta_value::ParsedBaseMetaValue::new(&val[..])
                         {
                             if !meta.is_stale() && meta.count() > 0 {
                                 return Ok(DataType::Hash);
@@ -2041,7 +2041,7 @@ impl Redis {
                     }
                     Ok(DataType::Set) => {
                         if let Ok(meta) =
-                            crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..])
+                            crate::format_base_meta_value::ParsedBaseMetaValue::new(&val[..])
                         {
                             if !meta.is_stale() && meta.count() > 0 {
                                 return Ok(DataType::Set);
@@ -2050,7 +2050,7 @@ impl Redis {
                     }
                     Ok(DataType::ZSet) => {
                         if let Ok(meta) =
-                            crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..])
+                            crate::format_base_meta_value::ParsedBaseMetaValue::new(&val[..])
                         {
                             if !meta.is_stale() && meta.count() > 0 {
                                 return Ok(DataType::ZSet);
@@ -2059,7 +2059,7 @@ impl Redis {
                     }
                     Ok(DataType::List) => {
                         if let Ok(meta) =
-                            crate::list_meta_value_format::ParsedListsMetaValue::new(&val[..])
+                            crate::format_list_meta_value::ParsedListsMetaValue::new(&val[..])
                         {
                             if !meta.is_stale() && meta.count() > 0 {
                                 return Ok(DataType::List);
@@ -2186,7 +2186,7 @@ impl Redis {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
 
             // Decode the key to get the actual user key
-            if let Ok(base_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
+            if let Ok(base_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]) {
                 let key_str = String::from_utf8_lossy(base_key.key());
 
                 // Check if key is not expired
@@ -2198,18 +2198,18 @@ impl Redis {
                         }
                     }
                 }
-            } else if let Ok(meta_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..])
+            } else if let Ok(meta_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..])
             {
                 let key_str = String::from_utf8_lossy(meta_key.key());
 
                 // Check if meta key is not expired using appropriate parser
                 if !value_bytes.is_empty() {
                     let is_valid = if let Ok(meta) =
-                        crate::base_meta_value_format::ParsedBaseMetaValue::new(&value_bytes[..])
+                        crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
                     {
                         !meta.is_stale() && meta.count() > 0
                     } else if let Ok(list_meta) =
-                        crate::list_meta_value_format::ParsedListsMetaValue::new(&value_bytes[..])
+                        crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
                     {
                         !list_meta.is_stale() && list_meta.count() > 0
                     } else {
@@ -2308,7 +2308,7 @@ impl Redis {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
 
             // Decode the key to get the actual user key
-            if let Ok(base_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
+            if let Ok(base_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]) {
                 // Check if the string key is not expired
                 if !value_bytes.is_empty() {
                     if let Ok(parsed) = ParsedStringsValue::new(&value_bytes[..]) {
@@ -2317,16 +2317,16 @@ impl Redis {
                         }
                     }
                 }
-            } else if let Ok(meta_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..])
+            } else if let Ok(meta_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..])
             {
                 // Check if meta key is not expired
                 if !value_bytes.is_empty() {
                     let is_valid = if let Ok(meta) =
-                        crate::base_meta_value_format::ParsedBaseMetaValue::new(&value_bytes[..])
+                        crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
                     {
                         !meta.is_stale() && meta.count() > 0
                     } else if let Ok(list_meta) =
-                        crate::list_meta_value_format::ParsedListsMetaValue::new(&value_bytes[..])
+                        crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
                     {
                         !list_meta.is_stale() && list_meta.count() > 0
                     } else {

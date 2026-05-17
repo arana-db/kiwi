@@ -396,8 +396,15 @@ impl Redis {
                             // Get score from value
                             let parsed_value = ParsedInternalValue::new(&value);
                             let score_bytes = parsed_value.user_value();
-                            let score = f64::from_be_bytes(score_bytes[0..8].try_into().expect("slice length mismatch"));
-                            
+                            let score_raw: [u8; 8] = score_bytes
+                                .get(0..8)
+                                .and_then(|b| b.try_into().ok())
+                                .ok_or_else(|| {
+                                    StorageError::InvalidFormat(
+                                        "Invalid zset score payload length (expected 8 bytes)".to_string(),
+                                    )
+                                })?;
+                            let score = f64::from_le_bytes(score_raw);
                             // Create score key
                             let new_score_key = self.encode_zsets_score_key(new_key, version, score, member);
                             let score_value = InternalValue::new(DataType::None, &[]);

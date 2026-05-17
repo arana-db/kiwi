@@ -32,7 +32,6 @@ use rocksdb::{
 };
 use snafu::{OptionExt, ResultExt};
 
-use crate::base_value_format::{DATA_TYPE_TAG, DataType};
 use crate::custom_comparator::{
     lists_data_key_comparator_name, lists_data_key_compare, zsets_score_key_comparator_name,
     zsets_score_key_compare,
@@ -41,6 +40,7 @@ use crate::data_compaction_filter::DataCompactionFilterFactory;
 use crate::error::Error::RedisErr;
 use crate::error::InvalidFormatSnafu;
 use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
+use crate::format_base_value::{DATA_TYPE_TAG, DataType};
 use crate::meta_compaction_filter::MetaCompactionFilterFactory;
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
