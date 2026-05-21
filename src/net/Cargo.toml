@@ -11,7 +11,7 @@ log.workspace = true
 tokio = { workspace = true, features = ["net", "io-util", "macros", "rt", "rt-multi-thread", "time"] }
 storage.workspace = true
 async-trait = "0.1"
-snafu = "0.8"
+snafu = "0.9"
 bitflags = "2.11.1"
 cmd = { path = "../cmd" }
 resp = { path = "../resp" }

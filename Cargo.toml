@@ -62,7 +62,7 @@ anyhow = "1.0"
 byteorder = "1.4"
 parking_lot = "0.12"
 tokio = { version = "1", features = ["full"] }
-snafu = "0.8"
+snafu = "0.9"
 tempfile = "3.27"
 crc16 = "0.4"
 async-channel = "2.5.0"
