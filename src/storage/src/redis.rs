@@ -178,20 +178,44 @@ impl Redis {
         let collector = Arc::new(LogIndexAndSequenceCollector::new(0));
         let cf_tracker = Arc::new(LogIndexOfColumnFamilies::new());
 
-        // Create snapshot callback - will be connected to Raft's snapshot trigger mechanism
+        // OnceCell shared with the event listener so callbacks (which fire on RocksDB
+        // background threads after open) can reach the live DB handle.
+        let db_once_cell: Arc<OnceCell<Arc<DB>>> = Arc::new(OnceCell::new());
+
+        // Snapshot trigger: emitted by the LogIndex purger every N flushes to suggest
+        // that the Raft layer build a snapshot. Wiring this into Raft requires a
+        // back-channel from storage -> raft that does not currently exist (the raft
+        // crate depends on storage, not the other way round). Until that channel is
+        // added the callback only logs at debug level — the manual snapshot path
+        // (`KiwiSnapshotBuilder`) keeps working without it.
         let snapshot_callback: SnapshotCallback =
-            Box::new(move |log_index: i64, _is_manual: bool| {
-                log::info!(
-                    "LogIndex snapshot callback triggered: log_index={}",
-                    log_index
+            Box::new(move |log_index: i64, is_manual: bool| {
+                log::debug!(
+                    "LogIndex snapshot suggestion: log_index={log_index}, is_manual={is_manual} \
+                     (auto-trigger not wired; manual snapshot path is unaffected)"
                 );
-                // TODO(#LOGINDEX-1): Connect to Raft's snapshot trigger mechanism
             });
 
-        // Create flush trigger callback for manual flush
+        // Flush trigger: invoked by the purger when the collector queue grows beyond
+        // its bound and a specific CF needs to be flushed to release entries. We hold
+        // the DB through `db_once_cell` (populated below after `DB::open_cf_descriptors`).
+        let flush_db_cell = Arc::clone(&db_once_cell);
         let flush_trigger: FlushTrigger = Box::new(move |cf_id: usize| {
-            log::info!("LogIndex flush trigger for CF {}", cf_id);
-            // TODO(#LOGINDEX-2): Trigger manual flush for the specified CF
+            let Some(db) = flush_db_cell.get() else {
+                log::warn!("flush_trigger fired before DB was initialized; cf_id={cf_id}");
+                return;
+            };
+            let Some(cf_name) = crate::logindex::types::cf_metadata::CF_NAMES_STR.get(cf_id) else {
+                log::warn!("flush_trigger received out-of-range cf_id={cf_id}");
+                return;
+            };
+            let Some(handle) = db.cf_handle(cf_name) else {
+                log::warn!("flush_trigger could not resolve cf handle for {cf_name}");
+                return;
+            };
+            if let Err(e) = db.flush_cf(&handle) {
+                log::error!("flush_trigger: flush_cf({cf_name}) failed: {e}");
+            }
         });
 
         // Create event listener purger - registered once on DB options (not per-CF)
@@ -214,7 +238,6 @@ impl Redis {
             ("zset_data_cf", false, Some(16 * 1024)),  // zset data: 16KB block size
             ("zset_score_cf", false, Some(16 * 1024)), // zset score: 16KB block size
         ];
-        let db_once_cell = Arc::new(OnceCell::new());
         let column_families: Vec<ColumnFamilyDescriptor> = CF_CONFIGS
             .iter()
             .map(|(name, use_bloom, block_size)| {
