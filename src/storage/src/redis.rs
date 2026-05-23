@@ -434,6 +434,28 @@ impl Redis {
         )))
     }
 
+    /// Commit a batch and record `(raft_log_index, seqno)` in the LogIndex collector.
+    ///
+    /// The seqno is captured via `latest_sequence_number()` *after* the underlying
+    /// `commit()` returns. RocksDB's latest sequence is monotonic, so for the snapshot
+    /// integration's purposes — "log L is persisted at seqno >= S" — concurrent writers
+    /// can only inflate S, never produce a value that would falsely claim persistence.
+    ///
+    /// Centralising the (commit, seqno-fetch, collector update) here gives us a single
+    /// place to harden later (e.g. a per-instance write mutex or a future rust-rocksdb
+    /// API exposing the batch's own sequence number) without touching every call site.
+    pub fn commit_batch_and_track_logindex(
+        &self,
+        batch: Box<dyn crate::batch::Batch + '_>,
+        raft_log_index: u64,
+    ) -> Result<()> {
+        batch.commit()?;
+        if let (Some(db), Some(collector)) = (self.db.as_ref(), self.logindex_collector.as_ref()) {
+            collector.update(raft_log_index as i64, db.latest_sequence_number());
+        }
+        Ok(())
+    }
+
     pub fn update_specific_key_duration(
         &self,
         dtype: DataType,

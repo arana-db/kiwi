@@ -518,24 +518,7 @@ impl Storage {
             }
         }
 
-        Box::new(batch).commit()?;
-
-        // Update collector with (log_index, seqno) mapping after successful commit.
-        // This is critical for Raft snapshot integration: enables tracking which
-        // raft logs have been persisted to SST files.
-        //
-        // Note: latest_sequence_number() is called after commit(). In theory,
-        // concurrent writes from other threads could make this seqno slightly
-        // larger than the batch's actual sequence. In practice, Raft apply is
-        // single-threaded so this race does not trigger. A future improvement
-        // would be to use WriteBatch's own sequence number when the rust-rocksdb
-        // API exposes it.
-        if let Some(ref db) = instance.db {
-            let seqno = db.latest_sequence_number();
-            if let Some(ref collector) = instance.logindex_collector {
-                collector.update(raft_log_index as i64, seqno);
-            }
-        }
+        instance.commit_batch_and_track_logindex(batch, raft_log_index)?;
 
         Ok(())
     }
