@@ -23,7 +23,6 @@ use arc_swap::ArcSwap;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
 use raft::state_machine::KiwiStateMachine;
-use storage::logindex::{LogIndexAndSequenceCollector, LogIndexOfColumnFamilies};
 use storage::unique_test_db_path;
 use storage::{StorageOptions, storage::Storage};
 
@@ -46,21 +45,11 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
 
     let storage_swap = Arc::new(ArcSwap::from(storage.clone()));
 
-    // Initialize logindex collector and cf_tracker from storage
-    let collector = storage
-        .get_logindex_collector(0)
-        .expect("stored logindex collector to exist after opening Storage");
-    let cf_tracker = storage
-        .get_logindex_cf_tracker(0)
-        .expect("stored logindex cf_tracker to exist after opening Storage");
-
     let mut sm = KiwiStateMachine::new(
         1,
         storage_swap.clone(),
         src_db_path.clone(),
         snap_root.clone(),
-        collector,
-        cf_tracker,
     );
 
     let mut builder = sm.get_snapshot_builder().await;
@@ -82,19 +71,15 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
     drop(storage);
     drop(sm);
 
-    // Create target state machine with fresh collector and tracker
+    // Create target state machine; install_snapshot will hot-swap a real Storage in.
     let target_storage = Arc::new(Storage::new(1, 0));
     let target_swap = Arc::new(ArcSwap::from(target_storage));
-    let target_collector = Arc::new(LogIndexAndSequenceCollector::new(0));
-    let target_cf_tracker = Arc::new(LogIndexOfColumnFamilies::new());
 
     let mut sm2 = KiwiStateMachine::new(
         2,
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root,
-        target_collector,
-        target_cf_tracker,
     );
     sm2.install_snapshot(&meta, Box::new(std::io::Cursor::new(bytes)))
         .await?;
@@ -133,15 +118,11 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     source_storage.set(b"key2", b"value2")?;
 
     // Build snapshot from source
-    let source_collector = Arc::new(LogIndexAndSequenceCollector::new(0));
-    let source_cf_tracker = Arc::new(LogIndexOfColumnFamilies::new());
     let mut sm_source = KiwiStateMachine::new(
         1,
         Arc::new(ArcSwap::from(source_storage.clone())),
         src_db_path.clone(),
         snap_root.clone(),
-        source_collector,
-        source_cf_tracker,
     );
 
     let mut builder = sm_source.get_snapshot_builder().await;
@@ -162,8 +143,6 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     std::fs::write(old_data_dir.join("marker_old_data"), b"stale")?;
 
     // Install the snapshot - this should REPLACE the old data.
-    let target_collector = Arc::new(LogIndexAndSequenceCollector::new(0));
-    let target_cf_tracker = Arc::new(LogIndexOfColumnFamilies::new());
     let target_storage = Arc::new(Storage::new(1, 0));
     let target_swap = Arc::new(ArcSwap::from(target_storage));
     let mut sm_target = KiwiStateMachine::new(
@@ -171,8 +150,6 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root,
-        target_collector,
-        target_cf_tracker,
     );
 
     sm_target

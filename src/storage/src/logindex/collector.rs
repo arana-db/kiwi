@@ -142,7 +142,7 @@ impl LogIndexAndSequenceCollector {
     /// Export state for snapshot serialization.
     ///
     /// Returns a list of `"log_index:seqno"` strings where both values are decimal
-    /// integers. This on-disk format is parsed by `restore_collector_state()` via
+    /// integers. This on-disk format is parsed by `restore_collector_states()` via
     /// `split_once(':')` and must remain stable across versions.
     pub fn export_state(&self) -> Vec<String> {
         let list = self.list.read();

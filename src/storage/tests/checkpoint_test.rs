@@ -141,7 +141,7 @@ fn test_snapshot_meta_max_version() {
         version: u32::MAX,
         last_included_index: 42,
         last_included_term: 7,
-        logindex_collector_state: Vec::new(),
+        logindex_collector_states: Vec::new(),
     };
 
     let json = serde_json::to_string(&meta).unwrap();
@@ -149,22 +149,25 @@ fn test_snapshot_meta_max_version() {
     assert_eq!(deserialized.version, u32::MAX);
 }
 
-/// Test that RaftSnapshotMeta supports logindex collector state.
+/// Test that RaftSnapshotMeta supports per-instance logindex collector states.
 #[test]
-fn test_raft_snapshot_meta_with_collector_state() {
+fn test_raft_snapshot_meta_with_collector_states() {
     let meta = RaftSnapshotMeta {
         version: 1,
         last_included_index: 300,
         last_included_term: 1,
-        logindex_collector_state: vec!["100:1000".to_string(), "200:2000".to_string()],
+        logindex_collector_states: vec![
+            vec!["100:1000".to_string(), "200:2000".to_string()],
+            vec!["150:1500".to_string()],
+        ],
     };
 
     let json = serde_json::to_string_pretty(&meta).unwrap();
     let parsed: RaftSnapshotMeta = serde_json::from_str(&json).unwrap();
 
-    assert_eq!(parsed.logindex_collector_state.len(), 2);
-    assert_eq!(parsed.logindex_collector_state[0], "100:1000");
-    assert_eq!(parsed.logindex_collector_state[1], "200:2000");
+    assert_eq!(parsed.logindex_collector_states.len(), 2);
+    assert_eq!(parsed.logindex_collector_states[0], vec!["100:1000", "200:2000"]);
+    assert_eq!(parsed.logindex_collector_states[1], vec!["150:1500"]);
 }
 
 /// Test that missing collector state field defaults to empty vec.
@@ -177,41 +180,40 @@ fn test_raft_snapshot_meta_defaults_empty_states() {
     }"#;
 
     let parsed: RaftSnapshotMeta = serde_json::from_str(json).unwrap();
-    assert_eq!(parsed.logindex_collector_state.len(), 0);
+    assert_eq!(parsed.logindex_collector_states.len(), 0);
 }
 
-/// Test collector state roundtrip via with_collector_state / restore_collector_state
+/// Test collector state roundtrip via with_collector_states / restore_collector_states.
 #[test]
-fn test_collector_state_roundtrip() {
+fn test_collector_states_roundtrip() {
     use storage::logindex::LogIndexAndSequenceCollector;
 
-    let collector = Arc::new(LogIndexAndSequenceCollector::new(0));
-    collector.update(100, 1000);
-    collector.update(200, 2000);
-    collector.update(300, 3000);
+    let inst0 = Arc::new(LogIndexAndSequenceCollector::new(0));
+    inst0.update(100, 1000);
+    inst0.update(200, 2000);
+    inst0.update(300, 3000);
 
-    let meta = RaftSnapshotMeta::with_collector_state(300, 1, &collector);
+    let inst1 = Arc::new(LogIndexAndSequenceCollector::new(0));
+    inst1.update(150, 1500);
 
-    assert_eq!(meta.logindex_collector_state.len(), 3);
-    assert!(
-        meta.logindex_collector_state
-            .contains(&"100:1000".to_string())
-    );
-    assert!(
-        meta.logindex_collector_state
-            .contains(&"200:2000".to_string())
-    );
-    assert!(
-        meta.logindex_collector_state
-            .contains(&"300:3000".to_string())
-    );
+    let collectors = [inst0.clone(), inst1.clone()];
+    let meta = RaftSnapshotMeta::with_collector_states(300, 1, &collectors);
 
-    let new_collector = Arc::new(LogIndexAndSequenceCollector::new(0));
-    meta.restore_collector_state(&new_collector);
+    assert_eq!(meta.logindex_collector_states.len(), 2);
+    assert_eq!(meta.logindex_collector_states[0].len(), 3);
+    assert!(meta.logindex_collector_states[0].contains(&"100:1000".to_string()));
+    assert!(meta.logindex_collector_states[0].contains(&"200:2000".to_string()));
+    assert!(meta.logindex_collector_states[0].contains(&"300:3000".to_string()));
+    assert_eq!(meta.logindex_collector_states[1], vec!["150:1500".to_string()]);
 
-    assert_eq!(new_collector.find_applied_log_index(1000), 100);
-    assert_eq!(new_collector.find_applied_log_index(1500), 100);
-    assert_eq!(new_collector.find_applied_log_index(2000), 200);
-    assert_eq!(new_collector.find_applied_log_index(2500), 200);
-    assert_eq!(new_collector.find_applied_log_index(3000), 300);
+    let new_inst0 = Arc::new(LogIndexAndSequenceCollector::new(0));
+    let new_inst1 = Arc::new(LogIndexAndSequenceCollector::new(0));
+    meta.restore_collector_states(&[new_inst0.clone(), new_inst1.clone()]);
+
+    assert_eq!(new_inst0.find_applied_log_index(1000), 100);
+    assert_eq!(new_inst0.find_applied_log_index(1500), 100);
+    assert_eq!(new_inst0.find_applied_log_index(2000), 200);
+    assert_eq!(new_inst0.find_applied_log_index(2500), 200);
+    assert_eq!(new_inst0.find_applied_log_index(3000), 300);
+    assert_eq!(new_inst1.find_applied_log_index(1500), 150);
 }

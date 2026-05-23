@@ -42,10 +42,10 @@ pub struct RaftSnapshotMeta {
     pub last_included_index: u64,
     /// Last log term included in the snapshot
     pub last_included_term: u64,
-    /// LogIndex collector state.
-    /// Format: Vec<"log_index:seqno">
+    /// LogIndex collector states, one entry per Storage instance.
+    /// Outer index is the instance id; inner Vec holds `"log_index:seqno"` pairs.
     #[serde(default)]
-    pub logindex_collector_state: Vec<String>,
+    pub logindex_collector_states: Vec<Vec<String>>,
 }
 
 impl RaftSnapshotMeta {
@@ -55,40 +55,56 @@ impl RaftSnapshotMeta {
             version: CURRENT_SNAPSHOT_VERSION,
             last_included_index,
             last_included_term,
-            logindex_collector_state: Vec::new(),
+            logindex_collector_states: Vec::new(),
         }
     }
 
-    /// Create snapshot meta with collector state
-    pub fn with_collector_state(
+    /// Create snapshot meta with collector states for every Storage instance.
+    pub fn with_collector_states(
         last_included_index: u64,
         last_included_term: u64,
-        collector: &Arc<LogIndexAndSequenceCollector>,
+        collectors: &[Arc<LogIndexAndSequenceCollector>],
     ) -> Self {
         Self {
             version: CURRENT_SNAPSHOT_VERSION,
             last_included_index,
             last_included_term,
-            logindex_collector_state: collector.export_state(),
+            logindex_collector_states: collectors.iter().map(|c| c.export_state()).collect(),
         }
     }
 
-    /// Restore collector state from snapshot metadata.
+    /// Restore collector states for each Storage instance from snapshot metadata.
     ///
-    /// Parses "log_index:seqno" entries exported by `LogIndexAndSequenceCollector::export_state()`.
+    /// `collectors[i]` receives the entries originally exported from instance `i`. Extra
+    /// entries (i.e. snapshot has more instances than the target) are logged and ignored.
     /// Entries that fail to parse are logged and skipped.
-    pub fn restore_collector_state(&self, collector: &Arc<LogIndexAndSequenceCollector>) {
-        for entry in &self.logindex_collector_state {
-            if let Some((log_index_str, seqno_str)) = entry.split_once(':') {
-                if let (Ok(log_index), Ok(seqno)) =
-                    (log_index_str.parse::<i64>(), seqno_str.parse::<u64>())
-                {
-                    collector.update(log_index, seqno);
+    pub fn restore_collector_states(&self, collectors: &[Arc<LogIndexAndSequenceCollector>]) {
+        for (idx, entries) in self.logindex_collector_states.iter().enumerate() {
+            let Some(collector) = collectors.get(idx) else {
+                log::warn!(
+                    "Snapshot has collector state for instance {idx} but target only has {} instances; ignoring",
+                    collectors.len()
+                );
+                continue;
+            };
+            for entry in entries {
+                if let Some((log_index_str, seqno_str)) = entry.split_once(':') {
+                    if let (Ok(log_index), Ok(seqno)) =
+                        (log_index_str.parse::<i64>(), seqno_str.parse::<u64>())
+                    {
+                        collector.update(log_index, seqno);
+                    } else {
+                        log::warn!(
+                            "Failed to parse collector state entry for instance {idx}: {:?}",
+                            entry
+                        );
+                    }
                 } else {
-                    log::warn!("Failed to parse collector state entry: {:?}", entry);
+                    log::warn!(
+                        "Invalid collector state format (missing ':') for instance {idx}: {:?}",
+                        entry
+                    );
                 }
-            } else {
-                log::warn!("Invalid collector state format (missing ':'): {:?}", entry);
             }
         }
     }

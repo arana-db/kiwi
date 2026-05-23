@@ -37,7 +37,6 @@ use openraft::{
     CommittedLeaderId, EntryPayload, ErrorSubject, ErrorVerb, LogId, RaftSnapshotBuilder, Snapshot,
     SnapshotMeta, StorageError, StoredMembership, storage::RaftStateMachine,
 };
-use storage::logindex::{LogIndexAndSequenceCollector, LogIndexOfColumnFamilies};
 use storage::storage::Storage;
 use storage::{RaftSnapshotMeta, StorageOptions, restore_checkpoint_layout};
 
@@ -186,21 +185,19 @@ pub struct KiwiStateMachine {
     snapshot_idx: u64,
     /// Pause controller for coordinating with StorageServer.
     pause_controller: Option<Arc<dyn PauseController>>,
-    /// LogIndex collector for Raft snapshot integration
-    collector: Arc<LogIndexAndSequenceCollector>,
-    /// LogIndex CF tracker for Raft snapshot integration
-    cf_tracker: Arc<LogIndexOfColumnFamilies>,
 }
 
 impl KiwiStateMachine {
     /// Create a new state machine.
+    ///
+    /// Per-instance LogIndex collectors and cf_trackers are owned by the underlying
+    /// Storage; snapshot build/install paths look them up through `storage_swap` so
+    /// they remain valid after a hot swap.
     pub fn new(
         node_id: u64,
         storage_swap: Arc<ArcSwap<Storage>>,
         db_path: PathBuf,
         snapshot_work_dir: PathBuf,
-        collector: Arc<LogIndexAndSequenceCollector>,
-        cf_tracker: Arc<LogIndexOfColumnFamilies>,
     ) -> Self {
         Self {
             _node_id: node_id,
@@ -211,8 +208,6 @@ impl KiwiStateMachine {
             last_membership: StoredMembership::default(),
             snapshot_idx: 0,
             pause_controller: None,
-            collector,
-            cf_tracker,
         }
     }
 
@@ -408,18 +403,6 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         self.storage_swap.swap(Arc::new(new_storage));
         log::info!("Storage swapped to new instance after snapshot installation");
 
-        // Refresh collector and cf_tracker from the new storage.
-        // The new storage creates its own collector/tracker instances during open().
-        // After swap, we must use the new ones instead of the orphaned old references.
-        let storage_after_swap = self.storage_swap.load();
-        if let Some(new_collector) = storage_after_swap.get_logindex_collector(0) {
-            self.collector = new_collector;
-        }
-        if let Some(new_cf_tracker) = storage_after_swap.get_logindex_cf_tracker(0) {
-            self.cf_tracker = new_cf_tracker;
-        }
-        drop(storage_after_swap);
-
         // ========== Phase 7: Update state and persist ==========
         // Initialize cf_tracker from restored SST properties
         self.init_cf_tracker().map_err(|e| {
@@ -427,18 +410,24 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             StorageError::from_io_error(ErrorSubject::Snapshot(None), ErrorVerb::Write, e)
         })?;
 
-        // Restore collector state from snapshot metadata
-        // This replays the (log_index, seqno) mappings captured during snapshot creation.
-        // The restore_collector_state() method parses "log_index:seqno" pairs exported
-        // by LogIndexAndSequenceCollector::export_state() and replays them.
-        file_meta.restore_collector_state(&self.collector);
+        // Restore each instance's collector state from snapshot metadata. The new
+        // storage created its own collector/tracker instances during open(), so we
+        // must look them up through storage_swap rather than reusing pre-swap refs.
+        let storage_after_swap = self.storage_swap.load();
+        let collectors: Vec<_> = (0..db_instance_num)
+            .filter_map(|i| storage_after_swap.get_logindex_collector(i))
+            .collect();
+        file_meta.restore_collector_states(&collectors);
 
         // Purge collector entries for indices compacted into the snapshot.
         // This immediately compacts restored pairs to a single boundary entry at
         // last_included_index, which is acceptable since the follower will receive
         // new entries via replication after this snapshot is installed.
-        self.collector
-            .purge(file_meta.last_included_index as storage::logindex::LogIndex);
+        let purge_idx = file_meta.last_included_index as storage::logindex::LogIndex;
+        for c in &collectors {
+            c.purge(purge_idx);
+        }
+        drop(storage_after_swap);
 
         self.last_applied = meta.last_log_id;
         self.last_membership = meta.last_membership.clone();
@@ -508,12 +497,14 @@ impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
             (0, 0)
         };
 
-        // Create snapshot meta with collector state
+        // Snapshot meta carries each instance's collector state so the receiver can
+        // rebuild every (log_index, seqno) mapping, not just instance 0's.
         let storage = self._storage.load_full();
-        let collector = storage
-            .get_logindex_collector(0)
-            .expect("logindex collector for instance 0");
-        let raft_meta = RaftSnapshotMeta::with_collector_state(last_idx, last_term, &collector);
+        let collectors: Vec<_> = (0..storage.db_instance_num)
+            .filter_map(|i| storage.get_logindex_collector(i))
+            .collect();
+        let raft_meta =
+            RaftSnapshotMeta::with_collector_states(last_idx, last_term, &collectors);
         storage
             .create_checkpoint(&dir, &raft_meta)
             .map_err(storage_err_to_raft)?;
@@ -537,7 +528,10 @@ impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
 
         // Purge collector entries that are now covered by the snapshot.
         // This prevents unbounded memory growth as the leader continues accepting writes.
-        collector.purge(raft_meta.last_included_index as storage::logindex::LogIndex);
+        let purge_idx = raft_meta.last_included_index as storage::logindex::LogIndex;
+        for c in &collectors {
+            c.purge(purge_idx);
+        }
 
         Ok(Snapshot {
             meta,

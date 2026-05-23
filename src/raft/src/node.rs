@@ -162,23 +162,14 @@ pub async fn create_raft_node(
     let snapshot_work_dir = config.data_dir.join("snapshots");
     fs::create_dir_all(&snapshot_work_dir)?;
 
-    // Initialize logindex collector and cf_tracker from storage.
-    // Use instance 0's collector and tracker for local tracking.
-    let storage = storage_swap.load_full();
-    let collector = storage
-        .get_logindex_collector(0)
-        .ok_or_else(|| anyhow::anyhow!("Storage instance 0 logindex collector not initialized"))?;
-    let cf_tracker = storage
-        .get_logindex_cf_tracker(0)
-        .ok_or_else(|| anyhow::anyhow!("Storage instance 0 cf_tracker not initialized"))?;
-
+    // Per-instance LogIndex collectors / cf_trackers live in the Storage; the state
+    // machine looks them up through storage_swap so it sees the right ones after a
+    // snapshot install hot-swaps Storage.
     let mut state_machine = KiwiStateMachine::new(
         config.node_id,
         storage_swap.clone(),
         config.db_path.clone(),
         snapshot_work_dir,
-        collector,
-        cf_tracker,
     );
 
     // Set pause controller for snapshot installation

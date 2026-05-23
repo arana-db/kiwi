@@ -31,7 +31,7 @@ use conf::raft_type::Binlog;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
 use raft::state_machine::KiwiStateMachine;
-use storage::logindex::{LogIndexAndSequenceCollector, LogIndexOfColumnFamilies};
+use storage::logindex::LogIndexAndSequenceCollector;
 use storage::{RaftSnapshotMeta, StorageOptions, storage::Storage, unique_test_db_path};
 
 #[tokio::test]
@@ -95,15 +95,12 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
         );
 
         // Create state machine and build snapshot
-        let cf_tracker = storage.get_logindex_cf_tracker(0).unwrap();
         let storage_swap = Arc::new(ArcSwap::from(Arc::clone(&storage)));
         let mut sm = KiwiStateMachine::new(
             1,
             storage_swap,
             src_db_path.clone(),
             snap_root.clone(),
-            collector.clone(),
-            cf_tracker.clone(),
         );
 
         let mut builder = sm.get_snapshot_builder().await;
@@ -137,16 +134,11 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
     let target_storage = Arc::new(Storage::new(1, 0));
     let target_swap = Arc::new(ArcSwap::from(target_storage));
 
-    let target_collector = Arc::new(LogIndexAndSequenceCollector::new(0));
-    let target_cf_tracker = Arc::new(LogIndexOfColumnFamilies::new());
-
     let mut sm2 = KiwiStateMachine::new(
         2,
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root,
-        target_collector.clone(),
-        target_cf_tracker,
     );
 
     sm2.install_snapshot(&meta, Box::new(std::io::Cursor::new(bytes)))
@@ -273,30 +265,23 @@ async fn test_collector_state_export_restore() -> anyhow::Result<()> {
     assert_eq!(exported.len(), 3, "Should export 3 mappings");
 
     // Create snapshot meta with collector state
-    let meta = RaftSnapshotMeta::with_collector_state(
+    let meta = RaftSnapshotMeta::with_collector_states(
         300, // last_included_index
         1,   // last_included_term
-        &collector,
+        std::slice::from_ref(&collector),
     );
 
     // Verify collector state is stored
-    assert_eq!(meta.logindex_collector_state.len(), 3);
-    assert!(
-        meta.logindex_collector_state
-            .contains(&"100:1000".to_string())
-    );
-    assert!(
-        meta.logindex_collector_state
-            .contains(&"200:2000".to_string())
-    );
-    assert!(
-        meta.logindex_collector_state
-            .contains(&"300:3000".to_string())
-    );
+    assert_eq!(meta.logindex_collector_states.len(), 1);
+    let inst0 = &meta.logindex_collector_states[0];
+    assert_eq!(inst0.len(), 3);
+    assert!(inst0.contains(&"100:1000".to_string()));
+    assert!(inst0.contains(&"200:2000".to_string()));
+    assert!(inst0.contains(&"300:3000".to_string()));
 
     // Create a new collector and restore state
     let new_collector = Arc::new(LogIndexAndSequenceCollector::new(0));
-    meta.restore_collector_state(&new_collector);
+    meta.restore_collector_states(std::slice::from_ref(&new_collector));
 
     // Verify restored state
     let restored_exported = new_collector.export_state();
