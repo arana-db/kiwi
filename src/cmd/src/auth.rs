@@ -207,11 +207,7 @@ mod tests {
         // ACL form (AUTH <user> <pass>) is reserved for future support.
         let cmd = auth_cmd_with(Some("secret"));
         let client = make_client();
-        client.set_argv(&[
-            b"auth".to_vec(),
-            b"user".to_vec(),
-            b"secret".to_vec(),
-        ]);
+        client.set_argv(&[b"auth".to_vec(), b"user".to_vec(), b"secret".to_vec()]);
 
         cmd.do_cmd(&client, make_storage());
 
