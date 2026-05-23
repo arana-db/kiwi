@@ -72,7 +72,10 @@ async fn test_bg_task_worker_concurrent() {
 /// Test get_global_smallest_flushed_log_index returns minimum across all instances
 #[tokio::test]
 async fn test_get_global_smallest_flushed_log_index() {
-    let db_path = tempfile::tempdir().unwrap().path().to_path_buf();
+    // Bind the TempDir guard for the test's lifetime — `tempdir().path().to_path_buf()`
+    // drops the guard immediately and the directory is removed before `open()` runs.
+    let _tmp = tempfile::tempdir().unwrap();
+    let db_path = _tmp.path().to_path_buf();
     let mut storage = Storage::new(3, 0);
     let options = Arc::new(StorageOptions::default());
     let _rx = storage.open(options, &db_path).unwrap();
@@ -102,7 +105,8 @@ async fn test_get_global_smallest_flushed_log_index() {
 /// Test get_global_smallest_flushed_log_index returns 0 when no flush has occurred
 #[tokio::test]
 async fn test_get_global_smallest_flushed_log_index_initial_state() {
-    let db_path = tempfile::tempdir().unwrap().path().to_path_buf();
+    let _tmp = tempfile::tempdir().unwrap();
+    let db_path = _tmp.path().to_path_buf();
     let mut storage = Storage::new(2, 0);
     let options = Arc::new(StorageOptions::default());
     let _rx = storage.open(options, &db_path).unwrap();
