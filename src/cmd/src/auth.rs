@@ -110,3 +110,121 @@ impl Cmd for AuthCmd {
         }
     }
 }
+
+#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use client::StreamTrait;
+    use storage::storage::Storage;
+
+    struct TestStream;
+
+    #[async_trait::async_trait]
+    impl StreamTrait for TestStream {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+
+        async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+    }
+
+    fn make_client() -> Arc<Client> {
+        // `Client::new` is fail-closed: a freshly built client is unauthenticated.
+        Arc::new(Client::new(Box::new(TestStream)))
+    }
+
+    fn make_storage() -> Arc<Storage> {
+        Arc::new(Storage::new(1, 0))
+    }
+
+    fn auth_cmd_with(password: Option<&str>) -> AuthCmd {
+        let owned = password.map(|s| s.to_string());
+        AuthCmd::new(Arc::new(move || owned.clone()))
+    }
+
+    fn reply_text(client: &Client) -> String {
+        match client.take_reply() {
+            RespData::SimpleString(b) => format!("+{}", String::from_utf8_lossy(&b)),
+            RespData::Error(b) => format!("-{}", String::from_utf8_lossy(&b)),
+            other => format!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn fresh_client_is_unauthenticated_by_default() {
+        // Guards the fail-closed default in `Client::new`. The NOAUTH gate in
+        // the network handler relies on this being false until AUTH succeeds.
+        let client = make_client();
+        assert!(!client.is_authenticated());
+    }
+
+    #[test]
+    fn wrong_password_does_not_authenticate() {
+        let cmd = auth_cmd_with(Some("secret"));
+        let client = make_client();
+        client.set_argv(&[b"auth".to_vec(), b"wrong".to_vec()]);
+
+        cmd.do_cmd(&client, make_storage());
+
+        assert!(!client.is_authenticated());
+        let reply = reply_text(&client);
+        assert!(reply.starts_with("-WRONGPASS"), "unexpected reply: {reply}");
+    }
+
+    #[test]
+    fn correct_password_authenticates_and_replies_ok() {
+        let cmd = auth_cmd_with(Some("secret"));
+        let client = make_client();
+        client.set_argv(&[b"auth".to_vec(), b"secret".to_vec()]);
+
+        cmd.do_cmd(&client, make_storage());
+
+        assert!(client.is_authenticated());
+        assert_eq!(reply_text(&client), "+OK");
+    }
+
+    #[test]
+    fn auth_without_requirepass_returns_error() {
+        let cmd = auth_cmd_with(None);
+        let client = make_client();
+        client.set_argv(&[b"auth".to_vec(), b"anything".to_vec()]);
+
+        cmd.do_cmd(&client, make_storage());
+
+        assert!(!client.is_authenticated());
+        let reply = reply_text(&client);
+        assert!(
+            reply.starts_with("-ERR AUTH called without"),
+            "unexpected reply: {reply}"
+        );
+    }
+
+    #[test]
+    fn auth_with_user_and_password_is_rejected() {
+        // ACL form (AUTH <user> <pass>) is reserved for future support.
+        let cmd = auth_cmd_with(Some("secret"));
+        let client = make_client();
+        client.set_argv(&[
+            b"auth".to_vec(),
+            b"user".to_vec(),
+            b"secret".to_vec(),
+        ]);
+
+        cmd.do_cmd(&client, make_storage());
+
+        assert!(!client.is_authenticated());
+        let reply = reply_text(&client);
+        assert!(reply.starts_with("-ERR ACL"), "unexpected reply: {reply}");
+    }
+
+    #[test]
+    fn auth_carries_no_auth_flag() {
+        // AUTH itself must be exempt from the NOAUTH gate, otherwise an
+        // unauthenticated client could never call it.
+        let cmd = AuthCmd::default();
+        assert!(cmd.has_flag(CmdFlags::NO_AUTH));
+    }
+}
