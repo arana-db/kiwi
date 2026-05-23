@@ -482,6 +482,14 @@ impl Storage {
         Ok(())
     }
 
+    /// Apply a Raft binlog entry to the underlying RocksDB instance and record
+    /// `(raft_log_index, seqno)` in the LogIndex collector.
+    ///
+    /// **Single-writer invariant**: must be called from the Raft apply path only.
+    /// `commit_batch_and_track_logindex` reads `db.latest_sequence_number()` *after*
+    /// commit, which is monotonic but per-DB-global; concurrent writers from other
+    /// threads would inflate the captured seqno and break the
+    /// "log L is persisted at seqno >= S" guarantee that snapshot/purge depends on.
     pub fn on_binlog_write(&self, binlog: &Binlog, raft_log_index: u64) -> Result<()> {
         let slot_id = binlog.slot_idx as usize;
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
