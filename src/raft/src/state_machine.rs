@@ -281,8 +281,6 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             last_applied: self.last_applied,
             last_membership: self.last_membership.clone(),
             _node_id: self._node_id,
-            collector: self.collector.clone(),
-            cf_tracker: self.cf_tracker.clone(),
         }
     }
 
@@ -494,11 +492,6 @@ pub struct KiwiSnapshotBuilder {
     last_applied: Option<LogId<u64>>,
     last_membership: StoredMembership<u64, KiwiNode>,
     _node_id: u64,
-    // Reserved for future LogIndex synchronization during snapshot creation
-    #[allow(dead_code)]
-    collector: Arc<LogIndexAndSequenceCollector>,
-    #[allow(dead_code)]
-    cf_tracker: Arc<LogIndexOfColumnFamilies>,
 }
 
 impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
