@@ -23,8 +23,16 @@ use arc_swap::ArcSwap;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
 use raft::state_machine::KiwiStateMachine;
-use storage::unique_test_db_path;
 use storage::{StorageOptions, storage::Storage};
+use storage::{safe_cleanup_test_db, unique_test_db_path};
+
+async fn close_storage(storage: Arc<Storage>, name: &str) -> anyhow::Result<()> {
+    let mut storage = Arc::try_unwrap(storage)
+        .map_err(|_| anyhow::Error::msg([name, " still has Arc references"].concat()))?;
+    storage.shutdown().await;
+    storage.close();
+    Ok(())
+}
 
 #[tokio::test]
 async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
@@ -65,14 +73,24 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
     storage.set(b"k_l2", b"after")?;
     assert_eq!(storage.get(b"k_l2")?, "after");
 
+    drop(builder);
+    drop(sm);
+    drop(storage_swap);
+    close_storage(storage, "source storage").await?;
+
     let meta = snap.meta.clone();
     let bytes = snap.snapshot.into_inner();
     // Create target storage but do NOT open it yet - this is expected because
     // install_snapshot will restore the checkpoint directly to db_path, bypassing
     // the normal open flow. The storage is opened after install_snapshot completes.
     let target_storage = Arc::new(Storage::new(1, 0));
-    let target_swap = Arc::new(ArcSwap::from(target_storage));
-    let mut sm2 = KiwiStateMachine::new(2, target_swap.clone(), restore_db_path.clone(), snap_root);
+    let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
+    let mut sm2 = KiwiStateMachine::new(
+        2,
+        target_swap.clone(),
+        restore_db_path.clone(),
+        snap_root.clone(),
+    );
     sm2.install_snapshot(&meta, Box::new(std::io::Cursor::new(bytes)))
         .await?;
 
@@ -84,8 +102,17 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
 
     // Verify restored data using the Storage held by ArcSwap.
     // The install_snapshot has already swapped in a new Storage with restored data.
-    let restored = target_swap.load();
+    let restored = target_swap.load_full();
     assert_eq!(restored.get(b"k_l2")?, "before");
+
+    drop(sm2);
+    drop(target_swap);
+    close_storage(restored, "restored storage").await?;
+    close_storage(target_storage, "target placeholder storage").await?;
+
+    safe_cleanup_test_db(&src_db_path);
+    safe_cleanup_test_db(&restore_db_path);
+    safe_cleanup_test_db(&snap_root);
 
     Ok(())
 }
@@ -126,8 +153,10 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     let snapshot_bytes = snapshot.snapshot.into_inner();
 
     // Drop source resources before creating target
+    drop(builder);
     drop(sm_source);
-    drop(source_storage);
+    drop(source_swap);
+    close_storage(source_storage, "source storage").await?;
 
     // Create old data directory structure directly without opening Storage.
     // This simulates a Follower that has existing stale data.
@@ -138,8 +167,12 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     // Install the snapshot - this should REPLACE the old data.
     let target_storage = Arc::new(Storage::new(1, 0));
     let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
-    let mut sm_target =
-        KiwiStateMachine::new(2, target_swap.clone(), restore_db_path.clone(), snap_root);
+    let mut sm_target = KiwiStateMachine::new(
+        2,
+        target_swap.clone(),
+        restore_db_path.clone(),
+        snap_root.clone(),
+    );
 
     sm_target
         .install_snapshot(
@@ -150,9 +183,18 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
 
     // Verify snapshot data using the Storage held by ArcSwap.
     // The install_snapshot has already swapped in a new Storage with restored data.
-    let restored = target_swap.load();
+    let restored = target_swap.load_full();
     assert_eq!(restored.get(b"key1")?, "value1");
     assert_eq!(restored.get(b"key2")?, "value2");
+
+    drop(sm_target);
+    drop(target_swap);
+    close_storage(restored, "restored storage").await?;
+    close_storage(target_storage, "target placeholder storage").await?;
+
+    safe_cleanup_test_db(&src_db_path);
+    safe_cleanup_test_db(&restore_db_path);
+    safe_cleanup_test_db(&snap_root);
 
     Ok(())
 }
