@@ -503,8 +503,7 @@ impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
         let collectors: Vec<_> = (0..storage.db_instance_num)
             .filter_map(|i| storage.get_logindex_collector(i))
             .collect();
-        let raft_meta =
-            RaftSnapshotMeta::with_collector_states(last_idx, last_term, &collectors);
+        let raft_meta = RaftSnapshotMeta::with_collector_states(last_idx, last_term, &collectors);
         storage
             .create_checkpoint(&dir, &raft_meta)
             .map_err(storage_err_to_raft)?;

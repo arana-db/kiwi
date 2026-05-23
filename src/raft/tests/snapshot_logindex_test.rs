@@ -96,12 +96,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
 
         // Create state machine and build snapshot
         let storage_swap = Arc::new(ArcSwap::from(Arc::clone(&storage)));
-        let mut sm = KiwiStateMachine::new(
-            1,
-            storage_swap,
-            src_db_path.clone(),
-            snap_root.clone(),
-        );
+        let mut sm = KiwiStateMachine::new(1, storage_swap, src_db_path.clone(), snap_root.clone());
 
         let mut builder = sm.get_snapshot_builder().await;
         let snap = builder.build_snapshot().await?;
@@ -134,12 +129,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
     let target_storage = Arc::new(Storage::new(1, 0));
     let target_swap = Arc::new(ArcSwap::from(target_storage));
 
-    let mut sm2 = KiwiStateMachine::new(
-        2,
-        target_swap.clone(),
-        restore_db_path.clone(),
-        snap_root,
-    );
+    let mut sm2 = KiwiStateMachine::new(2, target_swap.clone(), restore_db_path.clone(), snap_root);
 
     sm2.install_snapshot(&meta, Box::new(std::io::Cursor::new(bytes)))
         .await?;

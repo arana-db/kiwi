@@ -166,7 +166,10 @@ fn test_raft_snapshot_meta_with_collector_states() {
     let parsed: RaftSnapshotMeta = serde_json::from_str(&json).unwrap();
 
     assert_eq!(parsed.logindex_collector_states.len(), 2);
-    assert_eq!(parsed.logindex_collector_states[0], vec!["100:1000", "200:2000"]);
+    assert_eq!(
+        parsed.logindex_collector_states[0],
+        vec!["100:1000", "200:2000"]
+    );
     assert_eq!(parsed.logindex_collector_states[1], vec!["150:1500"]);
 }
 
@@ -204,7 +207,10 @@ fn test_collector_states_roundtrip() {
     assert!(meta.logindex_collector_states[0].contains(&"100:1000".to_string()));
     assert!(meta.logindex_collector_states[0].contains(&"200:2000".to_string()));
     assert!(meta.logindex_collector_states[0].contains(&"300:3000".to_string()));
-    assert_eq!(meta.logindex_collector_states[1], vec!["150:1500".to_string()]);
+    assert_eq!(
+        meta.logindex_collector_states[1],
+        vec!["150:1500".to_string()]
+    );
 
     let new_inst0 = Arc::new(LogIndexAndSequenceCollector::new(0));
     let new_inst1 = Arc::new(LogIndexAndSequenceCollector::new(0));
