@@ -20,6 +20,7 @@ use std::sync::Arc;
 use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
+use subtle::ConstantTimeEq;
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta};
 use crate::{impl_cmd_clone_box, impl_cmd_meta};
@@ -74,9 +75,14 @@ impl Cmd for AuthCmd {
         let argv = client.argv();
         match argv.len() {
             2 => {
-                let password = String::from_utf8_lossy(&argv[1]);
+                let password = &argv[1];
                 if let Some(requirepass) = (self.requirepass_provider)() {
-                    if password == requirepass {
+                    // Constant-time comparison to avoid leaking information
+                    // about the configured password through timing side
+                    // channels. Length mismatches still short-circuit, which
+                    // only reveals the password length — acceptable here.
+                    let matches: bool = password.ct_eq(requirepass.as_bytes()).into();
+                    if matches {
                         client.set_authenticated(true);
                         client.set_reply(RespData::SimpleString("OK".into()));
                     } else {
