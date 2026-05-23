@@ -198,13 +198,14 @@ impl ServerTrait for NetworkServer {
                     }
                 };
 
-                // Create client for this specific connection
+                // Create client for this specific connection.
+                // `Client::new` is fail-closed (`authenticated = false`); when
+                // no password is configured we must grant authentication here.
                 let stream = TcpStreamWrapper::new(socket);
                 let client = Arc::new(Client::new(Box::new(stream)));
 
-                // Require authentication if password is configured
-                if requirepass.is_some() {
-                    client.set_authenticated(false);
+                if requirepass.is_none() {
+                    client.set_authenticated(true);
                 }
 
                 // Process the connection

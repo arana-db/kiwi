@@ -56,7 +56,9 @@ impl Client {
                 cmd_name: Arc::new(Vec::default()),
                 key: Vec::default(),
                 reply: RespData::default(),
-                authenticated: true,
+                // Default to false (fail-closed): callers must explicitly grant
+                // authentication when no `requirepass` is configured.
+                authenticated: false,
             }),
         }
     }
