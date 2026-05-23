@@ -56,9 +56,10 @@ impl ServerFactory {
         protocol: &str,
         addr: Option<String>,
         runtime_manager: &RuntimeManager,
+        requirepass: Option<String>,
     ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
-            "tcp" => match Self::create_network_server(addr, runtime_manager) {
+            "tcp" => match Self::create_network_server(addr, runtime_manager, requirepass) {
                 Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
                 Err(e) => {
                     log::error!("Failed to create NetworkServer: {}", e);
@@ -111,6 +112,7 @@ impl ServerFactory {
     fn create_network_server(
         addr: Option<String>,
         runtime_manager: &RuntimeManager,
+        requirepass: Option<String>,
     ) -> Result<NetworkServer, Box<dyn std::error::Error>> {
         // Get the storage client from RuntimeManager
         let runtime_storage_client = runtime_manager.storage_client().map_err(|e| {
@@ -123,10 +125,13 @@ impl ServerFactory {
         // Wrap the runtime storage client in the network-side StorageClient
         let storage_client = Arc::new(StorageClient::new(runtime_storage_client));
 
-        // Create command table and executor
-        let cmd_table = Arc::new(create_command_table());
+        // Create command table with requirepass provider
+        let requirepass_for_provider = requirepass.clone();
+        let cmd_table = Arc::new(create_command_table(Arc::new(move || {
+            requirepass_for_provider.clone()
+        })));
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
-        NetworkServer::new(addr, storage_client, cmd_table, executor)
+        NetworkServer::new(addr, storage_client, cmd_table, executor, requirepass)
     }
 }

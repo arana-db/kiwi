@@ -103,6 +103,7 @@ mod tests {
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
             db_path: "./db".to_string(),
+            requirepass: None,
             raft: None,
         };
         assert!(invalid_config.validate().is_err());

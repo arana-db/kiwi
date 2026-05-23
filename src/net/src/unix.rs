@@ -46,7 +46,7 @@ impl UnixServer {
         Ok(Self {
             path,
             storage: Arc::new(storage),
-            cmd_table: Arc::new(create_command_table()),
+            cmd_table: Arc::new(create_command_table(Arc::new(|| None))),
             executor,
         })
     }
@@ -99,6 +99,9 @@ mod unix_impl {
                     Ok((socket, _)) => {
                         let s = UnixStreamWrapper::new(socket);
                         let client = Arc::new(Client::new(Box::new(s)));
+                        // Unix socket path has no `requirepass` wiring; grant
+                        // auth explicitly to match the fail-closed default.
+                        client.set_authenticated(true);
                         let storage = self.storage.clone();
                         let cmd_table = self.cmd_table.clone();
                         let executor = self.executor.clone();
