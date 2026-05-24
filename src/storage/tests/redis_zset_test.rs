@@ -19,9 +19,10 @@
 
 mod redis_zset_test {
     use kstd::lock_mgr::LockMgr;
+    use rocksdb::{IteratorMode, ReadOptions};
     use std::sync::Arc;
     use storage::{
-        BgTaskHandler, Redis, ScoreMember, StorageOptions, safe_cleanup_test_db,
+        BgTaskHandler, ColumnFamilyIndex, Redis, ScoreMember, StorageOptions, safe_cleanup_test_db,
         unique_test_db_path,
     };
 
@@ -150,6 +151,98 @@ mod redis_zset_test {
         let (next_cursor, results) = redis.zscan(key, 0, None, Some(10)).unwrap();
         assert_eq!(next_cursor, 0);
         assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_zscan_uses_little_endian_version_prefix() {
+        let redis = create_test_redis();
+        let key = b"zscan:endian";
+        let score_members = vec![
+            ScoreMember::new(1.25, b"member1".to_vec()),
+            ScoreMember::new(2.5, b"member2".to_vec()),
+        ];
+
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 2);
+
+        let (next_cursor, results) = redis.zscan(key, 0, None, Some(10)).unwrap();
+        assert_eq!(next_cursor, 0);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "member1");
+        assert_eq!(results[0].1, "1.25");
+        assert_eq!(results[1].0, "member2");
+        assert_eq!(results[1].1, "2.5");
+    }
+
+    #[test]
+    fn test_zset_score_cf_keys_store_version_as_little_endian() {
+        let redis = create_test_redis();
+        let key = b"zscan-raw-endian";
+        let score_members = vec![ScoreMember::new(9.5, b"member".to_vec())];
+
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 1);
+        let (_, results) = redis.zscan(key, 0, None, Some(10)).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "member");
+        assert_eq!(results[0].1, "9.5");
+
+        let db = redis.db.as_ref().expect("db initialized");
+        let cf_score = redis
+            .get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF)
+            .expect("zset score cf handle");
+        let iter = db.iterator_cf_opt(
+            &cf_score,
+            ReadOptions::default(),
+            IteratorMode::Start,
+        );
+        let raw_key = iter
+            .into_iter()
+            .next()
+            .expect("score key exists")
+            .unwrap()
+            .0;
+
+        let prefix_reserve_len = 8;
+        let encoded_key_len = key.len() + 2;
+        let version_start = prefix_reserve_len + encoded_key_len;
+        let version_end = version_start + 8;
+        assert_eq!(&raw_key[prefix_reserve_len..prefix_reserve_len + key.len()], key);
+        assert_eq!(&raw_key[prefix_reserve_len + key.len()..version_start], b"\x00\x00");
+
+        let version_bytes = &raw_key[version_start..version_end];
+        let version_le = u64::from_le_bytes(version_bytes.try_into().unwrap());
+        let version_be = u64::from_be_bytes(version_bytes.try_into().unwrap());
+        assert_ne!(version_le, version_be);
+
+        let expected_prefix = {
+            let mut prefix = Vec::with_capacity(key.len() + 11);
+            prefix.extend_from_slice(key);
+            prefix.extend_from_slice(b"\x00\x00");
+            prefix.extend_from_slice(&version_le.to_le_bytes());
+            prefix.push(0);
+            prefix
+        };
+        let wrong_prefix = {
+            let mut prefix = Vec::with_capacity(key.len() + 11);
+            prefix.extend_from_slice(key);
+            prefix.extend_from_slice(b"\x00\x00");
+            prefix.extend_from_slice(&version_le.to_be_bytes());
+            prefix.push(0);
+            prefix
+        };
+
+        let actual_prefix_end = version_end + 1;
+        assert_eq!(
+            &raw_key[..actual_prefix_end],
+            &[&[0u8; 8][..], expected_prefix.as_slice()].concat()
+        );
+        assert_ne!(
+            &raw_key[..actual_prefix_end],
+            &[&[0u8; 8][..], wrong_prefix.as_slice()].concat()
+        );
     }
 
     #[test]

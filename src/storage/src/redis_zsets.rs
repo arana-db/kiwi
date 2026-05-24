@@ -35,6 +35,15 @@ use std::collections::HashSet;
 use crate::format_member_data_key::MemberDataKey;
 use crate::format_zset_score_key::{ParsedZSetsScoreKey, ScoreMember, ZSetsScoreKey};
 
+fn build_zscan_prefix(key: &[u8], version: u64) -> Vec<u8> {
+    let mut prefix = Vec::with_capacity(key.len() + 9);
+    prefix.extend_from_slice(key);
+    prefix.push(0);
+    prefix.extend_from_slice(&version.to_le_bytes());
+    prefix.push(0);
+    prefix
+}
+
 impl Redis {
     /// Add one or more members to a sorted set, or update its score if it already exists
     pub fn zadd(&self, key: &[u8], score_members: &[ScoreMember], ret: &mut i32) -> Result<()> {
@@ -530,14 +539,7 @@ impl Redis {
         let mut next_cursor = 0u64;
 
         // Create prefix for this zset
-        let prefix = {
-            let mut prefix = Vec::with_capacity(key.len() + 9);
-            prefix.extend_from_slice(key);
-            prefix.push(0);
-            prefix.extend_from_slice(&version.to_be_bytes());
-            prefix.push(0);
-            prefix
-        };
+        let prefix = build_zscan_prefix(key, version);
 
         // Start iteration from cursor position
         let start_key = if cursor == 0 {

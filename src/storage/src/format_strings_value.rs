@@ -169,6 +169,10 @@ impl ParsedStringsValue {
         let dst = &mut self.inner.value[suffix_start..suffix_start + TIMESTAMP_LENGTH];
         dst.copy_from_slice(&bytes);
     }
+
+    pub fn value(&self) -> &[u8] {
+        &self.inner.value
+    }
 }
 
 #[allow(clippy::unwrap_used)]
