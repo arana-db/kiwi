@@ -32,7 +32,12 @@ impl Storage {
         self.insts[instance_id].key_etime(key)
     }
 
-    fn set_key_etime_for_instance(&self, instance_id: usize, key: &[u8], etime: u64) -> Result<bool> {
+    fn set_key_etime_for_instance(
+        &self,
+        instance_id: usize,
+        key: &[u8],
+        etime: u64,
+    ) -> Result<bool> {
         self.insts[instance_id].set_key_etime(key, etime)
     }
 

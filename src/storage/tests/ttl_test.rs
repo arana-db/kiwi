@@ -652,7 +652,10 @@ async fn test_ttl_with_hash_data_type_integration() {
     storage.hset(key, b"field1", b"value1").unwrap();
     storage.hset(key, b"field2", b"value2").unwrap();
     assert_eq!(storage.hlen(key).unwrap(), 2);
-    assert_eq!(storage.hget(key, b"field1").unwrap(), Some("value1".to_string()));
+    assert_eq!(
+        storage.hget(key, b"field1").unwrap(),
+        Some("value1".to_string())
+    );
     assert!(storage.expire(key, 2).unwrap());
     assert!(storage.ttl(key).unwrap() > 0);
 
@@ -662,7 +665,10 @@ async fn test_ttl_with_hash_data_type_integration() {
 
     assert!(storage.persist(key).unwrap());
     assert_eq!(storage.ttl(key).unwrap(), -1);
-    assert_eq!(storage.hget(key, b"field3").unwrap(), Some("value3".to_string()));
+    assert_eq!(
+        storage.hget(key, b"field3").unwrap(),
+        Some("value3".to_string())
+    );
 
     assert!(storage.expire(key, 1).unwrap());
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
@@ -671,7 +677,10 @@ async fn test_ttl_with_hash_data_type_integration() {
     assert_eq!(storage.exists(&[key.to_vec()]).unwrap(), 0);
     assert_eq!(storage.hlen(key).unwrap(), 0);
     assert_eq!(storage.hget(key, b"field1").unwrap(), None);
-    assert_eq!(storage.hgetall(key).unwrap(), Vec::<(String, String)>::new());
+    assert_eq!(
+        storage.hgetall(key).unwrap(),
+        Vec::<(String, String)>::new()
+    );
 
     storage.shutdown().await;
 }
@@ -753,8 +762,14 @@ async fn test_ttl_with_zset_data_type_integration() {
     assert_eq!(storage.exists(&[key.to_vec()]).unwrap(), 0);
     assert_eq!(storage.zcard(key).unwrap(), 0);
     assert_eq!(storage.zscore(key, b"member1").unwrap(), None);
-    assert_eq!(storage.zscan(key, 0, None, Some(10)).unwrap(), (0, Vec::new()));
-    assert_eq!(storage.zrange(key, 0, -1, true).unwrap(), Vec::<Vec<u8>>::new());
+    assert_eq!(
+        storage.zscan(key, 0, None, Some(10)).unwrap(),
+        (0, Vec::new())
+    );
+    assert_eq!(
+        storage.zrange(key, 0, -1, true).unwrap(),
+        Vec::<Vec<u8>>::new()
+    );
 
     storage.shutdown().await;
 }

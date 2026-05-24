@@ -193,11 +193,7 @@ mod redis_zset_test {
         let cf_score = redis
             .get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF)
             .expect("zset score cf handle");
-        let iter = db.iterator_cf_opt(
-            &cf_score,
-            ReadOptions::default(),
-            IteratorMode::Start,
-        );
+        let iter = db.iterator_cf_opt(&cf_score, ReadOptions::default(), IteratorMode::Start);
         let raw_key = iter
             .into_iter()
             .next()
@@ -209,8 +205,14 @@ mod redis_zset_test {
         let encoded_key_len = key.len() + 2;
         let version_start = prefix_reserve_len + encoded_key_len;
         let version_end = version_start + 8;
-        assert_eq!(&raw_key[prefix_reserve_len..prefix_reserve_len + key.len()], key);
-        assert_eq!(&raw_key[prefix_reserve_len + key.len()..version_start], b"\x00\x00");
+        assert_eq!(
+            &raw_key[prefix_reserve_len..prefix_reserve_len + key.len()],
+            key
+        );
+        assert_eq!(
+            &raw_key[prefix_reserve_len + key.len()..version_start],
+            b"\x00\x00"
+        );
 
         let version_bytes = &raw_key[version_start..version_end];
         let version_le = u64::from_le_bytes(version_bytes.try_into().unwrap());

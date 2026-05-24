@@ -19,8 +19,8 @@
 //! This module provides string operations for Redis storage
 
 use chrono::Utc;
-use rocksdb::ReadOptions;
 use kstd::lock_mgr::ScopeRecordLock;
+use rocksdb::ReadOptions;
 use snafu::{OptionExt, ResultExt};
 
 use crate::error::Error::*;
@@ -102,14 +102,16 @@ impl Redis {
                 batch.commit()?;
             }
             DataType::Hash | DataType::Set | DataType::ZSet => {
-                let mut parsed = crate::format_base_meta_value::ParsedBaseMetaValue::new(&value[..])?;
+                let mut parsed =
+                    crate::format_base_meta_value::ParsedBaseMetaValue::new(&value[..])?;
                 parsed.set_etime(etime);
                 let mut batch = self.create_batch()?;
                 batch.put(ColumnFamilyIndex::MetaCF, &base_meta_key, parsed.encoded())?;
                 batch.commit()?;
             }
             DataType::List => {
-                let mut parsed = crate::format_list_meta_value::ParsedListsMetaValue::new(&value[..])?;
+                let mut parsed =
+                    crate::format_list_meta_value::ParsedListsMetaValue::new(&value[..])?;
                 parsed.set_etime(etime);
                 let mut batch = self.create_batch()?;
                 batch.put(ColumnFamilyIndex::MetaCF, &base_meta_key, parsed.value())?;
