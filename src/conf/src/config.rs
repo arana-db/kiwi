@@ -83,7 +83,7 @@ impl std::str::FromStr for CompressionType {
 const DEFAULT_BINDING: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 7379; // Redis-compatible port (7xxx variant of 6379)
 // config struct define - keeping original config items but using Redis-style format
-#[derive(Debug, Validate)]
+#[derive(Validate)]
 pub struct Config {
     // Original config items from config.ini
     #[validate(range(min = 1024, max = 65535))]
@@ -114,10 +114,91 @@ pub struct Config {
     pub binding: String,
     pub timeout: u32,
     pub log_dir: String,
+    pub db_dir: String,
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
     pub db_path: String,
+    /// Authentication password. When set, clients must authenticate via AUTH command.
+    pub requirepass: Option<String>,
     pub raft: Option<RaftClusterConfig>,
+}
+
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("port", &self.port)
+            .field("memory", &self.memory)
+            .field(
+                "small_compaction_threshold",
+                &self.small_compaction_threshold,
+            )
+            .field(
+                "small_compaction_duration_threshold",
+                &self.small_compaction_duration_threshold,
+            )
+            .field(
+                "rocksdb_max_subcompactions",
+                &self.rocksdb_max_subcompactions,
+            )
+            .field(
+                "rocksdb_max_background_jobs",
+                &self.rocksdb_max_background_jobs,
+            )
+            .field(
+                "rocksdb_max_write_buffer_number",
+                &self.rocksdb_max_write_buffer_number,
+            )
+            .field(
+                "rocksdb_min_write_buffer_number_to_merge",
+                &self.rocksdb_min_write_buffer_number_to_merge,
+            )
+            .field("rocksdb_write_buffer_size", &self.rocksdb_write_buffer_size)
+            .field(
+                "rocksdb_level0_file_num_compaction_trigger",
+                &self.rocksdb_level0_file_num_compaction_trigger,
+            )
+            .field("rocksdb_num_levels", &self.rocksdb_num_levels)
+            .field(
+                "rocksdb_enable_pipelined_write",
+                &self.rocksdb_enable_pipelined_write,
+            )
+            .field(
+                "rocksdb_level0_slowdown_writes_trigger",
+                &self.rocksdb_level0_slowdown_writes_trigger,
+            )
+            .field(
+                "rocksdb_level0_stop_writes_trigger",
+                &self.rocksdb_level0_stop_writes_trigger,
+            )
+            .field("rocksdb_ttl_second", &self.rocksdb_ttl_second)
+            .field("rocksdb_periodic_second", &self.rocksdb_periodic_second)
+            .field(
+                "rocksdb_level_compaction_dynamic_level_bytes",
+                &self.rocksdb_level_compaction_dynamic_level_bytes,
+            )
+            .field("rocksdb_max_open_files", &self.rocksdb_max_open_files)
+            .field(
+                "rocksdb_target_file_size_base",
+                &self.rocksdb_target_file_size_base,
+            )
+            .field("rocksdb_compression_type", &self.rocksdb_compression_type)
+            .field("binding", &self.binding)
+            .field("timeout", &self.timeout)
+            .field("log_dir", &self.log_dir)
+            .field("redis_compatible_mode", &self.redis_compatible_mode)
+            .field("db_instance_num", &self.db_instance_num)
+            .field("db_path", &self.db_path)
+            .field(
+                "requirepass",
+                if self.requirepass.is_some() {
+                    &"<REDACTED>"
+                } else {
+                    &"<NONE>"
+                },
+            )
+            .field("raft", &self.raft)
+            .finish()
+    }
 }
 
 #[derive(Debug, Validate, Clone)]
@@ -127,6 +208,9 @@ pub struct RaftClusterConfig {
     pub raft_addr: String,
     pub resp_addr: String,
     pub data_dir: String,
+    pub heartbeat_interval_ms: Option<u64>,
+    pub election_timeout_min_ms: Option<u64>,
+    pub election_timeout_max_ms: Option<u64>,
     /// 是否使用内存日志存储，默认 false（使用 RocksDB 持久化存储）
     pub use_memory_log_store: bool,
 }
@@ -140,6 +224,7 @@ impl Default for Config {
             timeout: 50,
             memory: 1024 * 1024 * 1024, // 1GB
             log_dir: "/data/kiwi_rs/logs".to_string(),
+            db_dir: "./db".to_string(),
             redis_compatible_mode: false,
 
             rocksdb_max_subcompactions: 0,
@@ -163,6 +248,7 @@ impl Default for Config {
             db_path: "./db".to_string(),
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
+            requirepass: None,
             raft: None,
         }
     }
@@ -185,6 +271,9 @@ impl Config {
         let mut raft_addr: Option<String> = None;
         let mut raft_resp_addr: Option<String> = None;
         let mut raft_data_dir: Option<String> = None;
+        let mut raft_heartbeat_interval: Option<u64> = None;
+        let mut raft_election_timeout_min: Option<u64> = None;
+        let mut raft_election_timeout_max: Option<u64> = None;
         let mut raft_use_memory_log_store: bool = false;
 
         // Parse each configuration value
@@ -205,6 +294,18 @@ impl Config {
                 }
                 "log-dir" => {
                     config.log_dir = value;
+                }
+                "db-dir" => {
+                    let trimmed = value.trim();
+                    if trimmed.is_empty() {
+                        return Err(Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(
+                                "db-dir must not be empty".to_string(),
+                            ),
+                        });
+                    }
+                    config.db_dir = trimmed.to_string();
+                    config.db_path = trimmed.to_string();
                 }
                 "redis-compatible-mode" => {
                     config.redis_compatible_mode =
@@ -389,7 +490,7 @@ impl Config {
                             )),
                         })?;
                 }
-                "raft-node-id" => {
+                "raft-node-id" | "cluster-node-id" => {
                     raft_node_id = Some(value.parse().map_err(|e| Error::InvalidConfig {
                         source: serde_ini::de::Error::Custom(format!(
                             "Invalid raft-node-id: {}",
@@ -397,14 +498,41 @@ impl Config {
                         )),
                     })?);
                 }
-                "raft-addr" => {
+                "raft-addr" | "cluster-addr" => {
                     raft_addr = Some(value);
                 }
-                "raft-resp-addr" => {
+                "raft-resp-addr" | "cluster-resp-addr" => {
                     raft_resp_addr = Some(value);
                 }
-                "raft-data-dir" => {
+                "raft-data-dir" | "cluster-data-dir" => {
                     raft_data_dir = Some(value);
+                }
+                "raft-heartbeat-interval" | "cluster-heartbeat-interval" => {
+                    raft_heartbeat_interval =
+                        Some(value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid raft-heartbeat-interval: {}",
+                                e
+                            )),
+                        })?);
+                }
+                "raft-election-timeout-min" | "cluster-election-timeout-min" => {
+                    raft_election_timeout_min =
+                        Some(value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid raft-election-timeout-min: {}",
+                                e
+                            )),
+                        })?);
+                }
+                "raft-election-timeout-max" | "cluster-election-timeout-max" => {
+                    raft_election_timeout_max =
+                        Some(value.parse().map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid raft-election-timeout-max: {}",
+                                e
+                            )),
+                        })?);
                 }
                 "raft-use-memory-log-store" => {
                     raft_use_memory_log_store =
@@ -416,7 +544,11 @@ impl Config {
                         })?;
                 }
                 "db-path" => {
-                    config.db_path = value;
+                    config.db_path = value.clone();
+                    config.db_dir = value;
+                }
+                "requirepass" => {
+                    config.requirepass = Some(value);
                 }
                 _ => {
                     // Unknown configuration key, skip it
@@ -433,6 +565,9 @@ impl Config {
                 raft_addr: addr,
                 resp_addr,
                 data_dir,
+                heartbeat_interval_ms: raft_heartbeat_interval,
+                election_timeout_min_ms: raft_election_timeout_min,
+                election_timeout_max_ms: raft_election_timeout_max,
                 use_memory_log_store: raft_use_memory_log_store,
             });
         }
@@ -443,7 +578,9 @@ impl Config {
 
         Ok(config)
     }
+}
 
+impl Config {
     // TODO: Due to API issues, the rocksdb_ttl_second parameter is temporarily missing
     pub fn get_rocksdb_options(&self) -> rocksdb::Options {
         let mut options = rocksdb::Options::default();

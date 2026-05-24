@@ -107,10 +107,9 @@ pub struct TcpServer {
 }
 
 impl TcpServer {
-    pub fn new(addr: Option<String>) -> Result<Self, Box<dyn Error>> {
-        // TODO: Get storage options from config
+    pub fn new(addr: Option<String>, db_dir: Option<&str>) -> Result<Self, Box<dyn Error>> {
         let storage_options = Arc::new(StorageOptions::default());
-        let db_path = PathBuf::from("./db");
+        let db_path = PathBuf::from(db_dir.unwrap_or("./db"));
         let mut storage = Storage::new(1, 0);
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
@@ -123,7 +122,7 @@ impl TcpServer {
         let pool_config = default_pool_config();
 
         let storage = Arc::new(storage);
-        let cmd_table = Arc::new(create_command_table());
+        let cmd_table = Arc::new(create_command_table(Arc::new(|| None)));
 
         Ok(Self {
             addr: addr.unwrap_or("127.0.0.1:7379".to_string()),
@@ -177,9 +176,12 @@ impl ServerTrait for TcpServer {
                     }
                 };
 
-                // Create client for this specific connection
+                // Create client for this specific connection.
+                // This legacy TCP path has no `requirepass` wiring; grant auth
+                // explicitly to match the fail-closed default in `Client::new`.
                 let stream = TcpStreamWrapper::new(socket);
                 let client = Arc::new(Client::new(Box::new(stream)));
+                client.set_authenticated(true);
 
                 // Process the connection
                 // TODO: Update to use StorageClient for dual runtime architecture

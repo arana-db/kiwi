@@ -26,6 +26,7 @@ use std::sync::Arc;
 use crate::network_execution::NetworkCmdExecution;
 use bytes::Bytes;
 use client::Client;
+use cmd::CmdFlags;
 use cmd::table::CmdTable;
 use executor::CmdExecutor;
 use log::{debug, error, warn};
@@ -349,6 +350,21 @@ async fn process_command_batch(
         client.set_cmd_name(&command.cmd_name);
         client.set_argv(&command.argv);
 
+        // Auth check: deny non-NO_AUTH commands when not authenticated
+        if !client.is_authenticated() {
+            let cmd_name_str = String::from_utf8_lossy(&command.cmd_name).to_lowercase();
+            if let Some(cmd) = cmd_table.get(&cmd_name_str) {
+                if !cmd.has_flag(CmdFlags::NO_AUTH) {
+                    client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
+                    let response = client.take_reply();
+                    let mut encoder = RespEncoder::new(RespVersion::RESP2);
+                    encoder.encode_resp_data(&response);
+                    let _ = client.write(encoder.get_response().as_ref()).await;
+                    continue;
+                }
+            }
+        }
+
         // Handle the command
         handle_network_command(
             client.clone(),
@@ -482,7 +498,7 @@ mod tests {
             Duration::from_secs(30),
         ));
         let storage_client = Arc::new(crate::storage_client::StorageClient::new(runtime_client));
-        let cmd_table = Arc::new(create_command_table());
+        let cmd_table = Arc::new(create_command_table(Arc::new(|| None)));
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
         (storage_client, cmd_table, executor)

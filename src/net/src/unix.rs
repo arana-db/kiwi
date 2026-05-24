@@ -33,22 +33,22 @@ pub struct UnixServer {
 }
 
 impl UnixServer {
-    pub fn new(path: Option<String>) -> Self {
+    pub fn new(path: Option<String>, db_dir: Option<&str>) -> Result<Self, Box<dyn Error>> {
         let path = path.unwrap_or_else(|| "/tmp/kiwidb.sock".to_string());
         let storage_options = Arc::new(StorageOptions::default());
-        let db_path = PathBuf::from("./db");
+        let db_path = PathBuf::from(db_dir.unwrap_or("./db"));
         let mut storage = Storage::new(1, 0);
         storage
             .open(storage_options, db_path)
-            .expect("failed to open storage");
+            .map_err(|e| Box::new(e) as Box<dyn Error>)?;
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
-        Self {
+        Ok(Self {
             path,
             storage: Arc::new(storage),
-            cmd_table: Arc::new(create_command_table()),
+            cmd_table: Arc::new(create_command_table(Arc::new(|| None))),
             executor,
-        }
+        })
     }
 }
 
@@ -99,6 +99,9 @@ mod unix_impl {
                     Ok((socket, _)) => {
                         let s = UnixStreamWrapper::new(socket);
                         let client = Arc::new(Client::new(Box::new(s)));
+                        // Unix socket path has no `requirepass` wiring; grant
+                        // auth explicitly to match the fail-closed default.
+                        client.set_authenticated(true);
                         let storage = self.storage.clone();
                         let cmd_table = self.cmd_table.clone();
                         let executor = self.executor.clone();

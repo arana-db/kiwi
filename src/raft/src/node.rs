@@ -23,9 +23,16 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
+use crate::grpc::{
+    create_admin_service, create_client_service, create_core_service, create_metrics_service,
+};
 use crate::log_store::LogStore;
 use crate::log_store_rocksdb::RocksdbLogStore;
 use crate::network::KiwiNetworkFactory;
+use crate::raft_proto::raft_admin_service_server::RaftAdminServiceServer;
+use crate::raft_proto::raft_client_service_server::RaftClientServiceServer;
+use crate::raft_proto::raft_core_service_server::RaftCoreServiceServer;
+use crate::raft_proto::raft_metrics_service_server::RaftMetricsServiceServer;
 use crate::state_machine::{KiwiStateMachine, PauseController};
 use storage::storage::Storage;
 
@@ -58,7 +65,28 @@ impl RaftApp {
 
     pub async fn client_write(&self, binlog: Binlog) -> Result<BinlogResponse, anyhow::Error> {
         let res = self.raft.client_write(binlog).await?;
-        Ok(res.data)
+        let log_id = Some(res.log_id.index);
+        Ok(BinlogResponse {
+            success: res.data.success,
+            message: res.data.message,
+            log_id,
+        })
+    }
+
+    pub fn create_grpc_services(
+        app: Arc<RaftApp>,
+    ) -> (
+        RaftCoreServiceServer<crate::grpc::core::RaftCoreServiceImpl>,
+        RaftAdminServiceServer<crate::grpc::admin::RaftAdminServiceImpl>,
+        RaftClientServiceServer<crate::grpc::client::RaftClientServiceImpl>,
+        RaftMetricsServiceServer<crate::grpc::client::RaftMetricsServiceImpl>,
+    ) {
+        (
+            create_core_service(app.raft.clone()),
+            create_admin_service(app.clone()),
+            create_client_service(app.clone()),
+            create_metrics_service(app),
+        )
     }
 }
 
@@ -67,31 +95,21 @@ pub struct RaftConfig {
     pub raft_addr: String,
     pub resp_addr: String,
     pub data_dir: PathBuf,
-    /// RocksDB data directory (`<db_path>/0`, …) — must match the opened `Storage` path.
     pub db_path: PathBuf,
     pub heartbeat_interval: u64,
     pub election_timeout_min: u64,
     pub election_timeout_max: u64,
-    /// Whether to use in-memory log store, default false (uses RocksDB for persistence)
     pub use_memory_log_store: bool,
-
-    // Snapshot configuration
-    /// Number of logs since last snapshot to trigger a new snapshot
     pub snapshot_logs_threshold: u64,
-    /// Maximum chunk size for snapshot transfer (bytes)
     pub snapshot_max_chunk_size: u64,
-    /// Timeout for installing a snapshot (milliseconds)
     pub install_snapshot_timeout: u64,
-    /// Maximum number of logs to keep that are already in snapshot
     pub max_in_snapshot_log_to_keep: u64,
-    /// Replication lag threshold to use snapshot for catch-up
     pub replication_lag_threshold: u64,
 }
 
-// Snapshot configuration defaults
 const SNAPSHOT_LOGS_THRESHOLD: u64 = 5000;
-const SNAPSHOT_MAX_CHUNK_SIZE: u64 = 3 * 1024 * 1024; // 3MB
-const INSTALL_SNAPSHOT_TIMEOUT: u64 = 200; // milliseconds
+const SNAPSHOT_MAX_CHUNK_SIZE: u64 = 3 * 1024 * 1024;
+const INSTALL_SNAPSHOT_TIMEOUT: u64 = 200;
 const MAX_IN_SNAPSHOT_LOG_TO_KEEP: u64 = 1000;
 const REPLICATION_LAG_THRESHOLD: u64 = 5000;
 
@@ -105,7 +123,7 @@ impl Default for RaftConfig {
             db_path: PathBuf::from("/tmp/kiwi/db"),
             heartbeat_interval: 200,
             election_timeout_min: 500,
-            election_timeout_max: 1000,
+            election_timeout_max: 1500,
             use_memory_log_store: false,
             snapshot_logs_threshold: SNAPSHOT_LOGS_THRESHOLD,
             snapshot_max_chunk_size: SNAPSHOT_MAX_CHUNK_SIZE,
@@ -116,28 +134,21 @@ impl Default for RaftConfig {
     }
 }
 
-/// Build common Raft configuration
 fn build_raft_config(config: &RaftConfig) -> Result<Arc<Config>, anyhow::Error> {
     let raft_config = Config {
         heartbeat_interval: config.heartbeat_interval,
         election_timeout_min: config.election_timeout_min,
         election_timeout_max: config.election_timeout_max,
-
-        // Snapshot configuration
         snapshot_policy: SnapshotPolicy::LogsSinceLast(config.snapshot_logs_threshold),
         replication_lag_threshold: config.replication_lag_threshold,
         snapshot_max_chunk_size: config.snapshot_max_chunk_size,
         install_snapshot_timeout: config.install_snapshot_timeout,
         max_in_snapshot_log_to_keep: config.max_in_snapshot_log_to_keep,
-
         ..Default::default()
     };
     Ok(Arc::new(raft_config.validate()?))
 }
 
-/// Build RaftApp.
-///
-/// Uses RocksDB log store by default; set `raft-use-memory-log-store yes` in config to use in-memory log store (for testing).
 pub async fn create_raft_node(
     config: RaftConfig,
     storage_swap: Arc<ArcSwap<Storage>>,
@@ -154,7 +165,6 @@ pub async fn create_raft_node(
         snapshot_work_dir,
     );
 
-    // Set pause controller for snapshot installation
     if let Some(ctrl) = pause_controller {
         state_machine.set_pause_controller(ctrl);
     }

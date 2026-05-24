@@ -43,6 +43,7 @@ struct ClientContext {
     cmd_name: Arc<Vec<u8>>,
     key: Vec<u8>,
     reply: RespData,
+    authenticated: bool,
 }
 
 impl Client {
@@ -55,6 +56,9 @@ impl Client {
                 cmd_name: Arc::new(Vec::default()),
                 key: Vec::default(),
                 reply: RespData::default(),
+                // Default to false (fail-closed): callers must explicitly grant
+                // authentication when no `requirepass` is configured.
+                authenticated: false,
             }),
         }
     }
@@ -117,5 +121,15 @@ impl Client {
     pub fn take_reply(&self) -> RespData {
         let mut ctx = self.ctx.lock();
         std::mem::take(&mut ctx.reply)
+    }
+
+    pub fn is_authenticated(&self) -> bool {
+        let ctx = self.ctx.lock();
+        ctx.authenticated
+    }
+
+    pub fn set_authenticated(&self, val: bool) {
+        let mut ctx = self.ctx.lock();
+        ctx.authenticated = val;
     }
 }
