@@ -23,7 +23,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashSet;
-use rocksdb::{WriteBatch, WriteOptions, ReadOptions};
+use rocksdb::{WriteBatch, WriteOptions, ReadOptions, IteratorMode, Direction};
 
 use crate::{Result, StorageError};
 use crate::format::{DataType, InternalValue, ParsedInternalValue};
