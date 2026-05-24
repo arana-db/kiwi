@@ -15,6 +15,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::mem::size_of;
+
 use crate::error::InvalidFormatSnafu;
 use crate::error::Result;
 use crate::storage_define::{PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH};
@@ -573,9 +575,9 @@ mod tests {
 
             // Verify actual encoded length matches expected length
             assert_eq!(
-                encoded.capacity(),
+                encoded.len(),
                 expected_len,
-                "Capacity mismatch for key={:?}, member={:?}",
+                "Encoded length mismatch for key={:?}, member={:?}",
                 key,
                 member
             );

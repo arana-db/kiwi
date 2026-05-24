@@ -13,13 +13,13 @@
 
 ## Hash 结构的存储
 
-Hash 类型数据结构由两部分构成，元数据（meta_key，meta_value）和普通数据（data_key，data_value）。每个 Hash 类型数据对应一条元数据，每个 Filed 对应一条普通数据。具体格式如下图所示。
+Hash 类型数据结构由两部分构成，元数据（meta_key，meta_value）和普通数据（data_key，data_value）。每个 Hash 类型数据对应一条元数据，每个 field 对应一条普通数据。具体格式如下图所示。
 
 ![img.png](images/01-hash编码.png)
 
-元数据中的 key 由前缀保留字段，编码后的 user key 以及后缀保留字段构成，value 中记录了 hash 中元素个数，最新版本号，保留字段，数据写入时间以及数据过期时间，version 字段用于实现秒删功能。
+元数据中的 key 由前缀保留字段，编码后的 user key 以及后缀保留字段构成，value 中记录了 hash 中元素个数，最新版本号，保留字段，数据写入时间以及数据过期时间。version 字段使用 u64 little-endian 编码，并用于实现秒删功能。
 
-普通数据主要就是指的同一个 hash 表中一一对应的 field 和 value，普通数据的 key 字段依次拼接了保留字段，编码后的 user key，元数据中的最新 version，filed 字段以及后缀保留字段。value 则拼接了保留字段以及 field 写入时间。
+普通数据主要就是指同一个 hash 表中一一对应的 field 和 value，普通数据的 key 字段依次拼接了保留字段、编码后的 user key、元数据中的最新 version、field 字段以及后缀保留字段。value 则拼接了保留字段以及 field 写入时间。
 
 当执行读写以及删除单个 field 操作时，首先获取元信息，之后解析出 version，再将主 key，version 和 field字段拼接得到最终的 data key，最后读写 data key。
 
@@ -47,7 +47,7 @@ list 由两部分构成，元数据(meta_key, meta_value), 和普通数据(data_
 
 ## ZSets 结构的存储
 
-zset 由两部分构成，元数据(meta_key, meta_value), 普通数据(data_key, data_value)。元数据中存储的主要是 zset 集合的一些信息， 比如说当前 zset 集合中 member 的数量以及当前 zset 集合的版本号和过期时间(用做秒删功能), 而普通数据就是指的 zset 中每个 member 以及对应的 score。由于 zset 这种数据结构比较特殊，需要按照 memer 进行排序，也需要按照 score 进行排序，所以我们对于每一个 zset 我们会按照不同的格式存储两份普通数据, 在这里我们称为 member to score 和 score to member，作为具体最后 RocksDB 落盘的 KV 格式，具体格式如下：
+zset 由两部分构成，元数据(meta_key, meta_value) 和普通数据(data_key, data_value)。元数据中存储的主要是 zset 集合的一些信息，比如当前 zset 集合中 member 的数量以及当前 zset 集合的版本号和过期时间（用于秒删功能），而普通数据就是指 zset 中每个 member 以及对应的 score。由于 zset 这种数据结构比较特殊，需要按照 member 排序，也需要按照 score 排序，所以我们会按不同格式存储两份普通数据，在这里称为 member to score 和 score to member。作为最终 RocksDB 落盘的 KV 格式，具体如下：
 
 ![img.png](images/01-zset编码.png)
 
