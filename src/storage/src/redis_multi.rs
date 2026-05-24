@@ -484,7 +484,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result
     }
@@ -496,7 +496,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result.push(0); // separator
         result.extend_from_slice(field);
@@ -511,7 +511,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result
     }
@@ -523,7 +523,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result.push(0); // separator
         result.extend_from_slice(&index.to_be_bytes());
@@ -538,7 +538,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result
     }
@@ -550,7 +550,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result
     }
