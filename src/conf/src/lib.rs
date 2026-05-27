@@ -19,7 +19,6 @@ pub mod de_func;
 pub mod error;
 pub mod raft_type;
 
-#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use validator::Validate;
@@ -75,37 +74,8 @@ mod tests {
 
     #[test]
     fn test_validate_port_range() {
-        let mut invalid_config = Config {
-            binding: "127.0.0.1".to_string(),
-            port: 999,
-            timeout: 100,
-            redis_compatible_mode: false,
-            log_dir: "".to_string(),
-            db_dir: "./db".to_string(),
-            memory: 1024,
-            rocksdb_max_subcompactions: 0,
-            rocksdb_max_background_jobs: 4,
-            rocksdb_max_write_buffer_number: 2,
-            rocksdb_min_write_buffer_number_to_merge: 2,
-            rocksdb_write_buffer_size: 64 << 20,
-            rocksdb_level0_file_num_compaction_trigger: 4,
-            rocksdb_num_levels: 7,
-            rocksdb_enable_pipelined_write: false,
-            rocksdb_level0_slowdown_writes_trigger: 20,
-            rocksdb_level0_stop_writes_trigger: 36,
-            rocksdb_ttl_second: 30 * 24 * 60 * 60,
-            rocksdb_periodic_second: 30 * 24 * 60 * 60,
-            rocksdb_level_compaction_dynamic_level_bytes: true,
-            rocksdb_max_open_files: 10000,
-            rocksdb_target_file_size_base: 64 << 20,
-            rocksdb_compression_type: config::CompressionType::Lz4,
-            db_instance_num: 3,
-            small_compaction_threshold: 5000,
-            small_compaction_duration_threshold: 10000,
-            db_path: "./db".to_string(),
-            requirepass: None,
-            raft: None,
-        };
+        let mut invalid_config = Config::default();
+        invalid_config.port = 999;
         assert!(invalid_config.validate().is_err());
 
         invalid_config.port = 8080;
@@ -122,16 +92,109 @@ mod tests {
     fn test_db_dir_from_config_file() {
         use std::io::Write;
 
-        let filename = format!("kiwi_test_db_dir_{}.conf", std::process::id());
-        let tmp = std::env::temp_dir().join(filename);
+        let tmp = std::env::temp_dir().join(format!(
+            "kiwi_test_db_dir_{}.toml",
+            std::process::id()
+        ));
         let config_path = tmp.to_str().unwrap();
         let mut f = std::fs::File::create(config_path).unwrap();
-        writeln!(f, "port 7379").unwrap();
-        writeln!(f, "db-dir /data/kiwi/db").unwrap();
+        writeln!(f, "port = 7379").unwrap();
+        writeln!(f, "db-dir = \"/data/kiwi/db\"").unwrap();
         drop(f);
 
         let config = Config::load(config_path).unwrap();
         assert_eq!("/data/kiwi/db", config.db_dir);
+
+        let _ = std::fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn test_toml_raft_section() {
+        use std::io::Write;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "kiwi_test_raft_{}.toml",
+            std::process::id()
+        ));
+        let config_path = tmp.to_str().unwrap();
+        let mut f = std::fs::File::create(config_path).unwrap();
+        writeln!(f, "port = 7379").unwrap();
+        writeln!(f, "[raft]").unwrap();
+        writeln!(f, "node-id = 1").unwrap();
+        writeln!(f, "raft-addr = \"127.0.0.1:8081\"").unwrap();
+        writeln!(f, "resp-addr = \"127.0.0.1:6379\"").unwrap();
+        writeln!(f, "data-dir = \"/tmp/kiwi/raft\"").unwrap();
+        drop(f);
+
+        let config = Config::load(config_path).unwrap();
+        assert!(config.raft.is_some());
+        let raft = config.raft.unwrap();
+        assert_eq!(1, raft.node_id);
+        assert_eq!("127.0.0.1:8081", raft.raft_addr);
+        assert_eq!("127.0.0.1:6379", raft.resp_addr);
+        assert_eq!("/tmp/kiwi/raft", raft.data_dir);
+        assert!(!raft.use_memory_log_store);
+
+        let _ = std::fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn test_toml_memory_string() {
+        use std::io::Write;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "kiwi_test_memory_{}.toml",
+            std::process::id()
+        ));
+        let config_path = tmp.to_str().unwrap();
+        let mut f = std::fs::File::create(config_path).unwrap();
+        writeln!(f, "port = 7379").unwrap();
+        writeln!(f, "memory = \"2GB\"").unwrap();
+        drop(f);
+
+        let config = Config::load(config_path).unwrap();
+        assert_eq!(2 * 1024 * 1024 * 1024, config.memory);
+
+        let _ = std::fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn test_toml_memory_integer() {
+        use std::io::Write;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "kiwi_test_memory_int_{}.toml",
+            std::process::id()
+        ));
+        let config_path = tmp.to_str().unwrap();
+        let mut f = std::fs::File::create(config_path).unwrap();
+        writeln!(f, "port = 7379").unwrap();
+        writeln!(f, "memory = 536870912").unwrap(); // 512MB as raw bytes
+        drop(f);
+
+        let config = Config::load(config_path).unwrap();
+        assert_eq!(536870912, config.memory);
+
+        let _ = std::fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn test_minimal_toml() {
+        use std::io::Write;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "kiwi_test_minimal_{}.toml",
+            std::process::id()
+        ));
+        let config_path = tmp.to_str().unwrap();
+        let mut f = std::fs::File::create(config_path).unwrap();
+        writeln!(f, "# minimal config - everything else uses defaults").unwrap();
+        drop(f);
+
+        let config = Config::load(config_path).unwrap();
+        assert_eq!(7379, config.port);
+        assert_eq!("127.0.0.1", config.binding);
+        assert!(config.raft.is_none());
 
         let _ = std::fs::remove_file(config_path);
     }

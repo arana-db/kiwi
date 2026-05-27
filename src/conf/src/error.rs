@@ -18,7 +18,6 @@ use std::io;
 use std::num::ParseIntError;
 use std::path::PathBuf;
 
-use serde_ini::de::Error as serdeErr;
 use snafu::Snafu;
 
 #[derive(Debug, Snafu)]
@@ -28,7 +27,7 @@ pub enum Error {
     ConfigFile { source: io::Error, path: PathBuf },
 
     #[snafu(display("Invalid configuration: {}", source))]
-    InvalidConfig { source: serdeErr },
+    InvalidConfig { source: toml::de::Error },
 
     #[snafu(display("validate fail: {}", source))]
     ValidConfigFail { source: validator::ValidationErrors },

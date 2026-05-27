@@ -14,45 +14,60 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use std::collections::HashMap;
-
 use serde::{Deserialize, Deserializer, de};
 
 use crate::error::MemoryParseError;
+
+/// Serde deserializer for boolean fields that accept yes/no/true/false/1/0/on/off.
+/// TOML natively supports true/false, so this is mainly for backward-compatible values.
 pub fn deserialize_bool_from_yes_no<'de, D>(deserializer: D) -> Result<bool, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let s: String = Deserialize::deserialize(deserializer)?;
-    match s.to_lowercase().as_str() {
-        "yes" | "true" | "1" | "on" => Ok(true),
-        "no" | "false" | "0" | "off" => Ok(false),
-        _ => Err(de::Error::custom(
-            "expected one of: yes, no, true, false, 1, 0, on, off",
-        )),
+    // First try TOML native bool
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum BoolLike {
+        Bool(bool),
+        String(String),
+        Int(i64),
+    }
+
+    match BoolLike::deserialize(deserializer)? {
+        BoolLike::Bool(b) => Ok(b),
+        BoolLike::Int(i) => match i {
+            1 => Ok(true),
+            0 => Ok(false),
+            _ => Err(de::Error::custom(format!(
+                "invalid integer for bool: {}, expected 0 or 1",
+                i
+            ))),
+        },
+        BoolLike::String(s) => match s.to_lowercase().as_str() {
+            "yes" | "true" | "1" | "on" => Ok(true),
+            "no" | "false" | "0" | "off" => Ok(false),
+            _ => Err(de::Error::custom(
+                "expected one of: yes, no, true, false, 1, 0, on, off",
+            )),
+        },
     }
 }
 
+/// Serde deserializer for memory fields that accept human-readable sizes like "256MB", "1GB".
 pub fn deserialize_memory<'de, D>(deserializer: D) -> Result<u64, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let s: String = Deserialize::deserialize(deserializer)?;
-    match parse_memory(s.as_str()) {
-        Ok(num) => Ok(num),
-        Err(e) => Err(de::Error::custom(e)),
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum MemoryLike {
+        Int(u64),
+        String(String),
     }
-}
 
-/// Parse boolean from string (for config parsing, not serde)
-pub fn parse_bool_from_string(s: &str) -> Result<bool, String> {
-    match s.to_lowercase().as_str() {
-        "yes" | "true" | "1" | "on" => Ok(true),
-        "no" | "false" | "0" | "off" => Ok(false),
-        _ => Err(format!(
-            "Invalid boolean value '{}', expected one of: yes, no, true, false, 1, 0, on, off",
-            s
-        )),
+    match MemoryLike::deserialize(deserializer)? {
+        MemoryLike::Int(n) => Ok(n),
+        MemoryLike::String(s) => parse_memory(s.as_str()).map_err(de::Error::custom),
     }
 }
 
@@ -96,70 +111,4 @@ pub fn parse_memory(input: &str) -> Result<u64, MemoryParseError> {
             raw: input.to_string(),
         }),
     }
-}
-
-/// Parse Redis-style configuration file content
-/// Supports comments starting with # and empty lines
-pub fn parse_redis_config(content: &str) -> Result<HashMap<String, String>, String> {
-    let mut config = HashMap::new();
-
-    for (line_num, raw_line) in content.lines().enumerate() {
-        // Remove inline comments (everything after '#'), then trim
-        let line = raw_line
-            .split_once('#')
-            .map_or(raw_line, |(before, _)| before)
-            .trim();
-
-        // Skip empty lines
-        if line.is_empty() {
-            continue;
-        }
-
-        // Parse key-value pairs
-        if let Some((key, value)) = parse_config_line(line) {
-            config.insert(key, value);
-        } else {
-            return Err(format!(
-                "Invalid configuration line {}: {}",
-                line_num + 1,
-                line
-            ));
-        }
-    }
-
-    Ok(config)
-}
-
-/// Parse a single configuration line
-/// Supports both "key value" and "key=value" formats
-fn parse_config_line(line: &str) -> Option<(String, String)> {
-    // Try "key=value" format first
-    if let Some(pos) = line.find('=') {
-        let key = line[..pos].trim().to_string();
-        let value = line[pos + 1..].trim().to_string();
-        return Some((key, value));
-    }
-
-    // Try "key value" format
-    if let Some(pos) = line.find(' ') {
-        let key = line[..pos].trim().to_string();
-        let value = line[pos..].trim().to_string();
-        if !value.is_empty() {
-            return Some((key, value));
-        }
-    }
-
-    None
-}
-
-/// Convert Redis-style configuration to INI format for compatibility
-pub fn redis_config_to_ini(content: &str) -> Result<String, String> {
-    let config = parse_redis_config(content)?;
-    let mut ini_content = String::new();
-
-    for (key, value) in config {
-        ini_content.push_str(&format!("{} = {}\n", key, value));
-    }
-
-    Ok(ini_content)
 }
