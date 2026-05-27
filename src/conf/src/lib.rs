@@ -92,10 +92,8 @@ mod tests {
     fn test_db_dir_from_config_file() {
         use std::io::Write;
 
-        let tmp = std::env::temp_dir().join(format!(
-            "kiwi_test_db_dir_{}.toml",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("kiwi_test_db_dir_{}.toml", std::process::id()));
         let config_path = tmp.to_str().unwrap();
         let mut f = std::fs::File::create(config_path).unwrap();
         writeln!(f, "port = 7379").unwrap();
@@ -112,10 +110,7 @@ mod tests {
     fn test_toml_raft_section() {
         use std::io::Write;
 
-        let tmp = std::env::temp_dir().join(format!(
-            "kiwi_test_raft_{}.toml",
-            std::process::id()
-        ));
+        let tmp = std::env::temp_dir().join(format!("kiwi_test_raft_{}.toml", std::process::id()));
         let config_path = tmp.to_str().unwrap();
         let mut f = std::fs::File::create(config_path).unwrap();
         writeln!(f, "port = 7379").unwrap();
@@ -142,10 +137,8 @@ mod tests {
     fn test_toml_memory_string() {
         use std::io::Write;
 
-        let tmp = std::env::temp_dir().join(format!(
-            "kiwi_test_memory_{}.toml",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("kiwi_test_memory_{}.toml", std::process::id()));
         let config_path = tmp.to_str().unwrap();
         let mut f = std::fs::File::create(config_path).unwrap();
         writeln!(f, "port = 7379").unwrap();
@@ -162,10 +155,8 @@ mod tests {
     fn test_toml_memory_integer() {
         use std::io::Write;
 
-        let tmp = std::env::temp_dir().join(format!(
-            "kiwi_test_memory_int_{}.toml",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("kiwi_test_memory_int_{}.toml", std::process::id()));
         let config_path = tmp.to_str().unwrap();
         let mut f = std::fs::File::create(config_path).unwrap();
         writeln!(f, "port = 7379").unwrap();
@@ -182,10 +173,8 @@ mod tests {
     fn test_minimal_toml() {
         use std::io::Write;
 
-        let tmp = std::env::temp_dir().join(format!(
-            "kiwi_test_minimal_{}.toml",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("kiwi_test_minimal_{}.toml", std::process::id()));
         let config_path = tmp.to_str().unwrap();
         let mut f = std::fs::File::create(config_path).unwrap();
         writeln!(f, "# minimal config - everything else uses defaults").unwrap();

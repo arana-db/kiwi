@@ -106,33 +106,87 @@ const DEFAULT_PORT: u16 = 7379; // Redis-compatible port (7xxx variant of 6379)
 
 /// Default functions for serde
 mod defaults {
-    pub fn binding() -> String { super::DEFAULT_BINDING.to_string() }
-    pub fn port() -> u16 { super::DEFAULT_PORT }
-    pub fn timeout() -> u32 { 50 }
-    pub fn memory() -> u64 { 1024 * 1024 * 1024 } // 1GB
-    pub fn log_dir() -> String { "/data/kiwi_rs/logs".to_string() }
-    pub fn db_dir() -> String { "./db".to_string() }
-    pub fn db_path() -> String { "./db".to_string() }
-    pub fn redis_compatible_mode() -> bool { false }
-    pub fn db_instance_num() -> usize { 3 }
-    pub fn rocksdb_max_subcompactions() -> u32 { 0 }
-    pub fn rocksdb_max_background_jobs() -> i32 { 4 }
-    pub fn rocksdb_max_write_buffer_number() -> i32 { 2 }
-    pub fn rocksdb_min_write_buffer_number_to_merge() -> i32 { 2 }
-    pub fn rocksdb_write_buffer_size() -> usize { 64 << 20 } // 64MB
-    pub fn rocksdb_level0_file_num_compaction_trigger() -> i32 { 4 }
-    pub fn rocksdb_num_levels() -> i32 { 7 }
-    pub fn rocksdb_enable_pipelined_write() -> bool { false }
-    pub fn rocksdb_level0_slowdown_writes_trigger() -> i32 { 20 }
-    pub fn rocksdb_level0_stop_writes_trigger() -> i32 { 36 }
-    pub fn rocksdb_ttl_second() -> u64 { 30 * 24 * 60 * 60 } // 30 days
-    pub fn rocksdb_periodic_second() -> u64 { 30 * 24 * 60 * 60 } // 30 days
-    pub fn rocksdb_level_compaction_dynamic_level_bytes() -> bool { true }
-    pub fn rocksdb_max_open_files() -> i32 { 10000 }
-    pub fn rocksdb_target_file_size_base() -> u64 { 64 << 20 } // 64MB
-    pub fn rocksdb_compression_type() -> super::CompressionType { super::CompressionType::Lz4 }
-    pub fn small_compaction_threshold() -> usize { 5000 }
-    pub fn small_compaction_duration_threshold() -> usize { 10000 }
+    pub fn binding() -> String {
+        super::DEFAULT_BINDING.to_string()
+    }
+    pub fn port() -> u16 {
+        super::DEFAULT_PORT
+    }
+    pub fn timeout() -> u32 {
+        50
+    }
+    pub fn memory() -> u64 {
+        1024 * 1024 * 1024
+    } // 1GB
+    pub fn log_dir() -> String {
+        "/data/kiwi_rs/logs".to_string()
+    }
+    pub fn db_dir() -> String {
+        "./db".to_string()
+    }
+    pub fn db_path() -> String {
+        "./db".to_string()
+    }
+    pub fn redis_compatible_mode() -> bool {
+        false
+    }
+    pub fn db_instance_num() -> usize {
+        3
+    }
+    pub fn rocksdb_max_subcompactions() -> u32 {
+        0
+    }
+    pub fn rocksdb_max_background_jobs() -> i32 {
+        4
+    }
+    pub fn rocksdb_max_write_buffer_number() -> i32 {
+        2
+    }
+    pub fn rocksdb_min_write_buffer_number_to_merge() -> i32 {
+        2
+    }
+    pub fn rocksdb_write_buffer_size() -> usize {
+        64 << 20
+    } // 64MB
+    pub fn rocksdb_level0_file_num_compaction_trigger() -> i32 {
+        4
+    }
+    pub fn rocksdb_num_levels() -> i32 {
+        7
+    }
+    pub fn rocksdb_enable_pipelined_write() -> bool {
+        false
+    }
+    pub fn rocksdb_level0_slowdown_writes_trigger() -> i32 {
+        20
+    }
+    pub fn rocksdb_level0_stop_writes_trigger() -> i32 {
+        36
+    }
+    pub fn rocksdb_ttl_second() -> u64 {
+        30 * 24 * 60 * 60
+    } // 30 days
+    pub fn rocksdb_periodic_second() -> u64 {
+        30 * 24 * 60 * 60
+    } // 30 days
+    pub fn rocksdb_level_compaction_dynamic_level_bytes() -> bool {
+        true
+    }
+    pub fn rocksdb_max_open_files() -> i32 {
+        10000
+    }
+    pub fn rocksdb_target_file_size_base() -> u64 {
+        64 << 20
+    } // 64MB
+    pub fn rocksdb_compression_type() -> super::CompressionType {
+        super::CompressionType::Lz4
+    }
+    pub fn small_compaction_threshold() -> usize {
+        5000
+    }
+    pub fn small_compaction_duration_threshold() -> usize {
+        10000
+    }
 }
 
 // config struct define
@@ -385,7 +439,8 @@ impl Config {
         let content =
             std::fs::read_to_string(path).context(crate::error::ConfigFileSnafu { path })?;
 
-        let mut config: Config = toml::from_str(&content).context(crate::error::InvalidConfigSnafu)?;
+        let mut config: Config =
+            toml::from_str(&content).context(crate::error::InvalidConfigSnafu)?;
 
         // If db-dir is set but db-path is not explicitly set, sync them
         if config.db_dir != defaults::db_dir() && config.db_path == defaults::db_path() {
