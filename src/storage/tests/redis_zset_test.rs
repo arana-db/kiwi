@@ -18,12 +18,15 @@
 #![allow(clippy::unwrap_used)]
 
 mod redis_zset_test {
+    use bytes::Bytes;
     use kstd::lock_mgr::LockMgr;
     use rocksdb::{IteratorMode, ReadOptions};
     use std::sync::Arc;
+    use storage::base_meta_value_format::HashesMetaValue;
+    use storage::base_value_format::DataType;
     use storage::{
-        BgTaskHandler, ColumnFamilyIndex, Redis, ScoreMember, StorageOptions, safe_cleanup_test_db,
-        unique_test_db_path,
+        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, ScoreMember, StorageOptions,
+        safe_cleanup_test_db, unique_test_db_path,
     };
 
     fn create_test_redis() -> Redis {
@@ -97,6 +100,37 @@ mod redis_zset_test {
         let mut card = 0;
         let err = redis.zcard(key, &mut card).unwrap_err().to_string();
         assert!(err.contains("WRONGTYPE"), "expected WRONGTYPE, got: {err}");
+    }
+
+    #[test]
+    fn test_zadd_on_stale_wrong_type_treats_key_as_absent() {
+        let redis = create_test_redis();
+        let key = b"zadd_stale_wrong_type";
+
+        // Inject an expired Hash meta directly: type=Hash, count=5, etime=1 (in the past).
+        // is_stale() short-circuits to true on count==0, so we set count>0 to exercise
+        // the etime-based stale path that mirrors a key whose TTL has elapsed.
+        let mut hash_meta = HashesMetaValue::new(Bytes::copy_from_slice(&5u64.to_le_bytes()));
+        hash_meta.inner.data_type = DataType::Hash;
+        hash_meta.set_etime(1);
+        let meta_bytes = hash_meta.encode();
+        {
+            let db = redis.db.as_ref().unwrap();
+            let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+            let encoded_key = BaseMetaKey::new(key).encode().unwrap();
+            db.put_cf(&cf, &encoded_key, &meta_bytes[..]).unwrap();
+        }
+
+        // ZADD should treat the expired hash key as absent and create a fresh zset.
+        let score_members = vec![ScoreMember::new(1.0, b"m1".to_vec())];
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 1);
+
+        // ZCARD must succeed (not WRONGTYPE) because the meta should now be tagged ZSet.
+        let mut card = 0;
+        redis.zcard(key, &mut card).unwrap();
+        assert_eq!(card, 1);
     }
 
     #[test]

@@ -179,6 +179,94 @@ mod redis_set_test {
     }
 
     #[test]
+    fn test_smove_basic_moves_member_between_sets() {
+        let test_db_path = unique_test_db_path();
+
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let src = b"smove_basic_src";
+        let dst = b"smove_basic_dst";
+
+        let src_members: Vec<&[u8]> = vec![b"a".as_ref(), b"b".as_ref()];
+        redis.sadd(src, &src_members).expect("sadd src failed");
+
+        let dst_members: Vec<&[u8]> = vec![b"x".as_ref()];
+        redis.sadd(dst, &dst_members).expect("sadd dst failed");
+
+        // Move "a" from src -> dst.
+        let moved = redis.smove(src, dst, b"a").expect("smove failed");
+        assert!(moved, "smove should report success when member moves");
+
+        // src should now contain only "b".
+        let mut src_after = redis.smembers(src).expect("smembers src failed");
+        src_after.sort();
+        assert_eq!(src_after, vec!["b".to_string()]);
+
+        // dst should now contain "a" and "x".
+        let mut dst_after = redis.smembers(dst).expect("smembers dst failed");
+        dst_after.sort();
+        assert_eq!(dst_after, vec!["a".to_string(), "x".to_string()]);
+
+        // Counts updated.
+        assert_eq!(redis.scard(src).expect("scard src"), 1);
+        assert_eq!(redis.scard(dst).expect("scard dst"), 2);
+
+        // Moving a non-existent member is a no-op (returns false).
+        let missing = redis.smove(src, dst, b"never").expect("smove missing");
+        assert!(
+            !missing,
+            "smove should report false for missing source member"
+        );
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
+    fn test_smove_dest_wrong_type_returns_wrongtype_for_short_string() {
+        let test_db_path = unique_test_db_path();
+
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        // Set up a real source set with one member.
+        let src = b"smove_src";
+        let src_members: Vec<&[u8]> = vec![b"m1".as_ref()];
+        redis.sadd(src, &src_members).expect("sadd failed");
+
+        // Destination is a live, short (<16 byte) string. Its encoded length is
+        // smaller than BASE_META_VALUE_LENGTH, so parsing it as Set meta fails
+        // before any type check fires unless SMOVE gates on staleness/type first.
+        let dst = b"smove_dst_short";
+        redis.set(dst, b"x").expect("set failed");
+
+        let err = redis.smove(src, dst, b"m1").unwrap_err().to_string();
+        assert!(err.contains("WRONGTYPE"), "expected WRONGTYPE, got: {err}");
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
     fn test_sadd_to_existing_set() {
         let test_db_path = unique_test_db_path();
 

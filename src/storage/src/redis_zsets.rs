@@ -84,7 +84,13 @@ impl Redis {
             let valid;
             let mut parsed_zset_meta;
             if self.is_stale(&base_meta_val)? {
-                parsed_zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
+                // Build a fresh ZSet meta so the persisted type byte is ZSet
+                // regardless of what type the expired value held.
+                let mut fresh =
+                    ZSetsMetaValue::new(bytes::Bytes::copy_from_slice(&0u64.to_le_bytes()));
+                fresh.inner.data_type = DataType::ZSet;
+                let encoded = fresh.encode();
+                parsed_zset_meta = ParsedZSetsMetaValue::new(encoded)?;
                 valid = false;
                 version = parsed_zset_meta.initial_meta_value();
             } else {

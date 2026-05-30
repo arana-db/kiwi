@@ -695,6 +695,7 @@ impl Redis {
 
         // Build source member key
         let source_member_key = MemberDataKey::new(source, source_version, member).encode()?;
+
         // Check if member exists in source
         if db
             .get_cf(&cf_data, &source_member_key)
@@ -705,18 +706,26 @@ impl Redis {
             return Ok(false);
         }
 
-        // Handle destination set
+        // Handle destination set. Gate on staleness and type *before* parsing,
+        // so a non-Set value (e.g. a short string whose buffer is too small for
+        // the Set meta layout) returns WRONGTYPE rather than InvalidFormat, and
+        // a stale value of any prior type is rewritten as a fresh Set meta.
         let dest_meta_val = db.get_cf(&cf_meta, &dest_meta_key).context(RocksSnafu)?;
         let (mut dest_meta, dest_version, dest_exists) = if let Some(dest_val) = dest_meta_val {
-            let mut meta = ParsedSetsMetaValue::new(&dest_val[..])?;
-            let version = if self.is_stale(&dest_val)? {
-                // Destination set is expired, create new version
-                meta.initial_meta_value()
+            if self.is_stale(&dest_val)? {
+                let count_bytes = 0u64.to_le_bytes();
+                let mut new_meta = BaseMetaValue::new(Bytes::from(count_bytes.to_vec()));
+                new_meta.inner.data_type = DataType::Set;
+                let encoded = new_meta.encode();
+                let mut meta = ParsedSetsMetaValue::new(encoded)?;
+                let version = meta.initial_meta_value();
+                (meta, version, true)
             } else {
                 self.check_type(&dest_val, DataType::Set)?;
-                meta.version()
-            };
-            (meta, version, true)
+                let meta = ParsedSetsMetaValue::new(&dest_val[..])?;
+                let version = meta.version();
+                (meta, version, true)
+            }
         } else {
             // Destination set doesn't exist, create new one
             let count_bytes = 0u64.to_le_bytes();
@@ -730,6 +739,7 @@ impl Redis {
 
         // Build destination member key
         let dest_member_key = MemberDataKey::new(destination, dest_version, member).encode()?;
+
         // Check if member already exists in destination
         let member_exists_in_dest = db
             .get_cf(&cf_data, &dest_member_key)
