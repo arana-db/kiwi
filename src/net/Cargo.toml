@@ -21,7 +21,7 @@ executor = { path = "../executor" }
 runtime = { path = "../common/runtime" }
 thiserror = "2.0"
 parking_lot = "0.12"
-# raft = { path = "../raft" } # removed: src/raft no longer exists
+raft = { path = "../raft" }
 
 [dev-dependencies]
 env_logger = "0.11"

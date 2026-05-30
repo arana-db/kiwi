@@ -59,7 +59,7 @@ pub mod storage;
 
 pub mod redis_zsets;
 
-pub use batch::{Batch, BinlogBatch, RocksBatch};
+pub use batch::{AppendLogFn, Batch, BinlogBatch, RocksBatch};
 pub use checkpoint::{RAFT_SNAPSHOT_META_FILE, RaftSnapshotMeta, restore_checkpoint_layout};
 pub use error::Result;
 pub use expiration_manager::ExpirationManager;
