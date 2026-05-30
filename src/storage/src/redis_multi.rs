@@ -23,7 +23,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::collections::HashSet;
-use rocksdb::{WriteBatch, WriteOptions, ReadOptions};
+use rocksdb::{WriteBatch, WriteOptions, ReadOptions, IteratorMode, Direction};
 
 use crate::{Result, StorageError};
 use crate::format::{DataType, InternalValue, ParsedInternalValue};
@@ -396,8 +396,15 @@ impl Redis {
                             // Get score from value
                             let parsed_value = ParsedInternalValue::new(&value);
                             let score_bytes = parsed_value.user_value();
-                            let score = f64::from_be_bytes(score_bytes[0..8].try_into().expect("slice length mismatch"));
-                            
+                            let score_raw: [u8; 8] = score_bytes
+                                .get(0..8)
+                                .and_then(|b| b.try_into().ok())
+                                .ok_or_else(|| {
+                                    StorageError::InvalidFormat(
+                                        "Invalid zset score payload length (expected 8 bytes)".to_string(),
+                                    )
+                                })?;
+                            let score = f64::from_le_bytes(score_raw);
                             // Create score key
                             let new_score_key = self.encode_zsets_score_key(new_key, version, score, member);
                             let score_value = InternalValue::new(DataType::None, &[]);
@@ -477,7 +484,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result
     }
@@ -489,7 +496,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result.push(0); // separator
         result.extend_from_slice(field);
@@ -504,7 +511,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result
     }
@@ -516,7 +523,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result.push(0); // separator
         result.extend_from_slice(&index.to_be_bytes());
@@ -531,7 +538,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result
     }
@@ -543,7 +550,7 @@ impl Redis {
         result.push(0); // separator
         
         // Add version (8 bytes)
-        result.extend_from_slice(&version.to_be_bytes());
+        result.extend_from_slice(&version.to_le_bytes());
         
         result
     }

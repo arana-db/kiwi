@@ -18,10 +18,10 @@
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use snafu::ensure;
 
-use crate::base_value_format::{DataType, InternalValue, ParsedInternalValue};
 use crate::delegate_internal_value;
 use crate::delegate_parsed_value;
 use crate::error::{InvalidFormatSnafu, Result};
+use crate::format_base_value::{DataType, InternalValue, ParsedInternalValue};
 use crate::storage_define::{
     STRING_VALUE_SUFFIXLENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
 };
@@ -168,6 +168,10 @@ impl ParsedStringsValue {
         let bytes = self.inner.etime.to_le_bytes();
         let dst = &mut self.inner.value[suffix_start..suffix_start + TIMESTAMP_LENGTH];
         dst.copy_from_slice(&bytes);
+    }
+
+    pub fn value(&self) -> &[u8] {
+        &self.inner.value
     }
 }
 

@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 
+use storage::ZsetScoreMember;
 use storage::{StorageOptions, storage::Storage, unique_test_db_path};
 
 #[tokio::test]
@@ -634,6 +635,141 @@ async fn test_ttl_with_list_data_type_integration() {
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     let final_ttl = storage.ttl(key).unwrap();
     assert!((0..=2).contains(&final_ttl));
+
+    storage.shutdown().await;
+}
+
+/// Test TTL integration with hash data type
+#[tokio::test]
+async fn test_ttl_with_hash_data_type_integration() {
+    let db_path = unique_test_db_path();
+    let mut storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _receiver = storage.open(options, &db_path).unwrap();
+
+    let key = b"hash_ttl_key";
+
+    storage.hset(key, b"field1", b"value1").unwrap();
+    storage.hset(key, b"field2", b"value2").unwrap();
+    assert_eq!(storage.hlen(key).unwrap(), 2);
+    assert_eq!(
+        storage.hget(key, b"field1").unwrap(),
+        Some("value1".to_string())
+    );
+    assert!(storage.expire(key, 2).unwrap());
+    assert!(storage.ttl(key).unwrap() > 0);
+
+    storage.hset(key, b"field3", b"value3").unwrap();
+    assert_eq!(storage.hlen(key).unwrap(), 3);
+    assert!(storage.ttl(key).unwrap() > 0);
+
+    assert!(storage.persist(key).unwrap());
+    assert_eq!(storage.ttl(key).unwrap(), -1);
+    assert_eq!(
+        storage.hget(key, b"field3").unwrap(),
+        Some("value3".to_string())
+    );
+
+    assert!(storage.expire(key, 1).unwrap());
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+
+    assert_eq!(storage.ttl(key).unwrap(), -2);
+    assert_eq!(storage.exists(&[key.to_vec()]).unwrap(), 0);
+    assert_eq!(storage.hlen(key).unwrap(), 0);
+    assert_eq!(storage.hget(key, b"field1").unwrap(), None);
+    assert_eq!(
+        storage.hgetall(key).unwrap(),
+        Vec::<(String, String)>::new()
+    );
+
+    storage.shutdown().await;
+}
+
+/// Test TTL integration with set data type
+#[tokio::test]
+async fn test_ttl_with_set_data_type_integration() {
+    let db_path = unique_test_db_path();
+    let mut storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _receiver = storage.open(options, &db_path).unwrap();
+
+    let key = b"set_ttl_key";
+
+    storage.sadd(key, &[b"member1", b"member2"]).unwrap();
+    assert_eq!(storage.scard(key).unwrap(), 2);
+    assert!(storage.sismember(key, b"member1").unwrap());
+    assert!(storage.expire(key, 2).unwrap());
+    assert!(storage.ttl(key).unwrap() > 0);
+
+    storage.sadd(key, &[b"member3"]).unwrap();
+    assert_eq!(storage.scard(key).unwrap(), 3);
+    assert!(storage.ttl(key).unwrap() > 0);
+
+    assert!(storage.persist(key).unwrap());
+    assert_eq!(storage.ttl(key).unwrap(), -1);
+    assert!(storage.sismember(key, b"member3").unwrap());
+
+    assert!(storage.expire(key, 1).unwrap());
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+
+    assert_eq!(storage.ttl(key).unwrap(), -2);
+    assert_eq!(storage.exists(&[key.to_vec()]).unwrap(), 0);
+    assert_eq!(storage.smembers(key).unwrap(), Vec::<String>::new());
+    assert!(!storage.sismember(key, b"member1").unwrap());
+
+    storage.shutdown().await;
+}
+
+/// Test TTL integration with zset data type
+#[tokio::test]
+async fn test_ttl_with_zset_data_type_integration() {
+    let db_path = unique_test_db_path();
+    let mut storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _receiver = storage.open(options, &db_path).unwrap();
+
+    let key = b"zset_ttl_key";
+
+    let initial_members = [
+        ZsetScoreMember::new(1.25, b"member1".to_vec()),
+        ZsetScoreMember::new(2.5, b"member2".to_vec()),
+    ];
+    assert_eq!(storage.zadd(key, &initial_members).unwrap(), 2);
+    assert_eq!(storage.zcard(key).unwrap(), 2);
+    assert_eq!(
+        storage.zscore(key, b"member1").unwrap(),
+        Some(b"1.25".to_vec())
+    );
+    assert!(storage.expire(key, 2).unwrap());
+    assert!(storage.ttl(key).unwrap() > 0);
+
+    let extra_member = [ZsetScoreMember::new(3.75, b"member3".to_vec())];
+    assert_eq!(storage.zadd(key, &extra_member).unwrap(), 1);
+    assert_eq!(storage.zcard(key).unwrap(), 3);
+    assert!(storage.ttl(key).unwrap() > 0);
+
+    assert!(storage.persist(key).unwrap());
+    assert_eq!(storage.ttl(key).unwrap(), -1);
+    assert_eq!(
+        storage.zscore(key, b"member3").unwrap(),
+        Some(b"3.75".to_vec())
+    );
+
+    assert!(storage.expire(key, 1).unwrap());
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+
+    assert_eq!(storage.ttl(key).unwrap(), -2);
+    assert_eq!(storage.exists(&[key.to_vec()]).unwrap(), 0);
+    assert_eq!(storage.zcard(key).unwrap(), 0);
+    assert_eq!(storage.zscore(key, b"member1").unwrap(), None);
+    assert_eq!(
+        storage.zscan(key, 0, None, Some(10)).unwrap(),
+        (0, Vec::new())
+    );
+    assert_eq!(
+        storage.zrange(key, 0, -1, true).unwrap(),
+        Vec::<Vec<u8>>::new()
+    );
 
     storage.shutdown().await;
 }

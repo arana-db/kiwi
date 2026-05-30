@@ -22,8 +22,8 @@ use rocksdb::{
 };
 
 use crate::{
-    DataType, base_key_format::ParsedBaseKey, base_meta_value_format::ParsedBaseMetaValue,
-    list_meta_value_format::ParsedListsMetaValue, strings_value_format::ParsedStringsValue,
+    DataType, format_base_key::ParsedBaseKey, format_base_meta_value::ParsedBaseMetaValue,
+    format_list_meta_value::ParsedListsMetaValue, format_strings_value::ParsedStringsValue,
 };
 
 const META_FILTER_NAME: &std::ffi::CStr = c"MetaCompactionFilter";
@@ -137,11 +137,11 @@ mod tests {
 
     use crate::{
         DataType,
-        base_key_format::BaseKey,
-        base_meta_value_format::BaseMetaValue,
-        list_meta_value_format::ListsMetaValue,
+        format_base_key::BaseKey,
+        format_base_meta_value::BaseMetaValue,
+        format_list_meta_value::ListsMetaValue,
+        format_strings_value::StringValue,
         meta_compaction_filter::{MetaCompactionFilter, MetaCompactionFilterFactory},
-        strings_value_format::StringValue,
     };
 
     #[test]
