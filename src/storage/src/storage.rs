@@ -540,8 +540,22 @@ mod append_log_fn_tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
 
+    // These tests open a full RocksDB via `Storage::open`. RocksDB keeps
+    // process-lifetime allocations (block cache, table readers) that
+    // LeakSanitizer reports at shutdown; the `.github/lsan.supp`
+    // `leak:rocksdb::` rule can't match them because the statically linked
+    // C++ frames are not symbolized in the build-std sanitizer binary. The CI
+    // sanitizer jobs set `LSAN_OPTIONS`, so we skip these RocksDB-backed tests
+    // there; they still run in normal CI and locally.
+    fn running_under_sanitizer() -> bool {
+        std::env::var_os("LSAN_OPTIONS").is_some()
+    }
+
     #[tokio::test]
     async fn test_set_append_log_fn_propagates_to_all_instances() {
+        if running_under_sanitizer() {
+            return;
+        }
         let path = crate::unique_test_db_path();
         let mut storage = Storage::new(3, 0);
         storage
@@ -566,6 +580,9 @@ mod append_log_fn_tests {
 
     #[tokio::test]
     async fn test_create_batch_uses_binlog_batch_when_append_log_fn_set() {
+        if running_under_sanitizer() {
+            return;
+        }
         let path = crate::unique_test_db_path();
         let mut storage = Storage::new(1, 0);
         let _rx = storage
@@ -604,6 +621,10 @@ mod append_log_fn_tests {
     async fn test_on_binlog_write_does_not_recurse_in_cluster_mode() {
         use conf::raft_type::{Binlog, BinlogEntry, OperateType};
         use std::sync::atomic::{AtomicUsize, Ordering};
+
+        if running_under_sanitizer() {
+            return;
+        }
 
         let path = crate::unique_test_db_path();
         let mut storage = Storage::new(1, 0);
