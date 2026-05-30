@@ -19,9 +19,10 @@
 
 mod redis_zset_test {
     use kstd::lock_mgr::LockMgr;
+    use rocksdb::{IteratorMode, ReadOptions};
     use std::sync::Arc;
     use storage::{
-        BgTaskHandler, Redis, ScoreMember, StorageOptions, safe_cleanup_test_db,
+        BgTaskHandler, ColumnFamilyIndex, Redis, ScoreMember, StorageOptions, safe_cleanup_test_db,
         unique_test_db_path,
     };
 
@@ -150,6 +151,197 @@ mod redis_zset_test {
         let (next_cursor, results) = redis.zscan(key, 0, None, Some(10)).unwrap();
         assert_eq!(next_cursor, 0);
         assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_zscan_uses_little_endian_version_prefix() {
+        let redis = create_test_redis();
+        let key = b"zscan:endian";
+        let score_members = vec![
+            ScoreMember::new(1.25, b"member1".to_vec()),
+            ScoreMember::new(2.5, b"member2".to_vec()),
+        ];
+
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 2);
+
+        let (next_cursor, results) = redis.zscan(key, 0, None, Some(10)).unwrap();
+        assert_eq!(next_cursor, 0);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "member1");
+        assert_eq!(results[0].1, "1.25");
+        assert_eq!(results[1].0, "member2");
+        assert_eq!(results[1].1, "2.5");
+    }
+
+    #[test]
+    fn test_zscan_with_nul_in_key() {
+        let redis = create_test_redis();
+        let key = b"zscan\x00key";
+        let score_members = vec![
+            ScoreMember::new(1.0, b"alpha".to_vec()),
+            ScoreMember::new(2.0, b"beta".to_vec()),
+        ];
+
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 2);
+
+        let (next_cursor, results) = redis.zscan(key, 0, None, Some(10)).unwrap();
+        assert_eq!(next_cursor, 0);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], ("alpha".to_string(), "1".to_string()));
+        assert_eq!(results[1], ("beta".to_string(), "2".to_string()));
+    }
+
+    #[test]
+    fn test_zscan_can_page_through_many_similar_members_and_match_exact_subset() {
+        let redis = create_test_redis();
+        let key = b"zscan-many-similar";
+
+        let mut score_members = Vec::with_capacity(100);
+        for i in 0..100u32 {
+            score_members.push(ScoreMember::new(
+                i as f64,
+                format!("member-{i:03}").into_bytes(),
+            ));
+        }
+
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 100);
+
+        let mut cursor = 0u64;
+        let mut matched = Vec::new();
+        loop {
+            let (next_cursor, results) = redis
+                .zscan(key, cursor, Some("member-03?"), Some(4))
+                .unwrap();
+            matched.extend(results);
+            if next_cursor == 0 {
+                break;
+            }
+            cursor = next_cursor;
+        }
+
+        assert_eq!(matched.len(), 10);
+        let expected: Vec<(String, String)> = (30..40)
+            .map(|i| (format!("member-{i:03}"), i.to_string()))
+            .collect();
+        assert_eq!(matched, expected);
+    }
+
+    #[test]
+    fn test_zscan_can_page_through_sparse_matches_among_many_similar_members() {
+        let redis = create_test_redis();
+        let key = b"zscan-sparse-matches";
+
+        let mut score_members = Vec::with_capacity(100);
+        for i in 0..100u32 {
+            score_members.push(ScoreMember::new(
+                i as f64,
+                format!("member-{i:03}").into_bytes(),
+            ));
+        }
+
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 100);
+
+        let mut cursor = 0u64;
+        let mut matched = Vec::new();
+        loop {
+            let (next_cursor, results) = redis
+                .zscan(key, cursor, Some("member-??7"), Some(3))
+                .unwrap();
+            matched.extend(results);
+            if next_cursor == 0 {
+                break;
+            }
+            cursor = next_cursor;
+        }
+
+        assert_eq!(matched.len(), 10);
+        let expected: Vec<(String, String)> = (0..10)
+            .map(|i| {
+                let score = i * 10 + 7;
+                (format!("member-{score:03}"), score.to_string())
+            })
+            .collect();
+        assert_eq!(matched, expected);
+    }
+
+    #[test]
+    fn test_zset_score_cf_keys_store_version_as_little_endian() {
+        let redis = create_test_redis();
+        let key = b"zscan-raw-endian";
+        let score_members = vec![ScoreMember::new(9.5, b"member".to_vec())];
+
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 1);
+        let (_, results) = redis.zscan(key, 0, None, Some(10)).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "member");
+        assert_eq!(results[0].1, "9.5");
+
+        let db = redis.db.as_ref().expect("db initialized");
+        let cf_score = redis
+            .get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF)
+            .expect("zset score cf handle");
+        let iter = db.iterator_cf_opt(&cf_score, ReadOptions::default(), IteratorMode::Start);
+        let raw_key = iter
+            .into_iter()
+            .next()
+            .expect("score key exists")
+            .unwrap()
+            .0;
+
+        let prefix_reserve_len = 8;
+        let encoded_key_len = key.len() + 2;
+        let version_start = prefix_reserve_len + encoded_key_len;
+        let version_end = version_start + 8;
+        assert_eq!(
+            &raw_key[prefix_reserve_len..prefix_reserve_len + key.len()],
+            key
+        );
+        assert_eq!(
+            &raw_key[prefix_reserve_len + key.len()..version_start],
+            b"\x00\x00"
+        );
+
+        let version_bytes = &raw_key[version_start..version_end];
+        let version_le = u64::from_le_bytes(version_bytes.try_into().unwrap());
+        let version_be = u64::from_be_bytes(version_bytes.try_into().unwrap());
+        assert_ne!(version_le, version_be);
+
+        let expected_prefix = {
+            let mut prefix = Vec::with_capacity(key.len() + 11);
+            prefix.extend_from_slice(key);
+            prefix.extend_from_slice(b"\x00\x00");
+            prefix.extend_from_slice(&version_le.to_le_bytes());
+            prefix.push(0);
+            prefix
+        };
+        let wrong_prefix = {
+            let mut prefix = Vec::with_capacity(key.len() + 11);
+            prefix.extend_from_slice(key);
+            prefix.extend_from_slice(b"\x00\x00");
+            prefix.extend_from_slice(&version_le.to_be_bytes());
+            prefix.push(0);
+            prefix
+        };
+
+        let actual_prefix_end = version_end + 1;
+        assert_eq!(
+            &raw_key[..actual_prefix_end],
+            &[&[0u8; 8][..], expected_prefix.as_slice()].concat()
+        );
+        assert_ne!(
+            &raw_key[..actual_prefix_end],
+            &[&[0u8; 8][..], wrong_prefix.as_slice()].concat()
+        );
     }
 
     #[test]

@@ -20,10 +20,10 @@
 //! Redis sorted sets operations implementation
 //! This module provides sorted set operations for Redis storage
 
-use crate::base_data_value_format::{BaseDataValue, ParsedBaseDataValue};
-use crate::base_meta_value_format::{ParsedZSetsMetaValue, ZSetsMetaValue};
 use crate::error::Error::RedisErr;
 use crate::error::{OptionNoneSnafu, RocksSnafu};
+use crate::format_base_data_value::{BaseDataValue, ParsedBaseDataValue};
+use crate::format_base_meta_value::{ParsedZSetsMetaValue, ZSetsMetaValue};
 use crate::redis::Redis;
 use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Result};
 use kstd::lock_mgr::ScopeRecordLock;
@@ -32,8 +32,8 @@ use snafu::OptionExt;
 use snafu::ResultExt;
 use std::collections::HashSet;
 
-use crate::member_data_key_format::MemberDataKey;
-use crate::zset_score_key_format::{ParsedZSetsScoreKey, ScoreMember, ZSetsScoreKey};
+use crate::format_member_data_key::MemberDataKey;
+use crate::format_zset_score_key::{ParsedZSetsScoreKey, ScoreMember, ZSetsScoreKey};
 
 impl Redis {
     /// Add one or more members to a sorted set, or update its score if it already exists
@@ -390,7 +390,7 @@ impl Redis {
                         batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &old_score_key)?;
 
                         // Add new score key and update member value
-                        let new_score_key = crate::zset_score_key_format::ZSetsScoreKey::new(
+                        let new_score_key = crate::format_zset_score_key::ZSetsScoreKey::new(
                             key, version, new_score, member,
                         )
                         .encode()?;
@@ -529,24 +529,11 @@ impl Redis {
         let mut scanned = 0u64;
         let mut next_cursor = 0u64;
 
-        // Create prefix for this zset
-        let prefix = {
-            let mut prefix = Vec::with_capacity(key.len() + 9);
-            prefix.extend_from_slice(key);
-            prefix.push(0);
-            prefix.extend_from_slice(&version.to_be_bytes());
-            prefix.push(0);
-            prefix
-        };
-
-        // Start iteration from cursor position
-        let start_key = if cursor == 0 {
-            prefix.clone()
-        } else {
-            // For simplicity, we'll start from the beginning and skip to cursor
-            // In a production implementation, you'd want to encode the cursor position
-            prefix.clone()
-        };
+        // Seek to the first possible score key for this zset.
+        // Use the real encoded prefix so RocksDB seeks with the same layout
+        // as actual ZSetsScoreKey entries.
+        let start_key =
+            ZSetsScoreKey::new(key, version, f64::NEG_INFINITY, &[]).encode_seek_key()?;
 
         let iter = db.iterator_cf_opt(
             &cf_score,

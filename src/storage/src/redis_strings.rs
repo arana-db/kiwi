@@ -20,17 +20,111 @@
 
 use chrono::Utc;
 use kstd::lock_mgr::ScopeRecordLock;
+use rocksdb::ReadOptions;
 use snafu::{OptionExt, ResultExt};
 
 use crate::error::Error::*;
 use crate::{
     BaseMetaKey, ColumnFamilyIndex, DataType, Redis, Result,
-    base_key_format::BaseKey,
     error::{InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
-    strings_value_format::{ParsedStringsValue, StringValue},
+    format_base_key::BaseKey,
+    format_strings_value::{ParsedStringsValue, StringValue},
 };
 
 impl Redis {
+    pub fn key_etime(&self, key: &[u8]) -> Result<Option<u64>> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        let meta_cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "MetaCF is not initialized".to_string(),
+            })?;
+
+        let meta_key = BaseMetaKey::new(key).encode()?;
+        let value = match db
+            .get_cf_opt(&meta_cf, &meta_key, &self.read_options)
+            .context(RocksSnafu)?
+        {
+            Some(value) => value,
+            None => {
+                return Ok(None);
+            }
+        };
+
+        if self.is_stale(&value)? {
+            return Ok(None);
+        }
+
+        let etime_bytes = &value[value.len() - 8..];
+        let etime = u64::from_le_bytes(etime_bytes.try_into().map_err(|_| InvalidFormat {
+            message: "Failed to decode key etime".to_string(),
+            location: snafu::location!(),
+        })?);
+        Ok(Some(etime))
+    }
+
+    pub fn set_key_etime(&self, key: &[u8], etime: u64) -> Result<bool> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        let meta_cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "MetaCF is not initialized".to_string(),
+            })?;
+        let key_str = String::from_utf8_lossy(key).to_string();
+        let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &key_str);
+        let base_meta_key = BaseMetaKey::new(key).encode()?;
+
+        let snapshot = db.snapshot();
+        let mut read_options = ReadOptions::default();
+        read_options.set_snapshot(&snapshot);
+
+        let Some(value) = db
+            .get_cf_opt(&meta_cf, &base_meta_key, &read_options)
+            .context(RocksSnafu)?
+        else {
+            return Ok(false);
+        };
+
+        if self.is_stale(&value)? {
+            return Ok(false);
+        }
+
+        match DataType::try_from(value[0])? {
+            DataType::String => {
+                let mut parsed = ParsedStringsValue::new(&value[..])?;
+                parsed.set_etime(etime);
+                let mut batch = self.create_batch()?;
+                batch.put(ColumnFamilyIndex::MetaCF, &base_meta_key, parsed.value())?;
+                batch.commit()?;
+            }
+            DataType::Hash | DataType::Set | DataType::ZSet => {
+                let mut parsed =
+                    crate::format_base_meta_value::ParsedBaseMetaValue::new(&value[..])?;
+                parsed.set_etime(etime);
+                let mut batch = self.create_batch()?;
+                batch.put(ColumnFamilyIndex::MetaCF, &base_meta_key, parsed.encoded())?;
+                batch.commit()?;
+            }
+            DataType::List => {
+                let mut parsed =
+                    crate::format_list_meta_value::ParsedListsMetaValue::new(&value[..])?;
+                parsed.set_etime(etime);
+                let mut batch = self.create_batch()?;
+                batch.put(ColumnFamilyIndex::MetaCF, &base_meta_key, parsed.value())?;
+                batch.commit()?;
+            }
+            _ => {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
+
     //     let read_options = ReadOptions::default();
     //     match db.get_opt(key, &read_options)? {
     //         Some(existing) => {
@@ -2007,68 +2101,19 @@ impl Redis {
                 message: "MetaCF is not initialized".to_string(),
             })?;
 
-        // Check string type first (MetaCF)
-        let string_key = BaseKey::new(key);
-        if let Some(val) = db
-            .get_cf_opt(&cf, &string_key.encode()?, &self.read_options)
-            .context(RocksSnafu)?
-        {
-            let meta = ParsedStringsValue::new(&val[..])?;
-            if !meta.is_stale() {
-                return Ok(DataType::String);
-            }
-        }
-
-        // For other data types, we need to check their meta keys
-        // Since all data types use the same meta key format, we need to check the data type field in the value
         let meta_key = BaseMetaKey::new(key);
         if let Some(val) = db
             .get_cf_opt(&cf, &meta_key.encode()?, &self.read_options)
             .context(RocksSnafu)?
         {
-            // The first byte indicates the data type
-            if !val.is_empty() {
-                let data_type_byte = val[0];
-                match DataType::try_from(data_type_byte) {
-                    Ok(DataType::Hash) => {
-                        if let Ok(meta) =
-                            crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..])
-                        {
-                            if !meta.is_stale() && meta.count() > 0 {
-                                return Ok(DataType::Hash);
-                            }
-                        }
-                    }
-                    Ok(DataType::Set) => {
-                        if let Ok(meta) =
-                            crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..])
-                        {
-                            if !meta.is_stale() && meta.count() > 0 {
-                                return Ok(DataType::Set);
-                            }
-                        }
-                    }
-                    Ok(DataType::ZSet) => {
-                        if let Ok(meta) =
-                            crate::base_meta_value_format::ParsedBaseMetaValue::new(&val[..])
-                        {
-                            if !meta.is_stale() && meta.count() > 0 {
-                                return Ok(DataType::ZSet);
-                            }
-                        }
-                    }
-                    Ok(DataType::List) => {
-                        if let Ok(meta) =
-                            crate::list_meta_value_format::ParsedListsMetaValue::new(&val[..])
-                        {
-                            if !meta.is_stale() && meta.count() > 0 {
-                                return Ok(DataType::List);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
+            if val.is_empty() || self.is_stale(&val)? {
+                return Err(crate::error::Error::KeyNotFound {
+                    key: String::from_utf8_lossy(key).to_string(),
+                    location: snafu::location!(),
+                });
             }
+
+            return DataType::try_from(val[0]);
         }
 
         // Key doesn't exist or all types are stale
@@ -2186,7 +2231,7 @@ impl Redis {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
 
             // Decode the key to get the actual user key
-            if let Ok(base_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
+            if let Ok(base_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]) {
                 let key_str = String::from_utf8_lossy(base_key.key());
 
                 // Check if key is not expired
@@ -2198,18 +2243,18 @@ impl Redis {
                         }
                     }
                 }
-            } else if let Ok(meta_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..])
+            } else if let Ok(meta_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..])
             {
                 let key_str = String::from_utf8_lossy(meta_key.key());
 
                 // Check if meta key is not expired using appropriate parser
                 if !value_bytes.is_empty() {
                     let is_valid = if let Ok(meta) =
-                        crate::base_meta_value_format::ParsedBaseMetaValue::new(&value_bytes[..])
+                        crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
                     {
                         !meta.is_stale() && meta.count() > 0
                     } else if let Ok(list_meta) =
-                        crate::list_meta_value_format::ParsedListsMetaValue::new(&value_bytes[..])
+                        crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
                     {
                         !list_meta.is_stale() && list_meta.count() > 0
                     } else {
@@ -2308,7 +2353,7 @@ impl Redis {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
 
             // Decode the key to get the actual user key
-            if let Ok(base_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..]) {
+            if let Ok(base_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]) {
                 // Check if the string key is not expired
                 if !value_bytes.is_empty() {
                     if let Ok(parsed) = ParsedStringsValue::new(&value_bytes[..]) {
@@ -2317,16 +2362,16 @@ impl Redis {
                         }
                     }
                 }
-            } else if let Ok(meta_key) = crate::base_key_format::ParsedBaseKey::new(&key_bytes[..])
+            } else if let Ok(meta_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..])
             {
                 // Check if meta key is not expired
                 if !value_bytes.is_empty() {
                     let is_valid = if let Ok(meta) =
-                        crate::base_meta_value_format::ParsedBaseMetaValue::new(&value_bytes[..])
+                        crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
                     {
                         !meta.is_stale() && meta.count() > 0
                     } else if let Ok(list_meta) =
-                        crate::list_meta_value_format::ParsedListsMetaValue::new(&value_bytes[..])
+                        crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
                     {
                         !list_meta.is_stale() && list_meta.count() > 0
                     } else {

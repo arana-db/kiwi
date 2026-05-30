@@ -16,9 +16,9 @@
 // limitations under the License.
 
 use crate::error::{Error, InvalidArgumentSnafu, Result};
+use crate::format_zset_score_key::ZsetScoreMember;
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage::Storage;
-use crate::zset_score_key_format::ZsetScoreMember;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeforeOrAfter {
@@ -28,6 +28,19 @@ pub enum BeforeOrAfter {
 
 // Implementation of Storage struct methods
 impl Storage {
+    fn key_etime_for_instance(&self, instance_id: usize, key: &[u8]) -> Result<Option<u64>> {
+        self.insts[instance_id].key_etime(key)
+    }
+
+    fn set_key_etime_for_instance(
+        &self,
+        instance_id: usize,
+        key: &[u8],
+        etime: u64,
+    ) -> Result<bool> {
+        self.insts[instance_id].set_key_etime(key, etime)
+    }
+
     // Strings Commands Implementation
 
     // Set key to hold the string value. if key
@@ -486,56 +499,42 @@ impl Storage {
 
     /// Get time to live for a key in seconds
     pub fn ttl(&self, key: &[u8]) -> Result<i64> {
-        let key_str = String::from_utf8_lossy(key);
-
-        // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let Some(etime) = self.key_etime_for_instance(instance_id, key)? else {
+            return Ok(-2);
+        };
 
-        // Check if key exists in storage
-        match self.insts[instance_id].key_exists_live(key) {
-            Ok(false) => return Ok(-2), // Key doesn't exist
-            Err(e) => return Err(e),    // Propagate storage errors
-            Ok(true) => {}              // Key exists, continue
+        if etime == 0 {
+            return Ok(-1);
         }
 
-        if let Some(expiration_manager) = &self.expiration_manager {
-            match expiration_manager.get_ttl_seconds(&key_str) {
-                Some(-2) => Ok(-2),   // Key expired (treat as doesn't exist)
-                Some(-1) => Ok(-1),   // Key exists but has no expiration
-                Some(ttl) => Ok(ttl), // Positive TTL value
-                None => Ok(-1),       // Shouldn't happen with new API, key has no expiration
-            }
-        } else {
-            Ok(-1) // No expiration manager, key has no expiration
+        let current_micros = chrono::Utc::now().timestamp_micros() as u64;
+        if etime <= current_micros {
+            return Ok(-2);
         }
+
+        Ok(((etime - current_micros) / 1_000_000) as i64)
     }
 
     /// Get time to live for a key in milliseconds
     pub fn pttl(&self, key: &[u8]) -> Result<i64> {
-        let key_str = String::from_utf8_lossy(key);
-
-        // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let Some(etime) = self.key_etime_for_instance(instance_id, key)? else {
+            return Ok(-2);
+        };
 
-        // Check if key exists in storage
-        match self.insts[instance_id].key_exists_live(key) {
-            Ok(false) => return Ok(-2), // Key doesn't exist
-            Err(e) => return Err(e),    // Propagate storage errors
-            Ok(true) => {}              // Key exists, continue
+        if etime == 0 {
+            return Ok(-1);
         }
 
-        if let Some(expiration_manager) = &self.expiration_manager {
-            match expiration_manager.get_ttl_milliseconds(&key_str) {
-                Some(-2) => Ok(-2),   // Key expired (treat as doesn't exist)
-                Some(-1) => Ok(-1),   // Key exists but has no expiration
-                Some(ttl) => Ok(ttl), // Positive TTL value
-                None => Ok(-1),       // Shouldn't happen with new API, key has no expiration
-            }
-        } else {
-            Ok(-1) // No expiration manager, key has no expiration
+        let current_micros = chrono::Utc::now().timestamp_micros() as u64;
+        if etime <= current_micros {
+            return Ok(-2);
         }
+
+        Ok(((etime - current_micros) / 1_000) as i64)
     }
 
     /// Set a timeout on key in seconds
@@ -545,26 +544,19 @@ impl Storage {
         }
 
         let key_str = String::from_utf8_lossy(key);
-
-        // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let expire_time =
+            crate::expiration_manager::ExpirationManager::seconds_to_expire_time(seconds)?;
 
-        // Check if key exists in storage
-        match self.insts[instance_id].key_exists_live(key) {
-            Ok(false) => return Ok(false), // Key doesn't exist
-            Err(_) => return Ok(false),    // Error means key doesn't exist
-            Ok(true) => {}                 // Key exists, continue
+        if !self.set_key_etime_for_instance(instance_id, key, expire_time)? {
+            return Ok(false);
         }
 
         if let Some(expiration_manager) = &self.expiration_manager {
-            let expire_time =
-                crate::expiration_manager::ExpirationManager::seconds_to_expire_time(seconds)?;
             expiration_manager.set_expiration(&key_str, expire_time);
-            Ok(true)
-        } else {
-            Ok(false)
         }
+        Ok(true)
     }
 
     /// Set a timeout on key in milliseconds
@@ -574,104 +566,81 @@ impl Storage {
         }
 
         let key_str = String::from_utf8_lossy(key);
-
-        // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let expire_time =
+            crate::expiration_manager::ExpirationManager::milliseconds_to_expire_time(
+                milliseconds,
+            )?;
 
-        // Check if key exists in storage
-        match self.insts[instance_id].key_exists_live(key) {
-            Ok(false) => return Ok(false), // Key doesn't exist
-            Err(_) => return Ok(false),    // Error means key doesn't exist
-            Ok(true) => {}                 // Key exists, continue
+        if !self.set_key_etime_for_instance(instance_id, key, expire_time)? {
+            return Ok(false);
         }
 
         if let Some(expiration_manager) = &self.expiration_manager {
-            let expire_time =
-                crate::expiration_manager::ExpirationManager::milliseconds_to_expire_time(
-                    milliseconds,
-                )?;
             expiration_manager.set_expiration(&key_str, expire_time);
-            Ok(true)
-        } else {
-            Ok(false)
         }
+        Ok(true)
     }
 
     /// Set the expiration for a key as a UNIX timestamp in seconds
     pub fn expireat(&self, key: &[u8], timestamp: i64) -> Result<bool> {
         let key_str = String::from_utf8_lossy(key);
-
-        // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let expire_time =
+            crate::expiration_manager::ExpirationManager::unix_seconds_to_expire_time(timestamp)?;
 
-        // Check if key exists in storage
-        match self.insts[instance_id].key_exists_live(key) {
-            Ok(false) => return Ok(false), // Key doesn't exist
-            Err(_) => return Ok(false),    // Error means key doesn't exist
-            Ok(true) => {}                 // Key exists, continue
+        if !self.set_key_etime_for_instance(instance_id, key, expire_time)? {
+            return Ok(false);
         }
 
         if let Some(expiration_manager) = &self.expiration_manager {
-            let expire_time =
-                crate::expiration_manager::ExpirationManager::unix_seconds_to_expire_time(
-                    timestamp,
-                )?;
             expiration_manager.set_expiration(&key_str, expire_time);
-            Ok(true)
-        } else {
-            Ok(false)
         }
+        Ok(true)
     }
 
     /// Set the expiration for a key as a UNIX timestamp in milliseconds
     pub fn pexpireat(&self, key: &[u8], timestamp: i64) -> Result<bool> {
         let key_str = String::from_utf8_lossy(key);
-
-        // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let expire_time =
+            crate::expiration_manager::ExpirationManager::unix_milliseconds_to_expire_time(
+                timestamp,
+            )?;
 
-        // Check if key exists in storage
-        match self.insts[instance_id].key_exists_live(key) {
-            Ok(false) => return Ok(false), // Key doesn't exist
-            Err(_) => return Ok(false),    // Error means key doesn't exist
-            Ok(true) => {}                 // Key exists, continue
+        if !self.set_key_etime_for_instance(instance_id, key, expire_time)? {
+            return Ok(false);
         }
 
         if let Some(expiration_manager) = &self.expiration_manager {
-            let expire_time =
-                crate::expiration_manager::ExpirationManager::unix_milliseconds_to_expire_time(
-                    timestamp,
-                )?;
             expiration_manager.set_expiration(&key_str, expire_time);
-            Ok(true)
-        } else {
-            Ok(false)
         }
+        Ok(true)
     }
 
     /// Remove the expiration from a key
     pub fn persist(&self, key: &[u8]) -> Result<bool> {
         let key_str = String::from_utf8_lossy(key);
-
-        // First check if key exists
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        let Some(etime) = self.key_etime_for_instance(instance_id, key)? else {
+            return Ok(false);
+        };
+        if etime == 0 {
+            return Ok(false);
+        }
 
-        // Check if key exists in storage
-        match self.insts[instance_id].key_exists_live(key) {
-            Ok(false) => return Ok(false), // Key doesn't exist
-            Err(_) => return Ok(false),    // Error means key doesn't exist
-            Ok(true) => {}                 // Key exists, continue
+        if !self.set_key_etime_for_instance(instance_id, key, 0)? {
+            return Ok(false);
         }
 
         if let Some(expiration_manager) = &self.expiration_manager {
-            Ok(expiration_manager.remove_expiration(&key_str))
-        } else {
-            Ok(false)
+            expiration_manager.remove_expiration(&key_str);
         }
+        Ok(true)
     }
 
     /// Check if one or more keys exist
@@ -705,7 +674,7 @@ impl Storage {
 
         match self.insts[instance_id].get_key_type(key) {
             Ok(data_type) => {
-                Ok(crate::base_value_format::data_type_to_string(data_type).to_string())
+                Ok(crate::format_base_value::data_type_to_string(data_type).to_string())
             }
             Err(_) => Ok("none".to_string()), // Key doesn't exist
         }

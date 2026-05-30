@@ -22,9 +22,9 @@ use chrono::Utc;
 use snafu::ensure;
 
 use crate::{
-    base_value_format::{DataType, InternalValue, ParsedInternalValue},
     delegate_internal_value, delegate_parsed_value,
     error::{InvalidFormatSnafu, Result},
+    format_base_value::{DataType, InternalValue, ParsedInternalValue},
     storage_define::{
         BASE_META_VALUE_COUNT_LENGTH, SUFFIX_RESERVE_LENGTH, TIMESTAMP_LENGTH, TYPE_LENGTH,
         VERSION_LENGTH,
