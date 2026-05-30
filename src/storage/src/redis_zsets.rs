@@ -35,15 +35,6 @@ use std::collections::HashSet;
 use crate::format_member_data_key::MemberDataKey;
 use crate::format_zset_score_key::{ParsedZSetsScoreKey, ScoreMember, ZSetsScoreKey};
 
-fn build_zscan_prefix(key: &[u8], version: u64) -> Vec<u8> {
-    let mut prefix = Vec::with_capacity(key.len() + 9);
-    prefix.extend_from_slice(key);
-    prefix.push(0);
-    prefix.extend_from_slice(&version.to_le_bytes());
-    prefix.push(0);
-    prefix
-}
-
 impl Redis {
     /// Add one or more members to a sorted set, or update its score if it already exists
     pub fn zadd(&self, key: &[u8], score_members: &[ScoreMember], ret: &mut i32) -> Result<()> {
@@ -538,17 +529,11 @@ impl Redis {
         let mut scanned = 0u64;
         let mut next_cursor = 0u64;
 
-        // Create prefix for this zset
-        let prefix = build_zscan_prefix(key, version);
-
-        // Start iteration from cursor position
-        let start_key = if cursor == 0 {
-            prefix.clone()
-        } else {
-            // For simplicity, we'll start from the beginning and skip to cursor
-            // In a production implementation, you'd want to encode the cursor position
-            prefix.clone()
-        };
+        // Seek to the first possible score key for this zset.
+        // Use the real encoded prefix so RocksDB seeks with the same layout
+        // as actual ZSetsScoreKey entries.
+        let start_key =
+            ZSetsScoreKey::new(key, version, f64::NEG_INFINITY, &[]).encode_seek_key()?;
 
         let iter = db.iterator_cf_opt(
             &cf_score,

@@ -176,6 +176,103 @@ mod redis_zset_test {
     }
 
     #[test]
+    fn test_zscan_with_nul_in_key() {
+        let redis = create_test_redis();
+        let key = b"zscan\x00key";
+        let score_members = vec![
+            ScoreMember::new(1.0, b"alpha".to_vec()),
+            ScoreMember::new(2.0, b"beta".to_vec()),
+        ];
+
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 2);
+
+        let (next_cursor, results) = redis.zscan(key, 0, None, Some(10)).unwrap();
+        assert_eq!(next_cursor, 0);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0], ("alpha".to_string(), "1".to_string()));
+        assert_eq!(results[1], ("beta".to_string(), "2".to_string()));
+    }
+
+    #[test]
+    fn test_zscan_can_page_through_many_similar_members_and_match_exact_subset() {
+        let redis = create_test_redis();
+        let key = b"zscan-many-similar";
+
+        let mut score_members = Vec::with_capacity(100);
+        for i in 0..100u32 {
+            score_members.push(ScoreMember::new(
+                i as f64,
+                format!("member-{i:03}").into_bytes(),
+            ));
+        }
+
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 100);
+
+        let mut cursor = 0u64;
+        let mut matched = Vec::new();
+        loop {
+            let (next_cursor, results) = redis
+                .zscan(key, cursor, Some("member-03?"), Some(4))
+                .unwrap();
+            matched.extend(results);
+            if next_cursor == 0 {
+                break;
+            }
+            cursor = next_cursor;
+        }
+
+        assert_eq!(matched.len(), 10);
+        let expected: Vec<(String, String)> = (30..40)
+            .map(|i| (format!("member-{i:03}"), i.to_string()))
+            .collect();
+        assert_eq!(matched, expected);
+    }
+
+    #[test]
+    fn test_zscan_can_page_through_sparse_matches_among_many_similar_members() {
+        let redis = create_test_redis();
+        let key = b"zscan-sparse-matches";
+
+        let mut score_members = Vec::with_capacity(100);
+        for i in 0..100u32 {
+            score_members.push(ScoreMember::new(
+                i as f64,
+                format!("member-{i:03}").into_bytes(),
+            ));
+        }
+
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 100);
+
+        let mut cursor = 0u64;
+        let mut matched = Vec::new();
+        loop {
+            let (next_cursor, results) = redis
+                .zscan(key, cursor, Some("member-??7"), Some(3))
+                .unwrap();
+            matched.extend(results);
+            if next_cursor == 0 {
+                break;
+            }
+            cursor = next_cursor;
+        }
+
+        assert_eq!(matched.len(), 10);
+        let expected: Vec<(String, String)> = (0..10)
+            .map(|i| {
+                let score = i * 10 + 7;
+                (format!("member-{score:03}"), score.to_string())
+            })
+            .collect();
+        assert_eq!(matched, expected);
+    }
+
+    #[test]
     fn test_zset_score_cf_keys_store_version_as_little_endian() {
         let redis = create_test_redis();
         let key = b"zscan-raw-endian";
