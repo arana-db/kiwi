@@ -19,14 +19,22 @@
 //!
 //! Re-exports logindex types from storage::logindex to avoid code duplication.
 
-pub mod api;
+pub mod conversion;
 pub mod db_access; // Shim for backward compatibility with tests
+pub mod grpc;
 pub mod log_store;
 pub mod log_store_rocksdb;
 pub mod network;
 pub mod node;
 pub mod snapshot_archive;
 pub mod state_machine;
+
+pub mod raft_proto {
+    // 使用版本化的 proto 包名 kiwi.raft.v1
+    tonic::include_proto!("kiwi.raft.v1");
+    pub const FILE_DESCRIPTOR_SET: &[u8] =
+        tonic::include_file_descriptor_set!("kiwi.raft.v1_descriptor");
+}
 
 // Re-export logindex types from storage::logindex (no duplicate implementations)
 pub use storage::logindex::{

@@ -18,11 +18,11 @@ tokio.workspace = true
 env_logger.workspace = true
 log.workspace = true
 conf.workspace = true
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.6", features = ["derive"] }
 raft.workspace = true
-actix-web = "4"
-arc-swap = { workspace = true }
-
+tonic = "0.14"
+tonic-reflection = { version = "0.14", features = ["server"] }
+tokio-stream = { version = "0.1", features = ["net"] }
 
 [lints]
 workspace = true

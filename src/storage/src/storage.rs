@@ -593,11 +593,10 @@ impl Storage {
         for inst in &self.insts {
             if let Some(ref cf_tracker) = inst.logindex_cf_tracker {
                 if let Some(ref db) = inst.db {
-                    // Get raw DB pointer from Engine trait object
+                    // Query each CF's table properties through the Engine trait so the
+                    // tracker mirrors the (log_index, seqno) high-water mark recorded in
+                    // the restored SST files.
                     let engine = db.as_ref();
-                    // Use the engine's iterator_cf method to access CF handles
-                    // We need to get the raw DB to call cf_handle
-                    // For now, use a workaround: get properties via engine interface
                     for cf_id in 0..crate::logindex::types::cf_metadata::COLUMN_FAMILY_COUNT {
                         let cf_name = crate::logindex::types::cf_metadata::CF_NAMES_STR[cf_id];
                         if let Some(cf) = engine.cf_handle(cf_name) {

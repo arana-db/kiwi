@@ -36,7 +36,7 @@ impl PingCmd {
             meta: CmdMeta {
                 name: "ping".to_string(),
                 arity: -1,
-                flags: CmdFlags::READONLY | CmdFlags::FAST,
+                flags: CmdFlags::READONLY | CmdFlags::FAST | CmdFlags::NO_AUTH,
                 acl_category: AclCategory::FAST | AclCategory::CONNECTION,
                 ..Default::default()
             },

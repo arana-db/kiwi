@@ -461,7 +461,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         // On first access, lazily load from persisted snapshot to recover last_applied
         // after restart (otherwise openraft would scan from index 0 and fail if logs were purged).
         if self.last_applied.is_none() {
-            if let Ok(Some(snap)) = load_current_snapshot(&self.snapshot_work_dir) {
+            if let Some(snap) = load_current_snapshot(&self.snapshot_work_dir)? {
                 self.last_applied = snap.meta.last_log_id;
                 self.last_membership = snap.meta.last_membership.clone();
                 log::info!(

@@ -86,6 +86,10 @@ impl Cmd for SscanCmd {
                     pattern = Some(String::from_utf8_lossy(&argv[i + 1]).to_string());
                     i += 2;
                 }
+                "MATCH" => {
+                    client.set_reply(RespData::Error("ERR syntax error".into()));
+                    return;
+                }
                 "COUNT" if i + 1 < argv.len() => {
                     match String::from_utf8_lossy(&argv[i + 1]).parse::<usize>() {
                         Ok(c) if c > 0 => {
@@ -99,6 +103,10 @@ impl Cmd for SscanCmd {
                             return;
                         }
                     }
+                }
+                "COUNT" => {
+                    client.set_reply(RespData::Error("ERR syntax error".into()));
+                    return;
                 }
                 _ => {
                     client.set_reply(RespData::Error("ERR syntax error".into()));

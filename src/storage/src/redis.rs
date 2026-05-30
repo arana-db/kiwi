@@ -459,10 +459,13 @@ impl Redis {
 
     /// Commit a batch and record `(raft_log_index, seqno)` in the LogIndex collector.
     ///
-    /// The seqno is captured via `latest_sequence_number()` *after* the underlying
-    /// `commit()` returns. RocksDB's latest sequence is monotonic, so for the snapshot
-    /// integration's purposes — "log L is persisted at seqno >= S" — concurrent writers
-    /// can only inflate S, never produce a value that would falsely claim persistence.
+    /// The seqno is captured via `latest_sequence_number()` *after* `commit()` returns.
+    /// `Storage::on_binlog_write` documents a strict single-writer invariant for this
+    /// path: only the Raft apply loop is allowed to write to `inst.db`, so the seqno
+    /// observed here is the seqno produced by *this* batch. A second writer would
+    /// inflate the recorded seqno, which can stall flush-based logindex advancement
+    /// and Raft log purging — do not introduce one without first replacing this fetch
+    /// with a batch-local sequence number API.
     ///
     /// Centralising the (commit, seqno-fetch, collector update) here gives us a single
     /// place to harden later (e.g. a per-instance write mutex or a future rust-rocksdb
@@ -474,7 +477,10 @@ impl Redis {
     ) -> Result<()> {
         batch.commit()?;
         if let (Some(db), Some(collector)) = (self.db.as_ref(), self.logindex_collector.as_ref()) {
-            collector.update(raft_log_index as i64, db.latest_sequence_number());
+            // Raft log indices are u64; clamp to i64::MAX defensively so a wraparound
+            // can't sneak a negative value into the collector and skip the update.
+            let log_index_i64 = i64::try_from(raft_log_index).unwrap_or(i64::MAX);
+            collector.update(log_index_i64, db.latest_sequence_number());
         }
         Ok(())
     }
