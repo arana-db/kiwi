@@ -39,7 +39,7 @@ Config files use the Redis-style `key value` format (one per line).
 
 `node1.conf`:
 
-```
+```conf
 port 7401
 binding 127.0.0.1
 db-path /tmp/kiwi/n1/db
