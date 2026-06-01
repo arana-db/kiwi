@@ -359,26 +359,13 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         let db_id = current_storage.db_id;
 
         // Close old Storage to release RocksDB lock before restoring checkpoint.
-        // ArcSwap guarantees we have exclusive access during pause.
-        {
-            // Note: During normal operation, there may be other Arc references from
-            // pending requests or Raft apply operations. We need to close via ArcSwap.
-            // Use a different approach: create a temporary "closed" placeholder.
-            //
-            // Actually, we can call close() on the Storage directly since RocksDB
-            // close doesn't require exclusive access - it's idempotent.
-            // But to ensure proper cleanup, we create a new empty Storage as placeholder,
-            // swap it in, then drop the old one.
-
-            // Create placeholder Storage (not opened)
-            let placeholder = Arc::new(Storage::new(db_instance_num, db_id));
-
-            // Swap placeholder in - this releases ArcSwap's reference to old Storage
-            self.storage_swap.swap(placeholder);
-
-            // Now current_storage (the old Arc) is the only reference left
-            // It will be dropped at the end of this block, releasing RocksDB lock
-        }
+        // pause_controller has already drained pending requests, so swapping the
+        // placeholder in and dropping `current_storage` here is the only remaining
+        // reference — `restore_checkpoint_layout` below must run with no live
+        // RocksDB handle on `db_path`.
+        let placeholder = Arc::new(Storage::new(db_instance_num, db_id));
+        self.storage_swap.swap(placeholder);
+        drop(current_storage);
 
         log::info!("Old Storage dropped, RocksDB lock released");
 
