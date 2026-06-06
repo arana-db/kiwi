@@ -69,6 +69,8 @@ pub struct NetworkServer {
     connection_pool: Arc<ConnectionPool<NetworkResources>>,
     /// Authentication password; when set, clients must AUTH before running commands
     requirepass: Option<String>,
+    /// Optional leadership gate for cluster-mode write rejection
+    leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 }
 
 impl NetworkServer {
@@ -81,6 +83,7 @@ impl NetworkServer {
         cmd_table: Arc<CmdTable>,
         executor: Arc<CmdExecutor>,
         requirepass: Option<String>,
+        leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
     ) -> Result<Self, Box<dyn Error>> {
         let pool_config = default_network_pool_config();
 
@@ -91,6 +94,7 @@ impl NetworkServer {
             executor: executor.clone(),
             connection_pool: Arc::new(ConnectionPool::new(pool_config)),
             requirepass,
+            leader_gate,
         })
     }
 
@@ -102,6 +106,7 @@ impl NetworkServer {
         executor: Arc<CmdExecutor>,
         pool_config: PoolConfig,
         requirepass: Option<String>,
+        leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
     ) -> Result<Self, Box<dyn Error>> {
         Ok(Self {
             addr: addr.unwrap_or("127.0.0.1:7379".to_string()),
@@ -110,6 +115,7 @@ impl NetworkServer {
             executor: executor.clone(),
             connection_pool: Arc::new(ConnectionPool::new(pool_config)),
             requirepass,
+            leader_gate,
         })
     }
 
@@ -175,6 +181,7 @@ impl ServerTrait for NetworkServer {
             let cmd_table = self.cmd_table.clone();
             let executor = self.executor.clone();
             let requirepass = self.requirepass.clone();
+            let leader_gate = self.leader_gate.clone();
 
             tokio::spawn(async move {
                 // Get or create resources from the pool
@@ -214,6 +221,7 @@ impl ServerTrait for NetworkServer {
                     pooled_resources.inner().storage_client.clone(),
                     pooled_resources.inner().cmd_table.clone(),
                     pooled_resources.inner().executor.clone(),
+                    leader_gate,
                 )
                 .await;
 
@@ -258,6 +266,7 @@ mod tests {
             cmd_table,
             executor,
             None,
+            None,
         );
 
         assert!(server.is_ok());
@@ -291,6 +300,7 @@ mod tests {
             executor,
             pool_config,
             None,
+            None,
         );
 
         assert!(server.is_ok());
@@ -311,7 +321,7 @@ mod tests {
         let cmd_table = Arc::new(create_command_table(Arc::new(|| None)));
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
-        let server = NetworkServer::new(None, storage_client, cmd_table, executor, None);
+        let server = NetworkServer::new(None, storage_client, cmd_table, executor, None, None);
 
         assert!(server.is_ok());
         let server = server.unwrap();

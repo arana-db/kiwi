@@ -22,6 +22,7 @@
 pub mod conversion;
 pub mod db_access; // Shim for backward compatibility with tests
 pub mod grpc;
+pub mod leader_gate;
 pub mod log_store;
 pub mod log_store_rocksdb;
 pub mod network;

@@ -129,8 +129,15 @@ pub async fn process_connection_with_storage_client(
     storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
+    leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 ) -> std::io::Result<()> {
     // Delegate to the network-aware connection handler
-    crate::network_handle::process_network_connection(client, storage_client, cmd_table, executor)
-        .await
+    crate::network_handle::process_network_connection(
+        client,
+        storage_client,
+        cmd_table,
+        executor,
+        leader_gate,
+    )
+    .await
 }

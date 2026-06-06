@@ -62,7 +62,7 @@ pub mod redis_zsets;
 // LogIndex module for Raft snapshot integration
 pub mod logindex;
 
-pub use batch::{Batch, BinlogBatch, RocksBatch};
+pub use batch::{AppendLogFn, Batch, BinlogBatch, RocksBatch};
 pub use checkpoint::{RAFT_SNAPSHOT_META_FILE, RaftSnapshotMeta, restore_checkpoint_layout};
 pub use error::Result;
 pub use expiration_manager::ExpirationManager;

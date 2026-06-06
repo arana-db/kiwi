@@ -228,90 +228,131 @@ async fn start_server(
     config: &Config,
     pause_controller: StorageServerPauseController,
 ) -> std::io::Result<()> {
+    use conf::raft_type::{Binlog, BinlogResponse};
+    use tokio::sync::{mpsc, oneshot};
+
+    // Cluster mode: stand up Raft, wire the append-log bridge, expose a leader gate.
+    let leader_gate: Option<Arc<dyn raft::leader_gate::LeaderGate>> = if let Some(raft_config) =
+        &config.raft
+    {
+        let raft_config = RaftConfig {
+            node_id: raft_config.node_id,
+            raft_addr: raft_config.raft_addr.clone(),
+            resp_addr: raft_config.resp_addr.clone(),
+            data_dir: PathBuf::from(&raft_config.data_dir),
+            db_path: PathBuf::from(&config.db_path),
+            heartbeat_interval: raft_config.heartbeat_interval_ms.unwrap_or(200),
+            election_timeout_min: raft_config.election_timeout_min_ms.unwrap_or(500),
+            election_timeout_max: raft_config.election_timeout_max_ms.unwrap_or(1500),
+            use_memory_log_store: raft_config.use_memory_log_store,
+            ..RaftConfig::default()
+        };
+
+        let storage_swap = global_storage.arc_swap();
+        let pause_controller_wrapper = Arc::new(PauseControllerWrapper(pause_controller));
+
+        let raft_app = create_raft_node(raft_config, storage_swap, Some(pause_controller_wrapper))
+            .await
+            .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
+
+        // Bridge: storage runtime -> (channel) -> network runtime drain task -> client_write.
+        let (log_tx, mut log_rx) =
+            mpsc::unbounded_channel::<(Binlog, oneshot::Sender<Result<BinlogResponse, String>>)>();
+
+        // NOTE: this drains serially — one Raft consensus round-trip at a time.
+        // Acceptable for now; a throughput follow-up may spawn per-message or add
+        // backpressure via a bounded channel.
+        let raft_for_drain = raft_app.clone();
+        tokio::spawn(async move {
+            while let Some((binlog, resp_tx)) = log_rx.recv().await {
+                let result = raft_for_drain
+                    .client_write(binlog)
+                    .await
+                    .map_err(|e| e.to_string());
+                let _ = resp_tx.send(result);
+            }
+            warn!("Raft append-log drain task exited: channel closed");
+        });
+
+        // append_log_fn is invoked synchronously from BinlogBatch::commit, which
+        // runs inside a tokio task on the (multi-threaded) storage runtime. A bare
+        // blocking_recv would panic ("Cannot block ... within an asynchronous
+        // execution context"), so we wrap it in block_in_place; the drain task that
+        // resolves the oneshot runs on the separate network runtime.
+        let append_log_fn: storage::AppendLogFn = Arc::new(move |binlog| {
+            let (tx, rx) = oneshot::channel();
+            log_tx
+                .send((binlog, tx))
+                .map_err(|_| "raft log channel closed".to_string())?;
+            tokio::task::block_in_place(|| rx.blocking_recv())
+                .map_err(|_| "raft response channel closed".to_string())?
+        });
+        global_storage.load().set_append_log_fn(append_log_fn);
+
+        let raft_addr = raft_app.raft_addr.clone();
+        let grpc_addr = raft_addr.parse::<std::net::SocketAddr>().map_err(|e| {
+            std::io::Error::other(format!("Invalid Raft address '{}': {}", raft_addr, e))
+        })?;
+
+        let (core_svc, admin_svc, client_svc, metrics_svc) =
+            RaftApp::create_grpc_services(raft_app.clone());
+
+        info!("Starting Raft gRPC server on {}", raft_addr);
+
+        let reflect_svc = tonic_reflection::server::Builder::configure()
+            .register_encoded_file_descriptor_set(raft_proto::FILE_DESCRIPTOR_SET)
+            .build_v1()
+            .map_err(|e| {
+                std::io::Error::other(format!("Failed to create reflection service: {}", e))
+            })?;
+
+        let grpc_listener = tokio::net::TcpListener::bind(grpc_addr)
+            .await
+            .map_err(|e| {
+                std::io::Error::other(format!(
+                    "Failed to bind Raft gRPC server on {}: {}",
+                    grpc_addr, e
+                ))
+            })?;
+
+        tokio::spawn(async move {
+            use tonic::transport::Server;
+
+            let incoming = tokio_stream::wrappers::TcpListenerStream::new(grpc_listener);
+
+            info!("Raft gRPC server listening on {}", grpc_addr);
+
+            if let Err(e) = Server::builder()
+                .add_service(reflect_svc)
+                .add_service(core_svc)
+                .add_service(admin_svc)
+                .add_service(client_svc)
+                .add_service(metrics_svc)
+                .serve_with_incoming(incoming)
+                .await
+            {
+                let error_message = e.to_string();
+                error!("Raft gRPC server error: {}", error_message);
+            }
+        });
+
+        Some(raft_app as Arc<dyn raft::leader_gate::LeaderGate>)
+    } else {
+        None
+    };
+
     if let Some(server) = net::ServerFactory::create_server(
         protocol,
         Some(addr.to_string()),
         runtime_manager,
         config.requirepass.clone(),
+        leader_gate,
     ) {
         tokio::spawn(async move {
             if let Err(e) = server.run().await {
                 error!("Redis server error: {}", e);
             }
         });
-
-        if let Some(raft_config) = &config.raft {
-            let raft_config = RaftConfig {
-                node_id: raft_config.node_id,
-                raft_addr: raft_config.raft_addr.clone(),
-                resp_addr: raft_config.resp_addr.clone(),
-                data_dir: PathBuf::from(&raft_config.data_dir),
-                db_path: PathBuf::from(&config.db_path),
-                heartbeat_interval: raft_config.heartbeat_interval_ms.unwrap_or(200),
-                election_timeout_min: raft_config.election_timeout_min_ms.unwrap_or(500),
-                election_timeout_max: raft_config.election_timeout_max_ms.unwrap_or(1500),
-                use_memory_log_store: raft_config.use_memory_log_store,
-                ..RaftConfig::default()
-            };
-
-            let storage_swap = global_storage.arc_swap();
-            let pause_controller_wrapper = Arc::new(PauseControllerWrapper(pause_controller));
-
-            let raft_app =
-                create_raft_node(raft_config, storage_swap, Some(pause_controller_wrapper))
-                    .await
-                    .map_err(|e| {
-                        std::io::Error::other(format!("Failed to create Raft node: {}", e))
-                    })?;
-
-            let raft_addr = raft_app.raft_addr.clone();
-            let grpc_addr = raft_addr.parse::<std::net::SocketAddr>().map_err(|e| {
-                std::io::Error::other(format!("Invalid Raft address '{}': {}", raft_addr, e))
-            })?;
-
-            let (core_svc, admin_svc, client_svc, metrics_svc) =
-                RaftApp::create_grpc_services(raft_app.clone());
-
-            info!("Starting Raft gRPC server on {}", raft_addr);
-
-            let reflect_svc = tonic_reflection::server::Builder::configure()
-                .register_encoded_file_descriptor_set(raft_proto::FILE_DESCRIPTOR_SET)
-                .build_v1()
-                .map_err(|e| {
-                    std::io::Error::other(format!("Failed to create reflection service: {}", e))
-                })?;
-
-            let grpc_listener = tokio::net::TcpListener::bind(grpc_addr)
-                .await
-                .map_err(|e| {
-                    std::io::Error::other(format!(
-                        "Failed to bind Raft gRPC server on {}: {}",
-                        grpc_addr, e
-                    ))
-                })?;
-
-            tokio::spawn(async move {
-                use tonic::transport::Server;
-
-                let incoming = tokio_stream::wrappers::TcpListenerStream::new(grpc_listener);
-
-                info!("Raft gRPC server listening on {}", grpc_addr);
-
-                if let Err(e) = Server::builder()
-                    .add_service(reflect_svc)
-                    .add_service(core_svc)
-                    .add_service(admin_svc)
-                    .add_service(client_svc)
-                    .add_service(metrics_svc)
-                    .serve_with_incoming(incoming)
-                    .await
-                {
-                    let error_message = e.to_string();
-                    error!("Raft gRPC server error: {}", error_message);
-                }
-            });
-        }
-
         Ok(())
     } else {
         Err(std::io::Error::other(format!(

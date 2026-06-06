@@ -40,15 +40,7 @@ pub struct NetworkCmdExecution {
     pub client: Arc<Client>,
     /// The storage client for network-to-storage communication
     pub storage_client: Arc<StorageClient>,
-}
-
-impl NetworkCmdExecution {
-    /// Create a new NetworkCmdExecution
-    pub fn new(cmd: Arc<dyn Cmd>, client: Arc<Client>, storage_client: Arc<StorageClient>) -> Self {
-        Self {
-            cmd,
-            client,
-            storage_client,
-        }
-    }
+    /// Optional leadership gate; `None` in standalone mode. When `Some` and the
+    /// command is a write on a non-leader, the executor replies `-MOVED` (Task 7).
+    pub leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 }
