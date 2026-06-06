@@ -23,8 +23,8 @@ mod redis_zset_test {
     use bytes::Bytes;
     use kstd::lock_mgr::LockMgr;
     use rocksdb::{IteratorMode, ReadOptions};
-    use storage::base_meta_value_format::HashesMetaValue;
-    use storage::base_value_format::DataType;
+    use storage::format_base_meta_value::HashesMetaValue;
+    use storage::format_base_value::DataType;
     use storage::{
         BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, ScoreMember, StorageOptions,
         safe_cleanup_test_db, unique_test_db_path,
