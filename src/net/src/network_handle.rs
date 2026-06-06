@@ -49,6 +49,7 @@ pub async fn process_network_connection(
     storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
+    leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 ) -> std::io::Result<()> {
     let mut buf = vec![0; 4096]; // Increased buffer size for better performance
     let mut resp_parser = resp::RespParse::new(resp::RespVersion::RESP2);
@@ -71,6 +72,7 @@ pub async fn process_network_connection(
                                     storage_client.clone(),
                                     cmd_table.clone(),
                                     executor.clone(),
+                                    leader_gate.clone(),
                                 ).await;
                             }
                             return Ok(());
@@ -97,6 +99,7 @@ pub async fn process_network_connection(
                                                 storage_client.clone(),
                                                 cmd_table.clone(),
                                                 executor.clone(),
+                                                leader_gate.clone(),
                                             ).await;
                                             pending_commands.clear();
                                         }
@@ -124,6 +127,7 @@ pub async fn process_network_connection(
                                 storage_client.clone(),
                                 cmd_table.clone(),
                                 executor.clone(),
+                                leader_gate.clone(),
                             ).await;
                             pending_commands.clear();
                         }
@@ -151,6 +155,7 @@ async fn handle_network_command(
     storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
+    leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 ) {
     // Convert the command name from &[u8] to a lowercase String for lookup
     let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
@@ -164,6 +169,7 @@ async fn handle_network_command(
             cmd: cmd.clone(),
             client: client.clone(),
             storage_client: storage_client.clone(),
+            leader_gate: leader_gate.clone(),
         };
 
         // Execute the command using the network-aware executor
@@ -340,6 +346,7 @@ async fn process_command_batch(
     storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
+    leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 ) {
     debug!("Processing command batch of {} commands", commands.len());
 
@@ -371,6 +378,7 @@ async fn process_command_batch(
             storage_client.clone(),
             cmd_table.clone(),
             executor.clone(),
+            leader_gate.clone(),
         )
         .await;
 

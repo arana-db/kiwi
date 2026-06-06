@@ -24,7 +24,9 @@
 //!
 //! The batch system is designed with two implementations:
 //! - `RocksBatch`: For standalone mode, directly writes to RocksDB
-//! - `BinlogBatch`: For cluster mode, writes through Raft consensus (TODO)
+//! - `BinlogBatch`: For cluster mode, accumulates operations as `BinlogEntry`
+//!   values and on `commit` hands the assembled `Binlog` to an `AppendLogFn`
+//!   callback that proposes it through Raft consensus.
 //!
 //! # Usage
 //!
@@ -37,6 +39,7 @@
 
 use std::sync::Arc;
 
+use conf::raft_type::{Binlog, BinlogEntry, BinlogResponse, OperateType};
 use rocksdb::{BoundColumnFamily, WriteBatch, WriteOptions};
 use snafu::ResultExt;
 
@@ -219,68 +222,86 @@ impl<'a> Batch for RocksBatch<'a> {
     }
 }
 
+/// Callback that proposes an assembled binlog through Raft and blocks for the result.
+///
+/// Returns `Err(message)` if the propose failed (not leader, timeout, etc.).
+pub type AppendLogFn =
+    Arc<dyn Fn(Binlog) -> std::result::Result<BinlogResponse, String> + Send + Sync>;
+
 /// Binlog batch implementation for cluster (Raft) mode.
 ///
-/// This implementation serializes operations to a binlog format and commits
-/// through the Raft consensus layer.
-///
-/// TODO: Implement when Raft integration is ready.
-#[allow(dead_code)]
+/// Accumulates put/delete operations as `BinlogEntry` values, then on `commit`
+/// hands the assembled `Binlog` to `append_log_fn` (which proposes via Raft).
 pub struct BinlogBatch {
-    // TODO: Add binlog entries
-    // entries: Vec<BinlogEntry>,
-    // append_log_fn: AppendLogFunction,
-    count: u32,
+    append_log_fn: AppendLogFn,
+    slot_idx: u32,
+    entries: Vec<BinlogEntry>,
 }
 
-#[allow(dead_code)]
 impl BinlogBatch {
     /// Create a new BinlogBatch.
     ///
     /// # Arguments
-    /// * `append_log_fn` - Function to append log entries to Raft
-    pub fn new() -> Self {
-        Self { count: 0 }
-    }
-}
-
-impl Default for BinlogBatch {
-    fn default() -> Self {
-        Self::new()
+    /// * `append_log_fn` - Closure that proposes the binlog through Raft.
+    /// * `slot_idx` - Slot index this batch writes to (single-slot per binlog).
+    pub fn new(append_log_fn: AppendLogFn, slot_idx: u32) -> Self {
+        Self {
+            append_log_fn,
+            slot_idx,
+            entries: Vec::new(),
+        }
     }
 }
 
 impl Batch for BinlogBatch {
-    fn put(&mut self, _cf_idx: ColumnFamilyIndex, _key: &[u8], _value: &[u8]) -> Result<()> {
-        // TODO: Implement when Raft integration is ready
-        // Create binlog entry and add to entries
-        self.count += 1;
+    fn put(&mut self, cf_idx: ColumnFamilyIndex, key: &[u8], value: &[u8]) -> Result<()> {
+        self.entries.push(BinlogEntry {
+            cf_idx: cf_idx as u32,
+            op_type: OperateType::Put,
+            key: key.to_vec(),
+            value: Some(value.to_vec()),
+        });
         Ok(())
     }
 
-    fn delete(&mut self, _cf_idx: ColumnFamilyIndex, _key: &[u8]) -> Result<()> {
-        // TODO: Implement when Raft integration is ready
-        // Create binlog entry and add to entries
-        self.count += 1;
+    fn delete(&mut self, cf_idx: ColumnFamilyIndex, key: &[u8]) -> Result<()> {
+        self.entries.push(BinlogEntry {
+            cf_idx: cf_idx as u32,
+            op_type: OperateType::Delete,
+            key: key.to_vec(),
+            value: None,
+        });
         Ok(())
     }
 
     fn commit(self: Box<Self>) -> Result<()> {
-        // BinlogBatch commit is not yet implemented.
-        // Return an error to prevent silent data loss.
-        BatchSnafu {
-            message: "BinlogBatch commit is not implemented - Raft integration pending".to_string(),
+        let binlog = Binlog {
+            db_id: 0, // TODO: thread real db_id from Redis/Storage in a later task
+            slot_idx: self.slot_idx,
+            entries: self.entries,
+        };
+        let resp = (self.append_log_fn)(binlog).map_err(|message| crate::error::Error::Batch {
+            message,
+            location: snafu::Location::new(file!(), line!(), column!()),
+        })?;
+        if resp.success {
+            Ok(())
+        } else {
+            BatchSnafu {
+                message: resp
+                    .message
+                    .unwrap_or_else(|| "raft propose failed".to_string()),
+            }
+            .fail()
         }
-        .fail()
     }
 
     fn count(&self) -> u32 {
-        self.count
+        self.entries.len() as u32
     }
 
     fn clear(&mut self) {
-        // TODO: Clear entries
-        self.count = 0;
+        self.entries.clear();
     }
 }
 
@@ -288,16 +309,42 @@ impl Batch for BinlogBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use conf::raft_type::{BinlogResponse, OperateType};
+    use std::sync::{Arc, Mutex};
 
     #[test]
-    fn test_binlog_batch_default() {
-        let batch = BinlogBatch::default();
-        assert_eq!(batch.count(), 0);
+    fn test_binlog_batch_accumulates_entries() {
+        let captured: Arc<Mutex<Option<conf::raft_type::Binlog>>> = Arc::new(Mutex::new(None));
+        let captured_cl = captured.clone();
+        let append_log_fn: AppendLogFn = Arc::new(move |binlog| {
+            *captured_cl.lock().unwrap() = Some(binlog);
+            Ok(BinlogResponse::ok())
+        });
+
+        let mut batch = BinlogBatch::new(append_log_fn, 7);
+        batch.put(ColumnFamilyIndex::MetaCF, b"k1", b"v1").unwrap();
+        batch
+            .delete(ColumnFamilyIndex::HashesDataCF, b"k2")
+            .unwrap();
+        assert_eq!(batch.count(), 2);
+
+        Box::new(batch).commit().unwrap();
+
+        let binlog = captured.lock().unwrap().take().expect("binlog captured");
+        assert_eq!(binlog.slot_idx, 7);
+        assert_eq!(binlog.entries.len(), 2);
+        assert_eq!(binlog.entries[0].cf_idx, ColumnFamilyIndex::MetaCF as u32);
+        assert_eq!(binlog.entries[0].op_type, OperateType::Put);
+        assert_eq!(binlog.entries[0].value, Some(b"v1".to_vec()));
+        assert_eq!(binlog.entries[1].op_type, OperateType::Delete);
+        assert_eq!(binlog.entries[1].value, None);
     }
 
     #[test]
-    fn test_binlog_batch_commit_returns_error() {
-        let batch = BinlogBatch::default();
+    fn test_binlog_batch_commit_propagates_error() {
+        let append_log_fn: AppendLogFn = Arc::new(|_binlog| Err("raft unavailable".to_string()));
+        let mut batch = BinlogBatch::new(append_log_fn, 0);
+        batch.put(ColumnFamilyIndex::MetaCF, b"k", b"v").unwrap();
         let result = Box::new(batch).commit();
         assert!(result.is_err());
     }

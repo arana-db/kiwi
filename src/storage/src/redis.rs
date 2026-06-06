@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use chrono::Utc;
@@ -115,6 +116,9 @@ pub struct Redis {
 
     // For startup state tracking
     pub is_starting: AtomicBool,
+
+    // For cluster mode: when set, create_batch returns a BinlogBatch.
+    pub append_log_fn: OnceLock<crate::batch::AppendLogFn>,
 }
 
 impl Redis {
@@ -151,6 +155,8 @@ impl Redis {
 
             small_compaction_threshold: std::sync::atomic::AtomicU64::new(5000),
             small_compaction_duration_threshold: std::sync::atomic::AtomicU64::new(10000),
+
+            append_log_fn: OnceLock::new(),
         }
     }
 
@@ -330,11 +336,18 @@ impl Redis {
         None
     }
 
+    /// Inject the Raft append-log callback, switching this instance to cluster mode.
+    /// Idempotent: subsequent calls are ignored (OnceLock semantics).
+    pub fn set_append_log_fn(&self, f: crate::batch::AppendLogFn) {
+        let _ = self.append_log_fn.set(f);
+    }
+
     /// Create a new batch for atomic write operations.
     ///
     /// This method creates a batch appropriate for the current deployment mode:
     /// - In standalone mode, returns a `RocksBatch` for direct RocksDB writes
-    /// - In cluster mode, returns a `BinlogBatch` for Raft consensus (TODO)
+    /// - In cluster mode (when `append_log_fn` is set), returns a `BinlogBatch`
+    ///   for Raft consensus
     ///
     /// # Returns
     /// A boxed `Batch` trait object that can be used for atomic write operations.
@@ -346,11 +359,23 @@ impl Redis {
     /// batch.commit()?;
     /// ```
     pub fn create_batch(&self) -> Result<Box<dyn crate::batch::Batch + '_>> {
-        // TODO: Check if in cluster mode and return BinlogBatch
-        // if self.append_log_fn.is_some() {
-        //     return Ok(Box::new(BinlogBatch::new(...)));
-        // }
+        if let Some(f) = self.append_log_fn.get() {
+            // TODO(Task 4): self.index is the RocksDB instance ID, not a Redis hash
+            // slot. on_binlog_write routes by slot_idx % instance_num, so this only
+            // round-trips by coincidence. Thread the real slot through here.
+            let slot_idx = self.index as u32;
+            return Ok(Box::new(crate::batch::BinlogBatch::new(
+                f.clone(),
+                slot_idx,
+            )));
+        }
 
+        self.create_rocks_batch()
+    }
+
+    /// Always build a direct RocksDB batch, bypassing cluster-mode routing.
+    /// Used by the Raft apply path (on_binlog_write) to avoid recursive propose.
+    pub fn create_rocks_batch(&self) -> Result<Box<dyn crate::batch::Batch + '_>> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "Database is not initialized".to_string(),
         })?;

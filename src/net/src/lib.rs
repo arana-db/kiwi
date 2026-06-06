@@ -57,15 +57,18 @@ impl ServerFactory {
         addr: Option<String>,
         runtime_manager: &RuntimeManager,
         requirepass: Option<String>,
+        leader_gate: Option<Arc<dyn raft::leader_gate::LeaderGate>>,
     ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
-            "tcp" => match Self::create_network_server(addr, runtime_manager, requirepass) {
-                Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
-                Err(e) => {
-                    log::error!("Failed to create NetworkServer: {}", e);
-                    None
+            "tcp" => {
+                match Self::create_network_server(addr, runtime_manager, requirepass, leader_gate) {
+                    Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
+                    Err(e) => {
+                        log::error!("Failed to create NetworkServer: {}", e);
+                        None
+                    }
                 }
-            },
+            }
             #[cfg(unix)]
             "unix" => match unix::UnixServer::new(addr, None) {
                 Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
@@ -113,6 +116,7 @@ impl ServerFactory {
         addr: Option<String>,
         runtime_manager: &RuntimeManager,
         requirepass: Option<String>,
+        leader_gate: Option<Arc<dyn raft::leader_gate::LeaderGate>>,
     ) -> Result<NetworkServer, Box<dyn std::error::Error>> {
         // Get the storage client from RuntimeManager
         let runtime_storage_client = runtime_manager.storage_client().map_err(|e| {
@@ -132,6 +136,13 @@ impl ServerFactory {
         })));
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
-        NetworkServer::new(addr, storage_client, cmd_table, executor, requirepass)
+        NetworkServer::new(
+            addr,
+            storage_client,
+            cmd_table,
+            executor,
+            requirepass,
+            leader_gate,
+        )
     }
 }

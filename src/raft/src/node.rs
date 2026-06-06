@@ -90,6 +90,16 @@ impl RaftApp {
     }
 }
 
+impl crate::leader_gate::LeaderGate for RaftApp {
+    fn is_leader(&self) -> bool {
+        RaftApp::is_leader(self)
+    }
+
+    fn leader_resp_addr(&self) -> Option<String> {
+        self.get_leader().map(|(_, node)| node.resp_addr)
+    }
+}
+
 pub struct RaftConfig {
     pub node_id: u64,
     pub raft_addr: String,

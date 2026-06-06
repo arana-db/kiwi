@@ -232,14 +232,6 @@ pub trait Cmd: Send + Sync {
     fn get_sub_cmd(&self, _cmd_name: &str) -> Option<&dyn Cmd> {
         None
     }
-
-    fn to_binlog(&self, _client: &Client) -> Option<conf::raft_type::Binlog> {
-        None
-    }
-
-    fn needs_raft(&self) -> bool {
-        self.has_flag(CmdFlags::RAFT)
-    }
 }
 
 #[macro_export]

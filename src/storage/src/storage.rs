@@ -482,12 +482,20 @@ impl Storage {
         Ok(())
     }
 
+    /// Inject the Raft append-log callback into every Redis instance,
+    /// switching the storage into cluster mode.
+    pub fn set_append_log_fn(&self, f: crate::batch::AppendLogFn) {
+        for inst in &self.insts {
+            inst.set_append_log_fn(f.clone());
+        }
+    }
+
     pub fn on_binlog_write(&self, binlog: &Binlog, _raft_log_index: u64) -> Result<()> {
         let slot_id = binlog.slot_idx as usize;
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         let instance = &self.insts[instance_id];
 
-        let mut batch = instance.create_batch()?;
+        let mut batch = instance.create_rocks_batch()?;
 
         for entry in &binlog.entries {
             let cf_idx = match entry.cf_idx {
@@ -518,7 +526,140 @@ impl Storage {
             }
         }
 
-        Box::new(batch).commit()?;
+        batch.commit()?;
         Ok(())
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+mod append_log_fn_tests {
+    use super::*;
+    use crate::batch::AppendLogFn;
+    use conf::raft_type::BinlogResponse;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    // These tests open a full RocksDB via `Storage::open`. RocksDB keeps
+    // process-lifetime allocations (block cache, table readers) that
+    // LeakSanitizer reports at shutdown; the `.github/lsan.supp`
+    // `leak:rocksdb::` rule can't match them because the statically linked
+    // C++ frames are not symbolized in the build-std sanitizer binary. The CI
+    // sanitizer jobs set `LSAN_OPTIONS`, so we skip these RocksDB-backed tests
+    // there; they still run in normal CI and locally.
+    fn running_under_sanitizer() -> bool {
+        std::env::var_os("LSAN_OPTIONS").is_some()
+    }
+
+    #[tokio::test]
+    async fn test_set_append_log_fn_propagates_to_all_instances() {
+        if running_under_sanitizer() {
+            return;
+        }
+        let path = crate::unique_test_db_path();
+        let mut storage = Storage::new(3, 0);
+        storage
+            .open(Arc::new(crate::StorageOptions::default()), &path)
+            .unwrap();
+
+        // Before injection: no instance is in cluster mode.
+        for inst in &storage.insts {
+            assert!(inst.append_log_fn.get().is_none());
+        }
+
+        let f: crate::batch::AppendLogFn = Arc::new(|_b| Ok(conf::raft_type::BinlogResponse::ok()));
+        storage.set_append_log_fn(f);
+
+        // After injection: every instance has the callback.
+        for inst in &storage.insts {
+            assert!(inst.append_log_fn.get().is_some());
+        }
+
+        crate::safe_cleanup_test_db(&path);
+    }
+
+    #[tokio::test]
+    async fn test_create_batch_uses_binlog_batch_when_append_log_fn_set() {
+        if running_under_sanitizer() {
+            return;
+        }
+        let path = crate::unique_test_db_path();
+        let mut storage = Storage::new(1, 0);
+        let _rx = storage
+            .open(Arc::new(crate::StorageOptions::default()), &path)
+            .unwrap();
+
+        let inst = storage.insts[0].clone();
+
+        // Standalone: create_batch must succeed (RocksBatch) before injection.
+        {
+            let b = inst.create_batch().unwrap();
+            assert_eq!(b.count(), 0);
+        }
+
+        // Inject append_log_fn → cluster mode.
+        let called = Arc::new(AtomicBool::new(false));
+        let flag = called.clone();
+        let f: AppendLogFn = Arc::new(move |_binlog| {
+            flag.store(true, Ordering::SeqCst);
+            Ok(BinlogResponse::ok())
+        });
+        inst.set_append_log_fn(f);
+
+        let mut b = inst.create_batch().unwrap();
+        b.put(crate::ColumnFamilyIndex::MetaCF, b"k", b"v").unwrap();
+        Box::new(b).commit().unwrap();
+        assert!(
+            called.load(Ordering::SeqCst),
+            "append_log_fn should be invoked by BinlogBatch commit"
+        );
+
+        crate::safe_cleanup_test_db(&path);
+    }
+
+    #[tokio::test]
+    async fn test_on_binlog_write_does_not_recurse_in_cluster_mode() {
+        use conf::raft_type::{Binlog, BinlogEntry, OperateType};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        if running_under_sanitizer() {
+            return;
+        }
+
+        let path = crate::unique_test_db_path();
+        let mut storage = Storage::new(1, 0);
+        storage
+            .open(Arc::new(crate::StorageOptions::default()), &path)
+            .unwrap();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_cl = calls.clone();
+        let f: crate::batch::AppendLogFn = Arc::new(move |_b| {
+            calls_cl.fetch_add(1, Ordering::SeqCst);
+            Ok(conf::raft_type::BinlogResponse::ok())
+        });
+        storage.set_append_log_fn(f);
+
+        let binlog = Binlog {
+            db_id: 0,
+            slot_idx: 0,
+            entries: vec![BinlogEntry {
+                cf_idx: 0,
+                op_type: OperateType::Put,
+                key: b"applied_key".to_vec(),
+                value: Some(b"applied_val".to_vec()),
+            }],
+        };
+
+        storage.on_binlog_write(&binlog, 1).unwrap();
+
+        // apply must write directly via RocksBatch, never invoking append_log_fn.
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "on_binlog_write must not propose to raft"
+        );
+
+        crate::safe_cleanup_test_db(&path);
     }
 }
