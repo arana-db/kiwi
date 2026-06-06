@@ -36,7 +36,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(tokio_unstable)'] }
 [workspace.dependencies]
 
 bytes = { version = "1", features = ["serde"] }
-chrono = "0.4.44"
+chrono = "0.4.45"
 proc-macro2 = "1.0.66"
 quote = "1.0"
 syn = { version = "2.0", features = ["extra-traits", "full"] }
