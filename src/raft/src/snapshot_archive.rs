@@ -15,6 +15,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Tar packing/unpacking for Raft snapshot checkpoints.
+//!
+//! TODO: stream snapshot bytes (read/write without holding the full tar in memory) for
+//! build and install paths; align with OpenRaft snapshot APIs when switching off in-memory buffers.
+
 use std::io::{self, Cursor};
 use std::path::Path;
 
@@ -56,6 +61,12 @@ fn append_dir_all_skip_lock<W: std::io::Write>(
     Ok(())
 }
 
+/// Unpack a tar archive (from `build_snapshot` / OpenRaft `SnapshotData`) into `dst`.
+///
+/// Security: validates paths to prevent path traversal attacks.
+/// - Rejects if dst exists but is not a directory
+/// - Rejects tar entries containing ".." components
+/// - Rejects paths that escape the destination directory
 pub fn unpack_tar_to_dir(bytes: &[u8], dst: &Path) -> io::Result<()> {
     if dst.exists() && !dst.is_dir() {
         return Err(io::Error::new(
@@ -92,6 +103,7 @@ pub fn unpack_tar_to_dir(bytes: &[u8], dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Directory inside `unpack_tar_to_dir` output that contains `0/`, `1/`, … and `__raft_snapshot_meta`.
 pub fn unpacked_checkpoint_root(unpack_root: &Path) -> std::path::PathBuf {
     unpack_root.join("snap")
 }

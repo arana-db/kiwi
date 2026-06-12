@@ -77,7 +77,6 @@ fn persist_current_snapshot(
     // Use temporary files + atomic rename to prevent TOCTOU race conditions.
     let data_tmp = work_dir.join(format!(".{}.tmp", CURRENT_SNAPSHOT_DATA));
     let meta_tmp = work_dir.join(format!(".{}.tmp", CURRENT_SNAPSHOT_META));
-
     std::fs::write(&data_tmp, bytes).map_err(|e| {
         StorageError::from_io_error(ErrorSubject::Snapshot(None), ErrorVerb::Write, e)
     })?;
@@ -190,6 +189,10 @@ pub struct KiwiStateMachine {
 
 impl KiwiStateMachine {
     /// Create a new state machine.
+    ///
+    /// Per-instance LogIndex collectors and cf_trackers are owned by the underlying
+    /// Storage; snapshot build/install paths look them up through `storage_swap` so
+    /// they remain valid after a hot swap.
     pub fn new(
         node_id: u64,
         storage_swap: Arc<ArcSwap<Storage>>,
@@ -206,6 +209,13 @@ impl KiwiStateMachine {
             snapshot_idx: 0,
             pause_controller: None,
         }
+    }
+
+    /// Initialize cf_tracker from restored SST properties after snapshot install
+    /// or from existing DB on startup
+    pub fn init_cf_tracker(&self) -> Result<(), io::Error> {
+        let storage = self.storage_swap.load_full();
+        storage.init_cf_trackers().map_err(io::Error::other)
     }
 
     /// Set pause controller for coordinating with StorageServer.
@@ -349,31 +359,17 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         let db_id = current_storage.db_id;
 
         // Close old Storage to release RocksDB lock before restoring checkpoint.
-        // ArcSwap guarantees we have exclusive access during pause.
-        {
-            // Note: During normal operation, there may be other Arc references from
-            // pending requests or Raft apply operations. We need to close via ArcSwap.
-            // Use a different approach: create a temporary "closed" placeholder.
-            //
-            // Actually, we can call close() on the Storage directly since RocksDB
-            // close doesn't require exclusive ownership - it's idempotent.
-            // But to ensure proper cleanup, we create a new empty Storage as placeholder,
-            // swap it in, then drop the old one.
-
-            // Create placeholder Storage (not opened)
-            let placeholder = Arc::new(Storage::new(db_instance_num, db_id));
-
-            // Swap placeholder in - this releases ArcSwap's reference to old Storage
-            self.storage_swap.swap(placeholder);
-
-            // Now current_storage (the old Arc) is the only reference left
-            // It will be dropped at the end of this block, releasing RocksDB lock
-        }
+        // pause_controller has already drained pending requests, so swapping the
+        // placeholder in and dropping `current_storage` here is the only remaining
+        // reference — `restore_checkpoint_layout` below must run with no live
+        // RocksDB handle on `db_path`.
+        let placeholder = Arc::new(Storage::new(db_instance_num, db_id));
+        self.storage_swap.swap(placeholder);
+        drop(current_storage);
 
         log::info!("Old Storage dropped, RocksDB lock released");
 
         // ========== Phase 4: Restore checkpoint (atomic operation) ==========
-        // Now we can safely restore checkpoint since placeholder Storage holds no lock.
         restore_checkpoint_layout(&checkpoint_root, &self.db_path, db_instance_num).map_err(
             |e| {
                 cleanup_on_error();
@@ -394,16 +390,45 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         self.storage_swap.swap(Arc::new(new_storage));
         log::info!("Storage swapped to new instance after snapshot installation");
 
-        // ========== Phase 6: Resume StorageServer ==========
-        if let Some(ctrl) = &self.pause_controller {
-            ctrl.resume();
-        }
-
         // ========== Phase 7: Update state and persist ==========
+        // Initialize cf_tracker from restored SST properties
+        self.init_cf_tracker().map_err(|e| {
+            cleanup_on_error();
+            StorageError::from_io_error(ErrorSubject::Snapshot(None), ErrorVerb::Write, e)
+        })?;
+
+        // Restore each instance's collector state from snapshot metadata. The new
+        // storage created its own collector/tracker instances during open(), so we
+        // must look them up through storage_swap rather than reusing pre-swap refs.
+        let storage_after_swap = self.storage_swap.load();
+        let collectors: Vec<_> = (0..db_instance_num)
+            .filter_map(|i| storage_after_swap.get_logindex_collector(i))
+            .collect();
+        file_meta.restore_collector_states(&collectors);
+
+        // Purge collector entries for indices compacted into the snapshot.
+        // This immediately compacts restored pairs to a single boundary entry at
+        // last_included_index, which is acceptable since the follower will receive
+        // new entries via replication after this snapshot is installed.
+        let purge_idx = file_meta.last_included_index as storage::logindex::LogIndex;
+        for c in &collectors {
+            c.purge(purge_idx);
+        }
+        drop(storage_after_swap);
+
         self.last_applied = meta.last_log_id;
         self.last_membership = meta.last_membership.clone();
 
-        persist_current_snapshot(&self.snapshot_work_dir, meta, &bytes)?;
+        persist_current_snapshot(&self.snapshot_work_dir, meta, &bytes).inspect_err(|_| {
+            cleanup_on_error();
+        })?;
+
+        // ========== Phase 8: Resume StorageServer ==========
+        // Resume only after all state updates are complete, so applied_state()
+        // returns correct values if queries arrive immediately after resume.
+        if let Some(ctrl) = &self.pause_controller {
+            ctrl.resume();
+        }
 
         drop(unpack_root);
         log::info!("Snapshot installation complete");
@@ -420,6 +445,18 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         &mut self,
     ) -> Result<(Option<LogId<u64>>, StoredMembership<u64, KiwiNode>), openraft::StorageError<u64>>
     {
+        // On first access, lazily load from persisted snapshot to recover last_applied
+        // after restart (otherwise openraft would scan from index 0 and fail if logs were purged).
+        if self.last_applied.is_none() {
+            if let Some(snap) = load_current_snapshot(&self.snapshot_work_dir)? {
+                self.last_applied = snap.meta.last_log_id;
+                self.last_membership = snap.meta.last_membership.clone();
+                log::info!(
+                    "Recovered last_applied={:?} from persisted snapshot",
+                    self.last_applied
+                );
+            }
+        }
         Ok((self.last_applied, self.last_membership.clone()))
     }
 }
@@ -446,9 +483,14 @@ impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
         } else {
             (0, 0)
         };
-        let raft_meta = RaftSnapshotMeta::new(last_idx, last_term);
 
+        // Snapshot meta carries each instance's collector state so the receiver can
+        // rebuild every (log_index, seqno) mapping, not just instance 0's.
         let storage = self._storage.load_full();
+        let collectors: Vec<_> = (0..storage.db_instance_num)
+            .filter_map(|i| storage.get_logindex_collector(i))
+            .collect();
+        let raft_meta = RaftSnapshotMeta::with_collector_states(last_idx, last_term, &collectors);
         storage
             .create_checkpoint(&dir, &raft_meta)
             .map_err(storage_err_to_raft)?;
@@ -469,6 +511,13 @@ impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
         };
 
         persist_current_snapshot(&self.snapshot_work_dir, &meta, &bytes)?;
+
+        // Purge collector entries that are now covered by the snapshot.
+        // This prevents unbounded memory growth as the leader continues accepting writes.
+        let purge_idx = raft_meta.last_included_index as storage::logindex::LogIndex;
+        for c in &collectors {
+            c.purge(purge_idx);
+        }
 
         Ok(Snapshot {
             meta,

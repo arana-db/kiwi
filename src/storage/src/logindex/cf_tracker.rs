@@ -15,14 +15,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! LogIndexOfColumnFamilies: tracks log index state for all Column Families
+
 use std::collections::BTreeSet;
 
 use parking_lot::RwLock;
 
-use crate::COLUMN_FAMILY_COUNT;
-use crate::db_access::{DbCfAccess, Result};
-use crate::table_properties::get_largest_log_index_from_collection;
-use crate::types::{LogIndex, LogIndexSeqnoPair, SequenceNumber};
+use crate::logindex::db_access::{DbCfAccess, Result};
+use crate::logindex::types::cf_metadata::COLUMN_FAMILY_COUNT;
+use crate::logindex::types::{LogIndex, LogIndexSeqnoPair, SequenceNumber};
 
 /// Each CF's applied (latest in memtable) and flushed (latest in SST)
 struct LogIndexPair {
@@ -99,10 +100,11 @@ impl LogIndexOfColumnFamilies {
 
     /// Restore applied/flushed state from each CF's SST
     pub fn init<D: DbCfAccess>(&self, db: &D) -> Result<()> {
-        let state = self.state.write();
+        let mut state = self.state.write();
         for i in 0..COLUMN_FAMILY_COUNT {
             let collection = db.get_properties_of_all_tables_cf(i)?;
-            if let Some(pair) = get_largest_log_index_from_collection(&collection) {
+            if let Some(pair) = crate::logindex::get_largest_log_index_from_collection(&collection)
+            {
                 let log_index = pair.applied_log_index();
                 let seqno = pair.seqno();
                 state.cf[i].applied_index.set(log_index, seqno);
@@ -151,11 +153,24 @@ impl LogIndexOfColumnFamilies {
         if !Self::is_valid_cf_id(cf_id) {
             return;
         }
-        let state = self.state.write();
+        let mut state = self.state.write();
         let li = state.cf[cf_id].flushed_index.log_index();
         let seq = state.cf[cf_id].flushed_index.seqno();
         state.cf[cf_id]
             .flushed_index
+            .set(log_index.max(li), seqno.max(seq));
+    }
+
+    /// Set applied_index for a specific CF (used during snapshot restore)
+    pub fn set_applied_log_index(&self, cf_id: usize, log_index: LogIndex, seqno: SequenceNumber) {
+        if !Self::is_valid_cf_id(cf_id) {
+            return;
+        }
+        let mut state = self.state.write();
+        let li = state.cf[cf_id].applied_index.log_index();
+        let seq = state.cf[cf_id].applied_index.seqno();
+        state.cf[cf_id]
+            .applied_index
             .set(log_index.max(li), seqno.max(seq));
     }
 
@@ -189,7 +204,7 @@ impl LogIndexOfColumnFamilies {
         if !Self::is_valid_cf_id(cf_id) {
             return;
         }
-        let state = self.state.write();
+        let mut state = self.state.write();
         let fl = state.cf[cf_id].flushed_index.log_index();
         let fs = state.cf[cf_id].flushed_index.seqno();
         let aseq = state.cf[cf_id].applied_index.seqno();
@@ -216,15 +231,13 @@ impl LogIndexOfColumnFamilies {
             s.insert(state.cf[i].applied_index.log_index());
             s.insert(state.cf[i].flushed_index.log_index());
         }
-        if s.is_empty() {
-            return 0;
+
+        // Calculate gap between min and max values
+        let mut iter = s.iter();
+        match (iter.next(), iter.next_back()) {
+            (Some(first), Some(last)) => last.saturating_sub(*first) as u64,
+            _ => 0,
         }
-        if s.len() == 1 {
-            return 0;
-        }
-        let first = *s.first().expect("BTreeSet has at least 2 elements");
-        let last = *s.last().expect("BTreeSet has at least 2 elements");
-        last.saturating_sub(first) as u64
     }
 
     pub fn set_last_flush_index(&self, log_index: LogIndex, seqno: SequenceNumber) {
@@ -267,12 +280,15 @@ impl LogIndexOfColumnFamilies {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CF_NAMES;
-    use crate::LogIndexAndSequenceCollector;
-    use crate::db_access::DbCfAccess;
+    use crate::logindex::db_access::DbCfAccess;
+    use crate::logindex::types::LogIndexError;
+    use crate::logindex::{LogIndexAndSequenceCollector, LogIndexTablePropertiesCollectorFactory};
     use rocksdb::{ColumnFamilyDescriptor, DB, Options};
     use std::sync::Arc;
     use tempfile::TempDir;
+
+    // Use centralized CF names from cf_metadata module
+    use crate::logindex::types::cf_metadata::CF_NAMES_STR;
 
     struct MultiCfDbAccess<'a> {
         db: &'a DB,
@@ -283,11 +299,17 @@ mod tests {
             &self,
             cf_id: usize,
         ) -> Result<rocksdb::table_properties::TablePropertiesCollection> {
-            if cf_id < CF_NAMES.len() {
-                let cf = self.db.cf_handle(CF_NAMES[cf_id]).expect("cf handle");
-                self.db.get_properties_of_all_tables_cf(&cf)
+            if cf_id < CF_NAMES_STR.len() {
+                let cf = self.db.cf_handle(CF_NAMES_STR[cf_id]).ok_or_else(|| {
+                    LogIndexError::CfNotFound {
+                        cf_name: CF_NAMES_STR[cf_id].to_string(),
+                    }
+                })?;
+                self.db
+                    .get_properties_of_all_tables_cf(&cf)
+                    .map_err(|e| LogIndexError::RocksDb { source: e })
             } else {
-                self.db.get_properties_of_all_tables()
+                Err(LogIndexError::InvalidCfId { cf_id })
             }
         }
     }
@@ -298,16 +320,14 @@ mod tests {
         let path = temp_dir.path();
 
         let collector = Arc::new(LogIndexAndSequenceCollector::new(0));
-        let factory = crate::table_properties::LogIndexTablePropertiesCollectorFactory::new(
-            collector.clone(),
-        );
+        let factory = LogIndexTablePropertiesCollectorFactory::new(collector.clone());
 
         let mut opts = Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
         opts.set_table_properties_collector_factory(factory);
 
-        let cfs: Vec<ColumnFamilyDescriptor> = CF_NAMES
+        let cfs: Vec<ColumnFamilyDescriptor> = CF_NAMES_STR
             .iter()
             .map(|n| ColumnFamilyDescriptor::new(*n, opts.clone()))
             .collect();

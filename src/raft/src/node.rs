@@ -145,6 +145,21 @@ impl Default for RaftConfig {
 }
 
 fn build_raft_config(config: &RaftConfig) -> Result<Arc<Config>, anyhow::Error> {
+    // Validate snapshot configuration parameters
+    if config.snapshot_logs_threshold == 0 {
+        return Err(anyhow::anyhow!("snapshot_logs_threshold must be > 0"));
+    }
+    if config.snapshot_max_chunk_size == 0 {
+        return Err(anyhow::anyhow!("snapshot_max_chunk_size must be > 0"));
+    }
+    if config.install_snapshot_timeout == 0 {
+        return Err(anyhow::anyhow!("install_snapshot_timeout must be > 0"));
+    }
+    if config.replication_lag_threshold == 0 {
+        return Err(anyhow::anyhow!("replication_lag_threshold must be > 0"));
+    }
+    // max_in_snapshot_log_to_keep: 0 is intentionally allowed (keep no in-snapshot logs)
+
     let raft_config = Config {
         heartbeat_interval: config.heartbeat_interval,
         election_timeout_min: config.election_timeout_min,
@@ -168,6 +183,9 @@ pub async fn create_raft_node(
     let snapshot_work_dir = config.data_dir.join("snapshots");
     fs::create_dir_all(&snapshot_work_dir)?;
 
+    // Per-instance LogIndex collectors / cf_trackers live in the Storage; the state
+    // machine looks them up through storage_swap so it sees the right ones after a
+    // snapshot install hot-swaps Storage.
     let mut state_machine = KiwiStateMachine::new(
         config.node_id,
         storage_swap.clone(),

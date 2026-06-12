@@ -42,11 +42,17 @@ use crate::error::Error::RedisErr;
 use crate::error::InvalidFormatSnafu;
 use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
 use crate::format_base_value::{DATA_TYPE_TAG, DataType};
+use crate::logindex::{
+    FlushTrigger, LogIndexAndSequenceCollector, LogIndexAndSequenceCollectorPurger,
+    LogIndexOfColumnFamilies, LogIndexTablePropertiesCollectorFactory, SnapshotCallback,
+};
 use crate::meta_compaction_filter::MetaCompactionFilterFactory;
 use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
 use crate::storage_define::TYPE_LENGTH;
+
+// Import logindex types for use in Storage
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnFamilyIndex {
@@ -117,6 +123,10 @@ pub struct Redis {
     // For startup state tracking
     pub is_starting: AtomicBool,
 
+    // For LogIndex tracking (Raft snapshot integration)
+    pub logindex_collector: Option<Arc<LogIndexAndSequenceCollector>>,
+    pub logindex_cf_tracker: Option<Arc<LogIndexOfColumnFamilies>>,
+
     // For cluster mode: when set, create_batch returns a BinlogBatch.
     pub append_log_fn: OnceLock<crate::batch::AppendLogFn>,
 }
@@ -156,6 +166,10 @@ impl Redis {
             small_compaction_threshold: std::sync::atomic::AtomicU64::new(5000),
             small_compaction_duration_threshold: std::sync::atomic::AtomicU64::new(10000),
 
+            // LogIndex tracking initialized in open()
+            logindex_collector: None,
+            logindex_cf_tracker: None,
+
             append_log_fn: OnceLock::new(),
         }
     }
@@ -166,6 +180,62 @@ impl Redis {
             std::sync::atomic::Ordering::SeqCst,
         );
 
+        // Initialize LogIndex collector and tracker for Raft snapshot integration
+        let collector = Arc::new(LogIndexAndSequenceCollector::new(0));
+        let cf_tracker = Arc::new(LogIndexOfColumnFamilies::new());
+
+        // OnceCell shared with the event listener so callbacks (which fire on RocksDB
+        // background threads after open) can reach the live DB handle.
+        let db_once_cell: Arc<OnceCell<Arc<DB>>> = Arc::new(OnceCell::new());
+
+        // Snapshot trigger: emitted by the LogIndex purger every N flushes to suggest
+        // that the Raft layer build a snapshot. Wiring this into Raft requires a
+        // back-channel from storage -> raft that does not currently exist (the raft
+        // crate depends on storage, not the other way round). Until that channel is
+        // added the callback only logs at debug level — the manual snapshot path
+        // (`KiwiSnapshotBuilder`) keeps working without it.
+        let snapshot_callback: SnapshotCallback =
+            Box::new(move |log_index: i64, is_manual: bool| {
+                log::debug!(
+                    "LogIndex snapshot suggestion: log_index={log_index}, is_manual={is_manual} \
+                     (auto-trigger not wired; manual snapshot path is unaffected)"
+                );
+            });
+
+        // Flush trigger: invoked by the purger when the collector queue grows beyond
+        // its bound and a specific CF needs to be flushed to release entries. We hold
+        // the DB through `db_once_cell` (populated below after `DB::open_cf_descriptors`).
+        let flush_db_cell = Arc::clone(&db_once_cell);
+        let flush_trigger: FlushTrigger = Box::new(move |cf_id: usize| {
+            let Some(db) = flush_db_cell.get() else {
+                log::warn!("flush_trigger fired before DB was initialized; cf_id={cf_id}");
+                return;
+            };
+            let Some(cf_name) = crate::logindex::types::cf_metadata::CF_NAMES_STR.get(cf_id) else {
+                log::warn!("flush_trigger received out-of-range cf_id={cf_id}");
+                return;
+            };
+            let Some(handle) = db.cf_handle(cf_name) else {
+                log::warn!("flush_trigger could not resolve cf handle for {cf_name}");
+                return;
+            };
+            if let Err(e) = db.flush_cf(&handle) {
+                log::error!("flush_trigger: flush_cf({cf_name}) failed: {e}");
+            }
+        });
+
+        // Create event listener purger - registered once on DB options (not per-CF)
+        let purger = LogIndexAndSequenceCollectorPurger::new(
+            collector.clone(),
+            cf_tracker.clone(),
+            snapshot_callback,
+            Some(flush_trigger),
+        );
+
+        // Add event listener to DB options (event listeners are DB-level, not CF-level)
+        let mut db_opts = self.storage.options.clone();
+        db_opts.add_event_listener(purger);
+
         const CF_CONFIGS: &[(&str, bool, Option<usize>)] = &[
             ("default", true, None),                   // meta & string: bloom filter
             ("hash_data_cf", true, None),              // hash: bloom filter
@@ -174,7 +244,6 @@ impl Redis {
             ("zset_data_cf", false, Some(16 * 1024)),  // zset data: 16KB block size
             ("zset_score_cf", false, Some(16 * 1024)), // zset score: 16KB block size
         ];
-        let db_once_cell = Arc::new(OnceCell::new());
         let column_families: Vec<ColumnFamilyDescriptor> = CF_CONFIGS
             .iter()
             .map(|(name, use_bloom, block_size)| {
@@ -184,12 +253,12 @@ impl Redis {
                     *use_bloom,
                     *block_size,
                     Some(&db_once_cell),
+                    &collector,
                 )
             })
             .collect();
 
-        let db = DB::open_cf_descriptors(&self.storage.options, db_path, column_families)
-            .context(RocksSnafu)?;
+        let db = DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?;
         let engine = RocksdbEngine::new(db);
         let db_arc = engine.shared_db();
         let _ = db_once_cell.set(Arc::clone(&db_arc));
@@ -202,6 +271,17 @@ impl Redis {
         self.db = Some(Box::new(engine));
         self.is_starting.store(false, Ordering::SeqCst);
 
+        // Initialize cf_tracker from SST properties
+        let rocksdb = db_arc.as_ref();
+        let access = crate::logindex::db_access::DbAccess::new(rocksdb);
+        if let Err(e) = cf_tracker.init(&access) {
+            log::warn!("Failed to initialize cf_tracker from SST properties: {}", e);
+        }
+
+        // Store collector and tracker
+        self.logindex_collector = Some(collector);
+        self.logindex_cf_tracker = Some(cf_tracker);
+
         Ok(())
     }
 
@@ -212,6 +292,7 @@ impl Redis {
         use_bloom_filter: bool,
         block_size: Option<usize>,
         db_once_cell: Option<&Arc<OnceCell<Arc<DB>>>>,
+        collector: &Arc<LogIndexAndSequenceCollector>,
     ) -> ColumnFamilyDescriptor {
         let mut cf_opts = storage_options.options.clone();
         let mut table_opts = BlockBasedOptions::default();
@@ -244,6 +325,10 @@ impl Redis {
             let cache = rocksdb::Cache::new_lru_cache(storage_options.block_cache_size);
             table_opts.set_block_cache(&cache);
         }
+
+        // Set table properties collector factory for LogIndex tracking
+        let factory = LogIndexTablePropertiesCollectorFactory::new(collector.clone());
+        cf_opts.set_table_properties_collector_factory(factory);
 
         // Set table factory
         cf_opts.set_block_based_table_factory(&table_opts);
@@ -395,6 +480,34 @@ impl Redis {
             &self.write_options,
             cf_handles,
         )))
+    }
+
+    /// Commit a batch and record `(raft_log_index, seqno)` in the LogIndex collector.
+    ///
+    /// The seqno is captured via `latest_sequence_number()` *after* `commit()` returns.
+    /// `Storage::on_binlog_write` documents a strict single-writer invariant for this
+    /// path: only the Raft apply loop is allowed to write to `inst.db`, so the seqno
+    /// observed here is the seqno produced by *this* batch. A second writer would
+    /// inflate the recorded seqno, which can stall flush-based logindex advancement
+    /// and Raft log purging — do not introduce one without first replacing this fetch
+    /// with a batch-local sequence number API.
+    ///
+    /// Centralising the (commit, seqno-fetch, collector update) here gives us a single
+    /// place to harden later (e.g. a per-instance write mutex or a future rust-rocksdb
+    /// API exposing the batch's own sequence number) without touching every call site.
+    pub fn commit_batch_and_track_logindex(
+        &self,
+        batch: Box<dyn crate::batch::Batch + '_>,
+        raft_log_index: u64,
+    ) -> Result<()> {
+        batch.commit()?;
+        if let (Some(db), Some(collector)) = (self.db.as_ref(), self.logindex_collector.as_ref()) {
+            // Raft log indices are u64; clamp to i64::MAX defensively so a wraparound
+            // can't sneak a negative value into the collector and skip the update.
+            let log_index_i64 = i64::try_from(raft_log_index).unwrap_or(i64::MAX);
+            collector.update(log_index_i64, db.latest_sequence_number());
+        }
+        Ok(())
     }
 
     pub fn update_specific_key_duration(

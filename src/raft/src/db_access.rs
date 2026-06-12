@@ -15,19 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use rocksdb::table_properties::TablePropertiesCollection;
+//! Shim module that re-exports from storage::logindex for backward compatibility.
+//! Tests that use `raft::db_access::DbCfAccess` can continue to work.
 
-/// Error type (reuse rocksdb::Error or custom)
-pub type Result<T> = std::result::Result<T, rocksdb::Error>;
-
-/// Thin wrapper interface: provides ability to get TableProperties by CF
-///
-/// Equivalent to C++ Redis's GetDB() + GetColumnFamilyHandles()[cf_id],
-/// used for LogIndexOfColumnFamilies::Init to iterate CFs and call GetPropertiesOfAllTables.
-pub trait DbCfAccess {
-    /// Get TableProperties of all SSTs for specified CF
-    ///
-    /// # Arguments
-    /// * `cf_id` - ColumnFamily index, range [0, COLUMN_FAMILY_COUNT)
-    fn get_properties_of_all_tables_cf(&self, cf_id: usize) -> Result<TablePropertiesCollection>;
-}
+pub use storage::logindex::DbCfAccess;

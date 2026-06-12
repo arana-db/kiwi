@@ -129,13 +129,17 @@ impl raft::db_access::DbCfAccess for DbAccess<'_> {
     fn get_properties_of_all_tables_cf(
         &self,
         cf_id: usize,
-    ) -> std::result::Result<rocksdb::table_properties::TablePropertiesCollection, rocksdb::Error>
+    ) -> storage::logindex::db_access::Result<rocksdb::table_properties::TablePropertiesCollection>
     {
         if cf_id < CF_NAMES.len() {
             let cf = self.db.cf_handle(CF_NAMES[cf_id]).expect("cf handle");
-            self.db.get_properties_of_all_tables_cf(&cf)
+            self.db
+                .get_properties_of_all_tables_cf(&cf)
+                .map_err(|e| storage::logindex::types::LogIndexError::RocksDb { source: e })
         } else {
-            self.db.get_properties_of_all_tables()
+            self.db
+                .get_properties_of_all_tables()
+                .map_err(|e| storage::logindex::types::LogIndexError::RocksDb { source: e })
         }
     }
 }

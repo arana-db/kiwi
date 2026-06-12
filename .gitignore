@@ -46,6 +46,7 @@ test_debug_*
 STORAGE_COMPARISON.md
 
 # Claude Code configuration
+.claude
 .claude/
 
 # Claude Spec Workflow configuration

@@ -182,6 +182,16 @@ impl DualRuntimeError {
             StorageError::Unknown { .. } => false,
             StorageError::OptionNone { .. } => false,
             StorageError::RedisErr { .. } => true, // Redis protocol errors are typically recoverable
+            StorageError::LogIndex { message, .. } => {
+                let msg = message.to_lowercase();
+                // Structural/programming errors are not retryable
+                if msg.contains("not found") || msg.contains("invalid") || msg.contains("unknown") {
+                    false
+                } else {
+                    // RocksDB-originating errors may be transient
+                    true
+                }
+            }
         }
     }
 
