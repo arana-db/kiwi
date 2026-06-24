@@ -37,7 +37,7 @@ jobs:
     name: license header check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: check license header
         uses: apache/skywalking-eyes/header@main
@@ -47,7 +47,7 @@ jobs:
     name: cargo fmt
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -69,7 +69,7 @@ jobs:
     name: cargo clippy (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Free disk space (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -138,7 +138,7 @@ jobs:
     name: build and test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Free disk space (Linux)
         if: matrix.os == 'ubuntu-latest'
@@ -218,7 +218,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-and-test]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -263,7 +263,7 @@ jobs:
       matrix:
         sanitizer: [address, leak, thread]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup Rust nightly with sanitizer support
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -320,7 +320,7 @@ jobs:
     name: Docker Build Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -343,7 +343,7 @@ jobs:
     name: Static Analysis
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
