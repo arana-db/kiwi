@@ -66,181 +66,21 @@ impl StorageClient {
         self.inner.channel_stats().await
     }
 
-    // Redis command implementations
-
-    /// GET command - retrieve a value by key
-    pub async fn get(&self, key: &[u8]) -> Result<RespData, DualRuntimeError> {
-        debug!(
-            "StorageClient::get - key: {:?}",
-            String::from_utf8_lossy(key)
-        );
-
-        let command = StorageCommand::Get { key: key.to_vec() };
-
-        self.inner.send_request(command).await
-    }
-
-    /// SET command - set a key-value pair with optional TTL
-    pub async fn set(
+    /// Execute an arbitrary Redis command through the storage runtime command table
+    pub async fn execute_command(
         &self,
-        key: &[u8],
-        value: &[u8],
-        ttl: Option<Duration>,
+        cmd_name: &[u8],
+        argv: &[Vec<u8>],
     ) -> Result<RespData, DualRuntimeError> {
         debug!(
-            "StorageClient::set - key: {:?}, value_len: {}, ttl: {:?}",
-            String::from_utf8_lossy(key),
-            value.len(),
-            ttl
+            "StorageClient::execute_command - cmd: {:?}, argc: {}",
+            String::from_utf8_lossy(cmd_name),
+            argv.len()
         );
 
-        let command = StorageCommand::Set {
-            key: key.to_vec(),
-            value: value.to_vec(),
-            ttl,
-        };
-
-        self.inner.send_request(command).await
-    }
-
-    /// DEL command - delete one or more keys
-    pub async fn del(&self, keys: &[Vec<u8>]) -> Result<RespData, DualRuntimeError> {
-        debug!(
-            "StorageClient::del - keys: {:?}",
-            keys.iter()
-                .map(|k| String::from_utf8_lossy(k))
-                .collect::<Vec<_>>()
-        );
-
-        let command = StorageCommand::Del {
-            keys: keys.to_vec(),
-        };
-
-        self.inner.send_request(command).await
-    }
-
-    /// EXISTS command - check if keys exist
-    pub async fn exists(&self, keys: &[Vec<u8>]) -> Result<RespData, DualRuntimeError> {
-        debug!(
-            "StorageClient::exists - keys: {:?}",
-            keys.iter()
-                .map(|k| String::from_utf8_lossy(k))
-                .collect::<Vec<_>>()
-        );
-
-        let command = StorageCommand::Exists {
-            keys: keys.to_vec(),
-        };
-
-        self.inner.send_request(command).await
-    }
-
-    /// EXPIRE command - set expiration time for a key
-    pub async fn expire(&self, key: &[u8], ttl: Duration) -> Result<RespData, DualRuntimeError> {
-        debug!(
-            "StorageClient::expire - key: {:?}, ttl: {:?}",
-            String::from_utf8_lossy(key),
-            ttl
-        );
-
-        let command = StorageCommand::Expire {
-            key: key.to_vec(),
-            ttl,
-        };
-
-        self.inner.send_request(command).await
-    }
-
-    /// TTL command - get time to live for a key
-    pub async fn ttl(&self, key: &[u8]) -> Result<RespData, DualRuntimeError> {
-        debug!(
-            "StorageClient::ttl - key: {:?}",
-            String::from_utf8_lossy(key)
-        );
-
-        let command = StorageCommand::Ttl { key: key.to_vec() };
-
-        self.inner.send_request(command).await
-    }
-
-    /// INCR command - increment a numeric value
-    pub async fn incr(&self, key: &[u8]) -> Result<RespData, DualRuntimeError> {
-        debug!(
-            "StorageClient::incr - key: {:?}",
-            String::from_utf8_lossy(key)
-        );
-
-        let command = StorageCommand::Incr { key: key.to_vec() };
-
-        self.inner.send_request(command).await
-    }
-
-    /// INCRBY command - increment by a specific amount
-    pub async fn incr_by(&self, key: &[u8], increment: i64) -> Result<RespData, DualRuntimeError> {
-        debug!(
-            "StorageClient::incr_by - key: {:?}, increment: {}",
-            String::from_utf8_lossy(key),
-            increment
-        );
-
-        let command = StorageCommand::IncrBy {
-            key: key.to_vec(),
-            increment,
-        };
-
-        self.inner.send_request(command).await
-    }
-
-    /// DECR command - decrement a numeric value
-    pub async fn decr(&self, key: &[u8]) -> Result<RespData, DualRuntimeError> {
-        debug!(
-            "StorageClient::decr - key: {:?}",
-            String::from_utf8_lossy(key)
-        );
-
-        let command = StorageCommand::Decr { key: key.to_vec() };
-
-        self.inner.send_request(command).await
-    }
-
-    /// DECRBY command - decrement by a specific amount
-    pub async fn decr_by(&self, key: &[u8], decrement: i64) -> Result<RespData, DualRuntimeError> {
-        debug!(
-            "StorageClient::decr_by - key: {:?}, decrement: {}",
-            String::from_utf8_lossy(key),
-            decrement
-        );
-
-        let command = StorageCommand::DecrBy {
-            key: key.to_vec(),
-            decrement,
-        };
-
-        self.inner.send_request(command).await
-    }
-
-    /// MSET command - multiple set operations
-    pub async fn mset(&self, pairs: &[(Vec<u8>, Vec<u8>)]) -> Result<RespData, DualRuntimeError> {
-        debug!("StorageClient::mset - pairs: {}", pairs.len());
-
-        let command = StorageCommand::MSet {
-            pairs: pairs.to_vec(),
-        };
-
-        self.inner.send_request(command).await
-    }
-
-    /// MGET command - multiple get operations
-    pub async fn mget(&self, keys: &[Vec<u8>]) -> Result<RespData, DualRuntimeError> {
-        debug!(
-            "StorageClient::mget - keys: {:?}",
-            keys.iter()
-                .map(|k| String::from_utf8_lossy(k))
-                .collect::<Vec<_>>()
-        );
-
-        let command = StorageCommand::MGet {
-            keys: keys.to_vec(),
+        let command = StorageCommand::Execute {
+            cmd_name: cmd_name.to_vec(),
+            argv: argv.to_vec(),
         };
 
         self.inner.send_request(command).await
@@ -428,21 +268,11 @@ mod tests {
 
     #[test]
     fn test_storage_command_creation() {
-        // Test that we can create various storage commands
-        let _get_cmd = StorageCommand::Get {
-            key: b"test".to_vec(),
+        let command = StorageCommand::Execute {
+            cmd_name: b"get".to_vec(),
+            argv: vec![b"get".to_vec(), b"test".to_vec()],
         };
-        let _set_cmd = StorageCommand::Set {
-            key: b"test".to_vec(),
-            value: b"value".to_vec(),
-            ttl: None,
-        };
-        let _del_cmd = StorageCommand::Del {
-            keys: vec![b"test".to_vec()],
-        };
-        let _exists_cmd = StorageCommand::Exists {
-            keys: vec![b"test".to_vec()],
-        };
+        assert!(matches!(command, StorageCommand::Execute { .. }));
     }
 
     #[test]

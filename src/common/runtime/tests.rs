@@ -310,46 +310,21 @@ mod serialization_tests {
     #[test]
     fn test_storage_command_serialization() {
         let commands = vec![
-            StorageCommand::Get {
-                key: b"test_key".to_vec(),
+            StorageCommand::Execute {
+                cmd_name: b"get".to_vec(),
+                argv: vec![b"get".to_vec(), b"test_key".to_vec()],
             },
-            StorageCommand::Set {
-                key: b"test_key".to_vec(),
-                value: b"test_value".to_vec(),
-                ttl: Some(Duration::from_secs(60)),
+            StorageCommand::Execute {
+                cmd_name: b"set".to_vec(),
+                argv: vec![
+                    b"set".to_vec(),
+                    b"test_key".to_vec(),
+                    b"test_value".to_vec(),
+                ],
             },
-            StorageCommand::Del {
-                keys: vec![b"key1".to_vec(), b"key2".to_vec()],
-            },
-            StorageCommand::Exists {
-                keys: vec![b"key1".to_vec()],
-            },
-            StorageCommand::Expire {
-                key: b"key".to_vec(),
-                ttl: Duration::from_secs(30),
-            },
-            StorageCommand::Ttl {
-                key: b"key".to_vec(),
-            },
-            StorageCommand::Incr {
-                key: b"counter".to_vec(),
-            },
-            StorageCommand::IncrBy {
-                key: b"counter".to_vec(),
-                increment: 5,
-            },
-            StorageCommand::Decr {
-                key: b"counter".to_vec(),
-            },
-            StorageCommand::DecrBy {
-                key: b"counter".to_vec(),
-                decrement: 3,
-            },
-            StorageCommand::MSet {
-                pairs: vec![(b"k1".to_vec(), b"v1".to_vec())],
-            },
-            StorageCommand::MGet {
-                keys: vec![b"k1".to_vec(), b"k2".to_vec()],
+            StorageCommand::Execute {
+                cmd_name: b"ping".to_vec(),
+                argv: vec![b"ping".to_vec()],
             },
         ];
 
@@ -360,18 +335,7 @@ mod serialization_tests {
 
             // Verify the command type matches
             match (&cmd, &deserialized) {
-                (StorageCommand::Get { .. }, StorageCommand::Get { .. }) => {}
-                (StorageCommand::Set { .. }, StorageCommand::Set { .. }) => {}
-                (StorageCommand::Del { .. }, StorageCommand::Del { .. }) => {}
-                (StorageCommand::Exists { .. }, StorageCommand::Exists { .. }) => {}
-                (StorageCommand::Expire { .. }, StorageCommand::Expire { .. }) => {}
-                (StorageCommand::Ttl { .. }, StorageCommand::Ttl { .. }) => {}
-                (StorageCommand::Incr { .. }, StorageCommand::Incr { .. }) => {}
-                (StorageCommand::IncrBy { .. }, StorageCommand::IncrBy { .. }) => {}
-                (StorageCommand::Decr { .. }, StorageCommand::Decr { .. }) => {}
-                (StorageCommand::DecrBy { .. }, StorageCommand::DecrBy { .. }) => {}
-                (StorageCommand::MSet { .. }, StorageCommand::MSet { .. }) => {}
-                (StorageCommand::MGet { .. }, StorageCommand::MGet { .. }) => {}
+                (StorageCommand::Execute { .. }, StorageCommand::Execute { .. }) => {}
                 _ => panic!("Command type mismatch after serialization"),
             }
         }
@@ -595,31 +559,35 @@ mod integration_tests {
     #[tokio::test]
     async fn test_basic_get_set_flow() {
         // Test that we can create storage commands
-        let set_command = StorageCommand::Set {
-            key: b"test_key".to_vec(),
-            value: b"test_value".to_vec(),
-            ttl: None,
+        let set_command = StorageCommand::Execute {
+            cmd_name: b"set".to_vec(),
+            argv: vec![
+                b"set".to_vec(),
+                b"test_key".to_vec(),
+                b"test_value".to_vec(),
+            ],
         };
 
-        let get_command = StorageCommand::Get {
-            key: b"test_key".to_vec(),
+        let get_command = StorageCommand::Execute {
+            cmd_name: b"get".to_vec(),
+            argv: vec![b"get".to_vec(), b"test_key".to_vec()],
         };
 
         // Verify commands are created correctly
         match set_command {
-            StorageCommand::Set { key, value, ttl } => {
-                assert_eq!(key, b"test_key");
-                assert_eq!(value, b"test_value");
-                assert_eq!(ttl, None);
+            StorageCommand::Execute { cmd_name, argv } => {
+                assert_eq!(cmd_name, b"set");
+                assert_eq!(argv.len(), 3);
             }
-            _ => panic!("Expected Set command"),
+            _ => panic!("Expected Execute command"),
         }
 
         match get_command {
-            StorageCommand::Get { key } => {
-                assert_eq!(key, b"test_key");
+            StorageCommand::Execute { cmd_name, argv } => {
+                assert_eq!(cmd_name, b"get");
+                assert_eq!(argv, vec![b"get".to_vec(), b"test_key".to_vec()]);
             }
-            _ => panic!("Expected Get command"),
+            _ => panic!("Expected Execute command"),
         }
     }
 
@@ -633,8 +601,9 @@ mod integration_tests {
         let (response_tx, _response_rx) = oneshot::channel();
         let request = StorageRequest {
             id: RequestId::new(),
-            command: StorageCommand::Get {
-                key: b"test".to_vec(),
+            command: StorageCommand::Execute {
+                cmd_name: b"get".to_vec(),
+                argv: vec![b"get".to_vec(), b"test".to_vec()],
             },
             response_channel: response_tx,
             timeout: Duration::from_secs(1),
@@ -661,8 +630,9 @@ mod integration_tests {
         );
 
         // This should timeout since there's no storage server
-        let command = StorageCommand::Get {
-            key: b"test".to_vec(),
+        let command = StorageCommand::Execute {
+            cmd_name: b"get".to_vec(),
+            argv: vec![b"get".to_vec(), b"test".to_vec()],
         };
         let result = storage_client.send_request(command).await;
 
@@ -695,10 +665,13 @@ mod integration_tests {
             let handle = tokio::spawn(async move {
                 barrier.wait().await;
 
-                let command = StorageCommand::Set {
-                    key: format!("key_{}", i).into_bytes(),
-                    value: format!("value_{}", i).into_bytes(),
-                    ttl: None,
+                let command = StorageCommand::Execute {
+                    cmd_name: b"set".to_vec(),
+                    argv: vec![
+                        b"set".to_vec(),
+                        format!("key_{}", i).into_bytes(),
+                        format!("value_{}", i).into_bytes(),
+                    ],
                 };
 
                 // This will fail since there's no storage server, but we're testing concurrency
@@ -734,11 +707,13 @@ mod integration_tests {
         let client2 = StorageClient::new(Arc::clone(&message_channel), Duration::from_millis(100));
 
         // Test that requests from different clients are isolated
-        let command1 = StorageCommand::Get {
-            key: b"key1".to_vec(),
+        let command1 = StorageCommand::Execute {
+            cmd_name: b"get".to_vec(),
+            argv: vec![b"get".to_vec(), b"key1".to_vec()],
         };
-        let command2 = StorageCommand::Get {
-            key: b"key2".to_vec(),
+        let command2 = StorageCommand::Execute {
+            cmd_name: b"get".to_vec(),
+            argv: vec![b"get".to_vec(), b"key2".to_vec()],
         };
 
         let result1 = client1.send_request(command1);
@@ -761,8 +736,9 @@ mod integration_tests {
         for i in 0..10 {
             let client = storage_client.clone();
             let handle = tokio::spawn(async move {
-                let command = StorageCommand::Get {
-                    key: format!("key_{}", i).into_bytes(),
+                let command = StorageCommand::Execute {
+                    cmd_name: b"get".to_vec(),
+                    argv: vec![b"get".to_vec(), format!("key_{}", i).into_bytes()],
                 };
                 client.send_request(command).await
             });
@@ -847,82 +823,29 @@ mod integration_tests {
     // Redis Command Tests
     #[tokio::test]
     async fn test_redis_command_serialization() {
-        // Test all Redis command types
         let commands = vec![
-            StorageCommand::Get {
-                key: b"key1".to_vec(),
+            StorageCommand::Execute {
+                cmd_name: b"get".to_vec(),
+                argv: vec![b"get".to_vec(), b"key1".to_vec()],
             },
-            StorageCommand::Set {
-                key: b"key1".to_vec(),
-                value: b"value1".to_vec(),
-                ttl: Some(Duration::from_secs(60)),
-            },
-            StorageCommand::Del {
-                keys: vec![b"key1".to_vec(), b"key2".to_vec()],
-            },
-            StorageCommand::Exists {
-                keys: vec![b"key1".to_vec()],
-            },
-            StorageCommand::Expire {
-                key: b"key1".to_vec(),
-                ttl: Duration::from_secs(30),
-            },
-            StorageCommand::Ttl {
-                key: b"key1".to_vec(),
-            },
-            StorageCommand::Incr {
-                key: b"counter".to_vec(),
-            },
-            StorageCommand::IncrBy {
-                key: b"counter".to_vec(),
-                increment: 5,
-            },
-            StorageCommand::Decr {
-                key: b"counter".to_vec(),
-            },
-            StorageCommand::DecrBy {
-                key: b"counter".to_vec(),
-                decrement: 3,
-            },
-            StorageCommand::MSet {
-                pairs: vec![
-                    (b"key1".to_vec(), b"value1".to_vec()),
-                    (b"key2".to_vec(), b"value2".to_vec()),
+            StorageCommand::Execute {
+                cmd_name: b"hset".to_vec(),
+                argv: vec![
+                    b"hset".to_vec(),
+                    b"hash1".to_vec(),
+                    b"field1".to_vec(),
+                    b"value1".to_vec(),
                 ],
-            },
-            StorageCommand::MGet {
-                keys: vec![b"key1".to_vec(), b"key2".to_vec()],
             },
         ];
 
         // Test that all commands can be created and have correct structure
         for command in commands {
-            match command {
-                StorageCommand::Get { key } => assert!(!key.is_empty()),
-                StorageCommand::Set { key, value, .. } => {
-                    assert!(!key.is_empty());
-                    assert!(!value.is_empty());
-                }
-                StorageCommand::Del { keys } => assert!(!keys.is_empty()),
-                StorageCommand::Exists { keys } => assert!(!keys.is_empty()),
-                StorageCommand::Expire { key, ttl } => {
-                    assert!(!key.is_empty());
-                    assert!(ttl > Duration::ZERO);
-                }
-                StorageCommand::Ttl { key } => assert!(!key.is_empty()),
-                StorageCommand::Incr { key } => assert!(!key.is_empty()),
-                StorageCommand::IncrBy { key, increment } => {
-                    assert!(!key.is_empty());
-                    assert_ne!(increment, 0);
-                }
-                StorageCommand::Decr { key } => assert!(!key.is_empty()),
-                StorageCommand::DecrBy { key, decrement } => {
-                    assert!(!key.is_empty());
-                    assert_ne!(decrement, 0);
-                }
-                StorageCommand::MSet { pairs } => assert!(!pairs.is_empty()),
-                StorageCommand::MGet { keys } => assert!(!keys.is_empty()),
-                StorageCommand::Batch { commands } => assert!(!commands.is_empty()),
+            if let StorageCommand::Execute { cmd_name, argv } = command {
+                assert!(!cmd_name.is_empty());
+                assert!(!argv.is_empty());
+            } else {
+                panic!("Expected Execute command");
             }
         }
     }
@@ -932,42 +855,35 @@ mod integration_tests {
         // Test edge cases for Redis commands
 
         // Empty key (should be handled gracefully)
-        let empty_key_command = StorageCommand::Get { key: vec![] };
+        let empty_key_command = StorageCommand::Execute {
+            cmd_name: b"get".to_vec(),
+            argv: vec![b"get".to_vec(), vec![]],
+        };
         match empty_key_command {
-            StorageCommand::Get { key } => assert!(key.is_empty()),
-            _ => panic!("Expected Get command"),
+            StorageCommand::Execute { argv, .. } => assert!(argv[1].is_empty()),
+            _ => panic!("Expected Execute command"),
         }
 
         // Large key
         let large_key = vec![b'x'; 1024];
-        let large_key_command = StorageCommand::Get {
-            key: large_key.clone(),
+        let large_key_command = StorageCommand::Execute {
+            cmd_name: b"get".to_vec(),
+            argv: vec![b"get".to_vec(), large_key.clone()],
         };
         match large_key_command {
-            StorageCommand::Get { key } => assert_eq!(key.len(), 1024),
-            _ => panic!("Expected Get command"),
+            StorageCommand::Execute { argv, .. } => assert_eq!(argv[1].len(), 1024),
+            _ => panic!("Expected Execute command"),
         }
 
         // Large value
         let large_value = vec![b'y'; 10240];
-        let large_value_command = StorageCommand::Set {
-            key: b"large_value_key".to_vec(),
-            value: large_value.clone(),
-            ttl: None,
+        let large_value_command = StorageCommand::Execute {
+            cmd_name: b"set".to_vec(),
+            argv: vec![b"set".to_vec(), b"large_value_key".to_vec(), large_value],
         };
         match large_value_command {
-            StorageCommand::Set { value, .. } => assert_eq!(value.len(), 10240),
-            _ => panic!("Expected Set command"),
-        }
-
-        // Zero TTL
-        let zero_ttl_command = StorageCommand::Expire {
-            key: b"key".to_vec(),
-            ttl: Duration::ZERO,
-        };
-        match zero_ttl_command {
-            StorageCommand::Expire { ttl, .. } => assert_eq!(ttl, Duration::ZERO),
-            _ => panic!("Expected Expire command"),
+            StorageCommand::Execute { argv, .. } => assert_eq!(argv[2].len(), 10240),
+            _ => panic!("Expected Execute command"),
         }
     }
 
@@ -979,21 +895,21 @@ mod integration_tests {
 
         // Create a batch of commands
         let batch_commands = vec![
-            StorageCommand::Set {
-                key: b"key1".to_vec(),
-                value: b"value1".to_vec(),
-                ttl: None,
+            StorageCommand::Execute {
+                cmd_name: b"set".to_vec(),
+                argv: vec![b"set".to_vec(), b"key1".to_vec(), b"value1".to_vec()],
             },
-            StorageCommand::Set {
-                key: b"key2".to_vec(),
-                value: b"value2".to_vec(),
-                ttl: None,
+            StorageCommand::Execute {
+                cmd_name: b"set".to_vec(),
+                argv: vec![b"set".to_vec(), b"key2".to_vec(), b"value2".to_vec()],
             },
-            StorageCommand::Get {
-                key: b"key1".to_vec(),
+            StorageCommand::Execute {
+                cmd_name: b"get".to_vec(),
+                argv: vec![b"get".to_vec(), b"key1".to_vec()],
             },
-            StorageCommand::Get {
-                key: b"key2".to_vec(),
+            StorageCommand::Execute {
+                cmd_name: b"get".to_vec(),
+                argv: vec![b"get".to_vec(), b"key2".to_vec()],
             },
         ];
 
@@ -1040,10 +956,13 @@ mod integration_tests {
             let error_counter = Arc::clone(&error_counter);
 
             let handle = tokio::spawn(async move {
-                let command = StorageCommand::Set {
-                    key: format!("perf_key_{}", i).into_bytes(),
-                    value: format!("perf_value_{}", i).into_bytes(),
-                    ttl: None,
+                let command = StorageCommand::Execute {
+                    cmd_name: b"set".to_vec(),
+                    argv: vec![
+                        b"set".to_vec(),
+                        format!("perf_key_{}", i).into_bytes(),
+                        format!("perf_value_{}", i).into_bytes(),
+                    ],
                 };
 
                 match client.send_request(command).await {
@@ -1100,8 +1019,9 @@ mod integration_tests {
         for i in 0..num_requests {
             let client = storage_client.clone();
             let handle = tokio::spawn(async move {
-                let command = StorageCommand::Get {
-                    key: format!("capacity_test_{}", i).into_bytes(),
+                let command = StorageCommand::Execute {
+                    cmd_name: b"get".to_vec(),
+                    argv: vec![b"get".to_vec(), format!("capacity_test_{}", i).into_bytes()],
                 };
                 client.send_request(command).await
             });

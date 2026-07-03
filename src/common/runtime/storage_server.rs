@@ -483,75 +483,13 @@ impl StorageServer {
     /// Calculate storage statistics based on the command and result
     fn calculate_storage_stats(
         command: &StorageCommand,
-        result: &Result<resp::RespData, storage::error::Error>,
+        _result: &Result<resp::RespData, storage::error::Error>,
     ) -> StorageStats {
         let mut stats = StorageStats::default();
 
         match command {
-            StorageCommand::Get { key } => {
-                stats.keys_read = 1;
-                stats.bytes_read = key.len() as u64;
-                if let Ok(resp::RespData::BulkString(Some(value))) = result {
-                    stats.bytes_read += value.len() as u64;
-                }
-            }
-            StorageCommand::Set { key, value, .. } => {
-                stats.keys_written = if result.is_ok() { 1 } else { 0 };
-                stats.bytes_written = if result.is_ok() {
-                    (key.len() + value.len()) as u64
-                } else {
-                    0
-                };
-            }
-            StorageCommand::Del { keys } => {
-                if let Ok(resp::RespData::Integer(deleted_count)) = result {
-                    stats.keys_deleted = *deleted_count as u64;
-                }
-                stats.bytes_read = keys.iter().map(|k| k.len()).sum::<usize>() as u64;
-            }
-            StorageCommand::Exists { keys } => {
-                stats.keys_read = keys.len() as u64;
-                stats.bytes_read = keys.iter().map(|k| k.len()).sum::<usize>() as u64;
-            }
-            StorageCommand::MGet { keys } => {
-                stats.keys_read = keys.len() as u64;
-                stats.bytes_read = keys.iter().map(|k| k.len()).sum::<usize>() as u64;
-                if let Ok(resp::RespData::Array(Some(values))) = result {
-                    for value in values {
-                        if let resp::RespData::BulkString(Some(v)) = value {
-                            stats.bytes_read += v.len() as u64;
-                        }
-                    }
-                }
-            }
-            StorageCommand::MSet { pairs } => {
-                stats.keys_written = if result.is_ok() {
-                    pairs.len() as u64
-                } else {
-                    0
-                };
-                stats.bytes_written = if result.is_ok() {
-                    pairs.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>() as u64
-                } else {
-                    0
-                };
-            }
-            StorageCommand::Incr { key }
-            | StorageCommand::Decr { key }
-            | StorageCommand::IncrBy { key, .. }
-            | StorageCommand::DecrBy { key, .. } => {
-                stats.keys_read = 1;
-                stats.keys_written = if result.is_ok() { 1 } else { 0 };
-                stats.bytes_read = key.len() as u64;
-                stats.bytes_written = if result.is_ok() {
-                    key.len() as u64 + 8
-                } else {
-                    0
-                }; // Approximate integer size
-            }
-            StorageCommand::Expire { key, .. } | StorageCommand::Ttl { key } => {
-                stats.keys_read = 1;
-                stats.bytes_read = key.len() as u64;
+            StorageCommand::Execute { argv, .. } => {
+                stats.bytes_read = argv.iter().map(|arg| arg.len()).sum::<usize>() as u64;
             }
             StorageCommand::Batch { commands } => {
                 // Aggregate stats from all commands in batch
@@ -579,26 +517,9 @@ impl StorageServer {
         command: &StorageCommand,
     ) -> Result<RespData, storage::error::Error> {
         match command {
-            StorageCommand::Get { key } => Self::handle_get_command(storage, key).await,
-            StorageCommand::Set { key, value, ttl } => {
-                Self::handle_set_command(storage, key, value, ttl.as_ref()).await
+            StorageCommand::Execute { cmd_name, argv } => {
+                Self::handle_execute_command(storage, cmd_name, argv).await
             }
-            StorageCommand::Del { keys } => Self::handle_del_command(storage, keys).await,
-            StorageCommand::Exists { keys } => Self::handle_exists_command(storage, keys).await,
-            StorageCommand::Expire { key, ttl } => {
-                Self::handle_expire_command(storage, key, ttl).await
-            }
-            StorageCommand::Ttl { key } => Self::handle_ttl_command(storage, key).await,
-            StorageCommand::Incr { key } => Self::handle_incr_command(storage, key).await,
-            StorageCommand::IncrBy { key, increment } => {
-                Self::handle_incrby_command(storage, key, *increment).await
-            }
-            StorageCommand::Decr { key } => Self::handle_decr_command(storage, key).await,
-            StorageCommand::DecrBy { key, decrement } => {
-                Self::handle_decrby_command(storage, key, *decrement).await
-            }
-            StorageCommand::MSet { pairs } => Self::handle_mset_command(storage, pairs).await,
-            StorageCommand::MGet { keys } => Self::handle_mget_command(storage, keys).await,
             StorageCommand::Batch { commands } => {
                 Self::handle_batch_command(storage, commands).await
             }
@@ -618,23 +539,14 @@ pub struct BatchProcessor {
 /// Configuration for batch processing optimization
 #[derive(Debug, Clone)]
 pub struct BatchConfig {
-    /// Enable grouping of compatible operations (e.g., multiple GETs)
-    pub enable_operation_grouping: bool,
     /// Enable priority-based batching
     pub enable_priority_batching: bool,
-    /// Maximum number of operations to group together
-    pub max_group_size: usize,
-    /// Minimum batch size before processing (for efficiency)
-    pub min_batch_size: usize,
 }
 
 impl Default for BatchConfig {
     fn default() -> Self {
         Self {
-            enable_operation_grouping: true,
             enable_priority_batching: true,
-            max_group_size: 50,
-            min_batch_size: 5,
         }
     }
 }
@@ -644,20 +556,8 @@ impl Default for BatchConfig {
 struct BatchState {
     /// All pending requests
     requests: Vec<StorageRequest>,
-    /// Grouped requests by operation type for optimization
-    grouped_requests: std::collections::HashMap<BatchOperationType, Vec<StorageRequest>>,
     /// Last batch processing time
     last_batch_time: Instant,
-}
-
-/// Types of operations that can be batched together
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum BatchOperationType {
-    Read,    // GET, EXISTS, MGET operations
-    Write,   // SET, DEL, MSET operations
-    Numeric, // INCR, DECR, INCRBY, DECRBY operations
-    Expire,  // EXPIRE, TTL operations
-    Mixed,   // Operations that don't fit other categories
 }
 
 impl BatchProcessor {
@@ -670,7 +570,6 @@ impl BatchProcessor {
     pub fn with_config(max_batch_size: usize, batch_timeout_ms: u64, config: BatchConfig) -> Self {
         let batch_state = BatchState {
             requests: Vec::new(),
-            grouped_requests: std::collections::HashMap::new(),
             last_batch_time: Instant::now(),
         };
 
@@ -718,7 +617,6 @@ impl BatchProcessor {
 
         // Take all requests on timeout
         let batch = std::mem::take(&mut state.requests);
-        state.grouped_requests.clear();
         state.last_batch_time = Instant::now();
 
         debug!("Extracted batch of {} requests due to timeout", batch.len());
@@ -735,8 +633,6 @@ impl BatchProcessor {
 
         let batch = if self.config.enable_priority_batching {
             self.extract_priority_batch(&mut state)
-        } else if self.config.enable_operation_grouping {
-            self.extract_grouped_batch(&mut state)
         } else {
             // Simple FIFO batch
             let batch_size = self.max_batch_size.min(state.requests.len());
@@ -760,86 +656,7 @@ impl BatchProcessor {
         let batch_size = self.max_batch_size.min(state.requests.len());
         let batch = state.requests.drain(0..batch_size).collect();
 
-        // Update grouped requests
-        if self.config.enable_operation_grouping {
-            self.rebuild_grouped_requests(state);
-        }
-
         batch
-    }
-
-    /// Extract batch grouping compatible operations
-    fn extract_grouped_batch(&self, state: &mut BatchState) -> Vec<StorageRequest> {
-        let mut batch = Vec::new();
-        let mut remaining_capacity = self.max_batch_size;
-
-        // Process groups in order of efficiency (reads first, then writes)
-        let group_order = [
-            BatchOperationType::Read,
-            BatchOperationType::Numeric,
-            BatchOperationType::Write,
-            BatchOperationType::Expire,
-            BatchOperationType::Mixed,
-        ];
-
-        for op_type in &group_order {
-            if remaining_capacity == 0 {
-                break;
-            }
-
-            if let Some(group) = state.grouped_requests.get_mut(op_type) {
-                let take_count = remaining_capacity
-                    .min(group.len())
-                    .min(self.config.max_group_size);
-                if take_count > 0 {
-                    let group_batch: Vec<_> = group.drain(0..take_count).collect();
-                    remaining_capacity -= group_batch.len();
-                    batch.extend(group_batch);
-                }
-            }
-        }
-
-        // Remove processed requests from main list
-        state
-            .requests
-            .retain(|req| !batch.iter().any(|batch_req| batch_req.id == req.id));
-
-        // Clean up empty groups
-        state.grouped_requests.retain(|_, group| !group.is_empty());
-
-        batch
-    }
-
-    /// Rebuild grouped requests after priority sorting
-    fn rebuild_grouped_requests(&self, state: &mut BatchState) {
-        // For simplicity, we'll disable grouping when using priority batching
-        // This avoids the need to clone requests
-        state.grouped_requests.clear();
-    }
-
-    /// Classify storage command by operation type for batching
-    #[allow(dead_code)]
-    fn classify_operation(command: &StorageCommand) -> BatchOperationType {
-        match command {
-            StorageCommand::Get { .. }
-            | StorageCommand::Exists { .. }
-            | StorageCommand::MGet { .. } => BatchOperationType::Read,
-
-            StorageCommand::Set { .. }
-            | StorageCommand::Del { .. }
-            | StorageCommand::MSet { .. } => BatchOperationType::Write,
-
-            StorageCommand::Incr { .. }
-            | StorageCommand::IncrBy { .. }
-            | StorageCommand::Decr { .. }
-            | StorageCommand::DecrBy { .. } => BatchOperationType::Numeric,
-
-            StorageCommand::Expire { .. } | StorageCommand::Ttl { .. } => {
-                BatchOperationType::Expire
-            }
-
-            StorageCommand::Batch { .. } => BatchOperationType::Mixed,
-        }
     }
 
     /// Wait for batch condition to be met (size or efficiency threshold)
@@ -853,14 +670,6 @@ impl BatchProcessor {
                     break;
                 }
 
-                // Check if we have a good batch composition
-                if self.config.enable_operation_grouping
-                    && state.requests.len() >= self.config.min_batch_size
-                    && self.has_efficient_batch_composition(&state)
-                {
-                    break;
-                }
-
                 // Check if we have high priority requests that should be processed quickly
                 if self.config.enable_priority_batching && self.has_high_priority_requests(&state) {
                     break;
@@ -869,17 +678,6 @@ impl BatchProcessor {
 
             tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         }
-    }
-
-    /// Check if current batch has efficient composition for processing
-    fn has_efficient_batch_composition(&self, state: &BatchState) -> bool {
-        // Check if we have a good number of similar operations
-        for group in state.grouped_requests.values() {
-            if group.len() >= self.config.min_batch_size {
-                return true;
-            }
-        }
-        false
     }
 
     /// Check if there are high priority requests that should be processed quickly
@@ -896,7 +694,7 @@ impl BatchProcessor {
 
         BatchStats {
             pending_requests: state.requests.len(),
-            grouped_operations: state.grouped_requests.len(),
+            grouped_operations: 0,
             time_since_last_batch: state.last_batch_time.elapsed(),
         }
     }
@@ -1658,6 +1456,79 @@ impl StorageServer {
         }
 
         Ok(RespData::Array(Some(results)))
+    }
+
+    /// Handle an arbitrary Redis command using the current storage handlers
+    async fn handle_execute_command(
+        storage: &Arc<Storage>,
+        cmd_name: &[u8],
+        argv: &[Vec<u8>],
+    ) -> Result<RespData, storage::error::Error> {
+        let cmd_name = String::from_utf8_lossy(cmd_name).to_lowercase();
+
+        match cmd_name.as_str() {
+            "get" => Self::handle_get_command(storage, argv[1].as_slice()).await,
+            "set" => {
+                Self::handle_set_command(storage, argv[1].as_slice(), argv[2].as_slice(), None)
+                    .await
+            }
+            "del" => Self::handle_del_command(storage, &argv[1..]).await,
+            "exists" => Self::handle_exists_command(storage, &argv[1..]).await,
+            "expire" => {
+                let ttl = argv[2].as_slice();
+                let ttl = String::from_utf8_lossy(ttl).parse::<u64>().map_err(|_| {
+                    InvalidFormatSnafu {
+                        message: "invalid ttl".to_string(),
+                    }
+                    .build()
+                })?;
+                Self::handle_expire_command(
+                    storage,
+                    argv[1].as_slice(),
+                    &std::time::Duration::from_secs(ttl),
+                )
+                .await
+            }
+            "ttl" => Self::handle_ttl_command(storage, argv[1].as_slice()).await,
+            "incr" => Self::handle_incr_command(storage, argv[1].as_slice()).await,
+            "incrby" => {
+                let increment = String::from_utf8_lossy(argv[2].as_slice())
+                    .parse::<i64>()
+                    .map_err(|_| {
+                        InvalidFormatSnafu {
+                            message: "invalid increment".to_string(),
+                        }
+                        .build()
+                    })?;
+                Self::handle_incrby_command(storage, argv[1].as_slice(), increment).await
+            }
+            "decr" => Self::handle_decr_command(storage, argv[1].as_slice()).await,
+            "decrby" => {
+                let decrement = String::from_utf8_lossy(argv[2].as_slice())
+                    .parse::<i64>()
+                    .map_err(|_| {
+                        InvalidFormatSnafu {
+                            message: "invalid decrement".to_string(),
+                        }
+                        .build()
+                    })?;
+                Self::handle_decrby_command(storage, argv[1].as_slice(), decrement).await
+            }
+            "mset" => {
+                let mut pairs = Vec::with_capacity((argv.len().saturating_sub(1)) / 2);
+                for chunk in argv[1..].chunks(2) {
+                    if let [key, value] = chunk {
+                        pairs.push((key.clone(), value.clone()));
+                    }
+                }
+                Self::handle_mset_command(storage, &pairs).await
+            }
+            "mget" => Self::handle_mget_command(storage, &argv[1..]).await,
+            _ => SystemSnafu {
+                message: format!("command '{}' not supported in storage runtime", cmd_name),
+            }
+            .fail(),
+        }
     }
 
     /// Handle BATCH command (execute multiple commands atomically)
