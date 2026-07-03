@@ -21,7 +21,7 @@
 # Logs are written to files, viewable with `tail -f`.
 # Uses gRPC for cluster management (`grpcurl` required).
 #
-# Usage: ./start_node_cluster.sh [OPTIONS] [NODE_COUNT]
+# Usage: ./cluster.sh [OPTIONS] [NODE_COUNT]
 #   NODE_COUNT: Number of nodes to start (default: 3, range: 1-9)
 #
 # Options:
@@ -124,7 +124,7 @@ done
 trap cleanup_cluster EXIT
 
 # Also handle Ctrl+C
-trap 'log_info "Interrupted"; cleanup_cluster; exit 130' INT TERM
+trap 'log_info "Interrupted"; trap - EXIT; cleanup_cluster; exit 0' INT TERM
 
 # =============================================================================
 # Cluster Initialization
@@ -218,10 +218,9 @@ if [ "$RUN_TESTS" = "true" ]; then
     log_info "Running basic Raft tests..."
 
     # Find the leader
-    local leader_raft=""
+    leader_raft=""
     for node_info in "${NODES[@]}"; do
         IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
-        local metrics
         metrics=$(grpc_call "127.0.0.1:$raft_port" "kiwi.raft.v1.RaftMetricsService" "Metrics" "{}" "$GRPCURL")
         if [[ "$metrics" != "error" ]] && [[ "$metrics" == *"isLeader\": true"* ]]; then
             leader_raft="127.0.0.1:$raft_port"
@@ -235,8 +234,7 @@ if [ "$RUN_TESTS" = "true" ]; then
     else
         # Test write
         log_debug "Testing write operation..."
-        local write_data='{"binlog": {"db_id": 0, "slot_idx": 0, "entries": [{"cf_idx": 0, "op_type": "Put", "key": "dGVzdF9r", "value": "dGVzdF92"}]}}'
-        local write_response
+        write_data='{"binlog": {"db_id": 0, "slot_idx": 0, "entries": [{"cf_idx": 0, "op_type": "Put", "key": "dGVzdF9r", "value": "dGVzdF92"}]}}'
         write_response=$(grpc_call "$leader_raft" "kiwi.raft.v1.RaftClientService" "Write" "$write_data" "$GRPCURL")
         if [[ "$write_response" != "error" ]]; then
             log_info "Write test: OK"
@@ -246,7 +244,6 @@ if [ "$RUN_TESTS" = "true" ]; then
 
         # Test read
         log_debug "Testing read operation..."
-        local read_response
         read_response=$(grpc_call "$leader_raft" "kiwi.raft.v1.RaftClientService" "Read" '{"key": "dGVzdF9r"}' "$GRPCURL")
         if [[ "$read_response" != "error" ]]; then
             log_info "Read test: OK"

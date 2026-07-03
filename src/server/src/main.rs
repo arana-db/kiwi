@@ -19,7 +19,7 @@ use clap::Parser;
 use conf::config::Config;
 use log::{debug, error, info, warn};
 use runtime::{
-    DualRuntimeError, GlobalStorage, RuntimeConfig, RuntimeManager, StorageServer,
+    DualRuntimeError, GlobalStorage, RuntimeManager, StorageServer,
     StorageServerPauseController,
 };
 use std::path::PathBuf;
@@ -46,7 +46,7 @@ impl PauseController for PauseControllerWrapper {
 }
 
 #[derive(Parser)]
-#[command(name = "kiwi-server")]
+#[command(name = "kiwi")]
 #[command(about = "A Redis-compatible key-value database built in Rust")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 struct Args {
@@ -58,12 +58,29 @@ struct Args {
 
     #[arg(long)]
     init_cluster: bool,
+
+    #[arg(long)]
+    sample_config: bool,
+
+    #[arg(long)]
+    full_sample_config: bool,
 }
 
 fn main() -> std::io::Result<()> {
     env_logger::init();
 
     let args = Args::parse();
+
+    if args.full_sample_config {
+        print!("{}", Config::full_sample_config());
+        return Ok(());
+    }
+
+    if args.sample_config {
+        print!("{}", Config::sample_config());
+        return Ok(());
+    }
+    
     let config = if let Some(config_path) = args.config {
         Config::load(&config_path).map_err(|_e| {
             std::io::Error::new(
@@ -78,7 +95,7 @@ fn main() -> std::io::Result<()> {
     let addr = format!("{}:{}", config.binding, config.port);
     let protocol = "tcp";
 
-    let runtime_config = RuntimeConfig::default();
+    let runtime_config = config.runtime.clone();
     info!(
         "Creating RuntimeManager with {} network threads and {} storage threads",
         runtime_config.network_threads, runtime_config.storage_threads

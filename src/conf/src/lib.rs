@@ -18,6 +18,7 @@ pub mod config;
 pub mod de_func;
 pub mod error;
 pub mod raft_type;
+pub mod runtime_config;
 
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
@@ -105,6 +106,7 @@ mod tests {
             db_path: "./db".to_string(),
             requirepass: None,
             raft: None,
+            runtime: runtime_config::RuntimeConfig::default(),
         };
         assert!(invalid_config.validate().is_err());
 

@@ -1,71 +1,37 @@
-# Contributing to Kiwi-rs
+# Contributing to Kiwi
 
-Thank you for your interest in contributing to Kiwi-rs! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to Kiwi!
 
-## Getting Started
+For development environment setup, build commands, and architecture overview, see [docs/development.md](docs/development.md).
 
-1. Fork the repository
-2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/kiwi-rs.git`
-3. Create a new branch: `git checkout -b feature/your-feature-name`
-4. Make your changes
-5. Run tests: `make test`
-6. Run linter: `make lint`
-7. Format code: `make fmt`
-8. Commit your changes: `git commit -am 'feat: add some feature'`
-9. Push to the branch: `git push origin feature/your-feature-name`
-10. Create a Pull Request
+## Pull Request Workflow
 
-## Development Setup
+1. Fork the repository and clone your fork
+2. Create a feature branch: `git checkout -b feature/your-feature-name`
+3. Make your changes
+4. Run `make test` and `make lint` to verify
+5. Commit following the [convention](#commit-convention) below
+6. Push and create a Pull Request
 
-### Prerequisites
+Keep PRs focused on a single feature or fix. Add tests for new functionality and update documentation as needed.
 
-- Rust (stable toolchain)
-- Protocol Buffers compiler (protoc)
-- Make
+## Commit Convention
 
-### Building
+We follow [Conventional Commits](https://www.conventionalcommits.org/). PR titles are checked against this format by CI.
 
-```bash
-make build
-```
-
-### Testing
-
-```bash
-# Run all tests
-make test
-
-# Run specific test
-cargo test test_name
-```
-
-### Code Quality
-
-```bash
-# Format code
-make fmt
-
-# Check formatting
-make fmt-check
-
-# Run clippy
-make lint
-```
-
-## Commit Message Convention
-
-We follow the [Conventional Commits](https://www.conventionalcommits.org/) specification:
-
-- `feat:` - New feature
-- `fix:` - Bug fix
-- `docs:` - Documentation changes
-- `style:` - Code style changes (formatting, etc.)
-- `refactor:` - Code refactoring
-- `perf:` - Performance improvements
-- `test:` - Adding or updating tests
-- `chore:` - Maintenance tasks
-- `ci:` - CI/CD changes
-- `build:` - Build system changes
+| Type | Usage |
+|------|-------|
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `docs` | Documentation changes |
+| `refactor` | Code refactoring |
+| `perf` | Performance improvement |
+| `test` | Adding/updating tests |
+| `chore` | Maintenance tasks |
+| `ci` | CI/CD changes |
+| `build` | Build system changes |
+| `style` | Formatting, whitespace |
+| `revert` | Revert a previous commit |
 
 Examples:
 ```
@@ -74,40 +40,6 @@ fix: resolve memory leak in connection pool
 docs: update installation instructions
 ```
 
-## Pull Request Guidelines
+## License
 
-- Keep PRs focused on a single feature or fix
-- Update documentation as needed
-- Add tests for new features
-- Ensure all tests pass
-- Follow the existing code style
-- Write clear commit messages
-- Reference related issues
-
-## Code Style
-
-- Follow Rust standard conventions
-- Use `rustfmt` for formatting
-- Address all `clippy` warnings
-- Write clear, self-documenting code
-- Add comments for complex logic
-
-## Testing
-
-- Write unit tests for new functionality
-- Add integration tests where appropriate
-- Ensure tests are deterministic
-- Mock external dependencies
-
-## Documentation
-
-- Update README.md if needed
-- Add inline documentation for public APIs
-- Include examples for new features
-- Keep documentation up-to-date
-
-## Questions?
-
-Feel free to open an issue for any questions or concerns.
-
-Thank you for contributing! 🎉
+By contributing, you agree that your contributions will be licensed under the Apache License 2.0.

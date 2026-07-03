@@ -157,8 +157,8 @@ create_node() {
 # Node $node_id configuration
 binding = 127.0.0.1
 port = $resp_port
-network_threads = 1
-storage_threads = 2
+runtime-network_threads = 1
+runtime-storage_threads = 2
 
 raft-node-id = $node_id
 raft-addr = 127.0.0.1:$raft_port
