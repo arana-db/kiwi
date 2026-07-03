@@ -634,7 +634,11 @@ impl Config {
     fn to_redis_style(&self) -> String {
         let value = toml::Value::try_from(self).expect("Config should serialize to toml::Value");
         let mut lines: Vec<(String, String)> = Vec::new();
-        flatten_table(value.as_table().expect("top-level should be a table"), "", &mut lines);
+        flatten_table(
+            value.as_table().expect("top-level should be a table"),
+            "",
+            &mut lines,
+        );
         lines.sort_by(|a, b| a.0.cmp(&b.0));
         let mut out = String::new();
         for (key, val) in lines {

@@ -19,8 +19,7 @@ use clap::Parser;
 use conf::config::Config;
 use log::{debug, error, info, warn};
 use runtime::{
-    DualRuntimeError, GlobalStorage, RuntimeManager, StorageServer,
-    StorageServerPauseController,
+    DualRuntimeError, GlobalStorage, RuntimeManager, StorageServer, StorageServerPauseController,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -80,7 +79,7 @@ fn main() -> std::io::Result<()> {
         print!("{}", Config::sample_config());
         return Ok(());
     }
-    
+
     let config = if let Some(config_path) = args.config {
         Config::load(&config_path).map_err(|_e| {
             std::io::Error::new(
