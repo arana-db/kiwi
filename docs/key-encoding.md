@@ -2,7 +2,7 @@
 
 ## 数据类型与 CF 的关系
 
-![i01-cf 使用.png](images/01-cf使用.png)
+![01-cf使用](images/01-cf使用.png)
 
 ## String 结构的存储
 
