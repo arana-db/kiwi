@@ -31,6 +31,7 @@
 use std::io::{self, Cursor};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use arc_swap::ArcSwap;
 use openraft::{
@@ -185,6 +186,8 @@ pub struct KiwiStateMachine {
     snapshot_idx: u64,
     /// Pause controller for coordinating with StorageServer.
     pause_controller: Option<Arc<dyn PauseController>>,
+    /// Shared Raft append-log callback used to re-arm restored Storage after snapshot install.
+    append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
 }
 
 impl KiwiStateMachine {
@@ -198,6 +201,7 @@ impl KiwiStateMachine {
         storage_swap: Arc<ArcSwap<Storage>>,
         db_path: PathBuf,
         snapshot_work_dir: PathBuf,
+        append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
     ) -> Self {
         Self {
             _node_id: node_id,
@@ -208,6 +212,7 @@ impl KiwiStateMachine {
             last_membership: StoredMembership::default(),
             snapshot_idx: 0,
             pause_controller: None,
+            append_log_fn,
         }
     }
 
@@ -221,6 +226,12 @@ impl KiwiStateMachine {
     /// Set pause controller for coordinating with StorageServer.
     pub fn set_pause_controller(&mut self, controller: Arc<dyn PauseController>) {
         self.pause_controller = Some(controller);
+    }
+
+    fn rearm_append_log_fn(&self, storage: &Storage) {
+        if let Some(append_log_fn) = self.append_log_fn.as_ref().and_then(|holder| holder.get()) {
+            storage.set_append_log_fn(append_log_fn.clone());
+        }
     }
 
     /// Apply binlog to storage.
@@ -385,6 +396,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             cleanup_on_error();
             storage_err_to_raft(e)
         })?;
+        self.rearm_append_log_fn(&new_storage);
 
         // ========== Phase 6: Swap ArcSwap (atomic switch) ==========
         self.storage_swap.swap(Arc::new(new_storage));

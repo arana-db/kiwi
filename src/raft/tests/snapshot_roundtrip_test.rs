@@ -17,7 +17,8 @@
 
 #![allow(clippy::unwrap_used)]
 
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use arc_swap::ArcSwap;
 use openraft::RaftSnapshotBuilder;
@@ -58,6 +59,7 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
         storage_swap.clone(),
         src_db_path.clone(),
         snap_root.clone(),
+        None,
     );
 
     let mut builder = sm.get_snapshot_builder().await;
@@ -90,6 +92,7 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root.clone(),
+        None,
     );
     sm2.install_snapshot(&meta, Box::new(std::io::Cursor::new(bytes)))
         .await?;
@@ -143,6 +146,7 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
         source_swap.clone(),
         src_db_path.clone(),
         snap_root.clone(),
+        None,
     );
 
     let mut builder = sm_source.get_snapshot_builder().await;
@@ -172,6 +176,7 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root.clone(),
+        None,
     );
 
     sm_target
@@ -188,6 +193,87 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     assert_eq!(restored.get(b"key2")?, "value2");
 
     drop(sm_target);
+    drop(target_swap);
+    close_storage(restored, "restored storage").await?;
+    close_storage(target_storage, "target placeholder storage").await?;
+
+    safe_cleanup_test_db(&src_db_path);
+    safe_cleanup_test_db(&restore_db_path);
+    safe_cleanup_test_db(&snap_root);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn install_snapshot_rearms_append_log_hook() -> anyhow::Result<()> {
+    let src_db_path = unique_test_db_path();
+    let restore_db_path = unique_test_db_path();
+    let snap_root = unique_test_db_path();
+
+    std::fs::create_dir_all(&snap_root)?;
+
+    let source_storage = {
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _rx = storage.open(options, &src_db_path)?;
+        Arc::new(storage)
+    };
+    source_storage.set(b"snap_key", b"snap_value")?;
+
+    let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
+    let mut source_sm = KiwiStateMachine::new(
+        1,
+        source_swap.clone(),
+        src_db_path.clone(),
+        snap_root.clone(),
+        None,
+    );
+
+    let mut builder = source_sm.get_snapshot_builder().await;
+    let snapshot = builder.build_snapshot().await?;
+    let snapshot_meta = snapshot.meta.clone();
+    let snapshot_bytes = snapshot.snapshot.into_inner();
+
+    drop(builder);
+    drop(source_sm);
+    drop(source_swap);
+    close_storage(source_storage, "source storage").await?;
+
+    let hook_called = Arc::new(AtomicBool::new(false));
+    let hook_called_clone = hook_called.clone();
+    let append_log_fn: storage::AppendLogFn = Arc::new(move |_binlog| {
+        hook_called_clone.store(true, Ordering::SeqCst);
+        Ok(conf::raft_type::BinlogResponse::ok())
+    });
+    let append_log_fn_holder = Arc::new(OnceLock::new());
+    let _ = append_log_fn_holder.set(append_log_fn);
+
+    let target_storage = Arc::new(Storage::new(1, 0));
+    let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
+    let mut target_sm = KiwiStateMachine::new(
+        2,
+        target_swap.clone(),
+        restore_db_path.clone(),
+        snap_root.clone(),
+        Some(append_log_fn_holder),
+    );
+
+    target_sm
+        .install_snapshot(
+            &snapshot_meta,
+            Box::new(std::io::Cursor::new(snapshot_bytes)),
+        )
+        .await?;
+
+    let restored = target_swap.load_full();
+    assert_eq!(restored.get(b"snap_key")?, "snap_value");
+    restored.set(b"after_snapshot", b"goes_through_hook")?;
+    assert!(
+        hook_called.load(Ordering::SeqCst),
+        "restored storage should be re-armed with append_log_fn"
+    );
+
+    drop(target_sm);
     drop(target_swap);
     close_storage(restored, "restored storage").await?;
     close_storage(target_storage, "target placeholder storage").await?;
