@@ -18,12 +18,16 @@
 #![allow(clippy::unwrap_used)]
 
 mod redis_zset_test {
+    use std::sync::Arc;
+
+    use bytes::Bytes;
     use kstd::lock_mgr::LockMgr;
     use rocksdb::{IteratorMode, ReadOptions};
-    use std::sync::Arc;
+    use storage::format_base_meta_value::HashesMetaValue;
+    use storage::format_base_value::DataType;
     use storage::{
-        BgTaskHandler, ColumnFamilyIndex, Redis, ScoreMember, StorageOptions, safe_cleanup_test_db,
-        unique_test_db_path,
+        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, ScoreMember, StorageOptions,
+        safe_cleanup_test_db, unique_test_db_path,
     };
 
     fn create_test_redis() -> Redis {
@@ -85,6 +89,49 @@ mod redis_zset_test {
         let mut score = None;
         redis.zscore(key, b"member", &mut score).unwrap();
         assert!(score.is_none());
+    }
+
+    #[test]
+    fn test_zcard_wrong_type_returns_wrongtype_for_live_string() {
+        let redis = create_test_redis();
+        let key = b"zset_wrongtype_live_short";
+
+        redis.set(key, b"x").unwrap();
+
+        let mut card = 0;
+        let err = redis.zcard(key, &mut card).unwrap_err().to_string();
+        assert!(err.contains("WRONGTYPE"), "expected WRONGTYPE, got: {err}");
+    }
+
+    #[test]
+    fn test_zadd_on_stale_wrong_type_treats_key_as_absent() {
+        let redis = create_test_redis();
+        let key = b"zadd_stale_wrong_type";
+
+        // Inject an expired Hash meta directly: type=Hash, count=5, etime=1 (in the past).
+        // is_stale() short-circuits to true on count==0, so we set count>0 to exercise
+        // the etime-based stale path that mirrors a key whose TTL has elapsed.
+        let mut hash_meta = HashesMetaValue::new(Bytes::copy_from_slice(&5u64.to_le_bytes()));
+        hash_meta.inner.data_type = DataType::Hash;
+        hash_meta.set_etime(1);
+        let meta_bytes = hash_meta.encode();
+        {
+            let db = redis.db.as_ref().unwrap();
+            let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+            let encoded_key = BaseMetaKey::new(key).encode().unwrap();
+            db.put_cf(&cf, &encoded_key, &meta_bytes[..]).unwrap();
+        }
+
+        // ZADD should treat the expired hash key as absent and create a fresh zset.
+        let score_members = vec![ScoreMember::new(1.0, b"m1".to_vec())];
+        let mut ret = 0;
+        redis.zadd(key, &score_members, &mut ret).unwrap();
+        assert_eq!(ret, 1);
+
+        // ZCARD must succeed (not WRONGTYPE) because the meta should now be tagged ZSet.
+        let mut card = 0;
+        redis.zcard(key, &mut card).unwrap();
+        assert_eq!(card, 1);
     }
 
     #[test]
@@ -1874,5 +1921,71 @@ mod redis_zset_test {
         let mut card = 0;
         redis.zcard(key, &mut card).unwrap();
         assert_eq!(card, 2);
+    }
+
+    #[test]
+    fn test_zinterstore_dest_live_wrong_type_is_overwritten() {
+        let redis = create_test_redis();
+
+        let key1 = b"zinter_dest_wt_src1";
+        let key2 = b"zinter_dest_wt_src2";
+        let dest = b"zinter_dest_live_string";
+
+        // Destination is a live string key (wrong type).
+        redis.set(dest, b"live_string_value").unwrap();
+
+        let score_members1 = vec![ScoreMember::new(1.0, b"a".to_vec())];
+        let score_members2 = vec![ScoreMember::new(2.0, b"a".to_vec())];
+        let mut ret = 0;
+        redis.zadd(key1, &score_members1, &mut ret).unwrap();
+        redis.zadd(key2, &score_members2, &mut ret).unwrap();
+
+        // ZINTERSTORE must overwrite the live string destination without WRONGTYPE.
+        let keys = vec![key1.to_vec(), key2.to_vec()];
+        let mut count = 0;
+        redis
+            .zinterstore(dest, &keys, &[], "SUM", &mut count)
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let mut score = None;
+        redis.zscore(dest, b"a", &mut score).unwrap();
+        assert_eq!(String::from_utf8(score.unwrap()).unwrap(), "3");
+    }
+
+    #[test]
+    fn test_zunionstore_dest_stale_wrong_type_is_overwritten() {
+        let redis = create_test_redis();
+
+        let key1 = b"zunion_dest_wt_src1";
+        let dest = b"zunion_dest_stale_hash";
+
+        // Inject an expired Hash meta as destination (etime=1 is in the past).
+        let mut hash_meta = HashesMetaValue::new(Bytes::copy_from_slice(&5u64.to_le_bytes()));
+        hash_meta.inner.data_type = DataType::Hash;
+        hash_meta.set_etime(1);
+        let meta_bytes = hash_meta.encode();
+        {
+            let db = redis.db.as_ref().unwrap();
+            let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+            let encoded_key = BaseMetaKey::new(dest).encode().unwrap();
+            db.put_cf(&cf, &encoded_key, &meta_bytes[..]).unwrap();
+        }
+
+        let score_members1 = vec![ScoreMember::new(1.0, b"a".to_vec())];
+        let mut ret = 0;
+        redis.zadd(key1, &score_members1, &mut ret).unwrap();
+
+        // ZUNIONSTORE must treat stale destination as absent and succeed.
+        let keys = vec![key1.to_vec()];
+        let mut count = 0;
+        redis
+            .zunionstore(dest, &keys, &[], "SUM", &mut count)
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let mut score = None;
+        redis.zscore(dest, b"a", &mut score).unwrap();
+        assert_eq!(String::from_utf8(score.unwrap()).unwrap(), "1");
     }
 }

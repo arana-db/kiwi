@@ -79,11 +79,7 @@ impl Redis {
         let meta_get = db.get_cf(&cf, &base_meta_key).context(RocksSnafu)?;
         let (mut set_meta_value, version, is_new_set) = match meta_get {
             Some(val) => {
-                // Type check
-                self.check_type(&val, DataType::Set)?;
-                let set_meta_value = ParsedSetsMetaValue::new(&val[..])?;
-                // Check if expired
-                if set_meta_value.is_stale() {
+                if self.is_stale(&val)? {
                     // Create new set if expired
                     let count_bytes = 0u64.to_le_bytes().to_vec();
                     let mut new_meta = BaseMetaValue::new(Bytes::from(count_bytes));
@@ -93,6 +89,8 @@ impl Redis {
                     let version = new_set_meta.initial_meta_value();
                     (new_set_meta, version, true)
                 } else {
+                    self.check_type(&val, DataType::Set)?;
+                    let set_meta_value = ParsedSetsMetaValue::new(&val[..])?;
                     let version = set_meta_value.version();
                     (set_meta_value, version, false)
                 }
@@ -186,16 +184,14 @@ impl Redis {
 
         match db.get_cf(&cf, &base_meta_key).context(RocksSnafu)? {
             Some(val) => {
-                // Type check
-                self.check_type(&val, DataType::Set)?;
-                let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-                // Validity check (not expired and count > 0)
-                if !set_meta.is_valid() {
+                if self.is_stale(&val)? {
                     return KeyNotFoundSnafu {
                         key: String::from_utf8_lossy(key).to_string(),
                     }
                     .fail();
                 }
+                self.check_type(&val, DataType::Set)?;
+                let set_meta = ParsedSetsMetaValue::new(&val[..])?;
                 Ok(set_meta.count() as i32)
             }
             None => KeyNotFoundSnafu {
@@ -231,15 +227,12 @@ impl Redis {
             return Ok(Vec::new());
         };
 
-        // Type check
-        self.check_type(&val, DataType::Set)?;
-
-        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-        // Validity check (not expired and count > 0)
-        if !set_meta.is_valid() {
+        if self.is_stale(&val)? {
             // Redis SMEMBERS returns empty array for expired/invalid keys
             return Ok(Vec::new());
         }
+        self.check_type(&val, DataType::Set)?;
+        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
         let version = set_meta.version();
 
         // Iterate from prefix and collect members until prefix no longer matches
@@ -290,15 +283,12 @@ impl Redis {
             return Ok(false);
         };
 
-        // Type check
-        self.check_type(&val, DataType::Set)?;
-
-        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-        // Validity check (not expired and count > 0)
-        if !set_meta.is_valid() {
+        if self.is_stale(&val)? {
             // Redis SISMEMBER returns 0 for expired/invalid keys
             return Ok(false);
         }
+        self.check_type(&val, DataType::Set)?;
+        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
         let version = set_meta.version();
 
         // Check if member exists
@@ -337,15 +327,12 @@ impl Redis {
             return Ok(Vec::new());
         };
 
-        // Type check
-        self.check_type(&val, DataType::Set)?;
-
-        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-        // Validity check (not expired and count > 0)
-        if !set_meta.is_valid() {
+        if self.is_stale(&val)? {
             // Redis SRANDMEMBER returns empty array for expired/invalid keys
             return Ok(Vec::new());
         }
+        self.check_type(&val, DataType::Set)?;
+        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
 
         let version = set_meta.version();
         let set_size = set_meta.count() as usize;
@@ -459,15 +446,12 @@ impl Redis {
             return Ok(0);
         };
 
-        // Type check
-        self.check_type(&val, DataType::Set)?;
-
-        let mut set_meta = ParsedSetsMetaValue::new(&val[..])?;
-        // Validity check (not expired and count > 0)
-        if !set_meta.is_valid() {
+        if self.is_stale(&val)? {
             // Redis SREM returns 0 for expired/invalid keys
             return Ok(0);
         }
+        self.check_type(&val, DataType::Set)?;
+        let mut set_meta = ParsedSetsMetaValue::new(&val[..])?;
 
         let version = set_meta.version();
         let mut removed_count = 0i32;
@@ -545,15 +529,12 @@ impl Redis {
             return Ok(Vec::new());
         };
 
-        // Type check
-        self.check_type(&val, DataType::Set)?;
-
-        let mut set_meta = ParsedSetsMetaValue::new(&val[..])?;
-        // Validity check (not expired and count > 0)
-        if !set_meta.is_valid() {
+        if self.is_stale(&val)? {
             // Redis SPOP returns empty array for expired/invalid keys
             return Ok(Vec::new());
         }
+        self.check_type(&val, DataType::Set)?;
+        let mut set_meta = ParsedSetsMetaValue::new(&val[..])?;
 
         let version = set_meta.version();
         let set_size = set_meta.count() as usize;
@@ -703,19 +684,18 @@ impl Redis {
             return Ok(false);
         };
 
-        // Type check for source
-        self.check_type(&source_val, DataType::Set)?;
-
-        let mut source_meta = ParsedSetsMetaValue::new(&source_val[..])?;
-        if !source_meta.is_valid() {
+        if self.is_stale(&source_val)? {
             // Source set is expired/invalid
             return Ok(false);
         }
+        self.check_type(&source_val, DataType::Set)?;
+        let mut source_meta = ParsedSetsMetaValue::new(&source_val[..])?;
 
         let source_version = source_meta.version();
 
         // Build source member key
         let source_member_key = MemberDataKey::new(source, source_version, member).encode()?;
+
         // Check if member exists in source
         if db
             .get_cf(&cf_data, &source_member_key)
@@ -726,20 +706,26 @@ impl Redis {
             return Ok(false);
         }
 
-        // Handle destination set
+        // Handle destination set. Gate on staleness and type *before* parsing,
+        // so a non-Set value (e.g. a short string whose buffer is too small for
+        // the Set meta layout) returns WRONGTYPE rather than InvalidFormat, and
+        // a stale value of any prior type is rewritten as a fresh Set meta.
         let dest_meta_val = db.get_cf(&cf_meta, &dest_meta_key).context(RocksSnafu)?;
         let (mut dest_meta, dest_version, dest_exists) = if let Some(dest_val) = dest_meta_val {
-            // Type check for destination
-            self.check_type(&dest_val, DataType::Set)?;
-
-            let mut meta = ParsedSetsMetaValue::new(&dest_val[..])?;
-            let version = if meta.is_valid() {
-                meta.version()
+            if self.is_stale(&dest_val)? {
+                let count_bytes = 0u64.to_le_bytes();
+                let mut new_meta = BaseMetaValue::new(Bytes::from(count_bytes.to_vec()));
+                new_meta.inner.data_type = DataType::Set;
+                let encoded = new_meta.encode();
+                let mut meta = ParsedSetsMetaValue::new(encoded)?;
+                let version = meta.initial_meta_value();
+                (meta, version, true)
             } else {
-                // Destination set is expired, create new version
-                meta.initial_meta_value()
-            };
-            (meta, version, true)
+                self.check_type(&dest_val, DataType::Set)?;
+                let meta = ParsedSetsMetaValue::new(&dest_val[..])?;
+                let version = meta.version();
+                (meta, version, true)
+            }
         } else {
             // Destination set doesn't exist, create new one
             let count_bytes = 0u64.to_le_bytes();
@@ -753,6 +739,7 @@ impl Redis {
 
         // Build destination member key
         let dest_member_key = MemberDataKey::new(destination, dest_version, member).encode()?;
+
         // Check if member already exists in destination
         let member_exists_in_dest = db
             .get_cf(&cf_data, &dest_member_key)
@@ -1952,15 +1939,12 @@ impl Redis {
             return Ok(result);
         };
 
-        // Type check
-        self.check_type(&val, DataType::Set)?;
-
-        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-        // Validity check (not expired and count > 0)
-        if !set_meta.is_valid() {
+        if self.is_stale(&val)? {
             // Return empty result for expired/invalid keys
             return Ok(result);
         }
+        self.check_type(&val, DataType::Set)?;
+        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
 
         let version = set_meta.version();
 
@@ -2046,14 +2030,12 @@ impl Redis {
             }
 
             let val = meta_val.expect("meta_val checked non-None above");
-            // Type check
-            self.check_type(&val, DataType::Set)?;
-
-            let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-            if !set_meta.is_valid() {
+            if self.is_stale(&val)? {
                 // If any set is expired/invalid, intersection is empty
                 return Ok(result);
             }
+            self.check_type(&val, DataType::Set)?;
+            let set_meta = ParsedSetsMetaValue::new(&val[..])?;
 
             let count = set_meta.count() as i32;
             if count < smallest_size {
@@ -2121,11 +2103,8 @@ impl Redis {
             let meta_val = db.get_cf(&cf_meta, &base_meta_key).context(RocksSnafu)?;
 
             if let Some(val) = meta_val {
-                // Type check
-                self.check_type(&val, DataType::Set)?;
-
-                let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-                if set_meta.is_valid() {
+                if !self.is_stale(&val)? {
+                    self.check_type(&val, DataType::Set)?;
                     // Get all members of this set and add to union
                     let members = self.smembers(key)?;
                     for member in members {
@@ -2342,15 +2321,12 @@ impl Redis {
             return Ok((0, Vec::new()));
         };
 
-        // Type check
-        self.check_type(&val, DataType::Set)?;
-
-        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-        // Validity check (not expired and count > 0)
-        if !set_meta.is_valid() {
+        if self.is_stale(&val)? {
             // Return empty result with cursor 0 for expired/invalid keys
             return Ok((0, Vec::new()));
         }
+        self.check_type(&val, DataType::Set)?;
+        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
 
         let version = set_meta.version();
         let _set_size = set_meta.count() as usize;
