@@ -19,12 +19,20 @@
 
 #[cfg(test)]
 mod redis_string_test {
-    use std::{sync::Arc, thread, time::Duration};
+    use std::{path::Path, sync::Arc, thread, time::Duration};
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path,
+        BgTaskHandler, DataType, Redis, StorageOptions, safe_cleanup_test_db,
+        unique_test_db_path,
     };
+
+    fn cleanup_redis(redis: Redis, test_db_path: &Path) {
+        redis.set_need_close(true);
+        drop(redis);
+        thread::sleep(Duration::from_millis(10));
+        safe_cleanup_test_db(test_db_path);
+    }
 
     #[test]
     fn test_redis_set() {
@@ -62,10 +70,7 @@ mod redis_string_test {
             String::from_utf8_lossy(value).to_string()
         );
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -98,10 +103,7 @@ mod redis_string_test {
             );
         }
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -132,10 +134,7 @@ mod redis_string_test {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "好".as_bytes());
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -168,10 +167,7 @@ mod redis_string_test {
         let value = redis.get(key).unwrap();
         assert_eq!(value.as_bytes(), b"Hello Rust Programming");
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -207,10 +203,7 @@ mod redis_string_test {
         // After replacing bytes 0-9 with "\x00\x00\x00\x00\x00Redis", bytes 10-14 ("World") remain
         assert_eq!(value.as_bytes(), b"\x00\x00\x00\x00\x00RedisWorld");
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -260,10 +253,7 @@ mod redis_string_test {
             }
         }
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -289,10 +279,7 @@ mod redis_string_test {
         let value = redis.get(key).unwrap();
         assert_eq!(value.as_bytes(), b"\x00\x00\x00Hi");
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -321,10 +308,7 @@ mod redis_string_test {
         let result = redis.setrange(key, 0, b"test");
         assert!(result.is_err(), "setrange should fail for non-string type");
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -352,10 +336,7 @@ mod redis_string_test {
         let value = redis.get(key).unwrap();
         assert_eq!(value.as_bytes(), b"Hel\x00\x00\x00World");
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -412,10 +393,7 @@ mod redis_string_test {
             "Key should be expired and return error"
         );
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -472,10 +450,7 @@ mod redis_string_test {
             "Key should be expired and return error"
         );
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -523,10 +498,10 @@ mod redis_string_test {
         }
 
         if let Ok(redis) = Arc::try_unwrap(redis_arc) {
-            redis.set_need_close(true);
+            cleanup_redis(redis, &test_db_path);
+        } else {
+            safe_cleanup_test_db(&test_db_path);
         }
-
-        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
@@ -575,10 +550,7 @@ mod redis_string_test {
         let result = redis.getbit(key, i64::MAX);
         assert!(result.is_err(), "getbit should fail with very large offset");
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -615,10 +587,7 @@ mod redis_string_test {
             "original bit value should be 0 for expired key"
         );
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -685,10 +654,7 @@ mod redis_string_test {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0, "bitcount should be 0 for empty string");
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -718,10 +684,7 @@ mod redis_string_test {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 14, "bitcount should be 14 for \"llo\"");
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -757,10 +720,7 @@ mod redis_string_test {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 17, "bitcount should be 17 for \"test\"");
 
-        redis.set_need_close(true);
-        drop(redis);
-
-        safe_cleanup_test_db(&test_db_path);
+        cleanup_redis(redis, &test_db_path);
     }
 
     #[test]
@@ -788,9 +748,113 @@ mod redis_string_test {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 0, "bitcount should be 0 for expired key");
 
-        redis.set_need_close(true);
-        drop(redis);
+        cleanup_redis(redis, &test_db_path);
+    }
+
+    #[test]
+    fn test_redis_strlen_and_getrange_wrongtype() {
+        let test_db_path = unique_test_db_path();
 
         safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"wrongtype_string_meta";
+        redis.hset(key, b"field", b"value").unwrap();
+
+        let get_result = redis.get(key);
+        assert!(get_result.is_err(), "get should fail on non-string key");
+        assert!(
+            get_result.unwrap_err().to_string().contains("WRONGTYPE"),
+            "get should return WRONGTYPE"
+        );
+
+        let mget_result = redis.mget(&[key.to_vec()]).unwrap();
+        assert_eq!(mget_result, vec![None]);
+
+        let strlen_result = redis.strlen(key);
+        assert!(
+            strlen_result.is_err(),
+            "strlen should fail on non-string key"
+        );
+        assert!(
+            strlen_result.unwrap_err().to_string().contains("WRONGTYPE"),
+            "strlen should return WRONGTYPE"
+        );
+
+        let getrange_result = redis.getrange(key, 0, 2);
+        assert!(
+            getrange_result.is_err(),
+            "getrange should fail on non-string key"
+        );
+        assert!(
+            getrange_result
+                .unwrap_err()
+                .to_string()
+                .contains("WRONGTYPE"),
+            "getrange should return WRONGTYPE"
+        );
+
+        cleanup_redis(redis, &test_db_path);
+    }
+
+    #[test]
+    fn test_getbit_wrongtype_and_expired_wrongtype() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let live_wrongtype = b"getbit_live_wrongtype";
+        redis.hset(live_wrongtype, b"field", b"value").unwrap();
+        let err = redis.getbit(live_wrongtype, 0).unwrap_err();
+        assert!(err.to_string().contains("WRONGTYPE"));
+
+        let expired_wrongtype = b"getbit_expired_wrongtype";
+        redis.hset(expired_wrongtype, b"field", b"value").unwrap();
+        assert!(redis.set_key_etime(expired_wrongtype, 1).unwrap());
+        assert_eq!(redis.getbit(expired_wrongtype, 0).unwrap(), 0);
+
+        cleanup_redis(redis, &test_db_path);
+    }
+
+    #[test]
+    fn test_setnx_and_msetnx_keep_live_any_type_existence_semantics() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let key = b"setnx_existing_hash";
+        redis.hset(key, b"field", b"value").unwrap();
+
+        assert_eq!(redis.setnx(key, b"new").unwrap(), 0);
+        assert!(!redis.msetnx(&[(key.to_vec(), b"new".to_vec())]).unwrap());
+        let getset_result = redis.getset(key, b"other_value");
+        assert!(
+            getset_result.is_err(),
+            "GETSET should reject non-string keys"
+        );
+        assert!(
+            getset_result.unwrap_err().to_string().contains("WRONGTYPE"),
+            "GETSET should return WRONGTYPE"
+        );
+        assert_eq!(redis.get_key_type(key).unwrap(), DataType::Hash);
+
+        cleanup_redis(redis, &test_db_path);
     }
 }
