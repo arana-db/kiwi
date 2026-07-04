@@ -1050,7 +1050,7 @@ mod tests {
         }
     }
 
-    // Unit tests for boundary cases - Requirements 3.2, 3.3
+    // Unit tests for boundary cases
 
     #[tokio::test]
     async fn test_empty_range_query() {
@@ -1410,7 +1410,7 @@ mod tests {
         }
     }
 
-    // Unit tests for vote boundary cases - Requirements 4.3
+    // Unit tests for vote boundary cases
 
     #[tokio::test]
     async fn test_read_nonexistent_vote() {
@@ -1502,7 +1502,7 @@ mod tests {
         drop(temp_dir);
     }
 
-    // Unit tests for committed log ID boundary cases - Requirements 5.3
+    // Unit tests for committed log ID boundary cases
 
     #[tokio::test]
     async fn test_read_nonexistent_committed() {
@@ -2098,7 +2098,7 @@ mod tests {
         }
     }
 
-    // Unit tests for truncate boundary cases - Requirements 7.3
+    // Unit tests for truncate boundary cases
 
     #[tokio::test]
     async fn test_truncate_nonexistent_index() {
@@ -2431,7 +2431,7 @@ mod tests {
         assert!(result.is_ok(), "Truncating empty database should succeed");
     }
 
-    // Unit tests for log state boundary cases - Requirements 6.3, 6.4
+    // Unit tests for log state boundary cases
 
     #[tokio::test]
     async fn test_empty_database_log_state() {
@@ -2654,7 +2654,7 @@ mod tests {
         drop(temp_dir);
     }
 
-    // Unit tests for purge error conditions - Requirements 8.3
+    // Unit tests for purge error conditions
 
     #[tokio::test]
     async fn test_purge_with_smaller_log_id() {
@@ -3168,7 +3168,7 @@ mod tests {
         drop(temp_dir);
     }
 
-    // Unit tests for Clone functionality - Requirements 10.4
+    // Unit tests for Clone functionality
 
     #[tokio::test]
     async fn test_clone_basic() {

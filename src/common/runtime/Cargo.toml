@@ -19,10 +19,13 @@ uuid = { workspace = true }
 resp = { workspace = true }
 storage = { workspace = true }
 conf = { path = "../../conf" }
+client = { path = "../../client" }
+cmd = { path = "../../cmd" }
 bytes = { workspace = true }
 snafu = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 arc-swap = { workspace = true }
+async-trait = "0.1"
 
 [dev-dependencies]
 tokio-test = "0.4"
