@@ -30,7 +30,16 @@ mod tests {
 
     #[test]
     fn test_config_parsing() {
-        let config = config::Config::load("./kiwi.conf");
+        use std::io::Write;
+
+        let mut config_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config_file, "port 7379").unwrap();
+        writeln!(config_file, "memory 10M").unwrap();
+        writeln!(config_file, "rocksdb-max-subcompactions 2").unwrap();
+        writeln!(config_file, "rocksdb-ttl-second 604800").unwrap();
+        writeln!(config_file, "rocksdb-periodic-second 259200").unwrap();
+
+        let config = config::Config::load(config_file.path().to_str().unwrap());
         assert!(
             config.is_ok(),
             "Config loading failed: {:?}",
