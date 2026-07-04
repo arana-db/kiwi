@@ -34,7 +34,8 @@ use serde_json;
 use crate::manager::LifecycleState;
 use crate::{
     BackpressureConfig, DualRuntimeError, ManagerRuntimeHealth as RuntimeHealth, MessageChannel,
-    RequestId, RequestPriority, RuntimeConfig, RuntimeManager, StorageCommand, StorageStats,
+    NoopStorageStatsCollector, RequestId, RequestPriority, RuntimeConfig, RuntimeManager,
+    StorageCommand, StorageStats, StorageStatsCollector,
 };
 
 /// Test configuration for unit tests
@@ -371,6 +372,17 @@ mod serialization_tests {
         assert_eq!(stats.bytes_written, 0);
         assert!(!stats.cache_hit);
         assert_eq!(stats.compaction_level, None);
+    }
+
+    #[test]
+    fn test_noop_storage_stats_collector_exposes_storage_instrumentation_interface() {
+        let collector = NoopStorageStatsCollector::default();
+
+        collector.record_read(3, 5);
+        collector.record_write(7, 11);
+        collector.record_delete(13);
+
+        assert_eq!(collector.finish(), StorageStats::default());
     }
 }
 

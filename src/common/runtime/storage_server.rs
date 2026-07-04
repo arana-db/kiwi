@@ -34,7 +34,8 @@ use storage::storage::Storage;
 use crate::error::DualRuntimeError;
 use crate::global_storage::GlobalStorage;
 use crate::message::{
-    RequestPriority, StorageCommand, StorageRequest, StorageResponse, StorageStats,
+    NoopStorageStatsCollector, RequestPriority, StorageCommand, StorageRequest, StorageResponse,
+    StorageStatsCollector,
 };
 use crate::metrics::StorageMetricsTracker;
 
@@ -456,6 +457,11 @@ impl StorageServer {
             // tracker.record_operation_started();
         }
 
+        // TODO(storage-stats): Pass this request-local collector through
+        // `Cmd::execute` and into the storage crate so stats are recorded by
+        // actual storage operations instead of inferred from command arguments.
+        let stats_collector = NoopStorageStatsCollector;
+
         // Route the request based on command type
         let result = Self::execute_storage_command(&storage, &request.command).await;
 
@@ -479,14 +485,11 @@ impl StorageServer {
             }
         }
 
-        // Create response with enhanced statistics
-        let storage_stats = Self::calculate_storage_stats(&request.command, &result);
-
         let response = StorageResponse {
             id: request_id,
             result,
             execution_time,
-            storage_stats,
+            storage_stats: stats_collector.finish(),
         };
 
         // Send response back to network runtime
@@ -496,37 +499,6 @@ impl StorageServer {
                 request_id
             );
         }
-    }
-
-    /// Calculate storage statistics based on the command and result
-    fn calculate_storage_stats(
-        command: &StorageCommand,
-        _result: &Result<resp::RespData, storage::error::Error>,
-    ) -> StorageStats {
-        let mut stats = StorageStats::default();
-
-        match command {
-            StorageCommand::Execute { argv, .. } => {
-                stats.bytes_read = argv.iter().map(|arg| arg.len()).sum::<usize>() as u64;
-            }
-            StorageCommand::Batch { commands } => {
-                // Aggregate stats from all commands in batch
-                for cmd in commands {
-                    let cmd_stats = Self::calculate_storage_stats(cmd, &Ok(resp::RespData::Null));
-                    stats.keys_read += cmd_stats.keys_read;
-                    stats.keys_written += cmd_stats.keys_written;
-                    stats.keys_deleted += cmd_stats.keys_deleted;
-                    stats.bytes_read += cmd_stats.bytes_read;
-                    stats.bytes_written += cmd_stats.bytes_written;
-                }
-            }
-        }
-
-        // TODO: Implement cache hit detection and compaction level tracking
-        stats.cache_hit = false;
-        stats.compaction_level = None;
-
-        stats
     }
 
     /// Execute a storage command and return the result

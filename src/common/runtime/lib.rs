@@ -50,10 +50,10 @@ pub use error_logging::{
 pub use global_storage::GlobalStorage;
 pub use manager::{RuntimeHealth as ManagerRuntimeHealth, RuntimeManager, RuntimeStats};
 pub use message::{
-    BackpressureConfig, ChannelStats, CircuitBreaker, MessageChannel, QueueStats, QueuedRequest,
-    RecoveryConfig, RecoveryManager, RecoveryState, RecoveryStats, RequestError, RequestId,
-    RequestPriority, RequestQueue, RetryConfig, StorageClient, StorageCommand, StorageRequest,
-    StorageResponse, StorageStats,
+    BackpressureConfig, ChannelStats, CircuitBreaker, MessageChannel, NoopStorageStatsCollector,
+    QueueStats, QueuedRequest, RecoveryConfig, RecoveryManager, RecoveryState, RecoveryStats,
+    RequestError, RequestId, RequestPriority, RequestQueue, RetryConfig, StorageClient,
+    StorageCommand, StorageRequest, StorageResponse, StorageStats, StorageStatsCollector,
 };
 pub use metrics::{
     BatchMetrics, ChannelHealth, ChannelMetrics, ChannelMetricsTracker, CompactionStats,

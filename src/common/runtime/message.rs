@@ -74,7 +74,7 @@ pub enum StorageCommand {
 }
 
 /// Statistics about storage operations for monitoring
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct StorageStats {
     /// Number of keys read during the operation
     pub keys_read: u64,
@@ -90,6 +90,43 @@ pub struct StorageStats {
     pub cache_hit: bool,
     /// RocksDB compaction level accessed
     pub compaction_level: Option<u32>,
+}
+
+/// Request-local collector for storage-layer instrumentation.
+///
+/// TODO(storage-stats): Thread a real collector through `Cmd::execute` and the
+/// `storage` crate APIs so these counters are recorded at the point where
+/// reads, writes, deletes, cache hits, and RocksDB details actually happen.
+pub trait StorageStatsCollector: Send + Sync {
+    /// Record a storage read. `key_bytes` and `value_bytes` should be measured
+    /// by the storage layer, not inferred from Redis command arguments.
+    fn record_read(&self, key_bytes: u64, value_bytes: u64);
+
+    /// Record a storage write. `key_bytes` and `value_bytes` should be measured
+    /// after the storage layer accepts the mutation.
+    fn record_write(&self, key_bytes: u64, value_bytes: u64);
+
+    /// Record a storage delete. `key_bytes` should be measured by the storage layer.
+    fn record_delete(&self, key_bytes: u64);
+
+    /// Return the accumulated statistics for the request.
+    fn finish(&self) -> StorageStats;
+}
+
+/// Placeholder collector used until storage-layer instrumentation is wired in.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoopStorageStatsCollector;
+
+impl StorageStatsCollector for NoopStorageStatsCollector {
+    fn record_read(&self, _key_bytes: u64, _value_bytes: u64) {}
+
+    fn record_write(&self, _key_bytes: u64, _value_bytes: u64) {}
+
+    fn record_delete(&self, _key_bytes: u64) {}
+
+    fn finish(&self) -> StorageStats {
+        StorageStats::default()
+    }
 }
 
 /// Request sent from network runtime to storage runtime
