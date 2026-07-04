@@ -85,7 +85,7 @@ impl CmdExecutorNetworkExt for CmdExecutor {
             // Route connection-local commands locally and send all other
             // storage-backed commands through the generic Execute path.
             match cmd_name.as_str() {
-                "ping" | "auth" | "client" => {
+                "ping" | "auth" | "client" | "hello" => {
                     execute_local_command(&exec).await?;
                 }
                 _ => {

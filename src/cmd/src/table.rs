@@ -166,6 +166,7 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         crate::zscore::ZscoreCmd,
         crate::zunionstore::ZunionstoreCmd,
         // connection commands
+        crate::hello::HelloCmd,
         crate::ping::PingCmd,
     );
 
@@ -183,4 +184,70 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
     );
 
     cmd_table
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use bytes::Bytes;
+    use client::{Client, StreamTrait};
+    use resp::RespData;
+    use storage::storage::Storage;
+
+    use super::create_command_table;
+
+    struct TestStream;
+
+    #[async_trait::async_trait]
+    impl StreamTrait for TestStream {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+
+        async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn hello_command_returns_resp3_handshake() {
+        let table = create_command_table(Arc::new(|| None));
+        let command = table.get("hello").expect("HELLO should be registered");
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"hello");
+        client.set_argv(&[b"hello".to_vec(), b"3".to_vec()]);
+
+        command.execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert_eq!(
+            client.take_reply(),
+            RespData::Map(vec![
+                (
+                    RespData::BulkString(Some(Bytes::from("server"))),
+                    RespData::BulkString(Some(Bytes::from("kiwi"))),
+                ),
+                (
+                    RespData::BulkString(Some(Bytes::from("version"))),
+                    RespData::BulkString(Some(Bytes::from("1.0.0"))),
+                ),
+                (
+                    RespData::BulkString(Some(Bytes::from("proto"))),
+                    RespData::Integer(3),
+                ),
+                (
+                    RespData::BulkString(Some(Bytes::from("id"))),
+                    RespData::Integer(1),
+                ),
+                (
+                    RespData::BulkString(Some(Bytes::from("mode"))),
+                    RespData::BulkString(Some(Bytes::from("standalone"))),
+                ),
+                (
+                    RespData::BulkString(Some(Bytes::from("role"))),
+                    RespData::BulkString(Some(Bytes::from("master"))),
+                ),
+            ])
+        );
+    }
 }
