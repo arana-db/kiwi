@@ -21,7 +21,7 @@ use bytes::Bytes;
 use resp::{
     command::{CommandType, RespCommand},
     encode::{RespEncode, RespEncoder},
-    negotiation::ProtocolNegotiator,
+    negotiation::{HelloAuthResult, ProtocolNegotiator},
     parse::{Parse, RespParse, RespParseResult},
     types::{RespData, RespVersion},
 };
@@ -216,7 +216,9 @@ fn test_protocol_negotiation_resp2() {
     let mut negotiator = ProtocolNegotiator::new();
     let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("2")], false);
 
-    let response = negotiator.handle_hello(&command).unwrap();
+    let response = negotiator
+        .handle_hello(&command, |_| HelloAuthResult::Authenticated)
+        .unwrap();
     assert_eq!(negotiator.current_version(), RespVersion::RESP2);
 
     // Should return array format for RESP2
@@ -239,7 +241,9 @@ fn test_protocol_negotiation_resp3() {
     let mut negotiator = ProtocolNegotiator::new();
     let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
 
-    let response = negotiator.handle_hello(&command).unwrap();
+    let response = negotiator
+        .handle_hello(&command, |_| HelloAuthResult::Authenticated)
+        .unwrap();
     assert_eq!(negotiator.current_version(), RespVersion::RESP3);
 
     // Should return map format for RESP3
@@ -271,9 +275,54 @@ fn test_protocol_negotiation_with_auth() {
         false,
     );
 
-    let _response = negotiator.handle_hello(&command).unwrap();
+    let _response = negotiator
+        .handle_hello(&command, |_| HelloAuthResult::Authenticated)
+        .unwrap();
     assert_eq!(negotiator.current_version(), RespVersion::RESP3);
     assert!(negotiator.client_capabilities().contains_key("auth"));
+}
+
+#[test]
+fn test_protocol_negotiation_with_wrong_password() {
+    let mut negotiator = ProtocolNegotiator::new();
+    let command = RespCommand::new(
+        CommandType::Hello,
+        vec![
+            Bytes::from("3"),
+            Bytes::from("AUTH"),
+            Bytes::from("username"),
+            Bytes::from("password"),
+        ],
+        false,
+    );
+
+    let result = negotiator.handle_hello(&command, |_| HelloAuthResult::WrongPassword);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("WRONGPASS"), "expected WRONGPASS, got {err}");
+}
+
+#[test]
+fn test_protocol_negotiation_with_no_password_configured() {
+    let mut negotiator = ProtocolNegotiator::new();
+    let command = RespCommand::new(
+        CommandType::Hello,
+        vec![
+            Bytes::from("3"),
+            Bytes::from("AUTH"),
+            Bytes::from("username"),
+            Bytes::from("password"),
+        ],
+        false,
+    );
+
+    let result = negotiator.handle_hello(&command, |_| HelloAuthResult::NoPasswordConfigured);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("HELLO AUTH called without any password configured"),
+        "expected no-password-configured error, got {err}"
+    );
 }
 
 #[test]
@@ -289,7 +338,9 @@ fn test_protocol_negotiation_with_setname() {
         false,
     );
 
-    let _response = negotiator.handle_hello(&command).unwrap();
+    let _response = negotiator
+        .handle_hello(&command, |_| HelloAuthResult::Authenticated)
+        .unwrap();
     assert_eq!(negotiator.current_version(), RespVersion::RESP2);
     assert_eq!(
         negotiator.client_capabilities().get("client_name"),
@@ -378,7 +429,9 @@ fn test_feature_support_detection() {
 
     // Switch to RESP3
     let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
-    negotiator.handle_hello(&command).unwrap();
+    negotiator
+        .handle_hello(&command, |_| HelloAuthResult::Authenticated)
+        .unwrap();
 
     // Now supports RESP3 features
     assert!(negotiator.supports_feature("maps"));

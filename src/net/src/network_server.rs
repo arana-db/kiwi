@@ -53,9 +53,6 @@ pub struct NetworkResources {
 ///
 /// This server handles network I/O operations in a dedicated runtime and
 /// communicates with storage operations through a StorageClient.
-///
-/// # Requirements
-/// - Requirement 6.1: Network layer SHALL identify read/write operation types
 pub struct NetworkServer {
     /// Address to bind the server to
     addr: String,

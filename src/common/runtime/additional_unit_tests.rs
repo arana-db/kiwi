@@ -34,7 +34,8 @@ use serde_json;
 use crate::manager::LifecycleState;
 use crate::{
     BackpressureConfig, DualRuntimeError, ManagerRuntimeHealth as RuntimeHealth, MessageChannel,
-    RequestId, RequestPriority, RuntimeConfig, RuntimeManager, StorageCommand, StorageStats,
+    NoopStorageStatsCollector, RequestId, RequestPriority, RuntimeConfig, RuntimeManager,
+    StorageCommand, StorageStats, StorageStatsCollector,
 };
 
 /// Test configuration for unit tests
@@ -329,46 +330,21 @@ mod serialization_tests {
     #[test]
     fn test_storage_command_serialization() {
         let commands = vec![
-            StorageCommand::Get {
-                key: b"test_key".to_vec(),
+            StorageCommand::Execute {
+                cmd_name: b"get".to_vec(),
+                argv: vec![b"get".to_vec(), b"test_key".to_vec()],
             },
-            StorageCommand::Set {
-                key: b"test_key".to_vec(),
-                value: b"test_value".to_vec(),
-                ttl: Some(Duration::from_secs(60)),
+            StorageCommand::Execute {
+                cmd_name: b"set".to_vec(),
+                argv: vec![
+                    b"set".to_vec(),
+                    b"test_key".to_vec(),
+                    b"test_value".to_vec(),
+                ],
             },
-            StorageCommand::Del {
-                keys: vec![b"key1".to_vec(), b"key2".to_vec()],
-            },
-            StorageCommand::Exists {
-                keys: vec![b"key1".to_vec()],
-            },
-            StorageCommand::Expire {
-                key: b"key".to_vec(),
-                ttl: Duration::from_secs(30),
-            },
-            StorageCommand::Ttl {
-                key: b"key".to_vec(),
-            },
-            StorageCommand::Incr {
-                key: b"counter".to_vec(),
-            },
-            StorageCommand::IncrBy {
-                key: b"counter".to_vec(),
-                increment: 5,
-            },
-            StorageCommand::Decr {
-                key: b"counter".to_vec(),
-            },
-            StorageCommand::DecrBy {
-                key: b"counter".to_vec(),
-                decrement: 3,
-            },
-            StorageCommand::MSet {
-                pairs: vec![(b"k1".to_vec(), b"v1".to_vec())],
-            },
-            StorageCommand::MGet {
-                keys: vec![b"k1".to_vec(), b"k2".to_vec()],
+            StorageCommand::Execute {
+                cmd_name: b"ping".to_vec(),
+                argv: vec![b"ping".to_vec()],
             },
         ];
 
@@ -379,18 +355,7 @@ mod serialization_tests {
 
             // Verify the command type matches
             match (&cmd, &deserialized) {
-                (StorageCommand::Get { .. }, StorageCommand::Get { .. }) => {}
-                (StorageCommand::Set { .. }, StorageCommand::Set { .. }) => {}
-                (StorageCommand::Del { .. }, StorageCommand::Del { .. }) => {}
-                (StorageCommand::Exists { .. }, StorageCommand::Exists { .. }) => {}
-                (StorageCommand::Expire { .. }, StorageCommand::Expire { .. }) => {}
-                (StorageCommand::Ttl { .. }, StorageCommand::Ttl { .. }) => {}
-                (StorageCommand::Incr { .. }, StorageCommand::Incr { .. }) => {}
-                (StorageCommand::IncrBy { .. }, StorageCommand::IncrBy { .. }) => {}
-                (StorageCommand::Decr { .. }, StorageCommand::Decr { .. }) => {}
-                (StorageCommand::DecrBy { .. }, StorageCommand::DecrBy { .. }) => {}
-                (StorageCommand::MSet { .. }, StorageCommand::MSet { .. }) => {}
-                (StorageCommand::MGet { .. }, StorageCommand::MGet { .. }) => {}
+                (StorageCommand::Execute { .. }, StorageCommand::Execute { .. }) => {}
                 _ => panic!("Command type mismatch after serialization"),
             }
         }
@@ -407,6 +372,17 @@ mod serialization_tests {
         assert_eq!(stats.bytes_written, 0);
         assert!(!stats.cache_hit);
         assert_eq!(stats.compaction_level, None);
+    }
+
+    #[test]
+    fn test_noop_storage_stats_collector() {
+        let collector = NoopStorageStatsCollector::default();
+
+        collector.record_read(3, 5);
+        collector.record_write(7, 11);
+        collector.record_delete(13);
+
+        assert_eq!(collector.finish(), StorageStats::default());
     }
 }
 

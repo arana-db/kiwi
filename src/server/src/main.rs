@@ -143,10 +143,16 @@ fn main() -> std::io::Result<()> {
         let pause_controller_for_raft = pause_controller.clone();
 
         let storage_for_server = storage.clone();
+        let requirepass_for_storage_server = config.requirepass.clone();
         storage_handle.spawn(async move {
             info!("Initializing storage server...");
-            match initialize_storage_server(storage_receiver, storage_for_server, pause_controller)
-                .await
+            match initialize_storage_server(
+                storage_receiver,
+                storage_for_server,
+                pause_controller,
+                requirepass_for_storage_server,
+            )
+            .await
             {
                 Ok(_) => {
                     error!("Storage server exited unexpectedly - this should never happen!");
@@ -224,8 +230,13 @@ async fn initialize_storage_server(
     request_receiver: tokio::sync::mpsc::Receiver<runtime::StorageRequest>,
     global_storage: GlobalStorage,
     pause_controller: StorageServerPauseController,
+    requirepass: Option<String>,
 ) -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
+
+    // Initialize the storage-runtime command table with the same password
+    // provider used by the network runtime, so AUTH behaves consistently.
+    runtime::initialize_storage_command_table(Arc::new(move || requirepass.clone()));
 
     let storage_server =
         StorageServer::with_pause_controller(global_storage, request_receiver, pause_controller);

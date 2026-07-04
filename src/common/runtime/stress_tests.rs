@@ -186,10 +186,13 @@ mod memory_pressure_tests {
             let error_count = Arc::clone(&error_count);
 
             let handle = tokio::spawn(async move {
-                let command = StorageCommand::Set {
-                    key: format!("stress_key_{}", i).into_bytes(),
-                    value: vec![0u8; 1024], // 1KB value
-                    ttl: None,
+                let command = StorageCommand::Execute {
+                    cmd_name: b"set".to_vec(),
+                    argv: vec![
+                        b"set".to_vec(),
+                        format!("stress_key_{}", i).into_bytes(),
+                        vec![0u8; 1024],
+                    ],
                 };
 
                 match client.send_request(command).await {
@@ -272,8 +275,9 @@ mod memory_pressure_tests {
             let handle = tokio::spawn(async move {
                 barrier.wait().await;
 
-                let command = StorageCommand::Get {
-                    key: format!("key_{}", i).into_bytes(),
+                let command = StorageCommand::Execute {
+                    cmd_name: b"get".to_vec(),
+                    argv: vec![b"get".to_vec(), format!("key_{}", i).into_bytes()],
                 };
 
                 client.send_request(command).await
@@ -380,8 +384,12 @@ mod network_partition_tests {
                 // Wait a bit to ensure partition is active
                 tokio::time::sleep(Duration::from_millis(50)).await;
 
-                let command = StorageCommand::Get {
-                    key: format!("partition_test_{}", i).into_bytes(),
+                let command = StorageCommand::Execute {
+                    cmd_name: b"get".to_vec(),
+                    argv: vec![
+                        b"get".to_vec(),
+                        format!("partition_test_{}", i).into_bytes(),
+                    ],
                 };
 
                 if simulator.is_partitioned() {
@@ -447,10 +455,13 @@ mod network_partition_tests {
             let client = storage_client.clone();
 
             let handle = tokio::spawn(async move {
-                let command = StorageCommand::Set {
-                    key: format!("recovery_test_{}", i).into_bytes(),
-                    value: b"test_value".to_vec(),
-                    ttl: None,
+                let command = StorageCommand::Execute {
+                    cmd_name: b"set".to_vec(),
+                    argv: vec![
+                        b"set".to_vec(),
+                        format!("recovery_test_{}", i).into_bytes(),
+                        b"test_value".to_vec(),
+                    ],
                 };
 
                 client.send_request(command).await
@@ -500,8 +511,12 @@ mod network_partition_tests {
                 let delay = Duration::from_millis(rand::thread_rng().gen_range(10..100));
                 tokio::time::sleep(delay).await;
 
-                let command = StorageCommand::Get {
-                    key: format!("intermittent_test_{}", i).into_bytes(),
+                let command = StorageCommand::Execute {
+                    cmd_name: b"get".to_vec(),
+                    argv: vec![
+                        b"get".to_vec(),
+                        format!("intermittent_test_{}", i).into_bytes(),
+                    ],
                 };
 
                 match client.send_request(command).await {

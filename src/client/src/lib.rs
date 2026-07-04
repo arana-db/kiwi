@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use resp::RespData;
+use resp::{ProtocolNegotiator, RespCommand, RespData, RespResult};
 use tokio::sync::Mutex;
 
 #[async_trait]
@@ -44,6 +44,8 @@ struct ClientContext {
     key: Vec<u8>,
     reply: RespData,
     authenticated: bool,
+    /// Persisted RESP protocol negotiation state for this connection.
+    protocol_negotiator: ProtocolNegotiator,
 }
 
 impl Client {
@@ -59,6 +61,7 @@ impl Client {
                 // Default to false (fail-closed): callers must explicitly grant
                 // authentication when no `requirepass` is configured.
                 authenticated: false,
+                protocol_negotiator: ProtocolNegotiator::new(),
             }),
         }
     }
@@ -131,5 +134,26 @@ impl Client {
     pub fn set_authenticated(&self, val: bool) {
         let mut ctx = self.ctx.lock();
         ctx.authenticated = val;
+    }
+
+    /// Handle a RESP HELLO command using the persisted protocol negotiation
+    /// state for this connection, so the negotiated RESP version survives across
+    /// multiple commands.
+    ///
+    /// `authenticate` is called with the password supplied via the AUTH clause
+    /// and must report whether the client should be authenticated, rejected for
+    /// a wrong password, or rejected because no password is configured.
+    pub fn handle_hello<F>(&self, command: &RespCommand, authenticate: F) -> RespResult<RespData>
+    where
+        F: FnMut(&[u8]) -> resp::HelloAuthResult,
+    {
+        let mut ctx = self.ctx.lock();
+        ctx.protocol_negotiator.handle_hello(command, authenticate)
+    }
+
+    /// Return the currently negotiated RESP version for this connection.
+    pub fn resp_version(&self) -> resp::RespVersion {
+        let ctx = self.ctx.lock();
+        ctx.protocol_negotiator.current_version()
     }
 }

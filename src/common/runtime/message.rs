@@ -64,40 +64,17 @@ impl std::fmt::Display for RequestId {
 /// Storage commands that can be executed in the storage runtime
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StorageCommand {
-    /// Get a value by key
-    Get { key: Vec<u8> },
-    /// Set a key-value pair with optional TTL
-    Set {
-        key: Vec<u8>,
-        value: Vec<u8>,
-        ttl: Option<Duration>,
+    /// Execute a Redis command using the storage runtime command table
+    Execute {
+        cmd_name: Vec<u8>,
+        argv: Vec<Vec<u8>>,
     },
-    /// Delete one or more keys
-    Del { keys: Vec<Vec<u8>> },
-    /// Check if keys exist
-    Exists { keys: Vec<Vec<u8>> },
-    /// Set expiration time for a key
-    Expire { key: Vec<u8>, ttl: Duration },
-    /// Get time to live for a key
-    Ttl { key: Vec<u8> },
-    /// Increment a numeric value
-    Incr { key: Vec<u8> },
-    /// Increment by a specific amount
-    IncrBy { key: Vec<u8>, increment: i64 },
-    /// Decrement a numeric value
-    Decr { key: Vec<u8> },
-    /// Decrement by a specific amount
-    DecrBy { key: Vec<u8>, decrement: i64 },
-    /// Multiple set operations
-    MSet { pairs: Vec<(Vec<u8>, Vec<u8>)> },
-    /// Multiple get operations
-    MGet { keys: Vec<Vec<u8>> },
     /// Batch multiple commands together
     Batch { commands: Vec<StorageCommand> },
 }
 
 /// Statistics about storage operations for monitoring
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct StorageStats {
     /// Number of keys read during the operation
     pub keys_read: u64,
@@ -113,6 +90,44 @@ pub struct StorageStats {
     pub cache_hit: bool,
     /// RocksDB compaction level accessed
     pub compaction_level: Option<u32>,
+}
+
+/// Request-local collector for storage-layer instrumentation.
+///
+/// TODO(storage-stats): Thread a real collector through `Cmd::execute` and the
+/// `storage` crate APIs so these counters are recorded at the point where
+/// reads, writes, deletes, cache hits, and RocksDB details actually happen.
+/// Tracked in <https://github.com/arana-db/kiwi/issues/312>.
+pub trait StorageStatsCollector: Send + Sync {
+    /// Record a storage read. `key_bytes` and `value_bytes` should be measured
+    /// by the storage layer, not inferred from Redis command arguments.
+    fn record_read(&self, key_bytes: u64, value_bytes: u64);
+
+    /// Record a storage write. `key_bytes` and `value_bytes` should be measured
+    /// after the storage layer accepts the mutation.
+    fn record_write(&self, key_bytes: u64, value_bytes: u64);
+
+    /// Record a storage delete. `key_bytes` should be measured by the storage layer.
+    fn record_delete(&self, key_bytes: u64);
+
+    /// Return the accumulated statistics for the request.
+    fn finish(&self) -> StorageStats;
+}
+
+/// Placeholder collector used until storage-layer instrumentation is wired in.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoopStorageStatsCollector;
+
+impl StorageStatsCollector for NoopStorageStatsCollector {
+    fn record_read(&self, _key_bytes: u64, _value_bytes: u64) {}
+
+    fn record_write(&self, _key_bytes: u64, _value_bytes: u64) {}
+
+    fn record_delete(&self, _key_bytes: u64) {}
+
+    fn finish(&self) -> StorageStats {
+        StorageStats::default()
+    }
 }
 
 /// Request sent from network runtime to storage runtime
@@ -1223,13 +1238,10 @@ impl StorageClient {
             ));
         }
 
-        // Return a fallback response for queued requests
-        match self.get_fallback_response(&command).await {
-            Some(fallback) => Ok(fallback),
-            None => Err(crate::error::DualRuntimeError::Channel(
-                "Storage unavailable and no fallback available".to_string(),
-            )),
-        }
+        // No fallback responses are currently provided when storage is unavailable.
+        Err(crate::error::DualRuntimeError::Channel(
+            "Storage unavailable and no fallback available".to_string(),
+        ))
     }
 
     /// Try a single recovery request to test if storage is available
@@ -1316,30 +1328,6 @@ impl StorageClient {
         }
     }
 
-    /// Get a fallback response for certain commands when storage is unavailable
-    async fn get_fallback_response(&self, command: &StorageCommand) -> Option<resp::RespData> {
-        match command {
-            StorageCommand::Get { .. } => {
-                // Return null for GET operations when storage is unavailable
-                Some(resp::RespData::Null)
-            }
-            StorageCommand::Exists { keys: _ } => {
-                // Return 0 for EXISTS operations
-                Some(resp::RespData::Integer(0))
-            }
-            StorageCommand::MGet { keys } => {
-                // Return array of nulls for MGET operations
-                let nulls: Vec<resp::RespData> =
-                    keys.iter().map(|_| resp::RespData::Null).collect();
-                Some(resp::RespData::Array(Some(nulls)))
-            }
-            _ => {
-                // No fallback available for write operations
-                None
-            }
-        }
-    }
-
     /// Get recovery statistics
     pub async fn recovery_stats(&self) -> RecoveryStats {
         let recovery_manager = self.recovery_manager.lock().await;
@@ -1361,8 +1349,9 @@ impl StorageClient {
     /// Force a recovery attempt
     pub async fn force_recovery(&self) -> Result<(), crate::error::DualRuntimeError> {
         // Try a simple ping command to test storage availability
-        let ping_command = StorageCommand::Get {
-            key: b"__health_check__".to_vec(),
+        let ping_command = StorageCommand::Execute {
+            cmd_name: b"get".to_vec(),
+            argv: vec![b"get".to_vec(), b"__health_check__".to_vec()],
         };
 
         match self
@@ -1487,10 +1476,13 @@ mod tests {
 
     #[test]
     fn test_storage_command_serialization() {
-        let cmd = StorageCommand::Set {
-            key: b"test_key".to_vec(),
-            value: b"test_value".to_vec(),
-            ttl: Some(Duration::from_secs(60)),
+        let cmd = StorageCommand::Execute {
+            cmd_name: b"set".to_vec(),
+            argv: vec![
+                b"set".to_vec(),
+                b"test_key".to_vec(),
+                b"test_value".to_vec(),
+            ],
         };
 
         // Test that the command can be serialized and deserialized
@@ -1498,10 +1490,16 @@ mod tests {
         let deserialized: StorageCommand = serde_json::from_str(&serialized).unwrap();
 
         match deserialized {
-            StorageCommand::Set { key, value, ttl } => {
-                assert_eq!(key, b"test_key");
-                assert_eq!(value, b"test_value");
-                assert_eq!(ttl, Some(Duration::from_secs(60)));
+            StorageCommand::Execute { cmd_name, argv } => {
+                assert_eq!(cmd_name, b"set");
+                assert_eq!(
+                    argv,
+                    vec![
+                        b"set".to_vec(),
+                        b"test_key".to_vec(),
+                        b"test_value".to_vec()
+                    ]
+                );
             }
             _ => panic!("Unexpected command type"),
         }

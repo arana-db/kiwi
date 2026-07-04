@@ -35,6 +35,7 @@ pub mod getrange;
 pub mod getset;
 pub mod group_client;
 pub mod hdel;
+pub mod hello;
 pub mod hexists;
 pub mod hget;
 pub mod hgetall;
