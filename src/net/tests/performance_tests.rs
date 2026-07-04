@@ -94,7 +94,7 @@ impl NetworkPerformanceTests {
                     let op_start = Instant::now();
 
                     // Simulate getting and returning a connection
-                    match pool_clone
+                    if let Ok(conn) = pool_clone
                         .get_connection(|| async {
                             // Simulate connection creation
                             tokio::time::sleep(Duration::from_micros(100)).await;
@@ -102,13 +102,10 @@ impl NetworkPerformanceTests {
                         })
                         .await
                     {
-                        Ok(conn) => {
-                            // Simulate some work
-                            tokio::time::sleep(Duration::from_micros(50)).await;
-                            pool_clone.return_connection(conn).await;
-                            client_successful += 1;
-                        }
-                        Err(_) => {}
+                        // Simulate some work
+                        tokio::time::sleep(Duration::from_micros(50)).await;
+                        pool_clone.return_connection(conn).await;
+                        client_successful += 1;
                     }
 
                     client_latencies.push(op_start.elapsed());

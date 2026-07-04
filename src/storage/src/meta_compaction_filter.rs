@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_meta_compaction_filter_factory() {
-        let mut factory = MetaCompactionFilterFactory::default();
+        let mut factory = MetaCompactionFilterFactory;
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn test_string_value_not_expired() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_key");
         let encoded_key = key.encode().unwrap();
 
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_string_value_expired() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_key");
         let encoded_key = key.encode().unwrap();
 
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn test_string_value_permanent() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_key");
         let encoded_key = key.encode().unwrap();
 
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn test_list_meta_value_not_expired() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_list_key");
         let encoded_key = key.encode().unwrap();
 
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_list_meta_value_expired() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_list_key");
         let encoded_key = key.encode().unwrap();
 
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_list_meta_value_empty_and_expired_version() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_list_key");
         let encoded_key = key.encode().unwrap();
 
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_list_meta_value_empty_but_recent_version() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_list_key");
         let encoded_key = key.encode().unwrap();
 
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_hash_meta_value_not_expired() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_hash_key");
         let encoded_key = key.encode().unwrap();
 
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_hash_meta_value_expired() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_hash_key");
         let encoded_key = key.encode().unwrap();
 
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_hash_meta_value_empty_and_expired_version() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_hash_key");
         let encoded_key = key.encode().unwrap();
 
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn test_set_meta_value_expired() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_set_key");
         let encoded_key = key.encode().unwrap();
 
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_zset_meta_value_expired() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_zset_key");
         let encoded_key = key.encode().unwrap();
 
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn test_invalid_key() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let invalid_key = b"short"; // Key is too short to be valid
 
         let string_value = StringValue::new(b"test_value".as_slice());
@@ -373,7 +373,7 @@ mod tests {
 
     #[test]
     fn test_empty_value() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_key");
         let encoded_key = key.encode().unwrap();
 
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn test_invalid_data_type() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_key");
         let encoded_key = key.encode().unwrap();
 
@@ -398,7 +398,7 @@ mod tests {
 
     #[test]
     fn test_invalid_string_value_format() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_key");
         let encoded_key = key.encode().unwrap();
 
@@ -411,7 +411,7 @@ mod tests {
 
     #[test]
     fn test_unknown_data_type() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_key");
         let encoded_key = key.encode().unwrap();
 
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_list_meta_value_with_etime_zero_but_expired_version() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_list_key");
         let encoded_key = key.encode().unwrap();
 
@@ -442,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_hash_meta_value_with_etime_zero_but_expired_version() {
-        let mut filter = MetaCompactionFilter::default();
+        let mut filter = MetaCompactionFilter;
         let key = BaseKey::new(b"test_hash_key");
         let encoded_key = key.encode().unwrap();
 

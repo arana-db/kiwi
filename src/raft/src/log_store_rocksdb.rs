@@ -662,13 +662,10 @@ mod tests {
             let deserialized: Entry<conf::raft_type::KiwiTypeConfig> = deserialize(&serialized).expect("Deserialization should succeed");
             prop_assert_eq!(entry.log_id, deserialized.log_id);
             // Note: We compare log_id and payload structure
-            match (&entry.payload, &deserialized.payload) {
-                (EntryPayload::Normal(b1), EntryPayload::Normal(b2)) => {
-                    prop_assert_eq!(b1.db_id, b2.db_id);
-                    prop_assert_eq!(b1.slot_idx, b2.slot_idx);
-                    prop_assert_eq!(b1.entries.len(), b2.entries.len());
-                }
-                _ => {}
+            if let (EntryPayload::Normal(b1), EntryPayload::Normal(b2)) = (&entry.payload, &deserialized.payload) {
+                prop_assert_eq!(b1.db_id, b2.db_id);
+                prop_assert_eq!(b1.slot_idx, b2.slot_idx);
+                prop_assert_eq!(b1.entries.len(), b2.entries.len());
             }
         }
     }
@@ -976,7 +973,7 @@ mod tests {
                     for entry in &sequential_entries {
                         let key = encode_log_key(entry.log_id.index);
                         let value = serialize(&entry).unwrap();
-                        batch.put_cf(&logs_cf, &key, &value);
+                        batch.put_cf(&logs_cf, key, &value);
                     }
 
                     engine_clone.write(batch).unwrap();
@@ -1112,7 +1109,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -1163,7 +1160,7 @@ mod tests {
 
             let key = encode_log_key(1);
             let corrupted_value = vec![0xFF, 0xFF, 0xFF, 0xFF]; // Invalid JSON
-            batch.put_cf(&logs_cf, &key, &corrupted_value);
+            batch.put_cf(&logs_cf, key, &corrupted_value);
 
             engine_clone.write(batch).unwrap();
         }
@@ -1238,7 +1235,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -1302,7 +1299,7 @@ mod tests {
 
             let key = encode_log_key(entry.log_id.index);
             let value = serialize(&entry).unwrap();
-            batch.put_cf(&logs_cf, &key, &value);
+            batch.put_cf(&logs_cf, key, &value);
 
             engine_clone.write(batch).unwrap();
         }
@@ -1704,7 +1701,7 @@ mod tests {
                     for entry in &sequential_entries {
                         let key = encode_log_key(entry.log_id.index);
                         let value = serialize(&entry).unwrap();
-                        batch.put_cf(&logs_cf, &key, &value);
+                        batch.put_cf(&logs_cf, key, &value);
                     }
 
                     engine_clone.write(batch).unwrap();
@@ -1784,7 +1781,7 @@ mod tests {
                     for entry in &sequential_entries {
                         let key = encode_log_key(entry.log_id.index);
                         let value = serialize(&entry).unwrap();
-                        batch.put_cf(&logs_cf, &key, &value);
+                        batch.put_cf(&logs_cf, key, &value);
                     }
 
                     engine_clone.write(batch).unwrap();
@@ -1878,7 +1875,7 @@ mod tests {
                     for entry in &sequential_entries {
                         let key = encode_log_key(entry.log_id.index);
                         let value = serialize(&entry).unwrap();
-                        batch.put_cf(&logs_cf, &key, &value);
+                        batch.put_cf(&logs_cf, key, &value);
                     }
 
                     engine_clone.write(batch).unwrap();
@@ -2018,7 +2015,7 @@ mod tests {
                     for entry in &sequential_entries {
                         let key = encode_log_key(entry.log_id.index);
                         let value = serialize(&entry).unwrap();
-                        batch.put_cf(&logs_cf, &key, &value);
+                        batch.put_cf(&logs_cf, key, &value);
                     }
 
                     engine_clone.write(batch).unwrap();
@@ -2143,7 +2140,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -2220,7 +2217,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -2296,7 +2293,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -2385,7 +2382,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -2501,7 +2498,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -2557,7 +2554,7 @@ mod tests {
 
             let key = encode_log_key(entry.log_id.index);
             let value = serialize(&entry).unwrap();
-            batch.put_cf(&logs_cf, &key, &value);
+            batch.put_cf(&logs_cf, key, &value);
 
             engine_clone.write(batch).unwrap();
         }
@@ -2623,7 +2620,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -2715,7 +2712,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -2783,7 +2780,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -2850,7 +2847,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -2940,7 +2937,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -3042,7 +3039,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -3118,7 +3115,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -3207,7 +3204,7 @@ mod tests {
 
             let key = encode_log_key(entry.log_id.index);
             let value = serialize(&entry).unwrap();
-            batch.put_cf(&logs_cf, &key, &value);
+            batch.put_cf(&logs_cf, key, &value);
 
             engine_clone.write(batch).unwrap();
         }
@@ -3265,7 +3262,7 @@ mod tests {
             for entry in &entries {
                 let key = encode_log_key(entry.log_id.index);
                 let value = serialize(&entry).unwrap();
-                batch.put_cf(&logs_cf, &key, &value);
+                batch.put_cf(&logs_cf, key, &value);
             }
 
             engine_clone.write(batch).unwrap();
@@ -3329,7 +3326,7 @@ mod tests {
 
             let key = encode_log_key(entry1.log_id.index);
             let value = serialize(&entry1).unwrap();
-            batch.put_cf(&logs_cf, &key, &value);
+            batch.put_cf(&logs_cf, key, &value);
 
             engine_clone.write(batch).unwrap();
         }
@@ -3365,7 +3362,7 @@ mod tests {
 
             let key = encode_log_key(entry2.log_id.index);
             let value = serialize(&entry2).unwrap();
-            batch.put_cf(&logs_cf, &key, &value);
+            batch.put_cf(&logs_cf, key, &value);
 
             engine_clone.write(batch).unwrap();
         }
@@ -3410,7 +3407,7 @@ mod tests {
 
             let key = encode_log_key(entry.log_id.index);
             let value = serialize(&entry).unwrap();
-            batch.put_cf(&logs_cf, &key, &value);
+            batch.put_cf(&logs_cf, key, &value);
 
             engine_clone.write(batch).unwrap();
         }
