@@ -711,7 +711,9 @@ mod append_log_fn_tests {
         inst.set_append_log_fn(f);
 
         let mut b = inst.create_batch().unwrap();
-        b.put(crate::ColumnFamilyIndex::MetaCF, b"k", b"v").unwrap();
+        let encoded_key = crate::format_base_key::BaseKey::new(b"k").encode().unwrap();
+        b.put(crate::ColumnFamilyIndex::MetaCF, &encoded_key, b"v")
+            .unwrap();
         Box::new(b).commit().unwrap();
         assert!(
             called.load(Ordering::SeqCst),
