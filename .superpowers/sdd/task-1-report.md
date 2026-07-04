@@ -36,3 +36,19 @@
 - The branch’s pre-existing `is_stale_static` / `is_stale` split was preserved.
 - I did not change key encoding, `BaseMetaKey`, or any command-specific missing/stale handling outside the helper path.
 - No regressions showed up in the Redis basic test file.
+
+## Task 1 fix follow-up
+### Reviewer issue addressed
+- Restored `Redis::check_type(...)` to preserve the original compatibility behavior for current command callers.
+- Kept `Redis::check_type_state(...)` as the new helper for future migration work.
+- Added a regression test proving that `check_type` still returns `WRONGTYPE` for a stale foreign-type value.
+
+### RED / GREEN evidence for the fix
+- RED:
+  - Ran `env RUSTC_WRAPPER= cargo test -p storage --test redis_basic_test test_check_type_keeps_old_wrongtype_behavior_for_stale_foreign_type -- --nocapture`
+  - Result: failed because `check_type` incorrectly returned `Ok(())` for a stale foreign-type payload.
+- GREEN:
+  - Ran `env RUSTC_WRAPPER= cargo test -p storage --test redis_basic_test test_check_type_keeps_old_wrongtype_behavior_for_stale_foreign_type -- --nocapture`
+  - Ran `env RUSTC_WRAPPER= cargo test -p storage --test redis_basic_test test_check_type_state_reports_missing_stale_match_and_wrongtype -- --nocapture`
+  - Ran `env RUSTC_WRAPPER= cargo test -p storage --test redis_basic_test -- --nocapture`
+  - Result: all passed, including the new compatibility test and the full Redis basic suite (35 tests passed).

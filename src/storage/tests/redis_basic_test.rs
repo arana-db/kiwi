@@ -82,6 +82,25 @@ mod redis_basic_test {
     }
 
     #[test]
+    fn test_check_type_keeps_old_wrongtype_behavior_for_stale_foreign_type() {
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let mut set_meta = BaseMetaValue::new(Bytes::from(1u64.to_le_bytes().to_vec()));
+        set_meta.inner.data_type = DataType::Set;
+        let mut stale_set_raw = set_meta.encode().to_vec();
+        let etime_start = stale_set_raw.len() - 8;
+        stale_set_raw[etime_start..].copy_from_slice(&1u64.to_le_bytes());
+
+        let err = redis
+            .check_type(stale_set_raw.as_ref(), DataType::String)
+            .unwrap_err();
+        assert!(err.to_string().contains("WRONGTYPE"));
+    }
+
+    #[test]
     fn test_redis_open() {
         let test_db_path = unique_test_db_path();
 
