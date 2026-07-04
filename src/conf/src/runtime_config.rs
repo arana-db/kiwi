@@ -18,6 +18,34 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+fn default_scaling_evaluation_interval() -> Duration {
+    Duration::from_secs(1)
+}
+
+fn default_raft_metrics_collection_interval() -> Duration {
+    Duration::from_millis(100)
+}
+
+fn default_raft_metrics_retention_period() -> Duration {
+    Duration::from_secs(3600)
+}
+
+fn default_fault_injection_network_delay() -> Duration {
+    Duration::from_millis(100)
+}
+
+fn default_fault_injection_drop_rate() -> f64 {
+    0.1
+}
+
+fn default_request_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+fn default_batch_timeout() -> Duration {
+    Duration::from_millis(10)
+}
+
 /// Configuration for dynamic thread pool scaling
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScalingConfig {
@@ -38,7 +66,7 @@ pub struct ScalingConfig {
     /// Number of threads to add/remove during scaling
     pub scale_increment: usize,
     /// Interval between scaling evaluations
-    #[serde(skip)]
+    #[serde(skip, default = "default_scaling_evaluation_interval")]
     pub evaluation_interval: Duration,
 }
 
@@ -92,10 +120,10 @@ pub struct RaftMetricsConfig {
     /// Enable Raft metrics collection
     pub enabled: bool,
     /// Interval between metric collections
-    #[serde(skip)]
+    #[serde(skip, default = "default_raft_metrics_collection_interval")]
     pub collection_interval: Duration,
     /// How long to retain metrics data
-    #[serde(skip)]
+    #[serde(skip, default = "default_raft_metrics_retention_period")]
     pub retention_period: Duration,
     /// Enable detailed per-follower replication metrics
     pub track_replication_latency: bool,
@@ -121,10 +149,10 @@ pub struct FaultInjectionConfig {
     /// Enable fault injection (should only be true in test environments)
     pub enabled: bool,
     /// Default network delay duration for fault injection
-    #[serde(skip)]
+    #[serde(skip, default = "default_fault_injection_network_delay")]
     pub default_network_delay: Duration,
     /// Default message drop rate (0.0 to 1.0)
-    #[serde(skip)]
+    #[serde(skip, default = "default_fault_injection_drop_rate")]
     pub default_drop_rate: f64,
     /// Enable logging of all fault injection events
     pub log_events: bool,
@@ -151,12 +179,12 @@ pub struct RuntimeConfig {
     /// Buffer size for the message channel between runtimes
     pub channel_buffer_size: usize,
     /// Timeout for storage requests
-    #[serde(skip)]
+    #[serde(skip, default = "default_request_timeout")]
     pub request_timeout: Duration,
     /// Batch size for storage operations
     pub batch_size: usize,
     /// Timeout for batch processing
-    #[serde(skip)]
+    #[serde(skip, default = "default_batch_timeout")]
     pub batch_timeout: Duration,
     /// Dynamic thread pool scaling configuration
     #[serde(default)]

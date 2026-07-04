@@ -19,7 +19,7 @@ Kiwi is a Redis-compatible key-value database built in Rust, providing high capa
 
 ## Architecture
 
-```
+```text
 src/server/    → Entry point (main.rs)
 src/net/       → TCP server, connection handling, cluster routing
 src/cmd/       → Command definitions: Cmd trait, CmdMeta, command table
@@ -37,7 +37,7 @@ src/kstd/      → Utilities: LockMgr (sharded key-level locking)
 
 ### Request Flow
 
-```
+```text
 Client → TCP accept [network runtime] → RESP parse → Command lookup
   → CmdExecutor [network runtime] → Cmd.execute() calls StorageClient
     → MessageChannel →
@@ -106,7 +106,6 @@ See [docs/cluster.md](docs/cluster.md) for the manual step-by-step procedure and
 | [docs/development.md](docs/development.md) | Dev environment, build optimization, sccache |
 | [docs/cluster.md](docs/cluster.md) | Raft cluster quickstart and write-path verification |
 | [docs/key-encoding.md](docs/key-encoding.md) | Key encoding internals (Chinese) |
-| [CLAUDE.md](CLAUDE.md) | Build commands and architecture overview |
 | `kiwi --sample-config` | Generate a default config file |
 | `kiwi --full-sample-config` | Generate a config with all available keys |
 

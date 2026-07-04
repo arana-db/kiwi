@@ -23,6 +23,8 @@ pub mod runtime_config;
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use validator::Validate;
 
     use super::*;
@@ -145,5 +147,121 @@ mod tests {
         assert_eq!("/data/kiwi/db", config.db_dir);
 
         let _ = std::fs::remove_file(config_path);
+    }
+
+    #[test]
+    fn test_toml_runtime_validation_is_applied() {
+        let mut config = Config::default();
+        config.runtime.network_threads = 0;
+
+        let config_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            config_file.path(),
+            toml::to_string(&config).expect("default config should serialize"),
+        )
+        .unwrap();
+
+        let loaded = Config::load(config_file.path().to_str().unwrap());
+        assert!(
+            loaded.is_err(),
+            "runtime validation should reject zero threads"
+        );
+    }
+
+    #[test]
+    fn test_toml_runtime_skipped_fields_keep_defaults() {
+        let config = Config::default();
+
+        let config_file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            config_file.path(),
+            toml::to_string(&config).expect("default config should serialize"),
+        )
+        .unwrap();
+
+        let loaded = Config::load(config_file.path().to_str().unwrap()).unwrap();
+        assert_eq!(Duration::from_secs(30), loaded.runtime.request_timeout);
+        assert_eq!(Duration::from_millis(10), loaded.runtime.batch_timeout);
+        assert_eq!(
+            Duration::from_secs(1),
+            loaded.runtime.scaling.evaluation_interval
+        );
+        assert_eq!(
+            Duration::from_millis(100),
+            loaded.runtime.raft_metrics.collection_interval
+        );
+        assert_eq!(
+            Duration::from_secs(3600),
+            loaded.runtime.raft_metrics.retention_period
+        );
+        assert_eq!(
+            Duration::from_millis(100),
+            loaded.runtime.fault_injection.default_network_delay
+        );
+        assert_eq!(0.1, loaded.runtime.fault_injection.default_drop_rate);
+    }
+
+    #[test]
+    fn test_redis_style_runtime_config_parsing() {
+        use std::io::Write;
+
+        let mut config_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config_file, "port 7379").unwrap();
+        writeln!(config_file, "runtime-network-threads 3").unwrap();
+        writeln!(config_file, "runtime-storage_threads 5").unwrap();
+        writeln!(config_file, "runtime-channel-buffer-size 1024").unwrap();
+        writeln!(config_file, "runtime-batch-size 11").unwrap();
+        writeln!(config_file, "runtime-scaling-enabled yes").unwrap();
+        writeln!(config_file, "runtime-scaling-min-network-threads 1").unwrap();
+        writeln!(config_file, "runtime-scaling-max-network-threads 4").unwrap();
+        writeln!(config_file, "runtime-scaling-min-storage-threads 2").unwrap();
+        writeln!(config_file, "runtime-scaling-max-storage-threads 8").unwrap();
+        writeln!(config_file, "runtime-scaling-scale-up-threshold 70").unwrap();
+        writeln!(config_file, "runtime-scaling-scale-down-threshold 30").unwrap();
+        writeln!(config_file, "runtime-scaling-scale-increment 2").unwrap();
+        writeln!(config_file, "runtime-priority-enabled yes").unwrap();
+        writeln!(config_file, "runtime-priority-high-priority-weight 6").unwrap();
+        writeln!(config_file, "runtime-priority-normal-priority-weight 3").unwrap();
+        writeln!(config_file, "runtime-priority-low-priority-weight 1").unwrap();
+        writeln!(
+            config_file,
+            "runtime-priority-max-queue-size-per-priority 2048"
+        )
+        .unwrap();
+        writeln!(config_file, "runtime-raft-metrics-enabled no").unwrap();
+        writeln!(
+            config_file,
+            "runtime-raft-metrics-track-replication-latency no"
+        )
+        .unwrap();
+        writeln!(config_file, "runtime-raft-metrics-track-election-events no").unwrap();
+        writeln!(config_file, "runtime-fault-injection-enabled yes").unwrap();
+        writeln!(config_file, "runtime-fault-injection-log-events no").unwrap();
+        writeln!(config_file, "raft-node-id 1").unwrap();
+        writeln!(config_file, "raft-addr 127.0.0.1:8501").unwrap();
+        writeln!(config_file, "raft-resp-addr 127.0.0.1:7379").unwrap();
+        writeln!(config_file, "raft-data-dir /tmp/kiwi/raft").unwrap();
+        writeln!(config_file, "raft-heartbeat-interval-ms 200").unwrap();
+        writeln!(config_file, "raft-election-timeout-min-ms 500").unwrap();
+        writeln!(config_file, "raft-election-timeout-max-ms 1500").unwrap();
+
+        let loaded = Config::load(config_file.path().to_str().unwrap()).unwrap();
+
+        assert_eq!(3, loaded.runtime.network_threads);
+        assert_eq!(5, loaded.runtime.storage_threads);
+        assert_eq!(1024, loaded.runtime.channel_buffer_size);
+        assert_eq!(11, loaded.runtime.batch_size);
+        assert!(loaded.runtime.scaling.enabled);
+        assert_eq!(4, loaded.runtime.scaling.max_network_threads);
+        assert!(loaded.runtime.priority.enabled);
+        assert_eq!(6, loaded.runtime.priority.high_priority_weight);
+        assert!(!loaded.runtime.raft_metrics.enabled);
+        assert!(!loaded.runtime.raft_metrics.track_replication_latency);
+        assert!(loaded.runtime.fault_injection.enabled);
+        assert!(!loaded.runtime.fault_injection.log_events);
+        let raft = loaded.raft.unwrap();
+        assert_eq!(Some(200), raft.heartbeat_interval_ms);
+        assert_eq!(Some(500), raft.election_timeout_min_ms);
+        assert_eq!(Some(1500), raft.election_timeout_max_ms);
     }
 }

@@ -6,7 +6,7 @@
 
 ## 环境要求
 
-- Rust 工具链（stable）和 `protoc`（参见项目 README / `CLAUDE.md`）。
+- Rust 工具链（stable）和 `protoc`（参见项目 README / `docs/development.md`）。
 - `redis-cli` — 用于操作 RESP 端口（`brew install redis` / `apt install redis-tools`）。
 - `grpcurl` — 用于调用 Raft admin gRPC API 进行集群初始化（`brew install grpcurl`）。
   Raft gRPC 服务已启用反射，无需 `.proto` 文件。

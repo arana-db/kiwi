@@ -260,6 +260,31 @@ impl Default for Config {
         }
     }
 }
+
+fn invalid_config(message: String) -> Error {
+    Error::InvalidConfig {
+        source: serde_ini::de::Error::Custom(message),
+    }
+}
+
+fn parse_usize_value(key: &str, value: &str) -> Result<usize, Error> {
+    value
+        .parse()
+        .map_err(|e| invalid_config(format!("Invalid {}: {}", key, e)))
+}
+
+fn parse_bool_value(key: &str, value: &str) -> Result<bool, Error> {
+    parse_bool_from_string(value).map_err(|e| invalid_config(format!("Invalid {}: {}", key, e)))
+}
+
+fn validate_loaded_config(config: &Config) -> Result<(), Error> {
+    config
+        .validate()
+        .map_err(|e| Error::ValidConfigFail { source: e })?;
+    config.runtime.validate().map_err(invalid_config)?;
+    Ok(())
+}
+
 impl Config {
     // load config from file - supports TOML and Redis-style key-value format
     pub fn load(path: &str) -> Result<Self, Error> {
@@ -268,9 +293,7 @@ impl Config {
 
         // Try TOML first
         if let Ok(config) = toml::from_str::<Config>(&content) {
-            config
-                .validate()
-                .map_err(|e| Error::ValidConfigFail { source: e })?;
+            validate_loaded_config(&config)?;
             return Ok(config);
         }
 
@@ -522,7 +545,10 @@ impl Config {
                 "raft-data-dir" | "cluster-data-dir" => {
                     raft_data_dir = Some(value);
                 }
-                "raft-heartbeat-interval" | "cluster-heartbeat-interval" => {
+                "raft-heartbeat-interval"
+                | "raft-heartbeat-interval-ms"
+                | "cluster-heartbeat-interval"
+                | "cluster-heartbeat-interval-ms" => {
                     raft_heartbeat_interval =
                         Some(value.parse().map_err(|e| Error::InvalidConfig {
                             source: serde_ini::de::Error::Custom(format!(
@@ -531,7 +557,10 @@ impl Config {
                             )),
                         })?);
                 }
-                "raft-election-timeout-min" | "cluster-election-timeout-min" => {
+                "raft-election-timeout-min"
+                | "raft-election-timeout-min-ms"
+                | "cluster-election-timeout-min"
+                | "cluster-election-timeout-min-ms" => {
                     raft_election_timeout_min =
                         Some(value.parse().map_err(|e| Error::InvalidConfig {
                             source: serde_ini::de::Error::Custom(format!(
@@ -540,7 +569,10 @@ impl Config {
                             )),
                         })?);
                 }
-                "raft-election-timeout-max" | "cluster-election-timeout-max" => {
+                "raft-election-timeout-max"
+                | "raft-election-timeout-max-ms"
+                | "cluster-election-timeout-max"
+                | "cluster-election-timeout-max-ms" => {
                     raft_election_timeout_max =
                         Some(value.parse().map_err(|e| Error::InvalidConfig {
                             source: serde_ini::de::Error::Custom(format!(
@@ -565,6 +597,81 @@ impl Config {
                 "requirepass" => {
                     config.requirepass = Some(value);
                 }
+                "runtime-network-threads" | "runtime-network_threads" => {
+                    config.runtime.network_threads = parse_usize_value(&key, &value)?;
+                }
+                "runtime-storage-threads" | "runtime-storage_threads" => {
+                    config.runtime.storage_threads = parse_usize_value(&key, &value)?;
+                }
+                "runtime-channel-buffer-size" | "runtime-channel_buffer_size" => {
+                    config.runtime.channel_buffer_size = parse_usize_value(&key, &value)?;
+                }
+                "runtime-batch-size" | "runtime-batch_size" => {
+                    config.runtime.batch_size = parse_usize_value(&key, &value)?;
+                }
+                "runtime-scaling-enabled" => {
+                    config.runtime.scaling.enabled = parse_bool_value(&key, &value)?;
+                }
+                "runtime-scaling-min-network-threads" | "runtime-scaling-min_network_threads" => {
+                    config.runtime.scaling.min_network_threads = parse_usize_value(&key, &value)?;
+                }
+                "runtime-scaling-max-network-threads" | "runtime-scaling-max_network_threads" => {
+                    config.runtime.scaling.max_network_threads = parse_usize_value(&key, &value)?;
+                }
+                "runtime-scaling-min-storage-threads" | "runtime-scaling-min_storage_threads" => {
+                    config.runtime.scaling.min_storage_threads = parse_usize_value(&key, &value)?;
+                }
+                "runtime-scaling-max-storage-threads" | "runtime-scaling-max_storage_threads" => {
+                    config.runtime.scaling.max_storage_threads = parse_usize_value(&key, &value)?;
+                }
+                "runtime-scaling-scale-up-threshold" | "runtime-scaling-scale_up_threshold" => {
+                    config.runtime.scaling.scale_up_threshold = parse_usize_value(&key, &value)?;
+                }
+                "runtime-scaling-scale-down-threshold" | "runtime-scaling-scale_down_threshold" => {
+                    config.runtime.scaling.scale_down_threshold = parse_usize_value(&key, &value)?;
+                }
+                "runtime-scaling-scale-increment" | "runtime-scaling-scale_increment" => {
+                    config.runtime.scaling.scale_increment = parse_usize_value(&key, &value)?;
+                }
+                "runtime-priority-enabled" => {
+                    config.runtime.priority.enabled = parse_bool_value(&key, &value)?;
+                }
+                "runtime-priority-high-priority-weight"
+                | "runtime-priority-high_priority_weight" => {
+                    config.runtime.priority.high_priority_weight = parse_usize_value(&key, &value)?;
+                }
+                "runtime-priority-normal-priority-weight"
+                | "runtime-priority-normal_priority_weight" => {
+                    config.runtime.priority.normal_priority_weight =
+                        parse_usize_value(&key, &value)?;
+                }
+                "runtime-priority-low-priority-weight" | "runtime-priority-low_priority_weight" => {
+                    config.runtime.priority.low_priority_weight = parse_usize_value(&key, &value)?;
+                }
+                "runtime-priority-max-queue-size-per-priority"
+                | "runtime-priority-max_queue_size_per_priority" => {
+                    config.runtime.priority.max_queue_size_per_priority =
+                        parse_usize_value(&key, &value)?;
+                }
+                "runtime-raft-metrics-enabled" | "runtime-raft_metrics-enabled" => {
+                    config.runtime.raft_metrics.enabled = parse_bool_value(&key, &value)?;
+                }
+                "runtime-raft-metrics-track-replication-latency"
+                | "runtime-raft_metrics-track_replication_latency" => {
+                    config.runtime.raft_metrics.track_replication_latency =
+                        parse_bool_value(&key, &value)?;
+                }
+                "runtime-raft-metrics-track-election-events"
+                | "runtime-raft_metrics-track_election_events" => {
+                    config.runtime.raft_metrics.track_election_events =
+                        parse_bool_value(&key, &value)?;
+                }
+                "runtime-fault-injection-enabled" | "runtime-fault_injection-enabled" => {
+                    config.runtime.fault_injection.enabled = parse_bool_value(&key, &value)?;
+                }
+                "runtime-fault-injection-log-events" | "runtime-fault_injection-log_events" => {
+                    config.runtime.fault_injection.log_events = parse_bool_value(&key, &value)?;
+                }
                 _ => {
                     // Unknown configuration key, skip it
                     continue;
@@ -587,9 +694,7 @@ impl Config {
             });
         }
 
-        config
-            .validate()
-            .map_err(|_e| Error::ValidConfigFail { source: _e })?;
+        validate_loaded_config(&config)?;
 
         Ok(config)
     }
