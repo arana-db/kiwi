@@ -606,18 +606,20 @@ impl Config {
     /// Generate a complete sample configuration with all available keys, including
     /// Raft cluster settings and authentication.
     pub fn full_sample_config() -> String {
-        let mut c = Config::default();
-        c.raft = Some(RaftClusterConfig {
-            node_id: 1,
-            raft_addr: "127.0.0.1:8081".into(),
-            resp_addr: "127.0.0.1:7379".into(),
-            data_dir: "./raft_data".into(),
-            heartbeat_interval_ms: Some(200),
-            election_timeout_min_ms: Some(500),
-            election_timeout_max_ms: Some(1500),
-            use_memory_log_store: false,
-        });
-        c.requirepass = Some(String::new());
+        let c = Config {
+            raft: Some(RaftClusterConfig {
+                node_id: 1,
+                raft_addr: "127.0.0.1:8081".into(),
+                resp_addr: "127.0.0.1:7379".into(),
+                data_dir: "./raft_data".into(),
+                heartbeat_interval_ms: Some(200),
+                election_timeout_min_ms: Some(500),
+                election_timeout_max_ms: Some(1500),
+                use_memory_log_store: false,
+            }),
+            requirepass: Some(String::new()),
+            ..Default::default()
+        };
 
         format!(
             "# Kiwi Configuration File (all keys)\n\
