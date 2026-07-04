@@ -70,7 +70,7 @@ pub use format_base_key::BaseMetaKey;
 pub use format_base_value::*;
 pub use format_zset_score_key::{ScoreMember, ZsetScoreMember};
 pub use options::StorageOptions;
-pub use redis::{ColumnFamilyIndex, Redis};
+pub use redis::{ColumnFamilyIndex, Redis, TypeCheckState};
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use storage_impl::BeforeOrAfter;
