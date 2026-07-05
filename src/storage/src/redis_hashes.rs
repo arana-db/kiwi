@@ -291,8 +291,7 @@ impl Redis {
         {
             Some(meta_val_bytes) => {
                 match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
-                    TypeCheckState::Missing => unreachable!("meta exists in Some arm"),
-                    TypeCheckState::Stale => {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
                         create_new_hash(self, key, field, value)?;
                         return Ok(1);
                     }
@@ -612,8 +611,7 @@ impl Redis {
         {
             Some(meta_val_bytes) => {
                 match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
-                    TypeCheckState::Missing => unreachable!("meta exists in Some arm"),
-                    TypeCheckState::Stale => {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
                         create_new_hash(self, key, &field_map)?;
                         return Ok(());
                     }
@@ -738,8 +736,7 @@ impl Redis {
         {
             Some(meta_val_bytes) => {
                 match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
-                    TypeCheckState::Missing => unreachable!("meta exists in Some arm"),
-                    TypeCheckState::Stale => {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
                         create_new_hash(self, key, field, value)?;
                         return Ok(1);
                     }
@@ -855,8 +852,7 @@ impl Redis {
         {
             Some(meta_val_bytes) => {
                 match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
-                    TypeCheckState::Missing => unreachable!("meta exists in Some arm"),
-                    TypeCheckState::Stale => {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
                         create_new_hash(self, key, field, increment)?;
                         return Ok(increment);
                     }
@@ -1002,8 +998,7 @@ impl Redis {
         {
             Some(meta_val_bytes) => {
                 match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
-                    TypeCheckState::Missing => unreachable!("meta exists in Some arm"),
-                    TypeCheckState::Stale => {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
                         create_new_hash(self, key, field, increment)?;
                         return Ok(increment);
                     }
