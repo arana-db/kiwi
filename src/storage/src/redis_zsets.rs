@@ -172,7 +172,11 @@ impl Redis {
                     )?;
                     batch.commit()?;
                     *ret = count as i32;
-                    self.update_specific_key_statistics(DataType::ZSet, &key_str, statistic as u64)?;
+                    self.update_specific_key_statistics(
+                        DataType::ZSet,
+                        &key_str,
+                        statistic as u64,
+                    )?;
                     return Ok(());
                 }
             }
@@ -1272,20 +1276,16 @@ impl Redis {
                             let (raw_key, _) = item.context(RocksSnafu)?;
                             let score_key = ParsedZSetsScoreKey::new(&raw_key)?;
 
-                            if destination != score_key.key()
-                                || dest_version != score_key.version()
+                            if destination != score_key.key() || dest_version != score_key.version()
                             {
                                 break;
                             }
 
                             // Delete score key and member key
                             batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
-                            let member_key = MemberDataKey::new(
-                                destination,
-                                dest_version,
-                                score_key.member(),
-                            )
-                            .encode()?;
+                            let member_key =
+                                MemberDataKey::new(destination, dest_version, score_key.member())
+                                    .encode()?;
                             batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
                         }
                     }

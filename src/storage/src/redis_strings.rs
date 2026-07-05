@@ -1966,7 +1966,7 @@ impl Redis {
             });
         }
 
-        Ok(DataType::try_from(value[0])?)
+        DataType::try_from(value[0])
     }
 
     /// Delete a key (works for all data types)

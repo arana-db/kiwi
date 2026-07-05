@@ -659,11 +659,7 @@ impl Redis {
         }
     }
 
-    pub fn check_type_state(
-        &self,
-        value_raw: &[u8],
-        expected: DataType,
-    ) -> Result<TypeCheckState> {
+    pub fn check_type_state(&self, value_raw: &[u8], expected: DataType) -> Result<TypeCheckState> {
         if value_raw.is_empty() {
             return Ok(TypeCheckState::Missing);
         }

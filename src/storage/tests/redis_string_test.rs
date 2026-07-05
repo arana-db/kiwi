@@ -23,8 +23,7 @@ mod redis_string_test {
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BgTaskHandler, DataType, Redis, StorageOptions, safe_cleanup_test_db,
-        unique_test_db_path,
+        BgTaskHandler, DataType, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path,
     };
 
     fn cleanup_redis(redis: Redis, test_db_path: &Path) {

@@ -22,8 +22,7 @@ use bytes::BytesMut;
 use snafu::{OptionExt, ResultExt};
 
 use crate::{
-    TypeCheckState,
-    Result,
+    Result, TypeCheckState,
     error::{InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
     format_base_data_value::{BaseDataValue, ParsedBaseDataValue},
     format_base_key::BaseMetaKey,
