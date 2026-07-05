@@ -36,17 +36,17 @@ redis-cli -p 7379 get k1                # "hello"
 `node1.conf`:
 
 ```conf
-port 7401
+port 7379
 binding 127.0.0.1
-db-path /tmp/kiwi/n1/db
+data-dir /tmp/kiwi/n1/db
 raft-node-id 1
 raft-addr 127.0.0.1:8501
-raft-resp-addr 127.0.0.1:7401
+raft-resp-addr 127.0.0.1:7379
 raft-data-dir /tmp/kiwi/n1/raft
 raft-use-memory-log-store true
 ```
 
-类似地创建 `node2.conf` 和 `node3.conf`，修改 `port`/`raft-addr`/`raft-resp-addr`/`db-path`/`raft-data-dir` 和 `raft-node-id`（分别为 2 和 3）。保持 `raft-resp-addr` 等于各节点的 `<binding>:<port>`——这是返回给客户端的重定向地址。
+类似地创建 `node2.conf` 和 `node3.conf`，修改 `port`/`raft-addr`/`raft-resp-addr`/`data-dir`/`raft-data-dir` 和 `raft-node-id`（分别为 2 和 3）。保持 `raft-resp-addr` 等于各节点的 `<binding>:<port>`——这是返回给客户端的重定向地址。
 
 Raft 配置项说明：
 
@@ -74,9 +74,9 @@ RUST_LOG=info ./target/release/kiwi --config node3.conf &
 
 ```bash
 grpcurl -plaintext -d '{"nodes":[
-  {"node_id":1,"raft_addr":"127.0.0.1:8501","resp_addr":"127.0.0.1:7401"},
-  {"node_id":2,"raft_addr":"127.0.0.1:8502","resp_addr":"127.0.0.1:7402"},
-  {"node_id":3,"raft_addr":"127.0.0.1:8503","resp_addr":"127.0.0.1:7403"}
+  {"node_id":1,"raft_addr":"127.0.0.1:8501","resp_addr":"127.0.0.1:7379"},
+  {"node_id":2,"raft_addr":"127.0.0.1:8502","resp_addr":"127.0.0.1:7380"},
+  {"node_id":3,"raft_addr":"127.0.0.1:8503","resp_addr":"127.0.0.1:7381"}
 ]}' 127.0.0.1:8501 kiwi.raft.v1.RaftAdminService/Initialize
 # => { "response": { "success": true, "message": "OK" }, "leaderId": "1" }
 ```
@@ -90,23 +90,23 @@ leader 会在选举超时窗口内（一两秒）选出。
 写入操作在 leader 上返回 `OK`，在 follower 上返回 `MOVED <leader-resp-addr>`：
 
 ```bash
-redis-cli -p 7401 set probe v   # OK            -> node1 是 leader
-redis-cli -p 7402 set probe v   # MOVED 127.0.0.1:7401
-redis-cli -p 7403 set probe v   # MOVED 127.0.0.1:7401
+redis-cli -p 7379 set probe v   # OK            -> node1 是 leader
+redis-cli -p 7380 set probe v   # MOVED 127.0.0.1:7379
+redis-cli -p 7381 set probe v   # MOVED 127.0.0.1:7379
 ```
 
 ### Leader 写入 → follower 读取（复制）
 
 ```bash
 # 在 leader 上写入
-redis-cli -p 7401 set repltest hello_from_leader   # OK
-redis-cli -p 7401 incr counter                     # 1
+redis-cli -p 7379 set repltest hello_from_leader   # OK
+redis-cli -p 7379 incr counter                     # 1
 
 # 从 follower 读取（最终一致——等待复制完成）
 sleep 1
-redis-cli -p 7402 get repltest    # "hello_from_leader"
-redis-cli -p 7403 get repltest    # "hello_from_leader"
-redis-cli -p 7402 get counter     # "1"
+redis-cli -p 7380 get repltest    # "hello_from_leader"
+redis-cli -p 7381 get repltest    # "hello_from_leader"
+redis-cli -p 7380 get counter     # "1"
 ```
 
 端到端链路：命令 → leader 网关（在 leader 上通过）→ `BinlogBatch` 捕获编码后的 CF 变更 → Raft `client_write`（共识）→ 各节点的状态机通过 `on_binlog_write` 应用到本地 RocksDB → follower 本地读取可观察到复制后的值。

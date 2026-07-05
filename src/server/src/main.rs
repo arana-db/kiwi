@@ -199,13 +199,13 @@ async fn initialize_storage(config: &Config) -> Result<GlobalStorage, DualRuntim
     info!("Initializing storage...");
 
     let storage_options = Arc::new(StorageOptions::from_config(config));
-    let db_path = PathBuf::from(&config.db_path);
+    let data_dir = PathBuf::from(&config.data_dir);
 
-    let mut storage = Storage::new(1, 0);
+    let mut storage = Storage::new(config.db_instance_num, 0);
 
-    info!("Opening storage at path: {:?}", db_path);
+    info!("Opening storage at path: {:?}", data_dir);
     let bg_task_receiver = storage
-        .open(storage_options, &db_path)
+        .open(storage_options, &data_dir)
         .map_err(|e| DualRuntimeError::storage_runtime(format!("Failed to open storage: {}", e)))?;
     info!("Storage opened successfully");
 
@@ -256,7 +256,7 @@ async fn start_server(
             raft_addr: raft_config.raft_addr.clone(),
             resp_addr: raft_config.resp_addr.clone(),
             data_dir: PathBuf::from(&raft_config.data_dir),
-            db_path: PathBuf::from(&config.db_path),
+            db_path: PathBuf::from(&config.data_dir),
             heartbeat_interval: raft_config.heartbeat_interval_ms.unwrap_or(200),
             election_timeout_min: raft_config.election_timeout_min_ms.unwrap_or(500),
             election_timeout_max: raft_config.election_timeout_max_ms.unwrap_or(1500),

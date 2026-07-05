@@ -93,10 +93,10 @@ redis-cli -p 7379 get foo         # "bar"
 ### 集群模式
 
 ```bash
-make cluster                       # 启动 3 节点 Raft 集群（默认）
+make cluster                       # 启动 3 节点 Raft 集群（默认），节点 RESP 端口为 7379/7380/7381
 make cluster NODES=5               # 启动 5 节点集群
 
-# 另一个终端：
+# 另一个终端（连接节点 1）：
 redis-cli -p 7379 set foo bar     # OK
 redis-cli -p 7379 get foo         # "bar"
 ```

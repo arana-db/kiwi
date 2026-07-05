@@ -73,8 +73,8 @@ mod tests {
         assert_eq!(10000, config.small_compaction_duration_threshold);
 
         assert_eq!(50, config.timeout);
-        assert_eq!("/data/kiwi_rs/logs", config.log_dir);
-        assert_eq!("./db", config.db_dir);
+        assert_eq!("./kiwi_data/logs", config.log_dir);
+        assert_eq!("./kiwi_data/db", config.data_dir);
         assert!(!config.redis_compatible_mode);
         assert_eq!(3, config.db_instance_num);
 
@@ -93,7 +93,7 @@ mod tests {
             timeout: 100,
             redis_compatible_mode: false,
             log_dir: "".to_string(),
-            db_dir: "./db".to_string(),
+            data_dir: "./kiwi_data/db".to_string(),
             memory: 1024,
             rocksdb_max_subcompactions: 0,
             rocksdb_max_background_jobs: 4,
@@ -114,7 +114,6 @@ mod tests {
             db_instance_num: 3,
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
-            db_path: "./db".to_string(),
             requirepass: None,
             raft: None,
             runtime: runtime_config::RuntimeConfig::default(),
@@ -126,40 +125,36 @@ mod tests {
     }
 
     #[test]
-    fn test_db_dir_default() {
+    fn test_data_dir_default() {
         let config = Config::default();
-        assert_eq!("./db", config.db_dir);
+        assert_eq!("./kiwi_data/db", config.data_dir);
     }
 
     #[test]
-    fn test_db_dir_from_config_file() {
+    fn test_data_dir_from_config_file() {
         use std::io::Write;
 
-        let filename = format!("kiwi_test_db_dir_{}.conf", std::process::id());
+        let filename = format!("kiwi_test_data_dir_{}.conf", std::process::id());
         let tmp = std::env::temp_dir().join(filename);
         let config_path = tmp.to_str().unwrap();
         let mut f = std::fs::File::create(config_path).unwrap();
         writeln!(f, "port 7379").unwrap();
-        writeln!(f, "db-dir /data/kiwi/db").unwrap();
+        writeln!(f, "data-dir /data/kiwi/db").unwrap();
         drop(f);
 
         let config = Config::load(config_path).unwrap();
-        assert_eq!("/data/kiwi/db", config.db_dir);
+        assert_eq!("/data/kiwi/db", config.data_dir);
 
         let _ = std::fs::remove_file(config_path);
     }
 
     #[test]
-    fn test_toml_runtime_validation_is_applied() {
-        let mut config = Config::default();
-        config.runtime.network_threads = 0;
+    fn test_redis_style_runtime_validation_is_applied() {
+        use std::io::Write;
 
-        let config_file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(
-            config_file.path(),
-            toml::to_string(&config).expect("default config should serialize"),
-        )
-        .unwrap();
+        let mut config_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config_file, "port 7379").unwrap();
+        writeln!(config_file, "runtime-network-threads 0").unwrap();
 
         let loaded = Config::load(config_file.path().to_str().unwrap());
         assert!(
@@ -169,15 +164,12 @@ mod tests {
     }
 
     #[test]
-    fn test_toml_runtime_skipped_fields_keep_defaults() {
-        let config = Config::default();
+    fn test_redis_style_runtime_skipped_fields_keep_defaults() {
+        use std::io::Write;
 
-        let config_file = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(
-            config_file.path(),
-            toml::to_string(&config).expect("default config should serialize"),
-        )
-        .unwrap();
+        let mut config_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config_file, "port 7379").unwrap();
+        writeln!(config_file, "memory 10M").unwrap();
 
         let loaded = Config::load(config_file.path().to_str().unwrap()).unwrap();
         assert_eq!(Duration::from_secs(30), loaded.runtime.request_timeout);
