@@ -256,4 +256,45 @@ mod tests {
         assert_eq!(Some(500), raft.election_timeout_min_ms);
         assert_eq!(Some(1500), raft.election_timeout_max_ms);
     }
+
+    #[test]
+    fn test_sample_config_round_trip() {
+        use std::io::Write;
+
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "{}", Config::sample_config()).unwrap();
+        assert!(
+            Config::load(f.path().to_str().unwrap()).is_ok(),
+            "sample config should be reloadable"
+        );
+    }
+
+    #[test]
+    fn test_full_sample_config_round_trip() {
+        use std::io::Write;
+
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        write!(f, "{}", Config::full_sample_config()).unwrap();
+        let result = Config::load(f.path().to_str().unwrap());
+        assert!(
+            result.is_ok(),
+            "full sample config should be reloadable: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_partial_raft_config_requires_node_id() {
+        use std::io::Write;
+
+        let mut config_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config_file, "port 7379").unwrap();
+        writeln!(config_file, "raft-addr 127.0.0.1:8081").unwrap();
+
+        let loaded = Config::load(config_file.path().to_str().unwrap());
+        assert!(
+            loaded.is_err(),
+            "raft-* without raft-node-id should be rejected"
+        );
+    }
 }

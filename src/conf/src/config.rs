@@ -119,7 +119,9 @@ pub struct Config {
     pub redis_compatible_mode: bool,
     pub db_instance_num: usize,
     /// Authentication password. When set, clients must authenticate via AUTH command.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub requirepass: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub raft: Option<RaftClusterConfig>,
 
     /// Dual-runtime configuration.
@@ -313,6 +315,7 @@ impl Config {
 
         let mut raft_config = RaftClusterConfig::default();
         let mut raft_node_id: Option<u64> = None;
+        let mut raft_fields_seen = false;
 
         // Parse each configuration value
         for (key, value) in config_map {
@@ -528,6 +531,7 @@ impl Config {
                         })?;
                 }
                 "raft-node-id" | "cluster-node-id" => {
+                    raft_fields_seen = true;
                     raft_node_id = Some(value.parse().map_err(|e| Error::InvalidConfig {
                         source: serde_ini::de::Error::Custom(format!(
                             "Invalid raft-node-id: {}",
@@ -536,18 +540,22 @@ impl Config {
                     })?);
                 }
                 "raft-addr" | "cluster-addr" => {
+                    raft_fields_seen = true;
                     raft_config.raft_addr = value;
                 }
                 "raft-resp-addr" | "cluster-resp-addr" => {
+                    raft_fields_seen = true;
                     raft_config.resp_addr = value;
                 }
                 "raft-data-dir" | "cluster-data-dir" => {
+                    raft_fields_seen = true;
                     raft_config.data_dir = value;
                 }
                 "raft-heartbeat-interval"
                 | "raft-heartbeat-interval-ms"
                 | "cluster-heartbeat-interval"
                 | "cluster-heartbeat-interval-ms" => {
+                    raft_fields_seen = true;
                     raft_config.heartbeat_interval_ms =
                         Some(value.parse().map_err(|e| Error::InvalidConfig {
                             source: serde_ini::de::Error::Custom(format!(
@@ -560,6 +568,7 @@ impl Config {
                 | "raft-election-timeout-min-ms"
                 | "cluster-election-timeout-min"
                 | "cluster-election-timeout-min-ms" => {
+                    raft_fields_seen = true;
                     raft_config.election_timeout_min_ms =
                         Some(value.parse().map_err(|e| Error::InvalidConfig {
                             source: serde_ini::de::Error::Custom(format!(
@@ -572,6 +581,7 @@ impl Config {
                 | "raft-election-timeout-max-ms"
                 | "cluster-election-timeout-max"
                 | "cluster-election-timeout-max-ms" => {
+                    raft_fields_seen = true;
                     raft_config.election_timeout_max_ms =
                         Some(value.parse().map_err(|e| Error::InvalidConfig {
                             source: serde_ini::de::Error::Custom(format!(
@@ -581,6 +591,7 @@ impl Config {
                         })?);
                 }
                 "raft-use-memory-log-store" => {
+                    raft_fields_seen = true;
                     raft_config.use_memory_log_store =
                         parse_bool_from_string(&value).map_err(|e| Error::InvalidConfig {
                             source: serde_ini::de::Error::Custom(format!(
@@ -674,6 +685,14 @@ impl Config {
             }
         }
 
+        if raft_fields_seen && raft_node_id.is_none() {
+            return Err(Error::InvalidConfig {
+                source: serde_ini::de::Error::Custom(
+                    "raft-node-id is required when any raft-* option is set".to_string(),
+                ),
+            });
+        }
+
         if let Some(node_id) = raft_node_id {
             raft_config.node_id = node_id;
             config.raft = Some(raft_config);
@@ -698,7 +717,7 @@ impl Config {
     pub fn full_sample_config() -> String {
         let c = Config {
             raft: Some(RaftClusterConfig::default()),
-            requirepass: Some(String::new()),
+            requirepass: Some("your-password".to_string()),
             ..Default::default()
         };
 
