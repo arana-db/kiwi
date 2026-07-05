@@ -39,6 +39,7 @@ mod redis_zset_test {
         let result = redis.open(test_db_path.to_str().unwrap());
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
+        redis.set_need_close(true);
         redis
     }
 
@@ -193,6 +194,25 @@ mod redis_zset_test {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0], ("alpha".to_string(), "1".to_string()));
         assert_eq!(results[1], ("beta".to_string(), "2".to_string()));
+    }
+
+    #[test]
+    fn test_zset_commands_wrongtype_and_expired_wrongtype() {
+        let redis = create_test_redis();
+
+        let live_wrongtype = b"zset_live_wrongtype";
+        redis.set(live_wrongtype, b"value").unwrap();
+        let mut card = 0;
+        let err = redis.zcard(live_wrongtype, &mut card).unwrap_err();
+        assert!(err.to_string().contains("WRONGTYPE"));
+
+        let expired_wrongtype = b"zset_expired_wrongtype";
+        redis.set(expired_wrongtype, b"value").unwrap();
+        assert!(redis.set_key_etime(expired_wrongtype, 1).unwrap());
+
+        let mut expired_card = -1;
+        redis.zcard(expired_wrongtype, &mut expired_card).unwrap();
+        assert_eq!(expired_card, 0);
     }
 
     #[test]

@@ -22,6 +22,7 @@ use bytes::BytesMut;
 use snafu::{OptionExt, ResultExt};
 
 use crate::{
+    TypeCheckState,
     Result,
     error::{InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
     format_base_data_value::{BaseDataValue, ParsedBaseDataValue},
@@ -67,12 +68,17 @@ impl Redis {
             // If key exists, return current count; if not, return 0
             return match db.get(&meta_key).context(RocksSnafu)? {
                 Some(meta_value) => {
-                    let parsed_meta =
-                        ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
-                    if parsed_meta.is_valid() {
-                        Ok(Some(parsed_meta.count() as i64))
-                    } else {
-                        Ok(Some(0))
+                    match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                        TypeCheckState::Missing | TypeCheckState::Stale => Ok(Some(0)),
+                        TypeCheckState::Match => {
+                            let parsed_meta =
+                                ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
+                            if parsed_meta.is_valid() {
+                                Ok(Some(parsed_meta.count() as i64))
+                            } else {
+                                Ok(Some(0))
+                            }
+                        }
                     }
                 }
                 None => Ok(Some(0)),
@@ -82,12 +88,27 @@ impl Redis {
         // Get existing metadata
         let mut parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
             Some(meta_value) => {
-                let mut parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
-                if !parsed.is_valid() {
-                    // Initialize if invalid/expired
-                    parsed.initial_meta_value();
+                match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
+                        if !allow_create {
+                            return Ok(None);
+                        }
+                        let meta_value = ListsMetaValue::new(0u64.to_le_bytes().to_vec());
+                        let encoded = meta_value.encode();
+                        let mut parsed = ParsedListsMetaValue::new(encoded)?;
+                        parsed.initial_meta_value();
+                        parsed
+                    }
+                    TypeCheckState::Match => {
+                        let mut parsed =
+                            ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
+                        if !parsed.is_valid() {
+                            // Initialize if invalid/expired
+                            parsed.initial_meta_value();
+                        }
+                        parsed
+                    }
                 }
-                parsed
             }
             None => {
                 if !allow_create {
@@ -301,6 +322,10 @@ impl Redis {
         // Get existing metadata
         let mut parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
             Some(meta_value) => {
+                match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => return Ok(None),
+                    TypeCheckState::Match => {}
+                }
                 let parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
                 if !parsed.is_valid() {
                     return Ok(None);
@@ -377,6 +402,10 @@ impl Redis {
         // Get existing metadata
         let mut parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
             Some(meta_value) => {
+                match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => return Ok(None),
+                    TypeCheckState::Match => {}
+                }
                 let parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
                 if !parsed.is_valid() {
                     return Ok(None);
@@ -453,6 +482,10 @@ impl Redis {
         // Get existing metadata
         let mut parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
             Some(meta_value) => {
+                match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => return Ok(None),
+                    TypeCheckState::Match => {}
+                }
                 let parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
                 if !parsed.is_valid() {
                     return Ok(None);
@@ -527,6 +560,10 @@ impl Redis {
 
         match db.get(&meta_key).context(RocksSnafu)? {
             Some(meta_value) => {
+                match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => return Ok(0),
+                    TypeCheckState::Match => {}
+                }
                 let parsed_meta = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
                 if parsed_meta.is_valid() {
                     Ok(parsed_meta.count() as i64)
@@ -549,6 +586,10 @@ impl Redis {
         // Get existing metadata
         let parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
             Some(meta_value) => {
+                match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => return Ok(None),
+                    TypeCheckState::Match => {}
+                }
                 let parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
                 if !parsed.is_valid() {
                     return Ok(None);
@@ -602,6 +643,10 @@ impl Redis {
         // Get existing metadata
         let parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
             Some(meta_value) => {
+                match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => return Ok(Vec::new()),
+                    TypeCheckState::Match => {}
+                }
                 let parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
                 if !parsed.is_valid() {
                     return Ok(Vec::new());
@@ -668,6 +713,15 @@ impl Redis {
         // Get existing metadata
         let parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
             Some(meta_value) => {
+                match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
+                        return KeyNotFoundSnafu {
+                            key: String::from_utf8_lossy(key).to_string(),
+                        }
+                        .fail();
+                    }
+                    TypeCheckState::Match => {}
+                }
                 let parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
                 if !parsed.is_valid() {
                     return KeyNotFoundSnafu {
@@ -742,6 +796,10 @@ impl Redis {
         // Get existing metadata
         let mut parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
             Some(meta_value) => {
+                match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+                    TypeCheckState::Match => {}
+                }
                 let parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
                 if !parsed.is_valid() {
                     return Ok(());
@@ -841,6 +899,10 @@ impl Redis {
         // Get existing metadata
         let mut parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
             Some(meta_value) => {
+                match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => return Ok(0),
+                    TypeCheckState::Match => {}
+                }
                 let parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
                 if !parsed.is_valid() {
                     return Ok(0);
@@ -986,6 +1048,15 @@ impl Redis {
         // Get existing metadata
         let mut parsed_meta = match db.get(&meta_key).context(RocksSnafu)? {
             Some(meta_value) => {
+                match self.check_type_state(meta_value.as_ref(), DataType::List)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
+                        return KeyNotFoundSnafu {
+                            key: String::from_utf8_lossy(key).to_string(),
+                        }
+                        .fail();
+                    }
+                    TypeCheckState::Match => {}
+                }
                 let parsed = ParsedListsMetaValue::new(BytesMut::from(meta_value.as_slice()))?;
                 if !parsed.is_valid() {
                     return KeyNotFoundSnafu {
