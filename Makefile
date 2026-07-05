@@ -23,6 +23,8 @@ MAKEFLAGS += --warn-undefined-variables
 MAKEFLAGS += --no-builtin-rules
 MAKEFLAGS += --no-print-directory
 
+RUST_TEST_THREADS ?= 1
+
 build:
 	@echo "Building project..."
 	@cargo build
@@ -37,7 +39,7 @@ run:
 
 test:
 	@echo "Running tests..."
-	@cargo test
+	@ulimit -n 4096 2>/dev/null || true; RUST_TEST_THREADS=$(RUST_TEST_THREADS) cargo test
 
 clean:
 	@echo "Cleaning project..."
