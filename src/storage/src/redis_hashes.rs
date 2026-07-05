@@ -30,7 +30,7 @@ use crate::format_member_data_key::MemberDataKey;
 use crate::get_db_and_cfs;
 use crate::redis_sets::glob_match;
 use crate::util::is_tail_wildcard;
-use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Redis, Result};
+use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckState};
 
 impl Redis {
     /// Delete one or more hash fields
@@ -65,20 +65,13 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
-                let mut meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-                if meta_val.is_stale() {
-                    return Ok(0);
-                }
-                if meta_val.inner.data_type != DataType::Hash {
-                    return RedisErrSnafu {
-                        message: format!(
-                            "Wrong type of value, expected: {:?}, got: {:?}",
-                            DataType::Hash,
-                            meta_val.inner.data_type
-                        ),
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
+                        return Ok(0);
                     }
-                    .fail();
+                    TypeCheckState::Match => {}
                 }
+                let mut meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
 
                 let version = meta_val.version();
                 let mut del_cnt = 0i32;
@@ -153,20 +146,13 @@ impl Redis {
             .get_cf_opt(meta_cf, &base_meta_key, &read_options)
             .context(RocksSnafu)?
         {
-            let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-            if meta_val.is_stale() {
-                return Ok(None);
-            }
-            if meta_val.inner.data_type != DataType::Hash {
-                return RedisErrSnafu {
-                    message: format!(
-                        "Wrong type of value, expected: {:?}, got: {:?}",
-                        DataType::Hash,
-                        meta_val.inner.data_type
-                    ),
+            match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                TypeCheckState::Missing | TypeCheckState::Stale => {
+                    return Ok(None);
                 }
-                .fail();
+                TypeCheckState::Match => {}
             }
+            let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
             let version = meta_val.version();
             let data_key = MemberDataKey::new(_key, version, _field);
             if let Some(data_val_bytes) = db
@@ -205,20 +191,13 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
-                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-                if meta_val.is_stale() {
-                    return Ok(Vec::new());
-                }
-                if meta_val.inner.data_type != DataType::Hash {
-                    return RedisErrSnafu {
-                        message: format!(
-                            "Wrong type of value, expected: {:?}, got: {:?}",
-                            DataType::Hash,
-                            meta_val.inner.data_type
-                        ),
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
+                        return Ok(Vec::new());
                     }
-                    .fail();
+                    TypeCheckState::Match => {}
                 }
+                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
 
                 let version = meta_val.version();
                 let data_key = MemberDataKey::new(key, version, &[]);
@@ -256,20 +235,13 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
-                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-                if meta_val.is_stale() {
-                    return Ok(0);
-                }
-                if meta_val.inner.data_type != DataType::Hash {
-                    return RedisErrSnafu {
-                        message: format!(
-                            "Wrong type of value, expected: {:?}, got: {:?}",
-                            DataType::Hash,
-                            meta_val.inner.data_type
-                        ),
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
+                        return Ok(0);
                     }
-                    .fail();
+                    TypeCheckState::Match => {}
                 }
+                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
                 Ok(meta_val.count() as i32)
             }
             None => Ok(0),
@@ -318,25 +290,16 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
-                let mut parsed_meta = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-
-                if parsed_meta.data_type() != DataType::Hash {
-                    if parsed_meta.is_stale() {
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing => unreachable!("meta exists in Some arm"),
+                    TypeCheckState::Stale => {
                         create_new_hash(self, key, field, value)?;
                         return Ok(1);
-                    } else {
-                        return RedisErrSnafu {
-                            message: format!(
-                                "Wrong type of value, expected: {:?}, got: {:?}",
-                                DataType::Hash,
-                                parsed_meta.inner.data_type
-                            ),
-                        }
-                        .fail();
                     }
+                    TypeCheckState::Match => {}
                 }
-
-                if parsed_meta.is_stale() || parsed_meta.count() == 0 {
+                let mut parsed_meta = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
+                if parsed_meta.count() == 0 {
                     let version = parsed_meta.initial_meta_value();
                     parsed_meta.set_count(1);
 
@@ -438,20 +401,13 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
-                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-                if meta_val.is_stale() {
-                    return Ok(Vec::new());
-                }
-                if meta_val.inner.data_type != DataType::Hash {
-                    return RedisErrSnafu {
-                        message: format!(
-                            "Wrong type of value, expected: {:?}, got: {:?}",
-                            DataType::Hash,
-                            meta_val.inner.data_type
-                        ),
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
+                        return Ok(Vec::new());
                     }
-                    .fail();
+                    TypeCheckState::Match => {}
                 }
+                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
 
                 let version = meta_val.version();
                 let data_key = MemberDataKey::new(key, version, &[]);
@@ -503,20 +459,13 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
-                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-                if meta_val.is_stale() {
-                    return Ok(Vec::new());
-                }
-                if meta_val.inner.data_type != DataType::Hash {
-                    return RedisErrSnafu {
-                        message: format!(
-                            "Wrong type of value, expected: {:?}, got: {:?}",
-                            DataType::Hash,
-                            meta_val.inner.data_type
-                        ),
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
+                        return Ok(Vec::new());
                     }
-                    .fail();
+                    TypeCheckState::Match => {}
                 }
+                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
 
                 let version = meta_val.version();
                 let data_key = MemberDataKey::new(key, version, &[]);
@@ -566,23 +515,16 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
+                        for _ in fields {
+                            results.push(None);
+                        }
+                        return Ok(results);
+                    }
+                    TypeCheckState::Match => {}
+                }
                 let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-                if meta_val.is_stale() {
-                    for _ in fields {
-                        results.push(None);
-                    }
-                    return Ok(results);
-                }
-                if meta_val.inner.data_type != DataType::Hash {
-                    return RedisErrSnafu {
-                        message: format!(
-                            "Wrong type of value, expected: {:?}, got: {:?}",
-                            DataType::Hash,
-                            meta_val.inner.data_type
-                        ),
-                    }
-                    .fail();
-                }
 
                 let version = meta_val.version();
                 for field in fields {
@@ -669,25 +611,16 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
-                let mut parsed_meta = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-
-                if parsed_meta.data_type() != DataType::Hash {
-                    if parsed_meta.is_stale() {
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing => unreachable!("meta exists in Some arm"),
+                    TypeCheckState::Stale => {
                         create_new_hash(self, key, &field_map)?;
                         return Ok(());
-                    } else {
-                        return RedisErrSnafu {
-                            message: format!(
-                                "Wrong type of value, expected: {:?}, got: {:?}",
-                                DataType::Hash,
-                                parsed_meta.inner.data_type
-                            ),
-                        }
-                        .fail();
                     }
+                    TypeCheckState::Match => {}
                 }
-
-                if parsed_meta.is_stale() || parsed_meta.count() == 0 {
+                let mut parsed_meta = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
+                if parsed_meta.count() == 0 {
                     let version = parsed_meta.initial_meta_value();
                     parsed_meta.set_count(field_map.len() as u64);
 
@@ -804,25 +737,16 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
-                let mut parsed_meta = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-
-                if parsed_meta.data_type() != DataType::Hash {
-                    if parsed_meta.is_stale() {
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing => unreachable!("meta exists in Some arm"),
+                    TypeCheckState::Stale => {
                         create_new_hash(self, key, field, value)?;
                         return Ok(1);
-                    } else {
-                        return RedisErrSnafu {
-                            message: format!(
-                                "Wrong type of value, expected: {:?}, got: {:?}",
-                                DataType::Hash,
-                                parsed_meta.inner.data_type
-                            ),
-                        }
-                        .fail();
                     }
+                    TypeCheckState::Match => {}
                 }
-
-                if parsed_meta.is_stale() || parsed_meta.count() == 0 {
+                let mut parsed_meta = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
+                if parsed_meta.count() == 0 {
                     let version = parsed_meta.initial_meta_value();
                     parsed_meta.set_count(1);
 
@@ -930,25 +854,16 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
-                let mut parsed_meta = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-
-                if parsed_meta.data_type() != DataType::Hash {
-                    if parsed_meta.is_stale() {
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing => unreachable!("meta exists in Some arm"),
+                    TypeCheckState::Stale => {
                         create_new_hash(self, key, field, increment)?;
                         return Ok(increment);
-                    } else {
-                        return RedisErrSnafu {
-                            message: format!(
-                                "Wrong type of value, expected: {:?}, got: {:?}",
-                                DataType::Hash,
-                                parsed_meta.inner.data_type
-                            ),
-                        }
-                        .fail();
                     }
+                    TypeCheckState::Match => {}
                 }
-
-                if parsed_meta.is_stale() || parsed_meta.count() == 0 {
+                let mut parsed_meta = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
+                if parsed_meta.count() == 0 {
                     let version = parsed_meta.initial_meta_value();
                     parsed_meta.set_count(1);
 
@@ -1086,25 +1001,16 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
-                let mut parsed_meta = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-
-                if parsed_meta.data_type() != DataType::Hash {
-                    if parsed_meta.is_stale() {
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing => unreachable!("meta exists in Some arm"),
+                    TypeCheckState::Stale => {
                         create_new_hash(self, key, field, increment)?;
                         return Ok(increment);
-                    } else {
-                        return RedisErrSnafu {
-                            message: format!(
-                                "Wrong type of value, expected: {:?}, got: {:?}",
-                                DataType::Hash,
-                                parsed_meta.inner.data_type
-                            ),
-                        }
-                        .fail();
                     }
+                    TypeCheckState::Match => {}
                 }
-
-                if parsed_meta.is_stale() || parsed_meta.count() == 0 {
+                let mut parsed_meta = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
+                if parsed_meta.count() == 0 {
                     let version = parsed_meta.initial_meta_value();
                     parsed_meta.set_count(1);
 
@@ -1242,21 +1148,13 @@ impl Redis {
             .context(RocksSnafu)?
         {
             Some(meta_val_bytes) => {
-                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
-
-                if meta_val.is_stale() {
-                    return Ok((0, Vec::new()));
-                }
-                if meta_val.data_type() != DataType::Hash {
-                    return RedisErrSnafu {
-                        message: format!(
-                            "Wrong type of value, expected: {:?}, got: {:?}",
-                            DataType::Hash,
-                            meta_val.data_type()
-                        ),
+                match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                    TypeCheckState::Missing | TypeCheckState::Stale => {
+                        return Ok((0, Vec::new()));
                     }
-                    .fail();
+                    TypeCheckState::Match => {}
                 }
+                let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
 
                 let mut start_point = String::new();
                 let version = meta_val.version();

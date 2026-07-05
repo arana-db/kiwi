@@ -27,6 +27,32 @@ mod redis_hash_test {
     };
 
     #[test]
+    fn test_hash_commands_wrongtype_and_expired_wrongtype() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let live_wrongtype = b"hash_live_wrongtype";
+        redis.set(live_wrongtype, b"value").unwrap();
+        let err = redis.hlen(live_wrongtype).unwrap_err();
+        assert!(err.to_string().contains("WRONGTYPE"));
+
+        let expired_wrongtype = b"hash_expired_wrongtype";
+        redis.set(expired_wrongtype, b"value").unwrap();
+        assert!(redis.set_key_etime(expired_wrongtype, 1).unwrap());
+        assert_eq!(redis.hlen(expired_wrongtype).unwrap(), 0);
+
+        redis.set_need_close(true);
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
     fn test_hset_hget_hexists_basic() {
         let test_db_path = unique_test_db_path();
 
