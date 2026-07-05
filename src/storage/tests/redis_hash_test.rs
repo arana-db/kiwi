@@ -23,8 +23,8 @@ mod redis_hash_test {
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions,
-        safe_cleanup_test_db, unique_test_db_path,
+        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, safe_cleanup_test_db,
+        unique_test_db_path,
     };
 
     #[test]
