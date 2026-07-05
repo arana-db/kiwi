@@ -1300,7 +1300,11 @@ impl Redis {
     /// * Ok(false) - if the key doesn't exist or is expired
     /// * Err(RedisErr) - if there's a database error
     pub fn key_exists_live(&self, key: &[u8]) -> Result<bool> {
-        Ok(self.get_key_type(key).is_ok())
+        match self.get_key_type(key) {
+            Ok(_) => Ok(true),
+            Err(crate::error::Error::KeyNotFound { .. }) => Ok(false),
+            Err(err) => Err(err),
+        }
     }
 
     /// SETBIT key offset value

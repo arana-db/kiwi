@@ -82,7 +82,7 @@ mod redis_basic_test {
     }
 
     #[test]
-    fn test_check_type_keeps_old_wrongtype_behavior_for_stale_foreign_type() {
+    fn test_check_type_wrapper_treats_stale_foreign_type_as_missing() {
         let storage_options = Arc::new(StorageOptions::default());
         let (bg_task_handler, _) = BgTaskHandler::new();
         let lock_mgr = Arc::new(LockMgr::new(1000));
@@ -94,10 +94,20 @@ mod redis_basic_test {
         let etime_start = stale_set_raw.len() - 8;
         stale_set_raw[etime_start..].copy_from_slice(&1u64.to_le_bytes());
 
-        let err = redis
+        redis
             .check_type(stale_set_raw.as_ref(), DataType::String)
-            .unwrap_err();
-        assert!(err.to_string().contains("WRONGTYPE"));
+            .unwrap();
+    }
+
+    #[test]
+    fn test_key_exists_live_propagates_non_key_not_found_errors() {
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let err = redis.key_exists_live(b"missing-db").unwrap_err();
+        assert!(err.to_string().contains("db is not initialized"));
     }
 
     #[test]

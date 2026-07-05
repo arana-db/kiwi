@@ -676,15 +676,7 @@ impl Redis {
     }
 
     pub fn check_type(&self, value_raw: &[u8], key_type: DataType) -> Result<()> {
-        if value_raw.is_empty() {
-            return Ok(());
-        }
-
-        if value_raw.first().copied() == Some(key_type as u8) {
-            return Ok(());
-        }
-
-        Err(Self::wrong_type_error())
+        self.check_type_state(value_raw, key_type).map(|_| ())
     }
 
     pub fn get_scan_start_point(
