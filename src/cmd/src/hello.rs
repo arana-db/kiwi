@@ -19,18 +19,21 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use client::Client;
-use resp::{CommandType, RespCommand, RespData};
+use resp::{CommandType, HelloAuthResult, RespCommand, RespData};
 use storage::storage::Storage;
+use subtle::ConstantTimeEq;
 
+use crate::auth::RequirepassProvider;
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct HelloCmd {
     meta: CmdMeta,
+    requirepass_provider: RequirepassProvider,
 }
 
-impl HelloCmd {
-    pub fn new() -> Self {
+impl Default for HelloCmd {
+    fn default() -> Self {
         Self {
             meta: CmdMeta {
                 name: "hello".to_string(),
@@ -39,6 +42,22 @@ impl HelloCmd {
                 acl_category: AclCategory::CONNECTION | AclCategory::FAST,
                 ..Default::default()
             },
+            requirepass_provider: Arc::new(|| None),
+        }
+    }
+}
+
+impl HelloCmd {
+    pub fn new(provider: RequirepassProvider) -> Self {
+        Self {
+            meta: CmdMeta {
+                name: "hello".to_string(),
+                arity: -1,
+                flags: CmdFlags::NO_AUTH | CmdFlags::FAST,
+                acl_category: AclCategory::CONNECTION | AclCategory::FAST,
+                ..Default::default()
+            },
+            requirepass_provider: provider,
         }
     }
 }
@@ -59,9 +78,25 @@ impl Cmd for HelloCmd {
             is_pipeline: false,
         };
 
-        match client.handle_hello(&command) {
-            Ok(response) => client.set_reply(response),
-            Err(err) => client.set_reply(RespData::Error(format!("ERR {err}").into())),
+        let provider = Arc::clone(&self.requirepass_provider);
+        let authenticate = |password: &[u8]| match provider() {
+            Some(requirepass) => {
+                let matches: bool = password.ct_eq(requirepass.as_bytes()).into();
+                if matches {
+                    HelloAuthResult::Authenticated
+                } else {
+                    HelloAuthResult::WrongPassword
+                }
+            }
+            None => HelloAuthResult::NoPasswordConfigured,
+        };
+
+        match client.handle_hello(&command, authenticate) {
+            Ok(response) => {
+                client.set_authenticated(true);
+                client.set_reply(response);
+            }
+            Err(err) => client.set_reply(RespData::Error(err.to_string().into())),
         }
     }
 }

@@ -139,9 +139,16 @@ impl Client {
     /// Handle a RESP HELLO command using the persisted protocol negotiation
     /// state for this connection, so the negotiated RESP version survives across
     /// multiple commands.
-    pub fn handle_hello(&self, command: &RespCommand) -> RespResult<RespData> {
+    ///
+    /// `authenticate` is called with the password supplied via the AUTH clause
+    /// and must report whether the client should be authenticated, rejected for
+    /// a wrong password, or rejected because no password is configured.
+    pub fn handle_hello<F>(&self, command: &RespCommand, authenticate: F) -> RespResult<RespData>
+    where
+        F: FnMut(&[u8]) -> resp::HelloAuthResult,
+    {
         let mut ctx = self.ctx.lock();
-        ctx.protocol_negotiator.handle_hello(command)
+        ctx.protocol_negotiator.handle_hello(command, authenticate)
     }
 
     /// Return the currently negotiated RESP version for this connection.

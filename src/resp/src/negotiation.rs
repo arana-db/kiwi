@@ -25,6 +25,17 @@ use crate::{
     types::{RespData, RespVersion},
 };
 
+/// Result of authenticating via the `HELLO ... AUTH username password` clause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelloAuthResult {
+    /// Password matched the configured requirepass; client may be authenticated.
+    Authenticated,
+    /// Password did not match; client should be rejected with WRONGPASS.
+    WrongPassword,
+    /// No requirepass is configured; AUTH clause is not allowed.
+    NoPasswordConfigured,
+}
+
 /// Protocol negotiation handler for RESP3
 #[derive(Clone)]
 pub struct ProtocolNegotiator {
@@ -54,8 +65,19 @@ impl ProtocolNegotiator {
         &self.client_capabilities
     }
 
-    /// Handle HELLO command for protocol negotiation
-    pub fn handle_hello(&mut self, command: &RespCommand) -> RespResult<RespData> {
+    /// Handle HELLO command for protocol negotiation.
+    ///
+    /// `authenticate` is called with the password supplied via the AUTH clause.
+    /// It must return whether the client should be authenticated, rejected for a
+    /// wrong password, or rejected because no password is configured.
+    pub fn handle_hello<F>(
+        &mut self,
+        command: &RespCommand,
+        mut authenticate: F,
+    ) -> RespResult<RespData>
+    where
+        F: FnMut(&[u8]) -> HelloAuthResult,
+    {
         // HELLO [protover [AUTH username password] [SETNAME clientname]]
         let mut args_iter = command.args.iter().peekable();
 
@@ -95,12 +117,28 @@ impl ProtocolNegotiator {
                     let _username = args_iter.next().ok_or_else(|| {
                         RespError::InvalidData("AUTH requires username".to_string())
                     })?;
-                    let _password = args_iter.next().ok_or_else(|| {
+                    let password = args_iter.next().ok_or_else(|| {
                         RespError::InvalidData("AUTH requires password".to_string())
                     })?;
-                    // TODO: Implement authentication logic
-                    self.client_capabilities
-                        .insert("auth".to_string(), "enabled".to_string());
+
+                    match authenticate(password.as_ref()) {
+                        HelloAuthResult::Authenticated => {
+                            self.client_capabilities
+                                .insert("auth".to_string(), "enabled".to_string());
+                        }
+                        HelloAuthResult::WrongPassword => {
+                            return Err(RespError::InvalidData(
+                                "-WRONGPASS invalid username-password pair or user is disabled."
+                                    .to_string(),
+                            ));
+                        }
+                        HelloAuthResult::NoPasswordConfigured => {
+                            return Err(RespError::InvalidData(
+                                "-ERR HELLO AUTH called without any password configured"
+                                    .to_string(),
+                            ));
+                        }
+                    }
                 }
                 "SETNAME" => {
                     // SETNAME clientname
@@ -271,7 +309,9 @@ mod tests {
         let mut negotiator = ProtocolNegotiator::new();
         let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("2")], false);
 
-        let response = negotiator.handle_hello(&command).unwrap();
+        let response = negotiator
+            .handle_hello(&command, |_| HelloAuthResult::Authenticated)
+            .unwrap();
         assert_eq!(negotiator.current_version(), RespVersion::RESP2);
 
         if let RespData::Array(Some(items)) = response {
@@ -286,7 +326,9 @@ mod tests {
         let mut negotiator = ProtocolNegotiator::new();
         let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
 
-        let response = negotiator.handle_hello(&command).unwrap();
+        let response = negotiator
+            .handle_hello(&command, |_| HelloAuthResult::Authenticated)
+            .unwrap();
         assert_eq!(negotiator.current_version(), RespVersion::RESP3);
 
         if let RespData::Map(pairs) = response {
@@ -305,7 +347,9 @@ mod tests {
 
         // Switch to RESP3
         let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
-        negotiator.handle_hello(&command).unwrap();
+        negotiator
+            .handle_hello(&command, |_| HelloAuthResult::Authenticated)
+            .unwrap();
 
         // RESP3 supports new features
         assert!(negotiator.supports_feature("maps"));
