@@ -297,4 +297,19 @@ mod tests {
             "raft-* without raft-node-id should be rejected"
         );
     }
+
+    #[test]
+    fn test_raft_node_id_zero_is_rejected() {
+        use std::io::Write;
+
+        let mut config_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config_file, "port 7379").unwrap();
+        writeln!(config_file, "raft-node-id 0").unwrap();
+
+        let loaded = Config::load(config_file.path().to_str().unwrap());
+        assert!(
+            loaded.is_err(),
+            "raft-node-id 0 should be rejected by validation"
+        );
+    }
 }

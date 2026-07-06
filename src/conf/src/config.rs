@@ -297,6 +297,10 @@ fn validate_loaded_config(config: &Config) -> Result<(), Error> {
         .validate()
         .map_err(|e| Error::ValidConfigFail { source: e })?;
     config.runtime.validate().map_err(invalid_config)?;
+    if let Some(raft) = config.raft.as_ref() {
+        raft.validate()
+            .map_err(|e| Error::ValidConfigFail { source: e })?;
+    }
     Ok(())
 }
 
