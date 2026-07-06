@@ -53,6 +53,7 @@ STORAGE_COMPARISON.md
 .spec-workflow/
 
 agent-os/
+.worktrees/
 
 # Serana AI configuration
 .serena/

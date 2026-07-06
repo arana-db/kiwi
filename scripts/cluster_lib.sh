@@ -153,17 +153,16 @@ create_node() {
     }
 
     # Create config file
-    cat > "$node_dir/config.toml" << EOF
+    cat > "$node_dir/node.conf" << EOF
 # Node $node_id configuration
 binding = 127.0.0.1
 port = $resp_port
-network_threads = 1
-storage_threads = 2
+runtime-network_threads = 1
+runtime-storage_threads = 2
 
 raft-node-id = $node_id
 raft-addr = 127.0.0.1:$raft_port
 raft-resp-addr = 127.0.0.1:$resp_port
-raft-data-dir = ./raft_data
 EOF
 
     # Copy binary to node directory
@@ -213,7 +212,7 @@ start_node() {
 
     # Start node from its own directory
     cd "$node_dir"
-    RUST_LOG="${RUST_LOG:-info}" ./kiwi --config config.toml > "$log_file" 2>&1 &
+    RUST_LOG="${RUST_LOG:-info}" ./kiwi --config node.conf > "$log_file" 2>&1 &
     local pid=$!
     cd - > /dev/null
 

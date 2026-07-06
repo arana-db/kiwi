@@ -143,17 +143,22 @@ if [ "$COMMAND" = "build" ] || [ "$COMMAND" = "run" ]; then
         echo ""
         echo "Or continue without setup (you can run it later)."
         echo ""
-        read -p "Run quick setup now? (y/n) " -n 1 -r
-        echo ""
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            ./scripts/quick_setup.sh
-            if [ $? -eq 0 ]; then
-                success "✓ Setup complete! Continuing with build..."
+        if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ] || [ ! -t 0 ]; then
+            info "Skipping setup in non-interactive environment."
+            echo ""
+        else
+            read -p "Run quick setup now? (y/n) " -n 1 -r
+            echo ""
+            if [[ $REPLY =~ ^[Yy]$ ]]; then
+                ./scripts/quick_setup.sh
+                if [ $? -eq 0 ]; then
+                    success "✓ Setup complete! Continuing with build..."
+                    echo ""
+                fi
+            else
+                info "Skipping setup. You can run './scripts/quick_setup.sh' anytime."
                 echo ""
             fi
-        else
-            info "Skipping setup. You can run './scripts/quick_setup.sh' anytime."
-            echo ""
         fi
     fi
 fi

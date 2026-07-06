@@ -23,46 +23,56 @@ MAKEFLAGS += --warn-undefined-variables
 MAKEFLAGS += --no-builtin-rules
 MAKEFLAGS += --no-print-directory
 
+DEV := ./scripts/dev.sh
+NODES ?= 3
+
+check:
+	@$(DEV) check
+
 build:
-	@echo "Building project..."
-	@cargo build
+	@$(DEV) build
 
 release:
-	@echo "Building project in release mode..."
-	@cargo build --release
+	@$(DEV) build --release
 
 run:
-	@echo "Running project..."
-	@cargo run --bin server
+	@$(DEV) run
 
 test:
-	@echo "Running tests..."
-	@cargo test
+	@$(DEV) test
 
 clean:
-	@echo "Cleaning project..."
-	@cargo clean
+	@$(DEV) clean
 
 fmt:
-	@echo "Formatting code..."
 	@cargo fmt --manifest-path ./Cargo.toml --all
 
 fmt-check:
-	@echo "Formatting code..."
 	@cargo fmt --manifest-path ./Cargo.toml --all -- --check
 
 lint:
-	@echo "Linting code..."
 	@cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings -D clippy::unwrap_used
+
+standalone:
+	@$(DEV) build
+	@$(DEV) run
+
+cluster:
+	@./scripts/cluster.sh $(NODES)
 
 help:
 	@echo "Available commands:"
-	@echo "  build         - Build the project"
-	@echo "  run           - Run the project"
+	@echo "  check         - Quick syntax check (fast)"
+	@echo "  build         - Build (debug, auto-uses sccache)"
+	@echo "  release       - Build (release, auto-uses sccache)"
+	@echo "  run           - Build and run"
+	@echo "  standalone    - Build and run a single node"
+	@echo "  cluster       - Start a local multi-node Raft cluster"
 	@echo "  test          - Run tests"
-	@echo "  clean         - Clean the project"
-	@echo "  fmt           - Format the code"
-	@echo "  lint          - Lint the code"
-	@echo "  help          - Show this help message"
+	@echo "  clean         - Clean build artifacts"
+	@echo "  fmt           - Format code"
+	@echo "  fmt-check     - Check formatting (CI)"
+	@echo "  lint          - Run clippy (CI)"
+	@echo "  help          - Show this help"
 
-.PHONY: build release run test clean fmt lint help
+.PHONY: check build release run standalone cluster test clean fmt fmt-check lint help

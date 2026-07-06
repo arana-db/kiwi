@@ -21,7 +21,7 @@
 # Logs are written to files, viewable with `tail -f`.
 # Uses gRPC for cluster management (`grpcurl` required).
 #
-# Usage: ./start_node_cluster.sh [OPTIONS] [NODE_COUNT]
+# Usage: ./cluster.sh [OPTIONS] [NODE_COUNT]
 #   NODE_COUNT: Number of nodes to start (default: 3, range: 1-9)
 #
 # Options:
@@ -124,7 +124,7 @@ done
 trap cleanup_cluster EXIT
 
 # Also handle Ctrl+C
-trap 'log_info "Interrupted"; cleanup_cluster; exit 130' INT TERM
+trap 'log_info "Interrupted"; trap - EXIT; cleanup_cluster; exit 130' INT TERM
 
 # =============================================================================
 # Cluster Initialization
@@ -210,18 +210,18 @@ for node_info in "${NODES[@]}"; do
     get_node_status "$node_id" "$raft_port" "$resp_port"
 done
 
-# =============================================================================
-# Run Tests
-# =============================================================================
-
-if [ "$RUN_TESTS" = "true" ]; then
+run_basic_tests() {
     log_info "Running basic Raft tests..."
 
     # Find the leader
     local leader_raft=""
+    local metrics
+    local node_id
+    local node_info
+    local raft_port
+    local resp_port
     for node_info in "${NODES[@]}"; do
         IFS=':' read -r node_id raft_port resp_port <<< "$node_info"
-        local metrics
         metrics=$(grpc_call "127.0.0.1:$raft_port" "kiwi.raft.v1.RaftMetricsService" "Metrics" "{}" "$GRPCURL")
         if [[ "$metrics" != "error" ]] && [[ "$metrics" == *"isLeader\": true"* ]]; then
             leader_raft="127.0.0.1:$raft_port"
@@ -254,6 +254,14 @@ if [ "$RUN_TESTS" = "true" ]; then
             log_error "Read test: FAILED"
         fi
     fi
+}
+
+# =============================================================================
+# Run Tests
+# =============================================================================
+
+if [ "$RUN_TESTS" = "true" ]; then
+    run_basic_tests
 fi
 
 # =============================================================================

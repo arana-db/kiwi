@@ -4,198 +4,121 @@ English | [简体中文](README_CN.md)
 
 ## Introduction
 
-Kiwi is a Redis-compatible key-value database built in Rust, providing high capacity, high performance, and strong consistency through RocksDB and the Raft protocol.
+Kiwi is a Redis-compatible key-value database built in Rust, providing high capacity and strong consistency through RocksDB and the Raft protocol.
 
 ## Features
 
 - **Dual Runtime Architecture**: Network and storage runtimes are separated for performance isolation
 - **RocksDB Backend**: Uses RocksDB as the persistent storage backend
 - **Redis Protocol Compatibility**: Highly compatible with Redis protocol
-- **Raft Consensus Algorithm**: Integrates OpenRaft for strong consistency and high availability
+- **Raft Consensus**: Integrates OpenRaft for strong consistency and high availability
 - **Adaptor Pattern**: Custom adapter layer bridging storage with OpenRaft
 - **High Performance**: Optimized request processing with dedicated thread pools
 - **Asynchronous Communication**: Message channel-based asynchronous communication
 - **Fault Isolation**: Network and storage operations run in isolated runtimes
 
-## System Requirements
+## Architecture
 
-- Operating System: Linux, macOS, FreeBSD, or Windows
-- Rust toolchain
-
-## Installation
-
-Make sure you have the Rust toolchain installed. You can install it using [rustup](https://rustup.rs/):
-
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```text
+src/server/    → Entry point (main.rs)
+src/net/       → TCP server, connection handling, cluster routing
+src/cmd/       → Command definitions: Cmd trait, CmdMeta, command table
+src/executor/  → Command executor: tokio async task pool
+src/storage/   → Multi-instance RocksDB, column families, TTL
+src/engine/    → Engine trait abstraction over RocksDB
+src/resp/      → RESP protocol: parser, encoder, RespData types
+src/raft/      → Raft consensus: OpenRaft integration, state machine, router
+src/conf/      → Configuration: loading, validation, RaftClusterConfig
+src/client/    → Client context: connection state, argv, reply buffer
+src/common/runtime/ → Runtime management: async channel between net & storage
+src/common/macro/   → Proc macros: #[stack_trace_debug]
+src/kstd/      → Utilities: LockMgr (sharded key-level locking)
 ```
 
-## Quick Start
+### Request Flow
 
-### Building from Source
+```text
+Client → TCP accept [network runtime] → RESP parse → Command lookup
+  → CmdExecutor [network runtime] → Cmd.execute() calls StorageClient
+    → MessageChannel →
+  → StorageServer [storage runtime] → RocksDB
+    ← oneshot response ←
+  → RESP encode [network runtime] → write back to client
+```
+
+## Roadmap
+
+- ✅ Dual-runtime architecture for performance isolation
+- ✅ Message channel-based async communication
+- ✅ Basic Redis commands (GET, SET, DEL, etc.)
+- ✅ OpenRaft integration via adaptor pattern
+- 🚧 Most Redis commands
+- 🚧 Complete cluster mode
+- 🚧 Extended command support and execution optimization
+- 🚧 Module extension capabilities
+- 🚧 Comprehensive metrics and monitoring
+
+## Getting Started
+
+### Prerequisites
 
 ```bash
-# Clone the repository
+# Rust toolchain
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# protobuf compiler (macOS)
+brew install protobuf
+
+# protobuf compiler (Linux)
+apt install protobuf-compiler
+```
+
+### Get the Code
+
+```bash
 git clone https://github.com/arana-db/kiwi.git
 cd kiwi
-
-# Quick check (fast, recommended for development)
-cargo check
-
-# Build the project
-cargo build --release
-
-# Run the server (defaults to 127.0.0.1:7379)
-cargo run --release
 ```
 
-### Using Development Scripts
+### Standalone Mode
 
-For faster development workflow, use the provided scripts:
-
-**Linux/macOS:**
 ```bash
-# Make scripts executable (first time only)
-chmod +x scripts/*.sh
+make standalone                    # builds (release) and starts kiwi on 127.0.0.1:7379
 
-# Quick check (fastest)
-./scripts/dev.sh check
-
-# Build and run
-./scripts/dev.sh run
-
-# Auto-watch mode (checks on file save)
-./scripts/dev.sh watch
-
-# Open the debug info while building
-./scripts/dev.sh build --debug
-```
-
-**Windows:**
-```cmd
-# Quick check (fastest)
-scripts\dev check
-
-# Build and run
-scripts\dev run
-
-# Auto-watch mode
-scripts\dev watch
-
-# Open the debug info while building
-scripts\dev build --debug
+# In another terminal:
+redis-cli -p 7379 set foo bar     # OK
+redis-cli -p 7379 get foo         # "bar"
 ```
 
 ### Cluster Mode
 
-For cluster mode, refer to `config.example.toml` or `cluster.conf` in the repository root, and use the `--init-cluster` flag when starting the first node:
-
 ```bash
-cargo run --release -- --config cluster.conf --init-cluster
+make cluster                       # start a 3-node Raft cluster (default)
+make cluster NODES=5               # start a 5-node cluster
 ```
 
-### Recommended Development Workflow
+See [docs/cluster.md](docs/cluster.md) for the manual step-by-step procedure and Raft architecture details.
 
-#### 🚀 First-time Setup (Automatic Prompt)
+## Documentation
 
-When you first run `build` or `run`, the script will automatically prompt you to install sccache and cargo-watch:
-
-```bash
-⚠️  First-time setup recommended for optimal performance!
-Run quick setup now? (y/n)
-```
-
-**Press 'y'** to install automatically, or run manually:
-
-```bash
-# Linux/macOS:
-chmod +x scripts/quick_setup.sh
-./scripts/quick_setup.sh
-
-# Windows:
-scripts\quick_setup.cmd
-```
-
-After setup, builds will be **50-90% faster** on subsequent runs!
-
-#### 📝 Daily Development
-
-The development scripts **automatically use sccache** if installed:
-
-```bash
-# Linux/macOS:
-./scripts/dev.sh check   # Quick check (5-10x faster than build)
-./scripts/dev.sh build   # Build (automatically uses sccache)
-./scripts/dev.sh run     # Run (automatically uses sccache)
-./scripts/dev.sh watch   # Auto-check on file save
-
-# Windows:
-scripts\dev check        # Quick check
-scripts\dev build        # Build (automatically uses sccache)
-scripts\dev run          # Run (automatically uses sccache)
-scripts\dev watch        # Auto-check on file save
-```
-
-**Performance Tips:**
-- Use `check` for fast syntax checking during development (5-10x faster)
-- Use `watch` for automatic checking on file save (instant feedback)
-- Use `build` or `run` only when you need to execute the program
-- Scripts automatically use sccache if installed (no manual configuration needed)
-
-**Why is compilation slow?** See [Why Recompiling?](docs/WHY_RECOMPILING.md) for diagnosis and solutions.
-
-For detailed build optimization guide, see [docs/BUILD_OPTIMIZATION.md](docs/BUILD_OPTIMIZATION.md).
-
-## Key Components
-
-- **Raft Network Handler**: `src/net/src/raft_network_handle.rs`
-- **Router**: `src/raft/src/router.rs`
-- **Raft Node**: `src/raft/src/node.rs`
-- **Storage Backend**: `src/storage/src` and `src/raft/src/storage_engine/redis_storage_engine.rs`
-
-For more details, see `docs/CONSISTENCY_README.md`.
-
-## Raft Consensus Integration
-
-Kiwi integrates the **OpenRaft** library to provide distributed consensus and high availability:
-
-- **Adaptor Pattern**: Custom adapter layer bridging Kiwi storage with OpenRaft's sealed traits
-- **RocksDB-based Raft Log**: Uses RocksDB to persist Raft logs
-- **State Machine Replication**: Consistent state replication across cluster nodes
-- **Snapshot Support**: Efficient state transfer for new or lagging nodes
-
-For detailed integration documentation, see [docs/raft/OPENRAFT_INTEGRATION.md](docs/raft/OPENRAFT_INTEGRATION.md).
-
-## Development Roadmap
-
-- ✅ Dual runtime architecture for performance isolation
-- ✅ Message channel-based asynchronous communication
-- ✅ Basic Redis command support (GET, SET, DEL, etc.)
-- ✅ OpenRaft integration using Adaptor pattern
-- 🚧 Support for most Redis commands
-- 🚧 Complete cluster mode implementation
-- 🚧 Extended command support and command execution optimization
-- 🚧 Enhanced modular extension capabilities with examples
-- 🚧 Comprehensive development documentation and user guides
-- 🚧 Comprehensive metrics and monitoring
+| Document | Description |
+|----------|-------------|
+| [docs/development.md](docs/development.md) | Dev environment, build optimization, sccache |
+| [docs/cluster.md](docs/cluster.md) | Raft cluster quickstart and write-path verification |
+| [docs/key-encoding.md](docs/key-encoding.md) | Key encoding internals (Chinese) |
+| `kiwi --sample-config` | Generate a default config file |
+| `kiwi --full-sample-config` | Generate a config with all available keys |
 
 ## Dependencies
 
 ### RocksDB (Temporary Fork)
 
-This project currently uses a [customized fork of rust-rocksdb](https://github.com/arana-db/rust-rocksdb/tree/addtableproperties) because the official crate does not yet support the TablePropertiesCollector FFI functions required for LogIndex tracking in the Raft module. The upstream merge of these changes may take some time. Once the required functionality is available in the official [rust-rocksdb](https://github.com/rust-rocksdb/rust-rocksdb) repository, we will switch back to the official crate.
-
-## Documentation
-
-- [Quick Start Guide](docs/QUICK_START.md) - Detailed getting started guide
-- [Build Optimization](docs/BUILD_OPTIMIZATION.md) - How to speed up compilation
-- [Scripts Usage](scripts/README.md) - Development scripts documentation
-- [中文文档](docs/编译加速方案总结.md) - Chinese documentation
+This project uses a [customized fork of rust-rocksdb](https://github.com/arana-db/rust-rocksdb/tree/addtableproperties) because the official crate does not yet support the TablePropertiesCollector FFI functions required by the Raft module. Once the needed functionality lands in upstream [rust-rocksdb](https://github.com/rust-rocksdb/rust-rocksdb), we will switch back.
 
 ## Contributing
 
-Contributions to the Kiwi project are welcome! If you have any suggestions or find issues, please submit an Issue or create a Pull Request.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+Apache License 2.0. See [LICENSE](LICENSE).
