@@ -20,12 +20,13 @@
 #[cfg(test)]
 mod redis_set_test {
     use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use bytes::BufMut;
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, safe_cleanup_test_db,
-        unique_test_db_path,
+        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, DataType, Redis, StorageOptions,
+        safe_cleanup_test_db, unique_test_db_path,
     };
 
     // Build a valid Set meta bytes:
@@ -44,6 +45,39 @@ mod redis_set_test {
         buf.put_u64_le(0);
         buf.put_u64_le(0);
         buf
+    }
+
+    fn current_micros() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_micros() as u64
+    }
+
+    #[test]
+    fn test_set_commands_wrongtype_and_expired_wrongtype() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let live_wrongtype = b"set_live_wrongtype";
+        redis.set(live_wrongtype, b"value").unwrap();
+        let err = redis.scard(live_wrongtype).unwrap_err();
+        assert!(err.to_string().contains("WRONGTYPE"));
+
+        let expired_wrongtype = b"set_expired_wrongtype";
+        redis.set(expired_wrongtype, b"value").unwrap();
+        assert!(redis.set_key_etime(expired_wrongtype, 1).unwrap());
+        assert!(redis.smembers(expired_wrongtype).unwrap().is_empty());
+
+        redis.set_need_close(true);
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
@@ -145,6 +179,34 @@ mod redis_set_test {
         // scard on missing key should error
         let scard_missing = redis.scard(b"missing_key");
         assert!(scard_missing.is_err());
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
+    fn test_sadd_on_expired_wrongtype_key_is_allowed() {
+        let test_db_path = unique_test_db_path();
+
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"expired_wrongtype_set";
+        redis.hset(key, b"field", b"value").unwrap();
+        assert!(redis.set_key_etime(key, current_micros() - 1).unwrap());
+
+        let added = redis.sadd(key, &[b"member1"]).expect("sadd should succeed");
+        assert_eq!(added, 1);
+        assert_eq!(redis.get_key_type(key).unwrap(), DataType::Set);
 
         redis.set_need_close(true);
         drop(redis);

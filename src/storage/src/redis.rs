@@ -94,6 +94,13 @@ impl ColumnFamilyIndex {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TypeCheckState {
+    Missing,
+    Stale,
+    Match,
+}
+
 #[repr(C, align(64))]
 pub struct Redis {
     pub index: i32,
@@ -644,20 +651,32 @@ impl Redis {
         Ok(())
     }
 
-    pub fn check_type(&self, key: &[u8], key_type: DataType) -> Result<()> {
-        if key.is_empty() {
-            return Ok(());
-        }
-
-        if key.first().copied() == Some(key_type as u8) {
-            return Ok(());
-        }
-
-        Err(RedisErr {
+    fn wrong_type_error() -> crate::error::Error {
+        RedisErr {
             message: "WRONGTYPE Operation against a key holding the wrong kind of value"
                 .to_string(),
             location: Default::default(),
-        })
+        }
+    }
+
+    pub fn check_type_state(&self, value_raw: &[u8], expected: DataType) -> Result<TypeCheckState> {
+        if value_raw.is_empty() {
+            return Ok(TypeCheckState::Missing);
+        }
+
+        if self.is_stale(value_raw)? {
+            return Ok(TypeCheckState::Stale);
+        }
+
+        if value_raw.first().copied() == Some(expected as u8) {
+            return Ok(TypeCheckState::Match);
+        }
+
+        Err(Self::wrong_type_error())
+    }
+
+    pub fn check_type(&self, value_raw: &[u8], key_type: DataType) -> Result<()> {
+        self.check_type_state(value_raw, key_type).map(|_| ())
     }
 
     pub fn get_scan_start_point(
@@ -722,7 +741,7 @@ impl Redis {
     /// * `Ok(true)` - the value is expired or the count is 0
     /// * `Ok(false)` - the value is not expired and is valid
     /// * `Err(_)` - parsing error
-    pub fn is_stale(&self, val_raw: &[u8]) -> Result<bool> {
+    pub fn is_stale_static(val_raw: &[u8]) -> Result<bool> {
         if val_raw.is_empty() {
             return Ok(false);
         }
@@ -808,6 +827,10 @@ impl Redis {
             }
             .fail(),
         }
+    }
+
+    pub fn is_stale(&self, val_raw: &[u8]) -> Result<bool> {
+        Self::is_stale_static(val_raw)
     }
 }
 

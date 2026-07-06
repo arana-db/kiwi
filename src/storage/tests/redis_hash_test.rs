@@ -23,8 +23,35 @@ mod redis_hash_test {
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path,
+        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, safe_cleanup_test_db,
+        unique_test_db_path,
     };
+
+    #[test]
+    fn test_hash_commands_wrongtype_and_expired_wrongtype() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let live_wrongtype = b"hash_live_wrongtype";
+        redis.set(live_wrongtype, b"value").unwrap();
+        let err = redis.hlen(live_wrongtype).unwrap_err();
+        assert!(err.to_string().contains("WRONGTYPE"));
+
+        let expired_wrongtype = b"hash_expired_wrongtype";
+        redis.set(expired_wrongtype, b"value").unwrap();
+        assert!(redis.set_key_etime(expired_wrongtype, 1).unwrap());
+        assert_eq!(redis.hlen(expired_wrongtype).unwrap(), 0);
+
+        redis.set_need_close(true);
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
+    }
 
     #[test]
     fn test_hset_hget_hexists_basic() {
@@ -94,6 +121,39 @@ mod redis_hash_test {
             retrieved_value.unwrap(),
             String::from_utf8_lossy(expected_val).to_string()
         );
+
+        redis.set_need_close(true);
+        drop(redis);
+
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
+    fn test_hset_recovers_from_empty_meta_value() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let result = redis.open(test_db_path.to_str().unwrap());
+        assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
+
+        let key = b"empty_hash_meta";
+        let field = b"field1";
+        let value = b"value1";
+
+        {
+            let db = redis.db.as_ref().unwrap();
+            let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+            let encoded_key = BaseMetaKey::new(key).encode().unwrap();
+            db.put_cf(&cf, &encoded_key, &[]).unwrap();
+        }
+
+        assert_eq!(redis.hset(key, field, value).unwrap(), 1);
+        assert_eq!(redis.hget(key, field).unwrap(), Some("value1".to_string()));
 
         redis.set_need_close(true);
         drop(redis);

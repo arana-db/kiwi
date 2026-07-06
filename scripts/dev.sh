@@ -219,6 +219,10 @@ case $COMMAND in
 
     test)
         info "Running tests..."
+        # Stabilize tests under low fd limits: increase open-file limit if possible,
+        # and default to a single test thread to avoid exhausting file descriptors.
+        ulimit -n 4096 2>/dev/null || true
+        export RUST_TEST_THREADS="${RUST_TEST_THREADS:-1}"
         cargo test $PROFILE $CARGO_CONFIG_FLAG $VERBOSE
         ;;
 

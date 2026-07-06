@@ -21,10 +21,12 @@
 mod redis_basic_test {
     use std::sync::{Arc, atomic::Ordering};
 
+    use bytes::Bytes;
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, safe_cleanup_test_db,
-        unique_test_db_path,
+        BgTaskHandler, ColumnFamilyIndex, DataType, Redis, StorageOptions, TypeCheckState,
+        format_base_meta_value::BaseMetaValue, format_strings_value::StringValue,
+        safe_cleanup_test_db, unique_test_db_path,
     };
 
     #[test]
@@ -38,6 +40,74 @@ mod redis_basic_test {
         assert!(redis.is_starting.load(Ordering::SeqCst));
         assert!(redis.db.is_none());
         assert_eq!(redis.handles.len(), 0);
+    }
+
+    #[test]
+    fn test_check_type_state_reports_missing_stale_match_and_wrongtype() {
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        assert_eq!(
+            redis.check_type_state(&[], DataType::String).unwrap(),
+            TypeCheckState::Missing
+        );
+
+        let string_raw = StringValue::new(b"value".to_vec()).encode();
+        assert_eq!(
+            redis
+                .check_type_state(string_raw.as_ref(), DataType::String)
+                .unwrap(),
+            TypeCheckState::Match
+        );
+
+        let mut stale_raw = StringValue::new(b"value".to_vec()).encode().to_vec();
+        let etime_start = stale_raw.len() - 8;
+        stale_raw[etime_start..].copy_from_slice(&1u64.to_le_bytes());
+        assert_eq!(
+            redis
+                .check_type_state(stale_raw.as_ref(), DataType::String)
+                .unwrap(),
+            TypeCheckState::Stale
+        );
+
+        let mut set_meta = BaseMetaValue::new(Bytes::from(1u64.to_le_bytes().to_vec()));
+        set_meta.inner.data_type = DataType::Set;
+        let set_raw = set_meta.encode();
+        let err = redis
+            .check_type_state(set_raw.as_ref(), DataType::String)
+            .unwrap_err();
+        assert!(err.to_string().contains("WRONGTYPE"));
+    }
+
+    #[test]
+    fn test_check_type_wrapper_treats_stale_foreign_type_as_missing() {
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let mut set_meta = BaseMetaValue::new(Bytes::from(1u64.to_le_bytes().to_vec()));
+        set_meta.inner.data_type = DataType::Set;
+        let mut stale_set_raw = set_meta.encode().to_vec();
+        let etime_start = stale_set_raw.len() - 8;
+        stale_set_raw[etime_start..].copy_from_slice(&1u64.to_le_bytes());
+
+        redis
+            .check_type(stale_set_raw.as_ref(), DataType::String)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_key_exists_live_propagates_non_key_not_found_errors() {
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        let err = redis.key_exists_live(b"missing-db").unwrap_err();
+        assert!(err.to_string().contains("db is not initialized"));
     }
 
     #[test]

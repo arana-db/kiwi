@@ -25,7 +25,7 @@ use crate::error::{OptionNoneSnafu, RocksSnafu};
 use crate::format_base_data_value::{BaseDataValue, ParsedBaseDataValue};
 use crate::format_base_meta_value::{ParsedZSetsMetaValue, ZSetsMetaValue};
 use crate::redis::Redis;
-use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Result};
+use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Result, TypeCheckState};
 use kstd::lock_mgr::ScopeRecordLock;
 use rocksdb::{Direction, IteratorMode, ReadOptions};
 use snafu::OptionExt;
@@ -79,108 +79,110 @@ impl Redis {
 
         // ZSet exists, update it
         if !base_meta_val.is_empty() {
-            // Check type
-            self.check_type(&base_meta_val, DataType::ZSet)?;
+            match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+                TypeCheckState::Missing | TypeCheckState::Stale => {}
+                TypeCheckState::Match => {
+                    let mut parsed_zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
 
-            // Parse existing meta
-            let mut parsed_zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
+                    let version;
+                    let valid;
+                    if parsed_zset_meta.is_valid() {
+                        valid = true;
+                        version = parsed_zset_meta.version();
+                    } else {
+                        valid = false;
+                        version = parsed_zset_meta.initial_meta_value();
+                    }
 
-            // Get version and validity
-            let version;
-            let valid;
-            if parsed_zset_meta.is_valid() {
-                valid = true;
-                version = parsed_zset_meta.version();
-            } else {
-                valid = false;
-                version = parsed_zset_meta.initial_meta_value();
-            }
-
-            // Prepare batch write
-            let mut count = 0u64;
-            let mut batch = self.create_batch()?;
-            for sm in &filtered_score_members {
-                let mut not_found = true;
-                let member_key = MemberDataKey::new(key, version, &sm.member).encode()?;
-                if valid {
-                    // Check if member exists
-                    let existing_member_val = db
-                        .get_cf_opt(&cf_data, &member_key, &self.read_options)
-                        .context(RocksSnafu)?
-                        .unwrap_or_else(Vec::new);
-                    if !existing_member_val.is_empty() {
-                        // Member exists, check score
-                        let mut parsed_base_data_val =
-                            ParsedBaseDataValue::new(&existing_member_val[..])?;
-                        parsed_base_data_val.strip_suffix();
-                        not_found = false;
-                        match String::from_utf8_lossy(&parsed_base_data_val.user_value())
-                            .parse::<f64>()
-                        {
-                            Ok(existing_score) => {
-                                if (existing_score - sm.score).abs() < f64::EPSILON {
-                                    // Score is the same, skip
-                                    continue;
-                                } else {
-                                    // Score is different, delete old score key
-                                    let old_score_key = ZSetsScoreKey::new(
-                                        key,
-                                        version,
-                                        existing_score,
-                                        &sm.member,
-                                    )
-                                    .encode()?;
-                                    batch
-                                        .delete(ColumnFamilyIndex::ZsetsScoreCF, &old_score_key)?;
-                                    statistic += 1;
+                    let mut count = 0u64;
+                    let mut batch = self.create_batch()?;
+                    for sm in &filtered_score_members {
+                        let mut not_found = true;
+                        let member_key = MemberDataKey::new(key, version, &sm.member).encode()?;
+                        if valid {
+                            let existing_member_val = db
+                                .get_cf_opt(&cf_data, &member_key, &self.read_options)
+                                .context(RocksSnafu)?
+                                .unwrap_or_else(Vec::new);
+                            if !existing_member_val.is_empty() {
+                                let mut parsed_base_data_val =
+                                    ParsedBaseDataValue::new(&existing_member_val[..])?;
+                                parsed_base_data_val.strip_suffix();
+                                not_found = false;
+                                match String::from_utf8_lossy(&parsed_base_data_val.user_value())
+                                    .parse::<f64>()
+                                {
+                                    Ok(existing_score) => {
+                                        if (existing_score - sm.score).abs() < f64::EPSILON {
+                                            continue;
+                                        }
+                                        let old_score_key = ZSetsScoreKey::new(
+                                            key,
+                                            version,
+                                            existing_score,
+                                            &sm.member,
+                                        )
+                                        .encode()?;
+                                        batch.delete(
+                                            ColumnFamilyIndex::ZsetsScoreCF,
+                                            &old_score_key,
+                                        )?;
+                                        statistic += 1;
+                                    }
+                                    Err(_) => {
+                                        return Err(RedisErr {
+                                            message: "invalid score format".to_string(),
+                                            location: Default::default(),
+                                        });
+                                    }
                                 }
                             }
-                            Err(_) => {
-                                return Err(RedisErr {
-                                    message: "invalid score format".to_string(),
-                                    location: Default::default(),
-                                });
-                            }
+                        }
+
+                        let score_key =
+                            ZSetsScoreKey::new(key, version, sm.score, &sm.member).encode()?;
+                        let member_value = BaseDataValue::new(format!("{}", sm.score));
+                        let score_value = BaseDataValue::new("");
+                        batch.put(
+                            ColumnFamilyIndex::ZsetsDataCF,
+                            &member_key,
+                            &member_value.encode(),
+                        )?;
+                        batch.put(
+                            ColumnFamilyIndex::ZsetsScoreCF,
+                            &score_key,
+                            &score_value.encode(),
+                        )?;
+                        if not_found {
+                            count += 1;
                         }
                     }
-                }
 
-                // Insert new member and score
-                let score_key = ZSetsScoreKey::new(key, version, sm.score, &sm.member).encode()?;
-                let member_value = BaseDataValue::new(format!("{}", sm.score));
-                let score_value = BaseDataValue::new("");
-                batch.put(
-                    ColumnFamilyIndex::ZsetsDataCF,
-                    &member_key,
-                    &member_value.encode(),
-                )?;
-                batch.put(
-                    ColumnFamilyIndex::ZsetsScoreCF,
-                    &score_key,
-                    &score_value.encode(),
-                )?;
-                if not_found {
-                    count += 1;
+                    if !parsed_zset_meta.check_modify_count(count) {
+                        return Err(RedisErr {
+                            message: "zset size overflow".to_string(),
+                            location: Default::default(),
+                        });
+                    }
+                    parsed_zset_meta.modify_count(count);
+                    batch.put(
+                        ColumnFamilyIndex::MetaCF,
+                        &base_meta_key.encode()?,
+                        parsed_zset_meta.encoded(),
+                    )?;
+                    batch.commit()?;
+                    *ret = count as i32;
+                    self.update_specific_key_statistics(
+                        DataType::ZSet,
+                        &key_str,
+                        statistic as u64,
+                    )?;
+                    return Ok(());
                 }
-                continue;
             }
+        }
 
-            // Update meta
-            if !parsed_zset_meta.check_modify_count(count) {
-                return Err(RedisErr {
-                    message: "zset size overflow".to_string(),
-                    location: Default::default(),
-                });
-            }
-            parsed_zset_meta.modify_count(count);
-            batch.put(
-                ColumnFamilyIndex::MetaCF,
-                &base_meta_key.encode()?,
-                parsed_zset_meta.encoded(),
-            )?;
-            batch.commit()?;
-            *ret = count as i32;
-        } else {
+        {
             // ZSet does not exist, create new one
             let mut zset_meta = ZSetsMetaValue::new(bytes::Bytes::copy_from_slice(
                 &(filtered_score_members.len() as u64).to_le_bytes(),
@@ -237,7 +239,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -270,7 +275,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -341,97 +349,95 @@ impl Redis {
         let mut new_score = increment;
 
         if !base_meta_val.is_empty() {
-            // ZSet exists, check if member exists
-            self.check_type(&base_meta_val, DataType::ZSet)?;
+            match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+                TypeCheckState::Missing | TypeCheckState::Stale => {}
+                TypeCheckState::Match => {
+                    let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
+                    if !zset_meta.is_valid() {
+                        let score_member = ScoreMember::new(new_score, member.to_vec());
+                        let mut count = 0;
+                        std::mem::drop(_lock);
+                        self.zadd(key, &[score_member], &mut count)?;
+                        *ret = format!("{}", new_score).into_bytes();
+                        return Ok(());
+                    }
 
-            let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
-            if !zset_meta.is_valid() {
-                // ZSet is invalid, treat as if it doesn't exist
-                let score_member = ScoreMember::new(new_score, member.to_vec());
-                let mut count = 0;
-                std::mem::drop(_lock);
-                self.zadd(key, &[score_member], &mut count)?;
-                *ret = format!("{}", new_score).into_bytes();
-                return Ok(());
-            }
+                    let version = zset_meta.version();
+                    let member_key = MemberDataKey::new(key, version, member).encode()?;
+                    let existing_member_val = db
+                        .get_cf_opt(&cf_data, &member_key, &self.read_options)
+                        .context(RocksSnafu)?
+                        .unwrap_or_else(Vec::new);
 
-            let version = zset_meta.version();
-            let member_key = MemberDataKey::new(key, version, member).encode()?;
+                    if !existing_member_val.is_empty() {
+                        let mut parsed_base_data_val =
+                            ParsedBaseDataValue::new(&existing_member_val[..])?;
+                        parsed_base_data_val.strip_suffix();
 
-            // Check if member exists
-            let existing_member_val = db
-                .get_cf_opt(&cf_data, &member_key, &self.read_options)
-                .context(RocksSnafu)?
-                .unwrap_or_else(Vec::new);
+                        match String::from_utf8_lossy(&parsed_base_data_val.user_value())
+                            .parse::<f64>()
+                        {
+                            Ok(current_score) => {
+                                new_score = current_score + increment;
+                                if new_score.is_nan() || new_score.is_infinite() {
+                                    return Err(RedisErr {
+                                        message: "ERR increment would produce NaN or Infinity"
+                                            .to_string(),
+                                        location: Default::default(),
+                                    });
+                                }
 
-            if !existing_member_val.is_empty() {
-                // Member exists, get current score and increment it
-                let mut parsed_base_data_val = ParsedBaseDataValue::new(&existing_member_val[..])?;
-                parsed_base_data_val.strip_suffix();
+                                let mut batch = self.create_batch()?;
+                                let old_score_key =
+                                    ZSetsScoreKey::new(key, version, current_score, member)
+                                        .encode()?;
+                                batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &old_score_key)?;
 
-                match String::from_utf8_lossy(&parsed_base_data_val.user_value()).parse::<f64>() {
-                    Ok(current_score) => {
-                        new_score = current_score + increment;
+                                let new_score_key =
+                                    crate::format_zset_score_key::ZSetsScoreKey::new(
+                                        key, version, new_score, member,
+                                    )
+                                    .encode()?;
+                                let member_value = BaseDataValue::new(format!("{}", new_score));
+                                let score_value = BaseDataValue::new("");
 
-                        // Check for valid float (not NaN or infinite)
-                        if new_score.is_nan() || new_score.is_infinite() {
-                            return Err(RedisErr {
-                                message: "ERR increment would produce NaN or Infinity".to_string(),
-                                location: Default::default(),
-                            });
+                                batch.put(
+                                    ColumnFamilyIndex::ZsetsDataCF,
+                                    &member_key,
+                                    &member_value.encode(),
+                                )?;
+                                batch.put(
+                                    ColumnFamilyIndex::ZsetsScoreCF,
+                                    &new_score_key,
+                                    &score_value.encode(),
+                                )?;
+
+                                batch.commit()?;
+                            }
+                            Err(_) => {
+                                return Err(RedisErr {
+                                    message: "invalid score format".to_string(),
+                                    location: Default::default(),
+                                });
+                            }
                         }
-
-                        // Update the member with new score
-                        let mut batch = self.create_batch()?;
-
-                        // Delete old score key
-                        let old_score_key =
-                            ZSetsScoreKey::new(key, version, current_score, member).encode()?;
-                        batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &old_score_key)?;
-
-                        // Add new score key and update member value
-                        let new_score_key = crate::format_zset_score_key::ZSetsScoreKey::new(
-                            key, version, new_score, member,
-                        )
-                        .encode()?;
-                        let member_value = BaseDataValue::new(format!("{}", new_score));
-                        let score_value = BaseDataValue::new("");
-
-                        batch.put(
-                            ColumnFamilyIndex::ZsetsDataCF,
-                            &member_key,
-                            &member_value.encode(),
-                        )?;
-                        batch.put(
-                            ColumnFamilyIndex::ZsetsScoreCF,
-                            &new_score_key,
-                            &score_value.encode(),
-                        )?;
-
-                        batch.commit()?;
+                    } else {
+                        let score_member = ScoreMember::new(new_score, member.to_vec());
+                        let mut count = 0;
+                        std::mem::drop(_lock);
+                        self.zadd(key, &[score_member], &mut count)?;
                     }
-                    Err(_) => {
-                        return Err(RedisErr {
-                            message: "invalid score format".to_string(),
-                            location: Default::default(),
-                        });
-                    }
+
+                    *ret = format!("{}", new_score).into_bytes();
+                    return Ok(());
                 }
-            } else {
-                // Member doesn't exist, add it with the increment as the score
-                let score_member = ScoreMember::new(new_score, member.to_vec());
-                let mut count = 0;
-                std::mem::drop(_lock);
-                self.zadd(key, &[score_member], &mut count)?;
             }
-        } else {
-            // ZSet doesn't exist, create it with the member and increment as score
-            let score_member = ScoreMember::new(new_score, member.to_vec());
-            let mut count = 0;
-            std::mem::drop(_lock);
-            self.zadd(key, &[score_member], &mut count)?;
         }
 
+        let score_member = ScoreMember::new(new_score, member.to_vec());
+        let mut count = 0;
+        std::mem::drop(_lock);
+        self.zadd(key, &[score_member], &mut count)?;
         *ret = format!("{}", new_score).into_bytes();
         Ok(())
     }
@@ -461,7 +467,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -516,7 +525,10 @@ impl Redis {
             return Ok((0, Vec::new()));
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok((0, Vec::new())),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -618,7 +630,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -710,7 +725,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -802,7 +820,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -894,7 +915,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -982,7 +1006,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -1148,8 +1175,15 @@ impl Redis {
                 continue;
             }
 
-            // Check type
-            self.check_type(&base_meta_val, DataType::ZSet)?;
+            match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+                TypeCheckState::Missing | TypeCheckState::Stale => {
+                    if is_inter {
+                        return Ok(0);
+                    }
+                    continue;
+                }
+                TypeCheckState::Match => {}
+            }
 
             let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
             if !zset_meta.is_valid() {
@@ -1219,39 +1253,44 @@ impl Redis {
 
         let mut batch = self.create_batch()?;
 
-        // Delete existing destination data if it exists
+        // Delete existing destination data if it exists.
+        // ZINTERSTORE/ZUNIONSTORE always overwrite the destination, so we must not
+        // fail with WRONGTYPE when the destination holds a different data type.
         if !dest_meta_val.is_empty() {
-            self.check_type(&dest_meta_val, DataType::ZSet)?;
-            let dest_meta = ParsedZSetsMetaValue::new(&dest_meta_val[..])?;
-            if dest_meta.is_valid() {
-                let dest_version = dest_meta.version();
+            // If the destination is a parseable ZSet, clean up its score/member data.
+            if let Ok(dest_meta) = ParsedZSetsMetaValue::new(&dest_meta_val[..]) {
+                if dest_meta.is_valid() {
+                    let dest_version = dest_meta.version();
 
-                // Delete all score keys and member keys
-                let min_score_key =
-                    ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
-                        .encode_seek_key()?;
-                let iter = db.iterator_cf_opt(
-                    &cf_score,
-                    ReadOptions::default(),
-                    IteratorMode::From(&min_score_key, Direction::Forward),
-                );
+                    // Delete all score keys and member keys
+                    let min_score_key =
+                        ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
+                            .encode_seek_key()?;
+                    let iter = db.iterator_cf_opt(
+                        &cf_score,
+                        ReadOptions::default(),
+                        IteratorMode::From(&min_score_key, Direction::Forward),
+                    );
 
-                for item in iter {
-                    let (raw_key, _) = item.context(RocksSnafu)?;
-                    let score_key = ParsedZSetsScoreKey::new(&raw_key)?;
+                    for item in iter {
+                        let (raw_key, _) = item.context(RocksSnafu)?;
+                        let score_key = ParsedZSetsScoreKey::new(&raw_key)?;
 
-                    if destination != score_key.key() || dest_version != score_key.version() {
-                        break;
+                        if destination != score_key.key() || dest_version != score_key.version() {
+                            break;
+                        }
+
+                        // Delete score key and member key
+                        batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
+                        let member_key =
+                            MemberDataKey::new(destination, dest_version, score_key.member())
+                                .encode()?;
+                        batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
                     }
-
-                    // Delete score key and member key
-                    batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
-                    let member_key =
-                        MemberDataKey::new(destination, dest_version, score_key.member())
-                            .encode()?;
-                    batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
                 }
             }
+            // Remove the old destination meta key so the new result can replace it.
+            batch.delete(ColumnFamilyIndex::MetaCF, &dest_meta_key.encode()?)?;
         }
 
         // Add new result members or delete meta if empty
@@ -1334,7 +1373,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -1434,7 +1476,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -1517,7 +1562,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -1626,7 +1674,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -1756,7 +1807,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let mut zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -1856,7 +1910,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
@@ -1955,7 +2012,10 @@ impl Redis {
             return Ok(());
         }
 
-        self.check_type(&base_meta_val, DataType::ZSet)?;
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(()),
+            TypeCheckState::Match => {}
+        }
 
         let zset_meta = ParsedZSetsMetaValue::new(&base_meta_val[..])?;
         if !zset_meta.is_valid() {
