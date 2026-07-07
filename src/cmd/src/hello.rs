@@ -19,12 +19,13 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use client::Client;
-use resp::{CommandType, HelloAuthResult, RespCommand, RespData};
+use resp::{CommandType, HelloAuthResult, RespCommand, RespData, RespError};
 use storage::storage::Storage;
 use subtle::ConstantTimeEq;
 
-use crate::auth::RequirepassProvider;
-use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
+use crate::{
+    AclCategory, Cmd, CmdFlags, CmdMeta, RequirepassProvider, impl_cmd_clone_box, impl_cmd_meta,
+};
 
 #[derive(Clone)]
 pub struct HelloCmd {
@@ -78,25 +79,46 @@ impl Cmd for HelloCmd {
             is_pipeline: false,
         };
 
+        let mut auth_attempted = false;
         let provider = Arc::clone(&self.requirepass_provider);
-        let authenticate = |password: &[u8]| match provider() {
-            Some(requirepass) => {
-                let matches: bool = password.ct_eq(requirepass.as_bytes()).into();
-                if matches {
-                    HelloAuthResult::Authenticated
-                } else {
-                    HelloAuthResult::WrongPassword
+        let mut authenticate = |password: &[u8]| -> HelloAuthResult {
+            auth_attempted = true;
+            match provider() {
+                Some(requirepass) => {
+                    let matches: bool = password.ct_eq(requirepass.as_bytes()).into();
+                    if matches {
+                        HelloAuthResult::Authenticated
+                    } else {
+                        HelloAuthResult::WrongPassword
+                    }
                 }
+                None => HelloAuthResult::NoPasswordConfigured,
             }
-            None => HelloAuthResult::NoPasswordConfigured,
         };
 
-        match client.handle_hello(&command, authenticate) {
+        match client.handle_hello(&command, &mut authenticate) {
             Ok(response) => {
-                client.set_authenticated(true);
+                // Only mark the client as authenticated when the HELLO command
+                // included an AUTH clause that succeeded. A bare HELLO must not
+                // bypass the requirepass check.
+                if auth_attempted {
+                    client.set_authenticated(true);
+                }
                 client.set_reply(response);
             }
-            Err(err) => client.set_reply(RespData::Error(err.to_string().into())),
+            Err(err) => client.set_reply(RespData::Error(format_hello_error(err).into())),
         }
     }
+}
+
+/// Format a RESP error from HELLO negotiation for the client.
+///
+/// `RespError::InvalidData` is used to carry the raw Redis error message, so
+/// strip the Display prefix and any leading `-` that the encoder will add.
+fn format_hello_error(err: RespError) -> String {
+    let raw = match err {
+        RespError::InvalidData(msg) => msg,
+        other => other.to_string(),
+    };
+    raw.trim_start_matches('-').to_string()
 }
