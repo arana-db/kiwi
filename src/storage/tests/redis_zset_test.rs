@@ -39,6 +39,7 @@ mod redis_zset_test {
         let result = redis.open(test_db_path.to_str().unwrap());
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
+        redis.set_need_close(true);
         redis
     }
 
@@ -193,6 +194,25 @@ mod redis_zset_test {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0], ("alpha".to_string(), "1".to_string()));
         assert_eq!(results[1], ("beta".to_string(), "2".to_string()));
+    }
+
+    #[test]
+    fn test_zset_commands_wrongtype_and_expired_wrongtype() {
+        let redis = create_test_redis();
+
+        let live_wrongtype = b"zset_live_wrongtype";
+        redis.set(live_wrongtype, b"value").unwrap();
+        let mut card = 0;
+        let err = redis.zcard(live_wrongtype, &mut card).unwrap_err();
+        assert!(err.to_string().contains("WRONGTYPE"));
+
+        let expired_wrongtype = b"zset_expired_wrongtype";
+        redis.set(expired_wrongtype, b"value").unwrap();
+        assert!(redis.set_key_etime(expired_wrongtype, 1).unwrap());
+
+        let mut expired_card = -1;
+        redis.zcard(expired_wrongtype, &mut expired_card).unwrap();
+        assert_eq!(expired_card, 0);
     }
 
     #[test]
@@ -1312,6 +1332,39 @@ mod redis_zset_test {
         assert!(score.is_none());
 
         // New member should exist
+        let mut score = None;
+        redis.zscore(dest, b"a", &mut score).unwrap();
+        assert_eq!(String::from_utf8(score.unwrap()).unwrap(), "3");
+    }
+
+    #[test]
+    fn test_zinterstore_overwrites_wrongtype_destination() {
+        let redis = create_test_redis();
+
+        let key1 = b"zset1";
+        let key2 = b"zset2";
+        let dest = b"dest";
+
+        // Destination holds a non-ZSet value
+        redis.set(dest, b"string-value").unwrap();
+
+        // Create source sets
+        let score_members1 = vec![ScoreMember::new(1.0, b"a".to_vec())];
+        let score_members2 = vec![ScoreMember::new(2.0, b"a".to_vec())];
+
+        let mut ret = 0;
+        redis.zadd(key1, &score_members1, &mut ret).unwrap();
+        redis.zadd(key2, &score_members2, &mut ret).unwrap();
+
+        // Compute intersection (should overwrite dest regardless of its type)
+        let keys = vec![key1.to_vec(), key2.to_vec()];
+        let mut count = 0;
+        redis
+            .zinterstore(dest, &keys, &[], "SUM", &mut count)
+            .unwrap();
+
+        assert_eq!(count, 1);
+
         let mut score = None;
         redis.zscore(dest, b"a", &mut score).unwrap();
         assert_eq!(String::from_utf8(score.unwrap()).unwrap(), "3");

@@ -22,10 +22,11 @@
 #[cfg(test)]
 mod redis_list_test {
     use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BeforeOrAfter, BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db,
+        BeforeOrAfter, BgTaskHandler, DataType, Redis, StorageOptions, safe_cleanup_test_db,
         unique_test_db_path,
     };
 
@@ -42,7 +43,15 @@ mod redis_list_test {
         let result = redis.open(test_db_path.to_str().unwrap());
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
+        redis.set_need_close(true);
         redis
+    }
+
+    fn current_micros() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_micros() as u64
     }
 
     #[tokio::test]
@@ -69,6 +78,68 @@ mod redis_list_test {
 
         let len = redis.llen(key).expect("llen should succeed");
         assert_eq!(len, 3);
+    }
+
+    #[tokio::test]
+    async fn test_list_wrongtype_returns_error() {
+        let redis = create_test_redis();
+        let key = b"wrongtype_list";
+
+        redis
+            .hset(key, b"field", b"value")
+            .expect("hset should succeed");
+
+        let len_result = redis.llen(key);
+        assert!(len_result.is_err(), "llen should fail on non-list key");
+        assert!(
+            len_result.unwrap_err().to_string().contains("WRONGTYPE"),
+            "llen should return WRONGTYPE"
+        );
+
+        let lpush_result = redis.lpush(key, &[b"value".to_vec()]);
+        assert!(lpush_result.is_err(), "lpush should fail on non-list key");
+        assert!(
+            lpush_result.unwrap_err().to_string().contains("WRONGTYPE"),
+            "lpush should return WRONGTYPE"
+        );
+
+        let lrange_result = redis.lrange(key, 0, -1);
+        assert!(lrange_result.is_err(), "lrange should fail on non-list key");
+        assert!(
+            lrange_result.unwrap_err().to_string().contains("WRONGTYPE"),
+            "lrange should return WRONGTYPE"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_list_expired_wrongtype_is_treated_as_missing() {
+        let redis = create_test_redis();
+        let key = b"expired_wrongtype_list";
+
+        redis
+            .hset(key, b"field", b"value")
+            .expect("hset should succeed");
+        assert!(redis.set_key_etime(key, current_micros() - 1).unwrap());
+
+        let len = redis
+            .lpush(key, &[b"value1".to_vec()])
+            .expect("lpush should succeed");
+        assert_eq!(len, 1);
+        assert_eq!(redis.get_key_type(key).unwrap(), DataType::List);
+    }
+
+    #[tokio::test]
+    async fn test_lrange_expired_wrongtype_returns_empty() {
+        let redis = create_test_redis();
+        let key = b"lrange_expired_wrongtype";
+
+        redis
+            .hset(key, b"field", b"value")
+            .expect("hset should succeed");
+        assert!(redis.set_key_etime(key, current_micros() - 1).unwrap());
+
+        let values = redis.lrange(key, 0, -1).expect("lrange should succeed");
+        assert!(values.is_empty());
     }
 
     #[tokio::test]
