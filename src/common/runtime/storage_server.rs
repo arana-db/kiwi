@@ -1182,12 +1182,12 @@ impl StorageServer {
         argv: &[Vec<u8>],
     ) -> Result<RespData, storage::error::Error> {
         let command_name = String::from_utf8_lossy(cmd_name).to_lowercase();
-        let cmd_table = STORAGE_COMMAND_TABLE.get_or_init(|| {
-            // Fallback only for tests or code paths that forget to call
-            // `initialize_storage_command_table`. Production should always
-            // initialize this with the real `requirepass` provider.
-            create_command_table(Arc::new(|| None))
-        });
+        let Some(cmd_table) = STORAGE_COMMAND_TABLE.get() else {
+            return SystemSnafu {
+                message: "storage command table not initialized".to_string(),
+            }
+            .fail();
+        };
         let Some(command) = cmd_table.get(command_name.as_str()) else {
             return SystemSnafu {
                 message: format!(
@@ -1223,6 +1223,8 @@ mod tests {
         let _receiver = storage
             .open(options, &db_path)
             .expect("test storage should open");
+
+        initialize_storage_command_table(Arc::new(|| None));
 
         (Arc::new(storage), db_path)
     }
