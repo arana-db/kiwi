@@ -19,11 +19,10 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use client::Client;
-use resp::{CommandType, ProtocolNegotiator, RespCommand, RespData};
+use resp::{CommandType, RespCommand, RespData};
 use storage::storage::Storage;
 
-use crate::{AclCategory, Cmd, CmdFlags, CmdMeta};
-use crate::{impl_cmd_clone_box, impl_cmd_meta};
+use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 #[derive(Clone, Default)]
 pub struct HelloCmd {
@@ -59,9 +58,8 @@ impl Cmd for HelloCmd {
             args: argv.into_iter().skip(1).map(Bytes::from).collect(),
             is_pipeline: false,
         };
-        let mut negotiator = ProtocolNegotiator::new();
 
-        match negotiator.handle_hello(&command) {
+        match client.handle_hello(&command) {
             Ok(response) => client.set_reply(response),
             Err(err) => client.set_reply(RespData::Error(format!("ERR {err}").into())),
         }

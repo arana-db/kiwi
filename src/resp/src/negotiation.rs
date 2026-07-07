@@ -26,6 +26,7 @@ use crate::{
 };
 
 /// Protocol negotiation handler for RESP3
+#[derive(Clone)]
 pub struct ProtocolNegotiator {
     current_version: RespVersion,
     client_capabilities: HashMap<String, String>,
