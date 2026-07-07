@@ -119,6 +119,8 @@ use log::debug;
 use resp::RespData;
 use storage::storage::Storage;
 
+pub use auth::RequirepassProvider;
+
 bitflags! {
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct CmdFlags: u32 {
