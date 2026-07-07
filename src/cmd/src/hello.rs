@@ -79,10 +79,9 @@ impl Cmd for HelloCmd {
             is_pipeline: false,
         };
 
-        let mut auth_attempted = false;
         let provider = Arc::clone(&self.requirepass_provider);
+        let authentication_required = provider().is_some();
         let mut authenticate = |password: &[u8]| -> HelloAuthResult {
-            auth_attempted = true;
             match provider() {
                 Some(requirepass) => {
                     let matches: bool = password.ct_eq(requirepass.as_bytes()).into();
@@ -96,14 +95,17 @@ impl Cmd for HelloCmd {
             }
         };
 
-        match client.handle_hello(&command, &mut authenticate) {
+        match client.handle_hello(
+            &command,
+            client.is_authenticated(),
+            authentication_required,
+            &mut authenticate,
+        ) {
             Ok(response) => {
-                // Only mark the client as authenticated when the HELLO command
-                // included an AUTH clause that succeeded. A bare HELLO must not
-                // bypass the requirepass check.
-                if auth_attempted {
-                    client.set_authenticated(true);
-                }
+                // handle_hello only succeeds when the client is already
+                // authenticated or the HELLO included an AUTH clause that
+                // succeeded. In both cases the connection is authenticated.
+                client.set_authenticated(true);
                 client.set_reply(response);
             }
             Err(err) => client.set_reply(RespData::Error(format_hello_error(err).into())),

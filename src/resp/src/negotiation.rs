@@ -67,12 +67,15 @@ impl ProtocolNegotiator {
 
     /// Handle HELLO command for protocol negotiation.
     ///
-    /// `authenticate` is called with the password supplied via the AUTH clause.
-    /// It must return whether the client should be authenticated, rejected for a
-    /// wrong password, or rejected because no password is configured.
+    /// `authentication_required` reflects whether the server is configured
+    /// with a requirepass password. When true, a client must already be
+    /// authenticated or authenticate via the HELLO ... AUTH clause to receive
+    /// the HELLO handshake. When false, the NOAUTH check is skipped.
     pub fn handle_hello<F>(
         &mut self,
         command: &RespCommand,
+        already_authenticated: bool,
+        authentication_required: bool,
         mut authenticate: F,
     ) -> RespResult<RespData>
     where
@@ -100,10 +103,11 @@ impl ProtocolNegotiator {
             None
         };
 
-        // Update current version only if explicitly requested
-        if let Some(v) = requested_version {
-            self.current_version = v;
-        }
+        // Determine the version that will be used for this response. The
+        // connection's stored version is only updated after all checks pass.
+        let response_version = requested_version.unwrap_or(self.current_version);
+
+        let mut auth_attempted = false;
 
         // Parse additional arguments (AUTH, SETNAME, etc.)
         while let Some(arg) = args_iter.next() {
@@ -121,21 +125,18 @@ impl ProtocolNegotiator {
                         RespError::InvalidData("AUTH requires password".to_string())
                     })?;
 
+                    auth_attempted = true;
                     match authenticate(password.as_ref()) {
-                        HelloAuthResult::Authenticated => {
-                            self.client_capabilities
-                                .insert("auth".to_string(), "enabled".to_string());
-                        }
+                        HelloAuthResult::Authenticated => {}
                         HelloAuthResult::WrongPassword => {
                             return Err(RespError::InvalidData(
-                                "-WRONGPASS invalid username-password pair or user is disabled."
+                                "WRONGPASS invalid username-password pair or user is disabled."
                                     .to_string(),
                             ));
                         }
                         HelloAuthResult::NoPasswordConfigured => {
                             return Err(RespError::InvalidData(
-                                "-ERR HELLO AUTH called without any password configured"
-                                    .to_string(),
+                                "ERR HELLO AUTH called without any password configured".to_string(),
                             ));
                         }
                     }
@@ -159,7 +160,19 @@ impl ProtocolNegotiator {
             }
         }
 
-        // Build response based on protocol version
+        // Redis requires the client to be authenticated before returning the
+        // HELLO handshake when a password is configured. An AUTH clause that
+        // succeeds satisfies this, as does a connection that was already
+        // authenticated.
+        if authentication_required && !auth_attempted && !already_authenticated {
+            return Err(RespError::InvalidData(
+                "NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time".to_string(),
+            ));
+        }
+
+        // All checks passed: commit the negotiated version and build the reply.
+        self.current_version = response_version;
+
         match self.current_version {
             RespVersion::RESP2 => self.build_resp2_hello_response(),
             RespVersion::RESP3 => self.build_resp3_hello_response(),
@@ -169,7 +182,7 @@ impl ProtocolNegotiator {
 
     fn build_resp2_hello_response(&self) -> RespResult<RespData> {
         // RESP2 response format (array of key-value pairs)
-        let mut response = vec![
+        let response = vec![
             RespData::BulkString(Some(Bytes::from("server"))),
             RespData::BulkString(Some(Bytes::from("kiwi"))),
             RespData::BulkString(Some(Bytes::from("version"))),
@@ -182,20 +195,16 @@ impl ProtocolNegotiator {
             RespData::BulkString(Some(Bytes::from("standalone"))),
             RespData::BulkString(Some(Bytes::from("role"))),
             RespData::BulkString(Some(Bytes::from("master"))),
+            RespData::BulkString(Some(Bytes::from("modules"))),
+            RespData::Array(Some(vec![])),
         ];
-
-        // Add client capabilities if any
-        for (key, value) in &self.client_capabilities {
-            response.push(RespData::BulkString(Some(Bytes::from(key.clone()))));
-            response.push(RespData::BulkString(Some(Bytes::from(value.clone()))));
-        }
 
         Ok(RespData::Array(Some(response)))
     }
 
     fn build_resp3_hello_response(&self) -> RespResult<RespData> {
         // RESP3 response format (map)
-        let mut pairs = vec![
+        let pairs = vec![
             (
                 RespData::BulkString(Some(Bytes::from("server"))),
                 RespData::BulkString(Some(Bytes::from("kiwi"))),
@@ -220,15 +229,11 @@ impl ProtocolNegotiator {
                 RespData::BulkString(Some(Bytes::from("role"))),
                 RespData::BulkString(Some(Bytes::from("master"))),
             ),
+            (
+                RespData::BulkString(Some(Bytes::from("modules"))),
+                RespData::Array(Some(vec![])),
+            ),
         ];
-
-        // Add client capabilities if any
-        for (key, value) in &self.client_capabilities {
-            pairs.push((
-                RespData::BulkString(Some(Bytes::from(key.clone()))),
-                RespData::BulkString(Some(Bytes::from(value.clone()))),
-            ));
-        }
 
         Ok(RespData::Map(pairs))
     }
@@ -310,7 +315,7 @@ mod tests {
         let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("2")], false);
 
         let response = negotiator
-            .handle_hello(&command, |_| HelloAuthResult::Authenticated)
+            .handle_hello(&command, true, false, |_| HelloAuthResult::Authenticated)
             .unwrap();
         assert_eq!(negotiator.current_version(), RespVersion::RESP2);
 
@@ -327,7 +332,7 @@ mod tests {
         let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
 
         let response = negotiator
-            .handle_hello(&command, |_| HelloAuthResult::Authenticated)
+            .handle_hello(&command, true, false, |_| HelloAuthResult::Authenticated)
             .unwrap();
         assert_eq!(negotiator.current_version(), RespVersion::RESP3);
 
@@ -336,6 +341,22 @@ mod tests {
         } else {
             panic!("Expected map response for RESP3");
         }
+    }
+
+    #[test]
+    fn test_hello_noauth_when_unauthenticated() {
+        let mut negotiator = ProtocolNegotiator::new();
+        let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
+
+        let result = negotiator.handle_hello(&command, false, true, |_| {
+            panic!("authenticate should not be called without AUTH")
+        });
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("NOAUTH"), "expected NOAUTH error, got {err}");
+        // Version must not switch when the command is rejected.
+        assert_eq!(negotiator.current_version(), RespVersion::RESP2);
     }
 
     #[test]
@@ -348,7 +369,7 @@ mod tests {
         // Switch to RESP3
         let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
         negotiator
-            .handle_hello(&command, |_| HelloAuthResult::Authenticated)
+            .handle_hello(&command, true, false, |_| HelloAuthResult::Authenticated)
             .unwrap();
 
         // RESP3 supports new features

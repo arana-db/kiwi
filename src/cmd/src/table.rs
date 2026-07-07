@@ -250,7 +250,52 @@ mod tests {
                     RespData::BulkString(Some(Bytes::from("role"))),
                     RespData::BulkString(Some(Bytes::from("master"))),
                 ),
+                (
+                    RespData::BulkString(Some(Bytes::from("modules"))),
+                    RespData::Array(Some(vec![])),
+                ),
             ])
+        );
+    }
+
+    #[test]
+    fn hello_bare_with_requirepass_returns_noauth() {
+        let table = create_command_table(Arc::new(|| Some("secret".to_string())));
+        let command = table.get("hello").expect("HELLO should be registered");
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"hello");
+        client.set_argv(&[b"hello".to_vec(), b"3".to_vec()]);
+
+        command.execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert!(!client.is_authenticated());
+        let reply = client.take_reply();
+        assert!(
+            matches!(reply, RespData::Error(ref e) if String::from_utf8_lossy(e).contains("NOAUTH")),
+            "expected NOAUTH error, got {:?}",
+            reply
+        );
+    }
+
+    #[test]
+    fn hello_setname_sets_client_name() {
+        let table = create_command_table(Arc::new(|| None));
+        let command = table.get("hello").expect("HELLO should be registered");
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"hello");
+        client.set_argv(&[
+            b"hello".to_vec(),
+            b"2".to_vec(),
+            b"SETNAME".to_vec(),
+            b"my-client".to_vec(),
+        ]);
+
+        command.execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert_eq!(
+            client.name().as_ref(),
+            b"my-client",
+            "expected SETNAME to set the client name"
         );
     }
 

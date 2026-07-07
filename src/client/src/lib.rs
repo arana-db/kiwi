@@ -140,15 +140,46 @@ impl Client {
     /// state for this connection, so the negotiated RESP version survives across
     /// multiple commands.
     ///
+    /// `already_authenticated` reflects whether the connection is already
+    /// authenticated. `authentication_required` reflects whether the server has
+    /// a requirepass password configured. When authentication is required and
+    /// the client is not already authenticated, the HELLO ... AUTH clause must
+    /// be used to authenticate and receive the handshake.
+    ///
     /// `authenticate` is called with the password supplied via the AUTH clause
     /// and must report whether the client should be authenticated, rejected for
     /// a wrong password, or rejected because no password is configured.
-    pub fn handle_hello<F>(&self, command: &RespCommand, authenticate: F) -> RespResult<RespData>
+    pub fn handle_hello<F>(
+        &self,
+        command: &RespCommand,
+        already_authenticated: bool,
+        authentication_required: bool,
+        authenticate: F,
+    ) -> RespResult<RespData>
     where
         F: FnMut(&[u8]) -> resp::HelloAuthResult,
     {
-        let mut ctx = self.ctx.lock();
-        ctx.protocol_negotiator.handle_hello(command, authenticate)
+        let result;
+        let client_name;
+        {
+            let mut ctx = self.ctx.lock();
+            result = ctx.protocol_negotiator.handle_hello(
+                command,
+                already_authenticated,
+                authentication_required,
+                authenticate,
+            );
+            client_name = result.as_ref().ok().and_then(|_| {
+                ctx.protocol_negotiator
+                    .client_capabilities()
+                    .get("client_name")
+                    .cloned()
+            });
+        }
+        if let Some(name) = client_name {
+            self.set_name(name.as_bytes());
+        }
+        result
     }
 
     /// Return the currently negotiated RESP version for this connection.
