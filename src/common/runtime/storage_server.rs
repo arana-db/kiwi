@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 use client::{Client, StreamTrait};
+use cmd::auth::RequirepassProvider;
 use cmd::table::{CmdTable, create_command_table};
 use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
@@ -40,6 +41,13 @@ use crate::message::{
 use crate::metrics::StorageMetricsTracker;
 
 static STORAGE_COMMAND_TABLE: OnceLock<CmdTable> = OnceLock::new();
+
+/// Initialize the storage-runtime command table with the same password provider
+/// used by the network runtime, so AUTH validates against the configured
+/// `requirepass` regardless of which runtime executes the command.
+pub fn initialize_storage_command_table(requirepass_provider: RequirepassProvider) {
+    let _ = STORAGE_COMMAND_TABLE.get_or_init(|| create_command_table(requirepass_provider));
+}
 
 struct RuntimeCommandStream;
 
@@ -1174,8 +1182,12 @@ impl StorageServer {
         argv: &[Vec<u8>],
     ) -> Result<RespData, storage::error::Error> {
         let command_name = String::from_utf8_lossy(cmd_name).to_lowercase();
-        let cmd_table =
-            STORAGE_COMMAND_TABLE.get_or_init(|| create_command_table(Arc::new(|| None)));
+        let cmd_table = STORAGE_COMMAND_TABLE.get_or_init(|| {
+            // Fallback only for tests or code paths that forget to call
+            // `initialize_storage_command_table`. Production should always
+            // initialize this with the real `requirepass` provider.
+            create_command_table(Arc::new(|| None))
+        });
         let Some(command) = cmd_table.get(command_name.as_str()) else {
             return SystemSnafu {
                 message: format!(

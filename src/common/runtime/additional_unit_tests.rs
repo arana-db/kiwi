@@ -375,7 +375,7 @@ mod serialization_tests {
     }
 
     #[test]
-    fn test_noop_storage_stats_collector_exposes_storage_instrumentation_interface() {
+    fn test_noop_storage_stats_collector() {
         let collector = NoopStorageStatsCollector::default();
 
         collector.record_read(3, 5);

@@ -23,6 +23,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::LazyLock;
 
 use cmd::CmdFlags;
 use executor::CmdExecutor;
@@ -97,15 +98,23 @@ impl CmdExecutorNetworkExt for CmdExecutor {
     }
 }
 
+/// Shared dummy storage for connection-local commands that do not touch real
+/// storage (ping/auth/client/hello). Reused across calls to avoid allocating a
+/// throwaway `Storage` on every hot-path invocation.
+static LOCAL_DUMMY_STORAGE: LazyLock<Arc<Storage>> = LazyLock::new(|| Arc::new(Storage::new(1, 0)));
+
 async fn execute_local_command(exec: &NetworkCmdExecution) -> Result<(), DualRuntimeError> {
-    let storage = Arc::new(Storage::new(1, 0));
-    exec.cmd.do_cmd(exec.client.as_ref(), storage);
+    // Use Cmd::execute to run the full check_arg -> do_initial -> do_cmd pipeline,
+    // consistent with the storage-runtime dispatch path.
+    exec.cmd
+        .execute(exec.client.as_ref(), Arc::clone(&LOCAL_DUMMY_STORAGE));
     Ok(())
 }
 
 async fn execute_generic_command(exec: &NetworkCmdExecution) -> Result<(), DualRuntimeError> {
     let cmd_name = exec.client.cmd_name();
     let argv = exec.client.argv();
+    let cmd_name_str = String::from_utf8_lossy(cmd_name.as_slice());
 
     match exec
         .storage_client
@@ -114,8 +123,11 @@ async fn execute_generic_command(exec: &NetworkCmdExecution) -> Result<(), DualR
     {
         Ok(response) => exec.client.set_reply(response),
         Err(e) => {
-            error!("Generic command execution failed: {}", e);
-            let error_msg = format_storage_error("EXECUTE", &e);
+            error!(
+                "Generic command execution failed for '{}': {}",
+                cmd_name_str, e
+            );
+            let error_msg = format_storage_error(&cmd_name_str, &e);
             exec.client.set_reply(RespData::Error(error_msg.into()));
         }
     }

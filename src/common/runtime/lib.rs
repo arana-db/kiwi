@@ -66,4 +66,5 @@ pub use metrics::{
 pub use storage_server::{
     BackgroundTaskConfig, BackgroundTaskManager, BackgroundTaskStats, BatchConfig, BatchProcessor,
     BatchStats, RocksDbStats, StorageServer, StorageServerConfig, StorageServerPauseController,
+    initialize_storage_command_table,
 };

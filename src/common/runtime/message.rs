@@ -97,6 +97,7 @@ pub struct StorageStats {
 /// TODO(storage-stats): Thread a real collector through `Cmd::execute` and the
 /// `storage` crate APIs so these counters are recorded at the point where
 /// reads, writes, deletes, cache hits, and RocksDB details actually happen.
+/// Tracked in <https://github.com/arana-db/kiwi/issues/312>.
 pub trait StorageStatsCollector: Send + Sync {
     /// Record a storage read. `key_bytes` and `value_bytes` should be measured
     /// by the storage layer, not inferred from Redis command arguments.
@@ -1237,13 +1238,10 @@ impl StorageClient {
             ));
         }
 
-        // Return a fallback response for queued requests
-        match self.get_fallback_response(&command).await {
-            Some(fallback) => Ok(fallback),
-            None => Err(crate::error::DualRuntimeError::Channel(
-                "Storage unavailable and no fallback available".to_string(),
-            )),
-        }
+        // No fallback responses are currently provided when storage is unavailable.
+        Err(crate::error::DualRuntimeError::Channel(
+            "Storage unavailable and no fallback available".to_string(),
+        ))
     }
 
     /// Try a single recovery request to test if storage is available
@@ -1328,11 +1326,6 @@ impl StorageClient {
                 None => break, // No more queued requests
             }
         }
-    }
-
-    /// Get a fallback response for certain commands when storage is unavailable
-    async fn get_fallback_response(&self, _command: &StorageCommand) -> Option<resp::RespData> {
-        None
     }
 
     /// Get recovery statistics

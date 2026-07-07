@@ -333,9 +333,21 @@ mod serialization_tests {
             let serialized = serde_json::to_string(&cmd).unwrap();
             let deserialized: StorageCommand = serde_json::from_str(&serialized).unwrap();
 
-            // Verify the command type matches
+            // Verify the command fields match after the round-trip
             match (&cmd, &deserialized) {
-                (StorageCommand::Execute { .. }, StorageCommand::Execute { .. }) => {}
+                (
+                    StorageCommand::Execute {
+                        cmd_name: n1,
+                        argv: a1,
+                    },
+                    StorageCommand::Execute {
+                        cmd_name: n2,
+                        argv: a2,
+                    },
+                ) => {
+                    assert_eq!(n1, n2, "cmd_name mismatch after serialization round-trip");
+                    assert_eq!(a1, a2, "argv mismatch after serialization round-trip");
+                }
                 _ => panic!("Command type mismatch after serialization"),
             }
         }
@@ -839,13 +851,24 @@ mod integration_tests {
             },
         ];
 
-        // Test that all commands can be created and have correct structure
+        // Test that every command round-trips through serde correctly.
         for command in commands {
-            if let StorageCommand::Execute { cmd_name, argv } = command {
-                assert!(!cmd_name.is_empty());
-                assert!(!argv.is_empty());
-            } else {
-                panic!("Expected Execute command");
+            let serialized = serde_json::to_string(&command).unwrap();
+            let deserialized: StorageCommand = serde_json::from_str(&serialized).unwrap();
+            match (&command, &deserialized) {
+                (
+                    StorageCommand::Execute { cmd_name, argv },
+                    StorageCommand::Execute {
+                        cmd_name: cmd_name2,
+                        argv: argv2,
+                    },
+                ) => {
+                    assert!(!cmd_name.is_empty());
+                    assert!(!argv.is_empty());
+                    assert_eq!(cmd_name, cmd_name2);
+                    assert_eq!(argv, argv2);
+                }
+                _ => panic!("Expected Execute command"),
             }
         }
     }
