@@ -17,7 +17,10 @@
 
 #![allow(clippy::unwrap_used)]
 
-use storage::search_distance::{decode_f32_vector, distance, distance_for_schema};
+use storage::search_codec::{DecodedVector, codec_for_schema};
+use storage::search_distance::{
+    calculator_for_metric, decode_f32_vector, distance, distance_for_schema,
+};
 use storage::search_types::{DistanceMetric, VectorAlgorithm, VectorFieldSchema, VectorValueType};
 
 fn f32_bytes(values: &[f32]) -> Vec<u8> {
@@ -63,4 +66,31 @@ fn distance_for_schema_uses_schema_fields() {
     let vector = f32_bytes(&[1.0, 1.0, 1.0]);
 
     assert_eq!(distance_for_schema(&schema, &query, &vector).unwrap(), 5.0);
+}
+
+#[test]
+fn codec_for_schema_decodes_float32_vectors() {
+    let schema = VectorFieldSchema {
+        algorithm: VectorAlgorithm::Flat,
+        value_type: VectorValueType::Float32,
+        dim: 3,
+        distance_metric: DistanceMetric::L2,
+    };
+
+    let decoded = codec_for_schema(&schema)
+        .unwrap()
+        .decode(&f32_bytes(&[1.0, 2.0, 3.0]), 3)
+        .unwrap();
+
+    assert_eq!(decoded, DecodedVector::Float32(vec![1.0, 2.0, 3.0]));
+}
+
+#[test]
+fn distance_calculator_factory_selects_metric() {
+    assert_eq!(
+        calculator_for_metric(DistanceMetric::Cosine)
+            .unwrap()
+            .metric(),
+        DistanceMetric::Cosine
+    );
 }

@@ -35,6 +35,7 @@ mod format_lists_data_key;
 
 mod coding;
 mod expiration_manager;
+pub mod search_codec;
 pub mod search_distance;
 pub mod search_encoding;
 pub mod search_types;
@@ -76,7 +77,7 @@ pub use format_zset_score_key::{ScoreMember, ZsetScoreMember};
 pub use options::StorageOptions;
 pub use redis::{ColumnFamilyIndex, Redis, TypeCheckState};
 pub use redis_search::{
-    FlatVectorIndex, SearchCfStore, SearchIndexManager, VectorIndex, VectorSearchHit,
+    FlatVectorIndex, SearchCfStore, SearchIndexManager, VectorIndexEngine, VectorSearchHit,
 };
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};

@@ -59,6 +59,25 @@ impl SearchKeyKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+// SearchCF key layout. Length fields are little-endian u16 values.
+//
+// Common header:
+// | magic(1B=0x53) | version(1B=0x01) | kind(1B) |
+//
+// IndexMeta:
+// | header | index_len(2B LE) | index | field_len(2B LE=0) | doc_key_len(2B LE=0) |
+//
+// FieldMeta:
+// | header | index_len(2B LE) | index | field_len(2B LE) | field | doc_key_len(2B LE=0) |
+//
+// FlatVectorEntry:
+// | header | index_len(2B LE) | index | field_len(2B LE) | field | doc_key_len(2B LE) | doc_key |
+//
+// FlatVectorEntry scan prefix:
+// | header | index_len(2B LE) | index | field_len(2B LE) | field |
+//
+// `encode_prefix()` intentionally omits the trailing `doc_key_len + doc_key` section so RocksDB
+// can seek to the first entry for one `(index, field)` pair and forward-scan that contiguous range.
 pub struct SearchKey {
     pub kind: SearchKeyKind,
     pub index: Vec<u8>,

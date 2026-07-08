@@ -23,6 +23,7 @@ use snafu::{OptionExt, ResultExt};
 
 use crate::error::{OptionNoneSnafu, RedisErrSnafu, RocksSnafu};
 use crate::get_db_and_cfs;
+use crate::search_codec::codec_for_schema;
 use crate::search_distance::distance_for_schema;
 use crate::search_encoding::{
     SearchKey, SearchKeyKind, decode_search_meta_value, encode_search_meta_value,
@@ -37,6 +38,13 @@ use crate::{ColumnFamilyIndex, Redis, Result};
 pub struct VectorSearchHit {
     pub doc_key: Vec<u8>,
     pub score: f32,
+}
+
+#[derive(Debug, Clone)]
+struct IndexedVectorField {
+    index_name: Vec<u8>,
+    field_name: Vec<u8>,
+    schema: VectorFieldSchema,
 }
 
 pub struct SearchCfStore<'a> {
@@ -209,7 +217,9 @@ impl<'a> SearchCfStore<'a> {
     }
 }
 
-pub trait VectorIndex {
+pub trait VectorIndexEngine {
+    fn validate_schema(&self, schema: &VectorFieldSchema) -> Result<()>;
+
     fn upsert_vector(
         &self,
         index: &[u8],
@@ -241,9 +251,20 @@ impl<'a> FlatVectorIndex<'a> {
             store: SearchCfStore::new(redis),
         }
     }
+
+    fn codec(
+        &self,
+        schema: &VectorFieldSchema,
+    ) -> Result<&'static dyn crate::search_codec::VectorCodec> {
+        codec_for_schema(schema)
+    }
 }
 
-impl<'a> VectorIndex for FlatVectorIndex<'a> {
+impl<'a> VectorIndexEngine for FlatVectorIndex<'a> {
+    fn validate_schema(&self, schema: &VectorFieldSchema) -> Result<()> {
+        validate_flat_vector_schema(schema)
+    }
+
     fn upsert_vector(
         &self,
         index: &[u8],
@@ -252,8 +273,8 @@ impl<'a> VectorIndex for FlatVectorIndex<'a> {
         vector: &[u8],
         schema: &VectorFieldSchema,
     ) -> Result<()> {
-        validate_flat_vector_schema(schema)?;
-        crate::search_distance::decode_f32_vector(vector, schema.dim as usize)?;
+        self.validate_schema(schema)?;
+        self.codec(schema)?.validate(vector, schema.dim as usize)?;
         self.store.put_vector_entry(index, field, doc_key, vector)
     }
 
@@ -269,8 +290,8 @@ impl<'a> VectorIndex for FlatVectorIndex<'a> {
         schema: &VectorFieldSchema,
         k: usize,
     ) -> Result<Vec<VectorSearchHit>> {
-        validate_flat_vector_schema(schema)?;
-        crate::search_distance::decode_f32_vector(query, schema.dim as usize)?;
+        self.validate_schema(schema)?;
+        self.codec(schema)?.validate(query, schema.dim as usize)?;
 
         let mut hits = Vec::new();
         for (doc_key, vector) in self.store.iter_vector_entries(index, field)? {
@@ -301,6 +322,77 @@ impl<'a> SearchIndexManager<'a> {
         SearchCfStore::new(self.redis)
     }
 
+    fn vector_index_for_schema(
+        &self,
+        schema: &VectorFieldSchema,
+    ) -> Result<Box<dyn VectorIndexEngine + 'a>> {
+        match schema.algorithm {
+            VectorAlgorithm::Flat => Ok(Box::new(FlatVectorIndex::new(self.redis))),
+        }
+    }
+
+    fn vector_field_schema<'b>(
+        &self,
+        fields: &'b [(Vec<u8>, SearchFieldSchema)],
+        field: &[u8],
+    ) -> Result<&'b VectorFieldSchema> {
+        fields
+            .iter()
+            .find_map(|(field_name, field_schema)| {
+                if field_name.as_slice() == field {
+                    let SearchFieldSchema::Vector(vector_schema) = field_schema;
+                    Some(vector_schema)
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| crate::error::Error::InvalidArgument {
+                message: format!("unknown vector field: {}", String::from_utf8_lossy(field)),
+                location: Default::default(),
+            })
+    }
+
+    fn indexed_vector_fields_for_doc(&self, doc_key: &[u8]) -> Result<Vec<IndexedVectorField>> {
+        let indexes = self.store().list_index_names()?;
+        let mut fields = Vec::new();
+
+        for index in indexes {
+            let Some(schema) = self.load_index(&index)? else {
+                continue;
+            };
+            if !schema
+                .prefixes
+                .iter()
+                .any(|prefix| doc_key.starts_with(prefix))
+            {
+                continue;
+            }
+
+            for (field_name, field_schema) in &schema.fields {
+                let SearchFieldSchema::Vector(vector_schema) = field_schema;
+                fields.push(IndexedVectorField {
+                    index_name: schema.name.clone(),
+                    field_name: field_name.clone(),
+                    schema: *vector_schema,
+                });
+            }
+        }
+
+        Ok(fields)
+    }
+
+    fn indexed_vector_fields_for_hash_field(
+        &self,
+        doc_key: &[u8],
+        field: &[u8],
+    ) -> Result<Vec<IndexedVectorField>> {
+        Ok(self
+            .indexed_vector_fields_for_doc(doc_key)?
+            .into_iter()
+            .filter(|indexed_field| indexed_field.field_name.as_slice() == field)
+            .collect())
+    }
+
     pub fn create_index(&self, schema: SearchIndexSchema) -> Result<()> {
         validate_index_schema(&schema)?;
         if self.store().load_index_schema(&schema.name)?.is_some() {
@@ -326,7 +418,6 @@ impl<'a> SearchIndexManager<'a> {
     }
 
     pub fn rebuild_index(&self, schema: &SearchIndexSchema) -> Result<()> {
-        let flat_index = FlatVectorIndex::new(self.redis);
         let mut unique_keys = BTreeSet::new();
         for prefix in &schema.prefixes {
             for key in self.redis.scan_hash_keys_by_prefix(prefix)? {
@@ -337,8 +428,9 @@ impl<'a> SearchIndexManager<'a> {
         for doc_key in unique_keys {
             for (field_name, field_schema) in &schema.fields {
                 let SearchFieldSchema::Vector(vector_schema) = field_schema;
+                let index_engine = self.vector_index_for_schema(vector_schema)?;
                 if let Some(raw_value) = self.redis.hget_raw(&doc_key, field_name)? {
-                    flat_index.upsert_vector(
+                    index_engine.upsert_vector(
                         &schema.name,
                         field_name,
                         &doc_key,
@@ -353,36 +445,24 @@ impl<'a> SearchIndexManager<'a> {
     }
 
     pub fn refresh_hash_document(&self, doc_key: &[u8]) -> Result<()> {
-        let indexes = self.store().list_index_names()?;
-        let flat_index = FlatVectorIndex::new(self.redis);
-
-        for index in indexes {
-            let Some(schema) = self.load_index(&index)? else {
-                continue;
-            };
-            if !schema
-                .prefixes
-                .iter()
-                .any(|prefix| doc_key.starts_with(prefix))
-            {
-                continue;
-            }
-
-            for (field_name, field_schema) in &schema.fields {
-                let SearchFieldSchema::Vector(vector_schema) = field_schema;
-                match self.redis.hget_raw(doc_key, field_name)? {
-                    Some(raw_value) => {
-                        flat_index.upsert_vector(
-                            &schema.name,
-                            field_name,
-                            doc_key,
-                            &raw_value,
-                            vector_schema,
-                        )?;
-                    }
-                    None => {
-                        flat_index.delete_vector(&schema.name, field_name, doc_key)?;
-                    }
+        for indexed_field in self.indexed_vector_fields_for_doc(doc_key)? {
+            let index_engine = self.vector_index_for_schema(&indexed_field.schema)?;
+            match self.redis.hget_raw(doc_key, &indexed_field.field_name)? {
+                Some(raw_value) => {
+                    index_engine.upsert_vector(
+                        &indexed_field.index_name,
+                        &indexed_field.field_name,
+                        doc_key,
+                        &raw_value,
+                        &indexed_field.schema,
+                    )?;
+                }
+                None => {
+                    index_engine.delete_vector(
+                        &indexed_field.index_name,
+                        &indexed_field.field_name,
+                        doc_key,
+                    )?;
                 }
             }
         }
@@ -396,53 +476,24 @@ impl<'a> SearchIndexManager<'a> {
         field: &[u8],
         value: &[u8],
     ) -> Result<()> {
-        let indexes = self.store().list_index_names()?;
-
-        for index in indexes {
-            let Some(schema) = self.load_index(&index)? else {
-                continue;
-            };
-            if !schema
-                .prefixes
-                .iter()
-                .any(|prefix| doc_key.starts_with(prefix))
-            {
-                continue;
-            }
-
-            for (field_name, field_schema) in &schema.fields {
-                if field_name.as_slice() != field {
-                    continue;
-                }
-
-                let SearchFieldSchema::Vector(vector_schema) = field_schema;
-                validate_flat_vector_schema(vector_schema)?;
-                crate::search_distance::decode_f32_vector(value, vector_schema.dim as usize)?;
-            }
+        for indexed_field in self.indexed_vector_fields_for_hash_field(doc_key, field)? {
+            let index_engine = self.vector_index_for_schema(&indexed_field.schema)?;
+            index_engine.validate_schema(&indexed_field.schema)?;
+            codec_for_schema(&indexed_field.schema)?
+                .validate(value, indexed_field.schema.dim as usize)?;
         }
 
         Ok(())
     }
 
     pub fn delete_hash_document(&self, doc_key: &[u8]) -> Result<()> {
-        let indexes = self.store().list_index_names()?;
-        let flat_index = FlatVectorIndex::new(self.redis);
-
-        for index in indexes {
-            let Some(schema) = self.load_index(&index)? else {
-                continue;
-            };
-            if !schema
-                .prefixes
-                .iter()
-                .any(|prefix| doc_key.starts_with(prefix))
-            {
-                continue;
-            }
-
-            for (field_name, _) in &schema.fields {
-                flat_index.delete_vector(&schema.name, field_name, doc_key)?;
-            }
+        for indexed_field in self.indexed_vector_fields_for_doc(doc_key)? {
+            let index_engine = self.vector_index_for_schema(&indexed_field.schema)?;
+            index_engine.delete_vector(
+                &indexed_field.index_name,
+                &indexed_field.field_name,
+                doc_key,
+            )?;
         }
 
         Ok(())
@@ -461,23 +512,9 @@ impl<'a> SearchIndexManager<'a> {
                 key: String::from_utf8_lossy(index).to_string(),
                 location: Default::default(),
             })?;
-        let field_schema = schema
-            .fields
-            .iter()
-            .find_map(|(field_name, field_schema)| {
-                if field_name.as_slice() == field {
-                    Some(field_schema)
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| crate::error::Error::InvalidArgument {
-                message: format!("unknown vector field: {}", String::from_utf8_lossy(field)),
-                location: Default::default(),
-            })?;
-        let SearchFieldSchema::Vector(vector_schema) = field_schema;
-        let flat_index = FlatVectorIndex::new(self.redis);
-        flat_index.knn(index, field, query, vector_schema, k)
+        let vector_schema = self.vector_field_schema(&schema.fields, field)?;
+        let index_engine = self.vector_index_for_schema(vector_schema)?;
+        index_engine.knn(index, field, query, vector_schema, k)
     }
 }
 
@@ -497,10 +534,16 @@ fn validate_index_schema(schema: &SearchIndexSchema) -> Result<()> {
 
     for (_, field_schema) in &schema.fields {
         let SearchFieldSchema::Vector(vector_schema) = field_schema;
-        validate_flat_vector_schema(vector_schema)?;
+        validate_vector_field_schema(vector_schema)?;
     }
 
     Ok(())
+}
+
+fn validate_vector_field_schema(schema: &VectorFieldSchema) -> Result<()> {
+    match schema.algorithm {
+        VectorAlgorithm::Flat => validate_flat_vector_schema(schema),
+    }
 }
 
 fn validate_flat_vector_schema(schema: &VectorFieldSchema) -> Result<()> {

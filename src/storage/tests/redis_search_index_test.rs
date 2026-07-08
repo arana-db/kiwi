@@ -28,7 +28,7 @@ use storage::search_types::{
 };
 use storage::storage::Storage;
 use storage::{
-    BgTaskHandler, Redis, SearchIndexManager, StorageOptions, safe_cleanup_test_db,
+    BgTaskHandler, Redis, SearchCfStore, SearchIndexManager, StorageOptions, safe_cleanup_test_db,
     unique_test_db_path,
 };
 
@@ -170,6 +170,37 @@ fn flat_knn_search_returns_nearest_docs() {
         .search_knn(b"idx", b"emb", &f32_bytes(&[1.0, 0.0, 0.0]), 2)
         .unwrap();
     let doc_keys: Vec<Vec<u8>> = hits.into_iter().map(|hit| hit.doc_key).collect();
+
+    assert_eq!(doc_keys, vec![b"doc:1".to_vec(), b"doc:2".to_vec()]);
+}
+
+#[test]
+fn search_cf_prefix_scan_stays_contiguous_with_default_comparator() {
+    let (redis, _path) = open_test_redis();
+    let store = SearchCfStore::new(&redis);
+    let vector = f32_bytes(&[1.0, 0.0, 0.0]);
+
+    store
+        .put_vector_entry(b"i", b"f", b"doc:1", &vector)
+        .unwrap();
+    store
+        .put_vector_entry(b"i", b"f", b"doc:2", &vector)
+        .unwrap();
+    store
+        .put_vector_entry(b"i", b"g", b"doc:3", &vector)
+        .unwrap();
+    store
+        .put_vector_entry(b"j", b"f", b"doc:4", &vector)
+        .unwrap();
+    store
+        .put_vector_entry(b"i-longer", b"f", b"doc:5", &vector)
+        .unwrap();
+    store
+        .put_vector_entry(b"i", b"field-longer", b"doc:6", &vector)
+        .unwrap();
+
+    let entries = store.iter_vector_entries(b"i", b"f").unwrap();
+    let doc_keys: Vec<Vec<u8>> = entries.into_iter().map(|(doc_key, _)| doc_key).collect();
 
     assert_eq!(doc_keys, vec![b"doc:1".to_vec(), b"doc:2".to_vec()]);
 }

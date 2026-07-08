@@ -15,61 +15,67 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use snafu::Location;
-
 use crate::error::Result;
+use crate::search_codec::{DecodedVector, codec_for_schema};
 use crate::search_types::{DistanceMetric, VectorFieldSchema};
 
-pub fn decode_f32_vector(bytes: &[u8], dim: usize) -> Result<Vec<f32>> {
-    let expected_len = dim.checked_mul(std::mem::size_of::<f32>()).ok_or_else(|| {
-        crate::error::Error::InvalidFormat {
-            message: format!("vector dimension {dim} overflows byte length"),
-            location: Location::new(file!(), line!(), column!()),
+pub trait VectorDistance: Sync {
+    fn metric(&self) -> DistanceMetric;
+
+    fn distance(&self, left: &[f32], right: &[f32]) -> f32;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct L2Distance;
+
+impl VectorDistance for L2Distance {
+    fn metric(&self) -> DistanceMetric {
+        DistanceMetric::L2
+    }
+
+    fn distance(&self, left: &[f32], right: &[f32]) -> f32 {
+        left.iter()
+            .zip(right.iter())
+            .map(|(left, right)| {
+                let diff = left - right;
+                diff * diff
+            })
+            .sum()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct InnerProductDistance;
+
+impl VectorDistance for InnerProductDistance {
+    fn metric(&self) -> DistanceMetric {
+        DistanceMetric::IP
+    }
+
+    fn distance(&self, left: &[f32], right: &[f32]) -> f32 {
+        -dot_product(left, right)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct CosineDistance;
+
+impl VectorDistance for CosineDistance {
+    fn metric(&self) -> DistanceMetric {
+        DistanceMetric::Cosine
+    }
+
+    fn distance(&self, left: &[f32], right: &[f32]) -> f32 {
+        let dot = dot_product(left, right);
+        let left_norm = left.iter().map(|value| value * value).sum::<f32>().sqrt();
+        let right_norm = right.iter().map(|value| value * value).sum::<f32>().sqrt();
+
+        if left_norm == 0.0 || right_norm == 0.0 {
+            return 1.0;
         }
-    })?;
 
-    if bytes.len() != expected_len {
-        return Err(crate::error::Error::InvalidFormat {
-            message: format!(
-                "vector byte length mismatch: expected {expected_len}, got {}",
-                bytes.len()
-            ),
-            location: Location::new(file!(), line!(), column!()),
-        });
+        1.0 - (dot / (left_norm * right_norm))
     }
-
-    let mut values = Vec::with_capacity(dim);
-    for chunk in bytes.chunks_exact(4) {
-        let raw = [chunk[0], chunk[1], chunk[2], chunk[3]];
-        values.push(f32::from_le_bytes(raw));
-    }
-
-    Ok(values)
-}
-
-pub fn distance(metric: DistanceMetric, query: &[u8], vector: &[u8], dim: usize) -> Result<f32> {
-    let query = decode_f32_vector(query, dim)?;
-    let vector = decode_f32_vector(vector, dim)?;
-
-    Ok(match metric {
-        DistanceMetric::L2 => l2_distance(&query, &vector),
-        DistanceMetric::IP => -dot_product(&query, &vector),
-        DistanceMetric::Cosine => cosine_distance(&query, &vector),
-    })
-}
-
-pub fn distance_for_schema(schema: &VectorFieldSchema, query: &[u8], vector: &[u8]) -> Result<f32> {
-    distance(schema.distance_metric, query, vector, schema.dim as usize)
-}
-
-fn l2_distance(left: &[f32], right: &[f32]) -> f32 {
-    left.iter()
-        .zip(right.iter())
-        .map(|(left, right)| {
-            let diff = left - right;
-            diff * diff
-        })
-        .sum()
 }
 
 fn dot_product(left: &[f32], right: &[f32]) -> f32 {
@@ -79,14 +85,38 @@ fn dot_product(left: &[f32], right: &[f32]) -> f32 {
         .sum()
 }
 
-fn cosine_distance(left: &[f32], right: &[f32]) -> f32 {
-    let dot = dot_product(left, right);
-    let left_norm = left.iter().map(|value| value * value).sum::<f32>().sqrt();
-    let right_norm = right.iter().map(|value| value * value).sum::<f32>().sqrt();
+static L2_DISTANCE: L2Distance = L2Distance;
+static INNER_PRODUCT_DISTANCE: InnerProductDistance = InnerProductDistance;
+static COSINE_DISTANCE: CosineDistance = CosineDistance;
 
-    if left_norm == 0.0 || right_norm == 0.0 {
-        return 1.0;
+pub fn decode_f32_vector(bytes: &[u8], dim: usize) -> Result<Vec<f32>> {
+    crate::search_codec::decode_f32_vector(bytes, dim)
+}
+
+pub fn calculator_for_metric(metric: DistanceMetric) -> Result<&'static dyn VectorDistance> {
+    match metric {
+        DistanceMetric::L2 => Ok(&L2_DISTANCE),
+        DistanceMetric::IP => Ok(&INNER_PRODUCT_DISTANCE),
+        DistanceMetric::Cosine => Ok(&COSINE_DISTANCE),
     }
+}
 
-    1.0 - (dot / (left_norm * right_norm))
+pub fn distance(metric: DistanceMetric, query: &[u8], vector: &[u8], dim: usize) -> Result<f32> {
+    let query = decode_f32_vector(query, dim)?;
+    let vector = decode_f32_vector(vector, dim)?;
+    let calculator = calculator_for_metric(metric)?;
+    Ok(calculator.distance(&query, &vector))
+}
+
+pub fn distance_for_schema(schema: &VectorFieldSchema, query: &[u8], vector: &[u8]) -> Result<f32> {
+    let codec = codec_for_schema(schema)?;
+    let query = codec.decode(query, schema.dim as usize)?;
+    let vector = codec.decode(vector, schema.dim as usize)?;
+    let calculator = calculator_for_metric(schema.distance_metric)?;
+
+    match (query, vector) {
+        (DecodedVector::Float32(query), DecodedVector::Float32(vector)) => {
+            Ok(calculator.distance(&query, &vector))
+        }
+    }
 }
