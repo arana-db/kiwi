@@ -29,6 +29,8 @@ pub mod expire;
 pub mod expireat;
 pub mod flushall;
 pub mod flushdb;
+pub mod ft_create;
+pub mod ft_search;
 pub mod get;
 pub mod getbit;
 pub mod getrange;

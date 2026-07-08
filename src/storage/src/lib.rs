@@ -35,6 +35,9 @@ mod format_lists_data_key;
 
 mod coding;
 mod expiration_manager;
+pub mod search_distance;
+pub mod search_encoding;
+pub mod search_types;
 pub mod slot_indexer;
 mod statistics;
 mod util;
@@ -49,6 +52,7 @@ mod storage_murmur3;
 // commands
 mod redis_hashes;
 mod redis_lists;
+mod redis_search;
 mod redis_sets;
 mod redis_strings;
 
@@ -71,6 +75,9 @@ pub use format_base_value::*;
 pub use format_zset_score_key::{ScoreMember, ZsetScoreMember};
 pub use options::StorageOptions;
 pub use redis::{ColumnFamilyIndex, Redis, TypeCheckState};
+pub use redis_search::{
+    FlatVectorIndex, SearchCfStore, SearchIndexManager, VectorIndex, VectorSearchHit,
+};
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use storage_impl::BeforeOrAfter;

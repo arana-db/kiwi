@@ -79,6 +79,9 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         crate::bitcount::BitcountCmd,
         crate::bitpos::BitposCmd,
         crate::bitop::BitopCmd,
+        // Search commands
+        crate::ft_create::FtCreateCmd,
+        crate::ft_search::FtSearchCmd,
         // Keyspace and TTL commands
         crate::del::DelCmd,
         crate::exists::ExistsCmd,

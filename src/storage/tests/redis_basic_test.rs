@@ -126,9 +126,9 @@ mod redis_basic_test {
 
         assert!(!redis.is_starting.load(Ordering::SeqCst));
         assert!(redis.db.is_some());
-        assert_eq!(redis.handles.len(), 6);
+        assert_eq!(redis.handles.len(), 7);
 
-        for cf_index in 0..6 {
+        for cf_index in 0..7 {
             let cf_enum = match cf_index {
                 0 => ColumnFamilyIndex::MetaCF,
                 1 => ColumnFamilyIndex::HashesDataCF,
@@ -136,6 +136,7 @@ mod redis_basic_test {
                 3 => ColumnFamilyIndex::ListsDataCF,
                 4 => ColumnFamilyIndex::ZsetsDataCF,
                 5 => ColumnFamilyIndex::ZsetsScoreCF,
+                6 => ColumnFamilyIndex::SearchCF,
                 _ => panic!("Invalid CF index"),
             };
 
@@ -154,6 +155,7 @@ mod redis_basic_test {
             "list_data_cf",  // ListsDataCF
             "zset_data_cf",  // ZsetsDataCF
             "zset_score_cf", // ZsetsScoreCF
+            "search_cf",     // SearchCF
         ];
 
         for (i, expected_name) in expected_cf_names.iter().enumerate() {
@@ -176,6 +178,7 @@ mod redis_basic_test {
         assert_eq!(ColumnFamilyIndex::ListsDataCF as usize, 3);
         assert_eq!(ColumnFamilyIndex::ZsetsDataCF as usize, 4);
         assert_eq!(ColumnFamilyIndex::ZsetsScoreCF as usize, 5);
+        assert_eq!(ColumnFamilyIndex::SearchCF as usize, 6);
 
         assert_eq!(ColumnFamilyIndex::MetaCF.name(), "default");
         assert_eq!(ColumnFamilyIndex::HashesDataCF.name(), "hash_data_cf");
@@ -183,6 +186,7 @@ mod redis_basic_test {
         assert_eq!(ColumnFamilyIndex::ListsDataCF.name(), "list_data_cf");
         assert_eq!(ColumnFamilyIndex::ZsetsDataCF.name(), "zset_data_cf");
         assert_eq!(ColumnFamilyIndex::ZsetsScoreCF.name(), "zset_score_cf");
+        assert_eq!(ColumnFamilyIndex::SearchCF.name(), "search_cf");
     }
 
     #[test]

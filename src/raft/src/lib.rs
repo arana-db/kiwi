@@ -60,6 +60,7 @@ pub const CF_NAMES: [&str; COLUMN_FAMILY_COUNT] = [
     "list_data_cf",  // ListsDataCF = 3
     "zset_data_cf",  // ZsetsDataCF = 4
     "zset_score_cf", // ZsetsScoreCF = 5
+    "search_cf",     // SearchCF = 6
 ];
 
 const _: () = assert!(
@@ -81,6 +82,7 @@ mod tests {
             ColumnFamilyIndex::ListsDataCF,
             ColumnFamilyIndex::ZsetsDataCF,
             ColumnFamilyIndex::ZsetsScoreCF,
+            ColumnFamilyIndex::SearchCF,
         ];
         for (i, cf_index) in variants.iter().enumerate() {
             assert_eq!(

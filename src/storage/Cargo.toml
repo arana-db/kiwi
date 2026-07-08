@@ -22,6 +22,18 @@ path = "tests/redis_list_test.rs"
 name = "ttl_test"
 path = "tests/ttl_test.rs"
 
+[[test]]
+name = "redis_search_encoding_test"
+path = "tests/redis_search_encoding_test.rs"
+
+[[test]]
+name = "redis_search_distance_test"
+path = "tests/redis_search_distance_test.rs"
+
+[[test]]
+name = "redis_search_index_test"
+path = "tests/redis_search_index_test.rs"
+
 [dependencies]
 rocksdb.workspace = true 
 log.workspace = true

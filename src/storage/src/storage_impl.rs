@@ -17,8 +17,10 @@
 
 use crate::error::{Error, InvalidArgumentSnafu, Result};
 use crate::format_zset_score_key::ZsetScoreMember;
+use crate::search_types::SearchIndexSchema;
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage::Storage;
+use crate::{SearchIndexManager, VectorSearchHit};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeforeOrAfter {
@@ -39,6 +41,43 @@ impl Storage {
         etime: u64,
     ) -> Result<bool> {
         self.insts[instance_id].set_key_etime(key, etime)
+    }
+
+    fn refresh_hash_indexes_for_instance(&self, instance_id: usize, key: &[u8]) -> Result<()> {
+        SearchIndexManager::new(self.insts[instance_id].as_ref()).refresh_hash_document(key)
+    }
+
+    fn delete_hash_indexes_for_instance(&self, instance_id: usize, key: &[u8]) -> Result<()> {
+        SearchIndexManager::new(self.insts[instance_id].as_ref()).delete_hash_document(key)
+    }
+
+    fn validate_hash_indexed_field_for_instance(
+        &self,
+        instance_id: usize,
+        key: &[u8],
+        field: &[u8],
+        value: &[u8],
+    ) -> Result<()> {
+        SearchIndexManager::new(self.insts[instance_id].as_ref())
+            .validate_hash_field_value(key, field, value)
+    }
+
+    pub fn ft_create(&self, schema: SearchIndexSchema) -> Result<()> {
+        let slot_id = key_to_slot_id(&schema.name);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        SearchIndexManager::new(self.insts[instance_id].as_ref()).create_index(schema)
+    }
+
+    pub fn ft_search_knn(
+        &self,
+        index: &[u8],
+        field: &[u8],
+        query: &[u8],
+        k: usize,
+    ) -> Result<Vec<VectorSearchHit>> {
+        let slot_id = key_to_slot_id(index);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        SearchIndexManager::new(self.insts[instance_id].as_ref()).search_knn(index, field, query, k)
     }
 
     // Strings Commands Implementation
@@ -299,7 +338,15 @@ impl Storage {
     pub fn hset(&self, key: &[u8], field: &[u8], value: &[u8]) -> Result<i32> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        self.insts[instance_id].hset(key, field, value)
+        self.validate_hash_indexed_field_for_instance(instance_id, key, field, value)?;
+        let result = self.insts[instance_id].hset(key, field, value);
+        match result {
+            Ok(value_added) => {
+                self.refresh_hash_indexes_for_instance(instance_id, key)?;
+                Ok(value_added)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn hget(&self, key: &[u8], field: &[u8]) -> Result<Option<String>> {
@@ -311,7 +358,14 @@ impl Storage {
     pub fn hdel(&self, key: &[u8], fields: &[Vec<u8>]) -> Result<i32> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        self.insts[instance_id].hdel(key, fields)
+        let result = self.insts[instance_id].hdel(key, fields);
+        match result {
+            Ok(deleted_count) => {
+                self.refresh_hash_indexes_for_instance(instance_id, key)?;
+                Ok(deleted_count)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn hexists(&self, key: &[u8], field: &[u8]) -> Result<bool> {
@@ -693,7 +747,12 @@ impl Storage {
 
             // Try to delete the key - this will handle all data types
             match self.insts[instance_id].del_key(key) {
-                Ok(true) => deleted_count += 1,
+                Ok(true) => {
+                    deleted_count += 1;
+                    if let Err(error) = self.delete_hash_indexes_for_instance(instance_id, key) {
+                        log::warn!("Error deleting search index entries: {:?}", error);
+                    }
+                }
                 Ok(false) => {} // Key doesn't exist
                 Err(e) => {
                     // Log error but continue deleting other keys

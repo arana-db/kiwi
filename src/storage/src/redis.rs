@@ -62,13 +62,14 @@ pub enum ColumnFamilyIndex {
     ListsDataCF = 3,  // list data
     ZsetsDataCF = 4,  // zset data
     ZsetsScoreCF = 5, // zset score
+    SearchCF = 6,     // search index
 }
 
 impl ColumnFamilyIndex {
     /// Total number of column families.
     /// Update this constant when adding new column families.
     /// This constant is used by batch.rs for validation.
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 7;
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -78,6 +79,7 @@ impl ColumnFamilyIndex {
             ColumnFamilyIndex::ListsDataCF => "list_data_cf",
             ColumnFamilyIndex::ZsetsDataCF => "zset_data_cf",
             ColumnFamilyIndex::ZsetsScoreCF => "zset_score_cf",
+            ColumnFamilyIndex::SearchCF => "search_cf",
         }
     }
 
@@ -89,7 +91,7 @@ impl ColumnFamilyIndex {
             ColumnFamilyIndex::ZsetsDataCF | ColumnFamilyIndex::ZsetsScoreCF => {
                 Some(DataType::ZSet)
             }
-            ColumnFamilyIndex::MetaCF => None,
+            ColumnFamilyIndex::MetaCF | ColumnFamilyIndex::SearchCF => None,
         }
     }
 }
@@ -250,6 +252,7 @@ impl Redis {
             ("list_data_cf", true, None),              // list: bloom filter
             ("zset_data_cf", false, Some(16 * 1024)),  // zset data: 16KB block size
             ("zset_score_cf", false, Some(16 * 1024)), // zset score: 16KB block size
+            ("search_cf", true, None),                 // search index: bloom filter
         ];
         let column_families: Vec<ColumnFamilyDescriptor> = CF_CONFIGS
             .iter()
@@ -480,6 +483,7 @@ impl Redis {
             self.get_cf_handle(ColumnFamilyIndex::ListsDataCF),
             self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF),
             self.get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF),
+            self.get_cf_handle(ColumnFamilyIndex::SearchCF),
         ];
 
         Ok(Box::new(crate::batch::RocksBatch::new(

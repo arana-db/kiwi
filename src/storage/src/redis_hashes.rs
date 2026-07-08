@@ -23,8 +23,11 @@ use kstd::lock_mgr::ScopeRecordLock;
 use rocksdb::ReadOptions;
 use snafu::{OptionExt, ResultExt};
 
+use std::collections::HashMap;
+
 use crate::error::{OptionNoneSnafu, RedisErrSnafu, RocksSnafu};
 use crate::format_base_data_value::{BaseDataValue, ParsedBaseDataValue};
+use crate::format_base_key::ParsedBaseKey;
 use crate::format_base_meta_value::{HashesMetaValue, ParsedHashesMetaValue};
 use crate::format_member_data_key::MemberDataKey;
 use crate::get_db_and_cfs;
@@ -33,6 +36,105 @@ use crate::util::is_tail_wildcard;
 use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckState};
 
 impl Redis {
+    /// Get the raw value of a hash field as bytes.
+    pub fn hget_raw(&self, key: &[u8], field: &[u8]) -> Result<Option<Vec<u8>>> {
+        let (db, cfs) = get_db_and_cfs!(
+            self,
+            ColumnFamilyIndex::MetaCF,
+            ColumnFamilyIndex::HashesDataCF
+        );
+        debug_assert_eq!(cfs.len(), 2);
+        let meta_cf = &cfs[0];
+        let data_cf = &cfs[1];
+
+        let snapshot = db.snapshot();
+        let mut read_options = ReadOptions::default();
+        read_options.set_snapshot(&snapshot);
+
+        let base_meta_key = BaseMetaKey::new(key).encode()?;
+        if let Some(meta_val_bytes) = db
+            .get_cf_opt(meta_cf, &base_meta_key, &read_options)
+            .context(RocksSnafu)?
+        {
+            match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
+                TypeCheckState::Missing | TypeCheckState::Stale => {
+                    return Ok(None);
+                }
+                TypeCheckState::Match => {}
+            }
+            let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
+            let version = meta_val.version();
+            let data_key = MemberDataKey::new(key, version, field);
+            if let Some(data_val_bytes) = db
+                .get_cf_opt(data_cf, &data_key.encode()?, &read_options)
+                .context(RocksSnafu)?
+            {
+                let mut data_val = ParsedBaseDataValue::new(&data_val_bytes[..])?;
+                data_val.strip_suffix();
+                return Ok(Some(data_val.user_value().to_vec()));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Get multiple raw hash field values keyed by field name.
+    pub fn hmget_raw_map(
+        &self,
+        key: &[u8],
+        fields: &[Vec<u8>],
+    ) -> Result<HashMap<Vec<u8>, Vec<u8>>> {
+        let mut values = HashMap::new();
+        for field in fields {
+            if let Some(value) = self.hget_raw(key, field)? {
+                values.insert(field.clone(), value);
+            }
+        }
+        Ok(values)
+    }
+
+    /// Scan live hash keys whose user key starts with the given prefix.
+    pub fn scan_hash_keys_by_prefix(&self, prefix: &[u8]) -> Result<Vec<Vec<u8>>> {
+        let (db, cfs) = get_db_and_cfs!(self, ColumnFamilyIndex::MetaCF);
+        debug_assert_eq!(cfs.len(), 1);
+        let meta_cf = &cfs[0];
+
+        let iter = db.iterator_cf_opt(
+            meta_cf,
+            ReadOptions::default(),
+            rocksdb::IteratorMode::Start,
+        );
+        let mut keys = Vec::new();
+
+        for item in iter {
+            let (encoded_key, meta_val_bytes) = item.context(RocksSnafu)?;
+            let parsed_key = ParsedBaseKey::new(&encoded_key)?;
+            if !parsed_key.key().starts_with(prefix) {
+                continue;
+            }
+
+            let Some(first_byte) = meta_val_bytes.first() else {
+                continue;
+            };
+            let data_type = match DataType::try_from(*first_byte) {
+                Ok(data_type) => data_type,
+                Err(_) => continue,
+            };
+            if data_type != DataType::Hash {
+                continue;
+            }
+
+            let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
+            if meta_val.is_stale() {
+                continue;
+            }
+
+            keys.push(parsed_key.key().to_vec());
+        }
+
+        Ok(keys)
+    }
+
     /// Delete one or more hash fields
     pub fn hdel(&self, key: &[u8], fields: &[Vec<u8>]) -> Result<i32> {
         let (db, cfs) = get_db_and_cfs!(
