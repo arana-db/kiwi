@@ -99,7 +99,7 @@ impl CmdExecutorNetworkExt for CmdExecutor {
 }
 
 /// Shared dummy storage for connection-local commands that do not touch real
-/// storage (ping/auth/client/hello). Reused across calls to avoid allocating a
+/// storage (ping/auth/client). Reused across calls to avoid allocating a
 /// throwaway `Storage` on every hot-path invocation.
 static LOCAL_DUMMY_STORAGE: LazyLock<Arc<Storage>> = LazyLock::new(|| Arc::new(Storage::new(1, 0)));
 
