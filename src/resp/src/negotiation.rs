@@ -25,7 +25,19 @@ use crate::{
     types::{RespData, RespVersion},
 };
 
+/// Result of authenticating via the `HELLO ... AUTH username password` clause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HelloAuthResult {
+    /// Password matched the configured requirepass; client may be authenticated.
+    Authenticated,
+    /// Password did not match; client should be rejected with WRONGPASS.
+    WrongPassword,
+    /// No requirepass is configured; AUTH clause is not allowed.
+    NoPasswordConfigured,
+}
+
 /// Protocol negotiation handler for RESP3
+#[derive(Clone)]
 pub struct ProtocolNegotiator {
     current_version: RespVersion,
     client_capabilities: HashMap<String, String>,
@@ -53,8 +65,27 @@ impl ProtocolNegotiator {
         &self.client_capabilities
     }
 
-    /// Handle HELLO command for protocol negotiation
-    pub fn handle_hello(&mut self, command: &RespCommand) -> RespResult<RespData> {
+    /// Handle HELLO command for protocol negotiation.
+    ///
+    /// `authentication_required` reflects whether the server is configured
+    /// with a requirepass password. When true, a client must already be
+    /// authenticated or authenticate via the HELLO ... AUTH clause to receive
+    /// the HELLO handshake. When false, the NOAUTH check is skipped.
+    ///
+    /// `authenticate` is called with the `username` and `password` supplied via
+    /// the AUTH clause. It must report whether the client should be
+    /// authenticated, rejected for a wrong username/password pair, or rejected
+    /// because no password is configured.
+    pub fn handle_hello<F>(
+        &mut self,
+        command: &RespCommand,
+        already_authenticated: bool,
+        authentication_required: bool,
+        mut authenticate: F,
+    ) -> RespResult<(RespData, Option<String>)>
+    where
+        F: FnMut(&[u8], &[u8]) -> HelloAuthResult,
+    {
         // HELLO [protover [AUTH username password] [SETNAME clientname]]
         let mut args_iter = command.args.iter().peekable();
 
@@ -77,10 +108,13 @@ impl ProtocolNegotiator {
             None
         };
 
-        // Update current version only if explicitly requested
-        if let Some(v) = requested_version {
-            self.current_version = v;
-        }
+        // Determine the version that will be used for this response. The
+        // connection's stored version is only updated after all checks pass.
+        let response_version = requested_version.unwrap_or(self.current_version);
+
+        let mut auth_attempted = false;
+
+        let mut pending_set_name: Option<String> = None;
 
         // Parse additional arguments (AUTH, SETNAME, etc.)
         while let Some(arg) = args_iter.next() {
@@ -91,15 +125,28 @@ impl ProtocolNegotiator {
             match arg_str.as_str() {
                 "AUTH" => {
                     // AUTH username password
-                    let _username = args_iter.next().ok_or_else(|| {
+                    let username = args_iter.next().ok_or_else(|| {
                         RespError::InvalidData("AUTH requires username".to_string())
                     })?;
-                    let _password = args_iter.next().ok_or_else(|| {
+                    let password = args_iter.next().ok_or_else(|| {
                         RespError::InvalidData("AUTH requires password".to_string())
                     })?;
-                    // TODO: Implement authentication logic
-                    self.client_capabilities
-                        .insert("auth".to_string(), "enabled".to_string());
+
+                    auth_attempted = true;
+                    match authenticate(username.as_ref(), password.as_ref()) {
+                        HelloAuthResult::Authenticated => {}
+                        HelloAuthResult::WrongPassword => {
+                            return Err(RespError::InvalidData(
+                                "WRONGPASS invalid username-password pair or user is disabled."
+                                    .to_string(),
+                            ));
+                        }
+                        HelloAuthResult::NoPasswordConfigured => {
+                            return Err(RespError::InvalidData(
+                                "ERR HELLO AUTH called without any password configured".to_string(),
+                            ));
+                        }
+                    }
                 }
                 "SETNAME" => {
                     // SETNAME clientname
@@ -108,8 +155,7 @@ impl ProtocolNegotiator {
                     })?;
                     let client_name_str = std::str::from_utf8(client_name)
                         .map_err(|_| RespError::InvalidData("Invalid client name".to_string()))?;
-                    self.client_capabilities
-                        .insert("client_name".to_string(), client_name_str.to_string());
+                    pending_set_name = Some(client_name_str.to_string());
                 }
                 _ => {
                     return Err(RespError::InvalidData(format!(
@@ -120,17 +166,40 @@ impl ProtocolNegotiator {
             }
         }
 
-        // Build response based on protocol version
+        // Redis requires the client to be authenticated before returning the
+        // HELLO handshake when a password is configured. An AUTH clause that
+        // succeeds satisfies this, as does a connection that was already
+        // authenticated.
+        if authentication_required && !auth_attempted && !already_authenticated {
+            return Err(RespError::InvalidData(
+                "NOAUTH HELLO must be called with the client already authenticated, otherwise the HELLO <proto> AUTH <user> <pass> option can be used to authenticate the client and select the RESP protocol version at the same time".to_string(),
+            ));
+        }
+
+        // All checks passed: commit the negotiated version and persist any SETNAME
+        // from this command.
+        self.current_version = response_version;
+        if let Some(name) = pending_set_name.as_ref() {
+            self.client_capabilities
+                .insert("client_name".to_string(), name.clone());
+        }
+
         match self.current_version {
-            RespVersion::RESP2 => self.build_resp2_hello_response(),
-            RespVersion::RESP3 => self.build_resp3_hello_response(),
-            _ => self.build_resp2_hello_response(), // Fallback to RESP2
+            RespVersion::RESP2 => self
+                .build_resp2_hello_response()
+                .map(|data| (data, pending_set_name)),
+            RespVersion::RESP3 => self
+                .build_resp3_hello_response()
+                .map(|data| (data, pending_set_name)),
+            _ => self
+                .build_resp2_hello_response()
+                .map(|data| (data, pending_set_name)), // Fallback to RESP2
         }
     }
 
     fn build_resp2_hello_response(&self) -> RespResult<RespData> {
         // RESP2 response format (array of key-value pairs)
-        let mut response = vec![
+        let response = vec![
             RespData::BulkString(Some(Bytes::from("server"))),
             RespData::BulkString(Some(Bytes::from("kiwi"))),
             RespData::BulkString(Some(Bytes::from("version"))),
@@ -143,20 +212,16 @@ impl ProtocolNegotiator {
             RespData::BulkString(Some(Bytes::from("standalone"))),
             RespData::BulkString(Some(Bytes::from("role"))),
             RespData::BulkString(Some(Bytes::from("master"))),
+            RespData::BulkString(Some(Bytes::from("modules"))),
+            RespData::Array(Some(vec![])),
         ];
-
-        // Add client capabilities if any
-        for (key, value) in &self.client_capabilities {
-            response.push(RespData::BulkString(Some(Bytes::from(key.clone()))));
-            response.push(RespData::BulkString(Some(Bytes::from(value.clone()))));
-        }
 
         Ok(RespData::Array(Some(response)))
     }
 
     fn build_resp3_hello_response(&self) -> RespResult<RespData> {
         // RESP3 response format (map)
-        let mut pairs = vec![
+        let pairs = vec![
             (
                 RespData::BulkString(Some(Bytes::from("server"))),
                 RespData::BulkString(Some(Bytes::from("kiwi"))),
@@ -181,15 +246,11 @@ impl ProtocolNegotiator {
                 RespData::BulkString(Some(Bytes::from("role"))),
                 RespData::BulkString(Some(Bytes::from("master"))),
             ),
+            (
+                RespData::BulkString(Some(Bytes::from("modules"))),
+                RespData::Array(Some(vec![])),
+            ),
         ];
-
-        // Add client capabilities if any
-        for (key, value) in &self.client_capabilities {
-            pairs.push((
-                RespData::BulkString(Some(Bytes::from(key.clone()))),
-                RespData::BulkString(Some(Bytes::from(value.clone()))),
-            ));
-        }
 
         Ok(RespData::Map(pairs))
     }
@@ -259,7 +320,6 @@ impl ProtocolNegotiator {
     }
 }
 
-#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,7 +330,10 @@ mod tests {
         let mut negotiator = ProtocolNegotiator::new();
         let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("2")], false);
 
-        let response = negotiator.handle_hello(&command).unwrap();
+        let response = negotiator
+            .handle_hello(&command, true, false, |_, _| HelloAuthResult::Authenticated)
+            .expect("handle_hello should succeed")
+            .0;
         assert_eq!(negotiator.current_version(), RespVersion::RESP2);
 
         if let RespData::Array(Some(items)) = response {
@@ -285,7 +348,10 @@ mod tests {
         let mut negotiator = ProtocolNegotiator::new();
         let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
 
-        let response = negotiator.handle_hello(&command).unwrap();
+        let response = negotiator
+            .handle_hello(&command, true, false, |_, _| HelloAuthResult::Authenticated)
+            .expect("handle_hello should succeed")
+            .0;
         assert_eq!(negotiator.current_version(), RespVersion::RESP3);
 
         if let RespData::Map(pairs) = response {
@@ -293,6 +359,24 @@ mod tests {
         } else {
             panic!("Expected map response for RESP3");
         }
+    }
+
+    #[test]
+    fn test_hello_noauth_when_unauthenticated() {
+        let mut negotiator = ProtocolNegotiator::new();
+        let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
+
+        let result = negotiator.handle_hello(&command, false, true, |_, _| {
+            panic!("authenticate should not be called without AUTH")
+        });
+
+        assert!(result.is_err());
+        let err = result
+            .expect_err("handle_hello should fail for unauthenticated client")
+            .to_string();
+        assert!(err.contains("NOAUTH"), "expected NOAUTH error, got {err}");
+        // Version must not switch when the command is rejected.
+        assert_eq!(negotiator.current_version(), RespVersion::RESP2);
     }
 
     #[test]
@@ -304,7 +388,9 @@ mod tests {
 
         // Switch to RESP3
         let command = RespCommand::new(CommandType::Hello, vec![Bytes::from("3")], false);
-        negotiator.handle_hello(&command).unwrap();
+        negotiator
+            .handle_hello(&command, true, false, |_, _| HelloAuthResult::Authenticated)
+            .expect("handle_hello should succeed");
 
         // RESP3 supports new features
         assert!(negotiator.supports_feature("maps"));

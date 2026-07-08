@@ -24,7 +24,7 @@ use cmd::table::CmdTable;
 use executor::{CmdExecution, CmdExecutor};
 use log::error;
 use resp::encode::RespEncoder;
-use resp::{Parse, RespData, RespEncode, RespParseResult, RespVersion};
+use resp::{Parse, RespData, RespEncode, RespParseResult};
 use storage::storage::Storage;
 use tokio::select;
 
@@ -37,7 +37,7 @@ pub async fn process_connection(
     executor: Arc<CmdExecutor>,
 ) -> std::io::Result<()> {
     let mut buf = vec![0; 1024];
-    let mut resp_parser = resp::RespParse::new(resp::RespVersion::RESP2);
+    let mut resp_parser = resp::RespParse::new(client.resp_version());
 
     loop {
         select! {
@@ -59,7 +59,7 @@ pub async fn process_connection(
                                     handle_command(client.clone(), storage.clone(), cmd_table.clone(), executor.clone()).await;
                                     // Extract the reply from the connection and send it
                                     let response = client.take_reply();
-                                    let mut encoder = RespEncoder::new(RespVersion::RESP2);
+                                    let mut encoder = RespEncoder::new(client.resp_version());
                                     encoder.encode_resp_data(&response);
                                     match client.write(encoder.get_response().as_ref()).await {
                                         Ok(_) => (),
