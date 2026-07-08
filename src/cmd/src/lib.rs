@@ -35,6 +35,7 @@ pub mod getrange;
 pub mod getset;
 pub mod group_client;
 pub mod hdel;
+pub mod hello;
 pub mod hexists;
 pub mod hget;
 pub mod hgetall;
@@ -117,6 +118,8 @@ use client::Client;
 use log::debug;
 use resp::RespData;
 use storage::storage::Storage;
+
+pub use auth::RequirepassProvider;
 
 bitflags! {
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

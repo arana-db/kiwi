@@ -169,11 +169,15 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         crate::ping::PingCmd,
     );
 
-    // AuthCmd with requirepass provider
+    // AuthCmd and HelloCmd require the requirepass provider for authentication.
     {
-        let auth_cmd = crate::auth::AuthCmd::new(requirepass_provider);
+        let auth_cmd = crate::auth::AuthCmd::new(Arc::clone(&requirepass_provider));
         let cmd_name = auth_cmd.meta().name.clone();
         cmd_table.insert(cmd_name, Arc::new(auth_cmd));
+    }
+    {
+        let hello_cmd = crate::hello::HelloCmd::new(requirepass_provider);
+        cmd_table.insert(hello_cmd.meta().name.clone(), Arc::new(hello_cmd));
     }
 
     register_group_cmd!(
@@ -183,4 +187,190 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
     );
 
     cmd_table
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use bytes::Bytes;
+    use client::{Client, StreamTrait};
+    use resp::RespData;
+    use storage::storage::Storage;
+
+    use super::create_command_table;
+
+    struct TestStream;
+
+    #[async_trait::async_trait]
+    impl StreamTrait for TestStream {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+
+        async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+    }
+
+    #[test]
+    fn hello_command_returns_resp3_handshake() {
+        let table = create_command_table(Arc::new(|| None));
+        let command = table.get("hello").expect("HELLO should be registered");
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"hello");
+        client.set_argv(&[b"hello".to_vec(), b"3".to_vec()]);
+
+        command.execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert_eq!(
+            client.take_reply(),
+            RespData::Map(vec![
+                (
+                    RespData::BulkString(Some(Bytes::from("server"))),
+                    RespData::BulkString(Some(Bytes::from("kiwi"))),
+                ),
+                (
+                    RespData::BulkString(Some(Bytes::from("version"))),
+                    RespData::BulkString(Some(Bytes::from("1.0.0"))),
+                ),
+                (
+                    RespData::BulkString(Some(Bytes::from("proto"))),
+                    RespData::Integer(3),
+                ),
+                (
+                    RespData::BulkString(Some(Bytes::from("id"))),
+                    RespData::Integer(1),
+                ),
+                (
+                    RespData::BulkString(Some(Bytes::from("mode"))),
+                    RespData::BulkString(Some(Bytes::from("standalone"))),
+                ),
+                (
+                    RespData::BulkString(Some(Bytes::from("role"))),
+                    RespData::BulkString(Some(Bytes::from("master"))),
+                ),
+                (
+                    RespData::BulkString(Some(Bytes::from("modules"))),
+                    RespData::Array(Some(vec![])),
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn hello_bare_with_requirepass_returns_noauth() {
+        let table = create_command_table(Arc::new(|| Some("secret".to_string())));
+        let command = table.get("hello").expect("HELLO should be registered");
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"hello");
+        client.set_argv(&[b"hello".to_vec(), b"3".to_vec()]);
+
+        command.execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert!(!client.is_authenticated());
+        let reply = client.take_reply();
+        assert!(
+            matches!(reply, RespData::Error(ref e) if String::from_utf8_lossy(e).contains("NOAUTH")),
+            "expected NOAUTH error, got {:?}",
+            reply
+        );
+    }
+
+    #[test]
+    fn hello_setname_sets_client_name() {
+        let table = create_command_table(Arc::new(|| None));
+        let command = table.get("hello").expect("HELLO should be registered");
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"hello");
+        client.set_argv(&[
+            b"hello".to_vec(),
+            b"2".to_vec(),
+            b"SETNAME".to_vec(),
+            b"my-client".to_vec(),
+        ]);
+
+        command.execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert_eq!(
+            client.name().as_ref(),
+            b"my-client",
+            "expected SETNAME to set the client name"
+        );
+    }
+
+    #[test]
+    fn hello_auth_with_correct_password_authenticates() {
+        let table = create_command_table(Arc::new(|| Some("secret".to_string())));
+        let command = table.get("hello").expect("HELLO should be registered");
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"hello");
+        client.set_argv(&[
+            b"hello".to_vec(),
+            b"3".to_vec(),
+            b"AUTH".to_vec(),
+            b"default".to_vec(),
+            b"secret".to_vec(),
+        ]);
+
+        command.execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert!(client.is_authenticated());
+        let reply = client.take_reply();
+        assert!(
+            matches!(reply, RespData::Map(_)),
+            "expected HELLO handshake map, got {:?}",
+            reply
+        );
+    }
+
+    #[test]
+    fn hello_auth_with_wrong_password_returns_wrongpass() {
+        let table = create_command_table(Arc::new(|| Some("secret".to_string())));
+        let command = table.get("hello").expect("HELLO should be registered");
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"hello");
+        client.set_argv(&[
+            b"hello".to_vec(),
+            b"3".to_vec(),
+            b"AUTH".to_vec(),
+            b"default".to_vec(),
+            b"wrong".to_vec(),
+        ]);
+
+        command.execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert!(!client.is_authenticated());
+        let reply = client.take_reply();
+        assert!(
+            matches!(reply, RespData::Error(ref e) if String::from_utf8_lossy(e).contains("WRONGPASS")),
+            "expected WRONGPASS error, got {:?}",
+            reply
+        );
+    }
+
+    #[test]
+    fn hello_auth_without_requirepass_returns_error() {
+        let table = create_command_table(Arc::new(|| None));
+        let command = table.get("hello").expect("HELLO should be registered");
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"hello");
+        client.set_argv(&[
+            b"hello".to_vec(),
+            b"3".to_vec(),
+            b"AUTH".to_vec(),
+            b"default".to_vec(),
+            b"anything".to_vec(),
+        ]);
+
+        command.execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert!(!client.is_authenticated());
+        let reply = client.take_reply();
+        assert!(
+            matches!(reply, RespData::Error(ref e) if String::from_utf8_lossy(e).contains("HELLO AUTH called without")),
+            "expected no-password-configured error, got {:?}",
+            reply
+        );
+    }
 }

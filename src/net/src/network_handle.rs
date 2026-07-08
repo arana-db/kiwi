@@ -31,7 +31,7 @@ use cmd::table::CmdTable;
 use executor::CmdExecutor;
 use log::{debug, error, warn};
 use resp::encode::RespEncoder;
-use resp::{Parse, RespData, RespEncode, RespParseResult, RespVersion};
+use resp::{Parse, RespData, RespEncode, RespParseResult};
 use tokio::select;
 
 use crate::executor_ext::CmdExecutorNetworkExt;
@@ -52,7 +52,7 @@ pub async fn process_network_connection(
     leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 ) -> std::io::Result<()> {
     let mut buf = vec![0; 4096]; // Increased buffer size for better performance
-    let mut resp_parser = resp::RespParse::new(resp::RespVersion::RESP2);
+    let mut resp_parser = resp::RespParse::new(client.resp_version());
     let mut pending_commands = Vec::new();
 
     debug!("Starting network connection processing with pipelining support");
@@ -360,7 +360,8 @@ async fn process_command_batch(
                 if !cmd.has_flag(CmdFlags::NO_AUTH) {
                     client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
                     let response = client.take_reply();
-                    let mut encoder = RespEncoder::new(RespVersion::RESP2);
+                    let encoder_version = client.resp_version();
+                    let mut encoder = RespEncoder::new(encoder_version);
                     encoder.encode_resp_data(&response);
                     let _ = client.write(encoder.get_response().as_ref()).await;
                     continue;
@@ -382,7 +383,8 @@ async fn process_command_batch(
         let response = client.take_reply();
         debug!("Sending pipelined response: {:?}", response);
 
-        let mut encoder = RespEncoder::new(RespVersion::RESP2);
+        let encoder_version = client.resp_version();
+        let mut encoder = RespEncoder::new(encoder_version);
         encoder.encode_resp_data(&response);
 
         match client.write(encoder.get_response().as_ref()).await {

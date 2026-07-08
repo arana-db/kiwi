@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use resp::RespData;
+use resp::{ProtocolNegotiator, RespCommand, RespData, RespResult};
 use tokio::sync::Mutex;
 
 #[async_trait]
@@ -44,6 +44,8 @@ struct ClientContext {
     key: Vec<u8>,
     reply: RespData,
     authenticated: bool,
+    /// Persisted RESP protocol negotiation state for this connection.
+    protocol_negotiator: ProtocolNegotiator,
 }
 
 impl Client {
@@ -59,6 +61,7 @@ impl Client {
                 // Default to false (fail-closed): callers must explicitly grant
                 // authentication when no `requirepass` is configured.
                 authenticated: false,
+                protocol_negotiator: ProtocolNegotiator::new(),
             }),
         }
     }
@@ -131,5 +134,51 @@ impl Client {
     pub fn set_authenticated(&self, val: bool) {
         let mut ctx = self.ctx.lock();
         ctx.authenticated = val;
+    }
+
+    /// Handle a RESP HELLO command using the persisted protocol negotiation
+    /// state for this connection, so the negotiated RESP version survives across
+    /// multiple commands.
+    ///
+    /// `already_authenticated` reflects whether the connection is already
+    /// authenticated. `authentication_required` reflects whether the server has
+    /// a requirepass password configured. When authentication is required and
+    /// the client is not already authenticated, the HELLO ... AUTH clause must
+    /// be used to authenticate and receive the handshake.
+    ///
+    /// `authenticate` is called with the `username` and `password` supplied via
+    /// the AUTH clause and must report whether the client should be
+    /// authenticated, rejected for a wrong username/password pair, or rejected
+    /// because no password is configured.
+    pub fn handle_hello<F>(
+        &self,
+        command: &RespCommand,
+        already_authenticated: bool,
+        authentication_required: bool,
+        authenticate: F,
+    ) -> RespResult<(RespData, Option<String>)>
+    where
+        F: FnMut(&[u8], &[u8]) -> resp::HelloAuthResult,
+    {
+        let result;
+        {
+            let mut ctx = self.ctx.lock();
+            result = ctx.protocol_negotiator.handle_hello(
+                command,
+                already_authenticated,
+                authentication_required,
+                authenticate,
+            );
+        }
+        if let Ok((_, Some(name))) = &result {
+            self.set_name(name.as_bytes());
+        }
+        result
+    }
+
+    /// Return the currently negotiated RESP version for this connection.
+    pub fn resp_version(&self) -> resp::RespVersion {
+        let ctx = self.ctx.lock();
+        ctx.protocol_negotiator.current_version()
     }
 }
