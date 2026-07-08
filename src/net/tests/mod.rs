@@ -18,5 +18,6 @@
 #![allow(clippy::unwrap_used)]
 
 pub mod performance_tests;
+pub mod storage_command_e2e_tests;
 
 pub use performance_tests::{NetworkPerformanceTests, PerformanceResults, PerformanceTestConfig};

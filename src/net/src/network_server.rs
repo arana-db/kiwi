@@ -16,7 +16,8 @@
 // limitations under the License.
 
 use std::error::Error;
-use std::sync::Arc;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -53,9 +54,6 @@ pub struct NetworkResources {
 ///
 /// This server handles network I/O operations in a dedicated runtime and
 /// communicates with storage operations through a StorageClient.
-///
-/// # Requirements
-/// - Requirement 6.1: Network layer SHALL identify read/write operation types
 pub struct NetworkServer {
     /// Address to bind the server to
     addr: String,
@@ -71,6 +69,8 @@ pub struct NetworkServer {
     requirepass: Option<String>,
     /// Optional leadership gate for cluster-mode write rejection
     leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
+    /// Pre-bound listener for tests that need an ephemeral port.
+    listener: Mutex<Option<TcpListener>>,
 }
 
 impl NetworkServer {
@@ -95,6 +95,7 @@ impl NetworkServer {
             connection_pool: Arc::new(ConnectionPool::new(pool_config)),
             requirepass,
             leader_gate,
+            listener: Mutex::new(None),
         })
     }
 
@@ -116,6 +117,7 @@ impl NetworkServer {
             connection_pool: Arc::new(ConnectionPool::new(pool_config)),
             requirepass,
             leader_gate,
+            listener: Mutex::new(None),
         })
     }
 
@@ -161,14 +163,39 @@ impl NetworkServer {
     pub fn is_healthy(&self) -> bool {
         self.storage_client.is_healthy()
     }
+
+    /// Bind the server early and return the resolved socket address.
+    ///
+    /// This allows tests to use an OS-assigned ephemeral port (`127.0.0.1:0`)
+    /// while still querying the actual bound address. If `run()` is called
+    /// without calling `bind()` first, it binds lazily as before.
+    pub async fn bind(&self) -> Result<SocketAddr, Box<dyn Error>> {
+        let listener = TcpListener::bind(&self.addr).await?;
+        let addr = listener.local_addr()?;
+        *self
+            .listener
+            .lock()
+            .expect("network server listener lock poisoned") = Some(listener);
+        Ok(addr)
+    }
 }
 
 #[async_trait]
 impl ServerTrait for NetworkServer {
     async fn run(&self) -> Result<(), Box<dyn Error>> {
-        let listener = TcpListener::bind(&self.addr).await?;
+        let listener = {
+            let mut guard = self
+                .listener
+                .lock()
+                .expect("network server listener lock poisoned");
+            guard.take()
+        };
+        let listener = match listener {
+            Some(listener) => listener,
+            None => TcpListener::bind(&self.addr).await?,
+        };
 
-        info!("NetworkServer listening on: {}", self.addr);
+        info!("NetworkServer listening on: {}", listener.local_addr()?);
 
         // Start background cleanup task
         self.start_pool_cleanup().await;
