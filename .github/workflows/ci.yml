@@ -290,9 +290,11 @@ jobs:
           set -o pipefail
           if [[ "${{ matrix.sanitizer }}" == "leak" || "${{ matrix.sanitizer }}" == "thread" ]]; then
             # RocksDB/libstdc++ trigger sanitizer reports and timing instability
-            # in storage integration test binaries. Keep LSan/TSan on the rest
-            # of the workspace and storage unit tests; regular tests and ASan
-            # still cover the RocksDB-backed integration tests.
+            # in storage integration test binaries. The net crate's end-to-end
+            # storage command tests also spin up a real RocksDB-backed stack, so
+            # skip them under LSan/TSan for the same reason. Keep LSan/TSan on
+            # the rest of the workspace and storage unit tests; regular tests and
+            # ASan still cover the RocksDB-backed integration tests.
             {
               cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu \
                 --workspace --exclude storage \
@@ -300,7 +302,8 @@ jobs:
                 --skip install_snapshot_with_existing_data \
                 --skip test_snapshot_with_logindex_state \
                 --skip test_on_binlog_write_updates_collector \
-                --skip test_collector_state_export_restore
+                --skip test_collector_state_export_restore \
+                --skip storage_command_e2e_tests
               cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu \
                 -p storage --lib
             } 2>&1 | tee sanitizer.log
