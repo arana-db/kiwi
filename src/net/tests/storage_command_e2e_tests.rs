@@ -195,7 +195,7 @@ async fn send_command(stream: &mut tokio::net::TcpStream, args: &[&str]) -> Resp
 }
 
 #[tokio::test]
-async fn test_set_get_round_trip() {
+async fn storage_command_e2e_set_get_round_trip() {
     let server = TestServer::start(None).await;
     let mut stream = tokio::net::TcpStream::connect(server.addr)
         .await
@@ -214,7 +214,7 @@ async fn test_set_get_round_trip() {
 }
 
 #[tokio::test]
-async fn test_wrong_number_of_arguments_returns_resp_error() {
+async fn storage_command_e2e_wrong_number_of_arguments_returns_resp_error() {
     let server = TestServer::start(None).await;
     let mut stream = tokio::net::TcpStream::connect(server.addr)
         .await
@@ -237,7 +237,7 @@ async fn test_wrong_number_of_arguments_returns_resp_error() {
 }
 
 #[tokio::test]
-async fn test_auth_requirepass_flow() {
+async fn storage_command_e2e_auth_requirepass_flow() {
     let server = TestServer::start(Some("secret".to_string())).await;
     let mut stream = tokio::net::TcpStream::connect(server.addr)
         .await
@@ -286,7 +286,7 @@ async fn test_auth_requirepass_flow() {
 }
 
 #[tokio::test]
-async fn test_ping_and_client_are_local() {
+async fn storage_command_e2e_ping_and_client_are_local() {
     let server = TestServer::start(None).await;
     let mut stream = tokio::net::TcpStream::connect(server.addr)
         .await
@@ -316,7 +316,7 @@ async fn test_ping_and_client_are_local() {
 }
 
 #[tokio::test]
-async fn test_generic_storage_commands_use_storage_path() {
+async fn storage_command_e2e_generic_storage_commands_use_storage_path() {
     let server = TestServer::start(None).await;
     let mut stream = tokio::net::TcpStream::connect(server.addr)
         .await

@@ -303,7 +303,7 @@ jobs:
                 --skip test_snapshot_with_logindex_state \
                 --skip test_on_binlog_write_updates_collector \
                 --skip test_collector_state_export_restore \
-                --skip storage_command_e2e_tests
+                --skip storage_command_e2e_
               cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu \
                 -p storage --lib
             } 2>&1 | tee sanitizer.log
