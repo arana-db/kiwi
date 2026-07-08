@@ -9,7 +9,7 @@ workspace = true
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_ini = "0.2.0"
-toml = "0.8"
+toml = "0.9"
 validator = { version = "0.20", features = ["derive"] }
 snafu = "0.8.5"
 rocksdb.workspace = true
