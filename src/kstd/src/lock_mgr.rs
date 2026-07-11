@@ -90,10 +90,7 @@ impl LockMgr {
         let indexes = self.sorted_indexes(keys);
         let mut guards = Vec::with_capacity(indexes.len());
         for index in indexes {
-            match self.mutex_pool[index].try_lock() {
-                Some(guard) => guards.push(guard),
-                None => return None,
-            }
+            guards.push(self.mutex_pool[index].try_lock()?);
         }
         Some(ScopedMultiLock { guards })
     }
