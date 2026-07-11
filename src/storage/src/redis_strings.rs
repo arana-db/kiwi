@@ -22,10 +22,12 @@ use chrono::Utc;
 use kstd::lock_mgr::ScopeRecordLock;
 use rocksdb::ReadOptions;
 use snafu::{OptionExt, ResultExt};
+use std::collections::HashMap;
 
 use crate::error::Error::*;
+use crate::slot_indexer::key_to_slot_id;
 use crate::{
-    BaseMetaKey, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckState,
+    BaseMetaKey, BinlogBatch, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckState,
     error::{InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
     format_base_key::BaseKey,
     format_strings_value::{ParsedStringsValue, StringValue},
@@ -2158,24 +2160,47 @@ impl Redis {
 
                     // When chunk is full, delete and clear
                     if keys_chunk.len() >= CHUNK_SIZE {
-                        let mut batch = self.create_batch()?;
-                        for key in &keys_chunk {
-                            batch.delete(cf_index, key)?;
-                        }
-                        batch.commit()?;
+                        self.flush_keys_chunk(cf_index, &keys_chunk)?;
                         keys_chunk.clear();
                     }
                 }
 
                 // Delete remaining keys in the last chunk
                 if !keys_chunk.is_empty() {
-                    let mut batch = self.create_batch()?;
-                    for key in &keys_chunk {
-                        batch.delete(cf_index, key)?;
-                    }
-                    batch.commit()?;
+                    self.flush_keys_chunk(cf_index, &keys_chunk)?;
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    fn flush_keys_chunk(&self, cf_index: ColumnFamilyIndex, keys_chunk: &[Vec<u8>]) -> Result<()> {
+        if keys_chunk.is_empty() {
+            return Ok(());
+        }
+
+        if self.append_log_fn.get().is_none() {
+            let mut batch = self.create_batch()?;
+            for key in keys_chunk {
+                batch.delete(cf_index, key)?;
+            }
+            return batch.commit();
+        }
+
+        let mut keys_by_slot: HashMap<u32, Vec<&Vec<u8>>> = HashMap::new();
+        for key in keys_chunk {
+            let user_key = BinlogBatch::infer_user_key(cf_index as u32, key)?;
+            let slot_idx = key_to_slot_id(&user_key) as u32;
+            keys_by_slot.entry(slot_idx).or_default().push(key);
+        }
+
+        for keys in keys_by_slot.into_values() {
+            let mut batch = self.create_batch()?;
+            for key in keys {
+                batch.delete(cf_index, key)?;
+            }
+            batch.commit()?;
         }
 
         Ok(())

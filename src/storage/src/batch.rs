@@ -252,7 +252,7 @@ impl BinlogBatch {
         }
     }
 
-    fn infer_user_key(cf_idx: u32, encoded_key: &[u8]) -> Result<Vec<u8>> {
+    pub(crate) fn infer_user_key(cf_idx: u32, encoded_key: &[u8]) -> Result<Vec<u8>> {
         if cf_idx as usize >= ColumnFamilyIndex::COUNT {
             return InvalidFormatSnafu {
                 message: format!("Invalid column family index: {cf_idx}"),
