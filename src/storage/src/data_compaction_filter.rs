@@ -298,7 +298,7 @@ mod tests {
                     ListsMetaValue::new(bytes::Bytes::copy_from_slice(&1u64.to_le_bytes()));
                 meta_value.set_version(version);
                 meta_value.set_etime(etime);
-                db.put(&meta_key, &meta_value.encode()).unwrap();
+                db.put(&meta_key, meta_value.encode()).unwrap();
             }
             DataType::Hash | DataType::Set | DataType::ZSet => {
                 let mut meta_value =
@@ -306,7 +306,7 @@ mod tests {
                 meta_value.inner.data_type = data_type;
                 meta_value.set_version(version);
                 meta_value.set_etime(etime);
-                db.put(&meta_key, &meta_value.encode()).unwrap();
+                db.put(&meta_key, meta_value.encode()).unwrap();
             }
             _ => panic!("unsupported data type for meta: {data_type:?}"),
         }
@@ -430,7 +430,7 @@ mod tests {
         meta_value.inner.data_type = DataType::Hash;
         meta_value.set_version(1);
         meta_value.set_etime(past_time); // expired
-        db.put(&meta_key, &meta_value.encode()).unwrap();
+        db.put(&meta_key, meta_value.encode()).unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(10));
 
@@ -457,7 +457,7 @@ mod tests {
         meta_value.inner.data_type = DataType::Hash;
         meta_value.set_version(2); // meta version is 2
         meta_value.set_etime(0);
-        db.put(&meta_key, &meta_value.encode()).unwrap();
+        db.put(&meta_key, meta_value.encode()).unwrap();
 
         std::thread::sleep(std::time::Duration::from_millis(10));
 

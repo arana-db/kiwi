@@ -17,8 +17,6 @@
 
 //! Unit tests for dual runtime architecture core components
 
-#![allow(clippy::unwrap_used)]
-
 use std::time::Duration;
 
 // Import the dual runtime components

@@ -993,7 +993,7 @@ mod redis_list_test {
 
                     if thread_id % 2 == 0 {
                         // Use LPUSHX
-                        match redis_clone.lpushx(&key, &[value.clone()]) {
+                        match redis_clone.lpushx(&key, std::slice::from_ref(&value)) {
                             Ok(len) if len > 0 => {
                                 successful_lpushx_clone.fetch_add(1, Ordering::Relaxed)
                             }
@@ -1002,7 +1002,7 @@ mod redis_list_test {
                         };
                     } else {
                         // Use RPUSHX
-                        match redis_clone.rpushx(&key, &[value.clone()]) {
+                        match redis_clone.rpushx(&key, std::slice::from_ref(&value)) {
                             Ok(len) if len > 0 => {
                                 successful_lpushx_clone.fetch_add(1, Ordering::Relaxed)
                             }

@@ -113,7 +113,7 @@ mod redis_zset_test {
         println!("Results: {:?}", results);
 
         // For now, just check that we get some results
-        assert!(results.len() > 0, "Should return at least some results");
+        assert!(!results.is_empty(), "Should return at least some results");
     }
 
     #[test]
