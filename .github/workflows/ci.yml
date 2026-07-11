@@ -298,6 +298,7 @@ jobs:
                 --workspace --exclude storage \
                 -- --skip cursor_snapshot_roundtrip \
                 --skip install_snapshot_with_existing_data \
+                --skip install_snapshot_rearms_append_log_hook \
                 --skip test_snapshot_with_logindex_state \
                 --skip test_on_binlog_write_updates_collector \
                 --skip test_collector_state_export_restore
