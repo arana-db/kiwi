@@ -23,6 +23,7 @@ use runtime::{
 };
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use storage::StorageOptions;
 use storage::storage::Storage;
 
@@ -277,10 +278,16 @@ async fn start_server(
 
         let storage_swap = global_storage.arc_swap();
         let pause_controller_wrapper = Arc::new(PauseControllerWrapper(pause_controller));
+        let append_log_fn_holder = Arc::new(OnceLock::new());
 
-        let raft_app = create_raft_node(raft_config, storage_swap, Some(pause_controller_wrapper))
-            .await
-            .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
+        let raft_app = create_raft_node(
+            raft_config,
+            storage_swap,
+            Some(pause_controller_wrapper),
+            Some(append_log_fn_holder.clone()),
+        )
+        .await
+        .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
 
         // Bridge: storage runtime -> (channel) -> network runtime drain task -> client_write.
         let (log_tx, mut log_rx) =
@@ -314,6 +321,7 @@ async fn start_server(
             tokio::task::block_in_place(|| rx.blocking_recv())
                 .map_err(|_| "raft response channel closed".to_string())?
         });
+        let _ = append_log_fn_holder.set(append_log_fn.clone());
         global_storage.load().set_append_log_fn(append_log_fn);
 
         let raft_addr = raft_app.raft_addr.clone();

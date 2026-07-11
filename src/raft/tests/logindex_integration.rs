@@ -73,8 +73,8 @@ fn test_full_flow_multi_cf_properties() {
     let expected_seq = db.latest_sequence_number();
 
     let cf_tracker = LogIndexOfColumnFamilies::new();
-    for i in 0..CF_NAMES.len() {
-        let cf = db.cf_handle(CF_NAMES[i]).expect("cf handle");
+    for cf_name in CF_NAMES {
+        let cf = db.cf_handle(cf_name).expect("cf handle");
         let collection = db
             .get_properties_of_all_tables_cf(&cf)
             .expect("get properties");

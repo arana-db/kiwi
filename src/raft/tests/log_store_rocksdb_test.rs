@@ -84,7 +84,7 @@ fn write_entries_directly(engine: &Arc<dyn Engine>, entries: &[Entry<KiwiTypeCon
     for entry in entries {
         let key = (entry.log_id.index).to_be_bytes();
         let value = serde_json::to_vec(&entry).expect("Serialization should succeed");
-        batch.put_cf(&logs_cf, &key, &value);
+        batch.put_cf(&logs_cf, key, &value);
     }
 
     engine.write(batch).expect("Write should succeed");
@@ -642,7 +642,7 @@ async fn test_large_entry_persistence() {
     {
         let _log_store = RocksdbLogStore::new(engine.clone()).expect("Failed to create log store");
 
-        write_entries_directly(&engine, &[large_entry.clone()]);
+        write_entries_directly(&engine, std::slice::from_ref(&large_entry));
     }
 
     // Phase 2: Restart and verify large entry

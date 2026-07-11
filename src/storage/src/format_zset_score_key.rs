@@ -222,7 +222,7 @@ mod tests {
     fn test_encode_decode_roundtrip_basic() {
         let key = b"test_key";
         let version = 42u64;
-        let score = 3.14f64;
+        let score = 3.15f64;
         let member = b"member1";
 
         let score_key = ZSetsScoreKey::new(key, version, score, member);
@@ -400,7 +400,7 @@ mod tests {
     fn test_encode_seek_key_format() {
         let key = b"test_key";
         let version = 42u64;
-        let score = 3.14f64;
+        let score = 3.15f64;
         let member = b"member1";
 
         let score_key = ZSetsScoreKey::new(key, version, score, member);
@@ -485,7 +485,7 @@ mod tests {
         let mut encoded_keys = Vec::new();
 
         for member in &members {
-            let score_key = ZSetsScoreKey::new(key, version, score, *member);
+            let score_key = ZSetsScoreKey::new(key, version, score, member);
             let encoded = score_key.encode().expect("encode failed");
             encoded_keys.push(encoded);
         }

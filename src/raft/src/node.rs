@@ -20,6 +20,7 @@ use openraft::{Config, Raft, SnapshotPolicy};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use arc_swap::ArcSwap;
 
@@ -178,6 +179,7 @@ pub async fn create_raft_node(
     config: RaftConfig,
     storage_swap: Arc<ArcSwap<Storage>>,
     pause_controller: Option<Arc<dyn PauseController>>,
+    append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
 ) -> Result<Arc<RaftApp>, anyhow::Error> {
     let raft_config = build_raft_config(&config)?;
     let snapshot_work_dir = config.data_dir.join("snapshots");
@@ -191,6 +193,7 @@ pub async fn create_raft_node(
         storage_swap.clone(),
         config.db_path.clone(),
         snapshot_work_dir,
+        append_log_fn,
     );
 
     if let Some(ctrl) = pause_controller {

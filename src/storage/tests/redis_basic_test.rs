@@ -264,7 +264,7 @@ mod is_stale_tests {
         let redis = create_redis_instance();
         let result = redis.is_stale(&[]);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), false);
+        assert!(!result.unwrap());
     }
 
     #[test]
@@ -346,11 +346,7 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            false,
-            "Permanent string should not be stale"
-        );
+        assert!(!result.unwrap(), "Permanent string should not be stale");
     }
 
     #[test]
@@ -361,9 +357,8 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "Future-expiring string should not be stale"
         );
     }
@@ -376,7 +371,7 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true, "Expired string should be stale");
+        assert!(result.unwrap(), "Expired string should be stale");
     }
 
     #[test]
@@ -386,9 +381,8 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "Empty permanent string should not be stale"
         );
     }
@@ -400,7 +394,7 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true, "Hash with count=0 should be stale");
+        assert!(result.unwrap(), "Hash with count=0 should be stale");
     }
 
     #[test]
@@ -410,9 +404,8 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "Permanent hash with count>0 should not be stale"
         );
     }
@@ -425,9 +418,8 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "Future-expiring hash with count>0 should not be stale"
         );
     }
@@ -440,7 +432,7 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true, "Expired hash should be stale");
+        assert!(result.unwrap(), "Expired hash should be stale");
     }
 
     #[test]
@@ -451,9 +443,8 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
+        assert!(
             result.unwrap(),
-            true,
             "Hash with count=0 should be stale even if not expired"
         );
     }
@@ -465,7 +456,7 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true, "Set with count=0 should be stale");
+        assert!(result.unwrap(), "Set with count=0 should be stale");
     }
 
     #[test]
@@ -475,9 +466,8 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "Permanent set with count>0 should not be stale"
         );
     }
@@ -490,7 +480,7 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true, "Expired set should be stale");
+        assert!(result.unwrap(), "Expired set should be stale");
     }
 
     #[test]
@@ -500,7 +490,7 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true, "ZSet with count=0 should be stale");
+        assert!(result.unwrap(), "ZSet with count=0 should be stale");
     }
 
     #[test]
@@ -510,9 +500,8 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "Permanent zset with count>0 should not be stale"
         );
     }
@@ -525,7 +514,7 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true, "Expired zset should be stale");
+        assert!(result.unwrap(), "Expired zset should be stale");
     }
 
     #[test]
@@ -535,7 +524,7 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true, "List with count=0 should be stale");
+        assert!(result.unwrap(), "List with count=0 should be stale");
     }
 
     #[test]
@@ -545,9 +534,8 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "Permanent list with count>0 should not be stale"
         );
     }
@@ -560,9 +548,8 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "Future-expiring list with count>0 should not be stale"
         );
     }
@@ -575,7 +562,7 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true, "Expired list should be stale");
+        assert!(result.unwrap(), "Expired list should be stale");
     }
 
     #[test]
@@ -586,7 +573,7 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), true, "Value just expired should be stale");
+        assert!(result.unwrap(), "Value just expired should be stale");
     }
 
     #[test]
@@ -597,9 +584,8 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            false,
+        assert!(
+            !result.unwrap(),
             "Value not yet expired should not be stale"
         );
     }
@@ -626,7 +612,7 @@ mod is_stale_tests {
         for (name, value) in test_cases {
             let result = redis.is_stale(&value);
             assert!(result.is_ok(), "{} type should be handled", name);
-            assert_eq!(result.unwrap(), false, "Valid {} should not be stale", name);
+            assert!(!result.unwrap(), "Valid {} should not be stale", name);
         }
     }
 
@@ -639,10 +625,6 @@ mod is_stale_tests {
 
         let result = redis.is_stale(&value);
         assert!(result.is_ok());
-        assert_eq!(
-            result.unwrap(),
-            false,
-            "Hash with max count should not be stale"
-        );
+        assert!(!result.unwrap(), "Hash with max count should not be stale");
     }
 }
