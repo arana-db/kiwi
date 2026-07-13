@@ -452,14 +452,7 @@ impl Redis {
     /// ```
     pub fn create_batch(&self) -> Result<Box<dyn crate::batch::Batch + '_>> {
         if let Some(f) = self.append_log_fn.get() {
-            // TODO(Task 4): self.index is the RocksDB instance ID, not a Redis hash
-            // slot. on_binlog_write routes by slot_idx % instance_num, so this only
-            // round-trips by coincidence. Thread the real slot through here.
-            let slot_idx = self.index as u32;
-            return Ok(Box::new(crate::batch::BinlogBatch::new(
-                f.clone(),
-                slot_idx,
-            )));
+            return Ok(Box::new(crate::batch::BinlogBatch::new(f.clone())));
         }
 
         self.create_rocks_batch()

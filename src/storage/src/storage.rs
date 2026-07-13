@@ -642,6 +642,7 @@ mod append_log_fn_tests {
     use crate::batch::AppendLogFn;
     use conf::raft_type::BinlogResponse;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     // These tests open a full RocksDB via `Storage::open`. RocksDB keeps
@@ -711,7 +712,11 @@ mod append_log_fn_tests {
         inst.set_append_log_fn(f);
 
         let mut b = inst.create_batch().unwrap();
-        b.put(crate::ColumnFamilyIndex::MetaCF, b"k", b"v").unwrap();
+        let encoded_key = crate::format_base_key::BaseKey::new(b"k")
+            .encode()
+            .expect("cluster batch test should encode base key");
+        b.put(crate::ColumnFamilyIndex::MetaCF, &encoded_key, b"v")
+            .expect("cluster batch test should put encoded base key");
         Box::new(b).commit().unwrap();
         assert!(
             called.load(Ordering::SeqCst),
@@ -763,6 +768,58 @@ mod append_log_fn_tests {
             0,
             "on_binlog_write must not propose to raft"
         );
+
+        crate::safe_cleanup_test_db(&path);
+    }
+
+    #[tokio::test]
+    async fn test_flushdb_groups_cluster_binlogs_by_slot() {
+        if running_under_sanitizer() {
+            return;
+        }
+
+        let path = crate::unique_test_db_path();
+        let mut storage = Storage::new(1, 0);
+        storage
+            .open(Arc::new(crate::StorageOptions::default()), &path)
+            .unwrap();
+
+        let first_key = b"flush_slot_one";
+        let first_slot = crate::slot_indexer::key_to_slot_id(first_key);
+        let second_key = (0..1000)
+            .map(|index| format!("flush_slot_two_{index}"))
+            .find(|key| crate::slot_indexer::key_to_slot_id(key.as_bytes()) != first_slot)
+            .expect("test keys should include a different slot");
+
+        storage.set(first_key, b"v1").unwrap();
+        storage.set(second_key.as_bytes(), b"v2").unwrap();
+
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let captured_cl = captured.clone();
+        let f: AppendLogFn = Arc::new(move |binlog| {
+            captured_cl.lock().unwrap().push(binlog);
+            Ok(BinlogResponse::ok())
+        });
+        storage.set_append_log_fn(f);
+
+        storage.flushdb().unwrap();
+
+        let binlogs = captured.lock().unwrap();
+        assert!(
+            binlogs.len() >= 2,
+            "flushdb should split multi-slot keys into separate binlogs"
+        );
+        for binlog in binlogs.iter() {
+            assert!(!binlog.entries.is_empty());
+            for entry in &binlog.entries {
+                let user_key = crate::BinlogBatch::infer_user_key(entry.cf_idx, &entry.key)
+                    .expect("flushdb should emit decodable keys");
+                assert_eq!(
+                    binlog.slot_idx,
+                    crate::slot_indexer::key_to_slot_id(&user_key) as u32
+                );
+            }
+        }
 
         crate::safe_cleanup_test_db(&path);
     }

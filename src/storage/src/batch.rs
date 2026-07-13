@@ -44,7 +44,10 @@ use rocksdb::{BoundColumnFamily, WriteBatch, WriteOptions};
 use snafu::ResultExt;
 
 use crate::ColumnFamilyIndex;
-use crate::error::{BatchSnafu, Result, RocksSnafu};
+use crate::error::{BatchSnafu, InvalidFormatSnafu, Result, RocksSnafu};
+use crate::slot_indexer::key_to_slot_id;
+use crate::storage_define::{PREFIX_RESERVE_LENGTH, decode_user_key, seek_userkey_delim};
+use bytes::BytesMut;
 use engine::Engine;
 
 /// Trait for batch write operations.
@@ -234,7 +237,6 @@ pub type AppendLogFn =
 /// hands the assembled `Binlog` to `append_log_fn` (which proposes via Raft).
 pub struct BinlogBatch {
     append_log_fn: AppendLogFn,
-    slot_idx: u32,
     entries: Vec<BinlogEntry>,
 }
 
@@ -243,13 +245,71 @@ impl BinlogBatch {
     ///
     /// # Arguments
     /// * `append_log_fn` - Closure that proposes the binlog through Raft.
-    /// * `slot_idx` - Slot index this batch writes to (single-slot per binlog).
-    pub fn new(append_log_fn: AppendLogFn, slot_idx: u32) -> Self {
+    pub fn new(append_log_fn: AppendLogFn) -> Self {
         Self {
             append_log_fn,
-            slot_idx,
             entries: Vec::new(),
         }
+    }
+
+    pub(crate) fn infer_user_key(cf_idx: u32, encoded_key: &[u8]) -> Result<Vec<u8>> {
+        if cf_idx as usize >= ColumnFamilyIndex::COUNT {
+            return InvalidFormatSnafu {
+                message: format!("Invalid column family index: {cf_idx}"),
+            }
+            .fail();
+        }
+
+        if encoded_key.len() <= PREFIX_RESERVE_LENGTH {
+            return InvalidFormatSnafu {
+                message: format!(
+                    "Encoded key too short to infer binlog slot: len={}",
+                    encoded_key.len()
+                ),
+            }
+            .fail();
+        }
+
+        let key_part_start = PREFIX_RESERVE_LENGTH;
+        let key_part = &encoded_key[key_part_start..];
+        let key_part_end = seek_userkey_delim(key_part);
+        if key_part_end > key_part.len() {
+            return InvalidFormatSnafu {
+                message: "Encoded key delimiter not found while inferring binlog slot".to_string(),
+            }
+            .fail();
+        }
+
+        let mut user_key = BytesMut::new();
+        decode_user_key(&key_part[..key_part_end], &mut user_key)?;
+        Ok(user_key.to_vec())
+    }
+
+    fn infer_slot_idx(entries: &[BinlogEntry]) -> Result<u32> {
+        let mut inferred_slot = None;
+
+        for entry in entries {
+            let user_key = Self::infer_user_key(entry.cf_idx, &entry.key)?;
+            let slot = key_to_slot_id(&user_key) as u32;
+
+            match inferred_slot {
+                Some(existing) if existing != slot => {
+                    return BatchSnafu {
+                        message: format!(
+                            "CROSSSLOT binlog batch contains multiple slots: {existing} and {slot}"
+                        ),
+                    }
+                    .fail();
+                }
+                Some(_) => {}
+                None => inferred_slot = Some(slot),
+            }
+        }
+
+        inferred_slot.ok_or_else(|| crate::error::Error::Batch {
+            message: "Cannot infer slot for empty binlog batch".to_string(),
+            location: snafu::Location::new(file!(), line!(), column!()),
+        })
     }
 }
 
@@ -275,9 +335,14 @@ impl Batch for BinlogBatch {
     }
 
     fn commit(self: Box<Self>) -> Result<()> {
+        if self.entries.is_empty() {
+            return Ok(());
+        }
+
+        let slot_idx = Self::infer_slot_idx(&self.entries)?;
         let binlog = Binlog {
             db_id: 0, // TODO: thread real db_id from Redis/Storage in a later task
-            slot_idx: self.slot_idx,
+            slot_idx,
             entries: self.entries,
         };
         let resp = (self.append_log_fn)(binlog).map_err(|message| crate::error::Error::Batch {
@@ -305,33 +370,60 @@ impl Batch for BinlogBatch {
     }
 }
 
-#[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::format_base_key::BaseKey;
+    use crate::format_lists_data_key::ListsDataKey;
+    use crate::format_member_data_key::MemberDataKey;
+    use crate::format_zset_score_key::ZSetsScoreKey;
+    use crate::slot_indexer::key_to_slot_id;
     use conf::raft_type::{BinlogResponse, OperateType};
     use std::sync::{Arc, Mutex};
+
+    fn capture_append_log_fn(captured: Arc<Mutex<Option<conf::raft_type::Binlog>>>) -> AppendLogFn {
+        Arc::new(move |binlog| {
+            *captured
+                .lock()
+                .expect("capture_append_log_fn should lock captured binlog") = Some(binlog);
+            Ok(BinlogResponse::ok())
+        })
+    }
+
+    fn take_captured_binlog(
+        captured: &Arc<Mutex<Option<conf::raft_type::Binlog>>>,
+    ) -> conf::raft_type::Binlog {
+        captured
+            .lock()
+            .expect("BinlogBatch test should lock captured binlog")
+            .take()
+            .expect("BinlogBatch test should capture binlog")
+    }
 
     #[test]
     fn test_binlog_batch_accumulates_entries() {
         let captured: Arc<Mutex<Option<conf::raft_type::Binlog>>> = Arc::new(Mutex::new(None));
-        let captured_cl = captured.clone();
-        let append_log_fn: AppendLogFn = Arc::new(move |binlog| {
-            *captured_cl.lock().unwrap() = Some(binlog);
-            Ok(BinlogResponse::ok())
-        });
+        let append_log_fn = capture_append_log_fn(captured.clone());
+        let user_key = b"k1";
+        let encoded_key = BaseKey::new(user_key)
+            .encode()
+            .expect("BinlogBatch test should encode base key");
 
-        let mut batch = BinlogBatch::new(append_log_fn, 7);
-        batch.put(ColumnFamilyIndex::MetaCF, b"k1", b"v1").unwrap();
+        let mut batch = BinlogBatch::new(append_log_fn);
         batch
-            .delete(ColumnFamilyIndex::HashesDataCF, b"k2")
-            .unwrap();
+            .put(ColumnFamilyIndex::MetaCF, &encoded_key, b"v1")
+            .expect("BinlogBatch test should put entry");
+        batch
+            .delete(ColumnFamilyIndex::MetaCF, &encoded_key)
+            .expect("BinlogBatch test should delete entry");
         assert_eq!(batch.count(), 2);
 
-        Box::new(batch).commit().unwrap();
+        Box::new(batch)
+            .commit()
+            .expect("BinlogBatch test should commit entries");
 
-        let binlog = captured.lock().unwrap().take().expect("binlog captured");
-        assert_eq!(binlog.slot_idx, 7);
+        let binlog = take_captured_binlog(&captured);
+        assert_eq!(binlog.slot_idx, key_to_slot_id(user_key) as u32);
         assert_eq!(binlog.entries.len(), 2);
         assert_eq!(binlog.entries[0].cf_idx, ColumnFamilyIndex::MetaCF as u32);
         assert_eq!(binlog.entries[0].op_type, OperateType::Put);
@@ -343,9 +435,132 @@ mod tests {
     #[test]
     fn test_binlog_batch_commit_propagates_error() {
         let append_log_fn: AppendLogFn = Arc::new(|_binlog| Err("raft unavailable".to_string()));
-        let mut batch = BinlogBatch::new(append_log_fn, 0);
-        batch.put(ColumnFamilyIndex::MetaCF, b"k", b"v").unwrap();
+        let mut batch = BinlogBatch::new(append_log_fn);
+        let encoded_key = BaseKey::new(b"k")
+            .encode()
+            .expect("BinlogBatch error test should encode base key");
+        batch
+            .put(ColumnFamilyIndex::MetaCF, &encoded_key, b"v")
+            .expect("BinlogBatch error test should put entry");
         let result = Box::new(batch).commit();
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_binlog_batch_commit_empty_is_noop() {
+        let captured: Arc<Mutex<Option<conf::raft_type::Binlog>>> = Arc::new(Mutex::new(None));
+        let append_log_fn = capture_append_log_fn(captured.clone());
+        let batch = BinlogBatch::new(append_log_fn);
+
+        Box::new(batch)
+            .commit()
+            .expect("empty BinlogBatch commit should be a no-op");
+
+        assert!(
+            captured
+                .lock()
+                .expect("empty BinlogBatch test should lock captured binlog")
+                .is_none(),
+            "empty BinlogBatch commit should not append a binlog"
+        );
+    }
+
+    #[test]
+    fn test_binlog_batch_infers_slot_from_member_data_key() {
+        let captured: Arc<Mutex<Option<conf::raft_type::Binlog>>> = Arc::new(Mutex::new(None));
+        let append_log_fn = capture_append_log_fn(captured.clone());
+        let user_key = b"hash_key";
+        let encoded_key = MemberDataKey::new(user_key, 1, b"field")
+            .encode()
+            .expect("BinlogBatch member test should encode member key");
+
+        let mut batch = BinlogBatch::new(append_log_fn);
+        batch
+            .put(ColumnFamilyIndex::HashesDataCF, &encoded_key, b"value")
+            .expect("BinlogBatch member test should put entry");
+        Box::new(batch)
+            .commit()
+            .expect("BinlogBatch member test should commit entries");
+
+        let binlog = take_captured_binlog(&captured);
+        assert_eq!(binlog.slot_idx, key_to_slot_id(user_key) as u32);
+    }
+
+    #[test]
+    fn test_binlog_batch_infers_slot_from_list_data_key() {
+        let captured: Arc<Mutex<Option<conf::raft_type::Binlog>>> = Arc::new(Mutex::new(None));
+        let append_log_fn = capture_append_log_fn(captured.clone());
+        let user_key = b"list_key";
+        let encoded_key = ListsDataKey::new(user_key, 1, 42)
+            .encode()
+            .expect("BinlogBatch list test should encode list key");
+
+        let mut batch = BinlogBatch::new(append_log_fn);
+        batch
+            .put(ColumnFamilyIndex::ListsDataCF, &encoded_key, b"value")
+            .expect("BinlogBatch list test should put entry");
+        Box::new(batch)
+            .commit()
+            .expect("BinlogBatch list test should commit entries");
+
+        let binlog = take_captured_binlog(&captured);
+        assert_eq!(binlog.slot_idx, key_to_slot_id(user_key) as u32);
+    }
+
+    #[test]
+    fn test_binlog_batch_infers_slot_from_zset_score_key() {
+        let captured: Arc<Mutex<Option<conf::raft_type::Binlog>>> = Arc::new(Mutex::new(None));
+        let append_log_fn = capture_append_log_fn(captured.clone());
+        let user_key = b"zset_key";
+        let encoded_key = ZSetsScoreKey::new(user_key, 1, 2.5, b"member")
+            .encode()
+            .expect("BinlogBatch zset score test should encode score key");
+
+        let mut batch = BinlogBatch::new(append_log_fn);
+        batch
+            .put(ColumnFamilyIndex::ZsetsScoreCF, &encoded_key, b"")
+            .expect("BinlogBatch zset score test should put entry");
+        Box::new(batch)
+            .commit()
+            .expect("BinlogBatch zset score test should commit entries");
+
+        let binlog = take_captured_binlog(&captured);
+        assert_eq!(binlog.slot_idx, key_to_slot_id(user_key) as u32);
+    }
+
+    #[test]
+    fn test_binlog_batch_rejects_cross_slot_entries() {
+        let append_log_fn: AppendLogFn = Arc::new(|_binlog| Ok(BinlogResponse::ok()));
+        let first_user_key = b"key_one";
+        let first_slot = key_to_slot_id(first_user_key);
+        let second_user_key = (0..1000)
+            .map(|index| format!("key_two_{index}"))
+            .find(|key| key_to_slot_id(key.as_bytes()) != first_slot)
+            .expect("test keys should include a different slot");
+
+        let first_key = BaseKey::new(first_user_key)
+            .encode()
+            .expect("BinlogBatch cross-slot test should encode first key");
+        let second_key = BaseKey::new(second_user_key.as_bytes())
+            .encode()
+            .expect("BinlogBatch cross-slot test should encode second key");
+
+        let mut batch = BinlogBatch::new(append_log_fn);
+        batch
+            .put(ColumnFamilyIndex::MetaCF, &first_key, b"v1")
+            .expect("BinlogBatch cross-slot test should put first entry");
+        batch
+            .put(ColumnFamilyIndex::MetaCF, &second_key, b"v2")
+            .expect("BinlogBatch cross-slot test should put second entry");
+
+        let result = Box::new(batch).commit();
+        assert!(result.is_err());
+        assert!(
+            format!(
+                "{:?}",
+                result.expect_err("BinlogBatch cross-slot test should reject commit")
+            )
+            .contains("CROSSSLOT")
+        );
     }
 }
