@@ -70,7 +70,7 @@ tokio-util = "0.7.16"
 async-trait = "0.1"
 foyer = { version = "0.22" }
 clap = { version = "4.6", features = ["derive"] }
-rand = "0.8"
+rand = "0.9"
 uuid = { version = "1.23", features = ["v4", "serde"] }
 openraft = { version = "0.9", features = ["serde", "storage-v2"] }
 proptest = "1.11"
