@@ -25,6 +25,7 @@ use storage::{
     BaseMetaKey, BgTaskHandler, CanonicalVector, ColumnFamilyIndex, Redis, StorageOptions,
     VectorQuery, VectorSearchMode, VectorSearchOptions, safe_cleanup_test_db, unique_test_db_path,
 };
+use storage::{slot_indexer::key_to_slot_id, storage::Storage};
 
 fn open_redis(path: &PathBuf) -> Redis {
     let storage_options = Arc::new(StorageOptions::default());
@@ -62,6 +63,14 @@ fn populate_search_vectors(redis: &Redis) -> CanonicalVector {
 
 fn search_options(count: usize, mode: VectorSearchMode) -> VectorSearchOptions {
     VectorSearchOptions { count, mode }
+}
+
+fn count_cf_entries(redis: &Redis, cf_index: ColumnFamilyIndex) -> usize {
+    let db = redis.db.as_ref().expect("db is initialized");
+    let cf = redis.get_cf_handle(cf_index).expect("column family exists");
+    db.iterator_cf(&cf, IteratorMode::Start)
+        .map(|entry| entry.expect("read column family entry"))
+        .count()
 }
 
 #[test]
@@ -364,4 +373,161 @@ fn test_vsim_rejects_query_dimension_mismatch() {
                 .is_err()
         );
     });
+}
+
+#[tokio::test]
+async fn test_storage_routes_all_members_of_one_vectorset_to_one_instance() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let mut storage = Storage::new(3, 0);
+    let _receiver = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .expect("open storage");
+    let key = b"routed-vectors";
+    let x = CanonicalVector::from_values(&[1.0, 0.0]).expect("x");
+    let y = CanonicalVector::from_values(&[0.0, 1.0]).expect("y");
+
+    assert!(storage.vadd(key, b"x", &x).expect("insert x"));
+    assert!(storage.vadd(key, b"y", &y).expect("insert y"));
+    assert_eq!(storage.vcard(key).expect("card"), 2);
+    assert_eq!(storage.vdim(key).expect("dimension"), 2);
+    assert!(storage.vismember(key, b"x").expect("membership"));
+    assert_eq!(
+        storage.vemb(key, b"x").expect("embedding"),
+        Some(vec![1.0, 0.0])
+    );
+    assert_eq!(
+        storage
+            .vsim(
+                key,
+                VectorQuery::Vector(x),
+                search_options(1, VectorSearchMode::Approximate),
+            )
+            .expect("search")[0]
+            .element,
+        b"x"
+    );
+    assert!(storage.vrem(key, b"y").expect("remove y"));
+
+    let slot_id = key_to_slot_id(key);
+    let selected = storage.slot_indexer.get_instance_id(slot_id);
+    let meta_key = BaseMetaKey::new(key).encode().expect("meta key");
+    for (instance_id, redis) in storage.insts.iter().enumerate() {
+        let db = redis.db.as_ref().expect("db is initialized");
+        let meta_cf = redis
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .expect("MetaCF exists");
+        assert_eq!(
+            db.get_cf(&meta_cf, &meta_key)
+                .expect("read routed meta")
+                .is_some(),
+            instance_id == selected
+        );
+        assert_eq!(
+            count_cf_entries(redis, ColumnFamilyIndex::VectorDataCF),
+            usize::from(instance_id == selected)
+        );
+    }
+
+    storage.shutdown().await;
+}
+
+#[test]
+fn test_type_returns_vectorset() {
+    with_redis(|redis| {
+        let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
+        redis.vadd(b"vectors", b"member", &vector).expect("insert");
+        assert_eq!(
+            storage::data_type_to_string(redis.get_key_type(b"vectors").expect("key type")),
+            "vectorset"
+        );
+    });
+}
+
+#[tokio::test]
+async fn test_expired_vectorset_reads_as_missing() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let mut storage = Storage::new(1, 0);
+    let _receiver = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .expect("open storage");
+    let key = b"expiring-vectors";
+    let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
+    storage.vadd(key, b"member", &vector).expect("insert");
+
+    assert!(storage.expire(key, 60).expect("expire"));
+    assert!(storage.persist(key).expect("persist"));
+    assert!(storage.expireat(key, 1).expect("expire in the past"));
+    assert_eq!(storage.vcard(key).expect("expired card"), 0);
+    assert!(storage.vdim(key).is_err());
+    assert_eq!(storage.vemb(key, b"member").expect("expired emb"), None);
+    assert!(!storage.vismember(key, b"member").expect("expired member"));
+    assert!(
+        storage
+            .vsim(
+                key,
+                VectorQuery::Vector(vector),
+                search_options(1, VectorSearchMode::Approximate),
+            )
+            .expect("expired search")
+            .is_empty()
+    );
+    assert_eq!(storage.key_type(key).expect("expired type"), "none");
+
+    storage.shutdown().await;
+}
+
+#[test]
+fn test_del_removes_vector_meta_and_members() {
+    with_redis(|redis| {
+        let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
+        redis.vadd(b"vectors", b"a", &vector).expect("insert a");
+        redis.vadd(b"vectors", b"b", &vector).expect("insert b");
+        assert_eq!(count_cf_entries(redis, ColumnFamilyIndex::VectorDataCF), 2);
+
+        assert!(redis.del_key(b"vectors").expect("delete vector set"));
+        assert_eq!(redis.vcard(b"vectors").expect("missing card"), 0);
+        assert_eq!(count_cf_entries(redis, ColumnFamilyIndex::VectorDataCF), 0);
+    });
+}
+
+#[test]
+fn test_flushdb_removes_vector_meta_and_members() {
+    with_redis(|redis| {
+        let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
+        redis.vadd(b"vectors", b"a", &vector).expect("insert a");
+        redis.vadd(b"vectors", b"b", &vector).expect("insert b");
+
+        redis.flush_db().expect("flush db");
+        assert_eq!(count_cf_entries(redis, ColumnFamilyIndex::MetaCF), 0);
+        assert_eq!(count_cf_entries(redis, ColumnFamilyIndex::VectorDataCF), 0);
+    });
+}
+
+#[tokio::test]
+async fn test_vector_storage_rejects_cluster_mode() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let mut storage = Storage::new(1, 0);
+    let _receiver = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .expect("open storage");
+    storage.set_append_log_fn(Arc::new(|_| panic!("vector API must not append Raft log")));
+    let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
+
+    assert!(storage.vadd(b"vectors", b"member", &vector).is_err());
+    assert!(
+        storage
+            .vsim(
+                b"vectors",
+                VectorQuery::Vector(vector),
+                search_options(1, VectorSearchMode::Approximate),
+            )
+            .is_err()
+    );
+    assert!(storage.vrem(b"vectors", b"member").is_err());
+    assert!(storage.vcard(b"vectors").is_err());
+    assert!(storage.vdim(b"vectors").is_err());
+    assert!(storage.vemb(b"vectors", b"member").is_err());
+    assert!(storage.vismember(b"vectors", b"member").is_err());
+
+    storage.shutdown().await;
 }
