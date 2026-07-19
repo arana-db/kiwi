@@ -89,6 +89,7 @@ pub mod sunionstore;
 pub mod table;
 pub mod ttl;
 pub mod type_cmd;
+pub mod vector;
 pub mod zadd;
 pub mod zcard;
 pub mod zcount;
