@@ -769,7 +769,7 @@ impl Redis {
                 }
                 Ok(etime < now)
             }
-            DataType::Hash | DataType::Set | DataType::ZSet => {
+            DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                 // | type(1B) | count(8B) | version(8B) | reserve(16B) | ctime(8B) | etime(8B) |
                 let count_offset = TYPE_LENGTH;
                 let count_bytes = &val_raw[count_offset..count_offset + 8];

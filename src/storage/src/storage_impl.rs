@@ -19,6 +19,7 @@ use crate::error::{Error, InvalidArgumentSnafu, Result};
 use crate::format_zset_score_key::ZsetScoreMember;
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage::Storage;
+use crate::{CanonicalVector, VectorHit, VectorQuery, VectorSearchOptions};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeforeOrAfter {
@@ -745,6 +746,55 @@ impl Storage {
             }
         }
         Ok(None) // No keys found in any instance
+    }
+
+    // Vector Set Commands Implementation
+
+    pub fn vadd(&self, key: &[u8], element: &[u8], vector: &CanonicalVector) -> Result<bool> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].vadd(key, element, vector)
+    }
+
+    pub fn vsim(
+        &self,
+        key: &[u8],
+        query: VectorQuery,
+        options: VectorSearchOptions,
+    ) -> Result<Vec<VectorHit>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].vsim(key, query, options)
+    }
+
+    pub fn vrem(&self, key: &[u8], element: &[u8]) -> Result<bool> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].vrem(key, element)
+    }
+
+    pub fn vcard(&self, key: &[u8]) -> Result<u64> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].vcard(key)
+    }
+
+    pub fn vdim(&self, key: &[u8]) -> Result<u32> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].vdim(key)
+    }
+
+    pub fn vemb(&self, key: &[u8], element: &[u8]) -> Result<Option<Vec<f64>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].vemb(key, element)
+    }
+
+    pub fn vismember(&self, key: &[u8], element: &[u8]) -> Result<bool> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].vismember(key, element)
     }
 
     // Sets Commands Implementation

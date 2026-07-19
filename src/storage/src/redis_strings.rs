@@ -103,7 +103,7 @@ impl Redis {
                 batch.put(ColumnFamilyIndex::MetaCF, &base_meta_key, parsed.value())?;
                 batch.commit()?;
             }
-            DataType::Hash | DataType::Set | DataType::ZSet => {
+            DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                 let mut parsed =
                     crate::format_base_meta_value::ParsedBaseMetaValue::new(&value[..])?;
                 parsed.set_etime(etime);
@@ -2036,6 +2036,7 @@ impl Redis {
                 ColumnFamilyIndex::ListsDataCF,
                 ColumnFamilyIndex::ZsetsDataCF,
                 ColumnFamilyIndex::ZsetsScoreCF,
+                ColumnFamilyIndex::VectorDataCF,
             ] {
                 if let Some(cf) = self.get_cf_handle(cf_index) {
                     // Prefix-scan data CF and delete all derived keys
@@ -2147,6 +2148,7 @@ impl Redis {
             ColumnFamilyIndex::ListsDataCF,
             ColumnFamilyIndex::ZsetsDataCF,
             ColumnFamilyIndex::ZsetsScoreCF,
+            ColumnFamilyIndex::VectorDataCF,
         ];
 
         for cf_index in all_cf_indexes {

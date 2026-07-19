@@ -141,9 +141,11 @@ impl DataCompactionFilter {
             DataType::List => ParsedListsMetaValue::new(raw)
                 .ok()
                 .map(|m| (m.version(), m.etime())),
-            DataType::Hash | DataType::Set | DataType::ZSet => ParsedBaseMetaValue::new(raw)
-                .ok()
-                .map(|m| (m.version(), m.etime())),
+            DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
+                ParsedBaseMetaValue::new(raw)
+                    .ok()
+                    .map(|m| (m.version(), m.etime()))
+            }
             _ => None,
         }
     }
@@ -300,7 +302,7 @@ mod tests {
                 meta_value.set_etime(etime);
                 db.put(&meta_key, meta_value.encode()).unwrap();
             }
-            DataType::Hash | DataType::Set | DataType::ZSet => {
+            DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                 let mut meta_value =
                     BaseMetaValue::new(bytes::Bytes::copy_from_slice(&1u64.to_le_bytes()));
                 meta_value.inner.data_type = data_type;
@@ -392,6 +394,28 @@ mod tests {
         let mut filter = factory.create(context);
 
         let data_key = encode_data_key(b"zset_key", 1);
+        let decision = filter.filter(0, &data_key, b"");
+
+        assert!(matches!(decision, CompactionDecision::Keep));
+    }
+
+    #[test]
+    fn test_keeps_data_if_meta_is_valid_for_vectorset() {
+        let path = unique_test_db_path();
+        let (db_cell, db) = setup_db_for_filter_test(&path);
+
+        put_meta(&db, b"vector_key", DataType::VectorSet, 1, 0);
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::VectorSet);
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        let data_key = encode_data_key(b"vector_key", 1);
         let decision = filter.filter(0, &data_key, b"");
 
         assert!(matches!(decision, CompactionDecision::Keep));
