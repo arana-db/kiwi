@@ -214,7 +214,13 @@ impl RespEncoder {
             }
             RespData::Integer(num) => self.append_integer(*num),
             RespData::BulkString(Some(bytes)) => self.append_bulk_string(bytes),
-            RespData::BulkString(None) => self.set_bulk_string_len(-1),
+            RespData::BulkString(None) => {
+                if self.is_resp3() {
+                    self.append_null()
+                } else {
+                    self.set_bulk_string_len(-1)
+                }
+            }
             RespData::Array(Some(array)) => {
                 self.append_array_len(array.len() as i64);
                 for item in array {
@@ -602,6 +608,17 @@ mod tests {
         let mut encoder = RespEncoder::new(RespVersion::RESP3);
         encoder.encode_resp_data(&RespData::Null);
         assert_eq!(encoder.get_response(), Bytes::from("_\r\n"));
+    }
+
+    #[test]
+    fn test_null_bulk_uses_protocol_native_encoding() {
+        let mut resp2 = RespEncoder::new(RespVersion::RESP2);
+        resp2.encode_resp_data(&RespData::BulkString(None));
+        assert_eq!(resp2.get_response(), Bytes::from("$-1\r\n"));
+
+        let mut resp3 = RespEncoder::new(RespVersion::RESP3);
+        resp3.encode_resp_data(&RespData::BulkString(None));
+        assert_eq!(resp3.get_response(), Bytes::from("_\r\n"));
     }
 
     #[test]

@@ -191,6 +191,11 @@ fn test_resp3_backward_compatibility() {
     ];
 
     for original_data in resp2_data {
+        let expected_data = match &original_data {
+            RespData::BulkString(None) => RespData::Null,
+            _ => original_data.clone(),
+        };
+
         // Encode with RESP3 encoder
         let mut encoder = RespEncoder::new(RespVersion::RESP3);
         encoder.encode_resp_data(&original_data);
@@ -201,7 +206,7 @@ fn test_resp3_backward_compatibility() {
         let result = parser.parse(encoded);
 
         if let RespParseResult::Complete(parsed_data) = result {
-            assert_eq!(parsed_data, original_data);
+            assert_eq!(parsed_data, expected_data);
         } else {
             panic!(
                 "Failed backward compatibility test for: {:?}",
