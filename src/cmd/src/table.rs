@@ -165,6 +165,14 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         crate::zscan::ZscanCmd,
         crate::zscore::ZscoreCmd,
         crate::zunionstore::ZunionstoreCmd,
+        // Vector Set commands
+        crate::vector::VAddCmd,
+        crate::vector::VSimCmd,
+        crate::vector::VRemCmd,
+        crate::vector::VCardCmd,
+        crate::vector::VDimCmd,
+        crate::vector::VEmbCmd,
+        crate::vector::VIsMemberCmd,
         // connection commands
         crate::ping::PingCmd,
     );
@@ -256,6 +264,14 @@ mod tests {
                 ),
             ])
         );
+    }
+
+    #[test]
+    fn vector_commands_are_registered() {
+        let table = create_command_table(Arc::new(|| None));
+        for name in ["vadd", "vsim", "vrem", "vcard", "vdim", "vemb", "vismember"] {
+            assert!(table.contains_key(name), "{name} should be registered");
+        }
     }
 
     #[test]
