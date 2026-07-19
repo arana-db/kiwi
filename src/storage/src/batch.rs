@@ -161,6 +161,7 @@ fn cf_index_to_usize(cf_idx: ColumnFamilyIndex) -> usize {
         ColumnFamilyIndex::ListsDataCF => 3,
         ColumnFamilyIndex::ZsetsDataCF => 4,
         ColumnFamilyIndex::ZsetsScoreCF => 5,
+        ColumnFamilyIndex::VectorDataCF => 6,
     }
 }
 

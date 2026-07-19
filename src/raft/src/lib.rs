@@ -54,12 +54,13 @@ pub const COLUMN_FAMILY_COUNT: usize = storage::ColumnFamilyIndex::COUNT;
 
 /// List of CF names, in the same order as storage::ColumnFamilyIndex
 pub const CF_NAMES: [&str; COLUMN_FAMILY_COUNT] = [
-    "default",       // MetaCF = 0
-    "hash_data_cf",  // HashesDataCF = 1
-    "set_data_cf",   // SetsDataCF = 2
-    "list_data_cf",  // ListsDataCF = 3
-    "zset_data_cf",  // ZsetsDataCF = 4
-    "zset_score_cf", // ZsetsScoreCF = 5
+    "default",        // MetaCF = 0
+    "hash_data_cf",   // HashesDataCF = 1
+    "set_data_cf",    // SetsDataCF = 2
+    "list_data_cf",   // ListsDataCF = 3
+    "zset_data_cf",   // ZsetsDataCF = 4
+    "zset_score_cf",  // ZsetsScoreCF = 5
+    "vector_data_cf", // VectorDataCF = 6
 ];
 
 const _: () = assert!(
@@ -81,6 +82,7 @@ mod tests {
             ColumnFamilyIndex::ListsDataCF,
             ColumnFamilyIndex::ZsetsDataCF,
             ColumnFamilyIndex::ZsetsScoreCF,
+            ColumnFamilyIndex::VectorDataCF,
         ];
         for (i, cf_index) in variants.iter().enumerate() {
             assert_eq!(

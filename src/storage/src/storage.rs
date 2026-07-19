@@ -513,6 +513,7 @@ impl Storage {
                 3 => ColumnFamilyIndex::ListsDataCF,
                 4 => ColumnFamilyIndex::ZsetsDataCF,
                 5 => ColumnFamilyIndex::ZsetsScoreCF,
+                6 => ColumnFamilyIndex::VectorDataCF,
                 _ => {
                     return Err(crate::error::Error::RedisErr {
                         message: format!("Invalid column family index: {}", entry.cf_idx),

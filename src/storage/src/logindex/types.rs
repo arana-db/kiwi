@@ -51,7 +51,7 @@ pub type Result<T, E = LogIndexError> = std::result::Result<T, E>;
 /// inconsistencies across db_access.rs, event_listener.rs, and cf_tracker.rs.
 pub mod cf_metadata {
     /// Number of column families
-    pub const COLUMN_FAMILY_COUNT: usize = 6;
+    pub const COLUMN_FAMILY_COUNT: usize = 7;
 
     /// CF names as byte slices (for comparison with rocksdb CF handles)
     /// Note: Using &[u8] instead of &[u8; N] to allow variable-length names
@@ -62,6 +62,7 @@ pub mod cf_metadata {
         b"list_data_cf",
         b"zset_data_cf",
         b"zset_score_cf",
+        b"vector_data_cf",
     ];
 
     /// CF names as &str (for convenience in some contexts)
@@ -72,6 +73,7 @@ pub mod cf_metadata {
         "list_data_cf",
         "zset_data_cf",
         "zset_score_cf",
+        "vector_data_cf",
     ];
 
     // Compile-time guards: ensure arrays match COLUMN_FAMILY_COUNT.

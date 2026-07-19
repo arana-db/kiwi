@@ -111,6 +111,7 @@ pub enum ColumnFamilyIndex {
     ListsDataCF = 3,
     ZsetsDataCF = 4,
     ZsetsScoreCF = 5,
+    VectorDataCF = 6,
 }
 
 impl ColumnFamilyIndex {
@@ -122,6 +123,7 @@ impl ColumnFamilyIndex {
             3 => Some(Self::ListsDataCF),
             4 => Some(Self::ZsetsDataCF),
             5 => Some(Self::ZsetsScoreCF),
+            6 => Some(Self::VectorDataCF),
             _ => None,
         }
     }
