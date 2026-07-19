@@ -23,7 +23,7 @@ use kstd::lock_mgr::LockMgr;
 use rocksdb::{IteratorMode, ReadOptions};
 use storage::{
     BaseMetaKey, BgTaskHandler, CanonicalVector, ColumnFamilyIndex, Redis, StorageOptions,
-    safe_cleanup_test_db, unique_test_db_path,
+    VectorQuery, VectorSearchMode, VectorSearchOptions, safe_cleanup_test_db, unique_test_db_path,
 };
 
 fn open_redis(path: &PathBuf) -> Redis {
@@ -47,6 +47,21 @@ fn with_redis(test: impl FnOnce(&Redis)) {
     redis.set_need_close(true);
     drop(redis);
     safe_cleanup_test_db(&path);
+}
+
+fn populate_search_vectors(redis: &Redis) -> CanonicalVector {
+    let x = CanonicalVector::from_values(&[1.0, 0.0]).expect("x");
+    let y = CanonicalVector::from_values(&[0.0, 1.0]).expect("y");
+    let neg_x = CanonicalVector::from_values(&[-1.0, 0.0]).expect("negative x");
+    redis.vadd(b"search", b"b", &y).expect("insert b");
+    redis.vadd(b"search", b"a", &y).expect("insert a");
+    redis.vadd(b"search", b"x", &x).expect("insert x");
+    redis.vadd(b"search", b"neg", &neg_x).expect("insert neg");
+    x
+}
+
+fn search_options(count: usize, mode: VectorSearchMode) -> VectorSearchOptions {
+    VectorSearchOptions { count, mode }
 }
 
 #[test]
@@ -213,4 +228,140 @@ fn test_vector_meta_and_member_are_committed_together() {
     redis.set_need_close(true);
     drop(redis);
     safe_cleanup_test_db(&path);
+}
+
+#[test]
+fn test_vsim_direct_vector_returns_exact_top_k() {
+    with_redis(|redis| {
+        let x = populate_search_vectors(redis);
+        let hits = redis
+            .vsim(
+                b"search",
+                VectorQuery::Vector(x),
+                search_options(3, VectorSearchMode::Approximate),
+            )
+            .expect("search");
+
+        assert_eq!(
+            hits.iter()
+                .map(|hit| hit.element.as_slice())
+                .collect::<Vec<_>>(),
+            vec![b"x".as_slice(), b"a".as_slice(), b"b".as_slice()]
+        );
+        assert!((hits[0].score - 1.0).abs() < 1e-12);
+        assert!((hits[1].score - 0.5).abs() < 1e-12);
+        assert!((hits[2].score - 0.5).abs() < 1e-12);
+    });
+}
+
+#[test]
+fn test_vsim_ele_uses_stored_member_as_query() {
+    with_redis(|redis| {
+        populate_search_vectors(redis);
+        let hits = redis
+            .vsim(
+                b"search",
+                VectorQuery::Element(b"x".to_vec()),
+                search_options(2, VectorSearchMode::Approximate),
+            )
+            .expect("element search");
+
+        assert_eq!(hits[0].element, b"x");
+        assert_eq!(hits[1].element, b"a");
+    });
+}
+
+#[test]
+fn test_vsim_stable_tie_breaks_by_raw_element_bytes() {
+    with_redis(|redis| {
+        let x = populate_search_vectors(redis);
+        let hits = redis
+            .vsim(
+                b"search",
+                VectorQuery::Vector(x),
+                search_options(4, VectorSearchMode::Approximate),
+            )
+            .expect("search");
+
+        assert_eq!(hits[1].element, b"a");
+        assert_eq!(hits[2].element, b"b");
+        assert_eq!(hits[1].score, hits[2].score);
+    });
+}
+
+#[test]
+fn test_vsim_truth_matches_approximate_in_phase_one() {
+    with_redis(|redis| {
+        let x = populate_search_vectors(redis);
+        let approximate = redis
+            .vsim(
+                b"search",
+                VectorQuery::Vector(x.clone()),
+                search_options(4, VectorSearchMode::Approximate),
+            )
+            .expect("approximate search");
+        let truth = redis
+            .vsim(
+                b"search",
+                VectorQuery::Vector(x),
+                search_options(4, VectorSearchMode::Truth),
+            )
+            .expect("truth search");
+
+        assert_eq!(truth, approximate);
+    });
+}
+
+#[test]
+fn test_vsim_missing_key_is_empty_and_missing_ele_is_error() {
+    with_redis(|redis| {
+        let x = CanonicalVector::from_values(&[1.0, 0.0]).expect("x");
+        assert!(
+            redis
+                .vsim(
+                    b"missing",
+                    VectorQuery::Vector(x),
+                    search_options(3, VectorSearchMode::Approximate),
+                )
+                .expect("missing search")
+                .is_empty()
+        );
+
+        populate_search_vectors(redis);
+        assert!(
+            redis
+                .vsim(
+                    b"search",
+                    VectorQuery::Element(b"missing".to_vec()),
+                    search_options(3, VectorSearchMode::Approximate),
+                )
+                .is_err()
+        );
+    });
+}
+
+#[test]
+fn test_vsim_rejects_query_dimension_mismatch() {
+    with_redis(|redis| {
+        let x = populate_search_vectors(redis);
+        let wrong_dimension = CanonicalVector::from_values(&[1.0, 0.0, 0.0]).expect("3d");
+        assert!(
+            redis
+                .vsim(
+                    b"search",
+                    VectorQuery::Vector(wrong_dimension),
+                    search_options(3, VectorSearchMode::Approximate),
+                )
+                .is_err()
+        );
+        assert!(
+            redis
+                .vsim(
+                    b"search",
+                    VectorQuery::Vector(x),
+                    search_options(0, VectorSearchMode::Approximate),
+                )
+                .is_err()
+        );
+    });
 }

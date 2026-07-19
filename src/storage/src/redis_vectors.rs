@@ -15,12 +15,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{cmp::Ordering, collections::BinaryHeap};
+
 use kstd::lock_mgr::ScopeRecordLock;
-use rocksdb::ReadOptions;
+use rocksdb::{Direction, IteratorMode, ReadOptions};
 use snafu::{OptionExt, ResultExt};
 
 use crate::{
-    CanonicalVector, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckState,
+    CanonicalVector, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckState, VectorHit,
+    VectorQuery, VectorSearchOptions,
     error::{
         InvalidArgumentSnafu, InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RedisErrSnafu,
         RocksSnafu,
@@ -28,7 +31,37 @@ use crate::{
     format_base_key::BaseMetaKey,
     format_member_data_key::MemberDataKey,
     format_vector::{VectorDataValue, VectorMeta},
+    storage_define::SUFFIX_RESERVE_LENGTH,
 };
+
+#[derive(Debug)]
+struct HeapHit {
+    element: Vec<u8>,
+    score: f64,
+}
+
+impl PartialEq for HeapHit {
+    fn eq(&self, other: &Self) -> bool {
+        self.score.total_cmp(&other.score) == Ordering::Equal && self.element == other.element
+    }
+}
+
+impl Eq for HeapHit {}
+
+impl PartialOrd for HeapHit {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for HeapHit {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .score
+            .total_cmp(&self.score)
+            .then_with(|| self.element.cmp(&other.element))
+    }
+}
 
 impl Redis {
     pub fn is_cluster_mode(&self) -> bool {
@@ -281,6 +314,139 @@ impl Redis {
             .get_cf_opt(&vector_cf, &member_key, &read_options)
             .context(RocksSnafu)?
             .is_some())
+    }
+
+    pub fn vsim(
+        &self,
+        key: &[u8],
+        query: VectorQuery,
+        options: VectorSearchOptions,
+    ) -> Result<Vec<VectorHit>> {
+        self.ensure_vector_standalone()?;
+        if options.count == 0 {
+            return InvalidArgumentSnafu {
+                message: "vector search count must be greater than zero".to_string(),
+            }
+            .fail();
+        }
+
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        let meta_cf = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "MetaCF is not initialized".to_string(),
+            })?;
+        let vector_cf = self
+            .get_cf_handle(ColumnFamilyIndex::VectorDataCF)
+            .context(OptionNoneSnafu {
+                message: "VectorDataCF is not initialized".to_string(),
+            })?;
+        let snapshot = db.snapshot();
+        let mut point_read_options = ReadOptions::default();
+        point_read_options.set_snapshot(&snapshot);
+
+        let meta_key = BaseMetaKey::new(key).encode()?;
+        let Some(meta_raw) = db
+            .get_cf_opt(&meta_cf, &meta_key, &point_read_options)
+            .context(RocksSnafu)?
+        else {
+            return Ok(Vec::new());
+        };
+        let Some(meta) = self.parse_vector_meta(&meta_raw)? else {
+            return Ok(Vec::new());
+        };
+
+        let query_vector = match query {
+            VectorQuery::Element(element) => {
+                let query_key = MemberDataKey::new(key, meta.version(), &element).encode()?;
+                let Some(query_raw) = db
+                    .get_cf_opt(&vector_cf, &query_key, &point_read_options)
+                    .context(RocksSnafu)?
+                else {
+                    return KeyNotFoundSnafu {
+                        key: String::from_utf8_lossy(&element).to_string(),
+                    }
+                    .fail();
+                };
+                VectorDataValue::decode(&query_raw)?.canonical().clone()
+            }
+            VectorQuery::Vector(vector) => vector,
+        };
+        if query_vector.dimension() != meta.dimension() {
+            return InvalidArgumentSnafu {
+                message: format!(
+                    "vector dimension mismatch: expected {}, got {}",
+                    meta.dimension(),
+                    query_vector.dimension()
+                ),
+            }
+            .fail();
+        }
+
+        let prefix = MemberDataKey::new(key, meta.version(), b"").encode_seek_key()?;
+        let mut scan_options = ReadOptions::default();
+        scan_options.set_snapshot(&snapshot);
+        let iterator = db.iterator_cf_opt(
+            &vector_cf,
+            scan_options,
+            IteratorMode::From(&prefix, Direction::Forward),
+        );
+        let mut heap = BinaryHeap::new();
+
+        for entry in iterator {
+            let (encoded_key, encoded_value) = entry.context(RocksSnafu)?;
+            if !encoded_key.starts_with(&prefix) {
+                break;
+            }
+            if encoded_key.len() < prefix.len() + SUFFIX_RESERVE_LENGTH {
+                return InvalidFormatSnafu {
+                    message: "vector member key is shorter than its generation prefix".to_string(),
+                }
+                .fail();
+            }
+
+            let element_end = encoded_key.len() - SUFFIX_RESERVE_LENGTH;
+            let element = encoded_key[prefix.len()..element_end].to_vec();
+            let value = VectorDataValue::decode(&encoded_value)?;
+            if value.dimension() != meta.dimension() {
+                return InvalidFormatSnafu {
+                    message: format!(
+                        "vector member dimension {} does not match meta dimension {}",
+                        value.dimension(),
+                        meta.dimension()
+                    ),
+                }
+                .fail();
+            }
+            let hit = HeapHit {
+                element,
+                score: query_vector.score(value.canonical())?,
+            };
+
+            if heap.len() < options.count {
+                heap.push(hit);
+            } else if heap.peek().is_some_and(|worst| hit < *worst) {
+                heap.pop();
+                heap.push(hit);
+            }
+        }
+
+        let mut hits = heap
+            .into_iter()
+            .map(|hit| VectorHit {
+                element: hit.element,
+                score: hit.score,
+            })
+            .collect::<Vec<_>>();
+        hits.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.element.cmp(&right.element))
+        });
+        Ok(hits)
     }
 
     fn read_vector_meta(&self, key: &[u8]) -> Result<Option<VectorMeta>> {
