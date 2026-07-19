@@ -415,14 +415,18 @@ mod tests {
             ),
             (
                 RespData::BulkString(Some(Bytes::from("key2"))),
-                RespData::Integer(42),
+                RespData::Double(0.5),
             ),
         ]);
         let converted = ProtocolNegotiator::convert_to_resp2(&map_data);
-        if let RespData::Array(Some(items)) = converted {
-            assert_eq!(items.len(), 4); // 2 key-value pairs = 4 items
-        } else {
-            panic!("Expected array conversion for map");
-        }
+        assert_eq!(
+            converted,
+            RespData::Array(Some(vec![
+                RespData::BulkString(Some(Bytes::from("key1"))),
+                RespData::BulkString(Some(Bytes::from("value1"))),
+                RespData::BulkString(Some(Bytes::from("key2"))),
+                RespData::BulkString(Some(Bytes::from("0.5"))),
+            ]))
+        );
     }
 }

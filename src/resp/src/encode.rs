@@ -23,6 +23,7 @@ use bytes::{Bytes, BytesMut};
 use crate::{
     CRLF,
     error::RespError,
+    negotiation::ProtocolNegotiator,
     types::{RespData, RespVersion},
 };
 
@@ -198,6 +199,107 @@ impl RespEncoder {
         let _ = write!(self.buffer, "*{len}");
         self.append_crlf()
     }
+
+    fn encode_resp_data_inner(&mut self, data: &RespData) -> &mut Self {
+        match data {
+            RespData::SimpleString(bytes) => {
+                self.buffer.extend_from_slice(b"+");
+                self.buffer.extend_from_slice(bytes);
+                self.append_crlf()
+            }
+            RespData::Error(bytes) => {
+                self.buffer.extend_from_slice(b"-");
+                self.buffer.extend_from_slice(bytes);
+                self.append_crlf()
+            }
+            RespData::Integer(num) => self.append_integer(*num),
+            RespData::BulkString(Some(bytes)) => self.append_bulk_string(bytes),
+            RespData::BulkString(None) => self.set_bulk_string_len(-1),
+            RespData::Array(Some(array)) => {
+                self.append_array_len(array.len() as i64);
+                for item in array {
+                    self.encode_resp_data_inner(item);
+                }
+                self
+            }
+            RespData::Array(None) => self.set_array_len(-1),
+            RespData::Null => {
+                self.buffer.extend_from_slice(b"_");
+                self.append_crlf()
+            }
+            RespData::Boolean(value) => {
+                self.buffer.extend_from_slice(b"#");
+                self.buffer
+                    .extend_from_slice(if *value { b"t" } else { b"f" });
+                self.append_crlf()
+            }
+            RespData::Double(value) => {
+                if value.is_nan() {
+                    self.buffer.extend_from_slice(b",nan");
+                } else if value.is_infinite() {
+                    self.buffer.extend_from_slice(if value.is_sign_negative() {
+                        b",-inf"
+                    } else {
+                        b",inf"
+                    });
+                } else {
+                    let _ = write!(self.buffer, ",{value}");
+                }
+                self.append_crlf()
+            }
+            RespData::BigNumber(bytes) => {
+                self.buffer.extend_from_slice(b"(");
+                self.buffer.extend_from_slice(bytes);
+                self.append_crlf()
+            }
+            RespData::BulkError(bytes) => {
+                let _ = write!(self.buffer, "!{}", bytes.len());
+                self.append_crlf();
+                self.buffer.extend_from_slice(bytes);
+                self.append_crlf()
+            }
+            RespData::VerbatimString { format, data } => {
+                if format.len() != 3 {
+                    panic!(
+                        "RESP3 VerbatimString format must be exactly 3 bytes, got {}",
+                        format.len()
+                    );
+                }
+                let total_len = format.len() + 1 + data.len();
+                let _ = write!(self.buffer, "={total_len}");
+                self.append_crlf();
+                self.buffer.extend_from_slice(format);
+                self.buffer.extend_from_slice(b":");
+                self.buffer.extend_from_slice(data);
+                self.append_crlf()
+            }
+            RespData::Map(pairs) => {
+                let _ = write!(self.buffer, "%{}", pairs.len());
+                self.append_crlf();
+                for (key, value) in pairs {
+                    self.encode_resp_data_inner(key);
+                    self.encode_resp_data_inner(value);
+                }
+                self
+            }
+            RespData::Set(items) => {
+                let _ = write!(self.buffer, "~{}", items.len());
+                self.append_crlf();
+                for item in items {
+                    self.encode_resp_data_inner(item);
+                }
+                self
+            }
+            RespData::Push(items) => {
+                let _ = write!(self.buffer, ">{}", items.len());
+                self.append_crlf();
+                for item in items {
+                    self.encode_resp_data_inner(item);
+                }
+                self
+            }
+        }
+    }
 }
 
 impl RespEncode for RespEncoder {
@@ -362,103 +464,11 @@ impl RespEncode for RespEncoder {
     }
 
     fn encode_resp_data(&mut self, data: &RespData) -> &mut Self {
-        match data {
-            RespData::SimpleString(bytes) => {
-                self.buffer.extend_from_slice(b"+");
-                self.buffer.extend_from_slice(bytes);
-                self.append_crlf()
-            }
-            RespData::Error(bytes) => {
-                self.buffer.extend_from_slice(b"-");
-                self.buffer.extend_from_slice(bytes);
-                self.append_crlf()
-            }
-            RespData::Integer(num) => self.append_integer(*num),
-            RespData::BulkString(Some(bytes)) => self.append_bulk_string(bytes),
-            RespData::BulkString(None) => self.set_bulk_string_len(-1),
-            RespData::Array(Some(array)) => {
-                self.append_array_len(array.len() as i64);
-                for item in array {
-                    self.encode_resp_data(item);
-                }
-                self
-            }
-            RespData::Array(None) => self.set_array_len(-1),
-            // RESP3 types
-            RespData::Null => {
-                self.buffer.extend_from_slice(b"_");
-                self.append_crlf()
-            }
-            RespData::Boolean(b) => {
-                self.buffer.extend_from_slice(b"#");
-                self.buffer.extend_from_slice(if *b { b"t" } else { b"f" });
-                self.append_crlf()
-            }
-            RespData::Double(d) => {
-                if d.is_nan() {
-                    self.buffer.extend_from_slice(b",nan");
-                } else if d.is_infinite() {
-                    self.buffer.extend_from_slice(if d.is_sign_negative() {
-                        b",-inf"
-                    } else {
-                        b",inf"
-                    });
-                } else {
-                    let _ = write!(self.buffer, ",{}", d);
-                }
-                self.append_crlf()
-            }
-            RespData::BigNumber(bytes) => {
-                self.buffer.extend_from_slice(b"(");
-                self.buffer.extend_from_slice(bytes);
-                self.append_crlf()
-            }
-            RespData::BulkError(bytes) => {
-                let _ = write!(self.buffer, "!{}", bytes.len());
-                self.append_crlf();
-                self.buffer.extend_from_slice(bytes);
-                self.append_crlf()
-            }
-            RespData::VerbatimString { format, data } => {
-                if format.len() != 3 {
-                    panic!(
-                        "RESP3 VerbatimString format must be exactly 3 bytes, got {}",
-                        format.len()
-                    );
-                }
-                let total_len = format.len() + 1 + data.len(); // format + ':' + data
-                let _ = write!(self.buffer, "={total_len}");
-                self.append_crlf();
-                self.buffer.extend_from_slice(format);
-                self.buffer.extend_from_slice(b":");
-                self.buffer.extend_from_slice(data);
-                self.append_crlf()
-            }
-            RespData::Map(pairs) => {
-                let _ = write!(self.buffer, "%{}", pairs.len());
-                self.append_crlf();
-                for (key, value) in pairs {
-                    self.encode_resp_data(key);
-                    self.encode_resp_data(value);
-                }
-                self
-            }
-            RespData::Set(items) => {
-                let _ = write!(self.buffer, "~{}", items.len());
-                self.append_crlf();
-                for item in items {
-                    self.encode_resp_data(item);
-                }
-                self
-            }
-            RespData::Push(items) => {
-                let _ = write!(self.buffer, ">{}", items.len());
-                self.append_crlf();
-                for item in items {
-                    self.encode_resp_data(item);
-                }
-                self
-            }
+        if self.is_resp3() {
+            self.encode_resp_data_inner(data)
+        } else {
+            let normalized = ProtocolNegotiator::convert_to_resp2(data);
+            self.encode_resp_data_inner(&normalized)
         }
     }
 
@@ -553,6 +563,39 @@ impl RespEncode for RespEncoder {
 mod tests {
     use super::*;
     use crate::types::{RespData, RespVersion};
+
+    fn vsim_withscores_response() -> RespData {
+        RespData::Map(vec![
+            (
+                RespData::BulkString(Some(Bytes::from_static(b"a"))),
+                RespData::Double(1.0),
+            ),
+            (
+                RespData::BulkString(Some(Bytes::from_static(b"b"))),
+                RespData::Double(0.5),
+            ),
+        ])
+    }
+
+    #[test]
+    fn encode_vsim_withscores_resp3() {
+        let mut encoder = RespEncoder::new(RespVersion::RESP3);
+        encoder.encode_resp_data(&vsim_withscores_response());
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from_static(b"%2\r\n$1\r\na\r\n,1\r\n$1\r\nb\r\n,0.5\r\n")
+        );
+    }
+
+    #[test]
+    fn encode_vsim_withscores_resp2() {
+        let mut encoder = RespEncoder::new(RespVersion::RESP2);
+        encoder.encode_resp_data(&vsim_withscores_response());
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from_static(b"*4\r\n$1\r\na\r\n$1\r\n1\r\n$1\r\nb\r\n$3\r\n0.5\r\n")
+        );
+    }
 
     #[test]
     fn test_encode_resp3_null() {
@@ -720,41 +763,27 @@ mod tests {
 
     #[test]
     fn test_resp3_boolean_with_resp2_encoder() {
-        // Test current behavior: RESP3 Boolean encodes as RESP3 format even with RESP2 encoder
-        // This produces invalid RESP2 output (#t\r\n is not valid RESP2)
-        // TODO: Either fail with error or auto-convert Boolean(true) -> Integer(1) ":1\r\n"
         let mut encoder = RespEncoder::new(RespVersion::RESP2);
         encoder.encode_resp_data(&RespData::Boolean(true));
-        let result = encoder.get_response();
-        // Current implementation produces RESP3 format regardless of encoder version
-        assert_eq!(result, Bytes::from("#t\r\n"));
+        assert_eq!(encoder.get_response(), Bytes::from(":1\r\n"));
     }
 
     #[test]
     fn test_resp3_null_with_resp2_encoder() {
-        // Test current behavior: RESP3 Null encodes as RESP3 format even with RESP2 encoder
-        // This produces invalid RESP2 output (_\r\n is not valid RESP2)
-        // TODO: Auto-convert Null -> BulkString(None) "$-1\r\n" for RESP2 compatibility
         let mut encoder = RespEncoder::new(RespVersion::RESP2);
         encoder.encode_resp_data(&RespData::Null);
-        let result = encoder.get_response();
-        // Current implementation produces RESP3 format regardless of encoder version
-        assert_eq!(result, Bytes::from("_\r\n"));
+        assert_eq!(encoder.get_response(), Bytes::from("$-1\r\n"));
     }
 
     #[test]
-    fn test_resp3_types_behavior() {
-        // Document current behavior: RESP3 types encode regardless of version
-        // Future improvement: Add version-aware encoding or fail early
+    fn test_resp3_types_downgrade_for_resp2() {
         let mut encoder = RespEncoder::new(RespVersion::RESP2);
 
-        // Double
         #[allow(clippy::approx_constant)]
         encoder.clear().encode_resp_data(&RespData::Double(3.14));
-        assert_eq!(encoder.get_response(), Bytes::from(",3.14\r\n"));
+        assert_eq!(encoder.get_response(), Bytes::from("$4\r\n3.14\r\n"));
 
-        // Map
         encoder.clear().encode_resp_data(&RespData::Map(vec![]));
-        assert_eq!(encoder.get_response(), Bytes::from("%0\r\n"));
+        assert_eq!(encoder.get_response(), Bytes::from("*0\r\n"));
     }
 }
