@@ -43,7 +43,6 @@ raft-node-id 1
 raft-addr 127.0.0.1:8501
 raft-resp-addr 127.0.0.1:7379
 raft-data-dir /tmp/kiwi/n1/raft
-raft-use-memory-log-store true
 ```
 
 类似地创建 `node2.conf` 和 `node3.conf`，修改 `port`/`raft-addr`/`raft-resp-addr`/`data-dir`/`raft-data-dir` 和 `raft-node-id`（分别为 2 和 3）。保持 `raft-resp-addr` 等于各节点的 `<binding>:<port>`——这是返回给客户端的重定向地址。
@@ -55,8 +54,9 @@ Raft 配置项说明：
 | `raft-node-id` | 唯一节点 ID（`u64`） |
 | `raft-addr` | Raft 内部通信的 gRPC 地址 |
 | `raft-resp-addr` | 对外公布的 RESP 地址（用于 `MOVED` 重定向） |
-| `raft-data-dir` | Raft 日志/快照存储目录 |
-| `raft-use-memory-log-store` | `true` = 内存日志（测试用）；`false` = RocksDB 持久化 |
+| `raft-data-dir` | Raft 日志和快照的持久化存储目录 |
+
+Raft 日志始终持久化到 RocksDB。节点重启时会从 `raft-data-dir` 恢复投票状态、已提交位置和日志条目。每个节点必须使用独立且稳定的目录；节点重启或升级时不要删除该目录。
 
 ### 2. 启动节点
 
