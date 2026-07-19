@@ -161,10 +161,6 @@ impl VectorMeta {
         self.dimension
     }
 
-    pub(crate) fn etime(&self) -> u64 {
-        self.etime
-    }
-
     pub(crate) fn is_stale(&self) -> bool {
         self.etime != 0 && self.etime < Utc::now().timestamp_micros() as u64
     }
@@ -184,7 +180,7 @@ impl VectorDataValue {
 
     pub(crate) fn encode(&self) -> BytesMut {
         let mut output = BytesMut::with_capacity(
-            VECTOR_VALUE_HEADER_LENGTH + self.canonical.normalized().len() * size_of::<f32>(),
+            VECTOR_VALUE_HEADER_LENGTH + size_of_val(self.canonical.normalized()),
         );
         output.put_u8(VECTOR_VALUE_MAGIC);
         output.put_u8(VECTOR_VALUE_FORMAT);
@@ -271,10 +267,6 @@ impl VectorDataValue {
         self.canonical.dimension()
     }
 
-    pub(crate) fn original_l2(&self) -> f32 {
-        self.canonical.original_l2()
-    }
-
     pub(crate) fn canonical(&self) -> &CanonicalVector {
         &self.canonical
     }
@@ -308,7 +300,7 @@ mod tests {
         let decoded = VectorDataValue::decode(&encoded).expect("decode vector value");
 
         assert_eq!(decoded.dimension(), 2);
-        assert!((decoded.original_l2() - 5.0).abs() < 1e-6);
+        assert!((decoded.canonical().original_l2() - 5.0).abs() < 1e-6);
         assert_eq!(decoded.canonical(), &canonical);
     }
 

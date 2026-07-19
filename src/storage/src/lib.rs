@@ -53,6 +53,7 @@ mod redis_hashes;
 mod redis_lists;
 mod redis_sets;
 mod redis_strings;
+mod redis_vectors;
 
 pub mod error;
 mod format_zset_score_key;
