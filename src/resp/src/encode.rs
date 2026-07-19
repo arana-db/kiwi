@@ -214,6 +214,9 @@ impl RespEncoder {
             }
             RespData::Integer(num) => self.append_integer(*num),
             RespData::BulkString(Some(bytes)) => self.append_bulk_string(bytes),
+            RespData::BulkString(None) | RespData::Array(None) if self.is_resp3() => {
+                self.append_null()
+            }
             RespData::BulkString(None) => self.set_bulk_string_len(-1),
             RespData::Array(Some(array)) => {
                 self.append_array_len(array.len() as i64);
