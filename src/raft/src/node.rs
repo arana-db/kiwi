@@ -27,7 +27,6 @@ use arc_swap::ArcSwap;
 use crate::grpc::{
     create_admin_service, create_client_service, create_core_service, create_metrics_service,
 };
-use crate::log_store::LogStore;
 use crate::log_store_rocksdb::RocksdbLogStore;
 use crate::network::KiwiNetworkFactory;
 use crate::raft_proto::raft_admin_service_server::RaftAdminServiceServer;
@@ -110,7 +109,6 @@ pub struct RaftConfig {
     pub heartbeat_interval: u64,
     pub election_timeout_min: u64,
     pub election_timeout_max: u64,
-    pub use_memory_log_store: bool,
     pub snapshot_logs_threshold: u64,
     pub snapshot_max_chunk_size: u64,
     pub install_snapshot_timeout: u64,
@@ -135,7 +133,6 @@ impl Default for RaftConfig {
             heartbeat_interval: 200,
             election_timeout_min: 500,
             election_timeout_max: 1500,
-            use_memory_log_store: false,
             snapshot_logs_threshold: SNAPSHOT_LOGS_THRESHOLD,
             snapshot_max_chunk_size: SNAPSHOT_MAX_CHUNK_SIZE,
             install_snapshot_timeout: INSTALL_SNAPSHOT_TIMEOUT,
@@ -202,31 +199,17 @@ pub async fn create_raft_node(
 
     let network = KiwiNetworkFactory::new();
 
-    let raft = if config.use_memory_log_store {
-        let log_store_path = config.data_dir.join("raft_logs");
-        std::fs::create_dir_all(&log_store_path)?;
-        let log_store = LogStore::new();
-        Raft::new(
-            config.node_id,
-            raft_config,
-            network,
-            log_store,
-            state_machine,
-        )
-        .await?
-    } else {
-        let log_store_path = config.data_dir.join("raft_logs_rocksdb");
-        std::fs::create_dir_all(&log_store_path)?;
-        let log_store = RocksdbLogStore::open(&log_store_path)?;
-        Raft::new(
-            config.node_id,
-            raft_config,
-            network,
-            log_store,
-            state_machine,
-        )
-        .await?
-    };
+    let log_store_path = config.data_dir.join("raft_logs_rocksdb");
+    std::fs::create_dir_all(&log_store_path)?;
+    let log_store = RocksdbLogStore::open(&log_store_path)?;
+    let raft = Raft::new(
+        config.node_id,
+        raft_config,
+        network,
+        log_store,
+        state_machine,
+    )
+    .await?;
 
     Ok(Arc::new(RaftApp {
         node_id: config.node_id,
