@@ -19,6 +19,8 @@ extern crate core;
 
 mod format_base_data_value;
 mod format_member_data_key;
+mod format_vector;
+pub mod vector;
 
 mod data_compaction_filter;
 mod meta_compaction_filter;
@@ -75,3 +77,4 @@ pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use storage_impl::BeforeOrAfter;
 pub use util::{safe_cleanup_test_db, unique_test_db_path};
+pub use vector::{CanonicalVector, VectorHit, VectorQuery, VectorSearchMode, VectorSearchOptions};
