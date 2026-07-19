@@ -36,13 +36,16 @@ pub enum DataType {
     ZSet = 4,
     None = 5,
     All = 6,
+    VectorSet = 7,
 }
 
 impl DataType {
     pub fn min_meta_raw_len(self) -> Result<usize> {
         match self {
             DataType::String => Ok(TYPE_LENGTH + STRING_VALUE_SUFFIXLENGTH),
-            DataType::Hash | DataType::Set | DataType::ZSet => Ok(BASE_META_VALUE_LENGTH),
+            DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
+                Ok(BASE_META_VALUE_LENGTH)
+            }
             DataType::List => Ok(LISTS_META_VALUE_LENGTH),
             _ => InvalidFormatSnafu {
                 message: format!("data type: {self:?} should not be used as meta value"),
@@ -64,6 +67,7 @@ impl TryFrom<u8> for DataType {
             4 => Ok(DataType::ZSet),
             5 => Ok(DataType::None),
             6 => Ok(DataType::All),
+            7 => Ok(DataType::VectorSet),
             _ => InvalidFormatSnafu {
                 message: format!("Invalid data type byte: {value}"),
             }
@@ -72,8 +76,17 @@ impl TryFrom<u8> for DataType {
     }
 }
 
-pub const DATA_TYPE_STRINGS: [&str; 7] = ["string", "hash", "set", "list", "zset", "none", "all"];
-pub const DATA_TYPE_TAG: [char; 7] = ['k', 'h', 's', 'l', 'z', 'n', 'a'];
+pub const DATA_TYPE_STRINGS: [&str; 8] = [
+    "string",
+    "hash",
+    "set",
+    "list",
+    "zset",
+    "none",
+    "all",
+    "vectorset",
+];
+pub const DATA_TYPE_TAG: [char; 8] = ['k', 'h', 's', 'l', 'z', 'n', 'a', 'v'];
 
 pub fn data_type_to_string(data_type: DataType) -> &'static str {
     DATA_TYPE_STRINGS[data_type as usize]
