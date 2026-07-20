@@ -173,3 +173,13 @@ For multi-step tasks, state a brief plan:
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+## Subagent Policy
+
+This project permits and requires the use of subagents when a task contains two or more independent, bounded workstreams that can be executed in parallel. The lead agent should delegate those workstreams without requesting separate approval for each delegation. Tasks that cannot be safely or usefully decomposed do not require a subagent.
+
+Using subagents does not expand the scope of the user's request or authorize additional state-changing actions. The lead agent remains responsible for defining non-overlapping ownership, coordinating the work, independently verifying material conclusions, resolving duplicate or conflicting findings, and producing the final result.
+
+For pull request reviews, all subagents must remain read-only unless the user explicitly requests fixes. They may inspect the diff and source code, trace callers and implementations, assess tests, and run non-modifying static checks or tests. Subagents must not post GitHub comments or independently issue the final severity or merge decision; the lead agent must verify and submit all inline comments and the final conclusion.
+
+Authorization to implement fixes does not authorize commit, push, merge, rebase, closing the pull request, or resolving review threads. Those actions require the authorization specified by the applicable review protocol.
