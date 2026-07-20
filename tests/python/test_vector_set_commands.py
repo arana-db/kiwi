@@ -45,7 +45,11 @@ def vector_client(request):
         decode_responses=False,
         protocol=protocol,
     )
-    client.ping()
+    try:
+        client.ping()
+    except redis.ConnectionError:
+        client.close()
+        pytest.skip("Kiwi server is not running")
     client.delete(*keys)
     yield client, protocol, prefix
     client.delete(*keys)
