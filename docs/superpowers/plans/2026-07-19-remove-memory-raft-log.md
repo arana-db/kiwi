@@ -4,7 +4,7 @@
 
 **目标：** 删除正常运行路径中的内存 Raft LogStore，使旧配置项明确报错，并保证集群文档和节点构造只使用持久化 RocksDB 日志。
 
-**架构：** 保留 OpenRaft 的 `RaftLogStorage` 框架接口，但 Kiwi 正常节点只实例化 `RocksdbLogStore`。配置层对已删除的 `raft-use-memory-log-store` 返回迁移错误，避免旧配置被静默忽略；现有 RocksDB reopen 测试继续验证 vote、committed、log 和 purge 状态持久化。
+**架构：** 保留 OpenRaft 的 `RaftLogStorage` 框架接口，但 Kiwi 正常节点只实例化 `RocksdbLogStore`。配置层对已删除的 `raft-use-memory-log-store` 返回迁移错误，避免旧配置被静默忽略；新增真实 RocksDB close/reopen 测试验证 vote、committed、log 和 purge 状态持久化。
 
 **技术栈：** Rust、OpenRaft、RocksDB、SNAFU、Cargo test、Markdown 文档。
 
@@ -19,7 +19,7 @@
 - 删除：`src/raft/src/log_store.rs`，删除仅用于 POC 的非持久化实现。
 - 修改：`src/server/src/main.rs`，不再向 RaftConfig 传递内存日志开关。
 - 修改：`docs/cluster.md`，集群示例和配置说明只描述持久化 RocksDB 日志。
-- 验证：`src/raft/tests/log_store_rocksdb_test.rs`，复用既有 reopen 测试，不复制相同持久化覆盖。
+- 修改：`src/raft/tests/log_store_rocksdb_test.rs`，新增销毁全部底层句柄后对同一路径执行真实 close/reopen 的持久化测试。
 
 ### 任务 1：用失败测试冻结配置迁移行为
 
@@ -187,20 +187,20 @@ let raft = Raft::new(
 运行：
 
 ```powershell
-rg -n "use_memory_log_store|raft-use-memory-log-store|crate::log_store::LogStore|pub mod log_store;" src docs
+rg -n --glob '!docs/superpowers/plans/2026-07-19-remove-memory-raft-log.md' "use_memory_log_store|raft-use-memory-log-store|crate::log_store::LogStore|pub mod log_store;" src docs
 ```
 
-预期：只允许命中配置拒绝测试和迁移错误文字；不得再命中可执行内存日志实现或正常配置字段。
+预期：只允许命中配置拒绝测试、迁移错误和说明旧模式已删除的升级文档；不得再命中可执行内存日志实现或正常配置字段。
 
 - [ ] **步骤 5：运行 Raft 持久化定向测试**
 
 运行：
 
 ```powershell
-cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul && cargo +1.95-x86_64-pc-windows-msvc test --package raft --test log_store_rocksdb_test test_node_restart_data_recovery -- --nocapture'
+cmd.exe /d /s /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul && cargo +1.95-x86_64-pc-windows-msvc test --package raft --test log_store_rocksdb_test close_and_reopen_recovers_complete_raft_state -- --nocapture'
 ```
 
-预期：PASS，vote、committed state 和 log entries 在 reopen 后保持。
+预期：PASS。第一阶段销毁全部 store、reader、engine 和 DB handle 后，第二阶段从同一路径重新打开，并恢复 vote、committed state、last log、last purged 和未清理日志。
 
 ### 任务 4：修正文档和示例
 
@@ -228,10 +228,10 @@ Raft 日志始终持久化到 RocksDB。节点重启时会从该目录恢复 vot
 运行：
 
 ```powershell
-rg -n "memory log|内存日志|raft-use-memory-log-store" README.md docs config src
+rg -n --glob '!docs/superpowers/plans/2026-07-19-remove-memory-raft-log.md' "memory log|内存日志|raft-use-memory-log-store" README.md docs src
 ```
 
-预期：只允许迁移错误和拒绝测试命中，不再有推荐或配置说明。
+预期：只允许迁移错误、拒绝测试和明确说明旧模式已删除及升级操作的文档命中，不再有推荐或配置说明。
 
 ### 任务 5：完整验证
 

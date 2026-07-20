@@ -16,6 +16,7 @@
 // limitations under the License.
 
 use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
+use openraft::storage::RaftLogStorage;
 use openraft::{Config, Raft, SnapshotPolicy};
 use std::fs;
 use std::path::PathBuf;
@@ -199,9 +200,27 @@ pub async fn create_raft_node(
 
     let network = KiwiNetworkFactory::new();
 
+    let legacy_log_store_path = config.data_dir.join("raft_logs");
     let log_store_path = config.data_dir.join("raft_logs_rocksdb");
     std::fs::create_dir_all(&log_store_path)?;
-    let log_store = RocksdbLogStore::open(&log_store_path)?;
+    let mut log_store = RocksdbLogStore::open(&log_store_path)?;
+
+    if legacy_log_store_path.try_exists()? {
+        let log_state = log_store.get_log_state().await?;
+        let vote = log_store.read_vote().await?;
+        let committed = log_store.read_committed().await?;
+
+        if vote.is_none()
+            && committed.is_none()
+            && log_state.last_log_id.is_none()
+            && log_state.last_purged_log_id.is_none()
+        {
+            return Err(anyhow::anyhow!(
+                "cannot safely migrate legacy in-memory Raft log state in place; use a new node ID and clean data-dir/raft-data-dir to rejoin from a healthy leader"
+            ));
+        }
+    }
+
     let raft = Raft::new(
         config.node_id,
         raft_config,
@@ -218,4 +237,75 @@ pub async fn create_raft_node(
         raft,
         storage_swap,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn legacy_memory_log_without_durable_raft_state_is_rejected() {
+        let temp_dir = TempDir::new().expect("test should create a temporary directory");
+        let raft_data_dir = temp_dir.path().join("raft-data");
+        fs::create_dir_all(raft_data_dir.join("raft_logs"))
+            .expect("test should create the legacy memory log directory");
+
+        let config = RaftConfig {
+            data_dir: raft_data_dir,
+            db_path: temp_dir.path().join("data"),
+            ..Default::default()
+        };
+        let storage_swap = Arc::new(ArcSwap::from_pointee(Storage::new(1, 0)));
+
+        let error = match create_raft_node(config, storage_swap, None, None).await {
+            Ok(app) => {
+                app.raft
+                    .shutdown()
+                    .await
+                    .expect("test Raft node should shut down cleanly");
+                panic!("legacy memory log directory without durable Raft state must be rejected");
+            }
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("cannot safely migrate"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn legacy_memory_log_with_durable_vote_is_allowed() {
+        let temp_dir = TempDir::new().expect("test should create a temporary directory");
+        let raft_data_dir = temp_dir.path().join("raft-data");
+        fs::create_dir_all(raft_data_dir.join("raft_logs"))
+            .expect("test should create the legacy memory log directory");
+
+        {
+            let mut log_store = RocksdbLogStore::open(raft_data_dir.join("raft_logs_rocksdb"))
+                .expect("test should open the durable log store");
+            log_store
+                .save_vote(&openraft::Vote::new(1, 1))
+                .await
+                .expect("test should persist a vote");
+        }
+
+        let config = RaftConfig {
+            data_dir: raft_data_dir,
+            db_path: temp_dir.path().join("data"),
+            ..Default::default()
+        };
+        let storage_swap = Arc::new(ArcSwap::from_pointee(Storage::new(1, 0)));
+
+        let app = create_raft_node(config, storage_swap, None, None)
+            .await
+            .expect("durable Raft state should allow startup");
+
+        app.raft
+            .shutdown()
+            .await
+            .expect("test Raft node should shut down cleanly");
+        drop(app);
+    }
 }
