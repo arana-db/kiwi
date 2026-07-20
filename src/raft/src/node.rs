@@ -16,7 +16,6 @@
 // limitations under the License.
 
 use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
-use openraft::storage::RaftLogStorage;
 use openraft::{Config, Raft, SnapshotPolicy};
 use std::fs;
 use std::path::PathBuf;
@@ -203,22 +202,12 @@ pub async fn create_raft_node(
     let legacy_log_store_path = config.data_dir.join("raft_logs");
     let log_store_path = config.data_dir.join("raft_logs_rocksdb");
     std::fs::create_dir_all(&log_store_path)?;
-    let mut log_store = RocksdbLogStore::open(&log_store_path)?;
+    let log_store = RocksdbLogStore::open(&log_store_path)?;
 
     if legacy_log_store_path.try_exists()? {
-        let log_state = log_store.get_log_state().await?;
-        let vote = log_store.read_vote().await?;
-        let committed = log_store.read_committed().await?;
-
-        if vote.is_none()
-            && committed.is_none()
-            && log_state.last_log_id.is_none()
-            && log_state.last_purged_log_id.is_none()
-        {
-            return Err(anyhow::anyhow!(
-                "cannot safely migrate legacy in-memory Raft log state in place; use a new node ID and clean data-dir/raft-data-dir to rejoin from a healthy leader"
-            ));
-        }
+        return Err(anyhow::anyhow!(
+            "cannot safely migrate legacy in-memory Raft log state in place; use a new node ID and clean data-dir/raft-data-dir to rejoin from a healthy leader"
+        ));
     }
 
     let raft = Raft::new(
@@ -242,7 +231,43 @@ pub async fn create_raft_node(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use openraft::storage::{RaftLogStorage, RaftLogStorageExt};
+    use openraft::{Entry, EntryPayload, LeaderId, LogId, Vote};
     use tempfile::TempDir;
+
+    #[derive(Clone, Copy)]
+    enum DurableStateFixture {
+        VoteOnly,
+        CommittedOnly,
+        LogOnly,
+        PurgedOnly,
+        Complete,
+    }
+
+    impl DurableStateFixture {
+        fn name(self) -> &'static str {
+            match self {
+                Self::VoteOnly => "vote-only",
+                Self::CommittedOnly => "committed-only",
+                Self::LogOnly => "log-only",
+                Self::PurgedOnly => "purged-only",
+                Self::Complete => "complete",
+            }
+        }
+    }
+
+    fn test_log_entries() -> Vec<Entry<KiwiTypeConfig>> {
+        (1..=2)
+            .map(|index| Entry {
+                log_id: LogId::new(LeaderId::new(1, 1), index),
+                payload: EntryPayload::Normal(Binlog {
+                    db_id: 0,
+                    slot_idx: 0,
+                    entries: vec![],
+                }),
+            })
+            .collect()
+    }
 
     #[tokio::test]
     async fn legacy_memory_log_without_durable_raft_state_is_rejected() {
@@ -276,36 +301,88 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_memory_log_with_durable_vote_is_allowed() {
-        let temp_dir = TempDir::new().expect("test should create a temporary directory");
-        let raft_data_dir = temp_dir.path().join("raft-data");
-        fs::create_dir_all(raft_data_dir.join("raft_logs"))
-            .expect("test should create the legacy memory log directory");
+    async fn legacy_memory_log_marker_is_rejected_even_with_rocksdb_state() {
+        for fixture in [
+            DurableStateFixture::VoteOnly,
+            DurableStateFixture::CommittedOnly,
+            DurableStateFixture::LogOnly,
+            DurableStateFixture::PurgedOnly,
+            DurableStateFixture::Complete,
+        ] {
+            let temp_dir = TempDir::new().expect("test should create a temporary directory");
+            let raft_data_dir = temp_dir.path().join("raft-data");
+            fs::create_dir_all(raft_data_dir.join("raft_logs"))
+                .expect("test should create the legacy memory log directory");
 
-        {
-            let mut log_store = RocksdbLogStore::open(raft_data_dir.join("raft_logs_rocksdb"))
-                .expect("test should open the durable log store");
-            log_store
-                .save_vote(&openraft::Vote::new(1, 1))
-                .await
-                .expect("test should persist a vote");
+            {
+                let mut log_store = RocksdbLogStore::open(raft_data_dir.join("raft_logs_rocksdb"))
+                    .expect("test should open the durable log store");
+                let log_id = LogId::new(LeaderId::new(1, 1), 1);
+
+                match fixture {
+                    DurableStateFixture::VoteOnly => log_store
+                        .save_vote(&Vote::new(1, 1))
+                        .await
+                        .expect("test should persist a vote"),
+                    DurableStateFixture::CommittedOnly => log_store
+                        .save_committed(Some(log_id))
+                        .await
+                        .expect("test should persist a committed log ID"),
+                    DurableStateFixture::LogOnly => log_store
+                        .blocking_append(test_log_entries())
+                        .await
+                        .expect("test should persist log entries"),
+                    DurableStateFixture::PurgedOnly => log_store
+                        .purge(log_id)
+                        .await
+                        .expect("test should persist a purged log ID"),
+                    DurableStateFixture::Complete => {
+                        log_store
+                            .blocking_append(test_log_entries())
+                            .await
+                            .expect("test should persist log entries");
+                        log_store
+                            .save_vote(&Vote::new(1, 1))
+                            .await
+                            .expect("test should persist a vote");
+                        log_store
+                            .save_committed(Some(log_id))
+                            .await
+                            .expect("test should persist a committed log ID");
+                        log_store
+                            .purge(log_id)
+                            .await
+                            .expect("test should persist a purged log ID");
+                    }
+                }
+            }
+
+            let config = RaftConfig {
+                data_dir: raft_data_dir,
+                db_path: temp_dir.path().join("data"),
+                ..Default::default()
+            };
+            let storage_swap = Arc::new(ArcSwap::from_pointee(Storage::new(1, 0)));
+
+            let error = match create_raft_node(config, storage_swap, None, None).await {
+                Ok(app) => {
+                    app.raft
+                        .shutdown()
+                        .await
+                        .expect("test Raft node should shut down cleanly");
+                    panic!(
+                        "legacy memory log marker with {} RocksDB state must be rejected",
+                        fixture.name()
+                    );
+                }
+                Err(error) => error,
+            };
+
+            assert!(
+                error.to_string().contains("cannot safely migrate"),
+                "unexpected error for {} RocksDB state: {error}",
+                fixture.name()
+            );
         }
-
-        let config = RaftConfig {
-            data_dir: raft_data_dir,
-            db_path: temp_dir.path().join("data"),
-            ..Default::default()
-        };
-        let storage_swap = Arc::new(ArcSwap::from_pointee(Storage::new(1, 0)));
-
-        let app = create_raft_node(config, storage_swap, None, None)
-            .await
-            .expect("durable Raft state should allow startup");
-
-        app.raft
-            .shutdown()
-            .await
-            .expect("test Raft node should shut down cleanly");
-        drop(app);
     }
 }

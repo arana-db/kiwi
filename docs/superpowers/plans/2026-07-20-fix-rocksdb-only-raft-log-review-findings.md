@@ -4,7 +4,7 @@
 
 **目标：** 保证生产 Raft 日志只使用 RocksDB，拒绝旧内存日志节点以空 Raft 状态复用已有主数据，并用真实 close/reopen 测试验证持久化。
 
-**架构：** `create_raft_node()` 仍只创建 `RocksdbLogStore`。旧 `raft_logs` 目录仅作为迁移风险标记；当标记存在且 RocksDB Raft 状态全空时 fail closed。持久化测试销毁所有 DB handle 后从同一路径重新打开。
+**架构：** `create_raft_node()` 仍只创建 `RocksdbLogStore`。旧 `raft_logs` 目录仅作为迁移风险标记；只要标记存在就 fail closed，不尝试用部分或完整 RocksDB 字段证明跨存储历史一致。持久化测试销毁所有 DB handle 后从同一路径重新打开。
 
 **技术栈：** Rust、OpenRaft 0.9、RocksDB、Tokio、Cargo test、Clippy。
 
@@ -36,11 +36,11 @@ cargo +1.95 test --package raft legacy_memory_log_without_durable_raft_state_is_
 
 - [ ] **步骤 3：实现最小门禁**
 
-在 `RocksdbLogStore::open()` 后读取 vote、committed、last log 和 last purged。仅当旧 `raft_logs` 存在且四类 durable state 全空时返回迁移错误。不添加任何内存 LogStore、fallback 或运行时选择字段。
+只要旧 `raft_logs` 存在就返回迁移错误，不读取或推断 RocksDB 中的 vote、committed、last log 和 last purged 是否足以放行。不添加任何内存 LogStore、fallback 或运行时选择字段。
 
 - [ ] **步骤 4：验证绿灯并增加允许场景**
 
-再增加一个用例：旧目录存在，但 `raft_logs_rocksdb` 已持久化 vote 时，`create_raft_node()` 必须成功。
+增加表驱动负例：旧目录存在时，vote-only、committed-only、log-only、purged-only 和看似完整的 RocksDB 状态都必须拒绝。明确记录保守代价：空旧目录同样拒绝，运维必须按完整重新入群流程处理。
 
 ### 任务 2：增加真实 RocksDB close/reopen 持久化测试
 

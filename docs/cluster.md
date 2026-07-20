@@ -58,7 +58,7 @@ Raft 配置项说明：
 
 Raft 日志始终持久化到 RocksDB。节点重启时会从 `raft-data-dir` 恢复投票状态、已提交位置和日志条目。每个节点必须使用独立且稳定的目录；节点重启或升级时不要删除该目录。
 
-升级说明：曾启用 `raft-use-memory-log-store` 的节点不能保留原 node ID 和主数据原地升级。内存日志模式没有持久化 vote、membership、committed position 和日志尾部，无法从主数据安全恢复完整的 Raft 状态。请为该节点使用新的 node ID 和干净的 `data-dir`/`raft-data-dir`，再从健康 leader 重新加入集群。如果节点仅遗留旧 `raft_logs` 目录，但 `raft_logs_rocksdb` 中已有有效的持久化 Raft 状态，则仍可正常打开。
+升级说明：曾启用 `raft-use-memory-log-store` 的节点不能保留原 node ID 和主数据原地升级。内存日志模式没有持久化 vote、membership、committed position 和日志尾部，无法从主数据安全恢复完整的 Raft 状态。只要 `raft-data-dir` 中仍存在旧 `raft_logs` 目录，节点就会拒绝启动，即使同时存在 `raft_logs_rocksdb` 状态，因为无法证明两者属于同一段完整 Raft 历史。请为该节点使用新的 node ID 和干净的 `data-dir`/`raft-data-dir`，再从健康 leader 重新加入集群。这个保守门禁也会阻止仅留下空旧目录的节点；确认不需要旧数据后，应按同样流程清理并重新入群，而不是删除单个标记目录后复用原 node ID。
 
 ### 2. 启动节点
 
