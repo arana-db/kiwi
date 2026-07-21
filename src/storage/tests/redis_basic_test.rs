@@ -169,6 +169,46 @@ mod redis_basic_test {
     }
 
     #[test]
+    fn test_redis_drop_releases_rocksdb_for_same_path_reopen() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        {
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+            redis
+                .open(
+                    test_db_path
+                        .to_str()
+                        .expect("test DB path should be valid UTF-8"),
+                )
+                .expect("first Redis owner should open RocksDB");
+            redis.set_need_close(true);
+        }
+
+        {
+            let storage_options = Arc::new(StorageOptions::default());
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let lock_mgr = Arc::new(LockMgr::new(1000));
+            let mut reopened = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+            reopened
+                .open(
+                    test_db_path
+                        .to_str()
+                        .expect("test DB path should be valid UTF-8"),
+                )
+                .expect("dropping the first Redis owner should release the RocksDB lock");
+            reopened.set_need_close(true);
+        }
+
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
     fn test_column_family_index() {
         assert_eq!(ColumnFamilyIndex::MetaCF as usize, 0);
         assert_eq!(ColumnFamilyIndex::HashesDataCF as usize, 1);

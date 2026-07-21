@@ -17,10 +17,10 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Weak};
 
 use chrono::Utc;
 use once_cell::sync::OnceCell;
@@ -193,7 +193,7 @@ impl Redis {
 
         // OnceCell shared with the event listener so callbacks (which fire on RocksDB
         // background threads after open) can reach the live DB handle.
-        let db_once_cell: Arc<OnceCell<Arc<DB>>> = Arc::new(OnceCell::new());
+        let db_once_cell: Arc<OnceCell<Weak<DB>>> = Arc::new(OnceCell::new());
 
         // Snapshot trigger: emitted by the LogIndex purger every N flushes to suggest
         // that the Raft layer build a snapshot. Wiring this into Raft requires a
@@ -210,12 +210,15 @@ impl Redis {
             });
 
         // Flush trigger: invoked by the purger when the collector queue grows beyond
-        // its bound and a specific CF needs to be flushed to release entries. We hold
+        // its bound and a specific CF needs to be flushed to release entries. We access
         // the DB through `db_once_cell` (populated below after `DB::open_cf_descriptors`).
         let flush_db_cell = Arc::clone(&db_once_cell);
         let flush_trigger: FlushTrigger = Box::new(move |cf_id: usize| {
-            let Some(db) = flush_db_cell.get() else {
-                log::warn!("flush_trigger fired before DB was initialized; cf_id={cf_id}");
+            let Some(db) = flush_db_cell.get().and_then(Weak::upgrade) else {
+                log::debug!(
+                    "flush_trigger ignored because RocksDB is not initialized or is closing; \
+                     cf_id={cf_id}"
+                );
                 return;
             };
             let Some(cf_name) = crate::logindex::types::cf_metadata::CF_NAMES_STR.get(cf_id) else {
@@ -268,7 +271,7 @@ impl Redis {
         let db = DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?;
         let engine = RocksdbEngine::new(db);
         let db_arc = engine.shared_db();
-        let _ = db_once_cell.set(Arc::clone(&db_arc));
+        let _ = db_once_cell.set(Arc::downgrade(&db_arc));
 
         self.handles = CF_CONFIGS
             .iter()
@@ -298,7 +301,7 @@ impl Redis {
         cf_name: &str,
         use_bloom_filter: bool,
         block_size: Option<usize>,
-        db_once_cell: Option<&Arc<OnceCell<Arc<DB>>>>,
+        db_once_cell: Option<&Arc<OnceCell<Weak<DB>>>>,
         collector: &Arc<LogIndexAndSequenceCollector>,
     ) -> ColumnFamilyDescriptor {
         let mut cf_opts = storage_options.options.clone();
