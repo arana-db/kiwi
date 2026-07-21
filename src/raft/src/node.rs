@@ -200,15 +200,15 @@ pub async fn create_raft_node(
     let network = KiwiNetworkFactory::new();
 
     let legacy_log_store_path = config.data_dir.join("raft_logs");
-    let log_store_path = config.data_dir.join("raft_logs_rocksdb");
-    std::fs::create_dir_all(&log_store_path)?;
-    let log_store = RocksdbLogStore::open(&log_store_path)?;
-
     if legacy_log_store_path.try_exists()? {
         return Err(anyhow::anyhow!(
             "cannot safely migrate legacy in-memory Raft log state in place; use a new node ID and clean data-dir/raft-data-dir to rejoin from a healthy leader"
         ));
     }
+
+    let log_store_path = config.data_dir.join("raft_logs_rocksdb");
+    std::fs::create_dir_all(&log_store_path)?;
+    let log_store = RocksdbLogStore::open(&log_store_path)?;
 
     let raft = Raft::new(
         config.node_id,
@@ -275,6 +275,7 @@ mod tests {
         let raft_data_dir = temp_dir.path().join("raft-data");
         fs::create_dir_all(raft_data_dir.join("raft_logs"))
             .expect("test should create the legacy memory log directory");
+        let log_store_path = raft_data_dir.join("raft_logs_rocksdb");
 
         let config = RaftConfig {
             data_dir: raft_data_dir,
@@ -297,6 +298,12 @@ mod tests {
         assert!(
             error.to_string().contains("cannot safely migrate"),
             "unexpected error: {error}"
+        );
+        assert!(
+            !log_store_path
+                .try_exists()
+                .expect("test should inspect the RocksDB log store path"),
+            "legacy marker rejection must happen before creating the RocksDB log store"
         );
     }
 
