@@ -272,7 +272,6 @@ async fn start_server(
             heartbeat_interval: raft_config.heartbeat_interval_ms.unwrap_or(200),
             election_timeout_min: raft_config.election_timeout_min_ms.unwrap_or(500),
             election_timeout_max: raft_config.election_timeout_max_ms.unwrap_or(1500),
-            use_memory_log_store: raft_config.use_memory_log_store,
             ..RaftConfig::default()
         };
 

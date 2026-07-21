@@ -284,6 +284,42 @@ mod tests {
     }
 
     #[test]
+    fn test_memory_raft_log_store_config_is_rejected() {
+        use std::io::Write;
+
+        let mut config_file =
+            tempfile::NamedTempFile::new().expect("test should create temporary config");
+        writeln!(config_file, "raft-node-id 1").expect("test should write raft node id");
+        writeln!(config_file, "raft-use-memory-log-store true")
+            .expect("test should write removed config key");
+
+        let error = Config::load(
+            config_file
+                .path()
+                .to_str()
+                .expect("temporary config path should be UTF-8"),
+        )
+        .expect_err("removed memory raft log configuration must be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("raft-use-memory-log-store has been removed"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn test_full_sample_config_uses_persistent_raft_log_store() {
+        let sample = Config::full_sample_config();
+
+        assert!(
+            !sample.contains("raft-use-memory-log-store"),
+            "full sample config must not advertise a non-persistent Raft log store"
+        );
+    }
+
+    #[test]
     fn test_partial_raft_config_requires_node_id() {
         use std::io::Write;
 

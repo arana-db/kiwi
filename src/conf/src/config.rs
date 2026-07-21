@@ -218,8 +218,6 @@ pub struct RaftClusterConfig {
     pub heartbeat_interval_ms: Option<u64>,
     pub election_timeout_min_ms: Option<u64>,
     pub election_timeout_max_ms: Option<u64>,
-    /// 是否使用内存日志存储，默认 false（使用 RocksDB 持久化存储）
-    pub use_memory_log_store: bool,
 }
 
 impl Default for RaftClusterConfig {
@@ -232,7 +230,6 @@ impl Default for RaftClusterConfig {
             heartbeat_interval_ms: Some(200),
             election_timeout_min_ms: Some(500),
             election_timeout_max_ms: Some(1500),
-            use_memory_log_store: false,
         }
     }
 }
@@ -595,14 +592,12 @@ impl Config {
                         })?);
                 }
                 "raft-use-memory-log-store" => {
-                    raft_fields_seen = true;
-                    raft_config.use_memory_log_store =
-                        parse_bool_from_string(&value).map_err(|e| Error::InvalidConfig {
-                            source: serde_ini::de::Error::Custom(format!(
-                                "Invalid raft-use-memory-log-store: {}",
-                                e
-                            )),
-                        })?;
+                    return Err(Error::InvalidConfig {
+                        source: serde_ini::de::Error::Custom(
+                            "raft-use-memory-log-store has been removed; Kiwi requires the persistent RocksDB Raft log store"
+                                .to_string(),
+                        ),
+                    });
                 }
                 "requirepass" => {
                     config.requirepass = Some(value);

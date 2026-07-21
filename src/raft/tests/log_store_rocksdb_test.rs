@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use openraft::LeaderId;
 use openraft::RaftLogReader;
-use openraft::storage::RaftLogStorage;
+use openraft::storage::{RaftLogStorage, RaftLogStorageExt};
 use openraft::{Entry, EntryPayload, LogId, Vote};
 use rocksdb::{ColumnFamilyDescriptor, DB, Options};
 use tempfile::TempDir;
@@ -246,6 +246,74 @@ async fn test_node_restart_data_recovery() {
 
     // Clean up
     drop(temp_dir);
+}
+
+#[tokio::test]
+async fn close_and_reopen_recovers_complete_raft_state() {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let log_store_path = temp_dir.path().join("raft-log-store");
+    let entries = create_test_entries(1, 10, 7);
+    let vote = Vote::new_committed(7, 1);
+    let committed = LogId::new(LeaderId::new(7, 1), 8);
+    let purged = LogId::new(LeaderId::new(7, 1), 4);
+
+    {
+        let mut log_store =
+            RocksdbLogStore::open(&log_store_path).expect("Failed to open log store");
+        log_store
+            .blocking_append(entries.clone())
+            .await
+            .expect("Failed to append entries");
+        log_store
+            .save_vote(&vote)
+            .await
+            .expect("Failed to save vote");
+        log_store
+            .save_committed(Some(committed))
+            .await
+            .expect("Failed to save committed log id");
+        log_store
+            .purge(purged)
+            .await
+            .expect("Failed to purge entries");
+    }
+
+    let mut reopened = RocksdbLogStore::open(&log_store_path).expect("Failed to reopen log store");
+    let log_state = reopened
+        .get_log_state()
+        .await
+        .expect("Failed to read recovered log state");
+
+    assert_eq!(log_state.last_log_id, Some(entries[9].log_id));
+    assert_eq!(log_state.last_purged_log_id, Some(purged));
+    assert_eq!(
+        reopened
+            .read_vote()
+            .await
+            .expect("Failed to read recovered vote"),
+        Some(vote)
+    );
+    assert_eq!(
+        reopened
+            .read_committed()
+            .await
+            .expect("Failed to read recovered committed log id"),
+        Some(committed)
+    );
+
+    let recovered_entries = {
+        let mut reader = reopened.get_log_reader().await;
+        reader
+            .try_get_log_entries(1..=10)
+            .await
+            .expect("Failed to read recovered entries")
+    };
+    assert_eq!(recovered_entries.len(), 6);
+    assert_eq!(
+        serde_json::to_vec(&recovered_entries).expect("Failed to serialize recovered entries"),
+        serde_json::to_vec(&entries[4..]).expect("Failed to serialize expected entries")
+    );
+    drop(reopened);
 }
 
 #[tokio::test]
