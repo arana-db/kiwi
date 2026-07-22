@@ -179,6 +179,7 @@ pub async fn create_raft_node(
     pause_controller: Arc<dyn PauseController>,
     append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
 ) -> Result<Arc<RaftApp>, anyhow::Error> {
+    crate::state_machine::preflight_snapshot_install(&config.db_path)?;
     let raft_config = build_raft_config(&config)?;
     let snapshot_work_dir = config.data_dir.join("snapshots");
     fs::create_dir_all(&snapshot_work_dir)?;
@@ -231,7 +232,7 @@ pub async fn create_raft_node(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state_machine::StorageAccessPermit;
+    use crate::state_machine::{StorageAccessPermit, snapshot_install_marker_path};
     use openraft::storage::{RaftLogStorage, RaftLogStorageExt};
     use openraft::{Entry, EntryPayload, LeaderId, LogId, Vote};
     use tempfile::TempDir;
@@ -261,6 +262,103 @@ mod tests {
 
     fn noop_pause_controller() -> Arc<dyn PauseController> {
         Arc::new(NoopPauseController)
+    }
+
+    #[tokio::test]
+    async fn malformed_snapshot_install_marker_is_rejected_before_log_store_creation() {
+        let temp_dir = TempDir::new().expect("test should create a temporary directory");
+        let raft_data_dir = temp_dir.path().join("raft-data");
+        let db_path = temp_dir.path().join("data");
+        fs::create_dir_all(db_path.parent().expect("test DB path should have a parent"))
+            .expect("test should create the DB parent");
+        let marker_path =
+            snapshot_install_marker_path(&db_path).expect("test DB path should support a marker");
+        fs::write(&marker_path, b"{not-json")
+            .expect("test should write a malformed install marker");
+        let log_store_path = raft_data_dir.join("raft_logs_rocksdb");
+        let config = RaftConfig {
+            data_dir: raft_data_dir,
+            db_path,
+            ..Default::default()
+        };
+        let storage_swap = Arc::new(ArcSwap::from_pointee(Storage::new(1, 0)));
+
+        let error =
+            match create_raft_node(config, storage_swap, noop_pause_controller(), None).await {
+                Ok(app) => {
+                    app.raft
+                        .shutdown()
+                        .await
+                        .expect("unexpected test Raft node should shut down cleanly");
+                    panic!("malformed install marker must reject Raft startup");
+                }
+                Err(error) => error,
+            };
+
+        assert!(
+            error
+                .to_string()
+                .contains(&marker_path.display().to_string()),
+            "startup refusal must identify the marker path: {error}"
+        );
+        assert!(
+            !log_store_path
+                .try_exists()
+                .expect("test should inspect the log-store path"),
+            "marker preflight must run before creating the RocksDB log store"
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_snapshot_install_marker_version_is_rejected_before_log_store_creation() {
+        let temp_dir = TempDir::new().expect("test should create a temporary directory");
+        let raft_data_dir = temp_dir.path().join("raft-data");
+        let db_path = temp_dir.path().join("data");
+        let marker_path =
+            snapshot_install_marker_path(&db_path).expect("test DB path should support a marker");
+        let marker = serde_json::json!({
+            "version": 2,
+            "id": "future-snapshot",
+            "index": 8,
+            "term": 3,
+            "db": db_path,
+            "workdir": temp_dir.path().join("snapshots"),
+            "instances": 1
+        });
+        fs::write(
+            &marker_path,
+            serde_json::to_vec(&marker).expect("test marker should serialize"),
+        )
+        .expect("test should write an unknown-version install marker");
+        let log_store_path = raft_data_dir.join("raft_logs_rocksdb");
+        let config = RaftConfig {
+            data_dir: raft_data_dir,
+            db_path: temp_dir.path().join("data"),
+            ..Default::default()
+        };
+        let storage_swap = Arc::new(ArcSwap::from_pointee(Storage::new(1, 0)));
+
+        let error =
+            match create_raft_node(config, storage_swap, noop_pause_controller(), None).await {
+                Ok(app) => {
+                    app.raft
+                        .shutdown()
+                        .await
+                        .expect("unexpected test Raft node should shut down cleanly");
+                    panic!("unknown install marker version must reject Raft startup");
+                }
+                Err(error) => error,
+            };
+        assert!(
+            error.to_string().contains("unsupported marker version 2"),
+            "unexpected startup refusal: {error}"
+        );
+        assert!(
+            !log_store_path
+                .try_exists()
+                .expect("test should inspect the log-store path"),
+            "marker version preflight must run before creating the RocksDB log store"
+        );
     }
 
     #[derive(Clone, Copy)]

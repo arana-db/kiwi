@@ -23,7 +23,10 @@ use std::sync::{Arc, OnceLock};
 use arc_swap::ArcSwap;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
-use raft::state_machine::{KiwiStateMachine, PauseController, StorageAccessPermit};
+use raft::state_machine::{
+    KiwiStateMachine, PauseController, StorageAccessPermit, preflight_snapshot_install,
+    snapshot_install_marker_path,
+};
 use storage::{StorageOptions, storage::Storage};
 use storage::{safe_cleanup_test_db, unique_test_db_path};
 
@@ -183,8 +186,15 @@ async fn snapshot_builder_blocks_install_operation() {
     let snap_root = unique_test_db_path();
     std::fs::create_dir_all(&snap_root).expect("snapshot root should be created");
 
-    let target_storage = Arc::new(Storage::new(1, 0));
-    let target_swap = Arc::new(ArcSwap::from(Arc::clone(&target_storage)));
+    let mut storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _storage_rx = storage
+        .open(options, &db_path)
+        .expect("test storage should open");
+    storage
+        .set(b"snapshot-key", b"snapshot-value")
+        .expect("test should write snapshot data");
+    let target_swap = Arc::new(ArcSwap::from_pointee(storage));
     let controller = Arc::new(TestPauseController::default());
     let mut state_machine = KiwiStateMachine::new(
         1,
@@ -195,15 +205,24 @@ async fn snapshot_builder_blocks_install_operation() {
     );
     state_machine.set_pause_controller(controller.clone());
 
+    let mut source_builder = state_machine.get_snapshot_builder().await;
+    let snapshot = source_builder
+        .build_snapshot()
+        .await
+        .expect("test snapshot should build");
+    let snapshot_meta = snapshot.meta.clone();
+    let snapshot_bytes = snapshot.snapshot.into_inner();
+    drop(source_builder);
+
     let builder = state_machine.get_snapshot_builder().await;
     let install = tokio::spawn(async move {
-        let meta = openraft::SnapshotMeta::<u64, conf::raft_type::KiwiNode>::default();
-        state_machine
+        let result = state_machine
             .install_snapshot(
-                &meta,
-                Box::new(std::io::Cursor::new(b"not a tar archive".to_vec())),
+                &snapshot_meta,
+                Box::new(std::io::Cursor::new(snapshot_bytes)),
             )
-            .await
+            .await;
+        (state_machine, result, snapshot_meta)
     });
 
     while controller.pause_count.load(Ordering::SeqCst) == 0 {
@@ -215,15 +234,35 @@ async fn snapshot_builder_blocks_install_operation() {
         "install must wait until the snapshot builder releases its operation guard"
     );
 
+    let mut builder = builder;
+    let stale_snapshot = builder
+        .build_snapshot()
+        .await
+        .expect("the old builder should complete before install enters its gate");
+    assert_ne!(
+        stale_snapshot.meta.snapshot_id, "snapshot-1",
+        "the held builder must persist a distinct old current snapshot"
+    );
+    drop(stale_snapshot);
     drop(builder);
-    let result = install.await.expect("install task should not panic");
-    assert!(
-        result.is_err(),
-        "invalid archive should fail after the guard drains"
+    let (mut state_machine, result, installed_meta) =
+        install.await.expect("install task should not panic");
+    result.expect("valid install should complete after the builder guard drains");
+    let current = state_machine
+        .get_current_snapshot()
+        .await
+        .expect("current snapshot read should succeed")
+        .expect("install must leave a current snapshot");
+    assert_eq!(
+        current.meta, installed_meta,
+        "a builder created before install must not overwrite the installed current snapshot"
     );
 
+    drop(current);
+    drop(state_machine);
+    let restored = target_swap.load_full();
     drop(target_swap);
-    close_storage(target_storage, "target storage")
+    close_storage(restored, "restored target storage")
         .await
         .expect("target storage should close");
     safe_cleanup_test_db(&db_path);
@@ -543,6 +582,10 @@ async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
     );
     assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 1);
     assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 1);
+    assert!(
+        !snapshot_install_marker_path(&restore_db_path)?.exists(),
+        "successful install must remove its durable recovery marker"
+    );
     let restored = target_swap.load_full();
     assert_eq!(restored.get(b"snapshot_key")?, "snapshot_value");
     assert!(restored.get(b"stale_key").is_err());
@@ -561,6 +604,27 @@ async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
     };
     assert_eq!(reopened.get(b"snapshot_key")?, "snapshot_value");
     assert!(reopened.get(b"stale_key").is_err());
+
+    let reopened_swap = Arc::new(ArcSwap::from(reopened.clone()));
+    let mut reopened_sm = KiwiStateMachine::new(
+        2,
+        reopened_swap.clone(),
+        restore_db_path.clone(),
+        snap_root.clone(),
+        None,
+    );
+    let (reopened_applied, reopened_membership) = reopened_sm.applied_state().await?;
+    assert_eq!(reopened_applied, snapshot_meta.last_log_id);
+    assert_eq!(reopened_membership, snapshot_meta.last_membership);
+    let reopened_snapshot = reopened_sm
+        .get_current_snapshot()
+        .await?
+        .expect("reopened state machine must load the installed current snapshot");
+    assert_eq!(reopened_snapshot.meta, snapshot_meta);
+
+    drop(reopened_snapshot);
+    drop(reopened_sm);
+    drop(reopened_swap);
     close_storage(reopened, "reopened restored storage").await?;
 
     safe_cleanup_test_db(&src_db_path);
@@ -611,8 +675,9 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
     target_storage.set(b"stale_key", b"stale_value")?;
 
     // Persisting the current snapshot happens after the target database has been
-    // replaced and reopened. A regular file here forces that post-restore step to fail.
-    std::fs::write(&invalid_work_dir, b"not a directory")?;
+    // replaced and reopened. A directory at the data-file path forces that
+    // post-restore step to fail deterministically on every supported platform.
+    std::fs::create_dir_all(invalid_work_dir.join("current_snapshot.tar"))?;
 
     let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
     let pause_controller = Arc::new(TestPauseController::default());
@@ -646,6 +711,40 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
     assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 1);
     assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 0);
 
+    let marker_path = snapshot_install_marker_path(&restore_db_path)?;
+    assert!(
+        marker_path.is_file(),
+        "post-marker failure must retain {}",
+        marker_path.display()
+    );
+    let marker_json: serde_json::Value = serde_json::from_slice(&std::fs::read(&marker_path)?)?;
+    for field in [
+        "version",
+        "id",
+        "index",
+        "term",
+        "db",
+        "workdir",
+        "instances",
+    ] {
+        assert!(
+            marker_json.get(field).is_some(),
+            "durable marker must contain {field}: {marker_json}"
+        );
+    }
+    let restart_error = preflight_snapshot_install(&restore_db_path)
+        .expect_err("a simulated restart must reject an incomplete snapshot install");
+    assert!(
+        restart_error
+            .to_string()
+            .contains(&marker_path.display().to_string()),
+        "restart refusal must identify the marker path: {restart_error}"
+    );
+    assert!(
+        restart_error.to_string().contains("new node ID"),
+        "restart refusal must give the safe rejoin recovery path: {restart_error}"
+    );
+
     let attempts_before = pause_controller.enter_attempts.load(Ordering::SeqCst);
     let blocked_controller = pause_controller.clone();
     let blocked_read = tokio::spawn(async move { blocked_controller.enter().await });
@@ -675,9 +774,9 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
     drop(pause_controller);
     drop(_target_rx);
 
+    std::fs::remove_file(&marker_path)?;
     safe_cleanup_test_db(&src_db_path);
     safe_cleanup_test_db(&restore_db_path);
-    std::fs::remove_file(&invalid_work_dir)?;
     safe_cleanup_test_db(&snap_root);
 
     Ok(())
@@ -717,10 +816,14 @@ async fn install_snapshot_resumes_after_pre_restore_failure() -> anyhow::Result<
     assert!(result.is_err(), "invalid archive must fail before restore");
     assert!(
         !pause_controller.paused.load(Ordering::SeqCst),
-        "a failure before destructive restore must resume storage access"
+        "a failure before pause must leave storage access running"
     );
-    assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 1);
-    assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 1);
+    assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 0);
+    assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 0);
+    assert!(
+        !snapshot_install_marker_path(&restore_db_path)?.exists(),
+        "an archive validation failure must not create an install marker"
+    );
 
     let unchanged = target_swap.load_full();
     assert_eq!(unchanged.get(b"stale_key")?, "stale_value");
@@ -734,5 +837,85 @@ async fn install_snapshot_resumes_after_pre_restore_failure() -> anyhow::Result<
     safe_cleanup_test_db(&restore_db_path);
     safe_cleanup_test_db(&snap_root);
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn missing_checkpoint_instance_does_not_pause_or_replace_live_storage() -> anyhow::Result<()>
+{
+    let src_db_path = unique_test_db_path();
+    let restore_db_path = unique_test_db_path();
+    let source_work_dir = unique_test_db_path();
+    let target_work_dir = unique_test_db_path();
+    std::fs::create_dir_all(&source_work_dir)?;
+    std::fs::create_dir_all(&target_work_dir)?;
+
+    let source_storage = {
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _rx = storage.open(options, &src_db_path)?;
+        Arc::new(storage)
+    };
+    source_storage.set(b"snapshot_key", b"snapshot_value")?;
+    let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
+    let mut source_sm = KiwiStateMachine::new(
+        1,
+        source_swap.clone(),
+        src_db_path.clone(),
+        source_work_dir.clone(),
+        None,
+    );
+    let mut builder = source_sm.get_snapshot_builder().await;
+    let snapshot = builder.build_snapshot().await?;
+    let snapshot_meta = snapshot.meta.clone();
+    let snapshot_bytes = snapshot.snapshot.into_inner();
+    drop(builder);
+    drop(source_sm);
+    drop(source_swap);
+    close_storage(source_storage, "source storage").await?;
+
+    let mut target_storage = Storage::new(2, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _target_rx = target_storage.open(options, &restore_db_path)?;
+    target_storage.set(b"stale_key", b"stale_value")?;
+    let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
+    let pause_controller = Arc::new(TestPauseController::default());
+    let mut target_sm = KiwiStateMachine::new(
+        2,
+        target_swap.clone(),
+        restore_db_path.clone(),
+        target_work_dir.clone(),
+        None,
+    );
+    target_sm.set_pause_controller(pause_controller.clone());
+
+    let error = target_sm
+        .install_snapshot(
+            &snapshot_meta,
+            Box::new(std::io::Cursor::new(snapshot_bytes)),
+        )
+        .await
+        .expect_err("a checkpoint missing instance 1 must fail during prepare");
+    assert!(
+        error
+            .to_string()
+            .contains("missing checkpoint instance directory"),
+        "unexpected prepare failure: {error}"
+    );
+    assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 0);
+    assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 0);
+    assert!(!snapshot_install_marker_path(&restore_db_path)?.exists());
+    let unchanged = target_swap.load_full();
+    assert_eq!(unchanged.get(b"stale_key")?, "stale_value");
+
+    drop(target_sm);
+    drop(target_swap);
+    close_storage(unchanged, "unchanged two-instance target storage").await?;
+    drop(pause_controller);
+    drop(_target_rx);
+    safe_cleanup_test_db(&src_db_path);
+    safe_cleanup_test_db(&restore_db_path);
+    safe_cleanup_test_db(&source_work_dir);
+    safe_cleanup_test_db(&target_work_dir);
     Ok(())
 }
