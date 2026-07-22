@@ -15,10 +15,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::sync::{Arc, Weak};
+
 use bytes::BytesMut;
 use chrono::Utc;
 use once_cell::sync::OnceCell;
-use std::sync::Arc;
 
 use rocksdb::{
     CompactionDecision, DB, DEFAULT_COLUMN_FAMILY_NAME, compaction_filter::CompactionFilter,
@@ -220,12 +221,12 @@ impl CompactionFilter for DataCompactionFilter {
 }
 
 pub struct DataCompactionFilterFactory {
-    db: Arc<OnceCell<Arc<DB>>>,
+    db: Arc<OnceCell<Weak<DB>>>,
     data_type: DataType,
 }
 
 impl DataCompactionFilterFactory {
-    pub fn new(db: Arc<OnceCell<Arc<DB>>>, data_type: DataType) -> Self {
+    pub fn new(db: Arc<OnceCell<Weak<DB>>>, data_type: DataType) -> Self {
         Self { db, data_type }
     }
 }
@@ -237,7 +238,7 @@ impl CompactionFilterFactory for DataCompactionFilterFactory {
         &mut self,
         _context: rocksdb::compaction_filter_factory::CompactionFilterContext,
     ) -> Self::Filter {
-        let db = self.db.get().cloned();
+        let db = self.db.get().and_then(Weak::upgrade);
         DataCompactionFilter::new(db, self.data_type)
     }
 
@@ -260,7 +261,7 @@ mod tests {
         ColumnFamilyDescriptor, Options, compaction_filter_factory::CompactionFilterContext,
     };
 
-    fn setup_db_for_filter_test(path: &std::path::Path) -> (Arc<OnceCell<Arc<DB>>>, Arc<DB>) {
+    fn setup_db_for_filter_test(path: &std::path::Path) -> (Arc<OnceCell<Weak<DB>>>, Arc<DB>) {
         let mut db_opts = Options::default();
         db_opts.create_if_missing(true);
         db_opts.create_missing_column_families(true);
@@ -272,7 +273,9 @@ mod tests {
         let db = Arc::new(db);
 
         let db_cell = Arc::new(OnceCell::new());
-        db_cell.set(Arc::clone(&db)).unwrap();
+        db_cell
+            .set(Arc::downgrade(&db))
+            .expect("DB cell should be set once");
 
         (db_cell, db)
     }
@@ -328,6 +331,34 @@ mod tests {
 
         let decision = filter.filter(0, &data_key, b"");
         assert!(matches!(decision, CompactionDecision::Remove));
+    }
+
+    #[test]
+    fn test_factory_keeps_data_when_db_owner_is_gone() {
+        let db_cell: Arc<OnceCell<Weak<DB>>> = Arc::new(OnceCell::new());
+        let temp_dir = tempfile::TempDir::new().expect("test should create temp dir");
+
+        {
+            let mut opts = Options::default();
+            opts.create_if_missing(true);
+            let db = Arc::new(DB::open(&opts, temp_dir.path()).expect("test should open RocksDB"));
+            db_cell
+                .set(Arc::downgrade(&db))
+                .expect("DB cell should be set once");
+        }
+
+        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+        let data_key = encode_data_key(b"missing-owner", 1);
+
+        assert!(matches!(
+            filter.filter(0, &data_key, b""),
+            CompactionDecision::Keep
+        ));
     }
 
     #[test]
