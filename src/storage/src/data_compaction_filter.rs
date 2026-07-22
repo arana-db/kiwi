@@ -273,7 +273,9 @@ mod tests {
         let db = Arc::new(db);
 
         let db_cell = Arc::new(OnceCell::new());
-        db_cell.set(Arc::downgrade(&db)).unwrap();
+        db_cell
+            .set(Arc::downgrade(&db))
+            .expect("DB cell should be set once");
 
         (db_cell, db)
     }
