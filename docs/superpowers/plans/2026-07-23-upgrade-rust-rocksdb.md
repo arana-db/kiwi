@@ -110,7 +110,57 @@ git commit -m "docs(storage): describe the maintained RocksDB fork"
 
 预期：第一条命令无命中，第二条命中新的维护说明。
 
-### 任务 3：验证旧数据库和恢复路径兼容性
+### 任务 3：补齐损坏 TableProperties 的 fail-closed 测试
+
+**文件：**
+- 修改测试：`src/storage/src/logindex/table_properties.rs:220-278`
+
+- [ ] **步骤 1：为未覆盖输入编写失败测试**
+
+在现有 `tests` 模块增加独立断言，覆盖：
+
+- 非数字 log index：`not-a-log/5`
+- 非数字 sequence number：`233333/not-a-sequence`
+- 缺少 `/`：`233333`
+- 空 log index：`/5`
+- 空 sequence number：`233333/`
+- 非 UTF-8：`[0xff, b'/', b'5']`
+
+每种输入都必须得到 `None`，不得 panic 或产生部分恢复值。
+
+- [ ] **步骤 2：执行测试并用临时变异证明断言有效**
+
+运行：
+
+```bash
+cargo test -p storage logindex::table_properties::tests::test_read_stats_rejects_invalid_components -- --exact --nocapture
+```
+
+预期：当前实现可能已经对这些输入返回 `None`。若新增测试直接通过，临时把数字解析失败改为默认值，确认测试会失败，然后立即恢复该变异；记录这是补齐回归覆盖而非生产 bug 修复。
+
+- [ ] **步骤 3：只在红灯证明需要时做最小修复**
+
+只有在真实实现错误接受非 UTF-8 时，才将解析入口改为严格 UTF-8：
+
+```rust
+let s = std::str::from_utf8(value).ok()?;
+```
+
+不得改变 property key、数字类型、分隔符或合法值格式。
+
+- [ ] **步骤 4：验证绿灯并提交**
+
+运行：
+
+```bash
+cargo test -p storage logindex::table_properties -- --nocapture
+cargo fmt --all -- --check
+git diff --check
+git add src/storage/src/logindex/table_properties.rs
+git commit -m "test(storage): reject malformed log index properties"
+```
+
+### 任务 4：验证旧数据库和恢复路径兼容性
 
 **文件：**
 - 不修改生产文件
@@ -124,15 +174,15 @@ git commit -m "docs(storage): describe the maintained RocksDB fork"
 
 调用产品的正式 open/recovery 路径，确认 RocksDB 11.1.2 能读取旧 RocksDB 10.9.1 生成的 SST 和 `LargestLogIndex/LargestSequenceNumber` 属性。
 
-- [ ] **步骤 3：验证异常属性输入**
+- [ ] **步骤 3：复核异常属性输入门禁**
 
-运行现有 Storage LogIndex 测试，确认 property 缺失、额外分段、非法数字和异常字节不会产生错误恢复结果。
+运行任务 3 的 Storage LogIndex 测试，确认 property 缺失、额外分段、非法数字和异常字节不会产生错误恢复结果。
 
 - [ ] **步骤 4：记录环境或兼容性结果**
 
 如果旧数据库无法由新版本打开，保存准确 RocksDB 错误、DB 路径构造方式和工具链版本，停止提交完成声明；不得通过删除数据库或跳过恢复测试获得绿色结果。
 
-### 任务 4：分层质量门禁
+### 任务 5：分层质量门禁
 
 **文件：**
 - 不新增生产文件
@@ -178,7 +228,7 @@ cargo test -p raft
 
 不得把 Windows 结果替代 Linux native/FFI 验证。
 
-### 任务 5：最终审查与交付边界
+### 任务 6：最终审查与交付边界
 
 - [ ] **步骤 1：规格审查**
 
