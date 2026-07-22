@@ -249,6 +249,28 @@ mod tests {
     }
 
     #[test]
+    fn test_read_stats_rejects_invalid_components() {
+        let invalid_values: &[&[u8]] = &[
+            b"not-a-log/5",
+            b"233333/not-a-sequence",
+            b"233333",
+            b"/5",
+            b"233333/",
+            &[0xff, b'/', b'5'],
+        ];
+
+        for &value in invalid_values {
+            let mut properties = HashMap::new();
+            properties.insert(PROPERTY_KEY.as_bytes().to_vec(), value.to_vec());
+
+            assert!(
+                read_stats_from_table_props(&properties).is_none(),
+                "Should reject invalid table property value: {value:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_property_key_matches_cpp() {
         const CPP_K_PROPERTY_NAME: &str = "LargestLogIndex/LargestSequenceNumber";
         assert_eq!(
