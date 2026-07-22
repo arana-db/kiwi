@@ -86,8 +86,6 @@ fn test_redis_drop_releases_rocksdb_for_same_path_reopen() {
 在 WSL/Linux 中运行：
 
 ```bash
-PROTOC=/mnt/d/test/github/review/kiwi-pr-355/.review-tools/protoc-27.1-linux-x86_64/bin/protoc \
-CARGO_TARGET_DIR=/mnt/d/test/github/review/kiwi-pr-355/target-linux \
 cargo +1.95 test --package storage \
   test_redis_drop_releases_rocksdb_for_same_path_reopen -- --nocapture
 ```
@@ -243,8 +241,6 @@ fn test_factory_keeps_data_when_db_owner_is_gone() {
 - [ ] **步骤 1：运行生命周期定向测试**
 
 ```bash
-PROTOC=/mnt/d/test/github/review/kiwi-pr-355/.review-tools/protoc-27.1-linux-x86_64/bin/protoc \
-CARGO_TARGET_DIR=/mnt/d/test/github/review/kiwi-pr-355/target-linux \
 cargo +1.95 test --package storage \
   test_redis_drop_releases_rocksdb_for_same_path_reopen -- --nocapture
 ```
@@ -254,8 +250,6 @@ cargo +1.95 test --package storage \
 - [ ] **步骤 2：运行 compaction filter 测试**
 
 ```bash
-PROTOC=/mnt/d/test/github/review/kiwi-pr-355/.review-tools/protoc-27.1-linux-x86_64/bin/protoc \
-CARGO_TARGET_DIR=/mnt/d/test/github/review/kiwi-pr-355/target-linux \
 cargo +1.95 test --package storage data_compaction_filter -- --nocapture
 ```
 
@@ -264,8 +258,6 @@ cargo +1.95 test --package storage data_compaction_filter -- --nocapture
 - [ ] **步骤 3：运行 storage crate 全量测试**
 
 ```bash
-PROTOC=/mnt/d/test/github/review/kiwi-pr-355/.review-tools/protoc-27.1-linux-x86_64/bin/protoc \
-CARGO_TARGET_DIR=/mnt/d/test/github/review/kiwi-pr-355/target-linux \
 cargo +1.95 test --package storage
 ```
 
