@@ -30,7 +30,7 @@ mod redis_basic_test {
         safe_cleanup_test_db, unique_test_db_path,
     };
 
-    fn assert_concrete_rocksdb_owner(_db: &Arc<rocksdb::DB>) {}
+    fn assert_concrete_rocksdb(_db: &rocksdb::DB) {}
 
     #[test]
     fn test_redis_creation() {
@@ -41,7 +41,7 @@ mod redis_basic_test {
 
         assert_eq!(redis.get_index(), 1);
         assert!(redis.is_starting.load(Ordering::SeqCst));
-        assert!(redis.db.is_none());
+        assert!(redis.db().is_none());
         assert_eq!(redis.handles.len(), 0);
     }
 
@@ -128,7 +128,7 @@ mod redis_basic_test {
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
         assert!(!redis.is_starting.load(Ordering::SeqCst));
-        assert!(redis.db.is_some());
+        assert!(redis.db().is_some());
         assert_eq!(redis.handles.len(), 6);
 
         for cf_index in 0..6 {
@@ -187,10 +187,9 @@ mod redis_basic_test {
             )
             .expect("Redis should open RocksDB");
 
-        assert_concrete_rocksdb_owner(
+        assert_concrete_rocksdb(
             redis
-                .db
-                .as_ref()
+                .db()
                 .expect("opened Redis should own a RocksDB handle"),
         );
 
@@ -295,8 +294,7 @@ mod redis_basic_test {
 
         {
             let db = redis
-                .db
-                .as_ref()
+                .db()
                 .expect("opened Redis should own a RocksDB handle");
             let meta_cf = redis
                 .get_cf_handle(ColumnFamilyIndex::MetaCF)

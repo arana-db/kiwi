@@ -17,6 +17,9 @@
 
 use std::sync::{Arc, Weak};
 
+#[cfg(test)]
+use std::sync::{Condvar, Mutex, OnceLock};
+
 use bytes::BytesMut;
 use chrono::Utc;
 use once_cell::sync::OnceCell;
@@ -39,6 +42,124 @@ use crate::{
 
 const DATA_FILTER_NAME: &std::ffi::CStr = c"DataCompactionFilter";
 const DATA_FILTER_FACTORY_NAME: &std::ffi::CStr = c"DataCompactionFilterFactory";
+
+#[cfg(test)]
+#[derive(Default)]
+struct CompactionFilterTestState {
+    entered: bool,
+    released: bool,
+}
+
+#[cfg(test)]
+pub(crate) struct CompactionFilterTestGate {
+    key_prefix: Vec<u8>,
+    state: Mutex<CompactionFilterTestState>,
+    changed: Condvar,
+}
+
+#[cfg(test)]
+impl CompactionFilterTestGate {
+    pub(crate) fn new(key_prefix: &[u8]) -> Arc<Self> {
+        Arc::new(Self {
+            key_prefix: key_prefix.to_vec(),
+            state: Mutex::new(CompactionFilterTestState::default()),
+            changed: Condvar::new(),
+        })
+    }
+
+    pub(crate) fn wait_until_entered(&self, timeout: std::time::Duration) -> bool {
+        let state = self
+            .state
+            .lock()
+            .expect("compaction filter test gate mutex should not be poisoned");
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, timeout, |state| !state.entered)
+            .expect("compaction filter test gate wait should succeed");
+        state.entered
+    }
+
+    pub(crate) fn release(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("compaction filter test gate mutex should not be poisoned");
+        state.released = true;
+        self.changed.notify_all();
+    }
+
+    fn enter_and_wait(&self, key: &[u8]) {
+        if !key.starts_with(&self.key_prefix) {
+            return;
+        }
+
+        let mut state = self
+            .state
+            .lock()
+            .expect("compaction filter test gate mutex should not be poisoned");
+        if state.entered {
+            return;
+        }
+
+        state.entered = true;
+        self.changed.notify_all();
+        while !state.released {
+            state = self
+                .changed
+                .wait(state)
+                .expect("compaction filter test gate wait should succeed");
+        }
+    }
+}
+
+#[cfg(test)]
+fn compaction_filter_test_gate() -> &'static Mutex<Option<Weak<CompactionFilterTestGate>>> {
+    static GATE: OnceLock<Mutex<Option<Weak<CompactionFilterTestGate>>>> = OnceLock::new();
+    GATE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+pub(crate) struct CompactionFilterTestGateGuard {
+    gate: Arc<CompactionFilterTestGate>,
+}
+
+#[cfg(test)]
+impl Drop for CompactionFilterTestGateGuard {
+    fn drop(&mut self) {
+        self.gate.release();
+        *compaction_filter_test_gate()
+            .lock()
+            .expect("compaction filter test gate registry should not be poisoned") = None;
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn install_compaction_filter_test_gate(
+    gate: Arc<CompactionFilterTestGate>,
+) -> CompactionFilterTestGateGuard {
+    let mut installed = compaction_filter_test_gate()
+        .lock()
+        .expect("compaction filter test gate registry should not be poisoned");
+    assert!(
+        installed.is_none(),
+        "only one compaction test gate may be installed"
+    );
+    *installed = Some(Arc::downgrade(&gate));
+    drop(installed);
+    CompactionFilterTestGateGuard { gate }
+}
+
+#[cfg(test)]
+fn block_once_for_compaction_filter_test(key: &[u8]) {
+    let gate = compaction_filter_test_gate()
+        .lock()
+        .expect("compaction filter test gate registry should not be poisoned")
+        .as_ref()
+        .and_then(Weak::upgrade);
+    if let Some(gate) = gate {
+        gate.enter_and_wait(key);
+    }
+}
 
 #[derive(Debug)]
 enum MetaLookup {
@@ -198,6 +319,9 @@ impl CompactionFilter for DataCompactionFilter {
     }
 
     fn filter(&mut self, _level: u32, key: &[u8], _value: &[u8]) -> CompactionDecision {
+        #[cfg(test)]
+        block_once_for_compaction_filter_test(key);
+
         let Some(meta_key) = Self::build_meta_key(key) else {
             return CompactionDecision::Keep;
         };

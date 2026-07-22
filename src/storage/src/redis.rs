@@ -16,6 +16,7 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -100,6 +101,49 @@ pub enum TypeCheckState {
     Match,
 }
 
+/// The single shutdown owner for one RocksDB instance.
+///
+/// Callbacks receive only `Weak<DB>` references derived from this owner. Keeping
+/// the `Arc<DB>` private prevents an arbitrary clone from outliving the Redis
+/// lifecycle and becoming the thread that performs the final RocksDB close.
+pub(crate) struct RocksDbOwner {
+    db: Arc<DB>,
+}
+
+impl RocksDbOwner {
+    fn new(db: DB) -> Self {
+        Self { db: Arc::new(db) }
+    }
+
+    fn downgrade(&self) -> Weak<DB> {
+        Arc::downgrade(&self.db)
+    }
+}
+
+impl AsRef<DB> for RocksDbOwner {
+    fn as_ref(&self) -> &DB {
+        &self.db
+    }
+}
+
+impl Deref for RocksDbOwner {
+    type Target = DB;
+
+    fn deref(&self) -> &Self::Target {
+        &self.db
+    }
+}
+
+impl Drop for RocksDbOwner {
+    fn drop(&mut self) {
+        // Hold the unique lifecycle owner's strong reference while RocksDB
+        // cancels and joins background jobs. A compaction filter may itself hold
+        // a temporary Arc upgraded from Weak; waiting here ensures that Arc is
+        // released before the final DB close can run on a callback worker.
+        self.db.cancel_all_background_work(true);
+    }
+}
+
 #[repr(C, align(64))]
 pub struct Redis {
     pub index: i32,
@@ -110,7 +154,7 @@ pub struct Redis {
     pub write_options: WriteOptions,
     pub read_options: ReadOptions,
     pub compact_options: CompactOptions,
-    pub db: Option<Arc<DB>>,
+    pub(crate) db: Option<RocksDbOwner>,
 
     // For background task
     pub storage: Arc<StorageOptions>,
@@ -265,17 +309,16 @@ impl Redis {
             })
             .collect();
 
-        let db = Arc::new(
+        let db = RocksDbOwner::new(
             DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?,
         );
-        let _ = db_once_cell.set(Arc::downgrade(&db));
+        let _ = db_once_cell.set(db.downgrade());
 
         self.handles = CF_CONFIGS
             .iter()
             .filter(|(name, _, _)| db.cf_handle(name).is_some())
             .map(|(name, _, _)| name.to_string())
             .collect();
-        self.db = Some(Arc::clone(&db));
         self.is_starting.store(false, Ordering::SeqCst);
 
         // Initialize cf_tracker from SST properties
@@ -288,6 +331,7 @@ impl Redis {
         // Store collector and tracker
         self.logindex_collector = Some(collector);
         self.logindex_cf_tracker = Some(cf_tracker);
+        self.db = Some(db);
 
         Ok(())
     }
@@ -366,6 +410,11 @@ impl Redis {
     /// Get database index
     pub fn get_index(&self) -> i32 {
         self.index
+    }
+
+    /// Borrow the concrete RocksDB instance without exposing a cloneable owner.
+    pub fn db(&self) -> Option<&DB> {
+        self.db.as_deref()
     }
 
     /// Create a RocksDB physical checkpoint at `path`.
@@ -854,4 +903,135 @@ macro_rules! get_db_and_cfs {
 
         (db, cfs)
     }};
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+
+    use super::{ColumnFamilyIndex, Redis};
+    use crate::data_compaction_filter::{
+        CompactionFilterTestGate, install_compaction_filter_test_gate,
+    };
+    use crate::{BgTaskHandler, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+    use kstd::lock_mgr::LockMgr;
+
+    fn open_compaction_test_redis(path: &std::path::Path) -> Redis {
+        let mut storage_options = StorageOptions::default();
+        storage_options.options.set_write_buffer_size(32 * 1024);
+        storage_options.options.set_max_write_buffer_number(2);
+        storage_options
+            .options
+            .set_level_zero_file_num_compaction_trigger(2);
+        storage_options.options.set_max_background_jobs(2);
+
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let mut redis = Redis::new(
+            Arc::new(storage_options),
+            0,
+            Arc::new(bg_task_handler),
+            Arc::new(LockMgr::new(64)),
+        );
+        redis
+            .open(path.to_str().expect("test DB path should be valid UTF-8"))
+            .expect("compaction test Redis should open");
+        redis
+    }
+
+    #[test]
+    fn dropping_last_owner_waits_for_active_compaction_filter_before_reopen() {
+        let path = unique_test_db_path();
+        safe_cleanup_test_db(&path);
+
+        let redis = open_compaction_test_redis(&path);
+        let data_cf = redis
+            .get_cf_handle(ColumnFamilyIndex::HashesDataCF)
+            .expect("hash data column family should exist");
+        let gate = CompactionFilterTestGate::new(b"compaction-owner-");
+        let gate_guard = install_compaction_filter_test_gate(Arc::clone(&gate));
+
+        for file in 0..6u32 {
+            for key in 0..512u32 {
+                // Every flushed file covers the same key range so RocksDB cannot
+                // satisfy the compaction with a trivial file move; the filter must run.
+                let encoded_key = format!("compaction-owner-{key:04}");
+                redis
+                    .db
+                    .as_ref()
+                    .expect("Redis should own RocksDB")
+                    .put_cf(&data_cf, encoded_key.as_bytes(), vec![file as u8; 256])
+                    .expect("test write should succeed");
+            }
+            redis
+                .db
+                .as_ref()
+                .expect("Redis should own RocksDB")
+                .flush_cf(&data_cf)
+                .expect("test flush should succeed");
+        }
+
+        assert!(
+            gate.wait_until_entered(Duration::from_secs(10)),
+            "RocksDB should execute the installed compaction filter"
+        );
+        drop(data_cf);
+
+        let (drop_tx, drop_rx) = mpsc::channel();
+        let drop_thread = std::thread::spawn(move || {
+            drop(redis);
+            drop_tx
+                .send(())
+                .expect("drop completion receiver should remain alive");
+        });
+
+        let completed_while_filter_was_blocked =
+            drop_rx.recv_timeout(Duration::from_millis(250)).is_ok();
+
+        gate.release();
+        drop(gate_guard);
+
+        assert!(
+            !completed_while_filter_was_blocked,
+            "dropping the unique RocksDB owner must wait for the active compaction filter"
+        );
+        drop_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("owner drop should finish after the compaction filter is released");
+        drop_thread
+            .join()
+            .expect("owner drop thread should finish without panicking");
+
+        let (reopen_tx, reopen_rx) = mpsc::channel();
+        let reopen_path = path.clone();
+        let reopen_thread = std::thread::spawn(move || {
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let mut reopened = Redis::new(
+                Arc::new(StorageOptions::default()),
+                0,
+                Arc::new(bg_task_handler),
+                Arc::new(LockMgr::new(64)),
+            );
+            let result = reopened
+                .open(
+                    reopen_path
+                        .to_str()
+                        .expect("reopen path should be valid UTF-8"),
+                )
+                .map(|()| drop(reopened))
+                .map_err(|error| error.to_string());
+            reopen_tx
+                .send(result)
+                .expect("reopen result receiver should remain alive");
+        });
+        reopen_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("DB path reopen should not hang")
+            .expect("DB path should reopen after the unique owner is dropped");
+        reopen_thread
+            .join()
+            .expect("DB reopen thread should finish without panicking");
+
+        safe_cleanup_test_db(&path);
+    }
 }

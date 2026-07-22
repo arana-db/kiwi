@@ -97,7 +97,7 @@ mod redis_set_test {
         let key = b"set_key_members";
         let meta_bytes = build_empty_set_meta_bytes();
         {
-            let db = redis.db.as_ref().unwrap();
+            let db = redis.db().unwrap();
             let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
             let encoded_key = BaseMetaKey::new(key).encode().unwrap();
             db.put_cf(&cf, &encoded_key, &meta_bytes).unwrap();

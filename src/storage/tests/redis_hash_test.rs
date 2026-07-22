@@ -144,10 +144,10 @@ mod redis_hash_test {
         let value = b"value1";
 
         {
-            let db = redis.db.as_ref().unwrap();
+            let db = redis.db().unwrap();
             let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
             let encoded_key = BaseMetaKey::new(key).encode().unwrap();
-            db.put_cf(&cf, &encoded_key, &[]).unwrap();
+            db.put_cf(&cf, &encoded_key, []).unwrap();
         }
 
         assert_eq!(redis.hset(key, field, value).unwrap(), 1);
