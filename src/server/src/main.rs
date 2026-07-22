@@ -15,29 +15,48 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::OnceLock;
+
 use clap::Parser;
 use conf::config::Config;
 use log::{debug, error, info, warn};
 use runtime::{
-    DualRuntimeError, GlobalStorage, RuntimeManager, StorageServer, StorageServerPauseController,
+    DualRuntimeError, GlobalStorage, RuntimeManager,
+    StorageAccessPermit as RuntimeStorageAccessPermit, StorageServer, StorageServerPauseController,
 };
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::OnceLock;
 use storage::StorageOptions;
 use storage::storage::Storage;
 
 use raft::node::{RaftApp, RaftConfig, create_raft_node};
 use raft::raft_proto;
-use raft::state_machine::PauseController;
+use raft::state_machine::{PauseController, StorageAccessPermit};
 
 struct PauseControllerWrapper(StorageServerPauseController);
+struct PausePermitWrapper {
+    _permit: RuntimeStorageAccessPermit,
+}
+
+impl StorageAccessPermit for PausePermitWrapper {}
 
 impl PauseController for PauseControllerWrapper {
     fn request_pause(
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(self.0.request_pause())
+    }
+
+    fn enter(
+        self: Arc<Self>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>,
+    > {
+        Box::pin(async move {
+            Box::new(PausePermitWrapper {
+                _permit: self.0.enter().await,
+            }) as Box<dyn StorageAccessPermit>
+        })
     }
 
     fn resume(&self) {
@@ -282,7 +301,7 @@ async fn start_server(
         let raft_app = create_raft_node(
             raft_config,
             storage_swap,
-            Some(pause_controller_wrapper),
+            pause_controller_wrapper,
             Some(append_log_fn_holder.clone()),
         )
         .await

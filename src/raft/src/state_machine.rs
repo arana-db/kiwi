@@ -160,10 +160,20 @@ fn atomic_replace_file(
 }
 
 /// Pause controller for coordinating with StorageServer during snapshot installation.
+pub trait StorageAccessPermit: Send {}
+
 pub trait PauseController: Send + Sync {
     /// Request pause: wait for all pending requests to complete.
     fn request_pause(&self)
     -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>>;
+
+    /// Enter the shared Storage access gate and hold the returned permit for as
+    /// long as any owner loaded from the hot-swappable Storage remains alive.
+    fn enter(
+        self: Arc<Self>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>,
+    >;
 
     /// Resume: allow new requests to proceed.
     fn resume(&self);
@@ -186,6 +196,8 @@ pub struct KiwiStateMachine {
     snapshot_idx: u64,
     /// Pause controller for coordinating with StorageServer.
     pause_controller: Option<Arc<dyn PauseController>>,
+    /// Serializes snapshot-visible state with apply, build and install operations.
+    snapshot_operation_gate: Arc<tokio::sync::Mutex<()>>,
     /// Shared Raft append-log callback used to re-arm restored Storage after snapshot install.
     append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
 }
@@ -212,6 +224,7 @@ impl KiwiStateMachine {
             last_membership: StoredMembership::default(),
             snapshot_idx: 0,
             pause_controller: None,
+            snapshot_operation_gate: Arc::new(tokio::sync::Mutex::new(())),
             append_log_fn,
         }
     }
@@ -253,6 +266,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
     where
         I: IntoIterator<Item = openraft::Entry<KiwiTypeConfig>> + Send,
     {
+        let _snapshot_operation = Arc::clone(&self.snapshot_operation_gate).lock_owned().await;
         let mut responses = Vec::new();
 
         for entry in entries {
@@ -279,9 +293,11 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
     }
 
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
+        let snapshot_operation = Arc::clone(&self.snapshot_operation_gate).lock_owned().await;
         self.snapshot_idx = self.snapshot_idx.saturating_add(1);
         KiwiSnapshotBuilder {
-            _storage: Arc::clone(&self.storage_swap),
+            storage: self.storage_swap.load_full(),
+            _snapshot_operation: snapshot_operation,
             _idx: self.snapshot_idx,
             snapshot_work_dir: self.snapshot_work_dir.clone(),
             last_applied: self.last_applied,
@@ -307,6 +323,8 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         if let Some(ctrl) = &self.pause_controller {
             ctrl.request_pause().await;
         }
+
+        let _snapshot_operation = Arc::clone(&self.snapshot_operation_gate).lock_owned().await;
 
         // Before the live database is detached, an install failure leaves the
         // current Storage usable and it is safe to resume request processing.
@@ -476,6 +494,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
     async fn get_current_snapshot(
         &mut self,
     ) -> Result<Option<Snapshot<KiwiTypeConfig>>, openraft::StorageError<u64>> {
+        let _snapshot_operation = Arc::clone(&self.snapshot_operation_gate).lock_owned().await;
         load_current_snapshot(&self.snapshot_work_dir)
     }
 
@@ -483,6 +502,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         &mut self,
     ) -> Result<(Option<LogId<u64>>, StoredMembership<u64, KiwiNode>), openraft::StorageError<u64>>
     {
+        let _snapshot_operation = Arc::clone(&self.snapshot_operation_gate).lock_owned().await;
         // On first access, lazily load from persisted snapshot to recover last_applied
         // after restart (otherwise openraft would scan from index 0 and fail if logs were purged).
         if self.last_applied.is_none() {
@@ -500,7 +520,8 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
 }
 
 pub struct KiwiSnapshotBuilder {
-    _storage: Arc<ArcSwap<Storage>>,
+    storage: Arc<Storage>,
+    _snapshot_operation: tokio::sync::OwnedMutexGuard<()>,
     _idx: u64,
     snapshot_work_dir: PathBuf,
     last_applied: Option<LogId<u64>>,
@@ -524,12 +545,11 @@ impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
 
         // Snapshot meta carries each instance's collector state so the receiver can
         // rebuild every (log_index, seqno) mapping, not just instance 0's.
-        let storage = self._storage.load_full();
-        let collectors: Vec<_> = (0..storage.db_instance_num)
-            .filter_map(|i| storage.get_logindex_collector(i))
+        let collectors: Vec<_> = (0..self.storage.db_instance_num)
+            .filter_map(|i| self.storage.get_logindex_collector(i))
             .collect();
         let raft_meta = RaftSnapshotMeta::with_collector_states(last_idx, last_term, &collectors);
-        storage
+        self.storage
             .create_checkpoint(&dir, &raft_meta)
             .map_err(storage_err_to_raft)?;
 

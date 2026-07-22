@@ -23,7 +23,7 @@ use std::sync::{Arc, OnceLock};
 use arc_swap::ArcSwap;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
-use raft::state_machine::{KiwiStateMachine, PauseController};
+use raft::state_machine::{KiwiStateMachine, PauseController, StorageAccessPermit};
 use storage::{StorageOptions, storage::Storage};
 use storage::{safe_cleanup_test_db, unique_test_db_path};
 
@@ -38,8 +38,25 @@ async fn close_storage(storage: Arc<Storage>, name: &str) -> anyhow::Result<()> 
 #[derive(Default)]
 struct TestPauseController {
     paused: AtomicBool,
+    active: AtomicUsize,
+    enter_attempts: AtomicUsize,
     pause_count: AtomicUsize,
     resume_count: AtomicUsize,
+    state_changed: tokio::sync::Notify,
+}
+
+struct TestStorageAccessPermit {
+    controller: Arc<TestPauseController>,
+}
+
+impl StorageAccessPermit for TestStorageAccessPermit {}
+
+impl Drop for TestStorageAccessPermit {
+    fn drop(&mut self) {
+        if self.controller.active.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.controller.state_changed.notify_waiters();
+        }
+    }
 }
 
 impl PauseController for TestPauseController {
@@ -49,13 +66,168 @@ impl PauseController for TestPauseController {
         Box::pin(async {
             self.pause_count.fetch_add(1, Ordering::SeqCst);
             self.paused.store(true, Ordering::SeqCst);
+
+            loop {
+                let drained = self.state_changed.notified();
+                tokio::pin!(drained);
+                drained.as_mut().enable();
+
+                if self.active.load(Ordering::SeqCst) == 0 {
+                    return;
+                }
+                drained.await;
+            }
+        })
+    }
+
+    fn enter(
+        self: Arc<Self>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>,
+    > {
+        Box::pin(async move {
+            self.enter_attempts.fetch_add(1, Ordering::SeqCst);
+            loop {
+                while self.paused.load(Ordering::SeqCst) {
+                    let resumed = self.state_changed.notified();
+                    tokio::pin!(resumed);
+                    resumed.as_mut().enable();
+
+                    if !self.paused.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    resumed.await;
+                }
+
+                self.active.fetch_add(1, Ordering::SeqCst);
+                if !self.paused.load(Ordering::SeqCst) {
+                    return Box::new(TestStorageAccessPermit { controller: self })
+                        as Box<dyn StorageAccessPermit>;
+                }
+
+                if self.active.fetch_sub(1, Ordering::SeqCst) == 1 {
+                    self.state_changed.notify_waiters();
+                }
+            }
         })
     }
 
     fn resume(&self) {
         self.resume_count.fetch_add(1, Ordering::SeqCst);
         self.paused.store(false, Ordering::SeqCst);
+        self.state_changed.notify_waiters();
     }
+}
+
+#[tokio::test]
+async fn active_storage_access_permit_blocks_pause() {
+    let controller = Arc::new(TestPauseController::default());
+    let permit = Arc::clone(&controller).enter().await;
+
+    let pause_controller = Arc::clone(&controller);
+    let pause = tokio::spawn(async move {
+        pause_controller.request_pause().await;
+    });
+
+    while !controller.paused.load(Ordering::SeqCst) {
+        tokio::task::yield_now().await;
+    }
+    assert!(!pause.is_finished(), "pause must drain the active permit");
+
+    drop(permit);
+    pause.await.expect("pause task should not panic");
+    assert_eq!(controller.active.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn paused_reader_never_observes_placeholder_storage() {
+    let old_storage = Arc::new(Storage::new(1, 0));
+    let placeholder = Arc::new(Storage::new(1, 1));
+    let restored = Arc::new(Storage::new(1, 2));
+    let storage_swap = Arc::new(ArcSwap::from(Arc::clone(&old_storage)));
+    let controller = Arc::new(TestPauseController::default());
+
+    controller.request_pause().await;
+    storage_swap.swap(Arc::clone(&placeholder));
+
+    let reader_controller = Arc::clone(&controller);
+    let reader_swap = Arc::clone(&storage_swap);
+    let reader = tokio::spawn(async move {
+        let _permit = reader_controller.enter().await;
+        reader_swap.load_full()
+    });
+
+    while controller.enter_attempts.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !reader.is_finished(),
+        "reader must remain blocked while paused"
+    );
+
+    storage_swap.swap(Arc::clone(&restored));
+    assert!(
+        !reader.is_finished(),
+        "storage swap must not bypass the pause gate"
+    );
+
+    controller.resume();
+    let observed = reader.await.expect("reader task should not panic");
+    assert!(Arc::ptr_eq(&observed, &restored));
+    assert!(!Arc::ptr_eq(&observed, &placeholder));
+}
+
+#[tokio::test]
+async fn snapshot_builder_blocks_install_operation() {
+    let db_path = unique_test_db_path();
+    let snap_root = unique_test_db_path();
+    std::fs::create_dir_all(&snap_root).expect("snapshot root should be created");
+
+    let target_storage = Arc::new(Storage::new(1, 0));
+    let target_swap = Arc::new(ArcSwap::from(Arc::clone(&target_storage)));
+    let controller = Arc::new(TestPauseController::default());
+    let mut state_machine = KiwiStateMachine::new(
+        1,
+        Arc::clone(&target_swap),
+        db_path.clone(),
+        snap_root.clone(),
+        None,
+    );
+    state_machine.set_pause_controller(controller.clone());
+
+    let builder = state_machine.get_snapshot_builder().await;
+    let install = tokio::spawn(async move {
+        let meta = openraft::SnapshotMeta::<u64, conf::raft_type::KiwiNode>::default();
+        state_machine
+            .install_snapshot(
+                &meta,
+                Box::new(std::io::Cursor::new(b"not a tar archive".to_vec())),
+            )
+            .await
+    });
+
+    while controller.pause_count.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    tokio::task::yield_now().await;
+    assert!(
+        !install.is_finished(),
+        "install must wait until the snapshot builder releases its operation guard"
+    );
+
+    drop(builder);
+    let result = install.await.expect("install task should not panic");
+    assert!(
+        result.is_err(),
+        "invalid archive should fail after the guard drains"
+    );
+
+    drop(target_swap);
+    close_storage(target_storage, "target storage")
+        .await
+        .expect("target storage should close");
+    safe_cleanup_test_db(&db_path);
+    safe_cleanup_test_db(&snap_root);
 }
 
 #[tokio::test]
@@ -88,6 +260,7 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
     let mut builder = sm.get_snapshot_builder().await;
     let snap = builder.build_snapshot().await?;
     assert!(!snap.snapshot.get_ref().is_empty());
+    drop(builder);
 
     let cur = sm
         .get_current_snapshot()
@@ -98,7 +271,6 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
     storage.set(b"k_l2", b"after")?;
     assert_eq!(storage.get(b"k_l2")?, "after");
 
-    drop(builder);
     drop(sm);
     drop(storage_swap);
     close_storage(storage, "source storage").await?;
@@ -473,6 +645,25 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
     );
     assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 1);
     assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 0);
+
+    let attempts_before = pause_controller.enter_attempts.load(Ordering::SeqCst);
+    let blocked_controller = pause_controller.clone();
+    let blocked_read = tokio::spawn(async move { blocked_controller.enter().await });
+    while pause_controller.enter_attempts.load(Ordering::SeqCst) == attempts_before {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !blocked_read.is_finished(),
+        "new reads must remain blocked after a destructive install failure"
+    );
+    blocked_read.abort();
+    let cancelled = blocked_read.await;
+    assert!(cancelled.is_err(), "blocked read should be cancelled");
+    assert_eq!(
+        pause_controller.active.load(Ordering::SeqCst),
+        0,
+        "cancelling a blocked read must not leak an active permit"
+    );
 
     let restored = target_swap.load_full();
     assert_eq!(restored.get(b"snapshot_key")?, "snapshot_value");

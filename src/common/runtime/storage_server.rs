@@ -68,7 +68,7 @@ impl StorageAccessGate {
         }
     }
 
-    async fn enter(&self) -> StorageAccessGuard {
+    pub async fn enter(&self) -> StorageAccessPermit {
         #[cfg(test)]
         self.inner.enter_attempts.fetch_add(1, Ordering::SeqCst);
 
@@ -86,7 +86,7 @@ impl StorageAccessGate {
 
             self.inner.active.fetch_add(1, Ordering::SeqCst);
             if !self.inner.paused.load(Ordering::SeqCst) {
-                return StorageAccessGuard {
+                return StorageAccessPermit {
                     gate: Arc::clone(&self.inner),
                 };
             }
@@ -124,11 +124,15 @@ impl Default for StorageAccessGate {
     }
 }
 
-struct StorageAccessGuard {
+/// Opaque RAII permit proving that a caller may hold a Storage owner.
+///
+/// The permit intentionally exposes no fields or methods. Dropping it releases
+/// the access slot so a pending snapshot pause can finish draining owners.
+pub struct StorageAccessPermit {
     gate: Arc<StorageAccessGateInner>,
 }
 
-impl Drop for StorageAccessGuard {
+impl Drop for StorageAccessPermit {
     fn drop(&mut self) {
         if self.gate.active.fetch_sub(1, Ordering::SeqCst) == 1 {
             self.gate.state_changed.notify_waiters();
@@ -176,6 +180,11 @@ impl StorageServerPauseController {
         log::info!("StorageServerPauseController: requesting pause for snapshot installation");
         self.access_gate.request_pause().await;
         log::info!("StorageServerPauseController: pause complete, all pending requests finished");
+    }
+
+    /// Enter the shared Storage access gate.
+    pub async fn enter(&self) -> StorageAccessPermit {
+        self.access_gate.enter().await
     }
 
     /// Resume: allow new requests to proceed.
@@ -1402,6 +1411,32 @@ mod tests {
             .expect("blocked access should resume")
             .expect("enter task should not panic");
         drop(resumed_guard);
+    }
+
+    #[tokio::test]
+    async fn pause_controller_drains_public_access_permit() {
+        let controller = StorageServerPauseController::new();
+        let permit = controller.enter().await;
+
+        let pause_controller = controller.clone();
+        let pause = tokio::spawn(async move {
+            pause_controller.request_pause().await;
+        });
+
+        while !controller.access_gate.inner.paused.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !pause.is_finished(),
+            "pause must wait for the public access permit to drain"
+        );
+
+        drop(permit);
+        pause.await.expect("pause task should not panic");
+        assert_eq!(
+            controller.access_gate.inner.active.load(Ordering::SeqCst),
+            0
+        );
     }
 
     #[tokio::test]

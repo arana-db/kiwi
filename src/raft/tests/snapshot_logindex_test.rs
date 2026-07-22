@@ -107,6 +107,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
         let mut builder = sm.get_snapshot_builder().await;
         let snap = builder.build_snapshot().await?;
         assert!(!snap.snapshot.get_ref().is_empty());
+        drop(builder);
 
         // Verify snapshot was persisted
         let cur = sm
@@ -124,7 +125,6 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
         let bytes = snap.snapshot.into_inner();
 
         // Explicitly drop all source-side references before leaving this block
-        drop(builder);
         drop(sm);
         drop(storage);
 

@@ -41,7 +41,8 @@ pub struct RaftApp {
     pub raft_addr: String,
     pub resp_addr: String,
     pub raft: Raft<KiwiTypeConfig>,
-    pub storage_swap: Arc<ArcSwap<Storage>>,
+    pub(crate) storage_swap: Arc<ArcSwap<Storage>>,
+    pub(crate) pause_controller: Arc<dyn PauseController>,
 }
 
 impl RaftApp {
@@ -175,7 +176,7 @@ fn build_raft_config(config: &RaftConfig) -> Result<Arc<Config>, anyhow::Error> 
 pub async fn create_raft_node(
     config: RaftConfig,
     storage_swap: Arc<ArcSwap<Storage>>,
-    pause_controller: Option<Arc<dyn PauseController>>,
+    pause_controller: Arc<dyn PauseController>,
     append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
 ) -> Result<Arc<RaftApp>, anyhow::Error> {
     let raft_config = build_raft_config(&config)?;
@@ -193,9 +194,7 @@ pub async fn create_raft_node(
         append_log_fn,
     );
 
-    if let Some(ctrl) = pause_controller {
-        state_machine.set_pause_controller(ctrl);
-    }
+    state_machine.set_pause_controller(Arc::clone(&pause_controller));
 
     let network = KiwiNetworkFactory::new();
 
@@ -225,15 +224,44 @@ pub async fn create_raft_node(
         resp_addr: config.resp_addr,
         raft,
         storage_swap,
+        pause_controller,
     }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state_machine::StorageAccessPermit;
     use openraft::storage::{RaftLogStorage, RaftLogStorageExt};
     use openraft::{Entry, EntryPayload, LeaderId, LogId, Vote};
     use tempfile::TempDir;
+
+    struct NoopPauseController;
+    struct NoopStorageAccessPermit;
+
+    impl StorageAccessPermit for NoopStorageAccessPermit {}
+
+    impl PauseController for NoopPauseController {
+        fn request_pause(
+            &self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+            Box::pin(async {})
+        }
+
+        fn enter(
+            self: Arc<Self>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>,
+        > {
+            Box::pin(async { Box::new(NoopStorageAccessPermit) as Box<dyn StorageAccessPermit> })
+        }
+
+        fn resume(&self) {}
+    }
+
+    fn noop_pause_controller() -> Arc<dyn PauseController> {
+        Arc::new(NoopPauseController)
+    }
 
     #[derive(Clone, Copy)]
     enum DurableStateFixture {
@@ -284,7 +312,9 @@ mod tests {
         };
         let storage_swap = Arc::new(ArcSwap::from_pointee(Storage::new(1, 0)));
 
-        let error = match create_raft_node(config, storage_swap, None, None).await {
+        let error = match create_raft_node(config, storage_swap, noop_pause_controller(), None)
+            .await
+        {
             Ok(app) => {
                 app.raft
                     .shutdown()
@@ -371,19 +401,20 @@ mod tests {
             };
             let storage_swap = Arc::new(ArcSwap::from_pointee(Storage::new(1, 0)));
 
-            let error = match create_raft_node(config, storage_swap, None, None).await {
-                Ok(app) => {
-                    app.raft
-                        .shutdown()
-                        .await
-                        .expect("test Raft node should shut down cleanly");
-                    panic!(
-                        "legacy memory log marker with {} RocksDB state must be rejected",
-                        fixture.name()
-                    );
-                }
-                Err(error) => error,
-            };
+            let error =
+                match create_raft_node(config, storage_swap, noop_pause_controller(), None).await {
+                    Ok(app) => {
+                        app.raft
+                            .shutdown()
+                            .await
+                            .expect("test Raft node should shut down cleanly");
+                        panic!(
+                            "legacy memory log marker with {} RocksDB state must be rejected",
+                            fixture.name()
+                        );
+                    }
+                    Err(error) => error,
+                };
 
             assert!(
                 error.to_string().contains("cannot safely migrate"),
