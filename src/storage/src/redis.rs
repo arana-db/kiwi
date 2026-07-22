@@ -108,11 +108,20 @@ pub enum TypeCheckState {
 /// lifecycle and becoming the thread that performs the final RocksDB close.
 pub(crate) struct RocksDbOwner {
     db: Arc<DB>,
+    #[cfg(test)]
+    drop_test_gate: Option<Weak<RocksDbOwnerDropTestGate>>,
 }
 
 impl RocksDbOwner {
     fn new(db: DB) -> Self {
-        Self { db: Arc::new(db) }
+        #[cfg(test)]
+        let drop_test_gate = rocks_db_owner_drop_test_gate_for_path(db.path());
+
+        Self {
+            db: Arc::new(db),
+            #[cfg(test)]
+            drop_test_gate,
+        }
     }
 
     fn downgrade(&self) -> Weak<DB> {
@@ -136,12 +145,106 @@ impl Deref for RocksDbOwner {
 
 impl Drop for RocksDbOwner {
     fn drop(&mut self) {
+        #[cfg(test)]
+        if let Some(gate) = self.drop_test_gate.as_ref().and_then(Weak::upgrade) {
+            gate.mark_entered();
+        }
+
         // Hold the unique lifecycle owner's strong reference while RocksDB
         // cancels and joins background jobs. A compaction filter may itself hold
         // a temporary Arc upgraded from Weak; waiting here ensures that Arc is
         // released before the final DB close can run on a callback worker.
         self.db.cancel_all_background_work(true);
     }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct RocksDbOwnerDropTestState {
+    entered: bool,
+}
+
+#[cfg(test)]
+struct RocksDbOwnerDropTestGate {
+    state: Mutex<RocksDbOwnerDropTestState>,
+    changed: std::sync::Condvar,
+}
+
+#[cfg(test)]
+impl RocksDbOwnerDropTestGate {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(RocksDbOwnerDropTestState::default()),
+            changed: std::sync::Condvar::new(),
+        })
+    }
+
+    fn mark_entered(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("RocksDB owner drop test gate mutex should not be poisoned");
+        state.entered = true;
+        self.changed.notify_all();
+    }
+
+    fn wait_until_entered(&self, timeout: std::time::Duration) -> bool {
+        let state = self
+            .state
+            .lock()
+            .expect("RocksDB owner drop test gate mutex should not be poisoned");
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, timeout, |state| !state.entered)
+            .expect("RocksDB owner drop test gate wait should succeed");
+        state.entered
+    }
+}
+
+#[cfg(test)]
+fn rocks_db_owner_drop_test_gate_registry()
+-> &'static Mutex<Option<(std::path::PathBuf, Weak<RocksDbOwnerDropTestGate>)>> {
+    static GATE: OnceLock<Mutex<Option<(std::path::PathBuf, Weak<RocksDbOwnerDropTestGate>)>>> =
+        OnceLock::new();
+    GATE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+fn rocks_db_owner_drop_test_gate_for_path(path: &Path) -> Option<Weak<RocksDbOwnerDropTestGate>> {
+    rocks_db_owner_drop_test_gate_registry()
+        .lock()
+        .expect("RocksDB owner drop test gate registry should not be poisoned")
+        .as_ref()
+        .filter(|(target_path, _)| target_path == path)
+        .map(|(_, gate)| Weak::clone(gate))
+}
+
+#[cfg(test)]
+struct RocksDbOwnerDropTestGateGuard;
+
+#[cfg(test)]
+impl Drop for RocksDbOwnerDropTestGateGuard {
+    fn drop(&mut self) {
+        *rocks_db_owner_drop_test_gate_registry()
+            .lock()
+            .expect("RocksDB owner drop test gate registry should not be poisoned") = None;
+    }
+}
+
+#[cfg(test)]
+fn install_rocks_db_owner_drop_test_gate(
+    path: &Path,
+    gate: &Arc<RocksDbOwnerDropTestGate>,
+) -> RocksDbOwnerDropTestGateGuard {
+    let mut installed = rocks_db_owner_drop_test_gate_registry()
+        .lock()
+        .expect("RocksDB owner drop test gate registry should not be poisoned");
+    assert!(
+        installed.is_none(),
+        "only one RocksDB owner drop test gate may be installed"
+    );
+    *installed = Some((path.to_path_buf(), Arc::downgrade(gate)));
+    RocksDbOwnerDropTestGateGuard
 }
 
 #[repr(C, align(64))]
@@ -887,7 +990,7 @@ impl Redis {
 #[macro_export]
 macro_rules! get_db_and_cfs {
     ($self:expr $(, $cf:expr)*) => {{
-        let db = $self.db.as_ref().context(OptionNoneSnafu {
+        let db = $self.db().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
 
@@ -910,7 +1013,9 @@ mod lifecycle_tests {
     use std::sync::{Arc, mpsc};
     use std::time::Duration;
 
-    use super::{ColumnFamilyIndex, Redis};
+    use super::{
+        ColumnFamilyIndex, Redis, RocksDbOwnerDropTestGate, install_rocks_db_owner_drop_test_gate,
+    };
     use crate::data_compaction_filter::{
         CompactionFilterTestGate, install_compaction_filter_test_gate,
     };
@@ -944,6 +1049,8 @@ mod lifecycle_tests {
         let path = unique_test_db_path();
         safe_cleanup_test_db(&path);
 
+        let drop_gate = RocksDbOwnerDropTestGate::new();
+        let drop_gate_guard = install_rocks_db_owner_drop_test_gate(&path, &drop_gate);
         let redis = open_compaction_test_redis(&path);
         let data_cf = redis
             .get_cf_handle(ColumnFamilyIndex::HashesDataCF)
@@ -985,11 +1092,16 @@ mod lifecycle_tests {
                 .expect("drop completion receiver should remain alive");
         });
 
+        assert!(
+            drop_gate.wait_until_entered(Duration::from_secs(10)),
+            "RocksDbOwner::drop should start before checking completion"
+        );
         let completed_while_filter_was_blocked =
             drop_rx.recv_timeout(Duration::from_millis(250)).is_ok();
 
         gate.release();
         drop(gate_guard);
+        drop(drop_gate_guard);
 
         assert!(
             !completed_while_filter_was_blocked,

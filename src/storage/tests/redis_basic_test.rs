@@ -23,6 +23,8 @@ mod redis_basic_test {
 
     use bytes::Bytes;
     use kstd::lock_mgr::LockMgr;
+    use snafu::OptionExt;
+    use storage::error::OptionNoneSnafu;
     use storage::storage::Storage;
     use storage::{
         BgTaskHandler, ColumnFamilyIndex, DataType, Redis, StorageOptions, TypeCheckState,
@@ -31,6 +33,21 @@ mod redis_basic_test {
     };
 
     fn assert_concrete_rocksdb(_db: &rocksdb::DB) {}
+
+    fn assert_exported_db_macro_works(redis: &Redis) -> storage::Result<()> {
+        let (db, cfs) = storage::get_db_and_cfs!(redis, ColumnFamilyIndex::MetaCF);
+        assert_eq!(db.path(), redis.db().expect("Redis should be open").path());
+        assert_eq!(cfs.len(), 1);
+        db.put_cf(&cfs[0], b"exported-macro-key", b"exported-macro-value")
+            .expect("macro-returned DB and CF handle should be usable");
+        assert_eq!(
+            db.get_cf(&cfs[0], b"exported-macro-key")
+                .expect("macro-returned DB should read successfully")
+                .expect("macro test key should exist"),
+            b"exported-macro-value"
+        );
+        Ok(())
+    }
 
     #[test]
     fn test_redis_creation() {
@@ -306,6 +323,9 @@ mod redis_basic_test {
                 value
             );
         }
+
+        assert_exported_db_macro_works(&redis)
+            .expect("exported macro should work from an external crate");
 
         drop(redis);
         safe_cleanup_test_db(&test_db_path);
