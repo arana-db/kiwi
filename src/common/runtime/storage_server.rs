@@ -51,6 +51,8 @@ struct StorageAccessGateInner {
     paused: AtomicBool,
     active: AtomicU64,
     state_changed: tokio::sync::Notify,
+    #[cfg(test)]
+    enter_attempts: AtomicU64,
 }
 
 impl StorageAccessGate {
@@ -60,11 +62,16 @@ impl StorageAccessGate {
                 paused: AtomicBool::new(false),
                 active: AtomicU64::new(0),
                 state_changed: tokio::sync::Notify::new(),
+                #[cfg(test)]
+                enter_attempts: AtomicU64::new(0),
             }),
         }
     }
 
     async fn enter(&self) -> StorageAccessGuard {
+        #[cfg(test)]
+        self.inner.enter_attempts.fetch_add(1, Ordering::SeqCst);
+
         loop {
             while self.inner.paused.load(Ordering::SeqCst) {
                 let resumed = self.inner.state_changed.notified();
@@ -994,11 +1001,20 @@ impl BackgroundTaskManager {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
             config.compaction_check_interval,
         ));
+        let shutdown_requested = shutdown.notified();
+        tokio::pin!(shutdown_requested);
+        shutdown_requested.as_mut().enable();
 
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    let _access_guard = access_gate.enter().await;
+                    let _access_guard = tokio::select! {
+                        access_guard = access_gate.enter() => access_guard,
+                        _ = &mut shutdown_requested => {
+                            info!("Compaction monitoring task shutting down");
+                            break;
+                        }
+                    };
                     let storage = global_storage.load();
                     debug!("Monitoring compaction status");
 
@@ -1038,7 +1054,7 @@ impl BackgroundTaskManager {
                         }
                     }
                 }
-                _ = shutdown.notified() => {
+                _ = &mut shutdown_requested => {
                     info!("Compaction monitoring task shutting down");
                     break;
                 }
@@ -1058,11 +1074,20 @@ impl BackgroundTaskManager {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
             config.flush_check_interval,
         ));
+        let shutdown_requested = shutdown.notified();
+        tokio::pin!(shutdown_requested);
+        shutdown_requested.as_mut().enable();
 
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    let _access_guard = access_gate.enter().await;
+                    let _access_guard = tokio::select! {
+                        access_guard = access_gate.enter() => access_guard,
+                        _ = &mut shutdown_requested => {
+                            info!("Flush monitoring task shutting down");
+                            break;
+                        }
+                    };
                     let storage = global_storage.load();
                     debug!("Monitoring flush status");
 
@@ -1097,7 +1122,7 @@ impl BackgroundTaskManager {
                         }
                     }
                 }
-                _ = shutdown.notified() => {
+                _ = &mut shutdown_requested => {
                     info!("Flush monitoring task shutting down");
                     break;
                 }
@@ -1117,11 +1142,20 @@ impl BackgroundTaskManager {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
             config.stats_collection_interval,
         ));
+        let shutdown_requested = shutdown.notified();
+        tokio::pin!(shutdown_requested);
+        shutdown_requested.as_mut().enable();
 
         loop {
             tokio::select! {
                 _ = interval.tick() => {
-                    let _access_guard = access_gate.enter().await;
+                    let _access_guard = tokio::select! {
+                        access_guard = access_gate.enter() => access_guard,
+                        _ = &mut shutdown_requested => {
+                            info!("Statistics collection task shutting down");
+                            break;
+                        }
+                    };
                     let storage = global_storage.load();
                     debug!("Collecting storage statistics");
 
@@ -1161,7 +1195,7 @@ impl BackgroundTaskManager {
                         stats_guard.flushes_detected
                     );
                 }
-                _ = shutdown.notified() => {
+                _ = &mut shutdown_requested => {
                     info!("Statistics collection task shutting down");
                     break;
                 }
@@ -1457,6 +1491,59 @@ mod tests {
             "background manager must not retain the swapped-out Storage owner"
         );
         assert!(Arc::ptr_eq(&manager.global_storage.load(), &new_storage));
+    }
+
+    #[tokio::test]
+    async fn paused_monitors_observe_shutdown_without_resume() {
+        for monitor in ["compaction", "flush", "statistics"] {
+            let storage = Arc::new(Storage::new(1, 0));
+            let storage_weak = Arc::downgrade(&storage);
+            let global_storage = GlobalStorage::from_arc(Arc::clone(&storage));
+            let access_gate = StorageAccessGate::new();
+            access_gate.request_pause().await;
+
+            let config = BackgroundTaskConfig {
+                enable_auto_compaction: monitor == "compaction",
+                enable_flush_monitoring: monitor == "flush",
+                enable_stats_collection: monitor == "statistics",
+                ..BackgroundTaskConfig::default()
+            };
+            let manager = BackgroundTaskManager::with_config(
+                global_storage.clone(),
+                access_gate.clone(),
+                config,
+            );
+            let shutdown = Arc::clone(&manager.shutdown_signal);
+            let manager_task = tokio::spawn(manager.run());
+
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while access_gate.inner.enter_attempts.load(Ordering::SeqCst) == 0 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| panic!("{monitor} monitor should enter the paused gate"));
+
+            shutdown.notify_waiters();
+            tokio::time::timeout(Duration::from_secs(1), manager_task)
+                .await
+                .unwrap_or_else(|_| panic!("{monitor} manager should observe shutdown"))
+                .expect("background manager task should not panic")
+                .expect("background manager should exit cleanly");
+
+            drop(global_storage);
+            drop(storage);
+            tokio::time::timeout(Duration::from_millis(100), async {
+                while storage_weak.upgrade().is_some() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                panic!("paused {monitor} monitor must release Storage without resume")
+            });
+            assert_eq!(access_gate.inner.active.load(Ordering::SeqCst), 0);
+        }
     }
 
     #[tokio::test]
