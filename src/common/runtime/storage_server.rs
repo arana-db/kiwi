@@ -55,6 +55,29 @@ struct StorageAccessGateInner {
     enter_attempts: AtomicU64,
 }
 
+struct PauseCancellationGuard {
+    gate: StorageAccessGate,
+    armed: bool,
+}
+
+impl PauseCancellationGuard {
+    fn new(gate: StorageAccessGate) -> Self {
+        Self { gate, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PauseCancellationGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.gate.resume();
+        }
+    }
+}
+
 impl StorageAccessGate {
     pub fn new() -> Self {
         Self {
@@ -99,6 +122,7 @@ impl StorageAccessGate {
 
     async fn request_pause(&self) {
         self.inner.paused.store(true, Ordering::SeqCst);
+        let mut cancellation_guard = PauseCancellationGuard::new(self.clone());
 
         loop {
             let drained = self.inner.state_changed.notified();
@@ -106,6 +130,7 @@ impl StorageAccessGate {
             drained.as_mut().enable();
 
             if self.inner.active.load(Ordering::SeqCst) == 0 {
+                cancellation_guard.disarm();
                 return;
             }
             drained.await;
@@ -1437,6 +1462,39 @@ mod tests {
             controller.access_gate.inner.active.load(Ordering::SeqCst),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn aborted_pause_while_draining_restores_storage_access() {
+        let controller = StorageServerPauseController::new();
+        let permit = controller.enter().await;
+
+        let pause_controller = controller.clone();
+        let pause = tokio::spawn(async move {
+            pause_controller.request_pause().await;
+        });
+
+        while !controller.access_gate.inner.paused.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !pause.is_finished(),
+            "pause must still be draining the active permit"
+        );
+
+        pause.abort();
+        let cancelled = pause.await;
+        assert!(cancelled.is_err(), "pause task should be cancelled");
+        drop(permit);
+
+        let resumed_permit = tokio::time::timeout(Duration::from_secs(1), controller.enter())
+            .await
+            .expect("cancelling a draining pause must restore storage access");
+        assert!(
+            !controller.access_gate.inner.paused.load(Ordering::SeqCst),
+            "cancelled pause must clear the paused state"
+        );
+        drop(resumed_permit);
     }
 
     #[tokio::test]

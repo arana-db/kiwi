@@ -122,6 +122,33 @@ impl PauseController for TestPauseController {
     }
 }
 
+struct NoopPauseController;
+struct NoopStorageAccessPermit;
+
+impl StorageAccessPermit for NoopStorageAccessPermit {}
+
+impl PauseController for NoopPauseController {
+    fn request_pause(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async {})
+    }
+
+    fn enter(
+        self: Arc<Self>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>,
+    > {
+        Box::pin(async { Box::new(NoopStorageAccessPermit) as Box<dyn StorageAccessPermit> })
+    }
+
+    fn resume(&self) {}
+}
+
+fn noop_pause_controller() -> Arc<dyn PauseController> {
+    Arc::new(NoopPauseController)
+}
+
 #[tokio::test]
 async fn active_storage_access_permit_blocks_pause() {
     let controller = Arc::new(TestPauseController::default());
@@ -201,9 +228,9 @@ async fn snapshot_builder_blocks_install_operation() {
         Arc::clone(&target_swap),
         db_path.clone(),
         snap_root.clone(),
+        controller.clone(),
         None,
     );
-    state_machine.set_pause_controller(controller.clone());
 
     let mut source_builder = state_machine.get_snapshot_builder().await;
     let snapshot = source_builder
@@ -270,6 +297,98 @@ async fn snapshot_builder_blocks_install_operation() {
 }
 
 #[tokio::test]
+async fn aborted_install_before_marker_resumes_and_preserves_live_storage() -> anyhow::Result<()> {
+    let db_path = unique_test_db_path();
+    let snap_root = unique_test_db_path();
+    std::fs::create_dir_all(&snap_root)?;
+
+    let mut storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _storage_rx = storage.open(options, &db_path)?;
+    storage.set(b"live-key", b"live-value")?;
+
+    let target_swap = Arc::new(ArcSwap::from_pointee(storage));
+    let controller = Arc::new(TestPauseController::default());
+    let mut state_machine = KiwiStateMachine::new(
+        1,
+        Arc::clone(&target_swap),
+        db_path.clone(),
+        snap_root.clone(),
+        controller.clone(),
+        None,
+    );
+
+    let mut source_builder = state_machine.get_snapshot_builder().await;
+    let snapshot = source_builder.build_snapshot().await?;
+    let snapshot_meta = snapshot.meta.clone();
+    let snapshot_bytes = snapshot.snapshot.into_inner();
+    drop(source_builder);
+
+    let held_builder = state_machine.get_snapshot_builder().await;
+    let old_storage = target_swap.load_full();
+    let marker_path = snapshot_install_marker_path(&db_path)?;
+    assert!(!marker_path.exists());
+
+    let install = tokio::spawn(async move {
+        state_machine
+            .install_snapshot(
+                &snapshot_meta,
+                Box::new(std::io::Cursor::new(snapshot_bytes)),
+            )
+            .await
+    });
+
+    while controller.pause_count.load(Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        controller.paused.load(Ordering::SeqCst),
+        "install should pause before waiting for the snapshot operation gate"
+    );
+    assert!(
+        !marker_path.exists(),
+        "install must not create a marker before acquiring the operation gate"
+    );
+    assert!(
+        Arc::ptr_eq(&target_swap.load_full(), &old_storage),
+        "install must not replace live Storage before creating the marker"
+    );
+
+    install.abort();
+    let cancelled = install.await;
+    assert!(cancelled.is_err(), "install task should be cancelled");
+
+    assert!(
+        !marker_path.exists(),
+        "aborting before marker creation must leave no recovery marker"
+    );
+    assert!(
+        Arc::ptr_eq(&target_swap.load_full(), &old_storage),
+        "aborting before marker creation must preserve the live Storage"
+    );
+    assert_eq!(old_storage.get(b"live-key")?, "live-value");
+
+    let resumed_permit = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        Arc::clone(&controller).enter(),
+    )
+    .await
+    .expect("aborting a pre-marker install must resume storage access");
+    assert!(!controller.paused.load(Ordering::SeqCst));
+    assert_eq!(controller.resume_count.load(Ordering::SeqCst), 1);
+    drop(resumed_permit);
+
+    drop(held_builder);
+    drop(target_swap);
+    close_storage(old_storage, "preserved target storage").await?;
+    drop(controller);
+    drop(_storage_rx);
+    safe_cleanup_test_db(&db_path);
+    safe_cleanup_test_db(&snap_root);
+    Ok(())
+}
+
+#[tokio::test]
 async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
     let src_db_path = unique_test_db_path();
     let restore_db_path = unique_test_db_path();
@@ -293,6 +412,7 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
         storage_swap.clone(),
         src_db_path.clone(),
         snap_root.clone(),
+        noop_pause_controller(),
         None,
     );
 
@@ -326,6 +446,7 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root.clone(),
+        noop_pause_controller(),
         None,
     );
     sm2.install_snapshot(&meta, Box::new(std::io::Cursor::new(bytes)))
@@ -380,6 +501,7 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
         source_swap.clone(),
         src_db_path.clone(),
         snap_root.clone(),
+        noop_pause_controller(),
         None,
     );
 
@@ -410,6 +532,7 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root.clone(),
+        noop_pause_controller(),
         None,
     );
 
@@ -460,6 +583,7 @@ async fn install_snapshot_rearms_append_log_hook() -> anyhow::Result<()> {
         source_swap.clone(),
         src_db_path.clone(),
         snap_root.clone(),
+        noop_pause_controller(),
         None,
     );
 
@@ -489,6 +613,7 @@ async fn install_snapshot_rearms_append_log_hook() -> anyhow::Result<()> {
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root.clone(),
+        noop_pause_controller(),
         Some(append_log_fn_holder),
     );
 
@@ -541,6 +666,7 @@ async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
         source_swap.clone(),
         src_db_path.clone(),
         snap_root.clone(),
+        noop_pause_controller(),
         None,
     );
     let mut builder = source_sm.get_snapshot_builder().await;
@@ -565,9 +691,9 @@ async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root.clone(),
+        pause_controller.clone(),
         None,
     );
-    target_sm.set_pause_controller(pause_controller.clone());
 
     target_sm
         .install_snapshot(
@@ -611,6 +737,7 @@ async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
         reopened_swap.clone(),
         restore_db_path.clone(),
         snap_root.clone(),
+        noop_pause_controller(),
         None,
     );
     let (reopened_applied, reopened_membership) = reopened_sm.applied_state().await?;
@@ -657,6 +784,7 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
         source_swap.clone(),
         src_db_path.clone(),
         snap_root.clone(),
+        noop_pause_controller(),
         None,
     );
     let mut builder = source_sm.get_snapshot_builder().await;
@@ -686,9 +814,9 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
         target_swap.clone(),
         restore_db_path.clone(),
         invalid_work_dir.clone(),
+        pause_controller.clone(),
         None,
     );
-    target_sm.set_pause_controller(pause_controller.clone());
 
     let result = target_sm
         .install_snapshot(
@@ -801,9 +929,9 @@ async fn install_snapshot_resumes_after_pre_restore_failure() -> anyhow::Result<
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root.clone(),
+        pause_controller.clone(),
         None,
     );
-    target_sm.set_pause_controller(pause_controller.clone());
 
     let snapshot_meta = openraft::SnapshotMeta::<u64, conf::raft_type::KiwiNode>::default();
     let result = target_sm
@@ -863,6 +991,7 @@ async fn missing_checkpoint_instance_does_not_pause_or_replace_live_storage() ->
         source_swap.clone(),
         src_db_path.clone(),
         source_work_dir.clone(),
+        noop_pause_controller(),
         None,
     );
     let mut builder = source_sm.get_snapshot_builder().await;
@@ -885,9 +1014,9 @@ async fn missing_checkpoint_instance_does_not_pause_or_replace_live_storage() ->
         target_swap.clone(),
         restore_db_path.clone(),
         target_work_dir.clone(),
+        pause_controller.clone(),
         None,
     );
-    target_sm.set_pause_controller(pause_controller.clone());
 
     let error = target_sm
         .install_snapshot(

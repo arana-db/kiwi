@@ -187,15 +187,14 @@ pub async fn create_raft_node(
     // Per-instance LogIndex collectors / cf_trackers live in the Storage; the state
     // machine looks them up through storage_swap so it sees the right ones after a
     // snapshot install hot-swaps Storage.
-    let mut state_machine = KiwiStateMachine::new(
+    let state_machine = KiwiStateMachine::new(
         config.node_id,
         storage_swap.clone(),
         config.db_path.clone(),
         snapshot_work_dir,
+        Arc::clone(&pause_controller),
         append_log_fn,
     );
-
-    state_machine.set_pause_controller(Arc::clone(&pause_controller));
 
     let network = KiwiNetworkFactory::new();
 

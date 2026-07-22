@@ -300,6 +300,32 @@ pub trait PauseController: Send + Sync {
     fn resume(&self);
 }
 
+struct ResumeBeforeMarkerGuard {
+    controller: Arc<dyn PauseController>,
+    armed: bool,
+}
+
+impl ResumeBeforeMarkerGuard {
+    fn new(controller: Arc<dyn PauseController>) -> Self {
+        Self {
+            controller,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for ResumeBeforeMarkerGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.controller.resume();
+        }
+    }
+}
+
 /// Kiwi state machine with hot-swapping Storage support.
 pub struct KiwiStateMachine {
     _node_id: u64,
@@ -316,7 +342,7 @@ pub struct KiwiStateMachine {
     /// Snapshot counter for generating unique snapshot IDs.
     snapshot_idx: u64,
     /// Pause controller for coordinating with StorageServer.
-    pause_controller: Option<Arc<dyn PauseController>>,
+    pause_controller: Arc<dyn PauseController>,
     /// Serializes snapshot-visible state with apply, build and install operations.
     snapshot_operation_gate: Arc<tokio::sync::Mutex<()>>,
     /// Shared Raft append-log callback used to re-arm restored Storage after snapshot install.
@@ -334,6 +360,7 @@ impl KiwiStateMachine {
         storage_swap: Arc<ArcSwap<Storage>>,
         db_path: PathBuf,
         snapshot_work_dir: PathBuf,
+        pause_controller: Arc<dyn PauseController>,
         append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
     ) -> Self {
         Self {
@@ -344,7 +371,7 @@ impl KiwiStateMachine {
             last_applied: None,
             last_membership: StoredMembership::default(),
             snapshot_idx: 0,
-            pause_controller: None,
+            pause_controller,
             snapshot_operation_gate: Arc::new(tokio::sync::Mutex::new(())),
             append_log_fn,
         }
@@ -355,11 +382,6 @@ impl KiwiStateMachine {
     pub fn init_cf_tracker(&self) -> Result<(), io::Error> {
         let storage = self.storage_swap.load_full();
         storage.init_cf_trackers().map_err(io::Error::other)
-    }
-
-    /// Set pause controller for coordinating with StorageServer.
-    pub fn set_pause_controller(&mut self, controller: Arc<dyn PauseController>) {
-        self.pause_controller = Some(controller);
     }
 
     fn rearm_append_log_fn(&self, storage: &Storage) {
@@ -484,17 +506,12 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         let prepared = prepare_checkpoint_restore(&checkpoint_root, &self.db_path, db_instance_num)
             .map_err(io_err_to_raft)?;
 
-        if let Some(ctrl) = &self.pause_controller {
-            ctrl.request_pause().await;
-        }
+        self.pause_controller.request_pause().await;
+        let mut resume_before_marker =
+            ResumeBeforeMarkerGuard::new(Arc::clone(&self.pause_controller));
         let _snapshot_operation = Arc::clone(&self.snapshot_operation_gate).lock_owned().await;
 
-        let marker_path = snapshot_install_marker_path(&self.db_path).map_err(|error| {
-            if let Some(ctrl) = &self.pause_controller {
-                ctrl.resume();
-            }
-            io_err_to_raft(error)
-        })?;
+        let marker_path = snapshot_install_marker_path(&self.db_path).map_err(io_err_to_raft)?;
         let marker = SnapshotInstallMarker {
             version: SNAPSHOT_INSTALL_MARKER_VERSION,
             id: meta.snapshot_id.clone(),
@@ -505,9 +522,6 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             instances: db_instance_num,
         };
         let marker_bytes = persist_install_marker(&marker_path, &marker).map_err(|error| {
-            if let Some(ctrl) = &self.pause_controller {
-                ctrl.resume();
-            }
             StorageError::from_io_error(
                 ErrorSubject::Snapshot(None),
                 ErrorVerb::Write,
@@ -520,6 +534,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
                 ),
             )
         })?;
+        resume_before_marker.disarm();
 
         let post_marker_error = |context: &str, error: &dyn std::fmt::Display| {
             StorageError::from_io_error(
@@ -587,9 +602,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         remove_install_marker(&marker_path, &marker_bytes)
             .map_err(|error| post_marker_error("removing the durable install marker", &error))?;
 
-        if let Some(ctrl) = &self.pause_controller {
-            ctrl.resume();
-        }
+        self.pause_controller.resume();
 
         log::info!("Snapshot installation complete");
         Ok(())

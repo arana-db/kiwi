@@ -30,9 +30,36 @@ use arc_swap::ArcSwap;
 use conf::raft_type::Binlog;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
-use raft::state_machine::KiwiStateMachine;
+use raft::state_machine::{KiwiStateMachine, PauseController, StorageAccessPermit};
 use storage::logindex::LogIndexAndSequenceCollector;
 use storage::{RaftSnapshotMeta, StorageOptions, storage::Storage, unique_test_db_path};
+
+struct NoopPauseController;
+struct NoopStorageAccessPermit;
+
+impl StorageAccessPermit for NoopStorageAccessPermit {}
+
+impl PauseController for NoopPauseController {
+    fn request_pause(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async {})
+    }
+
+    fn enter(
+        self: Arc<Self>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>,
+    > {
+        Box::pin(async { Box::new(NoopStorageAccessPermit) as Box<dyn StorageAccessPermit> })
+    }
+
+    fn resume(&self) {}
+}
+
+fn noop_pause_controller() -> Arc<dyn PauseController> {
+    Arc::new(NoopPauseController)
+}
 
 #[tokio::test]
 async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
@@ -101,6 +128,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
             storage_swap,
             src_db_path.clone(),
             snap_root.clone(),
+            noop_pause_controller(),
             None,
         );
 
@@ -140,6 +168,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root,
+        noop_pause_controller(),
         None,
     );
 
