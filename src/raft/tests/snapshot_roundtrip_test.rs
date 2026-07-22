@@ -17,13 +17,13 @@
 
 #![allow(clippy::unwrap_used)]
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use arc_swap::ArcSwap;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
-use raft::state_machine::KiwiStateMachine;
+use raft::state_machine::{KiwiStateMachine, PauseController};
 use storage::{StorageOptions, storage::Storage};
 use storage::{safe_cleanup_test_db, unique_test_db_path};
 
@@ -33,6 +33,29 @@ async fn close_storage(storage: Arc<Storage>, name: &str) -> anyhow::Result<()> 
     storage.shutdown().await;
     storage.close();
     Ok(())
+}
+
+#[derive(Default)]
+struct TestPauseController {
+    paused: AtomicBool,
+    pause_count: AtomicUsize,
+    resume_count: AtomicUsize,
+}
+
+impl PauseController for TestPauseController {
+    fn request_pause(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async {
+            self.pause_count.fetch_add(1, Ordering::SeqCst);
+            self.paused.store(true, Ordering::SeqCst);
+        })
+    }
+
+    fn resume(&self) {
+        self.resume_count.fetch_add(1, Ordering::SeqCst);
+        self.paused.store(false, Ordering::SeqCst);
+    }
 }
 
 #[tokio::test]
@@ -279,6 +302,244 @@ async fn install_snapshot_rearms_append_log_hook() -> anyhow::Result<()> {
     close_storage(target_storage, "target placeholder storage").await?;
 
     safe_cleanup_test_db(&src_db_path);
+    safe_cleanup_test_db(&restore_db_path);
+    safe_cleanup_test_db(&snap_root);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
+    let src_db_path = unique_test_db_path();
+    let restore_db_path = unique_test_db_path();
+    let snap_root = unique_test_db_path();
+
+    std::fs::create_dir_all(&snap_root)?;
+
+    let source_storage = {
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _rx = storage.open(options, &src_db_path)?;
+        Arc::new(storage)
+    };
+    source_storage.set(b"snapshot_key", b"snapshot_value")?;
+
+    let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
+    let mut source_sm = KiwiStateMachine::new(
+        1,
+        source_swap.clone(),
+        src_db_path.clone(),
+        snap_root.clone(),
+        None,
+    );
+    let mut builder = source_sm.get_snapshot_builder().await;
+    let snapshot = builder.build_snapshot().await?;
+    let snapshot_meta = snapshot.meta.clone();
+    let snapshot_bytes = snapshot.snapshot.into_inner();
+
+    drop(builder);
+    drop(source_sm);
+    drop(source_swap);
+    close_storage(source_storage, "source storage").await?;
+
+    let mut target_storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _target_rx = target_storage.open(options, &restore_db_path)?;
+    target_storage.set(b"stale_key", b"stale_value")?;
+
+    let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
+    let pause_controller = Arc::new(TestPauseController::default());
+    let mut target_sm = KiwiStateMachine::new(
+        2,
+        target_swap.clone(),
+        restore_db_path.clone(),
+        snap_root.clone(),
+        None,
+    );
+    target_sm.set_pause_controller(pause_controller.clone());
+
+    target_sm
+        .install_snapshot(
+            &snapshot_meta,
+            Box::new(std::io::Cursor::new(snapshot_bytes)),
+        )
+        .await?;
+
+    assert!(
+        !pause_controller.paused.load(Ordering::SeqCst),
+        "successful install must resume storage access"
+    );
+    assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 1);
+    assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 1);
+    let restored = target_swap.load_full();
+    assert_eq!(restored.get(b"snapshot_key")?, "snapshot_value");
+    assert!(restored.get(b"stale_key").is_err());
+
+    drop(target_sm);
+    drop(target_swap);
+    close_storage(restored, "restored storage").await?;
+    drop(pause_controller);
+    drop(_target_rx);
+
+    let reopened = {
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _rx = storage.open(options, &restore_db_path)?;
+        Arc::new(storage)
+    };
+    assert_eq!(reopened.get(b"snapshot_key")?, "snapshot_value");
+    assert!(reopened.get(b"stale_key").is_err());
+    close_storage(reopened, "reopened restored storage").await?;
+
+    safe_cleanup_test_db(&src_db_path);
+    safe_cleanup_test_db(&restore_db_path);
+    safe_cleanup_test_db(&snap_root);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Result<()> {
+    let src_db_path = unique_test_db_path();
+    let restore_db_path = unique_test_db_path();
+    let snap_root = unique_test_db_path();
+    let invalid_work_dir = snap_root.join("invalid-work-dir");
+
+    std::fs::create_dir_all(&snap_root)?;
+
+    let source_storage = {
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _rx = storage.open(options, &src_db_path)?;
+        Arc::new(storage)
+    };
+    source_storage.set(b"snapshot_key", b"snapshot_value")?;
+
+    let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
+    let mut source_sm = KiwiStateMachine::new(
+        1,
+        source_swap.clone(),
+        src_db_path.clone(),
+        snap_root.clone(),
+        None,
+    );
+    let mut builder = source_sm.get_snapshot_builder().await;
+    let snapshot = builder.build_snapshot().await?;
+    let snapshot_meta = snapshot.meta.clone();
+    let snapshot_bytes = snapshot.snapshot.into_inner();
+
+    drop(builder);
+    drop(source_sm);
+    drop(source_swap);
+    close_storage(source_storage, "source storage").await?;
+
+    let mut target_storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _target_rx = target_storage.open(options, &restore_db_path)?;
+    target_storage.set(b"stale_key", b"stale_value")?;
+
+    // Persisting the current snapshot happens after the target database has been
+    // replaced and reopened. A regular file here forces that post-restore step to fail.
+    std::fs::write(&invalid_work_dir, b"not a directory")?;
+
+    let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
+    let pause_controller = Arc::new(TestPauseController::default());
+    let mut target_sm = KiwiStateMachine::new(
+        2,
+        target_swap.clone(),
+        restore_db_path.clone(),
+        invalid_work_dir.clone(),
+        None,
+    );
+    target_sm.set_pause_controller(pause_controller.clone());
+
+    let result = target_sm
+        .install_snapshot(
+            &snapshot_meta,
+            Box::new(std::io::Cursor::new(snapshot_bytes)),
+        )
+        .await;
+
+    let error = result.expect_err("invalid snapshot work dir must fail install");
+    assert!(
+        error
+            .to_string()
+            .contains(&invalid_work_dir.display().to_string()),
+        "post-restore error must identify the failing path: {error}"
+    );
+    assert!(
+        pause_controller.paused.load(Ordering::SeqCst),
+        "a failure after destructive restore must keep storage access paused"
+    );
+    assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 1);
+    assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 0);
+
+    let restored = target_swap.load_full();
+    assert_eq!(restored.get(b"snapshot_key")?, "snapshot_value");
+    assert!(restored.get(b"stale_key").is_err());
+
+    drop(target_sm);
+    drop(target_swap);
+    close_storage(restored, "restored storage after failed install").await?;
+    drop(pause_controller);
+    drop(_target_rx);
+
+    safe_cleanup_test_db(&src_db_path);
+    safe_cleanup_test_db(&restore_db_path);
+    std::fs::remove_file(&invalid_work_dir)?;
+    safe_cleanup_test_db(&snap_root);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn install_snapshot_resumes_after_pre_restore_failure() -> anyhow::Result<()> {
+    let restore_db_path = unique_test_db_path();
+    let snap_root = unique_test_db_path();
+
+    std::fs::create_dir_all(&snap_root)?;
+
+    let mut target_storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _target_rx = target_storage.open(options, &restore_db_path)?;
+    target_storage.set(b"stale_key", b"stale_value")?;
+
+    let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
+    let pause_controller = Arc::new(TestPauseController::default());
+    let mut target_sm = KiwiStateMachine::new(
+        2,
+        target_swap.clone(),
+        restore_db_path.clone(),
+        snap_root.clone(),
+        None,
+    );
+    target_sm.set_pause_controller(pause_controller.clone());
+
+    let snapshot_meta = openraft::SnapshotMeta::<u64, conf::raft_type::KiwiNode>::default();
+    let result = target_sm
+        .install_snapshot(
+            &snapshot_meta,
+            Box::new(std::io::Cursor::new(b"not a tar archive".to_vec())),
+        )
+        .await;
+
+    assert!(result.is_err(), "invalid archive must fail before restore");
+    assert!(
+        !pause_controller.paused.load(Ordering::SeqCst),
+        "a failure before destructive restore must resume storage access"
+    );
+    assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 1);
+    assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 1);
+
+    let unchanged = target_swap.load_full();
+    assert_eq!(unchanged.get(b"stale_key")?, "stale_value");
+
+    drop(target_sm);
+    drop(target_swap);
+    close_storage(unchanged, "unchanged target storage").await?;
+    drop(pause_controller);
+    drop(_target_rx);
+
     safe_cleanup_test_db(&restore_db_path);
     safe_cleanup_test_db(&snap_root);
 

@@ -308,8 +308,9 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             ctrl.request_pause().await;
         }
 
-        // Define cleanup on error: resume service
-        let cleanup_on_error = || {
+        // Before the live database is detached, an install failure leaves the
+        // current Storage usable and it is safe to resume request processing.
+        let resume_on_early_error = || {
             if let Some(ctrl) = &self.pause_controller {
                 ctrl.resume();
             }
@@ -319,12 +320,12 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         let bytes = snapshot.into_inner();
 
         let unpack_root = tempfile::tempdir().map_err(|e| {
-            cleanup_on_error();
+            resume_on_early_error();
             io_err_to_raft(e)
         })?;
 
         unpack_tar_to_dir(&bytes, unpack_root.path()).map_err(|e| {
-            cleanup_on_error();
+            resume_on_early_error();
             io_err_to_raft(e)
         })?;
 
@@ -332,7 +333,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
 
         // P0: Validate metadata consistency
         let file_meta = RaftSnapshotMeta::read_from_dir(&checkpoint_root).map_err(|e| {
-            cleanup_on_error();
+            resume_on_early_error();
             io_err_to_raft(e)
         })?;
 
@@ -342,7 +343,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         if file_meta.last_included_index != expected_index
             || file_meta.last_included_term != expected_term
         {
-            cleanup_on_error();
+            resume_on_early_error();
             return Err(StorageError::from_io_error(
                 ErrorSubject::Snapshot(None),
                 ErrorVerb::Read,
@@ -381,10 +382,16 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         log::info!("Old Storage dropped, RocksDB lock released");
 
         // ========== Phase 4: Restore checkpoint (atomic operation) ==========
+        // From this point onward the previous live Storage no longer exists.
+        // Any failure must leave request processing paused: resuming would expose
+        // the placeholder or a partially committed restored state.
         restore_checkpoint_layout(&checkpoint_root, &self.db_path, db_instance_num).map_err(
             |e| {
-                cleanup_on_error();
-                io_err_to_raft(e)
+                io_err_to_raft(io::Error::other(format!(
+                    "failed to restore snapshot checkpoint from {} to {}: {e}",
+                    checkpoint_root.display(),
+                    self.db_path.display()
+                )))
             },
         )?;
 
@@ -393,8 +400,14 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
 
         let options = Arc::new(StorageOptions::default());
         new_storage.open(options, &self.db_path).map_err(|e| {
-            cleanup_on_error();
-            storage_err_to_raft(e)
+            StorageError::from_io_error(
+                ErrorSubject::StateMachine,
+                ErrorVerb::Write,
+                io::Error::other(format!(
+                    "failed to open restored storage at {}: {e}",
+                    self.db_path.display()
+                )),
+            )
         })?;
         self.rearm_append_log_fn(&new_storage);
 
@@ -405,8 +418,14 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         // ========== Phase 7: Update state and persist ==========
         // Initialize cf_tracker from restored SST properties
         self.init_cf_tracker().map_err(|e| {
-            cleanup_on_error();
-            StorageError::from_io_error(ErrorSubject::Snapshot(None), ErrorVerb::Write, e)
+            StorageError::from_io_error(
+                ErrorSubject::Snapshot(None),
+                ErrorVerb::Write,
+                io::Error::other(format!(
+                    "failed to initialize restored storage at {}: {e}",
+                    self.db_path.display()
+                )),
+            )
         })?;
 
         // Restore each instance's collector state from snapshot metadata. The new
@@ -431,8 +450,15 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         self.last_applied = meta.last_log_id;
         self.last_membership = meta.last_membership.clone();
 
-        persist_current_snapshot(&self.snapshot_work_dir, meta, &bytes).inspect_err(|_| {
-            cleanup_on_error();
+        persist_current_snapshot(&self.snapshot_work_dir, meta, &bytes).map_err(|e| {
+            StorageError::from_io_error(
+                ErrorSubject::Snapshot(None),
+                ErrorVerb::Write,
+                io::Error::other(format!(
+                    "failed to persist installed snapshot under {}: {e}",
+                    self.snapshot_work_dir.display()
+                )),
+            )
         })?;
 
         // ========== Phase 8: Resume StorageServer ==========
