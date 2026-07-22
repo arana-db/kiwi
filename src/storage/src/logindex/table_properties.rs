@@ -118,7 +118,7 @@ impl LogIndexTablePropertiesCollectorFactory {
 impl TablePropertiesCollectorFactory for LogIndexTablePropertiesCollectorFactory {
     type Collector = LogIndexTablePropertiesCollector;
 
-    fn create(&mut self, _context: TablePropertiesCollectorContext) -> Self::Collector {
+    fn create(&self, _context: TablePropertiesCollectorContext) -> Self::Collector {
         LogIndexTablePropertiesCollector::new(self.collector.clone())
     }
 
