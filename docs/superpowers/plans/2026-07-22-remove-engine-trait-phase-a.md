@@ -13,7 +13,9 @@
 ## 文件结构
 
 - 修改 `src/common/runtime/storage_server.rs`：引入统一 storage access gate；让 batch、non-batch 和后台任务共同参与 pause/drain；后台管理器跟随 `GlobalStorage` 热切换。
-- 修改 `src/storage/src/redis.rs`：把 `Option<Box<dyn Engine>>` 改成 `Option<Arc<DB>>`；显式创建 checkpoint；删除 `need_close` 和自定义 `Drop`。
+- 修改 `src/storage/src/redis.rs`：把 `Option<Box<dyn Engine>>` 改成不可 Clone 的
+  `RocksDbOwner`；owner 内部保存 `Arc<DB>`，Drop 时 cancel/wait 后再释放；显式创建
+  checkpoint；删除 `need_close` 和旧的条件式 `Redis::Drop`。
 - 修改 `src/storage/src/batch.rs`：让 `RocksBatch` 借用具体 `&DB`，调用原生借用式 batch API。
 - 修改 `src/storage/src/redis_multi.rs`：把两处原生 `write_opt` 调用改成借用 `&WriteBatch`。
 - 修改 `src/storage/src/storage.rs`：`release_resources()` 只释放 Storage owner；更新注释和 batch 回归测试。
@@ -195,13 +197,14 @@ git commit -m "fix(runtime): drain RocksDB owners during storage swap"
 - 修改：`src/storage/tests/redis_set_test.rs`
 - 修改：`src/storage/tests/redis_string_test.rs`
 - 修改：`src/storage/tests/redis_zset_test.rs`
+- 修改：`src/raft/tests/snapshot_logindex_test.rs`
 
 - [ ] **步骤 1：编写 concrete Redis DB 类型红灯**
 
 在 `redis_basic_test.rs` 增加：
 
 ```rust
-fn assert_concrete_db_owner(db: &Arc<rocksdb::DB>) {
+fn assert_concrete_rocksdb(db: &rocksdb::DB) {
     assert!(db.cf_handle("default").is_some());
 }
 
@@ -209,14 +212,15 @@ fn assert_concrete_db_owner(db: &Arc<rocksdb::DB>) {
 fn test_redis_uses_concrete_shared_rocksdb_owner() {
     let path = storage::unique_test_db_path();
     let mut redis = create_redis_instance(&path);
-    let db = redis.db.as_ref().expect("Redis should own an open RocksDB");
-    assert_concrete_db_owner(db);
+    let db = redis.db().expect("Redis should own an open RocksDB");
+    assert_concrete_rocksdb(db);
     drop(redis);
     storage::safe_cleanup_test_db(&path);
 }
 ```
 
-使用测试文件现有 helper 名称调整 setup，但断言函数参数必须是 `&Arc<DB>`。
+使用测试文件现有 helper 名称调整 setup。最终公开契约必须是借用 `&DB`，不能通过
+测试重新暴露可 Clone 的 `Arc<DB>` owner。
 
 - [ ] **步骤 2：运行测试验证红灯**
 
@@ -224,26 +228,30 @@ fn test_redis_uses_concrete_shared_rocksdb_owner() {
 cargo test --package storage test_redis_uses_concrete_shared_rocksdb_owner --no-run
 ```
 
-预期：编译失败，`&Box<dyn Engine>` 不能传给 `&Arc<DB>`。
+预期：旧实现没有借用式 `db()` accessor，或底层仍是 `dyn Engine`，因此编译失败。
 
-- [ ] **步骤 3：迁移 Redis DB 所有权**
+- [ ] **步骤 3：迁移 Redis DB 所有权并建立唯一 shutdown owner**
 
 在 `redis.rs`：
 
 ```rust
-pub db: Option<Arc<DB>>,
+pub(crate) db: Option<RocksDbOwner>,
 ```
+
+`RocksDbOwner` 内部持有 `Arc<DB>`，实现 `Deref<Target = DB>` 但不得实现 `Clone`，
+不得返回内部 `Arc`。公开 accessor 只允许返回 `Option<&DB>`。
 
 `open()` 使用：
 
 ```rust
-let db = Arc::new(
+let db = RocksDbOwner::new(
     DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?,
 );
-let _ = db_once_cell.set(Arc::downgrade(&db));
+let _ = db_once_cell.set(db.downgrade());
 ```
 
-handles、`DbAccess` 和 `self.db` 都直接使用该 `Arc<DB>`。删除 `use engine::{Engine, RocksdbEngine};`，不得增加替代转发 wrapper。
+handles、`DbAccess` 和 `self.db` 都直接借用 owner 中的具体 `DB`。删除
+`use engine::{Engine, RocksdbEngine};`，不得增加替代 Engine 转发层。
 
 - [ ] **步骤 4：显式迁移 checkpoint**
 
@@ -269,7 +277,7 @@ self.db
 
 `Batch`、`BinlogBatch` 和 append callback 保持不变。
 
-- [ ] **步骤 6：删除 `need_close` 和 wrapper Drop**
+- [ ] **步骤 6：删除 `need_close` 和旧 wrapper Drop，补唯一 owner shutdown**
 
 删除：
 
@@ -279,7 +287,11 @@ Redis::set_need_close()
 impl Drop for Redis
 ```
 
-删除 storage 测试中所有 `set_need_close(true)` 调用。`Storage::release_resources()` 中止自身任务后直接 `self.insts.clear()`，注释必须说明这只释放 Storage 持有的 owner，外部 `Arc<Redis>` 可能继续让 DB 存活。
+删除 storage 测试中所有 `set_need_close(true)` 调用。`RocksDbOwner::drop()` 必须在仍
+持有内部 `Arc<DB>` 时调用 `cancel_all_background_work(true)`，等待 callback 退出后再
+释放 DB；该逻辑不得放在任何可 Clone 类型上。`Storage::release_resources()` 中止自身
+任务后直接 `self.insts.clear()`，注释必须说明这只释放 Storage 持有的 owner，外部
+`Arc<Redis>` 可能继续让 DB 存活。
 
 - [ ] **步骤 7：增加 Storage close 责任边界和真实 RocksBatch 回归**
 
@@ -289,9 +301,12 @@ impl Drop for Redis
 storage_close_allows_same_path_reopen_without_external_owners
 storage_close_releases_only_storage_owned_redis_references
 standalone_rocks_batch_put_commit_and_read_back
+dropping_last_owner_waits_for_active_compaction_filter_before_reopen
 ```
 
 外部 owner 测试必须在 `Storage::close()` 后继续通过该 `Arc<Redis>` 写读，随后释放 owner并真实同路径 reopen。batch 测试必须 put、commit、read back；不能只检查 count。
+compaction 生命周期测试必须阻塞一个真实 filter，证明旧实现会在 filter 阻塞时提前
+完成 owner drop；修复后 drop 必须等待 filter，释放 filter 后限时完成并真实 reopen。
 
 - [ ] **步骤 8：清理失效 Engine 注释**
 
@@ -303,6 +318,7 @@ standalone_rocks_batch_put_commit_and_read_back
 cargo test --package storage test_redis_uses_concrete_shared_rocksdb_owner -- --nocapture
 cargo test --package storage storage_close -- --nocapture
 cargo test --package storage standalone_rocks_batch_put_commit_and_read_back -- --nocapture
+cargo test --package storage dropping_last_owner_waits_for_active_compaction_filter_before_reopen -- --nocapture
 cargo test --package storage
 ```
 
@@ -312,6 +328,7 @@ cargo test --package storage
 
 ```bash
 git add src/storage/src src/storage/tests
+git add src/raft/tests/snapshot_logindex_test.rs
 git commit -m "refactor(storage): use concrete RocksDB ownership"
 ```
 
@@ -447,7 +464,7 @@ git commit -m "fix(raft): drain storage owners before snapshot restore"
 
 ```bash
 rg -n --glob '!docs/superpowers/**' --glob '!target/**' \
-  'Engine|RocksdbEngine|Box<dyn Engine>|Arc<dyn Engine>|&dyn Engine|engine\.workspace|path = "src/engine"|cancel_all_background_work|set_need_close|need_close' \
+  'Engine|RocksdbEngine|Box<dyn Engine>|Arc<dyn Engine>|&dyn Engine|engine\.workspace|path = "src/engine"|set_need_close|need_close' \
   Cargo.toml Cargo.lock README.md README_CN.md CLAUDE.md src
 ```
 
@@ -474,6 +491,15 @@ README/README_CN/CLAUDE 的 crate layout 删除 `engine/`，明确具体 RocksDB
 - [ ] **步骤 5：运行残留绿灯扫描**
 
 重复步骤 1 命令。预期：可执行源码、manifests、lockfile 和当前架构文档零命中；历史设计/计划被明确排除。
+
+另运行：
+
+```bash
+rg -n 'cancel_all_background_work' src --glob '*.rs'
+```
+
+预期只命中不可 Clone 的 storage `RocksDbOwner::drop()`；Raft LogStore 和其他共享
+owner 不得命中。
 
 - [ ] **步骤 6：提交任务 5**
 
@@ -528,7 +554,7 @@ cargo test --workspace
 ```text
 src/engine 不存在
 没有 Engine trait/object/wrapper
-没有 cancel_all_background_work
+cancel_all_background_work 仅存在于不可 Clone 的 storage RocksDbOwner::drop
 没有 need_close/set_need_close
 BackgroundTaskManager 不缓存 Arc<Storage>
 batch/non-batch/background 都通过 access gate

@@ -58,7 +58,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
 
         // Force flush to ensure data is persisted to SST
         if let Some(inst) = storage.insts.first() {
-            if let Some(ref db) = inst.db {
+            if let Some(db) = inst.db() {
                 db.flush().unwrap();
             }
         }
@@ -84,7 +84,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
         // Force flush after binlog write
         {
             let inst = storage.insts.first().unwrap();
-            inst.db.as_ref().unwrap().flush().unwrap();
+            inst.db().unwrap().flush().unwrap();
         } // inst reference dropped here
 
         // Verify collector has the (log_index, seqno) mapping
