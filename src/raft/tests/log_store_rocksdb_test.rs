@@ -32,11 +32,10 @@ use tempfile::TempDir;
 use tokio::time::sleep;
 
 use conf::raft_type::{Binlog, BinlogEntry, KiwiTypeConfig, OperateType};
-use engine::{Engine, RocksdbEngine};
 use raft::log_store_rocksdb::RocksdbLogStore;
 
 /// Helper function to create a test database with required column families
-fn create_test_db() -> (TempDir, Arc<dyn Engine>) {
+fn create_test_db() -> (TempDir, Arc<DB>) {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let mut opts = Options::default();
     opts.create_if_missing(true);
@@ -51,8 +50,7 @@ fn create_test_db() -> (TempDir, Arc<dyn Engine>) {
 
     let db = DB::open_cf_descriptors(&opts, temp_dir.path(), cfs).expect("Failed to open database");
 
-    let engine: Arc<dyn Engine> = Arc::new(RocksdbEngine::new(db));
-    (temp_dir, engine)
+    (temp_dir, Arc::new(db))
 }
 
 /// Helper function to create test log entries
@@ -75,10 +73,10 @@ fn create_test_entries(start_index: u64, count: u64, term: u64) -> Vec<Entry<Kiw
 }
 
 /// Helper function to write entries directly to RocksDB (bypassing the append callback issue)
-fn write_entries_directly(engine: &Arc<dyn Engine>, entries: &[Entry<KiwiTypeConfig>]) {
+fn write_entries_directly(db: &DB, entries: &[Entry<KiwiTypeConfig>]) {
     use rocksdb::WriteBatch;
 
-    let logs_cf = engine.cf_handle("logs").expect("logs CF should exist");
+    let logs_cf = db.cf_handle("logs").expect("logs CF should exist");
     let mut batch = WriteBatch::default();
 
     for entry in entries {
@@ -87,7 +85,7 @@ fn write_entries_directly(engine: &Arc<dyn Engine>, entries: &[Entry<KiwiTypeCon
         batch.put_cf(&logs_cf, key, &value);
     }
 
-    engine.write(batch).expect("Write should succeed");
+    db.write(&batch).expect("Write should succeed");
 }
 
 #[tokio::test]
@@ -314,6 +312,111 @@ async fn close_and_reopen_recovers_complete_raft_state() {
         serde_json::to_vec(&entries[4..]).expect("Failed to serialize expected entries")
     );
     drop(reopened);
+}
+
+// Regression for #349: dropping one clone must not close the shared DB, while dropping every
+// owner must release the path so the persisted Raft state can be reopened.
+#[tokio::test]
+async fn dropping_one_log_store_clone_keeps_remaining_owner_usable() {
+    let (temp_dir, db) = create_test_db();
+    let db_path = temp_dir.path().to_path_buf();
+    let entries = create_test_entries(1, 6, 11);
+    let vote = Vote::new_committed(11, 1);
+    let committed = LogId::new(LeaderId::new(11, 1), 5);
+    let purged = LogId::new(LeaderId::new(11, 1), 2);
+
+    let original = RocksdbLogStore::new(db.clone()).expect("Failed to create log store");
+    let dropped = original.clone();
+    let mut remaining = original.clone();
+
+    drop(dropped);
+    drop(original);
+
+    remaining
+        .blocking_append(entries.clone())
+        .await
+        .expect("Remaining clone should append entries");
+    remaining
+        .save_vote(&vote)
+        .await
+        .expect("Remaining clone should save vote");
+    remaining
+        .save_committed(Some(committed))
+        .await
+        .expect("Remaining clone should save committed log id");
+    remaining
+        .purge(purged)
+        .await
+        .expect("Remaining clone should purge entries");
+
+    assert!(db.cf_handle("logs").is_some());
+    assert!(db.cf_handle("meta").is_some());
+    assert!(db.cf_handle("state").is_some());
+    db.flush().expect("Concrete DB owner should flush");
+
+    let visible_entries = {
+        let mut reader = remaining.get_log_reader().await;
+        reader
+            .try_get_log_entries(1..=6)
+            .await
+            .expect("Remaining clone should read entries")
+    };
+    assert_eq!(
+        serde_json::to_vec(&visible_entries).expect("Failed to serialize visible entries"),
+        serde_json::to_vec(&entries[2..]).expect("Failed to serialize expected visible entries")
+    );
+    assert_eq!(
+        remaining
+            .read_vote()
+            .await
+            .expect("Vote should be readable"),
+        Some(vote)
+    );
+    assert_eq!(
+        remaining
+            .read_committed()
+            .await
+            .expect("Committed log id should be readable"),
+        Some(committed)
+    );
+
+    drop(remaining);
+    drop(db);
+
+    let mut reopened =
+        RocksdbLogStore::open(&db_path).expect("All owners should release the database path");
+    let reopened_state = reopened
+        .get_log_state()
+        .await
+        .expect("Reopened store should recover log state");
+    assert_eq!(reopened_state.last_log_id, Some(entries[5].log_id));
+    assert_eq!(reopened_state.last_purged_log_id, Some(purged));
+    assert_eq!(
+        reopened
+            .read_vote()
+            .await
+            .expect("Vote should survive reopen"),
+        Some(vote)
+    );
+    assert_eq!(
+        reopened
+            .read_committed()
+            .await
+            .expect("Committed log id should survive reopen"),
+        Some(committed)
+    );
+
+    let reopened_entries = {
+        let mut reader = reopened.get_log_reader().await;
+        reader
+            .try_get_log_entries(1..=6)
+            .await
+            .expect("Reopened store should recover retained entries")
+    };
+    assert_eq!(
+        serde_json::to_vec(&reopened_entries).expect("Failed to serialize reopened entries"),
+        serde_json::to_vec(&entries[2..]).expect("Failed to serialize expected reopened entries")
+    );
 }
 
 #[tokio::test]
