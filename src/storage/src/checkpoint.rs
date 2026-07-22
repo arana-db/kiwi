@@ -17,18 +17,25 @@
 
 //! Raft snapshot checkpoint layout: one RocksDB checkpoint per DB instance plus `__raft_snapshot_meta`.
 
-use crate::logindex::LogIndexAndSequenceCollector;
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+use crate::logindex::LogIndexAndSequenceCollector;
 
 /// File name for JSON metadata at the checkpoint root (not OpenRaft's `SnapshotMeta`).
 pub const RAFT_SNAPSHOT_META_FILE: &str = "__raft_snapshot_meta";
 
 const ROCKSDB_LOCK_FILE: &str = "LOCK";
+const TARGET_REMOVE_ATTEMPTS: usize = 5;
+const TARGET_REMOVE_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
+
+static RESTORE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Current snapshot format version
 pub const CURRENT_SNAPSHOT_VERSION: u32 = 1;
@@ -185,17 +192,56 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Copy checkpoint layout from `checkpoint_root` into `target_db_path` (`0/`, `1/`, …).
+/// A checkpoint layout that has been validated and copied next to its target.
 ///
-/// Uses atomic replacement pattern to avoid data loss:
-/// 1. Validate all source directories exist
-/// 2. Copy to a temporary sibling directory
-/// 3. Atomically swap by removing old and renaming new
-pub fn restore_checkpoint_layout(
+/// Dropping this value before [`Self::commit`] removes the staged directory without changing the
+/// target database directory.
+#[derive(Debug)]
+pub struct PreparedCheckpointRestore {
+    temp_dir: PathBuf,
+    target_db_path: PathBuf,
+    committed: bool,
+}
+
+impl PreparedCheckpointRestore {
+    /// Replace the target database directory with the staged checkpoint layout.
+    ///
+    /// This is the destructive phase of checkpoint restoration. On Windows, removing the old
+    /// target is retried to tolerate transient filesystem locks.
+    pub fn commit(mut self) -> io::Result<()> {
+        if self.target_db_path.exists() {
+            remove_target_with_retry(&self.target_db_path)?;
+        }
+
+        fs::rename(&self.temp_dir, &self.target_db_path).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to switch staged checkpoint {} to target {}: {error}",
+                    self.temp_dir.display(),
+                    self.target_db_path.display()
+                ),
+            )
+        })?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for PreparedCheckpointRestore {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_dir_all(&self.temp_dir);
+        }
+    }
+}
+
+/// Validate and stage a checkpoint layout without changing `target_db_path`.
+pub fn prepare_checkpoint_restore(
     checkpoint_root: &Path,
     target_db_path: &Path,
     db_instance_num: usize,
-) -> io::Result<()> {
+) -> io::Result<PreparedCheckpointRestore> {
     for i in 0..db_instance_num {
         let from = checkpoint_root.join(i.to_string());
         if !from.is_dir() {
@@ -206,54 +252,109 @@ pub fn restore_checkpoint_layout(
         }
     }
 
-    // Create temp directory as sibling of target (same filesystem for atomic rename)
-    let temp_dir = target_db_path.with_file_name(format!(".restore_temp_{}", std::process::id()));
+    let temp_dir = create_restore_temp_dir(target_db_path)?;
+    let prepared = PreparedCheckpointRestore {
+        temp_dir,
+        target_db_path: target_db_path.to_path_buf(),
+        committed: false,
+    };
 
-    // Clean up any stale temp directory from previous failed attempts
-    if temp_dir.exists() {
-        fs::remove_dir_all(&temp_dir)?;
+    for i in 0..db_instance_num {
+        let from = checkpoint_root.join(i.to_string());
+        let to = prepared.temp_dir.join(i.to_string());
+        copy_dir_all(&from, &to).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to stage checkpoint instance {} from {} to {}: {error}",
+                    i,
+                    from.display(),
+                    to.display()
+                ),
+            )
+        })?;
     }
 
-    fs::create_dir_all(&temp_dir)?;
+    Ok(prepared)
+}
 
-    // Copy checkpoint data to temp directory
-    let copy_result = (|| -> io::Result<()> {
-        for i in 0..db_instance_num {
-            let from = checkpoint_root.join(i.to_string());
-            let to = temp_dir.join(i.to_string());
-            copy_dir_all(&from, &to)?;
+fn create_restore_temp_dir(target_db_path: &Path) -> io::Result<PathBuf> {
+    let parent = target_db_path.parent().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "target database path has no parent directory: {}",
+                target_db_path.display()
+            ),
+        )
+    })?;
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    fs::create_dir_all(parent).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to create target parent directory {} for checkpoint staging: {error}",
+                parent.display()
+            ),
+        )
+    })?;
+
+    loop {
+        let sequence = RESTORE_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let temp_dir = parent.join(format!(".restore_temp_{}_{}", std::process::id(), sequence));
+        match fs::create_dir(&temp_dir) {
+            Ok(()) => return Ok(temp_dir),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!(
+                        "failed to create checkpoint staging directory {}: {error}",
+                        temp_dir.display()
+                    ),
+                ));
+            }
         }
-        Ok(())
-    })();
-
-    if let Err(e) = copy_result {
-        let _ = fs::remove_dir_all(&temp_dir);
-        return Err(e);
     }
+}
 
-    // Remove old target directory if it exists
-    // On Windows, this may require retries due to file locking
-    if target_db_path.exists() {
-        for attempt in 0..5 {
-            match fs::remove_dir_all(target_db_path) {
-                Ok(()) => break,
-                Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && attempt < 4 => {
-                    std::thread::sleep(std::time::Duration::from_millis(100 * (attempt + 1)));
-                }
-                Err(e) => return Err(e),
+fn remove_target_with_retry(target_db_path: &Path) -> io::Result<()> {
+    for attempt in 0..TARGET_REMOVE_ATTEMPTS {
+        match fs::remove_dir_all(target_db_path) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if error.kind() == io::ErrorKind::PermissionDenied
+                    && attempt + 1 < TARGET_REMOVE_ATTEMPTS =>
+            {
+                std::thread::sleep(TARGET_REMOVE_RETRY_BASE_DELAY * (attempt as u32 + 1));
+            }
+            Err(error) => {
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!(
+                        "failed to remove target database directory {}: {error}",
+                        target_db_path.display()
+                    ),
+                ));
             }
         }
     }
 
-    // Rename temp to target (this is the atomic switch)
-    let switch_result = fs::rename(&temp_dir, target_db_path);
+    unreachable!("target removal loop always returns")
+}
 
-    if let Err(e) = switch_result {
-        // Switch failed: clean up partial state
-        let _ = fs::remove_dir_all(target_db_path);
-        let _ = fs::remove_dir_all(&temp_dir);
-        return Err(e);
-    }
-
-    Ok(())
+/// Copy checkpoint layout from `checkpoint_root` into `target_db_path` (`0/`, `1/`, …).
+///
+/// This compatibility helper stages the complete checkpoint before entering the destructive
+/// target replacement phase.
+pub fn restore_checkpoint_layout(
+    checkpoint_root: &Path,
+    target_db_path: &Path,
+    db_instance_num: usize,
+) -> io::Result<()> {
+    prepare_checkpoint_restore(checkpoint_root, target_db_path, db_instance_num)?.commit()
 }

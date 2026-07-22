@@ -20,9 +20,86 @@
 use std::sync::Arc;
 
 use storage::{
-    RaftSnapshotMeta, StorageOptions, restore_checkpoint_layout, storage::Storage,
-    unique_test_db_path,
+    RaftSnapshotMeta, StorageOptions, prepare_checkpoint_restore, restore_checkpoint_layout,
+    storage::Storage, unique_test_db_path,
 };
+
+fn restore_temp_dirs(parent: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(parent)
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            let is_restore_temp = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".restore_temp_"));
+            is_restore_temp.then_some(path)
+        })
+        .collect()
+}
+
+fn write_instance(checkpoint_root: &std::path::Path, instance: usize, value: &[u8]) {
+    let instance_dir = checkpoint_root.join(instance.to_string());
+    std::fs::create_dir_all(&instance_dir).unwrap();
+    std::fs::write(instance_dir.join("CURRENT"), value).unwrap();
+}
+
+#[test]
+fn missing_checkpoint_instance_leaves_target_unchanged() {
+    let root = tempfile::tempdir().unwrap();
+    let checkpoint_root = root.path().join("checkpoint");
+    let target = root.path().join("db");
+    std::fs::create_dir_all(&checkpoint_root).unwrap();
+    write_instance(&checkpoint_root, 0, b"snapshot");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("sentinel"), b"live").unwrap();
+
+    let error = prepare_checkpoint_restore(&checkpoint_root, &target, 2).unwrap_err();
+
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+    assert_eq!(std::fs::read(target.join("sentinel")).unwrap(), b"live");
+    assert!(restore_temp_dirs(root.path()).is_empty());
+}
+
+#[test]
+fn prepared_restore_does_not_replace_target_until_commit() {
+    let root = tempfile::tempdir().unwrap();
+    let checkpoint_root = root.path().join("checkpoint");
+    let target = root.path().join("db");
+    write_instance(&checkpoint_root, 0, b"snapshot");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("sentinel"), b"live").unwrap();
+
+    let prepared = prepare_checkpoint_restore(&checkpoint_root, &target, 1).unwrap();
+
+    assert_eq!(std::fs::read(target.join("sentinel")).unwrap(), b"live");
+    assert_eq!(restore_temp_dirs(root.path()).len(), 1);
+
+    prepared.commit().unwrap();
+
+    assert!(!target.join("sentinel").exists());
+    assert_eq!(
+        std::fs::read(target.join("0/CURRENT")).unwrap(),
+        b"snapshot"
+    );
+    assert!(restore_temp_dirs(root.path()).is_empty());
+}
+
+#[test]
+fn dropping_prepared_restore_removes_staged_directory() {
+    let root = tempfile::tempdir().unwrap();
+    let checkpoint_root = root.path().join("checkpoint");
+    let target = root.path().join("db");
+    write_instance(&checkpoint_root, 0, b"snapshot");
+
+    let prepared = prepare_checkpoint_restore(&checkpoint_root, &target, 1).unwrap();
+    assert_eq!(restore_temp_dirs(root.path()).len(), 1);
+
+    drop(prepared);
+
+    assert!(restore_temp_dirs(root.path()).is_empty());
+    assert!(!target.exists());
+}
 
 #[tokio::test]
 async fn l1_checkpoint_roundtrip() {
