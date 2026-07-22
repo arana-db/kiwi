@@ -42,6 +42,93 @@ use crate::metrics::StorageMetricsTracker;
 
 static STORAGE_COMMAND_TABLE: OnceLock<CmdTable> = OnceLock::new();
 
+#[derive(Clone)]
+pub struct StorageAccessGate {
+    inner: Arc<StorageAccessGateInner>,
+}
+
+struct StorageAccessGateInner {
+    paused: AtomicBool,
+    active: AtomicU64,
+    state_changed: tokio::sync::Notify,
+}
+
+impl StorageAccessGate {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(StorageAccessGateInner {
+                paused: AtomicBool::new(false),
+                active: AtomicU64::new(0),
+                state_changed: tokio::sync::Notify::new(),
+            }),
+        }
+    }
+
+    async fn enter(&self) -> StorageAccessGuard {
+        loop {
+            while self.inner.paused.load(Ordering::SeqCst) {
+                let resumed = self.inner.state_changed.notified();
+                tokio::pin!(resumed);
+                resumed.as_mut().enable();
+
+                if !self.inner.paused.load(Ordering::SeqCst) {
+                    break;
+                }
+                resumed.await;
+            }
+
+            self.inner.active.fetch_add(1, Ordering::SeqCst);
+            if !self.inner.paused.load(Ordering::SeqCst) {
+                return StorageAccessGuard {
+                    gate: Arc::clone(&self.inner),
+                };
+            }
+
+            if self.inner.active.fetch_sub(1, Ordering::SeqCst) == 1 {
+                self.inner.state_changed.notify_waiters();
+            }
+        }
+    }
+
+    async fn request_pause(&self) {
+        self.inner.paused.store(true, Ordering::SeqCst);
+
+        loop {
+            let drained = self.inner.state_changed.notified();
+            tokio::pin!(drained);
+            drained.as_mut().enable();
+
+            if self.inner.active.load(Ordering::SeqCst) == 0 {
+                return;
+            }
+            drained.await;
+        }
+    }
+
+    fn resume(&self) {
+        self.inner.paused.store(false, Ordering::SeqCst);
+        self.inner.state_changed.notify_waiters();
+    }
+}
+
+impl Default for StorageAccessGate {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct StorageAccessGuard {
+    gate: Arc<StorageAccessGateInner>,
+}
+
+impl Drop for StorageAccessGuard {
+    fn drop(&mut self) {
+        if self.gate.active.fetch_sub(1, Ordering::SeqCst) == 1 {
+            self.gate.state_changed.notify_waiters();
+        }
+    }
+}
+
 /// Initialize the storage-runtime command table with the same password provider
 /// used by the network runtime, so AUTH validates against the configured
 /// `requirepass` regardless of which runtime executes the command.
@@ -66,53 +153,32 @@ impl StreamTrait for RuntimeCommandStream {
 /// This struct holds the necessary Arc fields to control pause/resume without owning StorageServer.
 #[derive(Clone)]
 pub struct StorageServerPauseController {
-    paused: Arc<AtomicBool>,
-    pending_count: Arc<AtomicU64>,
-    pause_notify: Arc<tokio::sync::Notify>,
+    access_gate: StorageAccessGate,
 }
 
 impl StorageServerPauseController {
     /// Create a new pause controller with default state (not paused)
     pub fn new() -> Self {
         Self {
-            paused: Arc::new(AtomicBool::new(false)),
-            pending_count: Arc::new(AtomicU64::new(0)),
-            pause_notify: Arc::new(tokio::sync::Notify::new()),
+            access_gate: StorageAccessGate::new(),
         }
     }
 
     /// Request pause: wait for all pending requests to complete.
     pub async fn request_pause(&self) {
         log::info!("StorageServerPauseController: requesting pause for snapshot installation");
-        self.paused.store(true, Ordering::SeqCst);
-
-        // Wait for all pending requests to complete
-        while self.pending_count.load(Ordering::SeqCst) > 0 {
-            self.pause_notify.notified().await;
-        }
+        self.access_gate.request_pause().await;
         log::info!("StorageServerPauseController: pause complete, all pending requests finished");
     }
 
     /// Resume: allow new requests to proceed.
     pub fn resume(&self) {
         log::info!("StorageServerPauseController: resuming after snapshot installation");
-        self.paused.store(false, Ordering::SeqCst);
-        self.pause_notify.notify_waiters();
+        self.access_gate.resume();
     }
 
-    /// Get the paused flag Arc (for StorageServer initialization)
-    pub fn paused_arc(&self) -> Arc<AtomicBool> {
-        self.paused.clone()
-    }
-
-    /// Get the pending count Arc (for StorageServer initialization)
-    pub fn pending_count_arc(&self) -> Arc<AtomicU64> {
-        self.pending_count.clone()
-    }
-
-    /// Get the pause notify Arc (for StorageServer initialization)
-    pub fn pause_notify_arc(&self) -> Arc<tokio::sync::Notify> {
-        self.pause_notify.clone()
+    fn access_gate(&self) -> StorageAccessGate {
+        self.access_gate.clone()
     }
 }
 
@@ -137,13 +203,8 @@ pub struct StorageServer {
     /// Server configuration
     config: StorageServerConfig,
 
-    // --- Pause mechanism for snapshot installation ---
-    /// Pause flag: when true, new requests wait for resume
-    paused: Arc<AtomicBool>,
-    /// Count of pending requests being processed
-    pending_count: Arc<AtomicU64>,
-    /// Notify for waiting paused requests
-    pause_notify: Arc<tokio::sync::Notify>,
+    /// Access gate that drains all Storage owners before snapshot replacement.
+    access_gate: StorageAccessGate,
 }
 
 /// Configuration for the storage server
@@ -192,15 +253,12 @@ impl StorageServer {
         request_receiver: mpsc::Receiver<StorageRequest>,
         pause_controller: StorageServerPauseController,
     ) -> Self {
-        let mut server = Self::with_config(
+        Self::with_config_and_gate(
             global_storage,
             request_receiver,
             StorageServerConfig::default(),
-        );
-        server.paused = pause_controller.paused_arc();
-        server.pending_count = pause_controller.pending_count_arc();
-        server.pause_notify = pause_controller.pause_notify_arc();
-        server
+            pause_controller.access_gate(),
+        )
     }
 
     /// Create a new storage server with metrics tracking
@@ -224,6 +282,20 @@ impl StorageServer {
         request_receiver: mpsc::Receiver<StorageRequest>,
         config: StorageServerConfig,
     ) -> Self {
+        Self::with_config_and_gate(
+            global_storage,
+            request_receiver,
+            config,
+            StorageAccessGate::new(),
+        )
+    }
+
+    fn with_config_and_gate(
+        global_storage: GlobalStorage,
+        request_receiver: mpsc::Receiver<StorageRequest>,
+        config: StorageServerConfig,
+        access_gate: StorageAccessGate,
+    ) -> Self {
         let batch_processor = if config.enable_batching {
             Some(BatchProcessor::new(
                 config.max_batch_size,
@@ -234,7 +306,10 @@ impl StorageServer {
         };
 
         let background_task_manager = if config.enable_background_tasks {
-            Some(BackgroundTaskManager::new(global_storage.load()))
+            Some(BackgroundTaskManager::new(
+                global_storage.clone(),
+                access_gate.clone(),
+            ))
         } else {
             None
         };
@@ -246,9 +321,7 @@ impl StorageServer {
             background_task_manager,
             metrics_tracker: None,
             config,
-            paused: Arc::new(AtomicBool::new(false)),
-            pending_count: Arc::new(AtomicU64::new(0)),
-            pause_notify: Arc::new(tokio::sync::Notify::new()),
+            access_gate,
         }
     }
 
@@ -256,12 +329,7 @@ impl StorageServer {
     /// Called by KiwiStateMachine during install_snapshot.
     pub async fn request_pause(&self) {
         info!("StorageServer: requesting pause for snapshot installation");
-        self.paused.store(true, Ordering::SeqCst);
-
-        // Wait for all pending requests to complete
-        while self.pending_count.load(Ordering::SeqCst) > 0 {
-            self.pause_notify.notified().await;
-        }
+        self.access_gate.request_pause().await;
         info!("StorageServer: pause complete, all pending requests finished");
     }
 
@@ -269,8 +337,7 @@ impl StorageServer {
     /// Called by KiwiStateMachine after snapshot installation completes.
     pub fn resume(&self) {
         info!("StorageServer: resuming after snapshot installation");
-        self.paused.store(false, Ordering::SeqCst);
-        self.pause_notify.notify_waiters();
+        self.access_gate.resume();
     }
 
     /// Start the storage server and begin processing requests
@@ -355,33 +422,16 @@ impl StorageServer {
         while let Some(request) = request_receiver.recv().await {
             debug!("Received storage request: {:?}", request.id);
 
-            // Check if paused - wait for resume
-            while self.paused.load(Ordering::SeqCst) {
-                debug!("Storage server paused, waiting for resume");
-                self.pause_notify.notified().await;
-            }
-
-            // Increment pending count
-            self.pending_count.fetch_add(1, Ordering::SeqCst);
+            let access_guard = self.access_gate.enter().await;
 
             // Process request immediately - load current storage
             let global_storage = self.global_storage.clone();
             let metrics_tracker = self.metrics_tracker.clone();
-            let paused = self.paused.clone();
-            let pending_count = self.pending_count.clone();
-            let pause_notify = self.pause_notify.clone();
 
             tokio::spawn(async move {
+                let _access_guard = access_guard;
                 let storage = global_storage.load();
                 Self::process_single_request(storage, request, metrics_tracker).await;
-
-                // Decrement pending count
-                pending_count.fetch_sub(1, Ordering::SeqCst);
-
-                // If paused and all requests complete, notify
-                if paused.load(Ordering::SeqCst) && pending_count.load(Ordering::SeqCst) == 0 {
-                    pause_notify.notify_waiters();
-                }
             });
         }
 
@@ -391,14 +441,11 @@ impl StorageServer {
 
     /// Process a batch of storage requests
     async fn process_request_batch(&self, batch: Vec<StorageRequest>) {
+        let _access_guard = self.access_gate.enter().await;
         let batch_size = batch.len();
         let batch_start_time = Instant::now();
 
         debug!("Processing batch of {} requests", batch_size);
-
-        // Increment pending count for all requests in batch
-        self.pending_count
-            .fetch_add(batch_size as u64, Ordering::SeqCst);
 
         // Process requests in parallel within the batch
         let mut handles = Vec::new();
@@ -407,20 +454,9 @@ impl StorageServer {
             // Load current storage for each request
             let storage = self.global_storage.load();
             let metrics_tracker = self.metrics_tracker.clone();
-            let paused = self.paused.clone();
-            let pending_count = self.pending_count.clone();
-            let pause_notify = self.pause_notify.clone();
 
             let handle = tokio::spawn(async move {
                 Self::process_single_request(storage, request, metrics_tracker).await;
-
-                // Decrement pending count
-                pending_count.fetch_sub(1, Ordering::SeqCst);
-
-                // If paused and all requests complete, notify
-                if paused.load(Ordering::SeqCst) && pending_count.load(Ordering::SeqCst) == 0 {
-                    pause_notify.notify_waiters();
-                }
             });
             handles.push(handle);
         }
@@ -715,7 +751,8 @@ pub struct BatchStats {
 
 /// Background task manager for RocksDB maintenance
 pub struct BackgroundTaskManager {
-    storage: Arc<Storage>,
+    global_storage: GlobalStorage,
+    access_gate: StorageAccessGate,
     config: BackgroundTaskConfig,
     stats: Arc<tokio::sync::Mutex<BackgroundTaskStats>>,
     shutdown_signal: Arc<tokio::sync::Notify>,
@@ -795,14 +832,19 @@ pub struct RocksDbStats {
 
 impl BackgroundTaskManager {
     /// Create a new background task manager with default configuration
-    pub fn new(storage: Arc<Storage>) -> Self {
-        Self::with_config(storage, BackgroundTaskConfig::default())
+    pub fn new(global_storage: GlobalStorage, access_gate: StorageAccessGate) -> Self {
+        Self::with_config(global_storage, access_gate, BackgroundTaskConfig::default())
     }
 
     /// Create a new background task manager with custom configuration
-    pub fn with_config(storage: Arc<Storage>, config: BackgroundTaskConfig) -> Self {
+    pub fn with_config(
+        global_storage: GlobalStorage,
+        access_gate: StorageAccessGate,
+        config: BackgroundTaskConfig,
+    ) -> Self {
         Self {
-            storage,
+            global_storage,
+            access_gate,
             config,
             stats: Arc::new(tokio::sync::Mutex::new(BackgroundTaskStats::default())),
             shutdown_signal: Arc::new(tokio::sync::Notify::new()),
@@ -812,12 +854,14 @@ impl BackgroundTaskManager {
 
     /// Create a new background task manager with metrics tracking
     pub fn with_metrics(
-        storage: Arc<Storage>,
+        global_storage: GlobalStorage,
+        access_gate: StorageAccessGate,
         config: BackgroundTaskConfig,
         metrics_tracker: Arc<StorageMetricsTracker>,
     ) -> Self {
         Self {
-            storage,
+            global_storage,
+            access_gate,
             config,
             stats: Arc::new(tokio::sync::Mutex::new(BackgroundTaskStats::default())),
             shutdown_signal: Arc::new(tokio::sync::Notify::new()),
@@ -837,14 +881,22 @@ impl BackgroundTaskManager {
         // Start compaction monitoring if enabled
         if self.config.enable_auto_compaction {
             let handle = {
-                let storage = Arc::clone(&self.storage);
+                let global_storage = self.global_storage.clone();
+                let access_gate = self.access_gate.clone();
                 let config = self.config.clone();
                 let stats = Arc::clone(&self.stats);
                 let shutdown = Arc::clone(&self.shutdown_signal);
                 let metrics_tracker = self.metrics_tracker.clone();
                 tokio::spawn(async move {
-                    Self::monitor_compaction(storage, config, stats, shutdown, metrics_tracker)
-                        .await;
+                    Self::monitor_compaction(
+                        global_storage,
+                        access_gate,
+                        config,
+                        stats,
+                        shutdown,
+                        metrics_tracker,
+                    )
+                    .await;
                 })
             };
             handles.push(("compaction", handle));
@@ -853,13 +905,22 @@ impl BackgroundTaskManager {
         // Start flush monitoring if enabled
         if self.config.enable_flush_monitoring {
             let handle = {
-                let storage = Arc::clone(&self.storage);
+                let global_storage = self.global_storage.clone();
+                let access_gate = self.access_gate.clone();
                 let config = self.config.clone();
                 let stats = Arc::clone(&self.stats);
                 let shutdown = Arc::clone(&self.shutdown_signal);
                 let metrics_tracker = self.metrics_tracker.clone();
                 tokio::spawn(async move {
-                    Self::monitor_flush(storage, config, stats, shutdown, metrics_tracker).await;
+                    Self::monitor_flush(
+                        global_storage,
+                        access_gate,
+                        config,
+                        stats,
+                        shutdown,
+                        metrics_tracker,
+                    )
+                    .await;
                 })
             };
             handles.push(("flush", handle));
@@ -868,14 +929,22 @@ impl BackgroundTaskManager {
         // Start statistics collection if enabled
         if self.config.enable_stats_collection {
             let handle = {
-                let storage = Arc::clone(&self.storage);
+                let global_storage = self.global_storage.clone();
+                let access_gate = self.access_gate.clone();
                 let config = self.config.clone();
                 let stats = Arc::clone(&self.stats);
                 let shutdown = Arc::clone(&self.shutdown_signal);
                 let metrics_tracker = self.metrics_tracker.clone();
                 tokio::spawn(async move {
-                    Self::collect_statistics(storage, config, stats, shutdown, metrics_tracker)
-                        .await;
+                    Self::collect_statistics(
+                        global_storage,
+                        access_gate,
+                        config,
+                        stats,
+                        shutdown,
+                        metrics_tracker,
+                    )
+                    .await;
                 })
             };
             handles.push(("statistics", handle));
@@ -915,7 +984,8 @@ impl BackgroundTaskManager {
 
     /// Monitor RocksDB compaction operations
     async fn monitor_compaction(
-        storage: Arc<Storage>,
+        global_storage: GlobalStorage,
+        access_gate: StorageAccessGate,
         config: BackgroundTaskConfig,
         stats: Arc<tokio::sync::Mutex<BackgroundTaskStats>>,
         shutdown: Arc<tokio::sync::Notify>,
@@ -928,6 +998,8 @@ impl BackgroundTaskManager {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    let _access_guard = access_gate.enter().await;
+                    let storage = global_storage.load();
                     debug!("Monitoring compaction status");
 
                     // Update last check time
@@ -976,7 +1048,8 @@ impl BackgroundTaskManager {
 
     /// Monitor RocksDB flush operations
     async fn monitor_flush(
-        storage: Arc<Storage>,
+        global_storage: GlobalStorage,
+        access_gate: StorageAccessGate,
         config: BackgroundTaskConfig,
         stats: Arc<tokio::sync::Mutex<BackgroundTaskStats>>,
         shutdown: Arc<tokio::sync::Notify>,
@@ -989,6 +1062,8 @@ impl BackgroundTaskManager {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    let _access_guard = access_gate.enter().await;
+                    let storage = global_storage.load();
                     debug!("Monitoring flush status");
 
                     // Update last check time
@@ -1032,7 +1107,8 @@ impl BackgroundTaskManager {
 
     /// Collect storage statistics
     async fn collect_statistics(
-        storage: Arc<Storage>,
+        global_storage: GlobalStorage,
+        access_gate: StorageAccessGate,
         config: BackgroundTaskConfig,
         stats: Arc<tokio::sync::Mutex<BackgroundTaskStats>>,
         shutdown: Arc<tokio::sync::Notify>,
@@ -1045,6 +1121,8 @@ impl BackgroundTaskManager {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    let _access_guard = access_gate.enter().await;
+                    let storage = global_storage.load();
                     debug!("Collecting storage statistics");
 
                     // Collect RocksDB statistics
@@ -1212,7 +1290,11 @@ impl StorageServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    use crate::message::RequestId;
     use storage::{StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+    use tokio::sync::oneshot;
 
     fn opened_test_storage() -> (Arc<Storage>, std::path::PathBuf) {
         let db_path = unique_test_db_path();
@@ -1246,6 +1328,186 @@ mod tests {
 
         assert_eq!(processor.max_batch_size, 50);
         assert_eq!(processor.batch_timeout_ms, 20);
+    }
+
+    #[tokio::test]
+    async fn storage_access_gate_blocks_new_access_until_resume() {
+        let gate = StorageAccessGate::new();
+        let existing_guard = gate.enter().await;
+
+        let pause_gate = gate.clone();
+        let pause = tokio::spawn(async move {
+            pause_gate.request_pause().await;
+        });
+
+        while !gate.inner.paused.load(Ordering::SeqCst) {
+            tokio::task::yield_now().await;
+        }
+        assert!(!pause.is_finished(), "pause must drain the existing guard");
+
+        let enter_gate = gate.clone();
+        let mut blocked_enter = tokio::spawn(async move { enter_gate.enter().await });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut blocked_enter)
+                .await
+                .is_err(),
+            "new access must remain blocked while pause is held"
+        );
+
+        drop(existing_guard);
+        tokio::time::timeout(Duration::from_secs(1), pause)
+            .await
+            .expect("pause should finish after the existing guard drains")
+            .expect("pause task should not panic");
+        assert_eq!(gate.inner.active.load(Ordering::SeqCst), 0);
+        assert!(!blocked_enter.is_finished());
+
+        gate.resume();
+        let resumed_guard = tokio::time::timeout(Duration::from_secs(1), blocked_enter)
+            .await
+            .expect("blocked access should resume")
+            .expect("enter task should not panic");
+        drop(resumed_guard);
+    }
+
+    #[tokio::test]
+    async fn pause_and_storage_enter_do_not_cross() {
+        for round in 0..128 {
+            let gate = StorageAccessGate::new();
+            let start = Arc::new(tokio::sync::Barrier::new(3));
+
+            let pause_gate = gate.clone();
+            let pause_start = Arc::clone(&start);
+            let mut pause = tokio::spawn(async move {
+                pause_start.wait().await;
+                if round % 2 == 0 {
+                    tokio::task::yield_now().await;
+                }
+                pause_gate.request_pause().await;
+            });
+
+            let enter_gate = gate.clone();
+            let enter_start = Arc::clone(&start);
+            let mut crossing_enter = tokio::spawn(async move {
+                enter_start.wait().await;
+                if round % 2 == 1 {
+                    tokio::task::yield_now().await;
+                }
+                enter_gate.enter().await
+            });
+            start.wait().await;
+
+            let entered_before_pause = tokio::time::timeout(Duration::from_secs(1), async {
+                tokio::select! {
+                    pause_result = &mut pause => {
+                        pause_result.expect("pause task should not panic");
+                        None
+                    }
+                    enter_result = &mut crossing_enter => {
+                        Some(enter_result.expect("enter task should not panic"))
+                    }
+                }
+            })
+            .await
+            .expect("pause or enter should make progress");
+
+            if let Some(guard) = entered_before_pause {
+                assert!(
+                    !pause.is_finished(),
+                    "pause must wait for an enter that linearized first"
+                );
+                drop(guard);
+                pause.await.expect("pause task should not panic");
+
+                let blocked_gate = gate.clone();
+                crossing_enter = tokio::spawn(async move { blocked_gate.enter().await });
+            }
+
+            assert_eq!(gate.inner.active.load(Ordering::SeqCst), 0);
+            assert!(
+                tokio::time::timeout(Duration::from_millis(2), &mut crossing_enter)
+                    .await
+                    .is_err(),
+                "enter must not cross a completed pause"
+            );
+
+            gate.resume();
+            let guard = tokio::time::timeout(Duration::from_secs(1), crossing_enter)
+                .await
+                .expect("enter should continue after resume")
+                .expect("enter task should not panic");
+            drop(guard);
+        }
+    }
+
+    #[test]
+    fn background_task_manager_does_not_retain_swapped_storage() {
+        let old_storage = Arc::new(Storage::new(1, 0));
+        let old_storage_weak = Arc::downgrade(&old_storage);
+        let global_storage = GlobalStorage::from_arc(Arc::clone(&old_storage));
+        let gate = StorageAccessGate::new();
+        let manager = BackgroundTaskManager::new(global_storage.clone(), gate);
+
+        let new_storage = Arc::new(Storage::new(1, 0));
+        global_storage.swap(Arc::clone(&new_storage));
+        drop(old_storage);
+
+        assert!(
+            old_storage_weak.upgrade().is_none(),
+            "background manager must not retain the swapped-out Storage owner"
+        );
+        assert!(Arc::ptr_eq(&manager.global_storage.load(), &new_storage));
+    }
+
+    #[tokio::test]
+    async fn paused_batch_does_not_start_until_resume() {
+        let global_storage = GlobalStorage::new(Storage::new(1, 0));
+        let (_request_sender, request_receiver) = mpsc::channel(1);
+        let pause_controller = StorageServerPauseController::new();
+        let server = StorageServer::with_pause_controller(
+            global_storage,
+            request_receiver,
+            pause_controller.clone(),
+        );
+        pause_controller.request_pause().await;
+
+        let (response_sender, mut response_receiver) = oneshot::channel();
+        let request = StorageRequest {
+            id: RequestId::new(),
+            command: StorageCommand::Batch {
+                commands: Vec::new(),
+            },
+            response_channel: response_sender,
+            timeout: Duration::from_secs(1),
+            timestamp: Instant::now(),
+            priority: RequestPriority::Normal,
+        };
+        let batch = vec![request];
+        let batch_processing = server.process_request_batch(batch);
+        tokio::pin!(batch_processing);
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut batch_processing)
+                .await
+                .is_err(),
+            "a paused batch must not begin processing"
+        );
+        assert!(matches!(
+            response_receiver.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+
+        pause_controller.resume();
+        tokio::time::timeout(Duration::from_secs(1), &mut batch_processing)
+            .await
+            .expect("batch should finish after resume");
+        let response = response_receiver
+            .await
+            .expect("batch request should send a response");
+        assert_eq!(
+            response.result.expect("batch should succeed"),
+            RespData::Array(Some(vec![]))
+        );
     }
 
     #[tokio::test]
