@@ -547,9 +547,6 @@ impl Redis {
 
         let mut results = Vec::with_capacity(keys.len());
 
-        // Note: RocksDB multi_get would be more efficient for batch reads,
-        // but it's not currently exposed through the Engine trait.
-        // Future optimization: add multi_get to Engine trait.
         for key in keys {
             let string_key = BaseKey::new(key);
 

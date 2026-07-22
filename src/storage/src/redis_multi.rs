@@ -96,7 +96,7 @@ impl Redis {
                 }
                 
                 // Write batch to DB
-                db.write_opt(batch, &self.default_write_options)?;
+                db.write_opt(&batch, &self.default_write_options)?;
                 
                 // Update statistics
                 self.update_specific_key_statistics(data_type, &String::from_utf8_lossy(key).to_string(), 1)?;
@@ -445,7 +445,7 @@ impl Redis {
                 }
                 
                 // Write batch to DB
-                db.write_opt(batch, &self.default_write_options)?;
+                db.write_opt(&batch, &self.default_write_options)?;
                 
                 Ok(())
             },

@@ -27,7 +27,6 @@ mod redis_string_test {
     };
 
     fn cleanup_redis(redis: Redis, test_db_path: &Path) {
-        redis.set_need_close(true);
         drop(redis);
         thread::sleep(Duration::from_millis(10));
         safe_cleanup_test_db(test_db_path);

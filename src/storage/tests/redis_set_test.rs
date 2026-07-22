@@ -75,7 +75,6 @@ mod redis_set_test {
         assert!(redis.set_key_etime(expired_wrongtype, 1).unwrap());
         assert!(redis.smembers(expired_wrongtype).unwrap().is_empty());
 
-        redis.set_need_close(true);
         drop(redis);
         safe_cleanup_test_db(&test_db_path);
     }
@@ -121,7 +120,6 @@ mod redis_set_test {
         assert!(missing_res.is_ok());
         assert_eq!(missing_res.unwrap(), Vec::<String>::new());
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -146,7 +144,6 @@ mod redis_set_test {
         let added = redis.sadd(key, &members).expect("sadd failed");
         assert_eq!(added, 2);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -180,7 +177,6 @@ mod redis_set_test {
         let scard_missing = redis.scard(b"missing_key");
         assert!(scard_missing.is_err());
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -208,7 +204,6 @@ mod redis_set_test {
         assert_eq!(added, 1);
         assert_eq!(redis.get_key_type(key).unwrap(), DataType::Set);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -251,7 +246,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(members, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -283,7 +277,6 @@ mod redis_set_test {
         assert!(members_result.is_ok());
         assert_eq!(members_result.unwrap(), Vec::<String>::new());
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -326,7 +319,6 @@ mod redis_set_test {
         assert_eq!(result_members, expected_members);
         assert_eq!(result_members.len(), member_count);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -373,7 +365,6 @@ mod redis_set_test {
 
         assert_eq!(result_members, expected_members);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -411,7 +402,6 @@ mod redis_set_test {
         diff_result.sort();
         assert_eq!(diff_result, vec!["a".to_string()]);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -457,7 +447,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(diff_result, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -496,7 +485,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(diff_result, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -533,7 +521,6 @@ mod redis_set_test {
         let diff_result = redis.sdiff(&keys).expect("sdiff failed");
         assert_eq!(diff_result, Vec::<String>::new());
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -573,7 +560,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(inter_result, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -619,7 +605,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(inter_result, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -656,7 +641,6 @@ mod redis_set_test {
         let inter_result = redis.sinter(&keys).expect("sinter failed");
         assert_eq!(inter_result, Vec::<String>::new());
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -692,7 +676,6 @@ mod redis_set_test {
         let inter_result = redis.sinter(&keys).expect("sinter failed");
         assert_eq!(inter_result, Vec::<String>::new());
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -726,7 +709,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(inter_result, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -766,7 +748,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(union_result, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -817,7 +798,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(union_result, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -856,7 +836,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(union_result, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -890,7 +869,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(union_result, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -930,7 +908,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(union_result, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -983,7 +960,6 @@ mod redis_set_test {
         expected.sort();
         assert_eq!(all_scanned, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -1026,7 +1002,6 @@ mod redis_set_test {
         assert_eq!(cursor, 0);
         assert_eq!(matched_members, vec!["apple".to_string()]);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -1052,7 +1027,6 @@ mod redis_set_test {
         assert_eq!(cursor, 0);
         assert_eq!(members, Vec::<String>::new());
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -1090,7 +1064,6 @@ mod redis_set_test {
         assert_eq!(scan_members.len(), 20); // Should return all members
         assert_eq!(cursor, 0); // Should complete
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);

@@ -23,11 +23,14 @@ mod redis_basic_test {
 
     use bytes::Bytes;
     use kstd::lock_mgr::LockMgr;
+    use storage::storage::Storage;
     use storage::{
         BgTaskHandler, ColumnFamilyIndex, DataType, Redis, StorageOptions, TypeCheckState,
         format_base_meta_value::BaseMetaValue, format_strings_value::StringValue,
         safe_cleanup_test_db, unique_test_db_path,
     };
+
+    fn assert_concrete_rocksdb_owner(_db: &Arc<rocksdb::DB>) {}
 
     #[test]
     fn test_redis_creation() {
@@ -164,8 +167,150 @@ mod redis_basic_test {
             );
         }
 
-        redis.set_need_close(true);
         drop(redis);
+    }
+
+    #[test]
+    fn test_redis_uses_concrete_shared_rocksdb_owner() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis
+            .open(
+                test_db_path
+                    .to_str()
+                    .expect("test DB path should be valid UTF-8"),
+            )
+            .expect("Redis should open RocksDB");
+
+        assert_concrete_rocksdb_owner(
+            redis
+                .db
+                .as_ref()
+                .expect("opened Redis should own a RocksDB handle"),
+        );
+
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[tokio::test]
+    async fn storage_close_allows_same_path_reopen_without_external_owners() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let mut storage = Storage::new(1, 0);
+        let _receiver = storage
+            .open(Arc::new(StorageOptions::default()), &test_db_path)
+            .expect("Storage should open RocksDB");
+        storage
+            .set(b"close-reopen-key", b"persisted-value")
+            .expect("Storage should write before close");
+        storage.close();
+
+        let mut reopened = Storage::new(1, 0);
+        let _receiver = reopened
+            .open(Arc::new(StorageOptions::default()), &test_db_path)
+            .expect("Storage::close should release the RocksDB path");
+        assert_eq!(
+            reopened
+                .get(b"close-reopen-key")
+                .expect("reopened Storage should read persisted data"),
+            "persisted-value"
+        );
+        reopened.close();
+
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[tokio::test]
+    async fn storage_close_releases_only_storage_owned_redis_references() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let mut storage = Storage::new(1, 0);
+        let _receiver = storage
+            .open(Arc::new(StorageOptions::default()), &test_db_path)
+            .expect("Storage should open RocksDB");
+        let external_owner = Arc::clone(&storage.insts[0]);
+
+        storage.close();
+
+        external_owner
+            .set(b"external-owner-key", b"external-owner-value")
+            .expect("external Redis owner should remain usable after Storage::close");
+        assert_eq!(
+            external_owner
+                .get(b"external-owner-key")
+                .expect("external Redis owner should read its write"),
+            "external-owner-value"
+        );
+        drop(external_owner);
+
+        let mut reopened = Storage::new(1, 0);
+        let _receiver = reopened
+            .open(Arc::new(StorageOptions::default()), &test_db_path)
+            .expect("dropping the final external owner should release the RocksDB path");
+        assert_eq!(
+            reopened
+                .get(b"external-owner-key")
+                .expect("reopened Storage should read the external owner's persisted write"),
+            "external-owner-value"
+        );
+        reopened.close();
+
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
+    fn standalone_rocks_batch_put_commit_and_read_back() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis
+            .open(
+                test_db_path
+                    .to_str()
+                    .expect("test DB path should be valid UTF-8"),
+            )
+            .expect("Redis should open RocksDB");
+
+        let key = b"standalone-batch-key";
+        let value = b"standalone-batch-value";
+        let mut batch = redis
+            .create_batch()
+            .expect("standalone Redis should create RocksBatch");
+        batch
+            .put(ColumnFamilyIndex::MetaCF, key, value)
+            .expect("RocksBatch should accept a put");
+        batch.commit().expect("RocksBatch should commit the put");
+
+        {
+            let db = redis
+                .db
+                .as_ref()
+                .expect("opened Redis should own a RocksDB handle");
+            let meta_cf = redis
+                .get_cf_handle(ColumnFamilyIndex::MetaCF)
+                .expect("Redis should expose the meta column family");
+            assert_eq!(
+                db.get_cf(&meta_cf, key)
+                    .expect("RocksDB should read the committed batch value")
+                    .expect("committed batch key should exist"),
+                value
+            );
+        }
+
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
     }
 
     #[test]
@@ -186,7 +331,6 @@ mod redis_basic_test {
                         .expect("test DB path should be valid UTF-8"),
                 )
                 .expect("first Redis owner should open RocksDB");
-            redis.set_need_close(true);
         }
 
         {
@@ -202,7 +346,6 @@ mod redis_basic_test {
                         .expect("test DB path should be valid UTF-8"),
                 )
                 .expect("dropping the first Redis owner should release the RocksDB lock");
-            reopened.set_need_close(true);
         }
 
         safe_cleanup_test_db(&test_db_path);
@@ -252,7 +395,6 @@ mod redis_basic_test {
             "new database should have 0 files at level0"
         );
 
-        redis.set_need_close(true);
         drop(redis);
     }
 }

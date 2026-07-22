@@ -48,7 +48,6 @@ mod redis_hash_test {
         assert!(redis.set_key_etime(expired_wrongtype, 1).unwrap());
         assert_eq!(redis.hlen(expired_wrongtype).unwrap(), 0);
 
-        redis.set_need_close(true);
         drop(redis);
         safe_cleanup_test_db(&test_db_path);
     }
@@ -122,7 +121,6 @@ mod redis_hash_test {
             String::from_utf8_lossy(expected_val).to_string()
         );
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -155,7 +153,6 @@ mod redis_hash_test {
         assert_eq!(redis.hset(key, field, value).unwrap(), 1);
         assert_eq!(redis.hget(key, field).unwrap(), Some("value1".to_string()));
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -183,7 +180,6 @@ mod redis_hash_test {
         assert!(hget_result.is_ok(), "hget failed: {:?}", hget_result.err());
         assert_eq!(hget_result.unwrap(), None);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -248,7 +244,6 @@ mod redis_hash_test {
 
         assert_eq!(all_scanned, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -300,7 +295,6 @@ mod redis_hash_test {
             "Should not match 'age'"
         );
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -327,7 +321,6 @@ mod redis_hash_test {
         assert_eq!(cursor, 0, "Cursor should be 0 for non-existent key");
         assert!(fields.is_empty(), "Fields should be empty");
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -393,7 +386,6 @@ mod redis_hash_test {
             );
         }
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -436,7 +428,6 @@ mod redis_hash_test {
 
         assert_eq!(fields.len(), 2, "Should match user:1:name and user:2:name");
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);

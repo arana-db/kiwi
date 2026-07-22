@@ -154,11 +154,8 @@ impl Storage {
             handle.abort();
         }
 
-        // Set need_close flag for all Redis instances so they close RocksDB on drop
-        for inst in &self.insts {
-            inst.set_need_close(true);
-        }
-        // Clear the vector to drop all Redis instances
+        // Release only the Redis owners held by this Storage. External Arc<Redis>
+        // owners remain valid and keep their RocksDB handles alive.
         self.insts.clear();
     }
 
@@ -224,10 +221,11 @@ impl Storage {
         }
     }
 
-    /// Close all RocksDB instances and release file handles.
+    /// Release the Redis owners held by this Storage.
+    /// External `Arc<Redis>` owners remain valid and may keep RocksDB open.
     /// Used before reopening Storage after snapshot installation.
     pub fn close(&mut self) {
-        log::info!("Closing Storage (releasing RocksDB file handles)");
+        log::info!("Closing Storage (releasing Redis owners held by Storage)");
 
         // Release all resources (Redis instances, background tasks, etc.)
         self.release_resources();
@@ -237,10 +235,11 @@ impl Storage {
         self.expiration_manager = None;
 
         self.is_opened.store(false, Ordering::SeqCst);
-        log::info!("Storage closed successfully");
+        log::info!("Storage released its Redis owners");
     }
 
-    /// Atomic operation: close old DB + open new DB at given path.
+    /// Release this Storage's Redis owners, then open the database at `db_path`.
+    /// External owners may keep the previous RocksDB path open and make reopening fail.
     /// Used during snapshot installation to switch to restored data.
     pub fn reopen(
         &mut self,
@@ -249,7 +248,7 @@ impl Storage {
     ) -> Result<mpsc::Receiver<BgTask>> {
         log::info!("Reopening Storage at path: {:?}", db_path.as_ref());
 
-        // Close existing instances first
+        // Release the Redis owners held by this Storage first.
         self.close();
 
         // Open new instances at the new path
@@ -601,14 +600,14 @@ impl Storage {
         for inst in &self.insts {
             if let Some(ref cf_tracker) = inst.logindex_cf_tracker {
                 if let Some(ref db) = inst.db {
-                    // Query each CF's table properties through the Engine trait so the
+                    // Query each CF's table properties through the concrete RocksDB so the
                     // tracker mirrors the (log_index, seqno) high-water mark recorded in
                     // the restored SST files.
-                    let engine = db.as_ref();
+                    let rocksdb = db.as_ref();
                     for cf_id in 0..crate::logindex::types::cf_metadata::COLUMN_FAMILY_COUNT {
                         let cf_name = crate::logindex::types::cf_metadata::CF_NAMES_STR[cf_id];
-                        if let Some(cf) = engine.cf_handle(cf_name) {
-                            match engine.get_properties_of_all_tables_cf(&cf) {
+                        if let Some(cf) = rocksdb.cf_handle(cf_name) {
+                            match rocksdb.get_properties_of_all_tables_cf(&cf) {
                                 Ok(collection) => {
                                     if let Some(pair) = crate::logindex::table_properties::get_largest_log_index_from_collection(&collection) {
                                         let log_index = pair.applied_log_index();

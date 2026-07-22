@@ -25,7 +25,6 @@ use std::sync::{Arc, Weak};
 use chrono::Utc;
 use once_cell::sync::OnceCell;
 
-use engine::{Engine, RocksdbEngine};
 use foyer::{Cache, CacheBuilder};
 use kstd::lock_mgr::LockMgr;
 use rocksdb::{
@@ -104,7 +103,6 @@ pub enum TypeCheckState {
 #[repr(C, align(64))]
 pub struct Redis {
     pub index: i32,
-    pub need_close: std::sync::atomic::AtomicBool,
     pub lock_mgr: Arc<LockMgr>,
 
     // For RocksDB
@@ -112,7 +110,7 @@ pub struct Redis {
     pub write_options: WriteOptions,
     pub read_options: ReadOptions,
     pub compact_options: CompactOptions,
-    pub db: Option<Box<dyn Engine>>,
+    pub db: Option<Arc<DB>>,
 
     // For background task
     pub storage: Arc<StorageOptions>,
@@ -154,7 +152,6 @@ impl Redis {
 
         Self {
             index,
-            need_close: std::sync::atomic::AtomicBool::new(false),
             is_starting: AtomicBool::new(true),
 
             storage,
@@ -268,21 +265,21 @@ impl Redis {
             })
             .collect();
 
-        let db = DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?;
-        let engine = RocksdbEngine::new(db);
-        let db_arc = engine.shared_db();
-        let _ = db_once_cell.set(Arc::downgrade(&db_arc));
+        let db = Arc::new(
+            DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?,
+        );
+        let _ = db_once_cell.set(Arc::downgrade(&db));
 
         self.handles = CF_CONFIGS
             .iter()
-            .filter(|(name, _, _)| engine.cf_handle(name).is_some())
+            .filter(|(name, _, _)| db.cf_handle(name).is_some())
             .map(|(name, _, _)| name.to_string())
             .collect();
-        self.db = Some(Box::new(engine));
+        self.db = Some(Arc::clone(&db));
         self.is_starting.store(false, Ordering::SeqCst);
 
         // Initialize cf_tracker from SST properties
-        let rocksdb = db_arc.as_ref();
+        let rocksdb = db.as_ref();
         let access = crate::logindex::db_access::DbAccess::new(rocksdb);
         if let Err(e) = cf_tracker.init(&access) {
             log::warn!("Failed to initialize cf_tracker from SST properties: {}", e);
@@ -371,18 +368,13 @@ impl Redis {
         self.index
     }
 
-    /// Set whether to close the database
-    pub fn set_need_close(&self, need_close: bool) {
-        self.need_close
-            .store(need_close, std::sync::atomic::Ordering::SeqCst);
-    }
-
     /// Create a RocksDB physical checkpoint at `path`.
     pub fn create_checkpoint(&self, path: &Path) -> Result<()> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "Database is not initialized".to_string(),
         })?;
-        db.create_checkpoint(path).context(RocksSnafu)
+        let checkpoint = rocksdb::checkpoint::Checkpoint::new(db.as_ref()).context(RocksSnafu)?;
+        checkpoint.create_checkpoint(path).context(RocksSnafu)
     }
 
     /// Compact database range
@@ -827,18 +819,6 @@ impl Redis {
 
     pub fn is_stale(&self, val_raw: &[u8]) -> Result<bool> {
         Self::is_stale_static(val_raw)
-    }
-}
-
-impl Drop for Redis {
-    fn drop(&mut self) {
-        if self.need_close.load(std::sync::atomic::Ordering::SeqCst) {
-            // Clear handles
-            self.handles.clear();
-
-            // Close database
-            self.db = None;
-        }
     }
 }
 

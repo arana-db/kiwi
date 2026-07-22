@@ -39,7 +39,6 @@ mod redis_zset_test {
         let result = redis.open(test_db_path.to_str().unwrap());
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
-        redis.set_need_close(true);
         redis
     }
 
