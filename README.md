@@ -24,10 +24,9 @@ src/server/    → Entry point (main.rs)
 src/net/       → TCP server, connection handling, cluster routing
 src/cmd/       → Command definitions: Cmd trait, CmdMeta, command table
 src/executor/  → Command executor: tokio async task pool
-src/storage/   → Multi-instance RocksDB, column families, TTL
-src/engine/    → Engine trait abstraction over RocksDB
+src/storage/   → Multi-instance RocksDB ownership, column families, TTL
 src/resp/      → RESP protocol: parser, encoder, RespData types
-src/raft/      → Raft consensus: OpenRaft integration, state machine, router
+src/raft/      → Raft consensus: OpenRaft integration, RocksDB log store, state machine, router
 src/conf/      → Configuration: loading, validation, RaftClusterConfig
 src/client/    → Client context: connection state, argv, reply buffer
 src/common/runtime/ → Runtime management: async channel between net & storage

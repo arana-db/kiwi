@@ -24,10 +24,9 @@ src/server/    → 入口 (main.rs)
 src/net/       → TCP 服务、连接管理、集群路由
 src/cmd/       → 命令定义：Cmd trait、CmdMeta、命令表
 src/executor/  → 命令执行器：tokio 异步任务池
-src/storage/   → 多实例 RocksDB、列族、TTL
-src/engine/    → RocksDB 引擎 trait 抽象
+src/storage/   → 多实例 RocksDB 所有权、列族、TTL
 src/resp/      → RESP 协议：解析、编码、RespData 类型
-src/raft/      → Raft 共识：OpenRaft 集成、状态机、路由器
+src/raft/      → Raft 共识：OpenRaft 集成、RocksDB 日志存储、状态机、路由器
 src/conf/      → 配置：加载、校验、集群配置
 src/client/    → 客户端上下文：连接状态、参数、响应缓冲
 src/common/runtime/ → 运行时管理：网络与存储间的异步通道

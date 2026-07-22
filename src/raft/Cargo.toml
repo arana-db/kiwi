@@ -7,7 +7,6 @@ edition.workspace = true
 openraft = { workspace = true, features = ["storage-v2", "serde"] }
 storage.workspace = true
 conf.workspace = true
-engine.workspace = true
 rocksdb.workspace = true
 
 # Serialization

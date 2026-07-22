@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-	"src/engine",
 	"src/storage",
 	"src/kstd",
 	"src/common/macro",
@@ -77,7 +76,6 @@ proptest = "1.11"
 arc-swap = "1.7"
 
 ## workspaces members
-engine = { path = "src/engine" }
 storage = { path = "src/storage" }
 kstd = { path = "src/kstd" }
 common-macro = { path = "src/common/macro" }

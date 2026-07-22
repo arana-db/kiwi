@@ -65,9 +65,8 @@ Workspace members under `src/`:
 - `cmd/` — Redis command implementations. Each command implements the `Cmd` trait.
 - `executor/` — Async command executor / task pool.
 - `client/` — Per-connection client state (`argv`, `cmd_name`, `key`, reply buffer, authentication).
-- `storage/` — Multi-instance RocksDB storage, column families, TTL, key encoding, and log index for Raft.
-- `engine/` — `Engine` trait abstraction and RocksDB engine implementation.
-- `raft/` — OpenRaft integration, log store, state machine, snapshot archive, and gRPC services.
+- `storage/` — Multi-instance concrete RocksDB ownership, column families, TTL, key encoding, and log index for Raft.
+- `raft/` — OpenRaft integration, concrete RocksDB log-store ownership, state machine, snapshot archive, and gRPC services.
 - `conf/` — Configuration loading, validation, and sample-config generation.
 - `kstd/` — Utilities, including `LockMgr` for sharded key-level locking.
 - `common/runtime/` — Dual-runtime manager, async message channel between network and storage runtimes, and `StorageServer`.
