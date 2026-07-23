@@ -253,7 +253,7 @@ jobs:
         run: make -C tests install-deps
 
       - name: Run integration tests
-        run: make -C tests test-python
+        run: bash tests/run_python_integration.sh
 
   sanitizers:
     name: Sanitizers (${{ matrix.sanitizer }})
