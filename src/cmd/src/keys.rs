@@ -101,6 +101,31 @@ mod tests {
         }
     }
 
+    fn take_bulk_keys(client: &Client) -> Vec<Vec<u8>> {
+        let RespData::Array(Some(keys)) = client.take_reply() else {
+            panic!("KEYS should return an array");
+        };
+        keys.into_iter()
+            .map(|reply| match reply {
+                RespData::BulkString(Some(key)) => key.to_vec(),
+                other => panic!("unexpected KEYS element: {other:?}"),
+            })
+            .collect()
+    }
+
+    fn run_keys(
+        command: &KeysCmd,
+        client: &Client,
+        storage: &Arc<Storage>,
+        pattern: &[u8],
+    ) -> Vec<Vec<u8>> {
+        client.set_argv(&[b"keys".to_vec(), pattern.to_vec()]);
+        command.do_cmd(client, Arc::clone(storage));
+        let mut keys = take_bulk_keys(client);
+        keys.sort();
+        keys
+    }
+
     #[tokio::test]
     async fn keys_command_preserves_binary_keys_and_matches_bytes() {
         let db_path = unique_test_db_path();
@@ -121,16 +146,7 @@ mod tests {
 
         client.set_argv(&[b"keys".to_vec(), b"?".to_vec()]);
         command.do_cmd(&client, Arc::clone(&storage));
-        let RespData::Array(Some(one_byte_keys)) = client.take_reply() else {
-            panic!("KEYS should return an array");
-        };
-        let mut one_byte_keys = one_byte_keys
-            .into_iter()
-            .map(|reply| match reply {
-                RespData::BulkString(Some(key)) => key.to_vec(),
-                other => panic!("unexpected KEYS element: {other:?}"),
-            })
-            .collect::<Vec<_>>();
+        let mut one_byte_keys = take_bulk_keys(&client);
         one_byte_keys.sort();
         assert_eq!(one_byte_keys, vec![invalid_key_b, invalid_key_a]);
 
@@ -139,6 +155,41 @@ mod tests {
         assert_eq!(
             client.take_reply(),
             RespData::Array(Some(vec![RespData::BulkString(Some(utf8_key.into()))]))
+        );
+
+        drop(storage);
+        safe_cleanup_test_db(&db_path);
+    }
+
+    #[tokio::test]
+    async fn keys_command_preserves_allkeys_behavior_for_empty_key() {
+        let db_path = unique_test_db_path();
+        safe_cleanup_test_db(&db_path);
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), &db_path)
+            .unwrap();
+        storage.set(b"", b"empty-key").unwrap();
+        storage.set(b"literal", b"literal-key").unwrap();
+        let storage = Arc::new(storage);
+        let client = Client::new(Box::new(TestStream));
+        let command = KeysCmd::new();
+
+        assert_eq!(
+            run_keys(&command, &client, &storage, b"*"),
+            vec![Vec::new(), b"literal".to_vec()]
+        );
+        assert_eq!(
+            run_keys(&command, &client, &storage, b"**"),
+            vec![b"literal".to_vec()]
+        );
+        assert_eq!(
+            run_keys(&command, &client, &storage, b"***"),
+            vec![b"literal".to_vec()]
+        );
+        assert_eq!(
+            run_keys(&command, &client, &storage, b"literal*"),
+            vec![b"literal".to_vec()]
         );
 
         drop(storage);

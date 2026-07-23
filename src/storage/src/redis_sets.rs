@@ -2473,6 +2473,10 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 pub(crate) fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
+    if text.is_empty() {
+        return pattern.is_empty();
+    }
+
     fn match_character_class(pattern: &[u8], class_start: usize, candidate: u8) -> (bool, usize) {
         let mut index = class_start + 1;
         let negated = pattern.get(index) == Some(&b'^');
@@ -2672,5 +2676,18 @@ mod glob_tests {
         assert!(glob_match_bytes(b"[a\\]", b"]"));
         assert!(!glob_match_bytes(b"[a\\]", b"b"));
         assert!(glob_match_bytes(b"[a\\]]x", b"]x"));
+    }
+
+    #[test]
+    fn test_glob_match_bytes_matches_redis_initial_empty_text_edges() {
+        assert!(glob_match_bytes(b"", b""));
+        assert!(!glob_match_bytes(b"*", b""));
+        assert!(!glob_match_bytes(b"**", b""));
+        assert!(!glob_match_bytes(b"***", b""));
+        assert!(!glob_match_bytes(b"literal*", b""));
+
+        assert!(glob_match_bytes(b"literal*", b"literal"));
+        assert!(glob_match_bytes(b"**", b"x"));
+        assert!(glob_match_bytes(b"***", b"x"));
     }
 }

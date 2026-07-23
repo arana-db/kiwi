@@ -2116,7 +2116,7 @@ impl Redis {
                 }
             };
 
-            if is_valid && glob_match_bytes(pattern, base_key.key()) {
+            if is_valid && (pattern == b"*" || glob_match_bytes(pattern, base_key.key())) {
                 keys.push(base_key.key().to_vec());
             }
         }
