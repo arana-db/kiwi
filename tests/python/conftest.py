@@ -45,7 +45,8 @@ def redis_client():
         host='localhost',
         port=6379,
         decode_responses=True,
-        socket_connect_timeout=5
+        socket_connect_timeout=5,
+        socket_timeout=5,
     )
     
     # 测试连接
@@ -118,7 +119,9 @@ def redis_binary_client(redis_client):
     client = redis.Redis(
         host='localhost',
         port=6379,
-        decode_responses=False  # 不自动解码
+        decode_responses=False,  # 不自动解码
+        socket_connect_timeout=5,
+        socket_timeout=5,
     )
     
     try:

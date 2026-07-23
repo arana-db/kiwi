@@ -376,8 +376,8 @@ class TestMsetRaceConditions:
         register_cleanup_keys(test_keys)
 
         start_barrier = threading.Barrier(3)
-        observer_started = threading.Event()
-        mutations_active = threading.Event()
+        mutation_performed = threading.Event()
+        overlap_observed = threading.Event()
         mutators_done = threading.Event()
         completion_lock = threading.Lock()
         completed_mutators = 0
@@ -386,20 +386,24 @@ class TestMsetRaceConditions:
             nonlocal completed_mutators
             with completion_lock:
                 completed_mutators += 1
-                if completed_mutators == 2:
-                    mutators_done.set()
+                is_last_mutator = completed_mutators == 2
 
-        def wait_for_observer():
-            start_barrier.wait(timeout=5)
-            assert observer_started.wait(timeout=5), "observer did not start"
-            mutations_active.set()
+            if is_last_mutator:
+                try:
+                    assert overlap_observed.wait(timeout=5), (
+                        "observer did not sample during the mutation phase"
+                    )
+                finally:
+                    mutators_done.set()
 
         def delete_operation():
             """删除操作"""
             try:
-                wait_for_observer()
-                for _ in range(num_iterations):
+                start_barrier.wait(timeout=5)
+                for iteration in range(num_iterations):
                     r.delete(*test_keys)
+                    if iteration == 0:
+                        mutation_performed.set()
                     time.sleep(0.001)
             finally:
                 finish_mutator()
@@ -407,16 +411,20 @@ class TestMsetRaceConditions:
         def mset_operation():
             """MSET 操作"""
             try:
-                wait_for_observer()
+                start_barrier.wait(timeout=5)
                 for i in range(num_iterations):
                     r.mset({key: f'value_{i}' for key in test_keys})
+                    if i == 0:
+                        mutation_performed.set()
                     time.sleep(0.001)
             finally:
                 finish_mutator()
 
         def observer_operation():
-            overlap_observations = 0
             start_barrier.wait(timeout=5)
+            assert mutation_performed.wait(timeout=5), (
+                "no DEL/MSET mutation completed before observation"
+            )
 
             while True:
                 values = r.mget(test_keys)
@@ -429,16 +437,10 @@ class TestMsetRaceConditions:
                     f"MGET observed a partial DEL/MSET state: {values}"
                 )
 
-                observer_started.set()
-                if mutations_active.is_set():
-                    overlap_observations += 1
+                overlap_observed.set()
                 if mutators_done.is_set():
                     break
                 time.sleep(0)
-
-            assert overlap_observations > 0, (
-                "observer did not overlap with DEL/MSET operations"
-            )
 
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = [
