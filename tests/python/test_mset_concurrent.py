@@ -31,6 +31,8 @@ import time
 
 import pytest
 
+pytestmark = pytest.mark.timeout(120)
+
 
 @pytest.fixture
 def register_cleanup_keys(redis_clean):
@@ -58,28 +60,28 @@ class TestMsetConcurrency:
         num_threads = 10
         operations_per_thread = 10
         keys_to_delete = [
-            f'thread_{thread_id}_key_{i}'
+            f'test_kiwi_mset_concurrent_thread_{thread_id}_key_{i}'
             for thread_id in range(num_threads)
             for i in range(operations_per_thread)
         ]
         register_cleanup_keys(keys_to_delete)
-        
+
         def mset_operation(thread_id):
             """每个线程执行的 MSET 操作"""
             results = []
             for i in range(operations_per_thread):
-                key = f'thread_{thread_id}_key_{i}'
+                key = f'test_kiwi_mset_concurrent_thread_{thread_id}_key_{i}'
                 value = f'thread_{thread_id}_value_{i}'
                 result = r.mset({key: value})
                 results.append(result)
             return results
-        
+
         # 使用线程池执行并发操作
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = [executor.submit(mset_operation, i) for i in range(num_threads)]
             all_results = []
-            for future in as_completed(futures):
-                all_results.extend(future.result())
+            for future in as_completed(futures, timeout=30):
+                all_results.extend(future.result(timeout=30))
         
         # 验证所有操作都成功
         assert all(all_results), "所有 MSET 操作应该成功"
@@ -87,7 +89,7 @@ class TestMsetConcurrency:
         # 验证所有键都被正确设置
         for thread_id in range(num_threads):
             for i in range(operations_per_thread):
-                key = f'thread_{thread_id}_key_{i}'
+                key = f'test_kiwi_mset_concurrent_thread_{thread_id}_key_{i}'
                 expected_value = f'thread_{thread_id}_value_{i}'
                 actual_value = r.get(key)
                 assert actual_value == expected_value, f"键 {key} 的值不正确"
@@ -98,7 +100,7 @@ class TestMsetConcurrency:
         """测试并发 MSET 操作相同的键"""
         r = redis_clean
         num_threads = 20
-        test_keys = ['shared_key_1', 'shared_key_2', 'shared_key_3']
+        test_keys = ['test_kiwi_mset_concurrent_shared_key_1', 'test_kiwi_mset_concurrent_shared_key_2', 'test_kiwi_mset_concurrent_shared_key_3']
         register_cleanup_keys(test_keys)
         
         def mset_operation(thread_id):
@@ -111,7 +113,10 @@ class TestMsetConcurrency:
         # 并发执行
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = [executor.submit(mset_operation, i) for i in range(num_threads)]
-            results = [future.result() for future in as_completed(futures)]
+            results = [
+                future.result(timeout=30)
+                for future in as_completed(futures, timeout=30)
+            ]
         
         # 所有操作都应该成功
         assert all(results)
@@ -121,15 +126,15 @@ class TestMsetConcurrency:
         assert all(value is not None for value in values)
         assert len(set(values)) == 1, "所有键必须来自同一次 MSET"
         assert values[0].startswith('thread_') and values[0].endswith('_value')
-        
-    def test_mset_atomicity_under_concurrency(
+
+    def test_concurrent_mset_batch_round_trip(
         self, redis_clean, register_cleanup_keys
     ):
-        """测试并发场景下 MSET 的原子性"""
+        """测试并发独立批次的 MSET/MGET 往返一致性"""
         r = redis_clean
         num_iterations = 50
         keys_to_delete = [
-            f'batch_{i}_key_{j}'
+            f'test_kiwi_mset_concurrent_batch_{i}_key_{j}'
             for i in range(num_iterations)
             for j in range(1, 4)
         ]
@@ -138,9 +143,9 @@ class TestMsetConcurrency:
         def mset_batch(batch_id):
             """设置一批键"""
             keys = {
-                f'batch_{batch_id}_key_1': f'batch_{batch_id}_value_1',
-                f'batch_{batch_id}_key_2': f'batch_{batch_id}_value_2',
-                f'batch_{batch_id}_key_3': f'batch_{batch_id}_value_3',
+                f'test_kiwi_mset_concurrent_batch_{batch_id}_key_1': f'batch_{batch_id}_value_1',
+                f'test_kiwi_mset_concurrent_batch_{batch_id}_key_2': f'batch_{batch_id}_value_2',
+                f'test_kiwi_mset_concurrent_batch_{batch_id}_key_3': f'batch_{batch_id}_value_3',
             }
             r.mset(keys)
             
@@ -151,10 +156,12 @@ class TestMsetConcurrency:
         # 并发执行多次
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = [executor.submit(mset_batch, i) for i in range(num_iterations)]
-            results = [future.result() for future in as_completed(futures)]
+            results = [
+                future.result(timeout=30)
+                for future in as_completed(futures, timeout=30)
+            ]
         
-        # 所有批次都应该保持原子性
-        assert all(results), "MSET 应该在并发场景下保持原子性"
+        assert all(results), "每个独立批次都应该完成 MSET/MGET 往返"
         
     def test_concurrent_mset_and_get(
         self, redis_clean, register_cleanup_keys
@@ -179,8 +186,8 @@ class TestMsetConcurrency:
                     current_write = write_count
                     write_count += 1
                 r.mset({
-                    f'writer_{writer_id}_key_1': f'value_{current_write}',
-                    f'writer_{writer_id}_key_2': f'value_{current_write}',
+                    f'test_kiwi_mset_concurrent_writer_{writer_id}_key_1': f'value_{current_write}',
+                    f'test_kiwi_mset_concurrent_writer_{writer_id}_key_2': f'value_{current_write}',
                 })
                 time.sleep(0.01)
         
@@ -193,8 +200,8 @@ class TestMsetConcurrency:
                     read_count += 1
                 writer_id = current_read % num_writers
                 values = r.mget([
-                    f'writer_{writer_id}_key_1',
-                    f'writer_{writer_id}_key_2',
+                    f'test_kiwi_mset_concurrent_writer_{writer_id}_key_1',
+                    f'test_kiwi_mset_concurrent_writer_{writer_id}_key_2',
                 ])
 
                 # 两个键尚未创建时都是 None；创建后必须来自同一次 MSET。
@@ -204,7 +211,7 @@ class TestMsetConcurrency:
                 time.sleep(0.01)
 
         keys_to_delete = [
-            f'writer_{i}_key_{j}'
+            f'test_kiwi_mset_concurrent_writer_{i}_key_{j}'
             for i in range(num_writers)
             for j in range(1, 3)
         ]
@@ -228,7 +235,7 @@ class TestMsetConcurrency:
 
                 # future.result() 将线程中的连接错误和断言回传主线程。
                 for future in futures:
-                    future.result()
+                    future.result(timeout=30)
         finally:
             stop_flag.set()
 
@@ -241,7 +248,7 @@ class TestMsetConcurrency:
         num_threads = 50
         operations_per_thread = 100
         keys_to_delete = [
-            f'stress_{thread_id}_{i}_key_{j}'
+            f'test_kiwi_mset_concurrent_stress_{thread_id}_{i}_key_{j}'
             for thread_id in range(num_threads)
             for i in range(operations_per_thread)
             for j in range(5)
@@ -253,7 +260,7 @@ class TestMsetConcurrency:
             success_count = 0
             for i in range(operations_per_thread):
                 keys = {
-                    f'stress_{thread_id}_{i}_key_{j}': f'value_{j}'
+                    f'test_kiwi_mset_concurrent_stress_{thread_id}_{i}_key_{j}': f'value_{j}'
                     for j in range(5)
                 }
                 assert r.mset(keys) is True
@@ -264,7 +271,10 @@ class TestMsetConcurrency:
         start_time = time.time()
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = [executor.submit(stress_operation, i) for i in range(num_threads)]
-            results = [future.result() for future in as_completed(futures)]
+            results = [
+                future.result(timeout=120)
+                for future in as_completed(futures, timeout=120)
+            ]
         end_time = time.time()
         
         # 统计
@@ -288,7 +298,7 @@ class TestMsetConcurrency:
         r = redis_clean
         num_operations = 100
         keys_to_delete = [
-            f'op_{i}_key_{j}'
+            f'test_kiwi_mset_concurrent_op_{i}_key_{j}'
             for i in range(num_operations)
             for j in range(1, 4)
         ]
@@ -297,9 +307,9 @@ class TestMsetConcurrency:
         def mset_mget_operation(op_id):
             """MSET 后立即 MGET"""
             keys = {
-                f'op_{op_id}_key_1': f'op_{op_id}_value_1',
-                f'op_{op_id}_key_2': f'op_{op_id}_value_2',
-                f'op_{op_id}_key_3': f'op_{op_id}_value_3',
+                f'test_kiwi_mset_concurrent_op_{op_id}_key_1': f'op_{op_id}_value_1',
+                f'test_kiwi_mset_concurrent_op_{op_id}_key_2': f'op_{op_id}_value_2',
+                f'test_kiwi_mset_concurrent_op_{op_id}_key_3': f'op_{op_id}_value_3',
             }
             
             # MSET
@@ -316,7 +326,10 @@ class TestMsetConcurrency:
         # 并发执行
         with ThreadPoolExecutor(max_workers=20) as executor:
             futures = [executor.submit(mset_mget_operation, i) for i in range(num_operations)]
-            results = [future.result() for future in as_completed(futures)]
+            results = [
+                future.result(timeout=30)
+                for future in as_completed(futures, timeout=30)
+            ]
         
         # 所有操作都应该验证成功
         assert all(results), "MSET 和 MGET 应该保持一致性"
@@ -330,7 +343,7 @@ class TestMsetRaceConditions:
         """测试并发覆盖的竞态条件"""
         r = redis_clean
         num_threads = 10
-        test_key = 'race_key'
+        test_key = 'test_kiwi_mset_concurrent_race_key'
         register_cleanup_keys([test_key])
         
         def overwrite_operation(thread_id):
@@ -341,8 +354,8 @@ class TestMsetRaceConditions:
         # 并发执行
         with ThreadPoolExecutor(max_workers=num_threads) as executor:
             futures = [executor.submit(overwrite_operation, i) for i in range(num_threads)]
-            for future in as_completed(futures):
-                future.result()
+            for future in as_completed(futures, timeout=30):
+                future.result(timeout=30)
         
         # 最终应该有一个有效的值
         final_value = r.get(test_key)
@@ -354,37 +367,88 @@ class TestMsetRaceConditions:
     ):
         """测试删除和设置的竞态条件"""
         r = redis_clean
-        test_keys = ['race_key_1', 'race_key_2', 'race_key_3']
+        test_keys = [
+            'test_kiwi_mset_concurrent_race_key_1',
+            'test_kiwi_mset_concurrent_race_key_2',
+            'test_kiwi_mset_concurrent_race_key_3',
+        ]
         num_iterations = 50
         register_cleanup_keys(test_keys)
-        
+
+        start_barrier = threading.Barrier(3)
+        observer_started = threading.Event()
+        mutations_active = threading.Event()
+        mutators_done = threading.Event()
+        completion_lock = threading.Lock()
+        completed_mutators = 0
+
+        def finish_mutator():
+            nonlocal completed_mutators
+            with completion_lock:
+                completed_mutators += 1
+                if completed_mutators == 2:
+                    mutators_done.set()
+
+        def wait_for_observer():
+            start_barrier.wait(timeout=5)
+            assert observer_started.wait(timeout=5), "observer did not start"
+            mutations_active.set()
+
         def delete_operation():
             """删除操作"""
-            for _ in range(num_iterations):
-                r.delete(*test_keys)
-                time.sleep(0.001)
-        
+            try:
+                wait_for_observer()
+                for _ in range(num_iterations):
+                    r.delete(*test_keys)
+                    time.sleep(0.001)
+            finally:
+                finish_mutator()
+
         def mset_operation():
             """MSET 操作"""
-            for i in range(num_iterations):
-                r.mset({key: f'value_{i}' for key in test_keys})
-                time.sleep(0.001)
-        
-        # 并发执行删除和设置
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            future1 = executor.submit(delete_operation)
-            future2 = executor.submit(mset_operation)
-            future1.result()
-            future2.result()
-        
-        # 操作应该都成功完成（不崩溃）
-        # 最终状态可能是存在或不存在，但不应该有部分状态
-        values = r.mget(test_keys)
-        
-        # 要么全部存在，要么全部不存在（原子性）
-        if any(v is not None for v in values):
-            assert all(v is not None for v in values), "MSET 应该是原子的"
-        
+            try:
+                wait_for_observer()
+                for i in range(num_iterations):
+                    r.mset({key: f'value_{i}' for key in test_keys})
+                    time.sleep(0.001)
+            finally:
+                finish_mutator()
+
+        def observer_operation():
+            overlap_observations = 0
+            start_barrier.wait(timeout=5)
+
+            while True:
+                values = r.mget(test_keys)
+                all_missing = all(value is None for value in values)
+                all_equal = (
+                    all(value is not None for value in values)
+                    and len(set(values)) == 1
+                )
+                assert all_missing or all_equal, (
+                    f"MGET observed a partial DEL/MSET state: {values}"
+                )
+
+                observer_started.set()
+                if mutations_active.is_set():
+                    overlap_observations += 1
+                if mutators_done.is_set():
+                    break
+                time.sleep(0)
+
+            assert overlap_observations > 0, (
+                "observer did not overlap with DEL/MSET operations"
+            )
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [
+                executor.submit(observer_operation),
+                executor.submit(delete_operation),
+                executor.submit(mset_operation),
+            ]
+            for future in futures:
+                future.result(timeout=30)
+
 if __name__ == '__main__':
     import sys
     try:

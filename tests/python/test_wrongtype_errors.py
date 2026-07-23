@@ -46,11 +46,11 @@ def cleanup_wrongtype_keys(redis_clean):
         yield
     finally:
         redis_clean.delete(
-            'list_key',
-            'hash_key',
-            'set_key',
-            'zset_key',
-            'string_key',
+            'test_kiwi_wrongtype_list_key',
+            'test_kiwi_wrongtype_hash_key',
+            'test_kiwi_wrongtype_set_key',
+            'test_kiwi_wrongtype_zset_key',
+            'test_kiwi_wrongtype_string_key',
         )
 
 
@@ -61,135 +61,135 @@ class TestWrongTypeErrors:
         """测试 MSET 将列表键覆盖为字符串"""
         r = redis_clean
 
-        r.lpush('list_key', 'value1', 'value2')
+        r.lpush('test_kiwi_wrongtype_list_key', 'value1', 'value2')
 
-        assert r.mset({'list_key': 'new_value'}) is True
-        assert r.type('list_key') == 'string'
-        assert r.get('list_key') == 'new_value'
+        assert r.mset({'test_kiwi_wrongtype_list_key': 'new_value'}) is True
+        assert r.type('test_kiwi_wrongtype_list_key') == 'string'
+        assert r.get('test_kiwi_wrongtype_list_key') == 'new_value'
 
     def test_mset_overwrites_hash_key(self, redis_clean):
         """测试 MSET 将哈希键覆盖为字符串"""
         r = redis_clean
 
-        r.hset('hash_key', 'field1', 'value1')
+        r.hset('test_kiwi_wrongtype_hash_key', 'field1', 'value1')
 
-        assert r.mset({'hash_key': 'new_value'}) is True
-        assert r.type('hash_key') == 'string'
-        assert r.get('hash_key') == 'new_value'
+        assert r.mset({'test_kiwi_wrongtype_hash_key': 'new_value'}) is True
+        assert r.type('test_kiwi_wrongtype_hash_key') == 'string'
+        assert r.get('test_kiwi_wrongtype_hash_key') == 'new_value'
 
     def test_mset_overwrites_set_key(self, redis_clean):
         """测试 MSET 将集合键覆盖为字符串"""
         r = redis_clean
 
-        r.sadd('set_key', 'member1', 'member2')
+        r.sadd('test_kiwi_wrongtype_set_key', 'member1', 'member2')
 
-        assert r.mset({'set_key': 'new_value'}) is True
-        assert r.type('set_key') == 'string'
-        assert r.get('set_key') == 'new_value'
+        assert r.mset({'test_kiwi_wrongtype_set_key': 'new_value'}) is True
+        assert r.type('test_kiwi_wrongtype_set_key') == 'string'
+        assert r.get('test_kiwi_wrongtype_set_key') == 'new_value'
 
     def test_mset_overwrites_zset_key(self, redis_clean):
         """测试 MSET 将有序集合键覆盖为字符串"""
         r = redis_clean
 
-        r.zadd('zset_key', {'member1': 1.0, 'member2': 2.0})
+        r.zadd('test_kiwi_wrongtype_zset_key', {'member1': 1.0, 'member2': 2.0})
 
-        assert r.mset({'zset_key': 'new_value'}) is True
-        assert r.type('zset_key') == 'string'
-        assert r.get('zset_key') == 'new_value'
+        assert r.mset({'test_kiwi_wrongtype_zset_key': 'new_value'}) is True
+        assert r.type('test_kiwi_wrongtype_zset_key') == 'string'
+        assert r.get('test_kiwi_wrongtype_zset_key') == 'new_value'
 
     def test_get_on_list_key(self, redis_clean):
         """测试对列表键使用 GET"""
         r = redis_clean
         
-        r.lpush('list_key', 'value')
+        r.lpush('test_kiwi_wrongtype_list_key', 'value')
         
         with pytest.raises(redis.ResponseError) as exc_info:
-            r.get('list_key')
+            r.get('test_kiwi_wrongtype_list_key')
         
         assert_wrongtype_error(exc_info)
         
-        r.delete('list_key')
+        r.delete('test_kiwi_wrongtype_list_key')
 
     def test_incr_on_non_integer_string(self, redis_clean):
         """测试对非整数字符串使用 INCR"""
         r = redis_clean
         
-        r.set('string_key', 'not_a_number')
+        r.set('test_kiwi_wrongtype_string_key', 'not_a_number')
         
         with pytest.raises(redis.ResponseError) as exc_info:
-            r.incr('string_key')
+            r.incr('test_kiwi_wrongtype_string_key')
         
         # 应该是值错误，不是类型错误
         assert 'not an integer' in str(exc_info.value).lower() or 'valid' in str(exc_info.value).lower()
         
-        r.delete('string_key')
+        r.delete('test_kiwi_wrongtype_string_key')
 
     def test_lpush_on_string_key(self, redis_clean):
         """测试对字符串键使用 LPUSH"""
         r = redis_clean
         
-        r.set('string_key', 'value')
+        r.set('test_kiwi_wrongtype_string_key', 'value')
         
         with pytest.raises(redis.ResponseError) as exc_info:
-            r.lpush('string_key', 'new_value')
+            r.lpush('test_kiwi_wrongtype_string_key', 'new_value')
         
         assert_wrongtype_error(exc_info)
         
-        r.delete('string_key')
+        r.delete('test_kiwi_wrongtype_string_key')
 
     def test_hset_on_string_key(self, redis_clean):
         """测试对字符串键使用 HSET"""
         r = redis_clean
         
-        r.set('string_key', 'value')
+        r.set('test_kiwi_wrongtype_string_key', 'value')
         
         with pytest.raises(redis.ResponseError) as exc_info:
-            r.hset('string_key', 'field', 'value')
+            r.hset('test_kiwi_wrongtype_string_key', 'field', 'value')
         
         assert_wrongtype_error(exc_info)
         
-        r.delete('string_key')
+        r.delete('test_kiwi_wrongtype_string_key')
 
     def test_sadd_on_string_key(self, redis_clean):
         """测试对字符串键使用 SADD"""
         r = redis_clean
         
-        r.set('string_key', 'value')
+        r.set('test_kiwi_wrongtype_string_key', 'value')
         
         with pytest.raises(redis.ResponseError) as exc_info:
-            r.sadd('string_key', 'member')
+            r.sadd('test_kiwi_wrongtype_string_key', 'member')
         
         assert_wrongtype_error(exc_info)
         
-        r.delete('string_key')
+        r.delete('test_kiwi_wrongtype_string_key')
 
     def test_zadd_on_string_key(self, redis_clean):
         """测试对字符串键使用 ZADD"""
         r = redis_clean
         
-        r.set('string_key', 'value')
+        r.set('test_kiwi_wrongtype_string_key', 'value')
         
         with pytest.raises(redis.ResponseError) as exc_info:
-            r.zadd('string_key', {'member': 1.0})
+            r.zadd('test_kiwi_wrongtype_string_key', {'member': 1.0})
         
         assert_wrongtype_error(exc_info)
         
-        r.delete('string_key')
+        r.delete('test_kiwi_wrongtype_string_key')
 
     def test_mset_overwrites_composite_and_sets_string_key(self, redis_clean):
-        """测试 MSET 原子覆盖复合类型键并设置新字符串键"""
+        """测试 MSET 批量覆盖复合类型键并设置新字符串键"""
         r = redis_clean
 
-        r.lpush('list_key', 'value')
+        r.lpush('test_kiwi_wrongtype_list_key', 'value')
 
         assert r.mset({
-            'list_key': 'new_value',
-            'string_key': 'value',
+            'test_kiwi_wrongtype_list_key': 'new_value',
+            'test_kiwi_wrongtype_string_key': 'value',
         }) is True
 
-        assert r.type('list_key') == 'string'
-        assert r.type('string_key') == 'string'
-        assert r.mget(['list_key', 'string_key']) == ['new_value', 'value']
+        assert r.type('test_kiwi_wrongtype_list_key') == 'string'
+        assert r.type('test_kiwi_wrongtype_string_key') == 'string'
+        assert r.mget(['test_kiwi_wrongtype_list_key', 'test_kiwi_wrongtype_string_key']) == ['new_value', 'value']
 
 
 class TestTypeValidation:
@@ -199,61 +199,61 @@ class TestTypeValidation:
         """验证字符串操作在字符串键上正常工作"""
         r = redis_clean
         
-        r.set('string_key', 'value')
-        assert r.get('string_key') == 'value'
+        r.set('test_kiwi_wrongtype_string_key', 'value')
+        assert r.get('test_kiwi_wrongtype_string_key') == 'value'
         
-        r.mset({'string_key': 'new_value'})
-        assert r.get('string_key') == 'new_value'
+        r.mset({'test_kiwi_wrongtype_string_key': 'new_value'})
+        assert r.get('test_kiwi_wrongtype_string_key') == 'new_value'
         
-        r.delete('string_key')
+        r.delete('test_kiwi_wrongtype_string_key')
 
     def test_list_operations_on_list(self, redis_clean):
         """验证列表操作在列表键上正常工作"""
         r = redis_clean
         
-        r.lpush('list_key', 'value1', 'value2')
-        assert r.llen('list_key') == 2
+        r.lpush('test_kiwi_wrongtype_list_key', 'value1', 'value2')
+        assert r.llen('test_kiwi_wrongtype_list_key') == 2
         
-        r.lpush('list_key', 'value3')
-        assert r.llen('list_key') == 3
+        r.lpush('test_kiwi_wrongtype_list_key', 'value3')
+        assert r.llen('test_kiwi_wrongtype_list_key') == 3
         
-        r.delete('list_key')
+        r.delete('test_kiwi_wrongtype_list_key')
 
     def test_hash_operations_on_hash(self, redis_clean):
         """验证哈希操作在哈希键上正常工作"""
         r = redis_clean
         
-        r.hset('hash_key', 'field1', 'value1')
-        assert r.hget('hash_key', 'field1') == 'value1'
+        r.hset('test_kiwi_wrongtype_hash_key', 'field1', 'value1')
+        assert r.hget('test_kiwi_wrongtype_hash_key', 'field1') == 'value1'
         
-        r.hset('hash_key', 'field2', 'value2')
-        assert r.hlen('hash_key') == 2
+        r.hset('test_kiwi_wrongtype_hash_key', 'field2', 'value2')
+        assert r.hlen('test_kiwi_wrongtype_hash_key') == 2
         
-        r.delete('hash_key')
+        r.delete('test_kiwi_wrongtype_hash_key')
 
     def test_set_operations_on_set(self, redis_clean):
         """验证集合操作在集合键上正常工作"""
         r = redis_clean
         
-        r.sadd('set_key', 'member1', 'member2')
-        assert r.scard('set_key') == 2
+        r.sadd('test_kiwi_wrongtype_set_key', 'member1', 'member2')
+        assert r.scard('test_kiwi_wrongtype_set_key') == 2
         
-        r.sadd('set_key', 'member3')
-        assert r.scard('set_key') == 3
+        r.sadd('test_kiwi_wrongtype_set_key', 'member3')
+        assert r.scard('test_kiwi_wrongtype_set_key') == 3
         
-        r.delete('set_key')
+        r.delete('test_kiwi_wrongtype_set_key')
 
     def test_zset_operations_on_zset(self, redis_clean):
         """验证有序集合操作在有序集合键上正常工作"""
         r = redis_clean
         
-        r.zadd('zset_key', {'member1': 1.0, 'member2': 2.0})
-        assert r.zcard('zset_key') == 2
+        r.zadd('test_kiwi_wrongtype_zset_key', {'member1': 1.0, 'member2': 2.0})
+        assert r.zcard('test_kiwi_wrongtype_zset_key') == 2
         
-        r.zadd('zset_key', {'member3': 3.0})
-        assert r.zcard('zset_key') == 3
+        r.zadd('test_kiwi_wrongtype_zset_key', {'member3': 3.0})
+        assert r.zcard('test_kiwi_wrongtype_zset_key') == 3
         
-        r.delete('zset_key')
+        r.delete('test_kiwi_wrongtype_zset_key')
 
 
 if __name__ == '__main__':

@@ -36,32 +36,32 @@ import redis
 def cleanup_mset_keys(redis_clean):
     """Remove the exact MSET test keys even when assertions fail."""
     keys = [
-        'test_key1',
-        'test_key2',
-        'test_key3',
-        'test_single_key',
-        'test_overwrite_key1',
-        'test_overwrite_key2',
-        'test_overwrite_key3',
-        'test_mget_key1',
-        'test_mget_key2',
-        'test_mget_key3',
-        'test_atomic_key1',
-        'test_atomic_key2',
-        'test_atomic_key3',
-        b'test_binary_key1',
-        b'test_binary_key2',
-        b'test_utf8_key',
-        'test_mget1',
-        'test_mget2',
-        'test_over',
-        'test_single',
-        'test_a1',
-        'test_a2',
+        'test_kiwi_mset_key1',
+        'test_kiwi_mset_key2',
+        'test_kiwi_mset_key3',
+        'test_kiwi_mset_single_key',
+        'test_kiwi_mset_overwrite_key1',
+        'test_kiwi_mset_overwrite_key2',
+        'test_kiwi_mset_overwrite_key3',
+        'test_kiwi_mset_mget_key1',
+        'test_kiwi_mset_mget_key2',
+        'test_kiwi_mset_mget_key3',
+        'test_kiwi_mset_batch_round_trip_key1',
+        'test_kiwi_mset_batch_round_trip_key2',
+        'test_kiwi_mset_batch_round_trip_key3',
+        b'test_kiwi_mset_binary_key1',
+        b'test_kiwi_mset_binary_key2',
+        b'test_kiwi_mset_utf8_key',
+        'test_kiwi_mset_mget1',
+        'test_kiwi_mset_mget2',
+        'test_kiwi_mset_over',
+        'test_kiwi_mset_single',
+        'test_kiwi_mset_a1',
+        'test_kiwi_mset_a2',
     ]
-    keys.extend(f'test_batch_key_{i}' for i in range(100))
-    keys.extend(f'benchmark_key_{i}' for i in range(1000))
-    keys.extend(f'test_batch_{i}' for i in range(100))
+    keys.extend(f'test_kiwi_mset_batch_key_{i}' for i in range(100))
+    keys.extend(f'test_kiwi_mset_benchmark_key_{i}' for i in range(1000))
+    keys.extend(f'test_kiwi_mset_batch_{i}' for i in range(100))
 
     try:
         yield
@@ -79,45 +79,45 @@ class TestMsetBasic:
         
         # 测试基本的 MSET
         result = r.mset({
-            'test_key1': 'value1',
-            'test_key2': 'value2',
-            'test_key3': 'value3'
+            'test_kiwi_mset_key1': 'value1',
+            'test_kiwi_mset_key2': 'value2',
+            'test_kiwi_mset_key3': 'value3'
         })
         assert result == True, "MSET 应该返回 True"
         
         # 验证所有键都已设置
-        assert r.get('test_key1') == 'value1'
-        assert r.get('test_key2') == 'value2'
-        assert r.get('test_key3') == 'value3'
+        assert r.get('test_kiwi_mset_key1') == 'value1'
+        assert r.get('test_kiwi_mset_key2') == 'value2'
+        assert r.get('test_kiwi_mset_key3') == 'value3'
 
     def test_mset_single_pair(self, redis_clean):
         """测试 MSET 单个键值对"""
         r = redis_clean
         
         # 只设置一个键值对
-        result = r.mset({'test_single_key': 'single_value'})
+        result = r.mset({'test_kiwi_mset_single_key': 'single_value'})
         assert result == True
-        assert r.get('test_single_key') == 'single_value'
+        assert r.get('test_kiwi_mset_single_key') == 'single_value'
 
     def test_mset_overwrite(self, redis_clean):
         """测试 MSET 覆盖已存在的键"""
         r = redis_clean
         
         # 先设置一些键
-        r.set('test_overwrite_key1', 'old_value1')
-        r.set('test_overwrite_key2', 'old_value2')
+        r.set('test_kiwi_mset_overwrite_key1', 'old_value1')
+        r.set('test_kiwi_mset_overwrite_key2', 'old_value2')
         
         # 使用 MSET 覆盖
         r.mset({
-            'test_overwrite_key1': 'new_value1',
-            'test_overwrite_key2': 'new_value2',
-            'test_overwrite_key3': 'new_value3'
+            'test_kiwi_mset_overwrite_key1': 'new_value1',
+            'test_kiwi_mset_overwrite_key2': 'new_value2',
+            'test_kiwi_mset_overwrite_key3': 'new_value3'
         })
         
         # 验证值已被覆盖
-        assert r.get('test_overwrite_key1') == 'new_value1'
-        assert r.get('test_overwrite_key2') == 'new_value2'
-        assert r.get('test_overwrite_key3') == 'new_value3'
+        assert r.get('test_kiwi_mset_overwrite_key1') == 'new_value1'
+        assert r.get('test_kiwi_mset_overwrite_key2') == 'new_value2'
+        assert r.get('test_kiwi_mset_overwrite_key3') == 'new_value3'
 
 
 class TestMsetIntegration:
@@ -129,62 +129,71 @@ class TestMsetIntegration:
         
         # 使用 MSET 设置多个键
         r.mset({
-            'test_mget_key1': 'mget_value1',
-            'test_mget_key2': 'mget_value2',
-            'test_mget_key3': 'mget_value3'
+            'test_kiwi_mset_mget_key1': 'mget_value1',
+            'test_kiwi_mset_mget_key2': 'mget_value2',
+            'test_kiwi_mset_mget_key3': 'mget_value3'
         })
         
         # 使用 MGET 获取所有键
-        values = r.mget(['test_mget_key1', 'test_mget_key2', 'test_mget_key3'])
+        values = r.mget(['test_kiwi_mset_mget_key1', 'test_kiwi_mset_mget_key2', 'test_kiwi_mset_mget_key3'])
         assert values == ['mget_value1', 'mget_value2', 'mget_value3']
 
-    def test_mset_atomicity(self, redis_clean):
-        """测试 MSET 原子性"""
+    def test_mset_batch_round_trip(self, redis_clean):
+        """测试 MSET 后由 MGET 读取完整批次"""
         r = redis_clean
-        
+
         # 设置初始值
-        r.set('test_atomic_key1', 'initial1')
-        r.set('test_atomic_key2', 'initial2')
-        
-        # 原子性更新所有键
+        r.set('test_kiwi_mset_batch_round_trip_key1', 'initial1')
+        r.set('test_kiwi_mset_batch_round_trip_key2', 'initial2')
+
+        # 更新并回读同一批键
         r.mset({
-            'test_atomic_key1': 'atomic1',
-            'test_atomic_key2': 'atomic2',
-            'test_atomic_key3': 'atomic3'
+            'test_kiwi_mset_batch_round_trip_key1': 'batch1',
+            'test_kiwi_mset_batch_round_trip_key2': 'batch2',
+            'test_kiwi_mset_batch_round_trip_key3': 'batch3'
         })
-        
+
         # 使用 MGET 验证所有键都已更新
-        values = r.mget(['test_atomic_key1', 'test_atomic_key2', 'test_atomic_key3'])
-        assert values == ['atomic1', 'atomic2', 'atomic3']
+        values = r.mget([
+            'test_kiwi_mset_batch_round_trip_key1',
+            'test_kiwi_mset_batch_round_trip_key2',
+            'test_kiwi_mset_batch_round_trip_key3',
+        ])
+        assert values == ['batch1', 'batch2', 'batch3']
 
 
 class TestMsetPerformance:
     """MSET 性能测试"""
 
     @pytest.mark.slow
+    @pytest.mark.timeout(120)
     def test_mset_large_batch(self, redis_clean):
         """测试 MSET 大批量操作 (100个键值对)"""
         r = redis_clean
         
         # 创建 100 个键值对
-        large_dict = {f'test_batch_key_{i}': f'batch_value_{i}' for i in range(100)}
+        large_dict = {f'test_kiwi_mset_batch_key_{i}': f'batch_value_{i}' for i in range(100)}
         
         # 执行 MSET
         result = r.mset(large_dict)
         assert result == True
         
         # 验证部分键
-        assert r.get('test_batch_key_0') == 'batch_value_0'
-        assert r.get('test_batch_key_50') == 'batch_value_50'
-        assert r.get('test_batch_key_99') == 'batch_value_99'
+        assert r.get('test_kiwi_mset_batch_key_0') == 'batch_value_0'
+        assert r.get('test_kiwi_mset_batch_key_50') == 'batch_value_50'
+        assert r.get('test_kiwi_mset_batch_key_99') == 'batch_value_99'
 
     @pytest.mark.benchmark
+    @pytest.mark.timeout(120)
     def test_mset_performance_benchmark(self, redis_clean, benchmark):
         """MSET 性能基准测试"""
         r = redis_clean
         
         # 创建测试数据
-        data = {f'benchmark_key_{i}': f'benchmark_value_{i}' for i in range(1000)}
+        data = {
+            f'test_kiwi_mset_benchmark_key_{i}': f'benchmark_value_{i}'
+            for i in range(1000)
+        }
         
         # 运行基准测试
         result = benchmark(r.mset, data)
@@ -200,18 +209,18 @@ class TestMsetBinary:
         
         # 使用二进制数据
         r.mset({
-            b'test_binary_key1': b'binary\x00value',
-            b'test_binary_key2': bytes([0, 1, 2, 3, 255]),
-            b'test_utf8_key': '你好世界'.encode('utf-8')
+            b'test_kiwi_mset_binary_key1': b'binary\x00value',
+            b'test_kiwi_mset_binary_key2': bytes([0, 1, 2, 3, 255]),
+            b'test_kiwi_mset_utf8_key': '你好世界'.encode('utf-8')
         })
         
         # 验证二进制数据完整性
-        assert r.get(b'test_binary_key1') == b'binary\x00value'
-        assert r.get(b'test_binary_key2') == bytes([0, 1, 2, 3, 255])
-        assert r.get(b'test_utf8_key') == '你好世界'.encode('utf-8')
+        assert r.get(b'test_kiwi_mset_binary_key1') == b'binary\x00value'
+        assert r.get(b'test_kiwi_mset_binary_key2') == bytes([0, 1, 2, 3, 255])
+        assert r.get(b'test_kiwi_mset_utf8_key') == '你好世界'.encode('utf-8')
         
         # 清理
-        r.delete(b'test_binary_key1', b'test_binary_key2', b'test_utf8_key')
+        r.delete(b'test_kiwi_mset_binary_key1', b'test_kiwi_mset_binary_key2', b'test_kiwi_mset_utf8_key')
 
 
 class TestMsetErrors:
@@ -256,7 +265,7 @@ def run_standalone_tests():
             ("覆盖已存在的键", lambda: test_overwrite(r)),
             ("单个键值对", lambda: test_single_pair(r)),
             ("大批量操作", lambda: test_large_batch(r)),
-            ("原子性验证", lambda: test_atomicity(r)),
+            ("批量往返验证", lambda: test_batch_round_trip(r)),
         ]
         
         for name, test_func in tests:
@@ -295,13 +304,13 @@ def test_basic():
     try:
         r = redis.Redis(host='localhost', port=6379, decode_responses=True)
         r.ping()
-        cleanup_keys(r, ['test_key1', 'test_key2'])
+        cleanup_keys(r, ['test_kiwi_mset_key1', 'test_kiwi_mset_key2'])
         
-        r.mset({'test_key1': 'value1', 'test_key2': 'value2'})
-        assert r.get('test_key1') == 'value1'
-        assert r.get('test_key2') == 'value2'
+        r.mset({'test_kiwi_mset_key1': 'value1', 'test_kiwi_mset_key2': 'value2'})
+        assert r.get('test_kiwi_mset_key1') == 'value1'
+        assert r.get('test_kiwi_mset_key2') == 'value2'
         
-        cleanup_keys(r, ['test_key1', 'test_key2'])
+        cleanup_keys(r, ['test_kiwi_mset_key1', 'test_kiwi_mset_key2'])
     except redis.ConnectionError:
         pytest.skip("Redis server not available")
 
@@ -311,13 +320,13 @@ def test_with_mget():
     try:
         r = redis.Redis(host='localhost', port=6379, decode_responses=True)
         r.ping()
-        cleanup_keys(r, ['test_mget1', 'test_mget2'])
+        cleanup_keys(r, ['test_kiwi_mset_mget1', 'test_kiwi_mset_mget2'])
         
-        r.mset({'test_mget1': 'v1', 'test_mget2': 'v2'})
-        values = r.mget(['test_mget1', 'test_mget2'])
+        r.mset({'test_kiwi_mset_mget1': 'v1', 'test_kiwi_mset_mget2': 'v2'})
+        values = r.mget(['test_kiwi_mset_mget1', 'test_kiwi_mset_mget2'])
         assert values == ['v1', 'v2']
         
-        cleanup_keys(r, ['test_mget1', 'test_mget2'])
+        cleanup_keys(r, ['test_kiwi_mset_mget1', 'test_kiwi_mset_mget2'])
     except redis.ConnectionError:
         pytest.skip("Redis server not available")
 
@@ -327,13 +336,13 @@ def test_overwrite():
     try:
         r = redis.Redis(host='localhost', port=6379, decode_responses=True)
         r.ping()
-        cleanup_keys(r, ['test_over'])
+        cleanup_keys(r, ['test_kiwi_mset_over'])
         
-        r.set('test_over', 'old')
-        r.mset({'test_over': 'new'})
-        assert r.get('test_over') == 'new'
+        r.set('test_kiwi_mset_over', 'old')
+        r.mset({'test_kiwi_mset_over': 'new'})
+        assert r.get('test_kiwi_mset_over') == 'new'
         
-        cleanup_keys(r, ['test_over'])
+        cleanup_keys(r, ['test_kiwi_mset_over'])
     except redis.ConnectionError:
         pytest.skip("Redis server not available")
 
@@ -343,12 +352,12 @@ def test_single_pair():
     try:
         r = redis.Redis(host='localhost', port=6379, decode_responses=True)
         r.ping()
-        cleanup_keys(r, ['test_single'])
+        cleanup_keys(r, ['test_kiwi_mset_single'])
         
-        r.mset({'test_single': 'value'})
-        assert r.get('test_single') == 'value'
+        r.mset({'test_kiwi_mset_single': 'value'})
+        assert r.get('test_kiwi_mset_single') == 'value'
         
-        cleanup_keys(r, ['test_single'])
+        cleanup_keys(r, ['test_kiwi_mset_single'])
     except redis.ConnectionError:
         pytest.skip("Redis server not available")
 
@@ -360,31 +369,31 @@ def test_large_batch():
         r.ping()
         
         # 清理可能存在的键
-        keys_to_clean = [f'test_batch_{i}' for i in range(100)]
+        keys_to_clean = [f'test_kiwi_mset_batch_{i}' for i in range(100)]
         cleanup_keys(r, keys_to_clean)
         
-        large_dict = {f'test_batch_{i}': f'val_{i}' for i in range(100)}
+        large_dict = {f'test_kiwi_mset_batch_{i}': f'val_{i}' for i in range(100)}
         r.mset(large_dict)
-        assert r.get('test_batch_0') == 'val_0'
-        assert r.get('test_batch_99') == 'val_99'
+        assert r.get('test_kiwi_mset_batch_0') == 'val_0'
+        assert r.get('test_kiwi_mset_batch_99') == 'val_99'
         
         cleanup_keys(r, keys_to_clean)
     except redis.ConnectionError:
         pytest.skip("Redis server not available")
 
 
-def test_atomicity():
-    """独立测试函数 - 原子性测试"""
+def test_batch_round_trip():
+    """独立测试函数 - 批量往返测试"""
     try:
         r = redis.Redis(host='localhost', port=6379, decode_responses=True)
         r.ping()
-        cleanup_keys(r, ['test_a1', 'test_a2'])
+        cleanup_keys(r, ['test_kiwi_mset_a1', 'test_kiwi_mset_a2'])
         
-        r.mset({'test_a1': 'v1', 'test_a2': 'v2'})
-        values = r.mget(['test_a1', 'test_a2'])
+        r.mset({'test_kiwi_mset_a1': 'v1', 'test_kiwi_mset_a2': 'v2'})
+        values = r.mget(['test_kiwi_mset_a1', 'test_kiwi_mset_a2'])
         assert values == ['v1', 'v2']
         
-        cleanup_keys(r, ['test_a1', 'test_a2'])
+        cleanup_keys(r, ['test_kiwi_mset_a1', 'test_kiwi_mset_a2'])
     except redis.ConnectionError:
         pytest.skip("Redis server not available")
 
@@ -401,7 +410,7 @@ def cleanup_keys(r, keys):
 
 def cleanup(r):
     """清理测试数据"""
-    patterns = ['test_*']
+    patterns = ['test_kiwi_mset_*']
     for pattern in patterns:
         keys = r.keys(pattern)
         if keys:
