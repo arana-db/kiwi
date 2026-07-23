@@ -19,11 +19,12 @@
 
 #[cfg(test)]
 mod redis_string_test {
-    use std::{path::Path, sync::Arc, thread, time::Duration};
+    use std::{collections::HashSet, path::Path, sync::Arc, thread, time::Duration};
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BgTaskHandler, DataType, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path,
+        BgTaskHandler, DataType, Redis, StorageOptions, safe_cleanup_test_db,
+        slot_indexer::key_to_slot_id, storage::Storage, unique_test_db_path,
     };
 
     fn cleanup_redis(redis: Redis, test_db_path: &Path) {
@@ -109,6 +110,63 @@ mod redis_string_test {
         );
 
         cleanup_redis(redis, &test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_storage_multi_instance_mget_binary_preserves_mixed_result_order() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(3, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        assert_eq!(storage.insts.len(), 3);
+
+        let first_binary_key = b"binary:instance:0".to_vec();
+        let second_binary_key = b"binary:instance:2".to_vec();
+        let wrong_type_key = b"binary:instance:4".to_vec();
+        let instance_ids = [
+            storage
+                .slot_indexer
+                .get_instance_id(key_to_slot_id(&first_binary_key)),
+            storage
+                .slot_indexer
+                .get_instance_id(key_to_slot_id(&second_binary_key)),
+            storage
+                .slot_indexer
+                .get_instance_id(key_to_slot_id(&wrong_type_key)),
+        ];
+        assert_eq!(HashSet::from(instance_ids).len(), 3);
+
+        let first_binary_value = vec![0, 0xff, 1, 0xfe];
+        let second_binary_value = vec![0xff, 2, 0, 0xfd];
+        storage.set(&first_binary_key, &first_binary_value).unwrap();
+        storage
+            .set(&second_binary_key, &second_binary_value)
+            .unwrap();
+        storage
+            .lpush(&wrong_type_key, &[b"list-value".to_vec()])
+            .unwrap();
+
+        let missing_key = b"binary:missing".to_vec();
+        let keys = vec![
+            second_binary_key.clone(),
+            wrong_type_key,
+            first_binary_key,
+            missing_key,
+            second_binary_key,
+        ];
+
+        assert_eq!(
+            storage.mget_binary(&keys).unwrap(),
+            vec![
+                Some(second_binary_value.clone()),
+                None,
+                Some(first_binary_value),
+                None,
+                Some(second_binary_value),
+            ]
+        );
     }
 
     #[test]
