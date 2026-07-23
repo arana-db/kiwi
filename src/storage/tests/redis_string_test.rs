@@ -19,7 +19,7 @@
 
 #[cfg(test)]
 mod redis_string_test {
-    use std::{collections::HashSet, mem::size_of, path::Path, sync::Arc, thread, time::Duration};
+    use std::{collections::HashSet, path::Path, sync::Arc, thread, time::Duration};
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
@@ -196,7 +196,7 @@ mod redis_string_test {
         storage.set(b"other_foxtrot", b"non-match").unwrap();
         storage.set(b"literal*star", b"escaped-wildcard").unwrap();
 
-        let keys = |pattern| {
+        let keys = |pattern: &[u8]| {
             storage
                 .keys(pattern)
                 .unwrap()
@@ -205,48 +205,74 @@ mod redis_string_test {
         };
 
         assert_eq!(
-            keys("test_*"),
+            keys(b"test_*"),
             HashSet::from([
-                "test_alpha".to_string(),
-                "test_beta".to_string(),
-                "test_charlie".to_string(),
-                "test_delta".to_string(),
-                "test_echo".to_string(),
-                "test_xray".to_string(),
+                b"test_alpha".to_vec(),
+                b"test_beta".to_vec(),
+                b"test_charlie".to_vec(),
+                b"test_delta".to_vec(),
+                b"test_echo".to_vec(),
+                b"test_xray".to_vec(),
             ])
         );
-        assert_eq!(keys("test_?cho"), HashSet::from(["test_echo".to_string()]));
+        assert_eq!(keys(b"test_?cho"), HashSet::from([b"test_echo".to_vec()]));
         assert_eq!(
-            keys("test_[ae]*"),
-            HashSet::from(["test_alpha".to_string(), "test_echo".to_string()])
+            keys(b"test_[ae]*"),
+            HashSet::from([b"test_alpha".to_vec(), b"test_echo".to_vec()])
         );
         assert_eq!(
-            keys("test_[a-c]*"),
+            keys(b"test_[a-c]*"),
             HashSet::from([
-                "test_alpha".to_string(),
-                "test_beta".to_string(),
-                "test_charlie".to_string(),
-            ])
-        );
-        assert_eq!(
-            keys("test_[^x]*"),
-            HashSet::from([
-                "test_alpha".to_string(),
-                "test_beta".to_string(),
-                "test_charlie".to_string(),
-                "test_delta".to_string(),
-                "test_echo".to_string(),
+                b"test_alpha".to_vec(),
+                b"test_beta".to_vec(),
+                b"test_charlie".to_vec(),
             ])
         );
         assert_eq!(
-            keys(r"literal\*star"),
-            HashSet::from(["literal*star".to_string()])
+            keys(b"test_[^x]*"),
+            HashSet::from([
+                b"test_alpha".to_vec(),
+                b"test_beta".to_vec(),
+                b"test_charlie".to_vec(),
+                b"test_delta".to_vec(),
+                b"test_echo".to_vec(),
+            ])
         );
-        assert!(!keys("test_*").contains("other_foxtrot"));
+        assert_eq!(
+            keys(br"literal\*star"),
+            HashSet::from([b"literal*star".to_vec()])
+        );
+        assert!(!keys(b"test_*").contains(b"other_foxtrot".as_slice()));
     }
 
     #[tokio::test]
-    async fn test_storage_keys_excludes_empty_and_expired_composite_values() {
+    async fn test_storage_keys_matches_and_returns_raw_key_bytes() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        let utf8_key = "é".as_bytes().to_vec();
+        let invalid_key_a = vec![0xff];
+        let invalid_key_b = vec![0xfe];
+        storage.set(&utf8_key, b"utf8").unwrap();
+        storage.set(&invalid_key_a, b"invalid-a").unwrap();
+        storage.set(&invalid_key_b, b"invalid-b").unwrap();
+
+        assert_eq!(
+            storage
+                .keys(b"?")
+                .unwrap()
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            HashSet::from([invalid_key_a, invalid_key_b])
+        );
+        assert_eq!(storage.keys(b"??").unwrap(), vec![utf8_key]);
+    }
+
+    #[tokio::test]
+    async fn test_storage_keys_excludes_removed_and_expired_composite_values() {
         let test_db_dir = tempfile::tempdir().unwrap();
         let mut storage = Storage::new(1, 0);
         let _bg_task_rx = storage
@@ -262,29 +288,10 @@ mod redis_string_test {
                 &[ZsetScoreMember::new(1.0, b"value".to_vec())],
             )
             .unwrap();
-        let redis = &storage.insts[0];
-        let meta_cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
-        for key in [
-            b"empty_hash".as_slice(),
-            b"empty_list".as_slice(),
-            b"empty_set".as_slice(),
-            b"empty_zset".as_slice(),
-        ] {
-            let encoded_key = BaseMetaKey::new(key).encode().unwrap();
-            let mut encoded_value = redis
-                .db()
-                .unwrap()
-                .get_cf(&meta_cf, &encoded_key)
-                .unwrap()
-                .unwrap()
-                .to_vec();
-            encoded_value[1..1 + size_of::<u64>()].fill(0);
-            redis
-                .db()
-                .unwrap()
-                .put_cf(&meta_cf, encoded_key, encoded_value)
-                .unwrap();
-        }
+        storage.hdel(b"empty_hash", &[b"field".to_vec()]).unwrap();
+        storage.lpop(b"empty_list", None).unwrap();
+        storage.srem(b"empty_set", &[b"value"]).unwrap();
+        storage.zrem(b"empty_zset", &[b"value".to_vec()]).unwrap();
 
         storage.hset(b"expired_hash", b"field", b"value").unwrap();
         storage
@@ -307,8 +314,8 @@ mod redis_string_test {
         }
         tokio::time::sleep(Duration::from_millis(1100)).await;
 
-        assert!(storage.keys("empty_*").unwrap().is_empty());
-        assert!(storage.keys("expired_*").unwrap().is_empty());
+        assert!(storage.keys(b"empty_*").unwrap().is_empty());
+        assert!(storage.keys(b"expired_*").unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -328,7 +335,7 @@ mod redis_string_test {
             .put_cf(&meta_cf, encoded_key, [DataType::Hash as u8])
             .unwrap();
 
-        assert!(storage.keys("*").is_err());
+        assert!(storage.keys(b"*").is_err());
     }
 
     #[test]

@@ -33,7 +33,7 @@ use crate::{
     format_base_meta_value::ParsedBaseMetaValue,
     format_list_meta_value::ParsedListsMetaValue,
     format_strings_value::{ParsedStringsValue, StringValue},
-    redis_sets::glob_match,
+    redis_sets::glob_match_bytes,
 };
 
 impl Redis {
@@ -2075,7 +2075,7 @@ impl Redis {
     }
 
     /// Scan for keys matching a pattern
-    pub fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
+    pub fn scan_keys(&self, pattern: &[u8]) -> Result<Vec<Vec<u8>>> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -2116,11 +2116,8 @@ impl Redis {
                 }
             };
 
-            if is_valid {
-                let key_str = String::from_utf8_lossy(base_key.key());
-                if glob_match(pattern, &key_str) {
-                    keys.push(key_str.into_owned());
-                }
+            if is_valid && glob_match_bytes(pattern, base_key.key()) {
+                keys.push(base_key.key().to_vec());
             }
         }
 

@@ -18,7 +18,7 @@
 //! Redis sets operations implementation
 //! This module provides set operations for Redis storage
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use bytes::Bytes;
 use kstd::lock_mgr::ScopeRecordLock;
@@ -2469,16 +2469,17 @@ impl Redis {
 /// Supports `*`, `?`, character classes and ranges, negated character classes,
 /// and backslash escaping.
 pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
-    let pattern_chars: Vec<char> = pattern.chars().collect();
-    let text_chars: Vec<char> = text.chars().collect();
+    glob_match_bytes(pattern.as_bytes(), text.as_bytes())
+}
 
+pub(crate) fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
     fn match_character_class(
-        pattern: &[char],
+        pattern: &[u8],
         class_start: usize,
-        candidate: char,
+        candidate: u8,
     ) -> Option<(bool, usize)> {
         let mut index = class_start + 1;
-        let negated = pattern.get(index) == Some(&'^');
+        let negated = pattern.get(index) == Some(&b'^');
         if negated {
             index += 1;
         }
@@ -2486,8 +2487,8 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
         let mut matched = false;
         while index < pattern.len() {
             match pattern[index] {
-                ']' => return Some((matched != negated, index + 1)),
-                '\\' if index + 1 < pattern.len() => {
+                b']' => return Some((matched != negated, index + 1)),
+                b'\\' if index + 1 < pattern.len() => {
                     if pattern[index + 1] == candidate {
                         matched = true;
                     }
@@ -2495,8 +2496,8 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
                 }
                 range_start
                     if index + 2 < pattern.len()
-                        && pattern[index + 1] == '-'
-                        && pattern[index + 2] != ']' =>
+                        && pattern[index + 1] == b'-'
+                        && pattern[index + 2] != b']' =>
                 {
                     let range_end = pattern[index + 2];
                     let (lower, upper) = if range_start <= range_end {
@@ -2521,76 +2522,73 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
         None
     }
 
-    fn match_recursive(
-        pattern: &[char],
-        text: &[char],
-        p_idx: usize,
-        t_idx: usize,
-        memo: &mut HashMap<(usize, usize), bool>,
-    ) -> bool {
-        if let Some(result) = memo.get(&(p_idx, t_idx)) {
-            return *result;
-        }
-
-        let result = if p_idx >= pattern.len() {
-            t_idx >= text.len()
-        } else {
-            match pattern[p_idx] {
-                '*' => {
-                    let mut candidate_index = t_idx;
-                    let mut matched = false;
-                    while candidate_index <= text.len() {
-                        if match_recursive(pattern, text, p_idx + 1, candidate_index, memo) {
-                            matched = true;
-                            break;
-                        }
-                        candidate_index += 1;
-                    }
-                    matched
-                }
-                '?' => {
-                    t_idx < text.len() && match_recursive(pattern, text, p_idx + 1, t_idx + 1, memo)
-                }
-                '[' if t_idx < text.len() => {
-                    if let Some((class_matches, next_pattern_index)) =
-                        match_character_class(pattern, p_idx, text[t_idx])
-                    {
-                        class_matches
-                            && match_recursive(pattern, text, next_pattern_index, t_idx + 1, memo)
-                    } else {
-                        text[t_idx] == '['
-                            && match_recursive(pattern, text, p_idx + 1, t_idx + 1, memo)
-                    }
-                }
-                '\\' => {
-                    let (literal, next_pattern_index) = if p_idx + 1 < pattern.len() {
-                        (pattern[p_idx + 1], p_idx + 2)
-                    } else {
-                        ('\\', p_idx + 1)
-                    };
-                    t_idx < text.len()
-                        && text[t_idx] == literal
-                        && match_recursive(pattern, text, next_pattern_index, t_idx + 1, memo)
-                }
-                literal => {
-                    t_idx < text.len()
-                        && text[t_idx] == literal
-                        && match_recursive(pattern, text, p_idx + 1, t_idx + 1, memo)
-                }
+    fn token_matches(pattern: &[u8], pattern_index: usize, candidate: u8) -> Option<usize> {
+        match pattern.get(pattern_index).copied()? {
+            b'?' => Some(pattern_index + 1),
+            b'[' => match match_character_class(pattern, pattern_index, candidate) {
+                Some((true, next_pattern_index)) => Some(next_pattern_index),
+                Some((false, _)) => None,
+                None if candidate == b'[' => Some(pattern_index + 1),
+                None => None,
+            },
+            b'\\' => {
+                let (literal, next_pattern_index) = if pattern_index + 1 < pattern.len() {
+                    (pattern[pattern_index + 1], pattern_index + 2)
+                } else {
+                    (b'\\', pattern_index + 1)
+                };
+                (candidate == literal).then_some(next_pattern_index)
             }
-        };
-
-        memo.insert((p_idx, t_idx), result);
-        result
+            b'*' => None,
+            literal => (candidate == literal).then_some(pattern_index + 1),
+        }
     }
 
-    match_recursive(&pattern_chars, &text_chars, 0, 0, &mut HashMap::new())
+    let mut pattern_index = 0;
+    let mut text_index = 0;
+    let mut star_pattern_index = None;
+    let mut star_text_index = 0;
+
+    while text_index < text.len() {
+        if pattern.get(pattern_index) == Some(&b'*') {
+            while pattern.get(pattern_index) == Some(&b'*') {
+                pattern_index += 1;
+            }
+            if pattern_index == pattern.len() {
+                return true;
+            }
+            star_pattern_index = Some(pattern_index);
+            star_text_index = text_index;
+            continue;
+        }
+
+        if let Some(next_pattern_index) = token_matches(pattern, pattern_index, text[text_index]) {
+            pattern_index = next_pattern_index;
+            text_index += 1;
+            continue;
+        }
+
+        let Some(resume_pattern_index) = star_pattern_index else {
+            return false;
+        };
+        if star_text_index >= text.len() {
+            return false;
+        }
+        star_text_index += 1;
+        text_index = star_text_index;
+        pattern_index = resume_pattern_index;
+    }
+
+    while pattern.get(pattern_index) == Some(&b'*') {
+        pattern_index += 1;
+    }
+    pattern_index == pattern.len()
 }
 
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod glob_tests {
-    use super::glob_match;
+    use super::{glob_match, glob_match_bytes};
 
     #[test]
     fn test_glob_match_exact() {
@@ -2646,5 +2644,24 @@ mod glob_tests {
         assert!(glob_match(r"literal\[bracket", "literal[bracket"));
         assert!(glob_match(r"class[\]]", "class]"));
         assert!(glob_match(r"slash\\", r"slash\"));
+    }
+
+    #[test]
+    fn test_glob_match_bytes_treats_question_mark_as_one_byte() {
+        let utf8 = "é".as_bytes();
+        assert!(!glob_match_bytes(b"?", utf8));
+        assert!(glob_match_bytes(b"??", utf8));
+        assert!(glob_match_bytes(b"?", &[0xff]));
+    }
+
+    #[test]
+    fn test_glob_match_bytes_handles_long_inputs_without_recursion() {
+        const INPUT_LEN: usize = 200_000;
+        let text = vec![b'a'; INPUT_LEN];
+        let question_pattern = vec![b'?'; INPUT_LEN];
+        let literal_pattern = vec![b'a'; INPUT_LEN];
+
+        assert!(glob_match_bytes(&question_pattern, &text));
+        assert!(glob_match_bytes(&literal_pattern, &text));
     }
 }

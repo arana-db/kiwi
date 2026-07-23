@@ -345,7 +345,7 @@ async fn test_keys_command() {
     let _receiver = storage.open(options, &db_path).unwrap();
 
     // Test KEYS with empty database
-    let keys = storage.keys("*").unwrap();
+    let keys = storage.keys(b"*").unwrap();
     assert!(keys.is_empty());
 
     // Set some keys
@@ -354,11 +354,11 @@ async fn test_keys_command() {
     storage.set(b"other", b"value3").unwrap();
 
     // Test KEYS with wildcard pattern
-    let keys = storage.keys("*").unwrap();
+    let keys = storage.keys(b"*").unwrap();
     assert!(keys.len() >= 3); // May contain other keys from the system
 
     // Test KEYS with a Redis glob pattern
-    let keys = storage.keys("test*").unwrap();
+    let keys = storage.keys(b"test*").unwrap();
     assert!(keys.len() >= 2); // Should find test1 and test2
 
     storage.shutdown().await;

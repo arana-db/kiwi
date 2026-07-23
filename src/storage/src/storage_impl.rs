@@ -720,7 +720,7 @@ impl Storage {
     }
 
     /// Find all keys matching the given pattern
-    pub fn keys(&self, pattern: &str) -> Result<Vec<String>> {
+    pub fn keys(&self, pattern: &[u8]) -> Result<Vec<Vec<u8>>> {
         let mut all_keys = Vec::new();
 
         for inst in &self.insts {
