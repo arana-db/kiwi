@@ -22,9 +22,8 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use foyer::{Cache, CacheBuilder};
 use kstd::lock_mgr::LockMgr;
-use parking_lot::RwLock;
 use snafu::ResultExt;
-use tokio::sync::mpsc;
+use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, mpsc};
 
 use crate::error::{Error, MpscSnafu, Result};
 use crate::expiration_manager::ExpirationManager;
@@ -94,7 +93,7 @@ pub struct Storage {
     pub insts: Vec<Arc<Redis>>,
     pub slot_indexer: SlotIndexer,
     pub lock_mgr: Arc<LockMgr>,
-    command_access_gate: RwLock<()>,
+    command_access_gate: Arc<RwLock<()>>,
     pub is_opened: AtomicBool,
 
     // For bg task
@@ -130,7 +129,7 @@ impl Storage {
             slot_indexer: SlotIndexer::new(db_instance_num),
             is_opened: AtomicBool::new(false),
             lock_mgr: Arc::new(LockMgr::new(1000)),
-            command_access_gate: RwLock::new(()),
+            command_access_gate: Arc::new(RwLock::new(())),
             cursors_store: Arc::new(CacheBuilder::new(1000).build()),
             db_instance_num,
             db_id,
@@ -144,20 +143,22 @@ impl Storage {
         }
     }
 
-    /// Run a top-level storage command while allowing other shared commands
-    /// to execute concurrently.
-    pub fn with_shared_command_access<R>(&self, command: impl FnOnce() -> R) -> R {
-        let _guard = self.command_access_gate.read();
-        command()
+    /// Wait for shared top-level command access without blocking a runtime worker.
+    ///
+    /// The owned guard is `Send`, so a dispatcher may keep it while command
+    /// execution enters `tokio::task::block_in_place`. Raft apply writes through
+    /// `on_binlog_write` directly and therefore does not recursively acquire it.
+    pub async fn acquire_shared_command_access(&self) -> OwnedRwLockReadGuard<()> {
+        Arc::clone(&self.command_access_gate).read_owned().await
     }
 
-    /// Run a top-level storage command without concurrent command observers.
+    /// Wait for exclusive top-level command access without blocking a runtime worker.
     ///
-    /// This provides in-process visibility across separate RocksDB instances.
+    /// The owned guard has the same `Send` and Raft-apply properties as the
+    /// shared guard. This provides in-process visibility across separate RocksDB instances.
     /// It does not make their writes crash-atomic or add rollback on failure.
-    pub fn with_exclusive_command_access<R>(&self, command: impl FnOnce() -> R) -> R {
-        let _guard = self.command_access_gate.write();
-        command()
+    pub async fn acquire_exclusive_command_access(&self) -> OwnedRwLockWriteGuard<()> {
+        Arc::clone(&self.command_access_gate).write_owned().await
     }
 
     /// Internal method to release all resources.
@@ -846,145 +847,107 @@ mod append_log_fn_tests {
 #[cfg(test)]
 mod command_access_gate_tests {
     use super::Storage;
-    use std::sync::{Arc, mpsc};
-    use std::thread;
+    use std::sync::Arc;
     use std::time::Duration;
+    use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, oneshot};
 
     #[test]
-    fn exclusive_command_access_blocks_shared_access() {
+    fn owned_command_access_guards_are_send() {
+        fn assert_send<T: Send>() {}
+
+        assert_send::<OwnedRwLockReadGuard<()>>();
+        assert_send::<OwnedRwLockWriteGuard<()>>();
+    }
+
+    #[tokio::test]
+    async fn exclusive_command_access_blocks_shared_access() {
         let storage = Arc::new(Storage::new(1, 0));
-        let (exclusive_entered_tx, exclusive_entered_rx) = mpsc::channel();
-        let (release_exclusive_tx, release_exclusive_rx) = mpsc::channel();
-        let (shared_entered_tx, shared_entered_rx) = mpsc::channel();
+        let exclusive = storage.acquire_exclusive_command_access().await;
 
-        let exclusive_storage = Arc::clone(&storage);
-        let exclusive = thread::spawn(move || {
-            exclusive_storage.with_exclusive_command_access(|| {
-                exclusive_entered_tx
-                    .send(())
-                    .expect("exclusive holder should report entry");
-                release_exclusive_rx
-                    .recv()
-                    .expect("exclusive holder should be released");
-            });
-        });
-        exclusive_entered_rx
-            .recv()
-            .expect("exclusive holder should enter first");
-
+        let (shared_attempted_tx, shared_attempted_rx) = oneshot::channel();
+        let (shared_entered_tx, mut shared_entered_rx) = oneshot::channel();
         let shared_storage = Arc::clone(&storage);
-        let shared = thread::spawn(move || {
-            shared_storage.with_shared_command_access(|| {
-                shared_entered_tx
-                    .send(())
-                    .expect("shared holder should report entry");
-            });
+        let shared = tokio::spawn(async move {
+            shared_attempted_tx
+                .send(())
+                .expect("shared waiter should report its attempt");
+            let _guard = shared_storage.acquire_shared_command_access().await;
+            shared_entered_tx
+                .send(())
+                .expect("shared holder should report entry");
         });
+        shared_attempted_rx
+            .await
+            .expect("shared waiter should reach the gate");
 
         assert!(
-            shared_entered_rx
-                .recv_timeout(Duration::from_millis(100))
+            tokio::time::timeout(Duration::from_millis(100), &mut shared_entered_rx)
+                .await
                 .is_err(),
             "shared access must wait while exclusive access is held"
         );
-        release_exclusive_tx
-            .send(())
-            .expect("exclusive holder should receive release");
-        shared_entered_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("shared access should enter after exclusive access exits");
-
-        exclusive.join().expect("exclusive thread should finish");
-        shared.join().expect("shared thread should finish");
+        drop(exclusive);
+        tokio::time::timeout(Duration::from_secs(1), &mut shared_entered_rx)
+            .await
+            .expect("shared access should enter after exclusive access exits")
+            .expect("shared holder should report entry");
+        shared.await.expect("shared task should finish");
     }
 
-    #[test]
-    fn shared_command_access_blocks_exclusive_access() {
+    #[tokio::test]
+    async fn shared_command_access_blocks_exclusive_access() {
         let storage = Arc::new(Storage::new(1, 0));
-        let (shared_entered_tx, shared_entered_rx) = mpsc::channel();
-        let (release_shared_tx, release_shared_rx) = mpsc::channel();
-        let (exclusive_entered_tx, exclusive_entered_rx) = mpsc::channel();
+        let shared = storage.acquire_shared_command_access().await;
 
-        let shared_storage = Arc::clone(&storage);
-        let shared = thread::spawn(move || {
-            shared_storage.with_shared_command_access(|| {
-                shared_entered_tx
-                    .send(())
-                    .expect("shared holder should report entry");
-                release_shared_rx
-                    .recv()
-                    .expect("shared holder should be released");
-            });
-        });
-        shared_entered_rx
-            .recv()
-            .expect("shared holder should enter first");
-
+        let (exclusive_attempted_tx, exclusive_attempted_rx) = oneshot::channel();
+        let (exclusive_entered_tx, mut exclusive_entered_rx) = oneshot::channel();
         let exclusive_storage = Arc::clone(&storage);
-        let exclusive = thread::spawn(move || {
-            exclusive_storage.with_exclusive_command_access(|| {
-                exclusive_entered_tx
-                    .send(())
-                    .expect("exclusive holder should report entry");
-            });
+        let exclusive = tokio::spawn(async move {
+            exclusive_attempted_tx
+                .send(())
+                .expect("exclusive waiter should report its attempt");
+            let _guard = exclusive_storage.acquire_exclusive_command_access().await;
+            exclusive_entered_tx
+                .send(())
+                .expect("exclusive holder should report entry");
         });
+        exclusive_attempted_rx
+            .await
+            .expect("exclusive waiter should reach the gate");
 
         assert!(
-            exclusive_entered_rx
-                .recv_timeout(Duration::from_millis(100))
+            tokio::time::timeout(Duration::from_millis(100), &mut exclusive_entered_rx)
+                .await
                 .is_err(),
             "exclusive access must wait while shared access is held"
         );
-        release_shared_tx
-            .send(())
-            .expect("shared holder should receive release");
-        exclusive_entered_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("exclusive access should enter after shared access exits");
-
-        shared.join().expect("shared thread should finish");
-        exclusive.join().expect("exclusive thread should finish");
+        drop(shared);
+        tokio::time::timeout(Duration::from_secs(1), &mut exclusive_entered_rx)
+            .await
+            .expect("exclusive access should enter after shared access exits")
+            .expect("exclusive holder should report entry");
+        exclusive.await.expect("exclusive task should finish");
     }
 
-    #[test]
-    fn shared_command_access_allows_parallel_readers() {
+    #[tokio::test]
+    async fn shared_command_access_allows_parallel_readers() {
         let storage = Arc::new(Storage::new(1, 0));
-        let (first_entered_tx, first_entered_rx) = mpsc::channel();
-        let (release_first_tx, release_first_rx) = mpsc::channel();
-        let (second_entered_tx, second_entered_rx) = mpsc::channel();
+        let first = storage.acquire_shared_command_access().await;
 
-        let first_storage = Arc::clone(&storage);
-        let first = thread::spawn(move || {
-            first_storage.with_shared_command_access(|| {
-                first_entered_tx
-                    .send(())
-                    .expect("first shared holder should report entry");
-                release_first_rx
-                    .recv()
-                    .expect("first shared holder should be released");
-            });
-        });
-        first_entered_rx
-            .recv()
-            .expect("first shared holder should enter");
-
+        let (second_entered_tx, second_entered_rx) = oneshot::channel();
         let second_storage = Arc::clone(&storage);
-        let second = thread::spawn(move || {
-            second_storage.with_shared_command_access(|| {
-                second_entered_tx
-                    .send(())
-                    .expect("second shared holder should report entry");
-            });
+        let second = tokio::spawn(async move {
+            let _guard = second_storage.acquire_shared_command_access().await;
+            second_entered_tx
+                .send(())
+                .expect("second shared holder should report entry");
         });
 
-        second_entered_rx
-            .recv_timeout(Duration::from_secs(1))
-            .expect("a second shared access should enter concurrently");
-        release_first_tx
-            .send(())
-            .expect("first shared holder should receive release");
-
-        first.join().expect("first shared thread should finish");
-        second.join().expect("second shared thread should finish");
+        tokio::time::timeout(Duration::from_secs(1), second_entered_rx)
+            .await
+            .expect("a second shared access should enter concurrently")
+            .expect("second shared holder should report entry");
+        drop(first);
+        second.await.expect("second shared task should finish");
     }
 }

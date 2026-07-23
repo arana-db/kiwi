@@ -208,20 +208,9 @@ pub trait Cmd: Send + Sync {
         }
     }
 
-    /// Execute a real top-level storage command under the command visibility gate.
-    ///
-    /// Internal composite command dispatch must continue to call `execute` so it
-    /// does not recursively acquire the same gate.
-    fn execute_with_storage_access(&self, client: &Client, storage: Arc<Storage>) {
-        if self.has_flag(CmdFlags::STORAGE_EXCLUSIVE) {
-            storage.with_exclusive_command_access(|| {
-                self.execute(client, Arc::clone(&storage));
-            });
-        } else {
-            storage.with_shared_command_access(|| {
-                self.execute(client, Arc::clone(&storage));
-            });
-        }
+    /// Whether a real top-level dispatcher must exclude all other storage commands.
+    fn requires_exclusive_storage_access(&self) -> bool {
+        self.has_flag(CmdFlags::STORAGE_EXCLUSIVE)
     }
 
     fn name(&self) -> &str {

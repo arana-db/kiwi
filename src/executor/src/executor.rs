@@ -128,8 +128,14 @@ impl CmdExecutor {
 
         // TODO: we may consider pass the cancellation_token to cmd.execute to
         // allow having a graceful shutdown in a big command processing logic.
-        exec.cmd
-            .execute_with_storage_access(exec.client.as_ref(), exec.storage);
+        let storage = exec.storage;
+        if exec.cmd.requires_exclusive_storage_access() {
+            let _guard = storage.acquire_exclusive_command_access().await;
+            exec.cmd.execute(exec.client.as_ref(), Arc::clone(&storage));
+        } else {
+            let _guard = storage.acquire_shared_command_access().await;
+            exec.cmd.execute(exec.client.as_ref(), Arc::clone(&storage));
+        }
 
         // notify the work has finished to the caller
         let _ = work.done.send(());
@@ -167,8 +173,8 @@ impl CmdExecutor {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Arc, mpsc};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Condvar, Mutex, mpsc};
     use std::thread;
     use std::time::Duration;
 
@@ -215,6 +221,117 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
+    struct BlockingExclusiveCmd {
+        meta: CmdMeta,
+        entered: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+        control: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl BlockingExclusiveCmd {
+        fn new(entered: oneshot::Sender<()>, control: Arc<(Mutex<bool>, Condvar)>) -> Self {
+            Self {
+                meta: CmdMeta {
+                    name: "blocking-exclusive".to_string(),
+                    arity: 1,
+                    flags: CmdFlags::WRITE | CmdFlags::STORAGE_EXCLUSIVE,
+                    acl_category: AclCategory::WRITE,
+                    ..Default::default()
+                },
+                entered: Arc::new(Mutex::new(Some(entered))),
+                control,
+            }
+        }
+    }
+
+    impl Cmd for BlockingExclusiveCmd {
+        fn meta(&self) -> &CmdMeta {
+            &self.meta
+        }
+
+        fn do_initial(&self, _client: &Client) -> bool {
+            true
+        }
+
+        fn do_cmd(&self, _client: &Client, _storage: Arc<Storage>) {
+            if let Some(entered) = self
+                .entered
+                .lock()
+                .expect("entered sender mutex should not be poisoned")
+                .take()
+            {
+                let _ = entered.send(());
+            }
+
+            let (blocked, wake) = self.control.as_ref();
+            let mut blocked = blocked
+                .lock()
+                .expect("blocking control mutex should not be poisoned");
+            while *blocked {
+                blocked = wake
+                    .wait(blocked)
+                    .expect("blocking control mutex should not be poisoned");
+            }
+        }
+
+        fn clone_box(&self) -> Box<dyn Cmd> {
+            Box::new(self.clone())
+        }
+    }
+
+    #[derive(Clone)]
+    struct WaitingSharedCmd {
+        meta: CmdMeta,
+        attempts: Arc<AtomicUsize>,
+        attempt_notify: Arc<tokio::sync::Notify>,
+        executed: Arc<AtomicUsize>,
+    }
+
+    impl WaitingSharedCmd {
+        fn new(
+            attempts: Arc<AtomicUsize>,
+            attempt_notify: Arc<tokio::sync::Notify>,
+            executed: Arc<AtomicUsize>,
+        ) -> Self {
+            Self {
+                meta: CmdMeta {
+                    name: "waiting-shared".to_string(),
+                    arity: 1,
+                    flags: CmdFlags::READONLY,
+                    acl_category: AclCategory::READ,
+                    ..Default::default()
+                },
+                attempts,
+                attempt_notify,
+                executed,
+            }
+        }
+    }
+
+    impl Cmd for WaitingSharedCmd {
+        fn meta(&self) -> &CmdMeta {
+            &self.meta
+        }
+
+        fn do_initial(&self, _client: &Client) -> bool {
+            true
+        }
+
+        fn do_cmd(&self, _client: &Client, _storage: Arc<Storage>) {
+            self.executed.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn clone_box(&self) -> Box<dyn Cmd> {
+            Box::new(self.clone())
+        }
+
+        fn requires_exclusive_storage_access(&self) -> bool {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            self.attempt_notify.notify_one();
+            false
+        }
+    }
+
     #[tokio::test]
     async fn test_cmd_executor_basic_functionality() {
         let executed = Arc::new(AtomicBool::new(false));
@@ -255,22 +372,7 @@ mod tests {
         client.set_cmd_name(b"probe");
         client.set_argv(&[b"probe".to_vec()]);
 
-        let (exclusive_entered_tx, exclusive_entered_rx) = mpsc::channel();
-        let (release_exclusive_tx, release_exclusive_rx) = mpsc::channel();
-        let holder_storage = Arc::clone(&storage);
-        let holder = thread::spawn(move || {
-            holder_storage.with_exclusive_command_access(|| {
-                exclusive_entered_tx
-                    .send(())
-                    .expect("exclusive holder should report entry");
-                release_exclusive_rx
-                    .recv()
-                    .expect("exclusive holder should be released");
-            });
-        });
-        exclusive_entered_rx
-            .recv()
-            .expect("exclusive holder should enter before dispatch");
+        let exclusive = storage.acquire_exclusive_command_access().await;
 
         let mut executor = CmdExecutor::new(1, 5);
         let execution = executor.execute(CmdExecution {
@@ -286,9 +388,7 @@ mod tests {
         );
         assert!(!executed.load(Ordering::SeqCst));
 
-        release_exclusive_tx
-            .send(())
-            .expect("exclusive holder should receive release");
+        drop(exclusive);
         tokio::time::timeout(Duration::from_secs(1), async {
             while !executed.load(Ordering::SeqCst) {
                 tokio::task::yield_now().await;
@@ -297,8 +397,139 @@ mod tests {
         .await
         .expect("command should execute after exclusive access exits");
 
-        holder.join().expect("exclusive holder should finish");
         executor.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn waiting_for_command_gate_does_not_starve_runtime_workers() {
+        const WAITING_COMMANDS: usize = 4;
+
+        let storage = Arc::new(Storage::new(1, 0));
+        let exclusive_executor = Arc::new(CmdExecutor::new(1, 2));
+        let control = Arc::new((Mutex::new(true), Condvar::new()));
+        let (exclusive_entered_tx, exclusive_entered_rx) = oneshot::channel();
+        let exclusive_cmd = Arc::new(BlockingExclusiveCmd::new(
+            exclusive_entered_tx,
+            Arc::clone(&control),
+        ));
+        let exclusive_client = Arc::new(Client::new(Box::new(TestStream::new())));
+        exclusive_client.set_cmd_name(b"blocking-exclusive");
+        exclusive_client.set_argv(&[b"blocking-exclusive".to_vec()]);
+
+        let exclusive_executor_for_task = Arc::clone(&exclusive_executor);
+        let exclusive_storage = Arc::clone(&storage);
+        let exclusive_task = tokio::spawn(async move {
+            exclusive_executor_for_task
+                .execute(CmdExecution {
+                    cmd: exclusive_cmd,
+                    client: exclusive_client,
+                    storage: exclusive_storage,
+                })
+                .await;
+        });
+        exclusive_entered_rx
+            .await
+            .expect("exclusive command should enter while holding the gate");
+
+        // Create shared workers from the runtime worker that remains available.
+        // A synchronous gate wait would block this worker; an async wait yields it.
+        let shared_executor = Arc::new(CmdExecutor::new(WAITING_COMMANDS, 16));
+
+        // This native watchdog prevents a broken synchronous gate from hanging
+        // the test forever after both Tokio workers become blocked.
+        let watchdog_control = Arc::clone(&control);
+        let watchdog = thread::spawn(move || {
+            let (blocked, wake) = watchdog_control.as_ref();
+            let blocked = blocked
+                .lock()
+                .expect("watchdog control mutex should not be poisoned");
+            let (mut blocked, _) = wake
+                .wait_timeout_while(blocked, Duration::from_secs(1), |blocked| *blocked)
+                .expect("watchdog control mutex should not be poisoned");
+            if *blocked {
+                *blocked = false;
+                wake.notify_all();
+            }
+        });
+
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let executed = Arc::new(AtomicUsize::new(0));
+        let attempt_notify = Arc::new(tokio::sync::Notify::new());
+        let (heartbeat_tx, heartbeat_rx) = mpsc::channel();
+        let heartbeat_notify = Arc::clone(&attempt_notify);
+        let heartbeat = tokio::spawn(async move {
+            heartbeat_notify.notified().await;
+            tokio::task::yield_now().await;
+            heartbeat_tx
+                .send(())
+                .expect("heartbeat receiver should remain alive");
+        });
+
+        let mut waiting_tasks = Vec::new();
+        for _ in 0..WAITING_COMMANDS {
+            let command = Arc::new(WaitingSharedCmd::new(
+                Arc::clone(&attempts),
+                Arc::clone(&attempt_notify),
+                Arc::clone(&executed),
+            ));
+            let client = Arc::new(Client::new(Box::new(TestStream::new())));
+            client.set_cmd_name(b"waiting-shared");
+            client.set_argv(&[b"waiting-shared".to_vec()]);
+            let waiting_executor = Arc::clone(&shared_executor);
+            let waiting_storage = Arc::clone(&storage);
+            waiting_tasks.push(tokio::spawn(async move {
+                waiting_executor
+                    .execute(CmdExecution {
+                        cmd: command,
+                        client,
+                        storage: waiting_storage,
+                    })
+                    .await;
+            }));
+        }
+
+        let heartbeat_result = tokio::task::spawn_blocking(move || {
+            heartbeat_rx.recv_timeout(Duration::from_millis(250))
+        })
+        .await
+        .expect("heartbeat waiter should not panic");
+        assert!(
+            heartbeat_result.is_ok(),
+            "gate waiters must yield so an unrelated heartbeat can run"
+        );
+        tokio::time::timeout(Duration::from_millis(250), async {
+            while attempts.load(Ordering::SeqCst) < WAITING_COMMANDS {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("all shared commands should reach the async gate");
+        assert_eq!(executed.load(Ordering::SeqCst), 0);
+
+        let (blocked, wake) = control.as_ref();
+        *blocked
+            .lock()
+            .expect("blocking control mutex should not be poisoned") = false;
+        wake.notify_all();
+
+        exclusive_task
+            .await
+            .expect("exclusive command task should finish");
+        for task in waiting_tasks {
+            task.await.expect("shared command task should finish");
+        }
+        heartbeat.await.expect("heartbeat task should finish");
+        watchdog.join().expect("watchdog thread should finish");
+        assert_eq!(executed.load(Ordering::SeqCst), WAITING_COMMANDS);
+
+        match Arc::try_unwrap(exclusive_executor) {
+            Ok(mut executor) => executor.close().await,
+            Err(_) => panic!("all exclusive executor owners should be released"),
+        }
+        match Arc::try_unwrap(shared_executor) {
+            Ok(mut executor) => executor.close().await,
+            Err(_) => panic!("all shared executor owners should be released"),
+        }
     }
 
     // Simple test stream implementation
