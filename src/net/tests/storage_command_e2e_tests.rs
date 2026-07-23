@@ -210,6 +210,27 @@ async fn send_command_with_version(
     read_response_with_version(stream, version).await
 }
 
+/// Send a command whose response is a single RESP line and return its exact wire bytes.
+async fn send_command_and_read_line(stream: &mut tokio::net::TcpStream, args: &[&str]) -> Bytes {
+    stream
+        .write_all(encode_command(args).as_ref())
+        .await
+        .expect("write to server");
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut response = Vec::with_capacity(16);
+        loop {
+            response.push(stream.read_u8().await.expect("read from server"));
+            if response.ends_with(b"\r\n") {
+                return Bytes::from(response);
+            }
+            assert!(response.len() < 64, "unexpectedly long RESP line");
+        }
+    })
+    .await
+    .expect("timed out waiting for RESP line")
+}
+
 #[tokio::test]
 async fn storage_command_e2e_set_get_round_trip() {
     let server = TestServer::start(None).await;
@@ -399,6 +420,35 @@ async fn storage_command_e2e_resp3_legacy_nulls_use_null_type() {
         reply,
         RespData::Array(Some(vec![RespData::Null, RespData::Null]))
     );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_rank_nulls_follow_negotiated_wire_protocol() {
+    let server = TestServer::start(None).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    for command in ["ZRANK", "ZREVRANK"] {
+        let reply =
+            send_command_and_read_line(&mut stream, &[command, "missing-zset", "member"]).await;
+        assert_eq!(reply, Bytes::from_static(b"$-1\r\n"), "{command}");
+    }
+
+    let reply = send_command_with_version(&mut stream, &["HELLO", "3"], RespVersion::RESP3).await;
+    assert!(
+        matches!(reply, RespData::Map(_)),
+        "expected RESP3 HELLO map, got {:?}",
+        reply
+    );
+
+    for command in ["ZRANK", "ZREVRANK"] {
+        let reply =
+            send_command_and_read_line(&mut stream, &[command, "missing-zset", "member"]).await;
+        assert_eq!(reply, Bytes::from_static(b"_\r\n"), "{command}");
+    }
 
     server.shutdown().await;
 }

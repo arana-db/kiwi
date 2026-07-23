@@ -388,10 +388,7 @@ impl RespEncode for RespEncoder {
             }
             RespData::Array(None) => self.set_array_len(-1),
             // RESP3 types
-            RespData::Null => {
-                self.buffer.extend_from_slice(b"_");
-                self.append_crlf()
-            }
+            RespData::Null => self.append_null(),
             RespData::Boolean(b) => {
                 self.buffer.extend_from_slice(b"#");
                 self.buffer.extend_from_slice(if *b { b"t" } else { b"f" });
@@ -465,10 +462,13 @@ impl RespEncode for RespEncoder {
         }
     }
 
-    // RESP3 specific methods
     fn append_null(&mut self) -> &mut Self {
-        self.buffer.extend_from_slice(b"_");
-        self.append_crlf()
+        if self.is_resp3() {
+            self.buffer.extend_from_slice(b"_");
+            self.append_crlf()
+        } else {
+            self.set_bulk_string_len(-1)
+        }
     }
 
     fn append_boolean(&mut self, value: bool) -> &mut Self {
@@ -755,15 +755,10 @@ mod tests {
     }
 
     #[test]
-    fn test_resp3_null_with_resp2_encoder() {
-        // Test current behavior: RESP3 Null encodes as RESP3 format even with RESP2 encoder
-        // This produces invalid RESP2 output (_\r\n is not valid RESP2)
-        // TODO: Auto-convert Null -> BulkString(None) "$-1\r\n" for RESP2 compatibility
+    fn test_encode_resp2_null_as_null_bulk_string() {
         let mut encoder = RespEncoder::new(RespVersion::RESP2);
         encoder.encode_resp_data(&RespData::Null);
-        let result = encoder.get_response();
-        // Current implementation produces RESP3 format regardless of encoder version
-        assert_eq!(result, Bytes::from("_\r\n"));
+        assert_eq!(encoder.get_response(), Bytes::from("$-1\r\n"));
     }
 
     #[test]
