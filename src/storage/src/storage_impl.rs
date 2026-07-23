@@ -164,20 +164,14 @@ impl Storage {
                 .push((key.clone(), value.clone()));
         }
 
-        // Sort keys to prevent deadlock, then dedup to avoid re-locking the same key
-        let mut sorted_keys: Vec<&Vec<u8>> = kvs.iter().map(|(key, _)| key).collect();
-        sorted_keys.sort();
-        sorted_keys.dedup();
-
-        // Acquire locks on all keys to ensure atomicity
-        // Use hex encoding to avoid lock aliasing from binary keys
-        let _locks: Vec<_> = sorted_keys
+        // Match the lossy UTF-8 lock identity used by ordinary key operations.
+        // LockMgr sorts and deduplicates shard indexes before acquiring them,
+        // preventing self-deadlock when different keys map to the same shard.
+        let lock_keys: Vec<String> = kvs
             .iter()
-            .map(|key| {
-                let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-                self.lock_mgr.lock(&key_hex)
-            })
+            .map(|(key, _)| String::from_utf8_lossy(key).into_owned())
             .collect();
+        let _locks = self.lock_mgr.multi_lock(&lock_keys);
 
         // Check if any key already exists
         for (instance_id, kv_pairs) in &instance_kvs {

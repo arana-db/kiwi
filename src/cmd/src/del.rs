@@ -35,7 +35,7 @@ impl DelCmd {
             meta: CmdMeta {
                 name: "del".to_string(),
                 arity: -2, // DEL key [key ...]
-                flags: CmdFlags::WRITE,
+                flags: CmdFlags::WRITE | CmdFlags::STORAGE_EXCLUSIVE,
                 acl_category: AclCategory::KEYSPACE | AclCategory::WRITE,
                 ..Default::default()
             },

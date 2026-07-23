@@ -171,6 +171,48 @@ mod redis_string_test {
     }
 
     #[tokio::test]
+    async fn test_storage_multi_instance_msetnx_is_all_or_nothing() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(3, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        let mut keys_by_instance = std::collections::HashMap::new();
+        for index in 0..10_000 {
+            let key = format!("msetnx:instance:{index}").into_bytes();
+            let instance_id = storage.slot_indexer.get_instance_id(key_to_slot_id(&key));
+            keys_by_instance.entry(instance_id).or_insert(key);
+            if keys_by_instance.len() == 3 {
+                break;
+            }
+        }
+        assert_eq!(keys_by_instance.len(), 3);
+
+        let mut keys: Vec<Vec<u8>> = keys_by_instance.into_values().collect();
+        keys.sort();
+        let initial: Vec<(Vec<u8>, Vec<u8>)> = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| (key.clone(), format!("initial-{index}").into_bytes()))
+            .collect();
+        assert!(storage.msetnx(&initial).unwrap());
+
+        let replacement: Vec<(Vec<u8>, Vec<u8>)> = keys
+            .iter()
+            .map(|key| (key.clone(), b"replacement".to_vec()))
+            .collect();
+        assert!(!storage.msetnx(&replacement).unwrap());
+        assert_eq!(
+            storage.mget_binary(&keys).unwrap(),
+            initial
+                .iter()
+                .map(|(_, value)| Some(value.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
     async fn test_storage_keys_supports_redis_glob_across_all_data_types() {
         let test_db_dir = tempfile::tempdir().unwrap();
         let mut storage = Storage::new(1, 0);

@@ -128,7 +128,8 @@ impl CmdExecutor {
 
         // TODO: we may consider pass the cancellation_token to cmd.execute to
         // allow having a graceful shutdown in a big command processing logic.
-        exec.cmd.execute(exec.client.as_ref(), exec.storage);
+        exec.cmd
+            .execute_with_storage_access(exec.client.as_ref(), exec.storage);
 
         // notify the work has finished to the caller
         let _ = work.done.send(());
@@ -166,21 +167,63 @@ impl CmdExecutor {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, mpsc};
+    use std::thread;
+    use std::time::Duration;
 
-    use cmd::get::GetCmd;
+    use cmd::{AclCategory, CmdFlags, CmdMeta};
 
     use super::*;
 
+    #[derive(Clone)]
+    struct ProbeCmd {
+        meta: CmdMeta,
+        executed: Arc<AtomicBool>,
+    }
+
+    impl ProbeCmd {
+        fn new(executed: Arc<AtomicBool>) -> Self {
+            Self {
+                meta: CmdMeta {
+                    name: "probe".to_string(),
+                    arity: 1,
+                    flags: CmdFlags::READONLY,
+                    acl_category: AclCategory::READ,
+                    ..Default::default()
+                },
+                executed,
+            }
+        }
+    }
+
+    impl Cmd for ProbeCmd {
+        fn meta(&self) -> &CmdMeta {
+            &self.meta
+        }
+
+        fn do_initial(&self, _client: &Client) -> bool {
+            true
+        }
+
+        fn do_cmd(&self, _client: &Client, _storage: Arc<Storage>) {
+            self.executed.store(true, Ordering::SeqCst);
+        }
+
+        fn clone_box(&self) -> Box<dyn Cmd> {
+            Box::new(self.clone())
+        }
+    }
+
     #[tokio::test]
     async fn test_cmd_executor_basic_functionality() {
-        // Create a real GetCmd
-        let get_cmd = Arc::new(GetCmd::new());
+        let executed = Arc::new(AtomicBool::new(false));
+        let get_cmd = Arc::new(ProbeCmd::new(Arc::clone(&executed)));
 
         // Create a simple client
         let client = Arc::new(Client::new(Box::new(TestStream::new())));
-        client.set_cmd_name(b"get");
-        client.set_argv(&[b"get".to_vec(), b"test_key".to_vec()]);
+        client.set_cmd_name(b"probe");
+        client.set_argv(&[b"probe".to_vec()]);
 
         // Create storage
         let storage = Arc::new(Storage::new(1, 0));
@@ -197,8 +240,64 @@ mod tests {
 
         // Execute the command
         executor.execute(cmd_execution).await;
+        assert!(executed.load(Ordering::SeqCst));
 
         // Test graceful shutdown
+        executor.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn executor_routes_commands_through_shared_storage_access() {
+        let storage = Arc::new(Storage::new(1, 0));
+        let executed = Arc::new(AtomicBool::new(false));
+        let command = Arc::new(ProbeCmd::new(Arc::clone(&executed)));
+        let client = Arc::new(Client::new(Box::new(TestStream::new())));
+        client.set_cmd_name(b"probe");
+        client.set_argv(&[b"probe".to_vec()]);
+
+        let (exclusive_entered_tx, exclusive_entered_rx) = mpsc::channel();
+        let (release_exclusive_tx, release_exclusive_rx) = mpsc::channel();
+        let holder_storage = Arc::clone(&storage);
+        let holder = thread::spawn(move || {
+            holder_storage.with_exclusive_command_access(|| {
+                exclusive_entered_tx
+                    .send(())
+                    .expect("exclusive holder should report entry");
+                release_exclusive_rx
+                    .recv()
+                    .expect("exclusive holder should be released");
+            });
+        });
+        exclusive_entered_rx
+            .recv()
+            .expect("exclusive holder should enter before dispatch");
+
+        let mut executor = CmdExecutor::new(1, 5);
+        let execution = executor.execute(CmdExecution {
+            cmd: command,
+            client,
+            storage,
+        });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), execution)
+                .await
+                .is_err(),
+            "shared command should wait behind held exclusive access"
+        );
+        assert!(!executed.load(Ordering::SeqCst));
+
+        release_exclusive_tx
+            .send(())
+            .expect("exclusive holder should receive release");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !executed.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("command should execute after exclusive access exits");
+
+        holder.join().expect("exclusive holder should finish");
         executor.close().await;
     }
 

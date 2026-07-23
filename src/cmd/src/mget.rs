@@ -35,7 +35,7 @@ impl MgetCmd {
             meta: CmdMeta {
                 name: "mget".to_string(),
                 arity: -2, // MGET key [key ...] (at least 1 key)
-                flags: CmdFlags::READONLY,
+                flags: CmdFlags::READONLY | CmdFlags::STORAGE_EXCLUSIVE,
                 acl_category: AclCategory::STRING | AclCategory::READ,
                 ..Default::default()
             },

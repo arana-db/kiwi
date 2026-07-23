@@ -1349,7 +1349,7 @@ impl StorageServer {
         client.set_argv(argv);
         client.set_authenticated(true);
 
-        command.execute(&client, Arc::clone(storage));
+        command.execute_with_storage_access(&client, Arc::clone(storage));
         Ok(client.take_reply())
     }
 }
@@ -1358,6 +1358,8 @@ impl StorageServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc as std_mpsc;
+    use std::thread;
     use std::time::Duration;
 
     use crate::message::RequestId;
@@ -1377,6 +1379,57 @@ mod tests {
         initialize_storage_command_table(Arc::new(|| None));
 
         (Arc::new(storage), db_path)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn storage_runtime_routes_exclusive_commands_through_command_gate() {
+        let (storage, db_path) = opened_test_storage();
+        let (shared_entered_tx, shared_entered_rx) = std_mpsc::channel();
+        let (release_shared_tx, release_shared_rx) = std_mpsc::channel();
+
+        let holder_storage = Arc::clone(&storage);
+        let holder = thread::spawn(move || {
+            holder_storage.with_shared_command_access(|| {
+                shared_entered_tx
+                    .send(())
+                    .expect("shared holder should report entry");
+                release_shared_rx
+                    .recv()
+                    .expect("shared holder should be released");
+            });
+        });
+        shared_entered_rx
+            .recv()
+            .expect("shared holder should enter before dispatch");
+
+        let command_storage = Arc::clone(&storage);
+        let command = tokio::spawn(async move {
+            StorageServer::handle_execute_command(
+                &command_storage,
+                b"mset",
+                &[b"mset".to_vec(), b"key".to_vec(), b"value".to_vec()],
+            )
+            .await
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            !command.is_finished(),
+            "exclusive storage command should wait behind shared access"
+        );
+
+        release_shared_tx
+            .send(())
+            .expect("shared holder should receive release");
+        let reply = tokio::time::timeout(Duration::from_secs(1), command)
+            .await
+            .expect("exclusive command should finish after shared access exits")
+            .expect("command task should not panic")
+            .expect("MSET should succeed");
+        assert_eq!(reply, RespData::SimpleString("OK".to_string().into()));
+
+        holder.join().expect("shared holder should finish");
+        drop(storage);
+        safe_cleanup_test_db(&db_path);
     }
 
     #[test]
