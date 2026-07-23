@@ -2,15 +2,15 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）逐任务实现此计划。步骤使用复选框（`- [ ]`）语法跟踪进度。
 
-**目标：** 将 Kiwi 固定到 `arana-db/rust-rocksdb@9e0de262bd378c84dcef4a226fed1217051fc5c5`，适配线程安全的 Collector Factory 接口，并证明现有 LogIndex SST 属性格式与恢复行为保持不变。
+**目标：** 将 Kiwi 固定到 `arana-db/rust-rocksdb@dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68`，适配线程安全的 Collector Factory 接口，并证明现有 LogIndex SST 属性格式与恢复行为保持不变。
 
-**架构：** 只替换根 workspace 的 Git revision 和 Factory receiver，不改变 LogIndex property key/value、Raft/Storage 数据路径或 RocksDB features。依赖升级后复用现有 Storage LogIndex 测试验证真实 bundled RocksDB 路径，并用独立的旧版本数据库探针验证 RocksDB 10.9.1 到 11.1.2 的 reopen/read 兼容性。
+**架构：** 只替换根 workspace 的 Git revision 和 Factory receiver，不改变 LogIndex property key/value、Raft/Storage 数据路径或 RocksDB features。目标 revision 包含已合并的 EventListener callback safety 工作；Kiwi 只更新依赖 pin 和相关验证，不在 README/Cargo 注释中展开该上游实现。依赖升级后复用现有 Storage LogIndex 测试验证真实 bundled RocksDB 路径，并用独立的旧版本数据库探针验证 RocksDB 10.9.1 到 11.1.2 的 reopen/read 兼容性。
 
-**技术栈：** Rust 1.91、Cargo workspace、arana-db/rust-rocksdb 0.51、RocksDB 11.1.2、WSL Ubuntu、Protocol Buffers、Clang。
+**技术栈：** `rust-rocksdb` 0.51 的 MSRV 为 Rust 1.91；Kiwi 实际按 `rust-toolchain.toml` 固定的 `nightly-2025-08-20` 构建和验证。其余组件为 Cargo workspace、RocksDB 11.1.2、WSL Ubuntu、Protocol Buffers 和 Clang。
 
 ---
 
-### 任务 1：升级依赖并适配 Collector Factory 合同
+## 任务 1：升级依赖并适配 Collector Factory 合同
 
 **文件：**
 - 修改：`Cargo.toml:44-53`
@@ -22,7 +22,7 @@
 将根依赖改为精确 revision：
 
 ```toml
-rocksdb = { package = "rust-rocksdb", git = "https://github.com/arana-db/rust-rocksdb", rev = "9e0de262bd378c84dcef4a226fed1217051fc5c5", features = ["multi-threaded-cf"] }
+rocksdb = { package = "rust-rocksdb", git = "https://github.com/arana-db/rust-rocksdb", rev = "dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68", features = ["multi-threaded-cf"] }
 ```
 
 - [x] **步骤 2：更新锁文件并验证预期接口失败**
@@ -34,7 +34,7 @@ cargo update -p rust-rocksdb
 cargo check -p storage
 ```
 
-预期：锁文件解析到 `9e0de262...`，`cargo check -p storage` 因 `TablePropertiesCollectorFactory::create` 需要 `&self`、当前实现仍为 `&mut self` 而失败。失败必须定位到 `src/storage/src/logindex/table_properties.rs`，不能接受网络、工具链或其他基线错误作为红灯。
+预期：锁文件解析到 `dd1ac21...`，`cargo check -p storage` 因 `TablePropertiesCollectorFactory::create` 需要 `&self`、当前实现仍为 `&mut self` 而失败。失败必须定位到 `src/storage/src/logindex/table_properties.rs`，不能接受网络、工具链或其他基线错误作为红灯。
 
 - [x] **步骤 3：写入最小接口适配**
 
@@ -63,7 +63,7 @@ rg -n 'LargestLogIndex/LargestSequenceNumber|format!\("\{\}/\{\}"' src/storage/s
 运行：
 
 ```bash
-rg -n 'git\+https://github.com/arana-db/rust-rocksdb\?rev=9e0de262bd378c84dcef4a226fed1217051fc5c5#9e0de262bd378c84dcef4a226fed1217051fc5c5' Cargo.lock
+rg -n 'git\+https://github.com/arana-db/rust-rocksdb\?rev=dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68#dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68' Cargo.lock
 git diff --check
 git add Cargo.toml Cargo.lock src/storage/src/logindex/table_properties.rs
 git commit -m "upgrade(storage): update rust-rocksdb maintenance baseline"
@@ -71,7 +71,7 @@ git commit -m "upgrade(storage): update rust-rocksdb maintenance baseline"
 
 预期：`rust-rocksdb` 和 `rust-librocksdb-sys` 两个 lock entry 都固定到新 SHA。
 
-### 任务 2：更新 fork 维护文档
+## 任务 2：更新 fork 维护文档
 
 **文件：**
 - 修改：`Cargo.toml:44-52`
@@ -110,7 +110,7 @@ git commit -m "docs(storage): describe the maintained RocksDB fork"
 
 预期：第一条命令无命中，第二条命中新的维护说明。
 
-### 任务 3：补齐损坏 TableProperties 的 fail-closed 测试
+## 任务 3：补齐损坏 TableProperties 的 fail-closed 测试
 
 **文件：**
 - 修改测试：`src/storage/src/logindex/table_properties.rs:220-278`
@@ -160,29 +160,39 @@ git add src/storage/src/logindex/table_properties.rs
 git commit -m "test(storage): reject malformed log index properties"
 ```
 
-### 任务 4：验证旧数据库和恢复路径兼容性
+## 任务 4：验证旧数据库和恢复路径兼容性
 
 **文件：**
 - 不修改生产文件
 - 临时探针：`D:/test/github/review/kiwi-rust-rocksdb-compat-*`
+- 修改测试：`src/raft/tests/logindex_integration.rs`
 
-- [x] **步骤 1：使用 Base `8ad50f6a...` 和旧 pin 创建持久化数据库**
+- [x] **步骤 1：使用 Base `8ad50f6afc5a8885a769b6baa776468090f0bee9` 和旧 pin 创建持久化数据库**
 
-使用独立临时 worktree/target，在旧依赖下运行真实 Storage/LogIndex 写入路径；阶段间只保留数据库目录，释放所有 DB、CF、listener 和 collector handle。
+旧 writer 必须在独立 worktree/target 中固定 `rust-rocksdb@f7abb18c64fac810f3c4736aef833c340396449b`（`rust-librocksdb-sys 0.41.0+10.9.1`），以固定数据库目录作为唯一跨进程输入。writer 通过真实 Storage/LogIndex open 路径写入并 flush 含 `LargestLogIndex/LargestSequenceNumber` 的 SST，打印实际 `<log_index>/<seqno>` 后退出。
 
 - [x] **步骤 2：使用升级后的分支重新打开同一数据库**
 
-调用产品的正式 open/recovery 路径，确认 RocksDB 11.1.2 能读取旧 RocksDB 10.9.1 生成的 SST 和 `LargestLogIndex/LargestSequenceNumber` 属性。
+新 reader 必须在另一个进程中固定 `rust-rocksdb@dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68`（`rust-librocksdb-sys 0.47.1+11.1.2`），只接收 writer 留下的同一数据库路径。reader 调用产品的正式 open/recovery 路径，确认 RocksDB 11.1.2 能读取旧 RocksDB 10.9.1 生成的 SST 和 `LargestLogIndex/LargestSequenceNumber` 属性。
+
+两个阶段之间不得保留进程内对象：writer 在退出前必须释放 TableProperties collection、所有 CF handle、DB、Factory、EventListener 和 Collector 的实际 owner；reader 只能在 writer 进程结束后从同一路径重新 open，不能共享 `Arc<DB>` 或其他 handle。探针的预期输出至少包含：
+
+```text
+WRITER_OK rust-rocksdb=f7abb18c64fac810f3c4736aef833c340396449b rocksdb=10.9.1 property=233333/<seqno>
+READER_OK rust-rocksdb=dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68 rocksdb=11.1.2 reopened=true property=233333/<same-seqno> applied=233333 flushed=233333
+```
+
+探针只保留数据库目录，不提交 SST fixture；失败时保留命令、revision、输出和 RocksDB 错误即可。
 
 - [x] **步骤 3：复核异常属性输入门禁**
 
-运行任务 3 的 Storage LogIndex 测试，确认 property 缺失、额外分段、非法数字和异常字节不会产生错误恢复结果。
+运行任务 3 的 Storage LogIndex 测试，并运行 `cargo test -p raft --test logindex_integration test_full_flow_multi_cf_properties -- --nocapture`。后者必须对每个真实 CF 执行 `put_cf`/`flush_cf`，记录各自实际 sequence/property pair，释放旧 DB 生命周期后同路径 reopen，再通过正式 `LogIndexOfColumnFamilies::init`/`DbAccess` 逐 CF 恢复；不得用 default CF 代替命名 CF，也不得假定所有 CF sequence 相同。
 
 - [x] **步骤 4：记录环境或兼容性结果**
 
 如果旧数据库无法由新版本打开，保存准确 RocksDB 错误、DB 路径构造方式和工具链版本，停止提交完成声明；不得通过删除数据库或跳过恢复测试获得绿色结果。
 
-### 任务 5：分层质量门禁
+## 任务 5：分层质量门禁
 
 **文件：**
 - 不新增生产文件
@@ -228,7 +238,7 @@ cargo test -p raft
 
 不得把 Windows 结果替代 Linux native/FFI 验证。
 
-### 任务 6：最终审查与交付边界
+## 任务 6：最终审查与交付边界
 
 - [x] **步骤 1：规格审查**
 

@@ -45,7 +45,7 @@ log = "0.4"
 # Kiwi uses the Arana-maintained arana-db/rust-rocksdb fork to provide the
 # TableProperties Collector/Factory FFI required by Storage LogIndex. Pinning an
 # exact revision keeps native dependency builds auditable and reproducible.
-rocksdb = { package = "rust-rocksdb", git = "https://github.com/arana-db/rust-rocksdb", rev = "9e0de262bd378c84dcef4a226fed1217051fc5c5", features = ["multi-threaded-cf"] }
+rocksdb = { package = "rust-rocksdb", git = "https://github.com/arana-db/rust-rocksdb", rev = "dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68", features = ["multi-threaded-cf"] }
 thiserror = "2.0"
 serde = "1.0"
 serde_json = "1.0"
