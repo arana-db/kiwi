@@ -25,20 +25,44 @@ MSET 并发测试
     pytest tests/python/test_mset_concurrent.py -v
 """
 
-import pytest
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import pytest
+
+
+@pytest.fixture
+def register_cleanup_keys(redis_clean):
+    """Register exact keys for unconditional, bounded post-test cleanup."""
+    keys = []
+
+    def register(new_keys):
+        keys.extend(new_keys)
+
+    try:
+        yield register
+    finally:
+        for offset in range(0, len(keys), 1000):
+            redis_clean.delete(*keys[offset:offset + 1000])
 
 
 class TestMsetConcurrency:
     """MSET 并发测试"""
 
-    def test_concurrent_mset_operations(self, redis_clean):
+    def test_concurrent_mset_operations(
+        self, redis_clean, register_cleanup_keys
+    ):
         """测试并发 MSET 操作"""
         r = redis_clean
         num_threads = 10
         operations_per_thread = 10
+        keys_to_delete = [
+            f'thread_{thread_id}_key_{i}'
+            for thread_id in range(num_threads)
+            for i in range(operations_per_thread)
+        ]
+        register_cleanup_keys(keys_to_delete)
         
         def mset_operation(thread_id):
             """每个线程执行的 MSET 操作"""
@@ -68,19 +92,14 @@ class TestMsetConcurrency:
                 actual_value = r.get(key)
                 assert actual_value == expected_value, f"键 {key} 的值不正确"
         
-        # 清理
-        keys_to_delete = [
-            f'thread_{thread_id}_key_{i}'
-            for thread_id in range(num_threads)
-            for i in range(operations_per_thread)
-        ]
-        r.delete(*keys_to_delete)
-
-    def test_concurrent_mset_same_keys(self, redis_clean):
+    def test_concurrent_mset_same_keys(
+        self, redis_clean, register_cleanup_keys
+    ):
         """测试并发 MSET 操作相同的键"""
         r = redis_clean
         num_threads = 20
         test_keys = ['shared_key_1', 'shared_key_2', 'shared_key_3']
+        register_cleanup_keys(test_keys)
         
         def mset_operation(thread_id):
             """每个线程尝试设置相同的键"""
@@ -103,12 +122,18 @@ class TestMsetConcurrency:
         assert len(set(values)) == 1, "所有键必须来自同一次 MSET"
         assert values[0].startswith('thread_') and values[0].endswith('_value')
         
-        r.delete(*test_keys)
-
-    def test_mset_atomicity_under_concurrency(self, redis_clean):
+    def test_mset_atomicity_under_concurrency(
+        self, redis_clean, register_cleanup_keys
+    ):
         """测试并发场景下 MSET 的原子性"""
         r = redis_clean
         num_iterations = 50
+        keys_to_delete = [
+            f'batch_{i}_key_{j}'
+            for i in range(num_iterations)
+            for j in range(1, 4)
+        ]
+        register_cleanup_keys(keys_to_delete)
         
         def mset_batch(batch_id):
             """设置一批键"""
@@ -131,15 +156,9 @@ class TestMsetConcurrency:
         # 所有批次都应该保持原子性
         assert all(results), "MSET 应该在并发场景下保持原子性"
         
-        # 清理
-        keys_to_delete = [
-            f'batch_{i}_key_{j}'
-            for i in range(num_iterations)
-            for j in range(1, 4)
-        ]
-        r.delete(*keys_to_delete)
-
-    def test_concurrent_mset_and_get(self, redis_clean):
+    def test_concurrent_mset_and_get(
+        self, redis_clean, register_cleanup_keys
+    ):
         """测试并发 MSET 和 GET 操作"""
         r = redis_clean
         num_writers = 5
@@ -189,6 +208,7 @@ class TestMsetConcurrency:
             for i in range(num_writers)
             for j in range(1, 3)
         ]
+        register_cleanup_keys(keys_to_delete)
         try:
             with ThreadPoolExecutor(
                 max_workers=num_writers + num_readers
@@ -211,31 +231,33 @@ class TestMsetConcurrency:
                     future.result()
         finally:
             stop_flag.set()
-            r.delete(*keys_to_delete)
 
     @pytest.mark.slow
-    def test_high_concurrency_stress(self, redis_clean):
+    def test_high_concurrency_stress(
+        self, redis_clean, register_cleanup_keys
+    ):
         """高并发压力测试"""
         r = redis_clean
         num_threads = 50
         operations_per_thread = 100
+        keys_to_delete = [
+            f'stress_{thread_id}_{i}_key_{j}'
+            for thread_id in range(num_threads)
+            for i in range(operations_per_thread)
+            for j in range(5)
+        ]
+        register_cleanup_keys(keys_to_delete)
         
         def stress_operation(thread_id):
             """压力测试操作"""
             success_count = 0
             for i in range(operations_per_thread):
-                try:
-                    # 每次操作设置多个键
-                    keys = {
-                        f'stress_{thread_id}_{i}_key_{j}': f'value_{j}'
-                        for j in range(5)
-                    }
-                    result = r.mset(keys)
-                    if result:
-                        success_count += 1
-                except Exception:
-                    # 压力环境允许忽略异常，仅用于测量成功操作数量
-                    pass
+                keys = {
+                    f'stress_{thread_id}_{i}_key_{j}': f'value_{j}'
+                    for j in range(5)
+                }
+                assert r.mset(keys) is True
+                success_count += 1
             return success_count
         
         # 执行高并发操作
@@ -255,15 +277,22 @@ class TestMsetConcurrency:
         print(f"  持续时间: {duration:.2f} 秒")
         print(f"  吞吐量: {ops_per_second:.2f} ops/sec")
         
-        # 至少应该有 80% 的操作成功
+        # 所有 worker 异常都由 future.result() 传播，因此每次操作都必须成功。
         expected_total = num_threads * operations_per_thread
-        success_rate = total_operations / expected_total
-        assert success_rate >= 0.8, f"成功率 {success_rate:.2%} 低于 80%"
+        assert total_operations == expected_total
 
-    def test_concurrent_mset_with_mget(self, redis_clean):
+    def test_concurrent_mset_with_mget(
+        self, redis_clean, register_cleanup_keys
+    ):
         """测试并发 MSET 和 MGET 操作"""
         r = redis_clean
         num_operations = 100
+        keys_to_delete = [
+            f'op_{i}_key_{j}'
+            for i in range(num_operations)
+            for j in range(1, 4)
+        ]
+        register_cleanup_keys(keys_to_delete)
         
         def mset_mget_operation(op_id):
             """MSET 后立即 MGET"""
@@ -292,23 +321,17 @@ class TestMsetConcurrency:
         # 所有操作都应该验证成功
         assert all(results), "MSET 和 MGET 应该保持一致性"
         
-        # 清理
-        keys_to_delete = [
-            f'op_{i}_key_{j}'
-            for i in range(num_operations)
-            for j in range(1, 4)
-        ]
-        r.delete(*keys_to_delete)
-
-
 class TestMsetRaceConditions:
     """MSET 竞态条件测试"""
 
-    def test_race_condition_overwrite(self, redis_clean):
+    def test_race_condition_overwrite(
+        self, redis_clean, register_cleanup_keys
+    ):
         """测试并发覆盖的竞态条件"""
         r = redis_clean
         num_threads = 10
         test_key = 'race_key'
+        register_cleanup_keys([test_key])
         
         def overwrite_operation(thread_id):
             """每个线程尝试覆盖相同的键"""
@@ -326,13 +349,14 @@ class TestMsetRaceConditions:
         assert final_value is not None
         assert final_value.startswith('thread_')
         
-        r.delete(test_key)
-
-    def test_race_condition_delete_and_set(self, redis_clean):
+    def test_race_condition_delete_and_set(
+        self, redis_clean, register_cleanup_keys
+    ):
         """测试删除和设置的竞态条件"""
         r = redis_clean
         test_keys = ['race_key_1', 'race_key_2', 'race_key_3']
         num_iterations = 50
+        register_cleanup_keys(test_keys)
         
         def delete_operation():
             """删除操作"""
@@ -361,9 +385,6 @@ class TestMsetRaceConditions:
         if any(v is not None for v in values):
             assert all(v is not None for v in values), "MSET 应该是原子的"
         
-        r.delete(*test_keys)
-
-
 if __name__ == '__main__':
     import sys
     try:

@@ -39,6 +39,21 @@ def assert_wrongtype_error(exc_info):
     ), f"Unexpected WRONGTYPE message: {message}"
 
 
+@pytest.fixture(autouse=True)
+def cleanup_wrongtype_keys(redis_clean):
+    """Remove every exact key used by this module even when a test fails."""
+    try:
+        yield
+    finally:
+        redis_clean.delete(
+            'list_key',
+            'hash_key',
+            'set_key',
+            'zset_key',
+            'string_key',
+        )
+
+
 class TestWrongTypeErrors:
     """WRONGTYPE 错误处理测试"""
 

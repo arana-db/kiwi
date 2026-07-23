@@ -22,7 +22,6 @@ Tests Redis list commands for compatibility and correctness
 """
 
 from concurrent.futures import ThreadPoolExecutor
-import threading
 import time
 
 import pytest
@@ -183,43 +182,35 @@ class TestListAdvancedOperations:
 class TestListConcurrency:
     """Test list operations under concurrent access"""
 
+    @pytest.fixture(autouse=True)
+    def cleanup_concurrency_keys(self, redis_clean):
+        """Remove the exact keys used by these tests even after failures."""
+        try:
+            yield
+        finally:
+            redis_clean.delete('test_concurrent', 'test_consistency')
+
     def test_concurrent_push_pop(self, redis_clean):
         """Test concurrent push and pop operations"""
         r = redis_clean
         results = []
-        errors = []
-        
+
         def push_worker():
-            try:
-                for i in range(100):
-                    r.lpush('test_concurrent', f'item_{i}')
-            except Exception as e:
-                errors.append(e)
-        
+            for i in range(100):
+                r.lpush('test_concurrent', f'item_{i}')
+
         def pop_worker():
-            try:
-                for _ in range(50):
-                    item = r.rpop('test_concurrent')
-                    if item:
-                        results.append(item)
-                    time.sleep(0.001)  # Small delay
-            except Exception as e:
-                errors.append(e)
-        
-        # Start threads
-        threads = []
-        threads.append(threading.Thread(target=push_worker))
-        threads.append(threading.Thread(target=pop_worker))
-        
-        for t in threads:
-            t.start()
-        
-        for t in threads:
-            t.join()
-        
-        # Verify no errors occurred
-        assert len(errors) == 0, f"Errors occurred: {errors}"
-        
+            for _ in range(50):
+                item = r.rpop('test_concurrent')
+                if item:
+                    results.append(item)
+                time.sleep(0.001)  # Small delay
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(push_worker), executor.submit(pop_worker)]
+            for future in futures:
+                future.result()
+
         # Verify final state is consistent
         final_length = r.llen('test_concurrent')
         assert final_length >= 0  # Should be non-negative

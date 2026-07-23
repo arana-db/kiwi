@@ -32,6 +32,44 @@ import pytest
 import redis
 
 
+@pytest.fixture(autouse=True)
+def cleanup_mset_keys(redis_clean):
+    """Remove the exact MSET test keys even when assertions fail."""
+    keys = [
+        'test_key1',
+        'test_key2',
+        'test_key3',
+        'test_single_key',
+        'test_overwrite_key1',
+        'test_overwrite_key2',
+        'test_overwrite_key3',
+        'test_mget_key1',
+        'test_mget_key2',
+        'test_mget_key3',
+        'test_atomic_key1',
+        'test_atomic_key2',
+        'test_atomic_key3',
+        b'test_binary_key1',
+        b'test_binary_key2',
+        b'test_utf8_key',
+        'test_mget1',
+        'test_mget2',
+        'test_over',
+        'test_single',
+        'test_a1',
+        'test_a2',
+    ]
+    keys.extend(f'test_batch_key_{i}' for i in range(100))
+    keys.extend(f'benchmark_key_{i}' for i in range(1000))
+    keys.extend(f'test_batch_{i}' for i in range(100))
+
+    try:
+        yield
+    finally:
+        for offset in range(0, len(keys), 500):
+            redis_clean.delete(*keys[offset:offset + 500])
+
+
 class TestMsetBasic:
     """MSET 基本功能测试"""
 
