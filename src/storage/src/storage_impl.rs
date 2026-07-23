@@ -57,14 +57,28 @@ impl Storage {
         self.insts[instance_id].get(key)
     }
 
+    pub fn get_binary(&self, key: &[u8]) -> Result<Vec<u8>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].get_binary(key)
+    }
+
     pub fn mget(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
+        Ok(self
+            .mget_binary(keys)?
+            .into_iter()
+            .map(|value| value.map(|value| String::from_utf8_lossy(&value).to_string()))
+            .collect())
+    }
+
+    pub fn mget_binary(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
 
         // If single instance, process directly for better performance
         if self.insts.len() == 1 {
-            return self.insts[0].mget(keys);
+            return self.insts[0].mget_binary(keys);
         }
 
         // Multi-instance: group keys by instance and process
@@ -85,7 +99,7 @@ impl Storage {
         for (instance_id, key_indices) in instance_keys {
             let instance_keys: Vec<Vec<u8>> =
                 key_indices.iter().map(|(_, key)| (*key).clone()).collect();
-            let instance_results = self.insts[instance_id].mget(&instance_keys)?;
+            let instance_results = self.insts[instance_id].mget_binary(&instance_keys)?;
 
             for ((original_idx, _), result) in key_indices.iter().zip(instance_results) {
                 results[*original_idx] = result;

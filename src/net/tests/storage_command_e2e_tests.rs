@@ -160,10 +160,16 @@ async fn wait_for_server(addr: SocketAddr) {
 
 /// Encode a Redis command as a RESP2 array of bulk strings.
 fn encode_command(args: &[&str]) -> Bytes {
+    let binary_args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
+    encode_binary_command(&binary_args)
+}
+
+/// Encode a Redis command with binary-safe bulk string arguments.
+fn encode_binary_command(args: &[&[u8]]) -> Bytes {
     let mut encoder = RespEncoder::new(RespVersion::RESP2);
     encoder.append_array_len(args.len() as i64);
     for arg in args {
-        encoder.append_string(arg);
+        encoder.append_bulk_string(arg);
     }
     encoder.get_response()
 }
@@ -195,6 +201,15 @@ async fn read_response_with_version(
 /// Send a command and return its parsed RESP response.
 async fn send_command(stream: &mut tokio::net::TcpStream, args: &[&str]) -> RespData {
     send_command_with_version(stream, args, RespVersion::RESP2).await
+}
+
+/// Send a command with binary-safe arguments and return its parsed RESP2 response.
+async fn send_binary_command(stream: &mut tokio::net::TcpStream, args: &[&[u8]]) -> RespData {
+    stream
+        .write_all(encode_binary_command(args).as_ref())
+        .await
+        .expect("write to server");
+    read_response_with_version(stream, RespVersion::RESP2).await
 }
 
 /// Send a command and parse its response using the specified protocol version.
@@ -383,6 +398,54 @@ async fn storage_command_e2e_generic_storage_commands_use_storage_path() {
     assert!(
         after.requests_sent >= before.requests_sent + 4,
         "generic commands should traverse the storage channel"
+    );
+
+    server.shutdown().await;
+}
+
+// Regression for issue #349: GET/MGET must return stored bytes unchanged over RESP.
+#[tokio::test]
+async fn storage_command_e2e_get_and_mget_preserve_binary_values() {
+    let server = TestServer::start(None).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    let first_value = [0, 1, 2, 3, 255];
+    let second_value = [255, 0, 254];
+
+    let reply = send_binary_command(&mut stream, &[b"SET", b"binary:first", &first_value]).await;
+    assert_eq!(reply, RespData::SimpleString(Bytes::from_static(b"OK")));
+    let reply = send_binary_command(&mut stream, &[b"SET", b"binary:second", &second_value]).await;
+    assert_eq!(reply, RespData::SimpleString(Bytes::from_static(b"OK")));
+
+    let reply = send_binary_command(&mut stream, &[b"GET", b"binary:first"]).await;
+    let RespData::BulkString(Some(actual)) = reply else {
+        panic!("expected bulk string reply, got {reply:?}");
+    };
+    assert_eq!(
+        actual.as_ref(),
+        first_value,
+        "GET returned different bytes: {actual:02x?}"
+    );
+
+    let reply = send_binary_command(
+        &mut stream,
+        &[
+            b"MGET",
+            b"binary:first",
+            b"binary:missing",
+            b"binary:second",
+        ],
+    )
+    .await;
+    assert_eq!(
+        reply,
+        RespData::Array(Some(vec![
+            RespData::BulkString(Some(Bytes::copy_from_slice(&first_value))),
+            RespData::BulkString(None),
+            RespData::BulkString(Some(Bytes::copy_from_slice(&second_value))),
+        ]))
     );
 
     server.shutdown().await;

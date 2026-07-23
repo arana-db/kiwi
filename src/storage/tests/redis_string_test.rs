@@ -71,6 +71,46 @@ mod redis_string_test {
         cleanup_redis(redis, &test_db_path);
     }
 
+    // Regression for issue #349: binary string reads must not use lossy UTF-8 conversion.
+    #[test]
+    fn test_redis_binary_get_and_mget_preserve_bytes() {
+        let test_db_path = unique_test_db_path();
+
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let first_key = b"binary:first";
+        let second_key = b"binary:second";
+        let first_value = [0, 1, 2, 3, 255];
+        let second_value = [255, 0, 254];
+        redis.set(first_key, &first_value).unwrap();
+        redis.set(second_key, &second_value).unwrap();
+
+        assert_eq!(redis.get_binary(first_key).unwrap(), first_value);
+        assert_eq!(
+            redis
+                .mget_binary(&[
+                    first_key.to_vec(),
+                    b"binary:missing".to_vec(),
+                    second_key.to_vec(),
+                ])
+                .unwrap(),
+            vec![
+                Some(first_value.to_vec()),
+                None,
+                Some(second_value.to_vec())
+            ]
+        );
+
+        cleanup_redis(redis, &test_db_path);
+    }
+
     #[test]
     fn test_redis_set_multiple() {
         let test_db_path = unique_test_db_path();

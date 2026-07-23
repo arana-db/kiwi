@@ -75,15 +75,14 @@ impl Cmd for MgetCmd {
         // Collect all keys (skip argv[0] which is the command name)
         let keys: Vec<Vec<u8>> = argv.iter().skip(1).cloned().collect();
 
-        let result = storage.mget(&keys);
+        let result = storage.mget_binary(&keys);
 
         match result {
             Ok(values) => {
-                // Convert Option<String> to RespData
                 let resp_array: Vec<RespData> = values
                     .into_iter()
                     .map(|opt_val| match opt_val {
-                        Some(val) => RespData::BulkString(Some(val.into_bytes().into())),
+                        Some(val) => RespData::BulkString(Some(val.into())),
                         None => RespData::BulkString(None),
                     })
                     .collect();

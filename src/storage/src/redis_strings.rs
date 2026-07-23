@@ -541,6 +541,15 @@ impl Redis {
     /// MGET nonexistent     // Returns [nil]
     /// ```
     pub fn mget(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
+        Ok(self
+            .mget_binary(keys)?
+            .into_iter()
+            .map(|value| value.map(|value| String::from_utf8_lossy(&value).to_string()))
+            .collect())
+    }
+
+    /// Get multiple string values as bytes, preserving binary data.
+    pub fn mget_binary(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -571,7 +580,7 @@ impl Redis {
                         TypeCheckState::Match => {
                             let string_value = ParsedStringsValue::new(&val[..])?;
                             let user_value = string_value.user_value();
-                            results.push(Some(String::from_utf8_lossy(&user_value).to_string()));
+                            results.push(Some(user_value.to_vec()));
                         }
                     }
                 }
