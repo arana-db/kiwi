@@ -36,6 +36,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
+#[cfg(test)]
+use std::collections::HashSet;
+#[cfg(test)]
+use std::sync::LazyLock;
+
 use arc_swap::ArcSwap;
 use openraft::{
     CommittedLeaderId, EntryPayload, ErrorSubject, ErrorVerb, LogId, RaftSnapshotBuilder, Snapshot,
@@ -68,6 +73,40 @@ const CURRENT_SNAPSHOT_DATA: &str = "current_snapshot.tar";
 const CURRENT_SNAPSHOT_META: &str = "current_snapshot_meta.json";
 const SNAPSHOT_INSTALL_MARKER_VERSION: u32 = 1;
 const SNAPSHOT_INSTALL_MARKER_SUFFIX: &str = ".snapshot-install-in-progress.json";
+const SNAPSHOT_INSTALL_CLEANUP_SUFFIX: &str = ".cleanup-pending";
+
+#[cfg(test)]
+static MARKER_PRIMARY_REMOVAL_SYNC_FAILURES: LazyLock<parking_lot::Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| parking_lot::Mutex::new(HashSet::new()));
+
+#[cfg(test)]
+struct MarkerPrimaryRemovalSyncFailureGuard {
+    marker_path: PathBuf,
+}
+
+#[cfg(test)]
+impl Drop for MarkerPrimaryRemovalSyncFailureGuard {
+    fn drop(&mut self) {
+        MARKER_PRIMARY_REMOVAL_SYNC_FAILURES
+            .lock()
+            .remove(&self.marker_path);
+    }
+}
+
+#[cfg(test)]
+fn fail_next_marker_primary_removal_sync(
+    marker_path: &Path,
+) -> MarkerPrimaryRemovalSyncFailureGuard {
+    let marker_path = marker_path.to_path_buf();
+    assert!(
+        MARKER_PRIMARY_REMOVAL_SYNC_FAILURES
+            .lock()
+            .insert(marker_path.clone()),
+        "marker removal sync failure already registered for {}",
+        marker_path.display()
+    );
+    MarkerPrimaryRemovalSyncFailureGuard { marker_path }
+}
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 struct SnapshotInstallMarker {
@@ -95,6 +134,12 @@ pub fn snapshot_install_marker_path(db_path: &Path) -> io::Result<PathBuf> {
     Ok(parent.unwrap_or_else(|| Path::new(".")).join(marker_name))
 }
 
+fn snapshot_install_cleanup_marker_path(marker_path: &Path) -> PathBuf {
+    let mut cleanup_name = marker_path.as_os_str().to_os_string();
+    cleanup_name.push(SNAPSHOT_INSTALL_CLEANUP_SUFFIX);
+    PathBuf::from(cleanup_name)
+}
+
 fn incomplete_install_error(marker_path: &Path, detail: impl std::fmt::Display) -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidData,
@@ -108,19 +153,28 @@ fn incomplete_install_error(marker_path: &Path, detail: impl std::fmt::Display) 
 /// Fail closed whenever an install marker exists, including malformed and unknown-version files.
 pub fn preflight_snapshot_install(db_path: &Path) -> io::Result<()> {
     let marker_path = snapshot_install_marker_path(db_path)?;
-    if !marker_path.try_exists()? {
-        return Ok(());
+    if marker_path.try_exists()? {
+        return reject_install_marker(&marker_path, "snapshot install did not complete");
     }
 
-    let bytes = std::fs::read(&marker_path).map_err(|error| {
-        incomplete_install_error(&marker_path, format!("failed to read marker: {error}"))
+    let cleanup_path = snapshot_install_cleanup_marker_path(&marker_path);
+    if cleanup_path.try_exists()? {
+        return reject_install_marker(&cleanup_path, "snapshot marker cleanup did not complete");
+    }
+
+    Ok(())
+}
+
+fn reject_install_marker(marker_path: &Path, state: &str) -> io::Result<()> {
+    let bytes = std::fs::read(marker_path).map_err(|error| {
+        incomplete_install_error(marker_path, format!("failed to read marker: {error}"))
     })?;
     let marker: SnapshotInstallMarker = serde_json::from_slice(&bytes).map_err(|error| {
-        incomplete_install_error(&marker_path, format!("marker is malformed: {error}"))
+        incomplete_install_error(marker_path, format!("marker is malformed: {error}"))
     })?;
     if marker.version != SNAPSHOT_INSTALL_MARKER_VERSION {
         return Err(incomplete_install_error(
-            &marker_path,
+            marker_path,
             format!(
                 "unsupported marker version {}, expected {}",
                 marker.version, SNAPSHOT_INSTALL_MARKER_VERSION
@@ -128,10 +182,10 @@ pub fn preflight_snapshot_install(db_path: &Path) -> io::Result<()> {
         ));
     }
     Err(incomplete_install_error(
-        &marker_path,
+        marker_path,
         format!(
-            "snapshot {} at index {} term {} did not complete",
-            marker.id, marker.index, marker.term
+            "{state}: snapshot {} at index {} term {}",
+            marker.id, marker.index, marker.term,
         ),
     ))
 }
@@ -143,6 +197,17 @@ fn write_and_sync(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 fn persist_install_marker(path: &Path, marker: &SnapshotInstallMarker) -> io::Result<Vec<u8>> {
+    let cleanup_path = snapshot_install_cleanup_marker_path(path);
+    if cleanup_path.try_exists()? {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "snapshot install cleanup marker already exists: {}",
+                cleanup_path.display()
+            ),
+        ));
+    }
+
     let bytes = serde_json::to_vec_pretty(marker)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
@@ -153,23 +218,45 @@ fn persist_install_marker(path: &Path, marker: &SnapshotInstallMarker) -> io::Re
 }
 
 fn remove_install_marker(path: &Path, marker_bytes: &[u8]) -> io::Result<()> {
+    let cleanup_path = snapshot_install_cleanup_marker_path(path);
+    let mut cleanup_file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&cleanup_path)?;
+    cleanup_file.write_all(marker_bytes)?;
+    cleanup_file.sync_all()?;
+    sync_parent_directory(&cleanup_path)?;
+
     std::fs::remove_file(path)?;
-    if let Err(sync_error) = sync_parent_directory(path) {
-        let restore_result = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .and_then(|mut file| {
-                file.write_all(marker_bytes)?;
-                file.sync_all()?;
-                sync_parent_directory(path)
-            });
-        return Err(io::Error::other(format!(
-            "failed to durably remove install marker {}: {sync_error}; marker restore result: {restore_result:?}",
-            path.display()
-        )));
+    sync_marker_parent_after_primary_removal(path)?;
+
+    std::fs::remove_file(&cleanup_path)?;
+    if let Err(error) = sync_parent_directory(&cleanup_path) {
+        // The cleanup marker was durably created before the primary marker was
+        // removed. If this final unlink is not durable, a restart observes
+        // either the cleanup marker (and blocks conservatively) or no marker
+        // after all restored state was already synchronized.
+        log::warn!(
+            "Failed to durably remove snapshot cleanup marker {}: {error}",
+            cleanup_path.display()
+        );
     }
     Ok(())
+}
+
+fn sync_marker_parent_after_primary_removal(marker_path: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if MARKER_PRIMARY_REMOVAL_SYNC_FAILURES
+        .lock()
+        .remove(marker_path)
+    {
+        return Err(io::Error::other(format!(
+            "injected marker primary removal sync failure for {}",
+            marker_path.display()
+        )));
+    }
+
+    sync_parent_directory(marker_path)
 }
 
 #[allow(clippy::result_large_err)]
@@ -673,5 +760,54 @@ impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
             meta,
             snapshot: Box::new(Cursor::new(bytes)),
         })
+    }
+}
+
+#[cfg(test)]
+mod marker_cleanup_tests {
+    use super::*;
+
+    #[test]
+    fn primary_marker_removal_sync_failure_leaves_restart_blocker() {
+        let root = tempfile::tempdir().expect("temporary directory should be created");
+        let db_path = root.path().join("db");
+        let marker_path = snapshot_install_marker_path(&db_path)
+            .expect("marker path should be derived from database path");
+        let cleanup_path = snapshot_install_cleanup_marker_path(&marker_path);
+        let marker = SnapshotInstallMarker {
+            version: SNAPSHOT_INSTALL_MARKER_VERSION,
+            id: "snapshot-test".to_string(),
+            index: 42,
+            term: 7,
+            db: db_path.clone(),
+            workdir: root.path().join("snapshots"),
+            instances: 1,
+        };
+        let marker_bytes =
+            persist_install_marker(&marker_path, &marker).expect("marker should be persisted");
+        let _failure = fail_next_marker_primary_removal_sync(&marker_path);
+
+        let error = remove_install_marker(&marker_path, &marker_bytes)
+            .expect_err("primary marker removal sync must fail at the injected point");
+        assert!(
+            error
+                .to_string()
+                .contains("injected marker primary removal sync failure"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            cleanup_path.is_file(),
+            "a durable cleanup marker must remain at {}",
+            cleanup_path.display()
+        );
+
+        let restart_error = preflight_snapshot_install(&db_path)
+            .expect_err("restart must reject a pending marker cleanup");
+        assert!(
+            restart_error
+                .to_string()
+                .contains(&cleanup_path.display().to_string()),
+            "restart refusal must identify cleanup marker: {restart_error}"
+        );
     }
 }

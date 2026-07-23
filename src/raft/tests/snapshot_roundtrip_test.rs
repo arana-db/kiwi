@@ -713,6 +713,8 @@ async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
         !snapshot_install_marker_path(&restore_db_path)?.exists(),
         "successful install must remove its durable recovery marker"
     );
+    preflight_snapshot_install(&restore_db_path)
+        .expect("successful install must remove every restart-blocking marker");
     let restored = target_swap.load_full();
     assert_eq!(restored.get(b"snapshot_key")?, "snapshot_value");
     assert!(restored.get(b"stale_key").is_err());
