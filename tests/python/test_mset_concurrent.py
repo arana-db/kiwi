@@ -379,6 +379,7 @@ class TestMsetRaceConditions:
         mutation_performed = threading.Event()
         overlap_observed = threading.Event()
         mutators_done = threading.Event()
+        mutator_failed = threading.Event()
         completion_lock = threading.Lock()
         completed_mutators = 0
 
@@ -386,45 +387,52 @@ class TestMsetRaceConditions:
             nonlocal completed_mutators
             with completion_lock:
                 completed_mutators += 1
-                is_last_mutator = completed_mutators == 2
-
-            if is_last_mutator:
-                try:
-                    assert overlap_observed.wait(timeout=5), (
-                        "observer did not sample during the mutation phase"
-                    )
-                finally:
+                if completed_mutators == 2:
                     mutators_done.set()
+
+        def wait_for_overlap(operation):
+            mutation_performed.set()
+            if not overlap_observed.wait(timeout=5):
+                raise AssertionError(
+                    f"observer did not sample after the first {operation}"
+                )
 
         def delete_operation():
             """删除操作"""
             try:
                 start_barrier.wait(timeout=5)
-                for iteration in range(num_iterations):
+                r.delete(*test_keys)
+                wait_for_overlap("DEL")
+                for _ in range(1, num_iterations):
                     r.delete(*test_keys)
-                    if iteration == 0:
-                        mutation_performed.set()
                     time.sleep(0.001)
-            finally:
+            except Exception:
+                mutator_failed.set()
+                raise
+            else:
                 finish_mutator()
 
         def mset_operation():
             """MSET 操作"""
             try:
                 start_barrier.wait(timeout=5)
-                for i in range(num_iterations):
+                r.mset({key: 'value_0' for key in test_keys})
+                wait_for_overlap("MSET")
+                for i in range(1, num_iterations):
                     r.mset({key: f'value_{i}' for key in test_keys})
-                    if i == 0:
-                        mutation_performed.set()
                     time.sleep(0.001)
-            finally:
+            except Exception:
+                mutator_failed.set()
+                raise
+            else:
                 finish_mutator()
 
         def observer_operation():
             start_barrier.wait(timeout=5)
-            assert mutation_performed.wait(timeout=5), (
-                "no DEL/MSET mutation completed before observation"
-            )
+            if not mutation_performed.wait(timeout=5):
+                raise AssertionError(
+                    "no DEL/MSET mutation completed before observation"
+                )
 
             while True:
                 values = r.mget(test_keys)
@@ -440,13 +448,15 @@ class TestMsetRaceConditions:
                 overlap_observed.set()
                 if mutators_done.is_set():
                     break
+                if mutator_failed.is_set():
+                    return
                 time.sleep(0)
 
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = [
-                executor.submit(observer_operation),
                 executor.submit(delete_operation),
                 executor.submit(mset_operation),
+                executor.submit(observer_operation),
             ]
             for future in futures:
                 future.result(timeout=30)
