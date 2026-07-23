@@ -3,6 +3,9 @@ name = "storage"
 version.workspace = true
 edition.workspace = true
 
+[features]
+test-fault-injection = []
+
 [lints]
 workspace = true 
 
@@ -46,5 +49,8 @@ moka = { version = "0.12", features = ["sync"] }
 foyer.workspace = true
 rand.workspace = true
 conf.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
 
 

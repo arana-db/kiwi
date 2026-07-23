@@ -41,6 +41,7 @@ tonic-prost-build = "0.14.6"
 [dev-dependencies]
 tempfile.workspace = true
 proptest = "1"
+storage = { workspace = true, features = ["test-fault-injection"] }
 
 [[test]]
 name = "logindex_integration"

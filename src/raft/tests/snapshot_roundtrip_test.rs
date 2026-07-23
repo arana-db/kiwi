@@ -27,6 +27,7 @@ use raft::state_machine::{
     KiwiStateMachine, PauseController, StorageAccessPermit, preflight_snapshot_install,
     snapshot_install_marker_path,
 };
+use storage::checkpoint::fail_next_restore_parent_sync_after_rename;
 use storage::{StorageOptions, storage::Storage};
 use storage::{safe_cleanup_test_db, unique_test_db_path};
 
@@ -899,6 +900,146 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
     drop(target_sm);
     drop(target_swap);
     close_storage(restored, "restored storage after failed install").await?;
+    drop(pause_controller);
+    drop(_target_rx);
+
+    std::fs::remove_file(&marker_path)?;
+    safe_cleanup_test_db(&src_db_path);
+    safe_cleanup_test_db(&restore_db_path);
+    safe_cleanup_test_db(&snap_root);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn install_snapshot_stays_paused_when_restore_parent_sync_fails_after_rename()
+-> anyhow::Result<()> {
+    let src_db_path = unique_test_db_path();
+    let restore_db_path = unique_test_db_path();
+    let snap_root = unique_test_db_path();
+
+    std::fs::create_dir_all(&snap_root)?;
+
+    let source_storage = {
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _rx = storage.open(options, &src_db_path)?;
+        Arc::new(storage)
+    };
+    source_storage.set(b"snapshot_key", b"snapshot_value")?;
+
+    let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
+    let mut source_sm = KiwiStateMachine::new(
+        1,
+        source_swap.clone(),
+        src_db_path.clone(),
+        snap_root.clone(),
+        noop_pause_controller(),
+        None,
+    );
+    let mut builder = source_sm.get_snapshot_builder().await;
+    let snapshot = builder.build_snapshot().await?;
+    let snapshot_meta = snapshot.meta.clone();
+    let snapshot_bytes = snapshot.snapshot.into_inner();
+
+    drop(builder);
+    drop(source_sm);
+    drop(source_swap);
+    close_storage(source_storage, "source storage").await?;
+
+    let mut target_storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _target_rx = target_storage.open(options, &restore_db_path)?;
+    target_storage.set(b"stale_key", b"stale_value")?;
+    std::fs::write(restore_db_path.join("sentinel"), b"old target")?;
+
+    let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
+    let pause_controller = Arc::new(TestPauseController::default());
+    let mut target_sm = KiwiStateMachine::new(
+        2,
+        target_swap.clone(),
+        restore_db_path.clone(),
+        snap_root.clone(),
+        pause_controller.clone(),
+        None,
+    );
+    let _fault_guard = fail_next_restore_parent_sync_after_rename(&restore_db_path);
+
+    let error = target_sm
+        .install_snapshot(
+            &snapshot_meta,
+            Box::new(std::io::Cursor::new(snapshot_bytes)),
+        )
+        .await
+        .expect_err("the injected parent directory sync failure must fail install");
+    let error = error.to_string();
+    assert!(
+        error.contains("committing the staged checkpoint"),
+        "error must identify checkpoint commit: {error}"
+    );
+    assert!(
+        error.contains("injected restore parent sync failure after rename"),
+        "error must identify the injected durability failure: {error}"
+    );
+    assert!(
+        error.contains(&restore_db_path.display().to_string()),
+        "error must identify the restored database path: {error}"
+    );
+
+    assert!(
+        pause_controller.paused.load(Ordering::SeqCst),
+        "a rename durability failure must keep storage access paused"
+    );
+    assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 1);
+    assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 0);
+
+    let marker_path = snapshot_install_marker_path(&restore_db_path)?;
+    assert!(
+        marker_path.is_file(),
+        "rename durability failure must retain {}",
+        marker_path.display()
+    );
+    let restart_error = preflight_snapshot_install(&restore_db_path)
+        .expect_err("restart must reject a restore whose rename was not durable");
+    assert!(
+        restart_error
+            .to_string()
+            .contains(&marker_path.display().to_string()),
+        "restart refusal must identify the marker path: {restart_error}"
+    );
+    assert!(
+        restart_error.to_string().contains("new node ID"),
+        "restart refusal must give the safe rejoin recovery path: {restart_error}"
+    );
+
+    let attempts_before = pause_controller.enter_attempts.load(Ordering::SeqCst);
+    let blocked_controller = pause_controller.clone();
+    let blocked_read = tokio::spawn(async move { blocked_controller.enter().await });
+    while pause_controller.enter_attempts.load(Ordering::SeqCst) == attempts_before {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !blocked_read.is_finished(),
+        "new reads must remain blocked after a rename durability failure"
+    );
+    blocked_read.abort();
+    assert!(
+        blocked_read.await.is_err(),
+        "blocked read should be cancelled"
+    );
+    assert_eq!(pause_controller.active.load(Ordering::SeqCst), 0);
+
+    assert!(
+        !restore_db_path.join("sentinel").exists(),
+        "old target must already have been removed at the injected failure point"
+    );
+    assert!(
+        restore_db_path.join("0").is_dir(),
+        "staged checkpoint must already have been renamed into the target"
+    );
+
+    drop(target_sm);
+    drop(target_swap);
     drop(pause_controller);
     drop(_target_rx);
 

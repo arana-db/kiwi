@@ -74,6 +74,7 @@ uuid = { version = "1.23", features = ["v4", "serde"] }
 openraft = { version = "0.9", features = ["serde", "storage-v2"] }
 proptest = "1.11"
 arc-swap = "1.7"
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 ## workspaces members
 storage = { path = "src/storage" }

@@ -42,7 +42,9 @@ use openraft::{
     SnapshotMeta, StorageError, StoredMembership, storage::RaftStateMachine,
 };
 use storage::storage::Storage;
-use storage::{RaftSnapshotMeta, StorageOptions, prepare_checkpoint_restore};
+use storage::{
+    RaftSnapshotMeta, StorageOptions, prepare_checkpoint_restore, sync_parent_directory,
+};
 
 use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
 
@@ -140,37 +142,27 @@ fn write_and_sync(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 
-#[cfg(unix)]
-fn sync_parent_dir(path: &Path) -> io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    File::open(parent)?.sync_all()
-}
-
-#[cfg(not(unix))]
-fn sync_parent_dir(_path: &Path) -> io::Result<()> {
-    Ok(())
-}
-
 fn persist_install_marker(path: &Path, marker: &SnapshotInstallMarker) -> io::Result<Vec<u8>> {
     let bytes = serde_json::to_vec_pretty(marker)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
     file.write_all(&bytes)?;
     file.sync_all()?;
-    sync_parent_dir(path)?;
+    sync_parent_directory(path)?;
     Ok(bytes)
 }
 
 fn remove_install_marker(path: &Path, marker_bytes: &[u8]) -> io::Result<()> {
     std::fs::remove_file(path)?;
-    if let Err(sync_error) = sync_parent_dir(path) {
+    if let Err(sync_error) = sync_parent_directory(path) {
         let restore_result = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(path)
             .and_then(|mut file| {
                 file.write_all(marker_bytes)?;
-                file.sync_all()
+                file.sync_all()?;
+                sync_parent_directory(path)
             });
         return Err(io::Error::other(format!(
             "failed to durably remove install marker {}: {sync_error}; marker restore result: {restore_result:?}",
@@ -215,7 +207,7 @@ fn persist_current_snapshot(
     // For Windows, see atomic_replace functions below
     atomic_replace_file(&data_tmp, &data_path)?;
     atomic_replace_file(&meta_tmp, &meta_path)?;
-    sync_parent_dir(&meta_path).map_err(|e| {
+    sync_parent_directory(&meta_path).map_err(|e| {
         StorageError::from_io_error(ErrorSubject::Snapshot(None), ErrorVerb::Write, e)
     })?;
 
@@ -250,32 +242,15 @@ fn load_current_snapshot(
     }))
 }
 
-/// Windows-safe atomic file replace.
-/// On Unix: rename is atomic.
-/// On Windows: must delete target first, then rename.
+/// Atomically replace a snapshot file within one directory.
 #[allow(clippy::result_large_err)]
 fn atomic_replace_file(
     src: &std::path::Path,
     dst: &std::path::Path,
 ) -> Result<(), StorageError<u64>> {
-    #[cfg(unix)]
-    {
-        std::fs::rename(src, dst).map_err(|e| {
-            StorageError::from_io_error(ErrorSubject::Snapshot(None), ErrorVerb::Write, e)
-        })?;
-    }
-
-    #[cfg(windows)]
-    {
-        if dst.exists() {
-            std::fs::remove_file(dst).map_err(|e| {
-                StorageError::from_io_error(ErrorSubject::Snapshot(None), ErrorVerb::Write, e)
-            })?;
-        }
-        std::fs::rename(src, dst).map_err(|e| {
-            StorageError::from_io_error(ErrorSubject::Snapshot(None), ErrorVerb::Write, e)
-        })?;
-    }
+    std::fs::rename(src, dst).map_err(|e| {
+        StorageError::from_io_error(ErrorSubject::Snapshot(None), ErrorVerb::Write, e)
+    })?;
 
     Ok(())
 }

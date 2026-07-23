@@ -17,16 +17,26 @@
 
 //! Raft snapshot checkpoint layout: one RocksDB checkpoint per DB instance plus `__raft_snapshot_meta`.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::collections::HashSet;
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::sync::LazyLock;
+
 use serde::{Deserialize, Serialize};
 
+#[cfg(any(test, feature = "test-fault-injection"))]
+use parking_lot::Mutex;
+
 use crate::logindex::LogIndexAndSequenceCollector;
+use crate::{sync_directory, sync_parent_directory};
 
 /// File name for JSON metadata at the checkpoint root (not OpenRaft's `SnapshotMeta`).
 pub const RAFT_SNAPSHOT_META_FILE: &str = "__raft_snapshot_meta";
@@ -36,6 +46,44 @@ const TARGET_REMOVE_ATTEMPTS: usize = 5;
 const TARGET_REMOVE_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
 
 static RESTORE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+static RESTORE_PARENT_SYNC_FAILURES: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Removes an unconsumed restore sync failpoint when a test exits early.
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+pub struct RestoreParentSyncFailureGuard {
+    target_db_path: PathBuf,
+}
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+impl Drop for RestoreParentSyncFailureGuard {
+    fn drop(&mut self) {
+        RESTORE_PARENT_SYNC_FAILURES
+            .lock()
+            .remove(&self.target_db_path);
+    }
+}
+
+/// Inject one failure after the staged checkpoint is renamed to `target_db_path`.
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+#[must_use]
+pub fn fail_next_restore_parent_sync_after_rename(
+    target_db_path: &Path,
+) -> RestoreParentSyncFailureGuard {
+    let target_db_path = target_db_path.to_path_buf();
+    assert!(
+        RESTORE_PARENT_SYNC_FAILURES
+            .lock()
+            .insert(target_db_path.clone()),
+        "restore parent sync failure already registered for {}",
+        target_db_path.display()
+    );
+    RestoreParentSyncFailureGuard { target_db_path }
+}
 
 /// Current snapshot format version
 pub const CURRENT_SNAPSHOT_VERSION: u32 = 1;
@@ -187,9 +235,10 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
             copy_dir_all(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path)?;
+            OpenOptions::new().write(true).open(&dst_path)?.sync_all()?;
         }
     }
-    Ok(())
+    sync_directory(dst)
 }
 
 /// A checkpoint layout that has been validated and copied next to its target.
@@ -211,6 +260,15 @@ impl PreparedCheckpointRestore {
     pub fn commit(mut self) -> io::Result<()> {
         if self.target_db_path.exists() {
             remove_target_with_retry(&self.target_db_path)?;
+            sync_parent_directory(&self.target_db_path).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!(
+                        "failed to sync target parent after removing {}: {error}",
+                        self.target_db_path.display()
+                    ),
+                )
+            })?;
         }
 
         fs::rename(&self.temp_dir, &self.target_db_path).map_err(|error| {
@@ -223,6 +281,16 @@ impl PreparedCheckpointRestore {
                 ),
             )
         })?;
+        sync_directory(&self.target_db_path).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to sync restored target directory {}: {error}",
+                    self.target_db_path.display()
+                ),
+            )
+        })?;
+        sync_restore_parent_after_rename(&self.target_db_path)?;
         self.committed = true;
         Ok(())
     }
@@ -275,6 +343,25 @@ pub fn prepare_checkpoint_restore(
         })?;
     }
 
+    sync_directory(&prepared.temp_dir).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to sync staged checkpoint root {}: {error}",
+                prepared.temp_dir.display()
+            ),
+        )
+    })?;
+    sync_parent_directory(&prepared.temp_dir).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to sync checkpoint staging parent for {}: {error}",
+                prepared.temp_dir.display()
+            ),
+        )
+    })?;
+
     Ok(prepared)
 }
 
@@ -307,7 +394,18 @@ fn create_restore_temp_dir(target_db_path: &Path) -> io::Result<PathBuf> {
         let sequence = RESTORE_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
         let temp_dir = parent.join(format!(".restore_temp_{}_{}", std::process::id(), sequence));
         match fs::create_dir(&temp_dir) {
-            Ok(()) => return Ok(temp_dir),
+            Ok(()) => {
+                sync_directory(parent).map_err(|error| {
+                    io::Error::new(
+                        error.kind(),
+                        format!(
+                            "failed to sync checkpoint staging parent {}: {error}",
+                            parent.display()
+                        ),
+                    )
+                })?;
+                return Ok(temp_dir);
+            }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
                 return Err(io::Error::new(
@@ -320,6 +418,26 @@ fn create_restore_temp_dir(target_db_path: &Path) -> io::Result<PathBuf> {
             }
         }
     }
+}
+
+fn sync_restore_parent_after_rename(target_db_path: &Path) -> io::Result<()> {
+    #[cfg(any(test, feature = "test-fault-injection"))]
+    if RESTORE_PARENT_SYNC_FAILURES.lock().remove(target_db_path) {
+        return Err(io::Error::other(format!(
+            "injected restore parent sync failure after rename for {}",
+            target_db_path.display()
+        )));
+    }
+
+    sync_parent_directory(target_db_path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to sync target parent after renaming staged checkpoint to {}: {error}",
+                target_db_path.display()
+            ),
+        )
+    })
 }
 
 fn remove_target_with_retry(target_db_path: &Path) -> io::Result<()> {
