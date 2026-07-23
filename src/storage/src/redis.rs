@@ -62,13 +62,14 @@ pub enum ColumnFamilyIndex {
     ListsDataCF = 3,  // list data
     ZsetsDataCF = 4,  // zset data
     ZsetsScoreCF = 5, // zset score
+    VectorDataCF = 6, // vector set data
 }
 
 impl ColumnFamilyIndex {
     /// Total number of column families.
     /// Update this constant when adding new column families.
     /// This constant is used by batch.rs for validation.
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 7;
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -78,6 +79,7 @@ impl ColumnFamilyIndex {
             ColumnFamilyIndex::ListsDataCF => "list_data_cf",
             ColumnFamilyIndex::ZsetsDataCF => "zset_data_cf",
             ColumnFamilyIndex::ZsetsScoreCF => "zset_score_cf",
+            ColumnFamilyIndex::VectorDataCF => "vector_data_cf",
         }
     }
 
@@ -89,6 +91,7 @@ impl ColumnFamilyIndex {
             ColumnFamilyIndex::ZsetsDataCF | ColumnFamilyIndex::ZsetsScoreCF => {
                 Some(DataType::ZSet)
             }
+            ColumnFamilyIndex::VectorDataCF => Some(DataType::VectorSet),
             ColumnFamilyIndex::MetaCF => None,
         }
     }
@@ -253,6 +256,7 @@ impl Redis {
             ("list_data_cf", true, None),              // list: bloom filter
             ("zset_data_cf", false, Some(16 * 1024)),  // zset data: 16KB block size
             ("zset_score_cf", false, Some(16 * 1024)), // zset score: 16KB block size
+            ("vector_data_cf", true, None),            // vector set: bloom filter
         ];
         let column_families: Vec<ColumnFamilyDescriptor> = CF_CONFIGS
             .iter()
@@ -353,6 +357,7 @@ impl Redis {
                 ColumnFamilyIndex::ListsDataCF,
                 ColumnFamilyIndex::ZsetsDataCF,
                 ColumnFamilyIndex::ZsetsScoreCF,
+                ColumnFamilyIndex::VectorDataCF,
             ]
             .iter()
             .find(|cf| cf.name() == cf_name)
@@ -476,6 +481,7 @@ impl Redis {
             self.get_cf_handle(ColumnFamilyIndex::ListsDataCF),
             self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF),
             self.get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF),
+            self.get_cf_handle(ColumnFamilyIndex::VectorDataCF),
         ];
 
         Ok(Box::new(crate::batch::RocksBatch::new(
@@ -766,7 +772,7 @@ impl Redis {
                 }
                 Ok(etime < now)
             }
-            DataType::Hash | DataType::Set | DataType::ZSet => {
+            DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                 // | type(1B) | count(8B) | version(8B) | reserve(16B) | ctime(8B) | etime(8B) |
                 let count_offset = TYPE_LENGTH;
                 let count_bytes = &val_raw[count_offset..count_offset + 8];

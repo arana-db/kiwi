@@ -94,14 +94,16 @@ impl CompactionFilter for MetaCompactionFilter {
                         || (m.count() == 0 && m.version() < cur_time)
                 },
             ),
-            DataType::Hash | DataType::Set | DataType::ZSet => parse_and_check(
-                value,
-                |v| ParsedBaseMetaValue::new(v),
-                |m| {
-                    (m.etime() != 0 && m.etime() < cur_time)
-                        || (m.count() == 0 && m.version() < cur_time)
-                },
-            ),
+            DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
+                parse_and_check(
+                    value,
+                    |v| ParsedBaseMetaValue::new(v),
+                    |m| {
+                        (m.etime() != 0 && m.etime() < cur_time)
+                            || (m.count() == 0 && m.version() < cur_time)
+                    },
+                )
+            }
             _ => CompactionDecision::Keep,
         }
     }
@@ -354,6 +356,24 @@ mod tests {
         zset_meta.set_etime(past_time);
         zset_meta.set_version(past_time);
         let encoded_value = zset_meta.encode();
+
+        let decision = filter.filter(0, &encoded_key, &encoded_value);
+        assert!(matches!(decision, CompactionDecision::Remove));
+    }
+
+    #[test]
+    fn test_vectorset_meta_value_expired() {
+        let mut filter = MetaCompactionFilter;
+        let key = BaseKey::new(b"test_vector_key");
+        let encoded_key = key.encode().unwrap();
+
+        let mut vector_meta =
+            BaseMetaValue::new(bytes::Bytes::copy_from_slice(&1u64.to_le_bytes()));
+        vector_meta.inner.data_type = DataType::VectorSet;
+        let past_time = Utc::now().timestamp_micros() as u64 - 3_600_000_000;
+        vector_meta.set_etime(past_time);
+        vector_meta.set_version(past_time);
+        let encoded_value = vector_meta.encode();
 
         let decision = filter.filter(0, &encoded_key, &encoded_value);
         assert!(matches!(decision, CompactionDecision::Remove));
