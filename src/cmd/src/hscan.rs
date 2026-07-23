@@ -21,6 +21,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
+use crate::scan_options::parse_scan_options;
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta};
 use crate::{impl_cmd_clone_box, impl_cmd_meta};
 
@@ -63,60 +64,20 @@ impl Cmd for HScanCmd {
         let argv = client.argv();
 
         let key = argv[1].as_slice();
-        // Parse cursor
-        let cursor = match std::str::from_utf8(&argv[2])
-            .ok()
-            .and_then(|value| value.parse::<u64>().ok())
-        {
-            Some(cursor) => cursor,
-            None => {
-                client.set_reply(RespData::Error("ERR invalid cursor".into()));
+        let options = match parse_scan_options(&argv[2], &argv[3..]) {
+            Ok(options) => options,
+            Err(error) => {
+                client.set_reply(RespData::Error(error.into()));
                 return;
             }
         };
 
-        // Parse optional MATCH and COUNT parameters
-        let mut pattern: Option<Vec<u8>> = None;
-        let mut count: Option<usize> = None;
-
-        let mut i = 3;
-        while i < argv.len() {
-            if argv[i].eq_ignore_ascii_case(b"MATCH") {
-                if i + 1 < argv.len() {
-                    pattern = Some(argv[i + 1].clone());
-                    i += 2;
-                } else {
-                    client.set_reply(RespData::Error("ERR syntax error".into()));
-                    return;
-                }
-            } else if argv[i].eq_ignore_ascii_case(b"COUNT") {
-                if i + 1 < argv.len() {
-                    match std::str::from_utf8(&argv[i + 1])
-                        .ok()
-                        .and_then(|value| value.parse::<usize>().ok())
-                    {
-                        Some(parsed_count) if parsed_count > 0 => {
-                            count = Some(parsed_count);
-                            i += 2;
-                        }
-                        _ => {
-                            client.set_reply(RespData::Error(
-                                "ERR value is not an integer or out of range".into(),
-                            ));
-                            return;
-                        }
-                    }
-                } else {
-                    client.set_reply(RespData::Error("ERR syntax error".into()));
-                    return;
-                }
-            } else {
-                client.set_reply(RespData::Error("ERR syntax error".into()));
-                return;
-            }
-        }
-
-        let result = storage.hscan(key, cursor, pattern.as_deref(), count);
+        let result = storage.hscan(
+            key,
+            options.cursor,
+            options.pattern.as_deref(),
+            options.count,
+        );
 
         match result {
             Ok((next_cursor, fields)) => {
