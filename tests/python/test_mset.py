@@ -26,9 +26,10 @@ MSET 命令测试
     python tests/python/test_mset.py  # 直接运行
 """
 
-import redis
-import pytest
 import sys
+
+import pytest
+import redis
 
 
 class TestMsetBasic:
@@ -179,12 +180,11 @@ class TestMsetErrors:
     """MSET 错误处理测试"""
 
     def test_mset_empty_dict(self, redis_clean):
-        """测试空字典（边界情况）"""
+        """测试空字典会触发 MSET 参数数量错误"""
         r = redis_clean
-        
-        # 空字典应该返回 True（Redis 行为）
-        result = r.mset({})
-        assert result == True
+
+        with pytest.raises(redis.ResponseError, match="wrong number of arguments"):
+            r.mset({})
 
 
 # ============================================================================

@@ -42,67 +42,45 @@ def assert_wrongtype_error(exc_info):
 class TestWrongTypeErrors:
     """WRONGTYPE 错误处理测试"""
 
-    def test_mset_on_list_key(self, redis_clean):
-        """测试对列表键使用 MSET"""
+    def test_mset_overwrites_list_key(self, redis_clean):
+        """测试 MSET 将列表键覆盖为字符串"""
         r = redis_clean
-        
-        # 创建一个列表
+
         r.lpush('list_key', 'value1', 'value2')
-        
-        # 尝试对列表键使用 MSET 应该失败
-        with pytest.raises(redis.ResponseError) as exc_info:
-            r.mset({'list_key': 'new_value'})
-        
-        # 验证错误消息
-        assert_wrongtype_error(exc_info)
-        
-        # 清理
-        r.delete('list_key')
 
-    def test_mset_on_hash_key(self, redis_clean):
-        """测试对哈希键使用 MSET"""
+        assert r.mset({'list_key': 'new_value'}) is True
+        assert r.type('list_key') == 'string'
+        assert r.get('list_key') == 'new_value'
+
+    def test_mset_overwrites_hash_key(self, redis_clean):
+        """测试 MSET 将哈希键覆盖为字符串"""
         r = redis_clean
-        
-        # 创建一个哈希
+
         r.hset('hash_key', 'field1', 'value1')
-        
-        # 尝试对哈希键使用 MSET 应该失败
-        with pytest.raises(redis.ResponseError) as exc_info:
-            r.mset({'hash_key': 'new_value'})
-        
-        assert_wrongtype_error(exc_info)
-        
-        r.delete('hash_key')
 
-    def test_mset_on_set_key(self, redis_clean):
-        """测试对集合键使用 MSET"""
+        assert r.mset({'hash_key': 'new_value'}) is True
+        assert r.type('hash_key') == 'string'
+        assert r.get('hash_key') == 'new_value'
+
+    def test_mset_overwrites_set_key(self, redis_clean):
+        """测试 MSET 将集合键覆盖为字符串"""
         r = redis_clean
-        
-        # 创建一个集合
+
         r.sadd('set_key', 'member1', 'member2')
-        
-        # 尝试对集合键使用 MSET 应该失败
-        with pytest.raises(redis.ResponseError) as exc_info:
-            r.mset({'set_key': 'new_value'})
-        
-        assert_wrongtype_error(exc_info)
-        
-        r.delete('set_key')
 
-    def test_mset_on_zset_key(self, redis_clean):
-        """测试对有序集合键使用 MSET"""
+        assert r.mset({'set_key': 'new_value'}) is True
+        assert r.type('set_key') == 'string'
+        assert r.get('set_key') == 'new_value'
+
+    def test_mset_overwrites_zset_key(self, redis_clean):
+        """测试 MSET 将有序集合键覆盖为字符串"""
         r = redis_clean
-        
-        # 创建一个有序集合
+
         r.zadd('zset_key', {'member1': 1.0, 'member2': 2.0})
-        
-        # 尝试对有序集合键使用 MSET 应该失败
-        with pytest.raises(redis.ResponseError) as exc_info:
-            r.mset({'zset_key': 'new_value'})
-        
-        assert_wrongtype_error(exc_info)
-        
-        r.delete('zset_key')
+
+        assert r.mset({'zset_key': 'new_value'}) is True
+        assert r.type('zset_key') == 'string'
+        assert r.get('zset_key') == 'new_value'
 
     def test_get_on_list_key(self, redis_clean):
         """测试对列表键使用 GET"""
@@ -183,26 +161,20 @@ class TestWrongTypeErrors:
         
         r.delete('string_key')
 
-    def test_mset_mixed_valid_and_wrongtype(self, redis_clean):
-        """测试 MSET 混合有效键和错误类型键"""
+    def test_mset_overwrites_composite_and_sets_string_key(self, redis_clean):
+        """测试 MSET 原子覆盖复合类型键并设置新字符串键"""
         r = redis_clean
-        
-        # 创建一个列表
+
         r.lpush('list_key', 'value')
-        
-        # MSET 应该是原子的，如果有一个键失败，整个操作应该失败
-        with pytest.raises(redis.ResponseError) as exc_info:
-            r.mset({
-                'list_key': 'new_value',  # 这个会失败
-                'string_key': 'value'      # 这个是有效的
-            })
-        
-        assert_wrongtype_error(exc_info)
-        
-        # 验证原子性：string_key 不应该被设置
-        assert r.get('string_key') is None
-        
-        r.delete('list_key')
+
+        assert r.mset({
+            'list_key': 'new_value',
+            'string_key': 'value',
+        }) is True
+
+        assert r.type('list_key') == 'string'
+        assert r.type('string_key') == 'string'
+        assert r.mget(['list_key', 'string_key']) == ['new_value', 'value']
 
 
 class TestTypeValidation:

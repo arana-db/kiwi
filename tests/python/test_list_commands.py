@@ -21,10 +21,12 @@ List Commands Integration Tests
 Tests Redis list commands for compatibility and correctness
 """
 
-import redis
-import pytest
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
+
+import pytest
+import redis
 
 
 class TestListBasicOperations:
@@ -237,23 +239,18 @@ class TestListConcurrency:
         
         def reader():
             for _ in range(20):
-                length = r.llen('test_consistency')
-                if length > 0:
-                    items = r.lrange('test_consistency', 0, -1)
-                    assert len(items) == length, "Length mismatch"
+                # LRANGE 本身是单条命令；不要把它和另一时刻的 LLEN 比较。
+                items = r.lrange('test_consistency', 0, -1)
+                assert items, "The initial item must remain in the list"
+                assert 'initial' in items
+                assert len(items) == len(set(items)), "List items must stay unique"
                 time.sleep(0.001)
-        
-        # Run concurrent operations
-        threads = [
-            threading.Thread(target=modifier),
-            threading.Thread(target=reader)
-        ]
-        
-        for t in threads:
-            t.start()
-        
-        for t in threads:
-            t.join()
+
+        # future.result() ensures assertions and Redis errors reach pytest.
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(modifier), executor.submit(reader)]
+            for future in futures:
+                future.result()
         
         # Final consistency check
         final_length = r.llen('test_consistency')
