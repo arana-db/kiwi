@@ -35,11 +35,23 @@ use crate::{BaseMetaKey, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckSt
 pub(crate) type HashScanResult = (u64, Vec<(Vec<u8>, Vec<u8>)>);
 
 fn tail_wildcard_prefix(pattern: &[u8]) -> Option<&[u8]> {
-    if pattern.contains(&b'\\') {
+    if pattern.len() < 2 || pattern.last() != Some(&b'*') {
         return None;
     }
-    let utf8_pattern = std::str::from_utf8(pattern).ok()?;
-    is_tail_wildcard(utf8_pattern).then_some(&pattern[..pattern.len() - 1])
+
+    let prefix = &pattern[..pattern.len() - 1];
+    if prefix
+        .iter()
+        .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b']' | b'\\'))
+    {
+        return None;
+    }
+
+    if let Ok(utf8_pattern) = std::str::from_utf8(pattern) {
+        debug_assert!(is_tail_wildcard(utf8_pattern));
+    }
+
+    Some(prefix)
 }
 
 impl Redis {

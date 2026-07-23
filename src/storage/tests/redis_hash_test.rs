@@ -560,4 +560,36 @@ mod redis_hash_test {
         drop(redis);
         safe_cleanup_test_db(&test_db_path);
     }
+
+    #[test]
+    fn test_hscan_binary_tail_wildcard_uses_prefix_range_across_pages() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let key = b"binary_prefix_hash";
+        redis.hset(key, b"\x7f-before", b"decoy").unwrap();
+        redis.hset(key, b"\x80-first", b"one").unwrap();
+        redis.hset(key, b"\x80-second", b"two").unwrap();
+        redis.hset(key, b"\x81-after", b"decoy").unwrap();
+
+        let (cursor, first_page) = redis.hscan(key, 0, Some(b"\x80*"), Some(1)).unwrap();
+        assert_ne!(cursor, 0);
+        assert_eq!(first_page, vec![(b"\x80-first".to_vec(), b"one".to_vec())]);
+
+        let (cursor, second_page) = redis.hscan(key, cursor, Some(b"\x80*"), Some(1)).unwrap();
+        assert_eq!(cursor, 0);
+        assert_eq!(
+            second_page,
+            vec![(b"\x80-second".to_vec(), b"two".to_vec())]
+        );
+
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
+    }
 }
