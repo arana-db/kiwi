@@ -377,10 +377,11 @@ fn test_vsim_rejects_query_dimension_mismatch() {
 
 #[tokio::test]
 async fn test_storage_routes_all_members_of_one_vectorset_to_one_instance() {
-    let temp = tempfile::tempdir().expect("temp dir");
+    let test_db_path = unique_test_db_path();
+    safe_cleanup_test_db(&test_db_path);
     let mut storage = Storage::new(3, 0);
     let _receiver = storage
-        .open(Arc::new(StorageOptions::default()), temp.path())
+        .open(Arc::new(StorageOptions::default()), &test_db_path)
         .expect("open storage");
     let key = b"routed-vectors";
     let x = CanonicalVector::from_values(&[1.0, 0.0]).expect("x");
@@ -429,6 +430,7 @@ async fn test_storage_routes_all_members_of_one_vectorset_to_one_instance() {
     }
 
     storage.shutdown().await;
+    safe_cleanup_test_db(&test_db_path);
 }
 
 #[test]
@@ -445,10 +447,11 @@ fn test_type_returns_vectorset() {
 
 #[tokio::test]
 async fn test_expired_vectorset_reads_as_missing() {
-    let temp = tempfile::tempdir().expect("temp dir");
+    let test_db_path = unique_test_db_path();
+    safe_cleanup_test_db(&test_db_path);
     let mut storage = Storage::new(1, 0);
     let _receiver = storage
-        .open(Arc::new(StorageOptions::default()), temp.path())
+        .open(Arc::new(StorageOptions::default()), &test_db_path)
         .expect("open storage");
     let key = b"expiring-vectors";
     let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
@@ -474,6 +477,7 @@ async fn test_expired_vectorset_reads_as_missing() {
     assert_eq!(storage.key_type(key).expect("expired type"), "none");
 
     storage.shutdown().await;
+    safe_cleanup_test_db(&test_db_path);
 }
 
 #[test]
@@ -505,10 +509,11 @@ fn test_flushdb_removes_vector_meta_and_members() {
 
 #[tokio::test]
 async fn test_vector_storage_rejects_cluster_mode() {
-    let temp = tempfile::tempdir().expect("temp dir");
+    let test_db_path = unique_test_db_path();
+    safe_cleanup_test_db(&test_db_path);
     let mut storage = Storage::new(1, 0);
     let _receiver = storage
-        .open(Arc::new(StorageOptions::default()), temp.path())
+        .open(Arc::new(StorageOptions::default()), &test_db_path)
         .expect("open storage");
     storage.set_append_log_fn(Arc::new(|_| panic!("vector API must not append Raft log")));
     let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
@@ -530,4 +535,5 @@ async fn test_vector_storage_rejects_cluster_mode() {
     assert!(storage.vismember(b"vectors", b"member").is_err());
 
     storage.shutdown().await;
+    safe_cleanup_test_db(&test_db_path);
 }
