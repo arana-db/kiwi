@@ -1008,6 +1008,32 @@ mod redis_set_test {
     }
 
     #[test]
+    fn test_sscan_match_star_includes_empty_member_but_double_star_does_not() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let key = b"set_with_empty_member";
+        assert_eq!(redis.sadd(key, &[b""]).unwrap(), 1);
+
+        let (cursor, members) = redis.sscan(key, 0, Some("*"), None).unwrap();
+        assert_eq!(cursor, 0);
+        assert_eq!(members, vec![String::new()]);
+
+        let (cursor, members) = redis.sscan(key, 0, Some("**"), None).unwrap();
+        assert_eq!(cursor, 0);
+        assert!(members.is_empty());
+
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
     fn test_sscan_empty_set() {
         let test_db_path = unique_test_db_path();
 

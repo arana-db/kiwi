@@ -2469,7 +2469,7 @@ impl Redis {
 /// Supports `*`, `?`, character classes and ranges, negated character classes,
 /// and backslash escaping.
 pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
-    glob_match_bytes(pattern.as_bytes(), text.as_bytes())
+    pattern == "*" || glob_match_bytes(pattern.as_bytes(), text.as_bytes())
 }
 
 pub(crate) fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
@@ -2595,6 +2595,8 @@ mod glob_tests {
         assert!(glob_match("h*o", "hello"));
         assert!(glob_match("*", "anything"));
         assert!(!glob_match("h*", "world"));
+        assert!(glob_match("*", ""));
+        assert!(!glob_match("**", ""));
     }
 
     #[test]

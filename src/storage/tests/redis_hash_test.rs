@@ -301,6 +301,32 @@ mod redis_hash_test {
     }
 
     #[test]
+    fn test_hscan_match_star_includes_empty_field_but_double_star_does_not() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let key = b"hash_with_empty_field";
+        assert_eq!(redis.hset(key, b"", b"value").unwrap(), 1);
+
+        let (cursor, fields) = redis.hscan(key, 0, Some("*"), None).unwrap();
+        assert_eq!(cursor, 0);
+        assert_eq!(fields, vec![(String::new(), "value".to_string())]);
+
+        let (cursor, fields) = redis.hscan(key, 0, Some("**"), None).unwrap();
+        assert_eq!(cursor, 0);
+        assert!(fields.is_empty());
+
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
     fn test_hscan_nonexistent_key() {
         let test_db_path = unique_test_db_path();
 
