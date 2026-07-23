@@ -63,37 +63,40 @@ impl Cmd for SscanCmd {
         let argv = client.argv();
 
         let key = argv[1].as_slice();
-        let cursor_str = String::from_utf8_lossy(&argv[2]);
-
         // Parse cursor
-        let cursor = match cursor_str.parse::<u64>() {
-            Ok(c) => c,
-            Err(_) => {
+        let cursor = match std::str::from_utf8(&argv[2])
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+        {
+            Some(cursor) => cursor,
+            None => {
                 client.set_reply(RespData::Error("ERR invalid cursor".into()));
                 return;
             }
         };
 
         // Parse optional MATCH and COUNT parameters
-        let mut pattern: Option<String> = None;
+        let mut pattern: Option<Vec<u8>> = None;
         let mut count: Option<usize> = None;
 
         let mut i = 3;
         while i < argv.len() {
-            let arg = String::from_utf8_lossy(&argv[i]).to_uppercase();
-            match arg.as_str() {
-                "MATCH" if i + 1 < argv.len() => {
-                    pattern = Some(String::from_utf8_lossy(&argv[i + 1]).to_string());
+            if argv[i].eq_ignore_ascii_case(b"MATCH") {
+                if i + 1 < argv.len() {
+                    pattern = Some(argv[i + 1].clone());
                     i += 2;
-                }
-                "MATCH" => {
+                } else {
                     client.set_reply(RespData::Error("ERR syntax error".into()));
                     return;
                 }
-                "COUNT" if i + 1 < argv.len() => {
-                    match String::from_utf8_lossy(&argv[i + 1]).parse::<usize>() {
-                        Ok(c) if c > 0 => {
-                            count = Some(c);
+            } else if argv[i].eq_ignore_ascii_case(b"COUNT") {
+                if i + 1 < argv.len() {
+                    match std::str::from_utf8(&argv[i + 1])
+                        .ok()
+                        .and_then(|value| value.parse::<usize>().ok())
+                    {
+                        Some(parsed_count) if parsed_count > 0 => {
+                            count = Some(parsed_count);
                             i += 2;
                         }
                         _ => {
@@ -103,15 +106,13 @@ impl Cmd for SscanCmd {
                             return;
                         }
                     }
-                }
-                "COUNT" => {
+                } else {
                     client.set_reply(RespData::Error("ERR syntax error".into()));
                     return;
                 }
-                _ => {
-                    client.set_reply(RespData::Error("ERR syntax error".into()));
-                    return;
-                }
+            } else {
+                client.set_reply(RespData::Error("ERR syntax error".into()));
+                return;
             }
         }
 
@@ -122,7 +123,7 @@ impl Cmd for SscanCmd {
                 // Convert members to RespData
                 let resp_members: Vec<RespData> = members
                     .into_iter()
-                    .map(|member| RespData::BulkString(Some(member.into_bytes().into())))
+                    .map(|member| RespData::BulkString(Some(member.into())))
                     .collect();
 
                 // Return [next_cursor, [members...]]
@@ -143,7 +144,23 @@ impl Cmd for SscanCmd {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
+    use client::StreamTrait;
+    use storage::{StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+
     use super::*;
+
+    struct TestStream;
+
+    #[async_trait::async_trait]
+    impl StreamTrait for TestStream {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+
+        async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+    }
 
     #[test]
     fn test_sscan_cmd_meta() {
@@ -183,5 +200,38 @@ mod tests {
         assert!(!cmd.check_arg(1)); // Missing key and cursor
         assert!(!cmd.check_arg(2)); // Missing cursor
         assert!(!cmd.check_arg(0)); // No arguments
+    }
+
+    #[tokio::test]
+    async fn sscan_command_preserves_binary_member_bytes() {
+        let db_path = unique_test_db_path();
+        safe_cleanup_test_db(&db_path);
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), &db_path)
+            .unwrap();
+        storage.sadd(b"binary_set", &[b"\xff"]).unwrap();
+        let storage = Arc::new(storage);
+        let client = Client::new(Box::new(TestStream));
+        client.set_argv(&[
+            b"sscan".to_vec(),
+            b"binary_set".to_vec(),
+            b"0".to_vec(),
+            b"match".to_vec(),
+            b"?".to_vec(),
+        ]);
+
+        SscanCmd::new().do_cmd(&client, Arc::clone(&storage));
+
+        assert_eq!(
+            client.take_reply(),
+            RespData::Array(Some(vec![
+                RespData::BulkString(Some(b"0".to_vec().into())),
+                RespData::Array(Some(vec![RespData::BulkString(Some(vec![0xff].into()))])),
+            ]))
+        );
+
+        drop(storage);
+        safe_cleanup_test_db(&db_path);
     }
 }

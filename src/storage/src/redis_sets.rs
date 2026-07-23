@@ -2364,9 +2364,9 @@ impl Redis {
         &self,
         key: &[u8],
         cursor: u64,
-        pattern: Option<&str>,
+        pattern: Option<&[u8]>,
         count: Option<usize>,
-    ) -> Result<(u64, Vec<String>)> {
+    ) -> Result<(u64, Vec<Vec<u8>>)> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -2424,7 +2424,7 @@ impl Redis {
             // member = raw_key[prefix..len - SUFFIX_RESERVE_LENGTH]
             if raw_key.len() >= prefix.len() + SUFFIX_RESERVE_LENGTH {
                 let member_slice = &raw_key[prefix.len()..raw_key.len() - SUFFIX_RESERVE_LENGTH];
-                all_members.push(String::from_utf8_lossy(member_slice).to_string());
+                all_members.push(member_slice.to_vec());
             }
         }
 
@@ -2445,7 +2445,7 @@ impl Redis {
             for member in &all_members[start_index..end_index] {
                 // Apply pattern matching if specified
                 if let Some(pat) = pattern {
-                    if !glob_match(pat, member) {
+                    if pat != b"*" && !glob_match_bytes(pat, member) {
                         continue;
                     }
                 }
@@ -2468,6 +2468,7 @@ impl Redis {
 ///
 /// Supports `*`, `?`, character classes and ranges, negated character classes,
 /// and backslash escaping.
+#[cfg(test)]
 pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     pattern == "*" || glob_match_bytes(pattern.as_bytes(), text.as_bytes())
 }

@@ -951,11 +951,11 @@ mod redis_set_test {
         all_scanned.sort();
 
         let mut expected = vec![
-            "member1".to_string(),
-            "member2".to_string(),
-            "member3".to_string(),
-            "member4".to_string(),
-            "member5".to_string(),
+            b"member1".to_vec(),
+            b"member2".to_vec(),
+            b"member3".to_vec(),
+            b"member4".to_vec(),
+            b"member5".to_vec(),
         ];
         expected.sort();
         assert_eq!(all_scanned, expected);
@@ -986,21 +986,22 @@ mod redis_set_test {
         assert_eq!(added, 5);
 
         // Test pattern matching with wildcard
-        let (cursor, matched_members) =
-            redis.sscan(key, 0, Some("a*"), None).expect("sscan failed");
+        let (cursor, matched_members) = redis
+            .sscan(key, 0, Some(b"a*"), None)
+            .expect("sscan failed");
         assert_eq!(cursor, 0); // Should complete in one scan
         let mut matched_sorted = matched_members;
         matched_sorted.sort();
-        let mut expected = vec!["apple".to_string(), "apricot".to_string()];
+        let mut expected = vec![b"apple".to_vec(), b"apricot".to_vec()];
         expected.sort();
         assert_eq!(matched_sorted, expected);
 
         // Test pattern matching with single character wildcard
         let (cursor, matched_members) = redis
-            .sscan(key, 0, Some("?????"), None)
+            .sscan(key, 0, Some(b"?????"), None)
             .expect("sscan failed");
         assert_eq!(cursor, 0);
-        assert_eq!(matched_members, vec!["apple".to_string()]);
+        assert_eq!(matched_members, vec![b"apple".to_vec()]);
 
         drop(redis);
 
@@ -1021,13 +1022,35 @@ mod redis_set_test {
         let key = b"set_with_empty_member";
         assert_eq!(redis.sadd(key, &[b""]).unwrap(), 1);
 
-        let (cursor, members) = redis.sscan(key, 0, Some("*"), None).unwrap();
+        let (cursor, members) = redis.sscan(key, 0, Some(b"*"), None).unwrap();
         assert_eq!(cursor, 0);
-        assert_eq!(members, vec![String::new()]);
+        assert_eq!(members, vec![Vec::<u8>::new()]);
 
-        let (cursor, members) = redis.sscan(key, 0, Some("**"), None).unwrap();
+        let (cursor, members) = redis.sscan(key, 0, Some(b"**"), None).unwrap();
         assert_eq!(cursor, 0);
         assert!(members.is_empty());
+
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
+    fn test_sscan_preserves_binary_member_bytes() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let key = b"binary_set";
+        assert_eq!(redis.sadd(key, &[b"\xff"]).unwrap(), 1);
+
+        let (cursor, members) = redis.sscan(key, 0, Some(b"?"), None).unwrap();
+        assert_eq!(cursor, 0);
+        assert_eq!(members, vec![vec![0xff]]);
 
         drop(redis);
         safe_cleanup_test_db(&test_db_path);
@@ -1051,7 +1074,7 @@ mod redis_set_test {
         let key = b"nonexistent";
         let (cursor, members) = redis.sscan(key, 0, None, None).expect("sscan failed");
         assert_eq!(cursor, 0);
-        assert_eq!(members, Vec::<String>::new());
+        assert_eq!(members, Vec::<Vec<u8>>::new());
 
         drop(redis);
 

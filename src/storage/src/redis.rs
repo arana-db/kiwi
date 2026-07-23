@@ -269,7 +269,7 @@ pub struct Redis {
     pub small_compaction_duration_threshold: AtomicU64,
 
     // For Scan
-    pub scan_cursors_store: Mutex<Cache<String, String>>,
+    pub scan_cursors_store: Mutex<Cache<Vec<u8>, Vec<u8>>>,
     pub spop_counts_store: Mutex<Cache<String, u64>>,
 
     // For startup state tracking
@@ -825,14 +825,14 @@ impl Redis {
         key: &[u8],
         pattern: &[u8],
         cursor: u64,
-    ) -> Result<Option<String>> {
-        let index_key = format!(
-            "{}_{}_{}_{}",
-            DATA_TYPE_TAG[dtype as usize],
-            String::from_utf8_lossy(key),
-            String::from_utf8_lossy(pattern),
-            cursor
-        );
+    ) -> Result<Option<Vec<u8>>> {
+        let mut index_key = Vec::with_capacity(1 + 8 + key.len() + 8 + pattern.len() + 8);
+        index_key.push(dtype as u8);
+        index_key.extend_from_slice(&(key.len() as u64).to_le_bytes());
+        index_key.extend_from_slice(key);
+        index_key.extend_from_slice(&(pattern.len() as u64).to_le_bytes());
+        index_key.extend_from_slice(pattern);
+        index_key.extend_from_slice(&cursor.to_le_bytes());
         Ok(self
             .scan_cursors_store
             .lock()
@@ -849,20 +849,19 @@ impl Redis {
         cursor: u64,
         next_point: &[u8],
     ) -> Result<()> {
-        let index_key = format!(
-            "{}_{}_{}_{}",
-            DATA_TYPE_TAG[dtype as usize],
-            String::from_utf8_lossy(key),
-            String::from_utf8_lossy(pattern),
-            cursor
-        );
-        let next_point_str = String::from_utf8_lossy(next_point).to_string();
+        let mut index_key = Vec::with_capacity(1 + 8 + key.len() + 8 + pattern.len() + 8);
+        index_key.push(dtype as u8);
+        index_key.extend_from_slice(&(key.len() as u64).to_le_bytes());
+        index_key.extend_from_slice(key);
+        index_key.extend_from_slice(&(pattern.len() as u64).to_le_bytes());
+        index_key.extend_from_slice(pattern);
+        index_key.extend_from_slice(&cursor.to_le_bytes());
         let store = self.scan_cursors_store.lock().map_err(|_| RedisErr {
             message: "Failed to lock scan_cursors_store".to_string(),
             location: Default::default(),
         })?;
 
-        store.insert(index_key, next_point_str);
+        store.insert(index_key, next_point.to_vec());
         Ok(())
     }
     /// check if the encoded value of any type is expired (type-agnostic)

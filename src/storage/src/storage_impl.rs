@@ -392,9 +392,9 @@ impl Storage {
         &self,
         key: &[u8],
         cursor: u64,
-        pattern: Option<&str>,
+        pattern: Option<&[u8]>,
         count: Option<usize>,
-    ) -> Result<(u64, Vec<(String, String)>)> {
+    ) -> Result<crate::redis_hashes::HashScanResult> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].hscan(key, cursor, pattern, count)
@@ -942,9 +942,9 @@ impl Storage {
         &self,
         key: &[u8],
         cursor: u64,
-        pattern: Option<&str>,
+        pattern: Option<&[u8]>,
         count: Option<usize>,
-    ) -> Result<(u64, Vec<String>)> {
+    ) -> Result<(u64, Vec<Vec<u8>>)> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].sscan(key, cursor, pattern, count)
