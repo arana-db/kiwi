@@ -2473,11 +2473,7 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 pub(crate) fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
-    fn match_character_class(
-        pattern: &[u8],
-        class_start: usize,
-        candidate: u8,
-    ) -> Option<(bool, usize)> {
+    fn match_character_class(pattern: &[u8], class_start: usize, candidate: u8) -> (bool, usize) {
         let mut index = class_start + 1;
         let negated = pattern.get(index) == Some(&b'^');
         if negated {
@@ -2485,52 +2481,43 @@ pub(crate) fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
         }
 
         let mut matched = false;
-        while index < pattern.len() {
-            match pattern[index] {
-                b']' => return Some((matched != negated, index + 1)),
-                b'\\' if index + 1 < pattern.len() => {
-                    if pattern[index + 1] == candidate {
-                        matched = true;
-                    }
-                    index += 2;
+        loop {
+            if index + 1 < pattern.len() && pattern[index] == b'\\' {
+                index += 1;
+                if pattern[index] == candidate {
+                    matched = true;
                 }
-                range_start
-                    if index + 2 < pattern.len()
-                        && pattern[index + 1] == b'-'
-                        && pattern[index + 2] != b']' =>
-                {
-                    let range_end = pattern[index + 2];
-                    let (lower, upper) = if range_start <= range_end {
-                        (range_start, range_end)
-                    } else {
-                        (range_end, range_start)
-                    };
-                    if (lower..=upper).contains(&candidate) {
-                        matched = true;
-                    }
-                    index += 3;
+            } else if index == pattern.len() {
+                return (matched != negated, pattern.len());
+            } else if pattern[index] == b']' {
+                return (matched != negated, index + 1);
+            } else if index + 2 < pattern.len() && pattern[index + 1] == b'-' {
+                let range_start = pattern[index];
+                let range_end = pattern[index + 2];
+                let (lower, upper) = if range_start <= range_end {
+                    (range_start, range_end)
+                } else {
+                    (range_end, range_start)
+                };
+                if (lower..=upper).contains(&candidate) {
+                    matched = true;
                 }
-                literal => {
-                    if literal == candidate {
-                        matched = true;
-                    }
-                    index += 1;
-                }
+                index += 2;
+            } else if pattern[index] == candidate {
+                matched = true;
             }
+            index += 1;
         }
-
-        None
     }
 
     fn token_matches(pattern: &[u8], pattern_index: usize, candidate: u8) -> Option<usize> {
         match pattern.get(pattern_index).copied()? {
             b'?' => Some(pattern_index + 1),
-            b'[' => match match_character_class(pattern, pattern_index, candidate) {
-                Some((true, next_pattern_index)) => Some(next_pattern_index),
-                Some((false, _)) => None,
-                None if candidate == b'[' => Some(pattern_index + 1),
-                None => None,
-            },
+            b'[' => {
+                let (matched, next_pattern_index) =
+                    match_character_class(pattern, pattern_index, candidate);
+                matched.then_some(next_pattern_index)
+            }
             b'\\' => {
                 let (literal, next_pattern_index) = if pattern_index + 1 < pattern.len() {
                     (pattern[pattern_index + 1], pattern_index + 2)
@@ -2663,5 +2650,27 @@ mod glob_tests {
 
         assert!(glob_match_bytes(&question_pattern, &text));
         assert!(glob_match_bytes(&literal_pattern, &text));
+    }
+
+    #[test]
+    fn test_glob_match_bytes_matches_redis_class_edges() {
+        assert!(!glob_match_bytes(b"[", b"["));
+
+        assert!(glob_match_bytes(b"[a", b"a"));
+        assert!(!glob_match_bytes(b"[a", b"["));
+
+        assert!(glob_match_bytes(b"[^", b"x"));
+        assert!(!glob_match_bytes(b"[^", b""));
+
+        assert!(glob_match_bytes(b"[a-]", b"]"));
+        assert!(glob_match_bytes(b"[a-]", b"_"));
+        assert!(glob_match_bytes(b"[a-]", b"a"));
+        assert!(!glob_match_bytes(b"[a-]", b"-"));
+        assert!(glob_match_bytes(b"[a-]]x", b"]x"));
+
+        assert!(glob_match_bytes(b"[a\\]", b"a"));
+        assert!(glob_match_bytes(b"[a\\]", b"]"));
+        assert!(!glob_match_bytes(b"[a\\]", b"b"));
+        assert!(glob_match_bytes(b"[a\\]]x", b"]x"));
     }
 }
