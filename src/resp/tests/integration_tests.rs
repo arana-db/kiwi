@@ -201,13 +201,30 @@ fn test_resp3_backward_compatibility() {
         let result = parser.parse(encoded);
 
         if let RespParseResult::Complete(parsed_data) = result {
-            assert_eq!(parsed_data, original_data);
+            let expected_data = match original_data {
+                RespData::BulkString(None) => RespData::Null,
+                data => data,
+            };
+            assert_eq!(parsed_data, expected_data);
         } else {
             panic!(
                 "Failed backward compatibility test for: {:?}",
                 original_data
             );
         }
+    }
+}
+
+#[test]
+fn test_resp2_legacy_null_round_trip() {
+    for original_data in [RespData::BulkString(None), RespData::Array(None)] {
+        let mut encoder = RespEncoder::new(RespVersion::RESP2);
+        encoder.encode_resp_data(&original_data);
+
+        let mut parser = RespParse::new(RespVersion::RESP2);
+        let result = parser.parse(encoder.get_response());
+
+        assert_eq!(result, RespParseResult::Complete(original_data));
     }
 }
 

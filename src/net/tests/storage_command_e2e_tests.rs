@@ -168,30 +168,46 @@ fn encode_command(args: &[&str]) -> Bytes {
     encoder.get_response()
 }
 
-/// Read and parse a single RESP2 frame from the stream.
-async fn read_response(stream: &mut tokio::net::TcpStream) -> RespData {
-    let mut parser = RespParse::new(RespVersion::RESP2);
-    let mut buf = vec![0u8; 4096];
-    loop {
-        let n = stream.read(&mut buf).await.expect("read from server");
-        if n == 0 {
-            panic!("server closed connection before responding");
+/// Read and parse a single RESP frame from the stream within a bounded timeout.
+async fn read_response_with_version(
+    stream: &mut tokio::net::TcpStream,
+    version: RespVersion,
+) -> RespData {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut parser = RespParse::new(version);
+        let mut buf = vec![0u8; 4096];
+        loop {
+            let n = stream.read(&mut buf).await.expect("read from server");
+            if n == 0 {
+                panic!("server closed connection before responding");
+            }
+            match parser.parse(Bytes::copy_from_slice(&buf[..n])) {
+                RespParseResult::Complete(data) => return data,
+                RespParseResult::Incomplete => continue,
+                RespParseResult::Error(e) => panic!("RESP parse error: {:?}", e),
+            }
         }
-        match parser.parse(Bytes::copy_from_slice(&buf[..n])) {
-            RespParseResult::Complete(data) => return data,
-            RespParseResult::Incomplete => continue,
-            RespParseResult::Error(e) => panic!("RESP parse error: {:?}", e),
-        }
-    }
+    })
+    .await
+    .expect("timed out waiting for RESP response")
 }
 
 /// Send a command and return its parsed RESP response.
 async fn send_command(stream: &mut tokio::net::TcpStream, args: &[&str]) -> RespData {
+    send_command_with_version(stream, args, RespVersion::RESP2).await
+}
+
+/// Send a command and parse its response using the specified protocol version.
+async fn send_command_with_version(
+    stream: &mut tokio::net::TcpStream,
+    args: &[&str],
+    version: RespVersion,
+) -> RespData {
     stream
         .write_all(encode_command(args).as_ref())
         .await
         .expect("write to server");
-    read_response(stream).await
+    read_response_with_version(stream, version).await
 }
 
 #[tokio::test]
@@ -346,6 +362,42 @@ async fn storage_command_e2e_generic_storage_commands_use_storage_path() {
     assert!(
         after.requests_sent >= before.requests_sent + 4,
         "generic commands should traverse the storage channel"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_resp3_legacy_nulls_use_null_type() {
+    let server = TestServer::start(None).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    let reply = send_command_with_version(&mut stream, &["HELLO", "3"], RespVersion::RESP3).await;
+    assert!(
+        matches!(reply, RespData::Map(_)),
+        "expected RESP3 HELLO map, got {:?}",
+        reply
+    );
+
+    let reply = send_command_with_version(
+        &mut stream,
+        &["LINDEX", "missing-list", "0"],
+        RespVersion::RESP3,
+    )
+    .await;
+    assert_eq!(reply, RespData::Null);
+
+    let reply = send_command_with_version(
+        &mut stream,
+        &["MGET", "missing-key-1", "missing-key-2"],
+        RespVersion::RESP3,
+    )
+    .await;
+    assert_eq!(
+        reply,
+        RespData::Array(Some(vec![RespData::Null, RespData::Null]))
     );
 
     server.shutdown().await;

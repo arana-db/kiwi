@@ -375,6 +375,9 @@ impl RespEncode for RespEncoder {
             }
             RespData::Integer(num) => self.append_integer(*num),
             RespData::BulkString(Some(bytes)) => self.append_bulk_string(bytes),
+            RespData::BulkString(None) | RespData::Array(None) if self.is_resp3() => {
+                self.append_null()
+            }
             RespData::BulkString(None) => self.set_bulk_string_len(-1),
             RespData::Array(Some(array)) => {
                 self.append_array_len(array.len() as i64);
@@ -559,6 +562,27 @@ mod tests {
         let mut encoder = RespEncoder::new(RespVersion::RESP3);
         encoder.encode_resp_data(&RespData::Null);
         assert_eq!(encoder.get_response(), Bytes::from("_\r\n"));
+    }
+
+    #[test]
+    fn test_encode_legacy_nulls_follow_protocol_version() {
+        let mut resp3_encoder = RespEncoder::new(RespVersion::RESP3);
+        resp3_encoder.encode_resp_data(&RespData::BulkString(None));
+        assert_eq!(resp3_encoder.get_response(), Bytes::from("_\r\n"));
+
+        resp3_encoder
+            .clear()
+            .encode_resp_data(&RespData::Array(None));
+        assert_eq!(resp3_encoder.get_response(), Bytes::from("_\r\n"));
+
+        let mut resp2_encoder = RespEncoder::new(RespVersion::RESP2);
+        resp2_encoder.encode_resp_data(&RespData::BulkString(None));
+        assert_eq!(resp2_encoder.get_response(), Bytes::from("$-1\r\n"));
+
+        resp2_encoder
+            .clear()
+            .encode_resp_data(&RespData::Array(None));
+        assert_eq!(resp2_encoder.get_response(), Bytes::from("*-1\r\n"));
     }
 
     #[test]
