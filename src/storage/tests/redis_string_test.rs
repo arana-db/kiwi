@@ -19,12 +19,13 @@
 
 #[cfg(test)]
 mod redis_string_test {
-    use std::{collections::HashSet, path::Path, sync::Arc, thread, time::Duration};
+    use std::{collections::HashSet, mem::size_of, path::Path, sync::Arc, thread, time::Duration};
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BgTaskHandler, DataType, Redis, StorageOptions, safe_cleanup_test_db,
-        slot_indexer::key_to_slot_id, storage::Storage, unique_test_db_path,
+        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, DataType, Redis, StorageOptions,
+        ZsetScoreMember, safe_cleanup_test_db, slot_indexer::key_to_slot_id, storage::Storage,
+        unique_test_db_path,
     };
 
     fn cleanup_redis(redis: Redis, test_db_path: &Path) {
@@ -167,6 +168,167 @@ mod redis_string_test {
                 Some(second_binary_value),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn test_storage_keys_supports_redis_glob_across_all_data_types() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        storage.set(b"test_alpha", b"string-value").unwrap();
+        storage
+            .lpush(b"test_beta", &[b"list-value".to_vec()])
+            .unwrap();
+        storage
+            .hset(b"test_charlie", b"field", b"hash-value")
+            .unwrap();
+        storage.sadd(b"test_delta", &[b"set-value"]).unwrap();
+        storage
+            .zadd(
+                b"test_echo",
+                &[ZsetScoreMember::new(1.0, b"zset-value".to_vec())],
+            )
+            .unwrap();
+        storage.set(b"test_xray", b"negated-class").unwrap();
+        storage.set(b"other_foxtrot", b"non-match").unwrap();
+        storage.set(b"literal*star", b"escaped-wildcard").unwrap();
+
+        let keys = |pattern| {
+            storage
+                .keys(pattern)
+                .unwrap()
+                .into_iter()
+                .collect::<HashSet<_>>()
+        };
+
+        assert_eq!(
+            keys("test_*"),
+            HashSet::from([
+                "test_alpha".to_string(),
+                "test_beta".to_string(),
+                "test_charlie".to_string(),
+                "test_delta".to_string(),
+                "test_echo".to_string(),
+                "test_xray".to_string(),
+            ])
+        );
+        assert_eq!(keys("test_?cho"), HashSet::from(["test_echo".to_string()]));
+        assert_eq!(
+            keys("test_[ae]*"),
+            HashSet::from(["test_alpha".to_string(), "test_echo".to_string()])
+        );
+        assert_eq!(
+            keys("test_[a-c]*"),
+            HashSet::from([
+                "test_alpha".to_string(),
+                "test_beta".to_string(),
+                "test_charlie".to_string(),
+            ])
+        );
+        assert_eq!(
+            keys("test_[^x]*"),
+            HashSet::from([
+                "test_alpha".to_string(),
+                "test_beta".to_string(),
+                "test_charlie".to_string(),
+                "test_delta".to_string(),
+                "test_echo".to_string(),
+            ])
+        );
+        assert_eq!(
+            keys(r"literal\*star"),
+            HashSet::from(["literal*star".to_string()])
+        );
+        assert!(!keys("test_*").contains("other_foxtrot"));
+    }
+
+    #[tokio::test]
+    async fn test_storage_keys_excludes_empty_and_expired_composite_values() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        storage.hset(b"empty_hash", b"field", b"value").unwrap();
+        storage.lpush(b"empty_list", &[b"value".to_vec()]).unwrap();
+        storage.sadd(b"empty_set", &[b"value"]).unwrap();
+        storage
+            .zadd(
+                b"empty_zset",
+                &[ZsetScoreMember::new(1.0, b"value".to_vec())],
+            )
+            .unwrap();
+        let redis = &storage.insts[0];
+        let meta_cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+        for key in [
+            b"empty_hash".as_slice(),
+            b"empty_list".as_slice(),
+            b"empty_set".as_slice(),
+            b"empty_zset".as_slice(),
+        ] {
+            let encoded_key = BaseMetaKey::new(key).encode().unwrap();
+            let mut encoded_value = redis
+                .db()
+                .unwrap()
+                .get_cf(&meta_cf, &encoded_key)
+                .unwrap()
+                .unwrap()
+                .to_vec();
+            encoded_value[1..1 + size_of::<u64>()].fill(0);
+            redis
+                .db()
+                .unwrap()
+                .put_cf(&meta_cf, encoded_key, encoded_value)
+                .unwrap();
+        }
+
+        storage.hset(b"expired_hash", b"field", b"value").unwrap();
+        storage
+            .lpush(b"expired_list", &[b"value".to_vec()])
+            .unwrap();
+        storage.sadd(b"expired_set", &[b"value"]).unwrap();
+        storage
+            .zadd(
+                b"expired_zset",
+                &[ZsetScoreMember::new(1.0, b"value".to_vec())],
+            )
+            .unwrap();
+        for key in [
+            b"expired_hash".as_slice(),
+            b"expired_list".as_slice(),
+            b"expired_set".as_slice(),
+            b"expired_zset".as_slice(),
+        ] {
+            assert!(storage.expire(key, 1).unwrap());
+        }
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+
+        assert!(storage.keys("empty_*").unwrap().is_empty());
+        assert!(storage.keys("expired_*").unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_storage_keys_propagates_invalid_metadata_errors() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        let redis = &storage.insts[0];
+        let meta_cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+        let encoded_key = BaseMetaKey::new(b"broken_meta").encode().unwrap();
+        redis
+            .db()
+            .unwrap()
+            .put_cf(&meta_cf, encoded_key, [DataType::Hash as u8])
+            .unwrap();
+
+        assert!(storage.keys("*").is_err());
     }
 
     #[test]

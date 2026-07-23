@@ -29,8 +29,11 @@ use crate::slot_indexer::key_to_slot_id;
 use crate::{
     BaseMetaKey, BinlogBatch, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckState,
     error::{InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
-    format_base_key::BaseKey,
+    format_base_key::{BaseKey, ParsedBaseKey},
+    format_base_meta_value::ParsedBaseMetaValue,
+    format_list_meta_value::ParsedListsMetaValue,
     format_strings_value::{ParsedStringsValue, StringValue},
+    redis_sets::glob_match,
 };
 
 impl Redis {
@@ -2090,43 +2093,33 @@ impl Redis {
         for item in iter {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
 
-            // Decode the key to get the actual user key
-            if let Ok(base_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]) {
-                let key_str = String::from_utf8_lossy(base_key.key());
-
-                // Check if key is not expired
-                if let Ok(parsed) = ParsedStringsValue::new(&value_bytes[..]) {
-                    if !parsed.is_stale() {
-                        // Simple pattern matching - in a full implementation, we'd support glob patterns
-                        if pattern == "*" || key_str.contains(pattern) {
-                            keys.push(key_str.to_string());
-                        }
-                    }
+            let base_key = ParsedBaseKey::new(&key_bytes[..])?;
+            let data_type = value_bytes.first().copied().ok_or_else(|| InvalidFormat {
+                message: "empty MetaCF value".to_string(),
+                location: snafu::location!(),
+            })?;
+            let is_valid = match DataType::try_from(data_type)? {
+                DataType::String => !ParsedStringsValue::new(&value_bytes[..])?.is_stale(),
+                DataType::List => {
+                    let meta = ParsedListsMetaValue::new(&value_bytes[..])?;
+                    !meta.is_stale() && meta.count() > 0
                 }
-            } else if let Ok(meta_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..])
-            {
-                let key_str = String::from_utf8_lossy(meta_key.key());
-
-                // Check if meta key is not expired using appropriate parser
-                if !value_bytes.is_empty() {
-                    let is_valid = if let Ok(meta) =
-                        crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
-                    {
-                        !meta.is_stale() && meta.count() > 0
-                    } else if let Ok(list_meta) =
-                        crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
-                    {
-                        !list_meta.is_stale() && list_meta.count() > 0
-                    } else {
-                        false
-                    };
-
-                    if is_valid {
-                        // Simple pattern matching
-                        if pattern == "*" || key_str.contains(pattern) {
-                            keys.push(key_str.to_string());
-                        }
+                DataType::Hash | DataType::Set | DataType::ZSet => {
+                    let meta = ParsedBaseMetaValue::new(&value_bytes[..])?;
+                    !meta.is_stale() && meta.count() > 0
+                }
+                DataType::None | DataType::All => {
+                    return InvalidFormatSnafu {
+                        message: format!("invalid MetaCF data type: {data_type}"),
                     }
+                    .fail();
+                }
+            };
+
+            if is_valid {
+                let key_str = String::from_utf8_lossy(base_key.key());
+                if glob_match(pattern, &key_str) {
+                    keys.push(key_str.into_owned());
                 }
             }
         }

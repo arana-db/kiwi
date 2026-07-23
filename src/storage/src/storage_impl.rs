@@ -724,10 +724,7 @@ impl Storage {
         let mut all_keys = Vec::new();
 
         for inst in &self.insts {
-            // Continue with other instances on error
-            if let Ok(keys) = inst.scan_keys(pattern) {
-                all_keys.extend(keys);
-            }
+            all_keys.extend(inst.scan_keys(pattern)?);
         }
 
         Ok(all_keys)

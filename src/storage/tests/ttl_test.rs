@@ -357,8 +357,8 @@ async fn test_keys_command() {
     let keys = storage.keys("*").unwrap();
     assert!(keys.len() >= 3); // May contain other keys from the system
 
-    // Test KEYS with specific pattern (simplified pattern matching)
-    let keys = storage.keys("test").unwrap();
+    // Test KEYS with a Redis glob pattern
+    let keys = storage.keys("test*").unwrap();
     assert!(keys.len() >= 2); // Should find test1 and test2
 
     storage.shutdown().await;

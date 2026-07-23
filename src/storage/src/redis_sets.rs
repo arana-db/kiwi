@@ -18,7 +18,7 @@
 //! Redis sets operations implementation
 //! This module provides set operations for Redis storage
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use bytes::Bytes;
 use kstd::lock_mgr::ScopeRecordLock;
@@ -2464,50 +2464,127 @@ impl Redis {
     }
 }
 
-/// Simple glob pattern matching
-/// Supports * (match any sequence) and ? (match single character)
+/// Redis-style glob pattern matching.
+///
+/// Supports `*`, `?`, character classes and ranges, negated character classes,
+/// and backslash escaping.
 pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     let pattern_chars: Vec<char> = pattern.chars().collect();
     let text_chars: Vec<char> = text.chars().collect();
 
-    fn match_recursive(pattern: &[char], text: &[char], p_idx: usize, t_idx: usize) -> bool {
-        // End of pattern
-        if p_idx >= pattern.len() {
-            return t_idx >= text.len();
+    fn match_character_class(
+        pattern: &[char],
+        class_start: usize,
+        candidate: char,
+    ) -> Option<(bool, usize)> {
+        let mut index = class_start + 1;
+        let negated = pattern.get(index) == Some(&'^');
+        if negated {
+            index += 1;
         }
 
-        // End of text but pattern remains
-        if t_idx >= text.len() {
-            // Check if remaining pattern is all '*'
-            return pattern[p_idx..].iter().all(|&c| c == '*');
-        }
-
-        match pattern[p_idx] {
-            '*' => {
-                // Try matching zero or more characters
-                for i in t_idx..=text.len() {
-                    if match_recursive(pattern, text, p_idx + 1, i) {
-                        return true;
+        let mut matched = false;
+        while index < pattern.len() {
+            match pattern[index] {
+                ']' => return Some((matched != negated, index + 1)),
+                '\\' if index + 1 < pattern.len() => {
+                    if pattern[index + 1] == candidate {
+                        matched = true;
                     }
+                    index += 2;
                 }
-                false
-            }
-            '?' => {
-                // Match exactly one character
-                match_recursive(pattern, text, p_idx + 1, t_idx + 1)
-            }
-            c => {
-                // Exact character match
-                if text[t_idx] == c {
-                    match_recursive(pattern, text, p_idx + 1, t_idx + 1)
-                } else {
-                    false
+                range_start
+                    if index + 2 < pattern.len()
+                        && pattern[index + 1] == '-'
+                        && pattern[index + 2] != ']' =>
+                {
+                    let range_end = pattern[index + 2];
+                    let (lower, upper) = if range_start <= range_end {
+                        (range_start, range_end)
+                    } else {
+                        (range_end, range_start)
+                    };
+                    if (lower..=upper).contains(&candidate) {
+                        matched = true;
+                    }
+                    index += 3;
+                }
+                literal => {
+                    if literal == candidate {
+                        matched = true;
+                    }
+                    index += 1;
                 }
             }
         }
+
+        None
     }
 
-    match_recursive(&pattern_chars, &text_chars, 0, 0)
+    fn match_recursive(
+        pattern: &[char],
+        text: &[char],
+        p_idx: usize,
+        t_idx: usize,
+        memo: &mut HashMap<(usize, usize), bool>,
+    ) -> bool {
+        if let Some(result) = memo.get(&(p_idx, t_idx)) {
+            return *result;
+        }
+
+        let result = if p_idx >= pattern.len() {
+            t_idx >= text.len()
+        } else {
+            match pattern[p_idx] {
+                '*' => {
+                    let mut candidate_index = t_idx;
+                    let mut matched = false;
+                    while candidate_index <= text.len() {
+                        if match_recursive(pattern, text, p_idx + 1, candidate_index, memo) {
+                            matched = true;
+                            break;
+                        }
+                        candidate_index += 1;
+                    }
+                    matched
+                }
+                '?' => {
+                    t_idx < text.len() && match_recursive(pattern, text, p_idx + 1, t_idx + 1, memo)
+                }
+                '[' if t_idx < text.len() => {
+                    if let Some((class_matches, next_pattern_index)) =
+                        match_character_class(pattern, p_idx, text[t_idx])
+                    {
+                        class_matches
+                            && match_recursive(pattern, text, next_pattern_index, t_idx + 1, memo)
+                    } else {
+                        text[t_idx] == '['
+                            && match_recursive(pattern, text, p_idx + 1, t_idx + 1, memo)
+                    }
+                }
+                '\\' => {
+                    let (literal, next_pattern_index) = if p_idx + 1 < pattern.len() {
+                        (pattern[p_idx + 1], p_idx + 2)
+                    } else {
+                        ('\\', p_idx + 1)
+                    };
+                    t_idx < text.len()
+                        && text[t_idx] == literal
+                        && match_recursive(pattern, text, next_pattern_index, t_idx + 1, memo)
+                }
+                literal => {
+                    t_idx < text.len()
+                        && text[t_idx] == literal
+                        && match_recursive(pattern, text, p_idx + 1, t_idx + 1, memo)
+                }
+            }
+        };
+
+        memo.insert((p_idx, t_idx), result);
+        result
+    }
+
+    match_recursive(&pattern_chars, &text_chars, 0, 0, &mut HashMap::new())
 }
 
 #[allow(clippy::unwrap_used)]
@@ -2545,5 +2622,29 @@ mod glob_tests {
         assert!(glob_match("h*l?o", "hallo"));
         assert!(glob_match("*l?o", "hello"));
         assert!(!glob_match("h*l?o", "world"));
+    }
+
+    #[test]
+    fn test_glob_match_character_classes() {
+        assert!(glob_match("h[ae]llo", "hello"));
+        assert!(glob_match("h[ae]llo", "hallo"));
+        assert!(!glob_match("h[ae]llo", "hollo"));
+
+        assert!(glob_match("file[0-3]", "file2"));
+        assert!(!glob_match("file[0-3]", "file4"));
+        assert!(glob_match("file[3-0]", "file2"));
+
+        assert!(glob_match("h[^x]llo", "hello"));
+        assert!(!glob_match("h[^x]llo", "hxllo"));
+    }
+
+    #[test]
+    fn test_glob_match_backslash_escapes_metacharacters() {
+        assert!(glob_match(r"literal\*star", "literal*star"));
+        assert!(!glob_match(r"literal\*star", "literal-anything-star"));
+        assert!(glob_match(r"literal\?mark", "literal?mark"));
+        assert!(glob_match(r"literal\[bracket", "literal[bracket"));
+        assert!(glob_match(r"class[\]]", "class]"));
+        assert!(glob_match(r"slash\\", r"slash\"));
     }
 }
