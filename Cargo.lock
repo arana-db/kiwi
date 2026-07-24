@@ -2341,8 +2341,8 @@ dependencies = [
 
 [[package]]
 name = "rust-librocksdb-sys"
-version = "0.41.0+10.9.1"
-source = "git+https://github.com/arana-db/rust-rocksdb?rev=f7abb18c64fac810f3c4736aef833c340396449b#f7abb18c64fac810f3c4736aef833c340396449b"
+version = "0.47.1+11.1.2"
+source = "git+https://github.com/arana-db/rust-rocksdb?rev=dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68#dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68"
 dependencies = [
  "bindgen",
  "bzip2-sys",
@@ -2351,13 +2351,15 @@ dependencies = [
  "libc",
  "libz-sys",
  "lz4-sys",
+ "pkg-config",
+ "rustflags",
  "zstd-sys",
 ]
 
 [[package]]
 name = "rust-rocksdb"
-version = "0.45.0"
-source = "git+https://github.com/arana-db/rust-rocksdb?rev=f7abb18c64fac810f3c4736aef833c340396449b#f7abb18c64fac810f3c4736aef833c340396449b"
+version = "0.51.0"
+source = "git+https://github.com/arana-db/rust-rocksdb?rev=dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68#dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68"
 dependencies = [
  "libc",
  "parking_lot",
@@ -2385,6 +2387,12 @@ name = "rustc-hash"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
+
+[[package]]
+name = "rustflags"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a39e0e9135d7a7208ee80aa4e3e4b88f0f5ad7be92153ed70686c38a03db2e63"
 
 [[package]]
 name = "rustix"
@@ -3842,7 +3850,6 @@ version = "2.0.16+zstd.1.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91e19ebc2adc8f83e43039e79776e3fda8ca919132d68a1fed6a5faca2683748"
 dependencies = [
- "bindgen",
  "cc",
  "pkg-config",
 ]

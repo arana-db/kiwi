@@ -111,9 +111,9 @@ See [docs/cluster.md](docs/cluster.md) for the manual step-by-step procedure and
 
 ## Dependencies
 
-### RocksDB (Temporary Fork)
+### RocksDB (Arana-maintained Fork)
 
-This project uses a [customized fork of rust-rocksdb](https://github.com/arana-db/rust-rocksdb/tree/addtableproperties) because the official crate does not yet support the TablePropertiesCollector FFI functions required by the Raft module. Once the needed functionality lands in upstream [rust-rocksdb](https://github.com/rust-rocksdb/rust-rocksdb), we will switch back.
+Kiwi uses the [Arana-maintained rust-rocksdb fork](https://github.com/arana-db/rust-rocksdb) to provide the TableProperties Collector/Factory FFI required by Storage LogIndex. The dependency is pinned to an exact revision so native builds are auditable and reproducible.
 
 ## Contributing
 

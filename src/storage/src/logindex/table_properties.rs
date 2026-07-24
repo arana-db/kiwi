@@ -118,7 +118,7 @@ impl LogIndexTablePropertiesCollectorFactory {
 impl TablePropertiesCollectorFactory for LogIndexTablePropertiesCollectorFactory {
     type Collector = LogIndexTablePropertiesCollector;
 
-    fn create(&mut self, _context: TablePropertiesCollectorContext) -> Self::Collector {
+    fn create(&self, _context: TablePropertiesCollectorContext) -> Self::Collector {
         LogIndexTablePropertiesCollector::new(self.collector.clone())
     }
 
@@ -246,6 +246,28 @@ mod tests {
             read_stats_from_table_props(&m).is_none(),
             "Should reject multiple extra segments"
         );
+    }
+
+    #[test]
+    fn test_read_stats_rejects_invalid_components() {
+        let invalid_values: &[&[u8]] = &[
+            b"not-a-log/5",
+            b"233333/not-a-sequence",
+            b"233333",
+            b"/5",
+            b"233333/",
+            &[0xff, b'/', b'5'],
+        ];
+
+        for &value in invalid_values {
+            let mut properties = HashMap::new();
+            properties.insert(PROPERTY_KEY.as_bytes().to_vec(), value.to_vec());
+
+            assert!(
+                read_stats_from_table_props(&properties).is_none(),
+                "Should reject invalid table property value: {value:?}"
+            );
+        }
     }
 
     #[test]

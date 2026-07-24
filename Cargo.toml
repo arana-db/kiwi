@@ -42,15 +42,10 @@ quote = "1.0"
 syn = { version = "3.0", features = ["extra-traits", "full"] }
 env_logger = "0.11"
 log = "0.4"
-# TODO / Future:
-# Currently using a customized fork of rust-rocksdb for this module.
-# The official RocksDB version does not yet support the FFI functions
-# required by TablePropertiesCollector.
-# We are actively working to merge the necessary TableCollector FFI functions
-# into the official RocksDB repository to enable a smooth migration in the future.
-# Once the required functionality is available upstream, we plan to replace
-# this fork with the official version.
-rocksdb = { package = "rust-rocksdb", git = "https://github.com/arana-db/rust-rocksdb", rev = "f7abb18c64fac810f3c4736aef833c340396449b", features = ["multi-threaded-cf"] }
+# Kiwi uses the Arana-maintained arana-db/rust-rocksdb fork to provide the
+# TableProperties Collector/Factory FFI required by Storage LogIndex. Pinning an
+# exact revision keeps native dependency builds auditable and reproducible.
+rocksdb = { package = "rust-rocksdb", git = "https://github.com/arana-db/rust-rocksdb", rev = "dd1ac21a1c7176e5d71e145a0e4b941ec84ccf68", features = ["multi-threaded-cf"] }
 thiserror = "2.0"
 serde = "1.0"
 serde_json = "1.0"
