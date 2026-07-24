@@ -1,0 +1,21 @@
+[package]
+name = "runtime-baseline"
+version.workspace = true
+description = "Kiwi storage runtime baseline harness"
+repository.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "kiwi-runtime-baseline"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

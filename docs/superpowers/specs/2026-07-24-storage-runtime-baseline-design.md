@@ -148,8 +148,10 @@ harness 已运行。
 
 当前 StorageServer 的 `with_config`、`with_pause_controller` 和 `with_metrics` 不能同时组合
 自定义 config、共享 access gate 和 observer；RuntimeManager 又在内部创建 MessageChannel
-和 StorageClient。第一阶段允许增加最小的组合构造入口，把同一个可选
-`Arc<BaselineMetrics>` 注入完整请求链：
+和 StorageClient。第一阶段允许增加最小的组合构造入口，把同一个可选 observer contract
+注入完整请求链。`runtime` crate 只定义该 contract 和随请求传递的 token；具体
+`BaselineMetrics` 由工具 crate 拥有并实现 contract，避免形成 `runtime -> tools/runtime-baseline`
+依赖环：
 
 - RuntimeManager/MessageChannel：logical request 开始、physical attempt 创建、send accepted、
   send failed 和 channel queued；
@@ -160,8 +162,15 @@ harness 已运行。
 
 logical request id 与每次 retry 的 physical attempt id 分离；attempt id 从 enqueue 到 execution
 terminal 保持不变。现有生产构造路径统一传入 `None`，benchmark observer、原子更新和控制
-协议通过 `runtime-baseline` feature 编译，普通生产 `kiwi` 不包含这些 hooks。组合 API 不改变
-worker/batching 调度。
+协议通过 `runtime-baseline` feature 编译，普通生产 `kiwi` 不包含这些 hooks。根 workspace 的
+`default-members` 精确保留 12 个生产 crate 并排除工具 crate，使普通 root build 不与工具 target
+处于同一 Cargo invocation，隔离 feature unification。组合 API 不改变 worker/batching 调度。
+构建身份中的 `source_dirty` 是受限的可编译输入状态：根 `src/`、`.cargo/`、根
+`Cargo.toml`/`Cargo.lock`/`rust-toolchain.toml`，以及工具 crate 的 manifest、build script、
+`src/` 和 `tests/`。build script 以同一集合执行有 pathspec 的 `git status --porcelain` 并注册
+`rerun-if-changed`；`.git`、Cargo target 和 benchmark results 都不属于该集合，避免构建产物或
+结果归档造成自触发重编译。若这个受限 source 集合有未暂存或未跟踪修改，startup/outcome 必须
+标为 `non_publishable` 并包含 `dirty_source_tree`。
 
 target 接受明确参数：
 
@@ -266,8 +275,9 @@ Python 只负责编排，不生成主要负载。控制器使用标准库完成�
 不直接启用现有 `StorageMetricsTracker` 的每请求异步 Mutex 路径。其共享锁和样本
 `Vec::remove(0)` 会改变被测热路径，不能作为当前 runtime 基线的既定实现。
 
-工具 crate 使用独立的 `BaselineMetrics`。热路径只执行原子 current/max/counter 更新和
-单调时间戳采样；需要分位数的阶段延迟通过有界 non-blocking sample channel 交给单独
+工具 crate 使用独立的 `BaselineMetrics`，并通过 `runtime` crate 定义的 observer contract
+接收事件；`runtime` 不拥有或依赖这个具体指标实现。热路径只执行原子 current/max/counter
+更新和单调时间戳采样；需要分位数的阶段延迟通过有界 non-blocking sample channel 交给单独
 collector，channel 满时只增加 `dropped_metric_samples`，不得阻塞请求。默认生产 `kiwi`
 不创建该 observer、不暴露 endpoint，也不编译 benchmark 控制通道。
 
@@ -346,8 +356,10 @@ CURRENT、MANIFEST 和 OPTIONS 文件 SHA-256。主矩阵统一测 warm workload
 - SET，connections 1，pipeline 1，batching off；
 - SET，connections 8，pipeline 8，batching on。
 
-smoke value 固定 64 B，每 case 预热 0.5 秒、测量 2 秒、总超时 15 秒；整个 smoke job
-总超时 5 分钟。它只验证真实执行和 fail-closed，不用于性能比较。
+smoke value 固定 64 B。memtier 2.5.1 的 `--test-time` 只接受整数秒，不能表达 0.5 秒；因此每
+case 预热 1 秒、测量 2 秒、总超时 15 秒。controller 的 4-case smoke step 总超时 5 分钟；整个
+GitHub job 总超时为 45 分钟，以覆盖冷 runner 的 release RocksDB 编译。它只验证真实执行和
+fail-closed，不用于性能比较。
 
 第二阶段使用版本化 `cases.yaml` 作为唯一可执行 case 清单。下表是可选维度，不做全
 笛卡尔积。manifest 分为以下组，合计不得超过 60 个 case variant：

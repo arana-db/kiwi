@@ -2329,6 +2329,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime-baseline"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "rust-librocksdb-sys"
 version = "0.47.1+11.1.2"
 source = "git+https://github.com/arana-db/rust-rocksdb?tag=v0.51.0-arana.1#971c792f3d6312204a5e162bd60d4d3c84a9e8a8"

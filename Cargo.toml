@@ -13,6 +13,25 @@ members = [
 	"src/executor",
 	"src/client",
 	"src/raft",
+	"tools/runtime-baseline",
+]
+
+# Keep ordinary root builds on the twelve production crates. The benchmark
+# harness opts in explicitly so its future runtime feature cannot unify into
+# the normal server build.
+default-members = [
+	"src/storage",
+	"src/kstd",
+	"src/common/macro",
+	"src/common/runtime",
+	"src/net",
+	"src/resp",
+	"src/server",
+	"src/conf",
+	"src/cmd",
+	"src/executor",
+	"src/client",
+	"src/raft",
 ]
 
 [workspace.package]
