@@ -17,8 +17,11 @@
 
 #![allow(clippy::unwrap_used)]
 
+use std::future::{Future, poll_fn};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::task::Poll;
 
 use arc_swap::ArcSwap;
 use openraft::RaftSnapshotBuilder;
@@ -37,6 +40,14 @@ async fn close_storage(storage: Arc<Storage>, name: &str) -> anyhow::Result<()> 
     storage.shutdown().await;
     storage.close();
     Ok(())
+}
+
+async fn assert_pending_after_one_poll<F: Future>(mut future: Pin<&mut F>, message: &str) {
+    poll_fn(|cx| {
+        assert!(future.as_mut().poll(cx).is_pending(), "{message}");
+        Poll::Ready(())
+    })
+    .await;
 }
 
 #[derive(Default)]
@@ -243,23 +254,19 @@ async fn snapshot_builder_blocks_install_operation() {
     drop(source_builder);
 
     let builder = state_machine.get_snapshot_builder().await;
-    let install = tokio::spawn(async move {
-        let result = state_machine
-            .install_snapshot(
-                &snapshot_meta,
-                Box::new(std::io::Cursor::new(snapshot_bytes)),
-            )
-            .await;
-        (state_machine, result, snapshot_meta)
-    });
-
-    while controller.pause_count.load(Ordering::SeqCst) == 0 {
-        tokio::task::yield_now().await;
-    }
-    tokio::task::yield_now().await;
-    assert!(
-        !install.is_finished(),
-        "install must wait until the snapshot builder releases its operation guard"
+    let mut install = Box::pin(state_machine.install_snapshot(
+        &snapshot_meta,
+        Box::new(std::io::Cursor::new(snapshot_bytes)),
+    ));
+    assert_pending_after_one_poll(
+        install.as_mut(),
+        "install should wait for the builder publication guard",
+    )
+    .await;
+    assert_eq!(
+        controller.pause_count.load(Ordering::SeqCst),
+        0,
+        "install must not pause storage access while waiting for the builder publication guard"
     );
 
     let mut builder = builder;
@@ -273,16 +280,23 @@ async fn snapshot_builder_blocks_install_operation() {
     );
     drop(stale_snapshot);
     drop(builder);
-    let (mut state_machine, result, installed_meta) =
-        install.await.expect("install task should not panic");
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), install.as_mut())
+        .await
+        .expect("install should complete after the builder releases its publication guard");
     result.expect("valid install should complete after the builder guard drains");
+    assert_eq!(
+        controller.pause_count.load(Ordering::SeqCst),
+        1,
+        "install should pause after acquiring the released publication guard"
+    );
+    drop(install);
     let current = state_machine
         .get_current_snapshot()
         .await
         .expect("current snapshot read should succeed")
         .expect("install must leave a current snapshot");
     assert_eq!(
-        current.meta, installed_meta,
+        current.meta, snapshot_meta,
         "a builder created before install must not overwrite the installed current snapshot"
     );
 
@@ -330,21 +344,19 @@ async fn aborted_install_before_marker_resumes_and_preserves_live_storage() -> a
     let marker_path = snapshot_install_marker_path(&db_path)?;
     assert!(!marker_path.exists());
 
-    let install = tokio::spawn(async move {
-        state_machine
-            .install_snapshot(
-                &snapshot_meta,
-                Box::new(std::io::Cursor::new(snapshot_bytes)),
-            )
-            .await
-    });
-
-    while controller.pause_count.load(Ordering::SeqCst) == 0 {
-        tokio::task::yield_now().await;
-    }
-    assert!(
-        controller.paused.load(Ordering::SeqCst),
-        "install should pause before waiting for the snapshot operation gate"
+    let mut install = Box::pin(state_machine.install_snapshot(
+        &snapshot_meta,
+        Box::new(std::io::Cursor::new(snapshot_bytes)),
+    ));
+    assert_pending_after_one_poll(
+        install.as_mut(),
+        "install should wait for the snapshot publication gate",
+    )
+    .await;
+    assert_eq!(
+        controller.pause_count.load(Ordering::SeqCst),
+        0,
+        "install must not pause before acquiring the snapshot publication gate"
     );
     assert!(
         !marker_path.exists(),
@@ -355,9 +367,7 @@ async fn aborted_install_before_marker_resumes_and_preserves_live_storage() -> a
         "install must not replace live Storage before creating the marker"
     );
 
-    install.abort();
-    let cancelled = install.await;
-    assert!(cancelled.is_err(), "install task should be cancelled");
+    drop(install);
 
     assert!(
         !marker_path.exists(),
@@ -369,17 +379,19 @@ async fn aborted_install_before_marker_resumes_and_preserves_live_storage() -> a
     );
     assert_eq!(old_storage.get(b"live-key")?, "live-value");
 
-    let resumed_permit = tokio::time::timeout(
+    let storage_permit = tokio::time::timeout(
         std::time::Duration::from_secs(1),
         Arc::clone(&controller).enter(),
     )
     .await
-    .expect("aborting a pre-marker install must resume storage access");
+    .expect("aborting while waiting for publication must leave storage access available");
     assert!(!controller.paused.load(Ordering::SeqCst));
-    assert_eq!(controller.resume_count.load(Ordering::SeqCst), 1);
-    drop(resumed_permit);
+    assert_eq!(controller.pause_count.load(Ordering::SeqCst), 0);
+    assert_eq!(controller.resume_count.load(Ordering::SeqCst), 0);
+    drop(storage_permit);
 
     drop(held_builder);
+    drop(state_machine);
     drop(target_swap);
     close_storage(old_storage, "preserved target storage").await?;
     drop(controller);

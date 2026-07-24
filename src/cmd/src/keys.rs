@@ -182,11 +182,11 @@ mod tests {
         );
         assert_eq!(
             run_keys(&command, &client, &storage, b"**"),
-            vec![b"literal".to_vec()]
+            vec![Vec::new(), b"literal".to_vec()]
         );
         assert_eq!(
             run_keys(&command, &client, &storage, b"***"),
-            vec![b"literal".to_vec()]
+            vec![Vec::new(), b"literal".to_vec()]
         );
         assert_eq!(
             run_keys(&command, &client, &storage, b"literal*"),

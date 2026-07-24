@@ -405,8 +405,10 @@ pub struct KiwiStateMachine {
     snapshot_idx: u64,
     /// Pause controller for coordinating with StorageServer.
     pause_controller: Arc<dyn PauseController>,
-    /// Serializes snapshot-visible state with apply, build and install operations.
-    snapshot_operation_gate: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes snapshot-visible state with apply, checkpoint and install operations.
+    snapshot_state_gate: Arc<tokio::sync::Mutex<()>>,
+    /// Serializes current snapshot publication with build, install and snapshot readers.
+    snapshot_publication_gate: Arc<tokio::sync::Mutex<()>>,
     /// Shared Raft append-log callback used to re-arm restored Storage after snapshot install.
     append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
 }
@@ -434,7 +436,8 @@ impl KiwiStateMachine {
             last_membership: StoredMembership::default(),
             snapshot_idx: 0,
             pause_controller,
-            snapshot_operation_gate: Arc::new(tokio::sync::Mutex::new(())),
+            snapshot_state_gate: Arc::new(tokio::sync::Mutex::new(())),
+            snapshot_publication_gate: Arc::new(tokio::sync::Mutex::new(())),
             append_log_fn,
         }
     }
@@ -471,7 +474,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
     where
         I: IntoIterator<Item = openraft::Entry<KiwiTypeConfig>> + Send,
     {
-        let _snapshot_operation = Arc::clone(&self.snapshot_operation_gate).lock_owned().await;
+        let _snapshot_state = Arc::clone(&self.snapshot_state_gate).lock_owned().await;
         let mut responses = Vec::new();
 
         for entry in entries {
@@ -498,11 +501,17 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
     }
 
     async fn get_snapshot_builder(&mut self) -> Self::SnapshotBuilder {
-        let snapshot_operation = Arc::clone(&self.snapshot_operation_gate).lock_owned().await;
+        let snapshot_publication = Arc::clone(&self.snapshot_publication_gate)
+            .lock_owned()
+            .await;
+        let snapshot_state = Arc::clone(&self.snapshot_state_gate).lock_owned().await;
         self.snapshot_idx = self.snapshot_idx.saturating_add(1);
         KiwiSnapshotBuilder {
             storage: self.storage_swap.load_full(),
-            _snapshot_operation: snapshot_operation,
+            snapshot_state_guard: Some(snapshot_state),
+            snapshot_publication_guard: Some(snapshot_publication),
+            #[cfg(test)]
+            checkpoint_completed_hook: None,
             _idx: self.snapshot_idx,
             snapshot_work_dir: self.snapshot_work_dir.clone(),
             last_applied: self.last_applied,
@@ -568,10 +577,13 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         let prepared = prepare_checkpoint_restore(&checkpoint_root, &self.db_path, db_instance_num)
             .map_err(io_err_to_raft)?;
 
+        let _snapshot_publication = Arc::clone(&self.snapshot_publication_gate)
+            .lock_owned()
+            .await;
         self.pause_controller.request_pause().await;
         let mut resume_before_marker =
             ResumeBeforeMarkerGuard::new(Arc::clone(&self.pause_controller));
-        let _snapshot_operation = Arc::clone(&self.snapshot_operation_gate).lock_owned().await;
+        let _snapshot_state = Arc::clone(&self.snapshot_state_gate).lock_owned().await;
 
         let marker_path = snapshot_install_marker_path(&self.db_path).map_err(io_err_to_raft)?;
         let marker = SnapshotInstallMarker {
@@ -673,7 +685,9 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
     async fn get_current_snapshot(
         &mut self,
     ) -> Result<Option<Snapshot<KiwiTypeConfig>>, openraft::StorageError<u64>> {
-        let _snapshot_operation = Arc::clone(&self.snapshot_operation_gate).lock_owned().await;
+        let _snapshot_publication = Arc::clone(&self.snapshot_publication_gate)
+            .lock_owned()
+            .await;
         load_current_snapshot(&self.snapshot_work_dir)
     }
 
@@ -681,7 +695,10 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         &mut self,
     ) -> Result<(Option<LogId<u64>>, StoredMembership<u64, KiwiNode>), openraft::StorageError<u64>>
     {
-        let _snapshot_operation = Arc::clone(&self.snapshot_operation_gate).lock_owned().await;
+        let _snapshot_publication = Arc::clone(&self.snapshot_publication_gate)
+            .lock_owned()
+            .await;
+        let _snapshot_state = Arc::clone(&self.snapshot_state_gate).lock_owned().await;
         // On first access, lazily load from persisted snapshot to recover last_applied
         // after restart (otherwise openraft would scan from index 0 and fail if logs were purged).
         if self.last_applied.is_none() {
@@ -698,9 +715,19 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
     }
 }
 
+#[cfg(test)]
+#[derive(Default)]
+struct SnapshotCheckpointTestHook {
+    checkpoint_completed: tokio::sync::Notify,
+    continue_build: tokio::sync::Notify,
+}
+
 pub struct KiwiSnapshotBuilder {
     storage: Arc<Storage>,
-    _snapshot_operation: tokio::sync::OwnedMutexGuard<()>,
+    snapshot_state_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    snapshot_publication_guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+    #[cfg(test)]
+    checkpoint_completed_hook: Option<Arc<SnapshotCheckpointTestHook>>,
     _idx: u64,
     snapshot_work_dir: PathBuf,
     last_applied: Option<LogId<u64>>,
@@ -708,13 +735,12 @@ pub struct KiwiSnapshotBuilder {
     _node_id: u64,
 }
 
-impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
-    async fn build_snapshot(&mut self) -> Result<Snapshot<KiwiTypeConfig>, StorageError<u64>> {
-        // Use tempfile to ensure automatic cleanup on error.
-        let temp_dir = tempfile::tempdir().map_err(io_err_to_raft)?;
-        let dir = temp_dir.path().join(format!("build-{}", self._idx));
-        std::fs::create_dir_all(&dir).map_err(io_err_to_raft)?;
-
+impl KiwiSnapshotBuilder {
+    fn create_checkpoint(
+        &self,
+        dir: &Path,
+        snapshot_state_guard: tokio::sync::OwnedMutexGuard<()>,
+    ) -> storage::error::Result<RaftSnapshotMeta> {
         // Use last_applied to ensure (index, term) pair comes from the same log entry.
         let (last_idx, last_term) = if let Some(last_log_id) = self.last_applied {
             (last_log_id.index, last_log_id.leader_id.term)
@@ -728,9 +754,42 @@ impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
             .filter_map(|i| self.storage.get_logindex_collector(i))
             .collect();
         let raft_meta = RaftSnapshotMeta::with_collector_states(last_idx, last_term, &collectors);
-        self.storage
-            .create_checkpoint(&dir, &raft_meta)
+        self.storage.create_checkpoint(dir, &raft_meta)?;
+
+        drop(snapshot_state_guard);
+        Ok(raft_meta)
+    }
+}
+
+impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
+    async fn build_snapshot(&mut self) -> Result<Snapshot<KiwiTypeConfig>, StorageError<u64>> {
+        let snapshot_publication_guard = self.snapshot_publication_guard.take();
+        let snapshot_state_guard = self.snapshot_state_guard.take();
+        let _snapshot_publication_guard = snapshot_publication_guard.ok_or_else(|| {
+            io_err_to_raft(io::Error::other(
+                "snapshot publication guard is missing before building the snapshot",
+            ))
+        })?;
+        let snapshot_state_guard = snapshot_state_guard.ok_or_else(|| {
+            io_err_to_raft(io::Error::other(
+                "snapshot state guard is missing before building the snapshot",
+            ))
+        })?;
+
+        // Use tempfile to ensure automatic cleanup on error.
+        let temp_dir = tempfile::tempdir().map_err(io_err_to_raft)?;
+        let dir = temp_dir.path().join(format!("build-{}", self._idx));
+        std::fs::create_dir_all(&dir).map_err(io_err_to_raft)?;
+
+        let raft_meta = self
+            .create_checkpoint(&dir, snapshot_state_guard)
             .map_err(storage_err_to_raft)?;
+
+        #[cfg(test)]
+        if let Some(hook) = &self.checkpoint_completed_hook {
+            hook.checkpoint_completed.notify_one();
+            hook.continue_build.notified().await;
+        }
 
         let bytes = pack_dir_to_vec(&dir).map_err(io_err_to_raft)?;
 
@@ -752,6 +811,9 @@ impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
         // Purge collector entries that are now covered by the snapshot.
         // This prevents unbounded memory growth as the leader continues accepting writes.
         let purge_idx = raft_meta.last_included_index as storage::logindex::LogIndex;
+        let collectors: Vec<_> = (0..self.storage.db_instance_num)
+            .filter_map(|i| self.storage.get_logindex_collector(i))
+            .collect();
         for c in &collectors {
             c.purge(purge_idx);
         }
@@ -760,6 +822,293 @@ impl RaftSnapshotBuilder<KiwiTypeConfig> for KiwiSnapshotBuilder {
             meta,
             snapshot: Box::new(Cursor::new(bytes)),
         })
+    }
+}
+
+#[cfg(test)]
+mod snapshot_gate_tests {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use openraft::{Entry, LeaderId};
+    use storage::{safe_cleanup_test_db, unique_test_db_path};
+
+    use super::*;
+
+    #[derive(Default)]
+    struct CountingPauseController {
+        paused: AtomicBool,
+        pause_count: AtomicUsize,
+        resume_count: AtomicUsize,
+        state_changed: tokio::sync::Notify,
+    }
+
+    struct TestStorageAccessPermit;
+
+    impl StorageAccessPermit for TestStorageAccessPermit {}
+
+    impl PauseController for CountingPauseController {
+        fn request_pause(
+            &self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+            Box::pin(async {
+                self.pause_count.fetch_add(1, Ordering::SeqCst);
+                self.paused.store(true, Ordering::SeqCst);
+            })
+        }
+
+        fn enter(
+            self: Arc<Self>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>,
+        > {
+            Box::pin(async move {
+                loop {
+                    let resumed = self.state_changed.notified();
+                    tokio::pin!(resumed);
+                    resumed.as_mut().enable();
+
+                    if !self.paused.load(Ordering::SeqCst) {
+                        return Box::new(TestStorageAccessPermit) as Box<dyn StorageAccessPermit>;
+                    }
+                    resumed.await;
+                }
+            })
+        }
+
+        fn resume(&self) {
+            self.resume_count.fetch_add(1, Ordering::SeqCst);
+            self.paused.store(false, Ordering::SeqCst);
+            self.state_changed.notify_waiters();
+        }
+    }
+
+    async fn close_storage(storage: Arc<Storage>) {
+        let mut storage = match Arc::try_unwrap(storage) {
+            Ok(storage) => storage,
+            Err(_) => panic!("test storage should not retain Arc references during cleanup"),
+        };
+        storage.shutdown().await;
+        storage.close();
+    }
+
+    #[tokio::test]
+    async fn snapshot_build_releases_apply_gate_after_checkpoint() {
+        let db_path = unique_test_db_path();
+        let snapshot_work_dir = unique_test_db_path();
+        std::fs::create_dir_all(&snapshot_work_dir)
+            .expect("snapshot work directory should be created");
+
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _storage_rx = storage
+            .open(options, &db_path)
+            .expect("test storage should open");
+        let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+        let controller = Arc::new(CountingPauseController::default());
+        let mut state_machine = KiwiStateMachine::new(
+            1,
+            Arc::clone(&storage_swap),
+            db_path.clone(),
+            snapshot_work_dir.clone(),
+            controller,
+            None,
+        );
+
+        let mut builder = state_machine.get_snapshot_builder().await;
+        let hook = Arc::new(SnapshotCheckpointTestHook::default());
+        builder.checkpoint_completed_hook = Some(Arc::clone(&hook));
+        let build = tokio::spawn(async move {
+            let result = builder.build_snapshot().await;
+            (builder, result)
+        });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            hook.checkpoint_completed.notified(),
+        )
+        .await
+        .expect("snapshot build should reach the post-checkpoint barrier");
+        assert!(
+            !build.is_finished(),
+            "snapshot build should remain blocked before archive and persistence"
+        );
+
+        let blank = Entry {
+            log_id: LogId::new(LeaderId::new(1, 1), 1),
+            payload: EntryPayload::Blank,
+        };
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            state_machine.apply([blank]),
+        )
+        .await
+        .expect("apply should proceed after checkpoint while builder remains alive")
+        .expect("blank entry should apply");
+
+        hook.continue_build.notify_one();
+        let (builder, snapshot) = tokio::time::timeout(std::time::Duration::from_secs(1), build)
+            .await
+            .expect("snapshot build should resume after the test barrier")
+            .expect("snapshot build task should not panic");
+        snapshot.expect("snapshot build should complete");
+        drop(builder);
+        drop(state_machine);
+        let storage = storage_swap.load_full();
+        drop(storage_swap);
+        close_storage(storage).await;
+        drop(_storage_rx);
+        safe_cleanup_test_db(&db_path);
+        safe_cleanup_test_db(&snapshot_work_dir);
+    }
+
+    #[tokio::test]
+    async fn snapshot_checkpoint_error_releases_apply_gate_while_builder_remains_alive() {
+        let db_path = unique_test_db_path();
+        let snapshot_work_dir = unique_test_db_path();
+        std::fs::create_dir_all(&snapshot_work_dir)
+            .expect("snapshot work directory should be created");
+
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _storage_rx = storage
+            .open(options, &db_path)
+            .expect("test storage should open");
+        let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+        let controller = Arc::new(CountingPauseController::default());
+        let mut state_machine = KiwiStateMachine::new(
+            1,
+            Arc::clone(&storage_swap),
+            db_path.clone(),
+            snapshot_work_dir.clone(),
+            controller,
+            None,
+        );
+
+        let mut builder = state_machine.get_snapshot_builder().await;
+        let snapshot_state_guard = builder
+            .snapshot_state_guard
+            .take()
+            .expect("builder should own the snapshot state guard");
+        let checkpoint_root = tempfile::tempdir().expect("checkpoint root should be created");
+        let checkpoint_file = checkpoint_root.path().join("not-a-directory");
+        std::fs::write(
+            &checkpoint_file,
+            b"file blocks checkpoint directory creation",
+        )
+        .expect("checkpoint blocker file should be written");
+        builder
+            .create_checkpoint(&checkpoint_file, snapshot_state_guard)
+            .expect_err("checkpoint creation should reject a regular file path");
+
+        let blank = Entry {
+            log_id: LogId::new(LeaderId::new(1, 1), 1),
+            payload: EntryPayload::Blank,
+        };
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            state_machine.apply([blank]),
+        )
+        .await
+        .expect("apply should proceed after checkpoint failure while builder remains alive")
+        .expect("blank entry should apply");
+
+        drop(builder);
+        drop(state_machine);
+        let storage = storage_swap.load_full();
+        drop(storage_swap);
+        close_storage(storage).await;
+        drop(_storage_rx);
+        safe_cleanup_test_db(&db_path);
+        safe_cleanup_test_db(&snapshot_work_dir);
+    }
+
+    #[tokio::test]
+    async fn aborted_install_after_pause_while_waiting_for_state_gate_resumes() {
+        let db_path = unique_test_db_path();
+        let snapshot_work_dir = unique_test_db_path();
+        std::fs::create_dir_all(&snapshot_work_dir)
+            .expect("snapshot work directory should be created");
+
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _storage_rx = storage
+            .open(options, &db_path)
+            .expect("test storage should open");
+        storage
+            .set(b"live-key", b"live-value")
+            .expect("live data should be written");
+        let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+        let controller = Arc::new(CountingPauseController::default());
+        let mut state_machine = KiwiStateMachine::new(
+            1,
+            Arc::clone(&storage_swap),
+            db_path.clone(),
+            snapshot_work_dir.clone(),
+            controller.clone(),
+            None,
+        );
+
+        let mut builder = state_machine.get_snapshot_builder().await;
+        let snapshot = builder
+            .build_snapshot()
+            .await
+            .expect("test snapshot should build");
+        drop(builder);
+        let snapshot_meta = snapshot.meta;
+        let snapshot_bytes = snapshot.snapshot.into_inner();
+        let old_storage = storage_swap.load_full();
+        let marker_path =
+            snapshot_install_marker_path(&db_path).expect("snapshot marker path should be derived");
+        let state_guard = Arc::clone(&state_machine.snapshot_state_gate)
+            .lock_owned()
+            .await;
+
+        let install = tokio::spawn(async move {
+            state_machine
+                .install_snapshot(
+                    &snapshot_meta,
+                    Box::new(std::io::Cursor::new(snapshot_bytes)),
+                )
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while controller.pause_count.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("install should pause before waiting for the state gate");
+        assert!(!marker_path.exists());
+        assert!(Arc::ptr_eq(&storage_swap.load_full(), &old_storage));
+
+        install.abort();
+        let cancelled = install.await;
+        assert!(cancelled.is_err(), "install task should be cancelled");
+        drop(state_guard);
+
+        assert_eq!(controller.pause_count.load(Ordering::SeqCst), 1);
+        assert_eq!(controller.resume_count.load(Ordering::SeqCst), 1);
+        assert!(!controller.paused.load(Ordering::SeqCst));
+        assert!(!marker_path.exists());
+        assert!(Arc::ptr_eq(&storage_swap.load_full(), &old_storage));
+        assert_eq!(
+            old_storage
+                .get(b"live-key")
+                .expect("live storage should remain readable"),
+            "live-value"
+        );
+        let permit = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            Arc::clone(&controller).enter(),
+        )
+        .await
+        .expect("storage access should resume after cancelling install");
+        drop(permit);
+
+        drop(storage_swap);
+        close_storage(old_storage).await;
+        drop(_storage_rx);
+        safe_cleanup_test_db(&db_path);
+        safe_cleanup_test_db(&snapshot_work_dir);
     }
 }
 

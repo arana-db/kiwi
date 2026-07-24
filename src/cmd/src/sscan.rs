@@ -195,4 +195,37 @@ mod tests {
         drop(storage);
         safe_cleanup_test_db(&db_path);
     }
+
+    #[tokio::test]
+    async fn sscan_command_matches_empty_member_with_repeated_star() {
+        let db_path = unique_test_db_path();
+        safe_cleanup_test_db(&db_path);
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), &db_path)
+            .unwrap();
+        storage.sadd(b"empty_member_set", &[b""]).unwrap();
+        let storage = Arc::new(storage);
+        let client = Client::new(Box::new(TestStream));
+        client.set_argv(&[
+            b"sscan".to_vec(),
+            b"empty_member_set".to_vec(),
+            b"0".to_vec(),
+            b"match".to_vec(),
+            b"**".to_vec(),
+        ]);
+
+        SscanCmd::new().do_cmd(&client, Arc::clone(&storage));
+
+        assert_eq!(
+            client.take_reply(),
+            RespData::Array(Some(vec![
+                RespData::BulkString(Some(b"0".to_vec().into())),
+                RespData::Array(Some(vec![RespData::BulkString(Some(Vec::new().into()))])),
+            ]))
+        );
+
+        drop(storage);
+        safe_cleanup_test_db(&db_path);
+    }
 }
