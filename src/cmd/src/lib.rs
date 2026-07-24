@@ -66,6 +66,7 @@ pub mod psetex;
 pub mod pttl;
 pub mod randomkey;
 pub mod sadd;
+mod scan_options;
 pub mod scard;
 pub mod sdiff;
 pub mod sdiffstore;
@@ -141,6 +142,7 @@ bitflags! {
         const NO_MULTI           = 1 << 14; // Cannot be pipelined
         const EXCLUSIVE          = 1 << 15; // May change Storage pointer
         const RAFT               = 1 << 16;
+        const STORAGE_EXCLUSIVE  = 1 << 17; // Requires command-level exclusive storage visibility
     }
 }
 
@@ -205,6 +207,11 @@ pub trait Cmd: Send + Sync {
         if self.do_initial(client) {
             self.do_cmd(client, storage);
         }
+    }
+
+    /// Whether a real top-level dispatcher must exclude all other storage commands.
+    fn requires_exclusive_storage_access(&self) -> bool {
+        self.has_flag(CmdFlags::STORAGE_EXCLUSIVE)
     }
 
     fn name(&self) -> &str {
@@ -340,5 +347,41 @@ impl Cmd for BaseCmdGroup {
 
     fn get_sub_cmd(&self, cmd_name: &str) -> Option<&(dyn Cmd + 'static)> {
         self.sub_cmds.get(cmd_name).map(|cmd| cmd.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod command_storage_access_tests {
+    use super::{Cmd, CmdFlags};
+
+    #[test]
+    fn only_multi_instance_atomic_commands_require_exclusive_storage_access() {
+        let exclusive_commands: Vec<Box<dyn Cmd>> = vec![
+            Box::new(crate::mset::MsetCmd::new()),
+            Box::new(crate::mget::MgetCmd::new()),
+            Box::new(crate::del::DelCmd::new()),
+            Box::new(crate::msetnx::MsetnxCmd::new()),
+        ];
+        for command in exclusive_commands {
+            assert!(
+                command.has_flag(CmdFlags::STORAGE_EXCLUSIVE),
+                "{} must serialize storage visibility",
+                command.name()
+            );
+        }
+
+        let shared_commands: Vec<Box<dyn Cmd>> = vec![
+            Box::new(crate::get::GetCmd::new()),
+            Box::new(crate::set::SetCmd::new()),
+            Box::new(crate::exists::ExistsCmd::new()),
+            Box::new(crate::type_cmd::TypeCmd::new()),
+        ];
+        for command in shared_commands {
+            assert!(
+                !command.has_flag(CmdFlags::STORAGE_EXCLUSIVE),
+                "{} should retain shared storage access",
+                command.name()
+            );
+        }
     }
 }

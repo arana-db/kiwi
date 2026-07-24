@@ -160,38 +160,90 @@ async fn wait_for_server(addr: SocketAddr) {
 
 /// Encode a Redis command as a RESP2 array of bulk strings.
 fn encode_command(args: &[&str]) -> Bytes {
+    let binary_args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
+    encode_binary_command(&binary_args)
+}
+
+/// Encode a Redis command with binary-safe bulk string arguments.
+fn encode_binary_command(args: &[&[u8]]) -> Bytes {
     let mut encoder = RespEncoder::new(RespVersion::RESP2);
     encoder.append_array_len(args.len() as i64);
     for arg in args {
-        encoder.append_string(arg);
+        encoder.append_bulk_string(arg);
     }
     encoder.get_response()
 }
 
-/// Read and parse a single RESP2 frame from the stream.
-async fn read_response(stream: &mut tokio::net::TcpStream) -> RespData {
-    let mut parser = RespParse::new(RespVersion::RESP2);
-    let mut buf = vec![0u8; 4096];
-    loop {
-        let n = stream.read(&mut buf).await.expect("read from server");
-        if n == 0 {
-            panic!("server closed connection before responding");
+/// Read and parse a single RESP frame from the stream within a bounded timeout.
+async fn read_response_with_version(
+    stream: &mut tokio::net::TcpStream,
+    version: RespVersion,
+) -> RespData {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut parser = RespParse::new(version);
+        let mut buf = vec![0u8; 4096];
+        loop {
+            let n = stream.read(&mut buf).await.expect("read from server");
+            if n == 0 {
+                panic!("server closed connection before responding");
+            }
+            match parser.parse(Bytes::copy_from_slice(&buf[..n])) {
+                RespParseResult::Complete(data) => return data,
+                RespParseResult::Incomplete => continue,
+                RespParseResult::Error(e) => panic!("RESP parse error: {:?}", e),
+            }
         }
-        match parser.parse(Bytes::copy_from_slice(&buf[..n])) {
-            RespParseResult::Complete(data) => return data,
-            RespParseResult::Incomplete => continue,
-            RespParseResult::Error(e) => panic!("RESP parse error: {:?}", e),
-        }
-    }
+    })
+    .await
+    .expect("timed out waiting for RESP response")
 }
 
 /// Send a command and return its parsed RESP response.
 async fn send_command(stream: &mut tokio::net::TcpStream, args: &[&str]) -> RespData {
+    send_command_with_version(stream, args, RespVersion::RESP2).await
+}
+
+/// Send a command with binary-safe arguments and return its parsed RESP2 response.
+async fn send_binary_command(stream: &mut tokio::net::TcpStream, args: &[&[u8]]) -> RespData {
+    stream
+        .write_all(encode_binary_command(args).as_ref())
+        .await
+        .expect("write to server");
+    read_response_with_version(stream, RespVersion::RESP2).await
+}
+
+/// Send a command and parse its response using the specified protocol version.
+async fn send_command_with_version(
+    stream: &mut tokio::net::TcpStream,
+    args: &[&str],
+    version: RespVersion,
+) -> RespData {
     stream
         .write_all(encode_command(args).as_ref())
         .await
         .expect("write to server");
-    read_response(stream).await
+    read_response_with_version(stream, version).await
+}
+
+/// Send a command whose response is a single RESP line and return its exact wire bytes.
+async fn send_command_and_read_line(stream: &mut tokio::net::TcpStream, args: &[&str]) -> Bytes {
+    stream
+        .write_all(encode_command(args).as_ref())
+        .await
+        .expect("write to server");
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut response = Vec::with_capacity(16);
+        loop {
+            response.push(stream.read_u8().await.expect("read from server"));
+            if response.ends_with(b"\r\n") {
+                return Bytes::from(response);
+            }
+            assert!(response.len() < 64, "unexpectedly long RESP line");
+        }
+    })
+    .await
+    .expect("timed out waiting for RESP line")
 }
 
 #[tokio::test]
@@ -347,6 +399,119 @@ async fn storage_command_e2e_generic_storage_commands_use_storage_path() {
         after.requests_sent >= before.requests_sent + 4,
         "generic commands should traverse the storage channel"
     );
+
+    server.shutdown().await;
+}
+
+// Regression for issue #349: GET/MGET must return stored bytes unchanged over RESP.
+#[tokio::test]
+async fn storage_command_e2e_get_and_mget_preserve_binary_values() {
+    let server = TestServer::start(None).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    let first_value = [0, 1, 2, 3, 255];
+    let second_value = [255, 0, 254];
+
+    let reply = send_binary_command(&mut stream, &[b"SET", b"binary:first", &first_value]).await;
+    assert_eq!(reply, RespData::SimpleString(Bytes::from_static(b"OK")));
+    let reply = send_binary_command(&mut stream, &[b"SET", b"binary:second", &second_value]).await;
+    assert_eq!(reply, RespData::SimpleString(Bytes::from_static(b"OK")));
+
+    let reply = send_binary_command(&mut stream, &[b"GET", b"binary:first"]).await;
+    let RespData::BulkString(Some(actual)) = reply else {
+        panic!("expected bulk string reply, got {reply:?}");
+    };
+    assert_eq!(
+        actual.as_ref(),
+        first_value,
+        "GET returned different bytes: {actual:02x?}"
+    );
+
+    let reply = send_binary_command(
+        &mut stream,
+        &[
+            b"MGET",
+            b"binary:first",
+            b"binary:missing",
+            b"binary:second",
+        ],
+    )
+    .await;
+    assert_eq!(
+        reply,
+        RespData::Array(Some(vec![
+            RespData::BulkString(Some(Bytes::copy_from_slice(&first_value))),
+            RespData::BulkString(None),
+            RespData::BulkString(Some(Bytes::copy_from_slice(&second_value))),
+        ]))
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_resp3_legacy_nulls_use_null_type() {
+    let server = TestServer::start(None).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    let reply = send_command_with_version(&mut stream, &["HELLO", "3"], RespVersion::RESP3).await;
+    assert!(
+        matches!(reply, RespData::Map(_)),
+        "expected RESP3 HELLO map, got {:?}",
+        reply
+    );
+
+    let reply = send_command_with_version(
+        &mut stream,
+        &["LINDEX", "missing-list", "0"],
+        RespVersion::RESP3,
+    )
+    .await;
+    assert_eq!(reply, RespData::Null);
+
+    let reply = send_command_with_version(
+        &mut stream,
+        &["MGET", "missing-key-1", "missing-key-2"],
+        RespVersion::RESP3,
+    )
+    .await;
+    assert_eq!(
+        reply,
+        RespData::Array(Some(vec![RespData::Null, RespData::Null]))
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_rank_nulls_follow_negotiated_wire_protocol() {
+    let server = TestServer::start(None).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    for command in ["ZRANK", "ZREVRANK"] {
+        let reply =
+            send_command_and_read_line(&mut stream, &[command, "missing-zset", "member"]).await;
+        assert_eq!(reply, Bytes::from_static(b"$-1\r\n"), "{command}");
+    }
+
+    let reply = send_command_with_version(&mut stream, &["HELLO", "3"], RespVersion::RESP3).await;
+    assert!(
+        matches!(reply, RespData::Map(_)),
+        "expected RESP3 HELLO map, got {:?}",
+        reply
+    );
+
+    for command in ["ZRANK", "ZREVRANK"] {
+        let reply =
+            send_command_and_read_line(&mut stream, &[command, "missing-zset", "member"]).await;
+        assert_eq!(reply, Bytes::from_static(b"_\r\n"), "{command}");
+    }
 
     server.shutdown().await;
 }

@@ -21,6 +21,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
+use crate::scan_options::parse_scan_options;
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta};
 use crate::{impl_cmd_clone_box, impl_cmd_meta};
 
@@ -63,66 +64,27 @@ impl Cmd for SscanCmd {
         let argv = client.argv();
 
         let key = argv[1].as_slice();
-        let cursor_str = String::from_utf8_lossy(&argv[2]);
-
-        // Parse cursor
-        let cursor = match cursor_str.parse::<u64>() {
-            Ok(c) => c,
-            Err(_) => {
-                client.set_reply(RespData::Error("ERR invalid cursor".into()));
+        let options = match parse_scan_options(&argv[2], &argv[3..]) {
+            Ok(options) => options,
+            Err(error) => {
+                client.set_reply(RespData::Error(error.into()));
                 return;
             }
         };
 
-        // Parse optional MATCH and COUNT parameters
-        let mut pattern: Option<String> = None;
-        let mut count: Option<usize> = None;
-
-        let mut i = 3;
-        while i < argv.len() {
-            let arg = String::from_utf8_lossy(&argv[i]).to_uppercase();
-            match arg.as_str() {
-                "MATCH" if i + 1 < argv.len() => {
-                    pattern = Some(String::from_utf8_lossy(&argv[i + 1]).to_string());
-                    i += 2;
-                }
-                "MATCH" => {
-                    client.set_reply(RespData::Error("ERR syntax error".into()));
-                    return;
-                }
-                "COUNT" if i + 1 < argv.len() => {
-                    match String::from_utf8_lossy(&argv[i + 1]).parse::<usize>() {
-                        Ok(c) if c > 0 => {
-                            count = Some(c);
-                            i += 2;
-                        }
-                        _ => {
-                            client.set_reply(RespData::Error(
-                                "ERR value is not an integer or out of range".into(),
-                            ));
-                            return;
-                        }
-                    }
-                }
-                "COUNT" => {
-                    client.set_reply(RespData::Error("ERR syntax error".into()));
-                    return;
-                }
-                _ => {
-                    client.set_reply(RespData::Error("ERR syntax error".into()));
-                    return;
-                }
-            }
-        }
-
-        let result = storage.sscan(key, cursor, pattern.as_deref(), count);
+        let result = storage.sscan(
+            key,
+            options.cursor,
+            options.pattern.as_deref(),
+            options.count,
+        );
 
         match result {
             Ok((next_cursor, members)) => {
                 // Convert members to RespData
                 let resp_members: Vec<RespData> = members
                     .into_iter()
-                    .map(|member| RespData::BulkString(Some(member.into_bytes().into())))
+                    .map(|member| RespData::BulkString(Some(member.into())))
                     .collect();
 
                 // Return [next_cursor, [members...]]
@@ -143,7 +105,23 @@ impl Cmd for SscanCmd {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
+    use client::StreamTrait;
+    use storage::{StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+
     use super::*;
+
+    struct TestStream;
+
+    #[async_trait::async_trait]
+    impl StreamTrait for TestStream {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+
+        async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+    }
 
     #[test]
     fn test_sscan_cmd_meta() {
@@ -183,5 +161,87 @@ mod tests {
         assert!(!cmd.check_arg(1)); // Missing key and cursor
         assert!(!cmd.check_arg(2)); // Missing cursor
         assert!(!cmd.check_arg(0)); // No arguments
+    }
+
+    #[tokio::test]
+    async fn sscan_command_preserves_binary_member_bytes() {
+        let db_path = unique_test_db_path();
+        safe_cleanup_test_db(&db_path);
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), &db_path)
+            .unwrap();
+        storage.sadd(b"binary_set", &[b"\xff"]).unwrap();
+        let storage = Arc::new(storage);
+        let client = Client::new(Box::new(TestStream));
+        client.set_argv(&[
+            b"sscan".to_vec(),
+            b"binary_set".to_vec(),
+            b"0".to_vec(),
+            b"match".to_vec(),
+            b"?".to_vec(),
+        ]);
+
+        SscanCmd::new().do_cmd(&client, Arc::clone(&storage));
+
+        assert_eq!(
+            client.take_reply(),
+            RespData::Array(Some(vec![
+                RespData::BulkString(Some(b"0".to_vec().into())),
+                RespData::Array(Some(vec![RespData::BulkString(Some(vec![0xff].into()))])),
+            ]))
+        );
+
+        drop(storage);
+        safe_cleanup_test_db(&db_path);
+    }
+
+    #[tokio::test]
+    async fn sscan_command_matches_redis_empty_member_pattern_edges() {
+        let db_path = unique_test_db_path();
+        safe_cleanup_test_db(&db_path);
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), &db_path)
+            .unwrap();
+        storage.sadd(b"empty_member_set", &[b""]).unwrap();
+        let storage = Arc::new(storage);
+        let client = Client::new(Box::new(TestStream));
+        client.set_argv(&[
+            b"sscan".to_vec(),
+            b"empty_member_set".to_vec(),
+            b"0".to_vec(),
+            b"match".to_vec(),
+            b"*".to_vec(),
+        ]);
+
+        SscanCmd::new().do_cmd(&client, Arc::clone(&storage));
+
+        assert_eq!(
+            client.take_reply(),
+            RespData::Array(Some(vec![
+                RespData::BulkString(Some(b"0".to_vec().into())),
+                RespData::Array(Some(vec![RespData::BulkString(Some(Vec::new().into()))])),
+            ]))
+        );
+
+        client.set_argv(&[
+            b"sscan".to_vec(),
+            b"empty_member_set".to_vec(),
+            b"0".to_vec(),
+            b"match".to_vec(),
+            b"**".to_vec(),
+        ]);
+        SscanCmd::new().do_cmd(&client, Arc::clone(&storage));
+        assert_eq!(
+            client.take_reply(),
+            RespData::Array(Some(vec![
+                RespData::BulkString(Some(b"0".to_vec().into())),
+                RespData::Array(Some(Vec::new())),
+            ]))
+        );
+
+        drop(storage);
+        safe_cleanup_test_db(&db_path);
     }
 }

@@ -139,6 +139,7 @@ impl Redis {
                 // Update metadata
                 parsed_meta.modify_left_index(values.len() as u64);
                 parsed_meta.modify_count(values.len() as u64);
+                parsed_meta.set_right_index(parsed_meta.left_index() + parsed_meta.count());
             } else {
                 // Non-empty list - read existing elements first, then rewrite everything
                 let mut existing_elements = Vec::new();

@@ -29,8 +29,11 @@ use crate::slot_indexer::key_to_slot_id;
 use crate::{
     BaseMetaKey, BinlogBatch, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckState,
     error::{InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu},
-    format_base_key::BaseKey,
+    format_base_key::{BaseKey, ParsedBaseKey},
+    format_base_meta_value::ParsedBaseMetaValue,
+    format_list_meta_value::ParsedListsMetaValue,
     format_strings_value::{ParsedStringsValue, StringValue},
+    redis_sets::glob_match_bytes,
 };
 
 impl Redis {
@@ -541,15 +544,21 @@ impl Redis {
     /// MGET nonexistent     // Returns [nil]
     /// ```
     pub fn mget(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
+        Ok(self
+            .mget_binary(keys)?
+            .into_iter()
+            .map(|value| value.map(|value| String::from_utf8_lossy(&value).to_string()))
+            .collect())
+    }
+
+    /// Get multiple string values as bytes, preserving binary data.
+    pub fn mget_binary(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
 
         let mut results = Vec::with_capacity(keys.len());
 
-        // Note: RocksDB multi_get would be more efficient for batch reads,
-        // but it's not currently exposed through the Engine trait.
-        // Future optimization: add multi_get to Engine trait.
         for key in keys {
             let string_key = BaseKey::new(key);
 
@@ -574,7 +583,7 @@ impl Redis {
                         TypeCheckState::Match => {
                             let string_value = ParsedStringsValue::new(&val[..])?;
                             let user_value = string_value.user_value();
-                            results.push(Some(String::from_utf8_lossy(&user_value).to_string()));
+                            results.push(Some(user_value.to_vec()));
                         }
                     }
                 }
@@ -2066,7 +2075,7 @@ impl Redis {
     }
 
     /// Scan for keys matching a pattern
-    pub fn scan_keys(&self, pattern: &str) -> Result<Vec<String>> {
+    pub fn scan_keys(&self, pattern: &[u8]) -> Result<Vec<Vec<u8>>> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -2084,44 +2093,31 @@ impl Redis {
         for item in iter {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
 
-            // Decode the key to get the actual user key
-            if let Ok(base_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]) {
-                let key_str = String::from_utf8_lossy(base_key.key());
-
-                // Check if key is not expired
-                if let Ok(parsed) = ParsedStringsValue::new(&value_bytes[..]) {
-                    if !parsed.is_stale() {
-                        // Simple pattern matching - in a full implementation, we'd support glob patterns
-                        if pattern == "*" || key_str.contains(pattern) {
-                            keys.push(key_str.to_string());
-                        }
-                    }
+            let base_key = ParsedBaseKey::new(&key_bytes[..])?;
+            let data_type = value_bytes.first().copied().ok_or_else(|| InvalidFormat {
+                message: "empty MetaCF value".to_string(),
+                location: snafu::location!(),
+            })?;
+            let is_valid = match DataType::try_from(data_type)? {
+                DataType::String => !ParsedStringsValue::new(&value_bytes[..])?.is_stale(),
+                DataType::List => {
+                    let meta = ParsedListsMetaValue::new(&value_bytes[..])?;
+                    !meta.is_stale() && meta.count() > 0
                 }
-            } else if let Ok(meta_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..])
-            {
-                let key_str = String::from_utf8_lossy(meta_key.key());
-
-                // Check if meta key is not expired using appropriate parser
-                if !value_bytes.is_empty() {
-                    let is_valid = if let Ok(meta) =
-                        crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
-                    {
-                        !meta.is_stale() && meta.count() > 0
-                    } else if let Ok(list_meta) =
-                        crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
-                    {
-                        !list_meta.is_stale() && list_meta.count() > 0
-                    } else {
-                        false
-                    };
-
-                    if is_valid {
-                        // Simple pattern matching
-                        if pattern == "*" || key_str.contains(pattern) {
-                            keys.push(key_str.to_string());
-                        }
-                    }
+                DataType::Hash | DataType::Set | DataType::ZSet => {
+                    let meta = ParsedBaseMetaValue::new(&value_bytes[..])?;
+                    !meta.is_stale() && meta.count() > 0
                 }
+                DataType::None | DataType::All => {
+                    return InvalidFormatSnafu {
+                        message: format!("invalid MetaCF data type: {data_type}"),
+                    }
+                    .fail();
+                }
+            };
+
+            if is_valid && (pattern == b"*" || glob_match_bytes(pattern, base_key.key())) {
+                keys.push(base_key.key().to_vec());
             }
         }
 

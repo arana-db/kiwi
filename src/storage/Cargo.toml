@@ -3,6 +3,9 @@ name = "storage"
 version.workspace = true
 edition.workspace = true
 
+[features]
+test-fault-injection = []
+
 [lints]
 workspace = true 
 
@@ -43,9 +46,11 @@ tokio.workspace = true
 tempfile.workspace = true
 crc16.workspace = true
 moka = { version = "0.12", features = ["sync"] }
-engine.workspace = true
 foyer.workspace = true
 rand.workspace = true
 conf.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
 
 

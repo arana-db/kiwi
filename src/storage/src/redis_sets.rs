@@ -2364,9 +2364,9 @@ impl Redis {
         &self,
         key: &[u8],
         cursor: u64,
-        pattern: Option<&str>,
+        pattern: Option<&[u8]>,
         count: Option<usize>,
-    ) -> Result<(u64, Vec<String>)> {
+    ) -> Result<(u64, Vec<Vec<u8>>)> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -2424,7 +2424,7 @@ impl Redis {
             // member = raw_key[prefix..len - SUFFIX_RESERVE_LENGTH]
             if raw_key.len() >= prefix.len() + SUFFIX_RESERVE_LENGTH {
                 let member_slice = &raw_key[prefix.len()..raw_key.len() - SUFFIX_RESERVE_LENGTH];
-                all_members.push(String::from_utf8_lossy(member_slice).to_string());
+                all_members.push(member_slice.to_vec());
             }
         }
 
@@ -2445,7 +2445,7 @@ impl Redis {
             for member in &all_members[start_index..end_index] {
                 // Apply pattern matching if specified
                 if let Some(pat) = pattern {
-                    if !glob_match(pat, member) {
+                    if pat != b"*" && !glob_match_bytes(pat, member) {
                         continue;
                     }
                 }
@@ -2464,56 +2464,123 @@ impl Redis {
     }
 }
 
-/// Simple glob pattern matching
-/// Supports * (match any sequence) and ? (match single character)
+/// Redis-style glob pattern matching.
+///
+/// Supports `*`, `?`, character classes and ranges, negated character classes,
+/// and backslash escaping.
+#[cfg(test)]
 pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
-    let pattern_chars: Vec<char> = pattern.chars().collect();
-    let text_chars: Vec<char> = text.chars().collect();
+    pattern == "*" || glob_match_bytes(pattern.as_bytes(), text.as_bytes())
+}
 
-    fn match_recursive(pattern: &[char], text: &[char], p_idx: usize, t_idx: usize) -> bool {
-        // End of pattern
-        if p_idx >= pattern.len() {
-            return t_idx >= text.len();
+pub(crate) fn glob_match_bytes(pattern: &[u8], text: &[u8]) -> bool {
+    if text.is_empty() {
+        return pattern.is_empty();
+    }
+
+    fn match_character_class(pattern: &[u8], class_start: usize, candidate: u8) -> (bool, usize) {
+        let mut index = class_start + 1;
+        let negated = pattern.get(index) == Some(&b'^');
+        if negated {
+            index += 1;
         }
 
-        // End of text but pattern remains
-        if t_idx >= text.len() {
-            // Check if remaining pattern is all '*'
-            return pattern[p_idx..].iter().all(|&c| c == '*');
-        }
-
-        match pattern[p_idx] {
-            '*' => {
-                // Try matching zero or more characters
-                for i in t_idx..=text.len() {
-                    if match_recursive(pattern, text, p_idx + 1, i) {
-                        return true;
-                    }
+        let mut matched = false;
+        loop {
+            if index + 1 < pattern.len() && pattern[index] == b'\\' {
+                index += 1;
+                if pattern[index] == candidate {
+                    matched = true;
                 }
-                false
-            }
-            '?' => {
-                // Match exactly one character
-                match_recursive(pattern, text, p_idx + 1, t_idx + 1)
-            }
-            c => {
-                // Exact character match
-                if text[t_idx] == c {
-                    match_recursive(pattern, text, p_idx + 1, t_idx + 1)
+            } else if index == pattern.len() {
+                return (matched != negated, pattern.len());
+            } else if pattern[index] == b']' {
+                return (matched != negated, index + 1);
+            } else if index + 2 < pattern.len() && pattern[index + 1] == b'-' {
+                let range_start = pattern[index];
+                let range_end = pattern[index + 2];
+                let (lower, upper) = if range_start <= range_end {
+                    (range_start, range_end)
                 } else {
-                    false
+                    (range_end, range_start)
+                };
+                if (lower..=upper).contains(&candidate) {
+                    matched = true;
                 }
+                index += 2;
+            } else if pattern[index] == candidate {
+                matched = true;
             }
+            index += 1;
         }
     }
 
-    match_recursive(&pattern_chars, &text_chars, 0, 0)
+    fn token_matches(pattern: &[u8], pattern_index: usize, candidate: u8) -> Option<usize> {
+        match pattern.get(pattern_index).copied()? {
+            b'?' => Some(pattern_index + 1),
+            b'[' => {
+                let (matched, next_pattern_index) =
+                    match_character_class(pattern, pattern_index, candidate);
+                matched.then_some(next_pattern_index)
+            }
+            b'\\' => {
+                let (literal, next_pattern_index) = if pattern_index + 1 < pattern.len() {
+                    (pattern[pattern_index + 1], pattern_index + 2)
+                } else {
+                    (b'\\', pattern_index + 1)
+                };
+                (candidate == literal).then_some(next_pattern_index)
+            }
+            b'*' => None,
+            literal => (candidate == literal).then_some(pattern_index + 1),
+        }
+    }
+
+    let mut pattern_index = 0;
+    let mut text_index = 0;
+    let mut star_pattern_index = None;
+    let mut star_text_index = 0;
+
+    while text_index < text.len() {
+        if pattern.get(pattern_index) == Some(&b'*') {
+            while pattern.get(pattern_index) == Some(&b'*') {
+                pattern_index += 1;
+            }
+            if pattern_index == pattern.len() {
+                return true;
+            }
+            star_pattern_index = Some(pattern_index);
+            star_text_index = text_index;
+            continue;
+        }
+
+        if let Some(next_pattern_index) = token_matches(pattern, pattern_index, text[text_index]) {
+            pattern_index = next_pattern_index;
+            text_index += 1;
+            continue;
+        }
+
+        let Some(resume_pattern_index) = star_pattern_index else {
+            return false;
+        };
+        if star_text_index >= text.len() {
+            return false;
+        }
+        star_text_index += 1;
+        text_index = star_text_index;
+        pattern_index = resume_pattern_index;
+    }
+
+    while pattern.get(pattern_index) == Some(&b'*') {
+        pattern_index += 1;
+    }
+    pattern_index == pattern.len()
 }
 
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod glob_tests {
-    use super::glob_match;
+    use super::{glob_match, glob_match_bytes};
 
     #[test]
     fn test_glob_match_exact() {
@@ -2529,6 +2596,8 @@ mod glob_tests {
         assert!(glob_match("h*o", "hello"));
         assert!(glob_match("*", "anything"));
         assert!(!glob_match("h*", "world"));
+        assert!(glob_match("*", ""));
+        assert!(!glob_match("**", ""));
     }
 
     #[test]
@@ -2545,5 +2614,83 @@ mod glob_tests {
         assert!(glob_match("h*l?o", "hallo"));
         assert!(glob_match("*l?o", "hello"));
         assert!(!glob_match("h*l?o", "world"));
+    }
+
+    #[test]
+    fn test_glob_match_character_classes() {
+        assert!(glob_match("h[ae]llo", "hello"));
+        assert!(glob_match("h[ae]llo", "hallo"));
+        assert!(!glob_match("h[ae]llo", "hollo"));
+
+        assert!(glob_match("file[0-3]", "file2"));
+        assert!(!glob_match("file[0-3]", "file4"));
+        assert!(glob_match("file[3-0]", "file2"));
+
+        assert!(glob_match("h[^x]llo", "hello"));
+        assert!(!glob_match("h[^x]llo", "hxllo"));
+    }
+
+    #[test]
+    fn test_glob_match_backslash_escapes_metacharacters() {
+        assert!(glob_match(r"literal\*star", "literal*star"));
+        assert!(!glob_match(r"literal\*star", "literal-anything-star"));
+        assert!(glob_match(r"literal\?mark", "literal?mark"));
+        assert!(glob_match(r"literal\[bracket", "literal[bracket"));
+        assert!(glob_match(r"class[\]]", "class]"));
+        assert!(glob_match(r"slash\\", r"slash\"));
+    }
+
+    #[test]
+    fn test_glob_match_bytes_treats_question_mark_as_one_byte() {
+        let utf8 = "é".as_bytes();
+        assert!(!glob_match_bytes(b"?", utf8));
+        assert!(glob_match_bytes(b"??", utf8));
+        assert!(glob_match_bytes(b"?", &[0xff]));
+    }
+
+    #[test]
+    fn test_glob_match_bytes_handles_long_inputs_without_recursion() {
+        const INPUT_LEN: usize = 200_000;
+        let text = vec![b'a'; INPUT_LEN];
+        let question_pattern = vec![b'?'; INPUT_LEN];
+        let literal_pattern = vec![b'a'; INPUT_LEN];
+
+        assert!(glob_match_bytes(&question_pattern, &text));
+        assert!(glob_match_bytes(&literal_pattern, &text));
+    }
+
+    #[test]
+    fn test_glob_match_bytes_matches_redis_class_edges() {
+        assert!(!glob_match_bytes(b"[", b"["));
+
+        assert!(glob_match_bytes(b"[a", b"a"));
+        assert!(!glob_match_bytes(b"[a", b"["));
+
+        assert!(glob_match_bytes(b"[^", b"x"));
+        assert!(!glob_match_bytes(b"[^", b""));
+
+        assert!(glob_match_bytes(b"[a-]", b"]"));
+        assert!(glob_match_bytes(b"[a-]", b"_"));
+        assert!(glob_match_bytes(b"[a-]", b"a"));
+        assert!(!glob_match_bytes(b"[a-]", b"-"));
+        assert!(glob_match_bytes(b"[a-]]x", b"]x"));
+
+        assert!(glob_match_bytes(b"[a\\]", b"a"));
+        assert!(glob_match_bytes(b"[a\\]", b"]"));
+        assert!(!glob_match_bytes(b"[a\\]", b"b"));
+        assert!(glob_match_bytes(b"[a\\]]x", b"]x"));
+    }
+
+    #[test]
+    fn test_glob_match_bytes_matches_redis_initial_empty_text_edges() {
+        assert!(glob_match_bytes(b"", b""));
+        assert!(!glob_match_bytes(b"*", b""));
+        assert!(!glob_match_bytes(b"**", b""));
+        assert!(!glob_match_bytes(b"***", b""));
+        assert!(!glob_match_bytes(b"literal*", b""));
+
+        assert!(glob_match_bytes(b"literal*", b"literal"));
+        assert!(glob_match_bytes(b"**", b"x"));
+        assert!(glob_match_bytes(b"***", b"x"));
     }
 }

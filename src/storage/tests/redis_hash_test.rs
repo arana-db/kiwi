@@ -23,8 +23,8 @@ mod redis_hash_test {
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, Redis, StorageOptions, safe_cleanup_test_db,
-        unique_test_db_path,
+        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, DataType, Redis, StorageOptions,
+        safe_cleanup_test_db, unique_test_db_path,
     };
 
     #[test]
@@ -48,7 +48,6 @@ mod redis_hash_test {
         assert!(redis.set_key_etime(expired_wrongtype, 1).unwrap());
         assert_eq!(redis.hlen(expired_wrongtype).unwrap(), 0);
 
-        redis.set_need_close(true);
         drop(redis);
         safe_cleanup_test_db(&test_db_path);
     }
@@ -122,7 +121,6 @@ mod redis_hash_test {
             String::from_utf8_lossy(expected_val).to_string()
         );
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -146,16 +144,15 @@ mod redis_hash_test {
         let value = b"value1";
 
         {
-            let db = redis.db.as_ref().unwrap();
+            let db = redis.db().unwrap();
             let cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
             let encoded_key = BaseMetaKey::new(key).encode().unwrap();
-            db.put_cf(&cf, &encoded_key, &[]).unwrap();
+            db.put_cf(&cf, &encoded_key, []).unwrap();
         }
 
         assert_eq!(redis.hset(key, field, value).unwrap(), 1);
         assert_eq!(redis.hget(key, field).unwrap(), Some("value1".to_string()));
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -183,7 +180,6 @@ mod redis_hash_test {
         assert!(hget_result.is_ok(), "hget failed: {:?}", hget_result.err());
         assert_eq!(hget_result.unwrap(), None);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -231,24 +227,18 @@ mod redis_hash_test {
         assert_eq!(final_cursor, 0, "Should be end of iteration");
 
         // Verify all fields were returned
-        let mut all_scanned: Vec<(String, String)> = scan_fields;
+        let mut all_scanned: Vec<(Vec<u8>, Vec<u8>)> = scan_fields;
         all_scanned.extend(remaining_fields);
         all_scanned.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let mut expected: Vec<(String, String)> = fields_values
+        let mut expected: Vec<(Vec<u8>, Vec<u8>)> = fields_values
             .iter()
-            .map(|(f, v)| {
-                (
-                    String::from_utf8_lossy(f).to_string(),
-                    String::from_utf8_lossy(v).to_string(),
-                )
-            })
+            .map(|(field, value)| (field.to_vec(), value.to_vec()))
             .collect();
         expected.sort_by(|a, b| a.0.cmp(&b.0));
 
         assert_eq!(all_scanned, expected);
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -277,32 +267,57 @@ mod redis_hash_test {
 
         // Scan with pattern "c*" - should match "city" and "country"
         let (_cursor, fields) = redis
-            .hscan(key, 0, Some("c*"), None)
+            .hscan(key, 0, Some(b"c*"), None)
             .expect("hscan with pattern failed");
 
         // Extract field names
-        let field_names: Vec<String> = fields.iter().map(|(f, _)| f.clone()).collect();
+        let field_names: Vec<Vec<u8>> = fields.iter().map(|(field, _)| field.clone()).collect();
 
         assert!(
-            field_names.contains(&"city".to_string()),
+            field_names.contains(&b"city".to_vec()),
             "Should match 'city'"
         );
         assert!(
-            field_names.contains(&"country".to_string()),
+            field_names.contains(&b"country".to_vec()),
             "Should match 'country'"
         );
         assert!(
-            !field_names.contains(&"name".to_string()),
+            !field_names.contains(&b"name".to_vec()),
             "Should not match 'name'"
         );
         assert!(
-            !field_names.contains(&"age".to_string()),
+            !field_names.contains(&b"age".to_vec()),
             "Should not match 'age'"
         );
 
-        redis.set_need_close(true);
         drop(redis);
 
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
+    fn test_hscan_match_star_includes_empty_field_but_double_star_does_not() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let key = b"hash_with_empty_field";
+        assert_eq!(redis.hset(key, b"", b"value").unwrap(), 1);
+
+        let (cursor, fields) = redis.hscan(key, 0, Some(b"*"), None).unwrap();
+        assert_eq!(cursor, 0);
+        assert_eq!(fields, vec![(Vec::new(), b"value".to_vec())]);
+
+        let (cursor, fields) = redis.hscan(key, 0, Some(b"**"), None).unwrap();
+        assert_eq!(cursor, 0);
+        assert!(fields.is_empty());
+
+        drop(redis);
         safe_cleanup_test_db(&test_db_path);
     }
 
@@ -327,7 +342,6 @@ mod redis_hash_test {
         assert_eq!(cursor, 0, "Cursor should be 0 for non-existent key");
         assert!(fields.is_empty(), "Fields should be empty");
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -381,19 +395,19 @@ mod redis_hash_test {
         assert_eq!(all_fields.len(), 20, "Should have scanned all 20 fields");
 
         // Verify field names are correct
-        let mut field_names: Vec<String> = all_fields.iter().map(|(f, _)| f.clone()).collect();
+        let mut field_names: Vec<Vec<u8>> =
+            all_fields.iter().map(|(field, _)| field.clone()).collect();
         field_names.sort();
 
         for i in 0..20 {
-            let expected_field = format!("field{:02}", i);
+            let expected_field = format!("field{:02}", i).into_bytes();
             assert!(
                 field_names.contains(&expected_field),
-                "Missing field: {}",
+                "Missing field: {:?}",
                 expected_field
             );
         }
 
-        redis.set_need_close(true);
         drop(redis);
 
         safe_cleanup_test_db(&test_db_path);
@@ -421,24 +435,161 @@ mod redis_hash_test {
 
         // Test pattern with wildcard: "user:*"
         let (_, fields) = redis
-            .hscan(key, 0, Some("user:*"), None)
+            .hscan(key, 0, Some(b"user:*"), None)
             .expect("hscan failed");
 
-        let field_names: Vec<String> = fields.iter().map(|(f, _)| f.clone()).collect();
+        let field_names: Vec<Vec<u8>> = fields.iter().map(|(field, _)| field.clone()).collect();
 
         assert_eq!(field_names.len(), 3, "Should match 3 user fields");
-        assert!(field_names.iter().all(|f| f.starts_with("user:")));
+        assert!(field_names.iter().all(|field| field.starts_with(b"user:")));
 
         // Test pattern with question mark: "user:?:name"
         let (_, fields) = redis
-            .hscan(key, 0, Some("user:?:name"), None)
+            .hscan(key, 0, Some(b"user:?:name"), None)
             .expect("hscan failed");
 
         assert_eq!(fields.len(), 2, "Should match user:1:name and user:2:name");
 
-        redis.set_need_close(true);
         drop(redis);
 
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
+    fn test_hscan_preserves_binary_field_and_value_bytes() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let key = b"binary_hash";
+        redis.hset(key, b"\xff", b"\xfe").unwrap();
+
+        let (cursor, fields) = redis.hscan(key, 0, Some(b"?"), None).unwrap();
+        assert_eq!(cursor, 0);
+        assert_eq!(fields, vec![(vec![0xff], vec![0xfe])]);
+
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
+    fn test_hscan_cursor_preserves_binary_next_field() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let key = b"binary_cursor_hash";
+        redis.hset(key, b"a", b"ascii").unwrap();
+        redis.hset(key, b"\xff", b"binary").unwrap();
+
+        let (cursor, first_page) = redis.hscan(key, 0, Some(b"?"), Some(1)).unwrap();
+        assert_ne!(cursor, 0);
+        assert_eq!(first_page, vec![(b"a".to_vec(), b"ascii".to_vec())]);
+
+        let (cursor, second_page) = redis.hscan(key, cursor, Some(b"?"), Some(1)).unwrap();
+        assert_eq!(cursor, 0);
+        assert_eq!(second_page, vec![(vec![0xff], b"binary".to_vec())]);
+
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
+    fn test_scan_cursor_cache_distinguishes_binary_keys_and_patterns() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        redis
+            .store_scan_next_point(DataType::Hash, b"\xff", b"\xfe", 7, b"\xfd")
+            .unwrap();
+        redis
+            .store_scan_next_point(DataType::Hash, b"\xfe", b"\xff", 7, b"\xfc")
+            .unwrap();
+
+        assert_eq!(
+            redis
+                .get_scan_start_point(DataType::Hash, b"\xff", b"\xfe", 7)
+                .unwrap(),
+            Some(vec![0xfd])
+        );
+        assert_eq!(
+            redis
+                .get_scan_start_point(DataType::Hash, b"\xfe", b"\xff", 7)
+                .unwrap(),
+            Some(vec![0xfc])
+        );
+
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
+    fn test_hscan_escaped_tail_star_matches_literal_star() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let key = b"escaped_hash";
+        redis.hset(key, b"foo*", b"literal-star").unwrap();
+        redis.hset(key, b"foobar", b"wildcard-decoy").unwrap();
+
+        let (cursor, fields) = redis.hscan(key, 0, Some(b"foo\\*"), None).unwrap();
+        assert_eq!(cursor, 0);
+        assert_eq!(fields, vec![(b"foo*".to_vec(), b"literal-star".to_vec())]);
+
+        drop(redis);
+        safe_cleanup_test_db(&test_db_path);
+    }
+
+    #[test]
+    fn test_hscan_binary_tail_wildcard_uses_prefix_range_across_pages() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let key = b"binary_prefix_hash";
+        redis.hset(key, b"\x7f-before", b"decoy").unwrap();
+        redis.hset(key, b"\x80-first", b"one").unwrap();
+        redis.hset(key, b"\x80-second", b"two").unwrap();
+        redis.hset(key, b"\x81-after", b"decoy").unwrap();
+
+        let (cursor, first_page) = redis.hscan(key, 0, Some(b"\x80*"), Some(1)).unwrap();
+        assert_ne!(cursor, 0);
+        assert_eq!(first_page, vec![(b"\x80-first".to_vec(), b"one".to_vec())]);
+
+        let (cursor, second_page) = redis.hscan(key, cursor, Some(b"\x80*"), Some(1)).unwrap();
+        assert_eq!(cursor, 0);
+        assert_eq!(
+            second_page,
+            vec![(b"\x80-second".to_vec(), b"two".to_vec())]
+        );
+
+        drop(redis);
         safe_cleanup_test_db(&test_db_path);
     }
 }

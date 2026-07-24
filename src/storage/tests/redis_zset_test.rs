@@ -39,7 +39,6 @@ mod redis_zset_test {
         let result = redis.open(test_db_path.to_str().unwrap());
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
-        redis.set_need_close(true);
         redis
     }
 
@@ -306,7 +305,7 @@ mod redis_zset_test {
         assert_eq!(results[0].0, "member");
         assert_eq!(results[0].1, "9.5");
 
-        let db = redis.db.as_ref().expect("db initialized");
+        let db = redis.db().expect("db initialized");
         let cf_score = redis
             .get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF)
             .expect("zset score cf handle");

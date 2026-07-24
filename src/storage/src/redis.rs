@@ -16,6 +16,7 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::OnceLock;
@@ -25,7 +26,6 @@ use std::sync::{Arc, Weak};
 use chrono::Utc;
 use once_cell::sync::OnceCell;
 
-use engine::{Engine, RocksdbEngine};
 use foyer::{Cache, CacheBuilder};
 use kstd::lock_mgr::LockMgr;
 use rocksdb::{
@@ -101,10 +101,155 @@ pub enum TypeCheckState {
     Match,
 }
 
+/// The single shutdown owner for one RocksDB instance.
+///
+/// Callbacks receive only `Weak<DB>` references derived from this owner. Keeping
+/// the `Arc<DB>` private prevents an arbitrary clone from outliving the Redis
+/// lifecycle and becoming the thread that performs the final RocksDB close.
+pub(crate) struct RocksDbOwner {
+    db: Arc<DB>,
+    #[cfg(test)]
+    drop_test_gate: Option<Weak<RocksDbOwnerDropTestGate>>,
+}
+
+impl RocksDbOwner {
+    fn new(db: DB) -> Self {
+        #[cfg(test)]
+        let drop_test_gate = rocks_db_owner_drop_test_gate_for_path(db.path());
+
+        Self {
+            db: Arc::new(db),
+            #[cfg(test)]
+            drop_test_gate,
+        }
+    }
+
+    fn downgrade(&self) -> Weak<DB> {
+        Arc::downgrade(&self.db)
+    }
+}
+
+impl AsRef<DB> for RocksDbOwner {
+    fn as_ref(&self) -> &DB {
+        &self.db
+    }
+}
+
+impl Deref for RocksDbOwner {
+    type Target = DB;
+
+    fn deref(&self) -> &Self::Target {
+        &self.db
+    }
+}
+
+impl Drop for RocksDbOwner {
+    fn drop(&mut self) {
+        #[cfg(test)]
+        if let Some(gate) = self.drop_test_gate.as_ref().and_then(Weak::upgrade) {
+            gate.mark_entered();
+        }
+
+        // Hold the unique lifecycle owner's strong reference while RocksDB
+        // cancels and joins background jobs. A compaction filter may itself hold
+        // a temporary Arc upgraded from Weak; waiting here ensures that Arc is
+        // released before the final DB close can run on a callback worker.
+        self.db.cancel_all_background_work(true);
+    }
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct RocksDbOwnerDropTestState {
+    entered: bool,
+}
+
+#[cfg(test)]
+struct RocksDbOwnerDropTestGate {
+    state: Mutex<RocksDbOwnerDropTestState>,
+    changed: std::sync::Condvar,
+}
+
+#[cfg(test)]
+impl RocksDbOwnerDropTestGate {
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: Mutex::new(RocksDbOwnerDropTestState::default()),
+            changed: std::sync::Condvar::new(),
+        })
+    }
+
+    fn mark_entered(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("RocksDB owner drop test gate mutex should not be poisoned");
+        state.entered = true;
+        self.changed.notify_all();
+    }
+
+    fn wait_until_entered(&self, timeout: std::time::Duration) -> bool {
+        let state = self
+            .state
+            .lock()
+            .expect("RocksDB owner drop test gate mutex should not be poisoned");
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, timeout, |state| !state.entered)
+            .expect("RocksDB owner drop test gate wait should succeed");
+        state.entered
+    }
+}
+
+#[cfg(test)]
+fn rocks_db_owner_drop_test_gate_registry()
+-> &'static Mutex<Option<(std::path::PathBuf, Weak<RocksDbOwnerDropTestGate>)>> {
+    static GATE: OnceLock<Mutex<Option<(std::path::PathBuf, Weak<RocksDbOwnerDropTestGate>)>>> =
+        OnceLock::new();
+    GATE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+fn rocks_db_owner_drop_test_gate_for_path(path: &Path) -> Option<Weak<RocksDbOwnerDropTestGate>> {
+    rocks_db_owner_drop_test_gate_registry()
+        .lock()
+        .expect("RocksDB owner drop test gate registry should not be poisoned")
+        .as_ref()
+        .filter(|(target_path, _)| target_path == path)
+        .map(|(_, gate)| Weak::clone(gate))
+}
+
+#[cfg(test)]
+struct RocksDbOwnerDropTestGateGuard;
+
+#[cfg(test)]
+impl Drop for RocksDbOwnerDropTestGateGuard {
+    fn drop(&mut self) {
+        *rocks_db_owner_drop_test_gate_registry()
+            .lock()
+            .expect("RocksDB owner drop test gate registry should not be poisoned") = None;
+    }
+}
+
+#[cfg(test)]
+fn install_rocks_db_owner_drop_test_gate(
+    path: &Path,
+    gate: &Arc<RocksDbOwnerDropTestGate>,
+) -> RocksDbOwnerDropTestGateGuard {
+    let mut installed = rocks_db_owner_drop_test_gate_registry()
+        .lock()
+        .expect("RocksDB owner drop test gate registry should not be poisoned");
+    assert!(
+        installed.is_none(),
+        "only one RocksDB owner drop test gate may be installed"
+    );
+    *installed = Some((path.to_path_buf(), Arc::downgrade(gate)));
+    RocksDbOwnerDropTestGateGuard
+}
+
 #[repr(C, align(64))]
 pub struct Redis {
     pub index: i32,
-    pub need_close: std::sync::atomic::AtomicBool,
     pub lock_mgr: Arc<LockMgr>,
 
     // For RocksDB
@@ -112,7 +257,7 @@ pub struct Redis {
     pub write_options: WriteOptions,
     pub read_options: ReadOptions,
     pub compact_options: CompactOptions,
-    pub db: Option<Box<dyn Engine>>,
+    pub(crate) db: Option<RocksDbOwner>,
 
     // For background task
     pub storage: Arc<StorageOptions>,
@@ -124,7 +269,7 @@ pub struct Redis {
     pub small_compaction_duration_threshold: AtomicU64,
 
     // For Scan
-    pub scan_cursors_store: Mutex<Cache<String, String>>,
+    pub scan_cursors_store: Mutex<Cache<Vec<u8>, Vec<u8>>>,
     pub spop_counts_store: Mutex<Cache<String, u64>>,
 
     // For startup state tracking
@@ -154,7 +299,6 @@ impl Redis {
 
         Self {
             index,
-            need_close: std::sync::atomic::AtomicBool::new(false),
             is_starting: AtomicBool::new(true),
 
             storage,
@@ -268,21 +412,20 @@ impl Redis {
             })
             .collect();
 
-        let db = DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?;
-        let engine = RocksdbEngine::new(db);
-        let db_arc = engine.shared_db();
-        let _ = db_once_cell.set(Arc::downgrade(&db_arc));
+        let db = RocksDbOwner::new(
+            DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?,
+        );
+        let _ = db_once_cell.set(db.downgrade());
 
         self.handles = CF_CONFIGS
             .iter()
-            .filter(|(name, _, _)| engine.cf_handle(name).is_some())
+            .filter(|(name, _, _)| db.cf_handle(name).is_some())
             .map(|(name, _, _)| name.to_string())
             .collect();
-        self.db = Some(Box::new(engine));
         self.is_starting.store(false, Ordering::SeqCst);
 
         // Initialize cf_tracker from SST properties
-        let rocksdb = db_arc.as_ref();
+        let rocksdb = db.as_ref();
         let access = crate::logindex::db_access::DbAccess::new(rocksdb);
         if let Err(e) = cf_tracker.init(&access) {
             log::warn!("Failed to initialize cf_tracker from SST properties: {}", e);
@@ -291,6 +434,7 @@ impl Redis {
         // Store collector and tracker
         self.logindex_collector = Some(collector);
         self.logindex_cf_tracker = Some(cf_tracker);
+        self.db = Some(db);
 
         Ok(())
     }
@@ -371,10 +515,9 @@ impl Redis {
         self.index
     }
 
-    /// Set whether to close the database
-    pub fn set_need_close(&self, need_close: bool) {
-        self.need_close
-            .store(need_close, std::sync::atomic::Ordering::SeqCst);
+    /// Borrow the concrete RocksDB instance without exposing a cloneable owner.
+    pub fn db(&self) -> Option<&DB> {
+        self.db.as_deref()
     }
 
     /// Create a RocksDB physical checkpoint at `path`.
@@ -382,7 +525,8 @@ impl Redis {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "Database is not initialized".to_string(),
         })?;
-        db.create_checkpoint(path).context(RocksSnafu)
+        let checkpoint = rocksdb::checkpoint::Checkpoint::new(db.as_ref()).context(RocksSnafu)?;
+        checkpoint.create_checkpoint(path).context(RocksSnafu)
     }
 
     /// Compact database range
@@ -681,14 +825,14 @@ impl Redis {
         key: &[u8],
         pattern: &[u8],
         cursor: u64,
-    ) -> Result<Option<String>> {
-        let index_key = format!(
-            "{}_{}_{}_{}",
-            DATA_TYPE_TAG[dtype as usize],
-            String::from_utf8_lossy(key),
-            String::from_utf8_lossy(pattern),
-            cursor
-        );
+    ) -> Result<Option<Vec<u8>>> {
+        let mut index_key = Vec::with_capacity(1 + 8 + key.len() + 8 + pattern.len() + 8);
+        index_key.push(dtype as u8);
+        index_key.extend_from_slice(&(key.len() as u64).to_le_bytes());
+        index_key.extend_from_slice(key);
+        index_key.extend_from_slice(&(pattern.len() as u64).to_le_bytes());
+        index_key.extend_from_slice(pattern);
+        index_key.extend_from_slice(&cursor.to_le_bytes());
         Ok(self
             .scan_cursors_store
             .lock()
@@ -705,20 +849,19 @@ impl Redis {
         cursor: u64,
         next_point: &[u8],
     ) -> Result<()> {
-        let index_key = format!(
-            "{}_{}_{}_{}",
-            DATA_TYPE_TAG[dtype as usize],
-            String::from_utf8_lossy(key),
-            String::from_utf8_lossy(pattern),
-            cursor
-        );
-        let next_point_str = String::from_utf8_lossy(next_point).to_string();
+        let mut index_key = Vec::with_capacity(1 + 8 + key.len() + 8 + pattern.len() + 8);
+        index_key.push(dtype as u8);
+        index_key.extend_from_slice(&(key.len() as u64).to_le_bytes());
+        index_key.extend_from_slice(key);
+        index_key.extend_from_slice(&(pattern.len() as u64).to_le_bytes());
+        index_key.extend_from_slice(pattern);
+        index_key.extend_from_slice(&cursor.to_le_bytes());
         let store = self.scan_cursors_store.lock().map_err(|_| RedisErr {
             message: "Failed to lock scan_cursors_store".to_string(),
             location: Default::default(),
         })?;
 
-        store.insert(index_key, next_point_str);
+        store.insert(index_key, next_point.to_vec());
         Ok(())
     }
     /// check if the encoded value of any type is expired (type-agnostic)
@@ -830,18 +973,6 @@ impl Redis {
     }
 }
 
-impl Drop for Redis {
-    fn drop(&mut self) {
-        if self.need_close.load(std::sync::atomic::Ordering::SeqCst) {
-            // Clear handles
-            self.handles.clear();
-
-            // Close database
-            self.db = None;
-        }
-    }
-}
-
 /// Retrieves the database reference and the specified column family handles.
 ///
 /// # Parameters
@@ -858,7 +989,7 @@ impl Drop for Redis {
 #[macro_export]
 macro_rules! get_db_and_cfs {
     ($self:expr $(, $cf:expr)*) => {{
-        let db = $self.db.as_ref().context(OptionNoneSnafu {
+        let db = $self.db().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
 
@@ -874,4 +1005,144 @@ macro_rules! get_db_and_cfs {
 
         (db, cfs)
     }};
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+
+    use super::{
+        ColumnFamilyIndex, Redis, RocksDbOwnerDropTestGate, install_rocks_db_owner_drop_test_gate,
+    };
+    use crate::data_compaction_filter::{
+        CompactionFilterTestGate, install_compaction_filter_test_gate,
+    };
+    use crate::{BgTaskHandler, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+    use kstd::lock_mgr::LockMgr;
+
+    fn open_compaction_test_redis(path: &std::path::Path) -> Redis {
+        let mut storage_options = StorageOptions::default();
+        storage_options.options.set_write_buffer_size(32 * 1024);
+        storage_options.options.set_max_write_buffer_number(2);
+        storage_options
+            .options
+            .set_level_zero_file_num_compaction_trigger(2);
+        storage_options.options.set_max_background_jobs(2);
+
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let mut redis = Redis::new(
+            Arc::new(storage_options),
+            0,
+            Arc::new(bg_task_handler),
+            Arc::new(LockMgr::new(64)),
+        );
+        redis
+            .open(path.to_str().expect("test DB path should be valid UTF-8"))
+            .expect("compaction test Redis should open");
+        redis
+    }
+
+    #[test]
+    fn dropping_last_owner_waits_for_active_compaction_filter_before_reopen() {
+        let path = unique_test_db_path();
+        safe_cleanup_test_db(&path);
+
+        let drop_gate = RocksDbOwnerDropTestGate::new();
+        let drop_gate_guard = install_rocks_db_owner_drop_test_gate(&path, &drop_gate);
+        let redis = open_compaction_test_redis(&path);
+        let data_cf = redis
+            .get_cf_handle(ColumnFamilyIndex::HashesDataCF)
+            .expect("hash data column family should exist");
+        let gate = CompactionFilterTestGate::new(b"compaction-owner-");
+        let gate_guard = install_compaction_filter_test_gate(Arc::clone(&gate));
+
+        for file in 0..6u32 {
+            for key in 0..512u32 {
+                // Every flushed file covers the same key range so RocksDB cannot
+                // satisfy the compaction with a trivial file move; the filter must run.
+                let encoded_key = format!("compaction-owner-{key:04}");
+                redis
+                    .db
+                    .as_ref()
+                    .expect("Redis should own RocksDB")
+                    .put_cf(&data_cf, encoded_key.as_bytes(), vec![file as u8; 256])
+                    .expect("test write should succeed");
+            }
+            redis
+                .db
+                .as_ref()
+                .expect("Redis should own RocksDB")
+                .flush_cf(&data_cf)
+                .expect("test flush should succeed");
+        }
+
+        assert!(
+            gate.wait_until_entered(Duration::from_secs(10)),
+            "RocksDB should execute the installed compaction filter"
+        );
+        drop(data_cf);
+
+        let (drop_tx, drop_rx) = mpsc::channel();
+        let drop_thread = std::thread::spawn(move || {
+            drop(redis);
+            drop_tx
+                .send(())
+                .expect("drop completion receiver should remain alive");
+        });
+
+        assert!(
+            drop_gate.wait_until_entered(Duration::from_secs(10)),
+            "RocksDbOwner::drop should start before checking completion"
+        );
+        let completed_while_filter_was_blocked =
+            drop_rx.recv_timeout(Duration::from_millis(250)).is_ok();
+
+        gate.release();
+        drop(gate_guard);
+        drop(drop_gate_guard);
+
+        assert!(
+            !completed_while_filter_was_blocked,
+            "dropping the unique RocksDB owner must wait for the active compaction filter"
+        );
+        drop_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("owner drop should finish after the compaction filter is released");
+        drop_thread
+            .join()
+            .expect("owner drop thread should finish without panicking");
+
+        let (reopen_tx, reopen_rx) = mpsc::channel();
+        let reopen_path = path.clone();
+        let reopen_thread = std::thread::spawn(move || {
+            let (bg_task_handler, _) = BgTaskHandler::new();
+            let mut reopened = Redis::new(
+                Arc::new(StorageOptions::default()),
+                0,
+                Arc::new(bg_task_handler),
+                Arc::new(LockMgr::new(64)),
+            );
+            let result = reopened
+                .open(
+                    reopen_path
+                        .to_str()
+                        .expect("reopen path should be valid UTF-8"),
+                )
+                .map(|()| drop(reopened))
+                .map_err(|error| error.to_string());
+            reopen_tx
+                .send(result)
+                .expect("reopen result receiver should remain alive");
+        });
+        reopen_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("DB path reopen should not hang")
+            .expect("DB path should reopen after the unique owner is dropped");
+        reopen_thread
+            .join()
+            .expect("DB reopen thread should finish without panicking");
+
+        safe_cleanup_test_db(&path);
+    }
 }

@@ -35,7 +35,7 @@ impl MsetnxCmd {
             meta: CmdMeta {
                 name: "msetnx".to_string(),
                 arity: -3, // MSETNX key value [key value ...] (at least 1 key-value pair)
-                flags: CmdFlags::WRITE,
+                flags: CmdFlags::WRITE | CmdFlags::STORAGE_EXCLUSIVE,
                 acl_category: AclCategory::STRING | AclCategory::WRITE,
                 ..Default::default()
             },

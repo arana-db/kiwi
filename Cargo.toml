@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-	"src/engine",
 	"src/storage",
 	"src/kstd",
 	"src/common/macro",
@@ -70,9 +69,9 @@ uuid = { version = "1.23", features = ["v4", "serde"] }
 openraft = { version = "0.9", features = ["serde", "storage-v2"] }
 proptest = "1.11"
 arc-swap = "1.7"
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 ## workspaces members
-engine = { path = "src/engine" }
 storage = { path = "src/storage" }
 kstd = { path = "src/kstd" }
 common-macro = { path = "src/common/macro" }

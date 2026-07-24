@@ -19,15 +19,16 @@
 
 #[cfg(test)]
 mod redis_string_test {
-    use std::{path::Path, sync::Arc, thread, time::Duration};
+    use std::{collections::HashSet, path::Path, sync::Arc, thread, time::Duration};
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BgTaskHandler, DataType, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path,
+        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, DataType, Redis, StorageOptions,
+        ZsetScoreMember, safe_cleanup_test_db, slot_indexer::key_to_slot_id, storage::Storage,
+        unique_test_db_path,
     };
 
     fn cleanup_redis(redis: Redis, test_db_path: &Path) {
-        redis.set_need_close(true);
         drop(redis);
         thread::sleep(Duration::from_millis(10));
         safe_cleanup_test_db(test_db_path);
@@ -70,6 +71,313 @@ mod redis_string_test {
         );
 
         cleanup_redis(redis, &test_db_path);
+    }
+
+    // Regression for issue #349: binary string reads must not use lossy UTF-8 conversion.
+    #[test]
+    fn test_redis_binary_get_and_mget_preserve_bytes() {
+        let test_db_path = unique_test_db_path();
+
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let first_key = b"binary:first";
+        let second_key = b"binary:second";
+        let first_value = [0, 1, 2, 3, 255];
+        let second_value = [255, 0, 254];
+        redis.set(first_key, &first_value).unwrap();
+        redis.set(second_key, &second_value).unwrap();
+
+        assert_eq!(redis.get_binary(first_key).unwrap(), first_value);
+        assert_eq!(
+            redis
+                .mget_binary(&[
+                    first_key.to_vec(),
+                    b"binary:missing".to_vec(),
+                    second_key.to_vec(),
+                ])
+                .unwrap(),
+            vec![
+                Some(first_value.to_vec()),
+                None,
+                Some(second_value.to_vec())
+            ]
+        );
+
+        cleanup_redis(redis, &test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_storage_multi_instance_mget_binary_preserves_mixed_result_order() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(3, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        assert_eq!(storage.insts.len(), 3);
+
+        let first_binary_key = b"binary:instance:0".to_vec();
+        let second_binary_key = b"binary:instance:2".to_vec();
+        let wrong_type_key = b"binary:instance:4".to_vec();
+        let instance_ids = [
+            storage
+                .slot_indexer
+                .get_instance_id(key_to_slot_id(&first_binary_key)),
+            storage
+                .slot_indexer
+                .get_instance_id(key_to_slot_id(&second_binary_key)),
+            storage
+                .slot_indexer
+                .get_instance_id(key_to_slot_id(&wrong_type_key)),
+        ];
+        assert_eq!(HashSet::from(instance_ids).len(), 3);
+
+        let first_binary_value = vec![0, 0xff, 1, 0xfe];
+        let second_binary_value = vec![0xff, 2, 0, 0xfd];
+        storage.set(&first_binary_key, &first_binary_value).unwrap();
+        storage
+            .set(&second_binary_key, &second_binary_value)
+            .unwrap();
+        storage
+            .lpush(&wrong_type_key, &[b"list-value".to_vec()])
+            .unwrap();
+
+        let missing_key = b"binary:missing".to_vec();
+        let keys = vec![
+            second_binary_key.clone(),
+            wrong_type_key,
+            first_binary_key,
+            missing_key,
+            second_binary_key,
+        ];
+
+        assert_eq!(
+            storage.mget_binary(&keys).unwrap(),
+            vec![
+                Some(second_binary_value.clone()),
+                None,
+                Some(first_binary_value),
+                None,
+                Some(second_binary_value),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_storage_multi_instance_msetnx_is_all_or_nothing() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(3, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        let mut keys_by_instance = std::collections::HashMap::new();
+        for index in 0..10_000 {
+            let key = format!("msetnx:instance:{index}").into_bytes();
+            let instance_id = storage.slot_indexer.get_instance_id(key_to_slot_id(&key));
+            keys_by_instance.entry(instance_id).or_insert(key);
+            if keys_by_instance.len() == 3 {
+                break;
+            }
+        }
+        assert_eq!(keys_by_instance.len(), 3);
+
+        let mut keys: Vec<Vec<u8>> = keys_by_instance.into_values().collect();
+        keys.sort();
+        let initial: Vec<(Vec<u8>, Vec<u8>)> = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| (key.clone(), format!("initial-{index}").into_bytes()))
+            .collect();
+        assert!(storage.msetnx(&initial).unwrap());
+
+        let replacement: Vec<(Vec<u8>, Vec<u8>)> = keys
+            .iter()
+            .map(|key| (key.clone(), b"replacement".to_vec()))
+            .collect();
+        assert!(!storage.msetnx(&replacement).unwrap());
+        assert_eq!(
+            storage.mget_binary(&keys).unwrap(),
+            initial
+                .iter()
+                .map(|(_, value)| Some(value.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_storage_keys_supports_redis_glob_across_all_data_types() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        storage.set(b"test_alpha", b"string-value").unwrap();
+        storage
+            .lpush(b"test_beta", &[b"list-value".to_vec()])
+            .unwrap();
+        storage
+            .hset(b"test_charlie", b"field", b"hash-value")
+            .unwrap();
+        storage.sadd(b"test_delta", &[b"set-value"]).unwrap();
+        storage
+            .zadd(
+                b"test_echo",
+                &[ZsetScoreMember::new(1.0, b"zset-value".to_vec())],
+            )
+            .unwrap();
+        storage.set(b"test_xray", b"negated-class").unwrap();
+        storage.set(b"other_foxtrot", b"non-match").unwrap();
+        storage.set(b"literal*star", b"escaped-wildcard").unwrap();
+
+        let keys = |pattern: &[u8]| {
+            storage
+                .keys(pattern)
+                .unwrap()
+                .into_iter()
+                .collect::<HashSet<_>>()
+        };
+
+        assert_eq!(
+            keys(b"test_*"),
+            HashSet::from([
+                b"test_alpha".to_vec(),
+                b"test_beta".to_vec(),
+                b"test_charlie".to_vec(),
+                b"test_delta".to_vec(),
+                b"test_echo".to_vec(),
+                b"test_xray".to_vec(),
+            ])
+        );
+        assert_eq!(keys(b"test_?cho"), HashSet::from([b"test_echo".to_vec()]));
+        assert_eq!(
+            keys(b"test_[ae]*"),
+            HashSet::from([b"test_alpha".to_vec(), b"test_echo".to_vec()])
+        );
+        assert_eq!(
+            keys(b"test_[a-c]*"),
+            HashSet::from([
+                b"test_alpha".to_vec(),
+                b"test_beta".to_vec(),
+                b"test_charlie".to_vec(),
+            ])
+        );
+        assert_eq!(
+            keys(b"test_[^x]*"),
+            HashSet::from([
+                b"test_alpha".to_vec(),
+                b"test_beta".to_vec(),
+                b"test_charlie".to_vec(),
+                b"test_delta".to_vec(),
+                b"test_echo".to_vec(),
+            ])
+        );
+        assert_eq!(
+            keys(br"literal\*star"),
+            HashSet::from([b"literal*star".to_vec()])
+        );
+        assert!(!keys(b"test_*").contains(b"other_foxtrot".as_slice()));
+    }
+
+    #[tokio::test]
+    async fn test_storage_keys_matches_and_returns_raw_key_bytes() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        let utf8_key = "é".as_bytes().to_vec();
+        let invalid_key_a = vec![0xff];
+        let invalid_key_b = vec![0xfe];
+        storage.set(&utf8_key, b"utf8").unwrap();
+        storage.set(&invalid_key_a, b"invalid-a").unwrap();
+        storage.set(&invalid_key_b, b"invalid-b").unwrap();
+
+        assert_eq!(
+            storage
+                .keys(b"?")
+                .unwrap()
+                .into_iter()
+                .collect::<HashSet<_>>(),
+            HashSet::from([invalid_key_a, invalid_key_b])
+        );
+        assert_eq!(storage.keys(b"??").unwrap(), vec![utf8_key]);
+    }
+
+    #[tokio::test]
+    async fn test_storage_keys_excludes_removed_and_expired_composite_values() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        storage.hset(b"empty_hash", b"field", b"value").unwrap();
+        storage.lpush(b"empty_list", &[b"value".to_vec()]).unwrap();
+        storage.sadd(b"empty_set", &[b"value"]).unwrap();
+        storage
+            .zadd(
+                b"empty_zset",
+                &[ZsetScoreMember::new(1.0, b"value".to_vec())],
+            )
+            .unwrap();
+        storage.hdel(b"empty_hash", &[b"field".to_vec()]).unwrap();
+        storage.lpop(b"empty_list", None).unwrap();
+        storage.srem(b"empty_set", &[b"value"]).unwrap();
+        storage.zrem(b"empty_zset", &[b"value".to_vec()]).unwrap();
+
+        storage.hset(b"expired_hash", b"field", b"value").unwrap();
+        storage
+            .lpush(b"expired_list", &[b"value".to_vec()])
+            .unwrap();
+        storage.sadd(b"expired_set", &[b"value"]).unwrap();
+        storage
+            .zadd(
+                b"expired_zset",
+                &[ZsetScoreMember::new(1.0, b"value".to_vec())],
+            )
+            .unwrap();
+        for key in [
+            b"expired_hash".as_slice(),
+            b"expired_list".as_slice(),
+            b"expired_set".as_slice(),
+            b"expired_zset".as_slice(),
+        ] {
+            assert!(storage.expire(key, 1).unwrap());
+        }
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+
+        assert!(storage.keys(b"empty_*").unwrap().is_empty());
+        assert!(storage.keys(b"expired_*").unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_storage_keys_propagates_invalid_metadata_errors() {
+        let test_db_dir = tempfile::tempdir().unwrap();
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), test_db_dir.path())
+            .unwrap();
+
+        let redis = &storage.insts[0];
+        let meta_cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+        let encoded_key = BaseMetaKey::new(b"broken_meta").encode().unwrap();
+        redis
+            .db()
+            .unwrap()
+            .put_cf(&meta_cf, encoded_key, [DataType::Hash as u8])
+            .unwrap();
+
+        assert!(storage.keys(b"*").is_err());
     }
 
     #[test]

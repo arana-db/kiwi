@@ -15,29 +15,48 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::OnceLock;
+
 use clap::Parser;
 use conf::config::Config;
 use log::{debug, error, info, warn};
 use runtime::{
-    DualRuntimeError, GlobalStorage, RuntimeManager, StorageServer, StorageServerPauseController,
+    DualRuntimeError, GlobalStorage, RuntimeManager,
+    StorageAccessPermit as RuntimeStorageAccessPermit, StorageServer, StorageServerPauseController,
 };
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::OnceLock;
 use storage::StorageOptions;
 use storage::storage::Storage;
 
 use raft::node::{RaftApp, RaftConfig, create_raft_node};
 use raft::raft_proto;
-use raft::state_machine::PauseController;
+use raft::state_machine::{PauseController, StorageAccessPermit};
 
 struct PauseControllerWrapper(StorageServerPauseController);
+struct PausePermitWrapper {
+    _permit: RuntimeStorageAccessPermit,
+}
+
+impl StorageAccessPermit for PausePermitWrapper {}
 
 impl PauseController for PauseControllerWrapper {
     fn request_pause(
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(self.0.request_pause())
+    }
+
+    fn enter(
+        self: Arc<Self>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>,
+    > {
+        Box::pin(async move {
+            Box::new(PausePermitWrapper {
+                _permit: self.0.enter().await,
+            }) as Box<dyn StorageAccessPermit>
+        })
     }
 
     fn resume(&self) {
@@ -91,6 +110,8 @@ fn main() -> std::io::Result<()> {
     } else {
         Config::default()
     };
+
+    preflight_server_startup(&config)?;
 
     let addr = format!("{}:{}", config.binding, config.port);
     let protocol = "tcp";
@@ -202,6 +223,48 @@ fn main() -> std::io::Result<()> {
     result
 }
 
+fn preflight_server_startup(config: &Config) -> std::io::Result<()> {
+    raft::state_machine::preflight_snapshot_install(std::path::Path::new(&config.data_dir))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn startup_preflight_rejects_marker_even_when_raft_is_disabled() {
+        let root = std::env::temp_dir().join(format!(
+            "kiwi-server-preflight-{}-{}",
+            std::process::id(),
+            TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let db_path = root.join("data");
+        std::fs::create_dir_all(&root).expect("test should create its temporary root");
+        let marker_path = raft::state_machine::snapshot_install_marker_path(&db_path)
+            .expect("test DB path should support a marker");
+        std::fs::write(&marker_path, b"{not-json")
+            .expect("test should write a malformed install marker");
+        let mut config = Config::default();
+        config.data_dir = db_path.display().to_string();
+        config.raft = None;
+
+        let error = preflight_server_startup(&config)
+            .expect_err("server startup must reject an install marker without Raft configured");
+        assert!(
+            error
+                .to_string()
+                .contains(&marker_path.display().to_string()),
+            "server refusal must identify the marker path: {error}"
+        );
+
+        std::fs::remove_file(marker_path).expect("test should remove its marker");
+        std::fs::remove_dir_all(root).expect("test should remove its temporary root");
+    }
+}
+
 async fn initialize_storage(config: &Config) -> Result<GlobalStorage, DualRuntimeError> {
     info!("Initializing storage...");
 
@@ -282,7 +345,7 @@ async fn start_server(
         let raft_app = create_raft_node(
             raft_config,
             storage_swap,
-            Some(pause_controller_wrapper),
+            pause_controller_wrapper,
             Some(append_log_fn_holder.clone()),
         )
         .await

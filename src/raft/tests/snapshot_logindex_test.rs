@@ -30,9 +30,36 @@ use arc_swap::ArcSwap;
 use conf::raft_type::Binlog;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
-use raft::state_machine::KiwiStateMachine;
+use raft::state_machine::{KiwiStateMachine, PauseController, StorageAccessPermit};
 use storage::logindex::LogIndexAndSequenceCollector;
 use storage::{RaftSnapshotMeta, StorageOptions, storage::Storage, unique_test_db_path};
+
+struct NoopPauseController;
+struct NoopStorageAccessPermit;
+
+impl StorageAccessPermit for NoopStorageAccessPermit {}
+
+impl PauseController for NoopPauseController {
+    fn request_pause(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        Box::pin(async {})
+    }
+
+    fn enter(
+        self: Arc<Self>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>,
+    > {
+        Box::pin(async { Box::new(NoopStorageAccessPermit) as Box<dyn StorageAccessPermit> })
+    }
+
+    fn resume(&self) {}
+}
+
+fn noop_pause_controller() -> Arc<dyn PauseController> {
+    Arc::new(NoopPauseController)
+}
 
 #[tokio::test]
 async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
@@ -58,7 +85,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
 
         // Force flush to ensure data is persisted to SST
         if let Some(inst) = storage.insts.first() {
-            if let Some(ref db) = inst.db {
+            if let Some(db) = inst.db() {
                 db.flush().unwrap();
             }
         }
@@ -84,7 +111,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
         // Force flush after binlog write
         {
             let inst = storage.insts.first().unwrap();
-            inst.db.as_ref().unwrap().flush().unwrap();
+            inst.db().unwrap().flush().unwrap();
         } // inst reference dropped here
 
         // Verify collector has the (log_index, seqno) mapping
@@ -101,12 +128,14 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
             storage_swap,
             src_db_path.clone(),
             snap_root.clone(),
+            noop_pause_controller(),
             None,
         );
 
         let mut builder = sm.get_snapshot_builder().await;
         let snap = builder.build_snapshot().await?;
         assert!(!snap.snapshot.get_ref().is_empty());
+        drop(builder);
 
         // Verify snapshot was persisted
         let cur = sm
@@ -124,7 +153,6 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
         let bytes = snap.snapshot.into_inner();
 
         // Explicitly drop all source-side references before leaving this block
-        drop(builder);
         drop(sm);
         drop(storage);
 
@@ -140,6 +168,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
         target_swap.clone(),
         restore_db_path.clone(),
         snap_root,
+        noop_pause_controller(),
         None,
     );
 

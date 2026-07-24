@@ -23,12 +23,18 @@ pytest 配置文件
 提供测试夹具（fixtures）和通用配置
 """
 
+import os
+
 import pytest
 import redis
-import time
 
 
-@pytest.fixture(scope="session")
+def _enabled(name):
+    """Return whether a CI-only test mode is explicitly enabled."""
+    return os.environ.get(name) == "1"
+
+
+@pytest.fixture(scope="session", autouse=True)
 def redis_client():
     """
     创建 Redis 客户端连接
@@ -39,19 +45,38 @@ def redis_client():
         host='localhost',
         port=6379,
         decode_responses=True,
-        socket_connect_timeout=5
+        socket_connect_timeout=5,
+        socket_timeout=5,
     )
     
     # 测试连接
     try:
         client.ping()
-    except redis.ConnectionError:
-        pytest.skip("Redis server is not running on localhost:6379")
+    except redis.RedisError as error:
+        client.close()
+        message = "Redis server is not running on localhost:6379"
+        if _enabled("KIWI_TEST_REQUIRE_SERVER"):
+            pytest.fail(f"{message}: {error}", pytrace=False)
+        pytest.skip(message)
     
     yield client
     
     # 清理（如果需要）
     client.close()
+
+
+@pytest.fixture(scope="function", autouse=True)
+def isolate_redis_database(redis_client):
+    """Flush the dedicated CI server before and after every test."""
+    if not _enabled("KIWI_TEST_ISOLATED_SERVER"):
+        yield
+        return
+
+    redis_client.flushdb()
+    try:
+        yield
+    finally:
+        redis_client.flushdb()
 
 
 @pytest.fixture(scope="function")
@@ -61,7 +86,11 @@ def redis_clean(redis_client):
     
     确保测试之间互不影响
     """
-    # 测试前清理
+    if _enabled("KIWI_TEST_ISOLATED_SERVER"):
+        yield redis_client
+        return
+
+    # 普通本地模式只清理测试前缀，避免清空开发者的外部 Redis。
     keys = redis_client.keys('test_*')
     if keys:
         redis_client.delete(*keys)
@@ -81,7 +110,7 @@ def r(redis_clean):
 
 
 @pytest.fixture(scope="session")
-def redis_binary_client():
+def redis_binary_client(redis_client):
     """
     创建二进制模式的 Redis 客户端
     
@@ -90,13 +119,19 @@ def redis_binary_client():
     client = redis.Redis(
         host='localhost',
         port=6379,
-        decode_responses=False  # 不自动解码
+        decode_responses=False,  # 不自动解码
+        socket_connect_timeout=5,
+        socket_timeout=5,
     )
     
     try:
         client.ping()
-    except redis.ConnectionError:
-        pytest.skip("Redis server is not running on localhost:6379")
+    except redis.RedisError as error:
+        client.close()
+        message = "Redis server is not running on localhost:6379"
+        if _enabled("KIWI_TEST_REQUIRE_SERVER"):
+            pytest.fail(f"{message}: {error}", pytrace=False)
+        pytest.skip(message)
     
     yield client
     client.close()

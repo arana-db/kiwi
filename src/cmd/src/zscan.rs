@@ -21,6 +21,7 @@ use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
+use crate::scan_options::parse_scan_options;
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta};
 use crate::{impl_cmd_clone_box, impl_cmd_meta};
 
@@ -63,59 +64,16 @@ impl Cmd for ZscanCmd {
         let argv = client.argv();
 
         let key = argv[1].as_slice();
-        let cursor_str = String::from_utf8_lossy(&argv[2]);
-
-        // Parse cursor
-        let cursor = match cursor_str.parse::<u64>() {
-            Ok(c) => c,
-            Err(_) => {
-                client.set_reply(RespData::Error("ERR invalid cursor".into()));
+        let options = match parse_scan_options(&argv[2], &argv[3..]) {
+            Ok(options) => options,
+            Err(error) => {
+                client.set_reply(RespData::Error(error.into()));
                 return;
             }
         };
+        let pattern = options.pattern.as_deref().map(String::from_utf8_lossy);
 
-        // Parse optional MATCH and COUNT parameters
-        let mut pattern: Option<String> = None;
-        let mut count: Option<usize> = None;
-
-        let mut i = 3;
-        while i < argv.len() {
-            let arg = String::from_utf8_lossy(&argv[i]).to_uppercase();
-            match arg.as_str() {
-                "MATCH" if i + 1 < argv.len() => {
-                    pattern = Some(String::from_utf8_lossy(&argv[i + 1]).to_string());
-                    i += 2;
-                }
-                "MATCH" => {
-                    client.set_reply(RespData::Error("ERR syntax error".into()));
-                    return;
-                }
-                "COUNT" if i + 1 < argv.len() => {
-                    match String::from_utf8_lossy(&argv[i + 1]).parse::<usize>() {
-                        Ok(c) if c > 0 => {
-                            count = Some(c);
-                            i += 2;
-                        }
-                        _ => {
-                            client.set_reply(RespData::Error(
-                                "ERR value is not an integer or out of range".into(),
-                            ));
-                            return;
-                        }
-                    }
-                }
-                "COUNT" => {
-                    client.set_reply(RespData::Error("ERR syntax error".into()));
-                    return;
-                }
-                _ => {
-                    client.set_reply(RespData::Error("ERR syntax error".into()));
-                    return;
-                }
-            }
-        }
-
-        let result = storage.zscan(key, cursor, pattern.as_deref(), count);
+        let result = storage.zscan(key, options.cursor, pattern.as_deref(), options.count);
 
         match result {
             Ok((next_cursor, members_scores)) => {

@@ -46,7 +46,6 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use conf::raft_type::KiwiTypeConfig;
-use engine::{Engine, RocksdbEngine};
 
 use rocksdb::{ColumnFamilyDescriptor, DB, Direction, IteratorMode, Options, WriteBatch};
 
@@ -60,7 +59,7 @@ const COMMITTED_KEY: &[u8] = b"committed";
 
 #[derive(Clone)]
 pub struct RocksdbLogStore {
-    engine: Arc<dyn Engine>,
+    db: Arc<DB>,
 }
 
 impl RocksdbLogStore {
@@ -69,7 +68,7 @@ impl RocksdbLogStore {
         &self,
         name: &str,
     ) -> Result<Arc<rocksdb::BoundColumnFamily<'_>>, StorageError<u64>> {
-        self.engine
+        self.db
             .cf_handle(name)
             .ok_or_else(|| cf_not_found_write(name))
     }
@@ -79,7 +78,7 @@ impl RocksdbLogStore {
         &self,
         name: &str,
     ) -> Result<Arc<rocksdb::BoundColumnFamily<'_>>, StorageError<u64>> {
-        self.engine
+        self.db
             .cf_handle(name)
             .ok_or_else(|| cf_not_found_read(name))
     }
@@ -116,7 +115,7 @@ impl RocksdbLogStore {
         let batch = self.build_append_batch(entries)?;
 
         // 执行批量写入，先捕获结果再通知回调，确保 callback 无论成功失败都被调用
-        let write_result = self.engine.write(batch).map_err(io_write_err);
+        let write_result = self.db.write(&batch).map_err(io_write_err);
 
         // 通知回调写入结果（openraft 要求 callback 必须被调用，否则内部状态会挂住）
         callback.log_io_completed(
@@ -153,7 +152,7 @@ impl RocksdbLogStore {
 
         // 创建迭代器从起始键开始
         let iter = self
-            .engine
+            .db
             .iterator_cf(&logs_cf, IteratorMode::From(&start_key, Direction::Forward));
 
         let mut entries = Vec::new();
@@ -187,7 +186,7 @@ impl RocksdbLogStore {
         let value = serialize(vote)?;
 
         // 写入到 RocksDB
-        self.engine
+        self.db
             .put_cf(&state_cf, VOTE_KEY, &value)
             .map_err(io_write_err)?;
 
@@ -200,10 +199,7 @@ impl RocksdbLogStore {
         let state_cf = self.cf_read(STATE_CF)?;
 
         // 从 RocksDB 读取
-        let value = self
-            .engine
-            .get_cf(&state_cf, VOTE_KEY)
-            .map_err(io_read_err)?;
+        let value = self.db.get_cf(&state_cf, VOTE_KEY).map_err(io_read_err)?;
 
         // 如果不存在，返回 None
         let Some(bytes) = value else {
@@ -227,7 +223,7 @@ impl RocksdbLogStore {
         let value = serialize(&committed)?;
 
         // 写入到 RocksDB
-        self.engine
+        self.db
             .put_cf(&state_cf, COMMITTED_KEY, &value)
             .map_err(io_write_err)?;
 
@@ -241,7 +237,7 @@ impl RocksdbLogStore {
 
         // 从 RocksDB 读取
         let value = self
-            .engine
+            .db
             .get_cf(&state_cf, COMMITTED_KEY)
             .map_err(io_read_err)?;
 
@@ -268,7 +264,7 @@ impl RocksdbLogStore {
         let mut batch = WriteBatch::default();
         batch.delete_range_cf(&logs_cf, &start_key, &end_key);
         batch.delete_cf(&logs_cf, end_key);
-        self.engine.write(batch).map_err(io_write_err)?;
+        self.db.write(&batch).map_err(io_write_err)?;
 
         Ok(())
     }
@@ -289,7 +285,7 @@ impl RocksdbLogStore {
         let value = serialize(&Some(log_id))?;
         batch.put_cf(&meta_cf, LAST_PURGED_KEY, &value);
 
-        self.engine.write(batch).map_err(io_write_err)?;
+        self.db.write(&batch).map_err(io_write_err)?;
 
         Ok(())
     }
@@ -302,7 +298,7 @@ impl RocksdbLogStore {
         let logs_cf = self.cf_read(LOGS_CF)?;
 
         // 使用反向迭代器获取最后一条日志
-        let iter = self.engine.iterator_cf(&logs_cf, IteratorMode::End);
+        let iter = self.db.iterator_cf(&logs_cf, IteratorMode::End);
         let last_log_id = iter
             .take(1)
             .next()
@@ -319,7 +315,7 @@ impl RocksdbLogStore {
         let meta_cf = self.cf_read(META_CF)?;
 
         let last_purged_log_id = self
-            .engine
+            .db
             .get_cf(&meta_cf, LAST_PURGED_KEY)
             .map_err(io_read_err)?
             .map(|bytes| deserialize::<Option<openraft::LogId<u64>>>(&bytes))
@@ -340,14 +336,14 @@ impl RocksdbLogStore {
 }
 
 impl RocksdbLogStore {
-    /// 从已有的 RocksDB 引擎创建日志存储实例
-    pub fn new(engine: Arc<dyn Engine>) -> Result<Self, StorageError<u64>> {
+    /// 从已有的 RocksDB 数据库创建日志存储实例
+    pub fn new(db: Arc<DB>) -> Result<Self, StorageError<u64>> {
         for cf_name in [LOGS_CF, META_CF, STATE_CF] {
-            if engine.cf_handle(cf_name).is_none() {
+            if db.cf_handle(cf_name).is_none() {
                 return Err(cf_not_found_read(cf_name));
             }
         }
-        Ok(Self { engine })
+        Ok(Self { db })
     }
 
     /// 打开或创建指定路径的 RocksDB 日志存储
@@ -362,9 +358,8 @@ impl RocksdbLogStore {
             ColumnFamilyDescriptor::new(STATE_CF, Options::default()),
         ];
 
-        let db = DB::open_cf_descriptors(&opts, path, cfs)?;
-        let engine = Arc::new(RocksdbEngine::new(db));
-        Ok(Self::new(engine)?)
+        let db = Arc::new(DB::open_cf_descriptors(&opts, path, cfs)?);
+        Ok(Self::new(db)?)
     }
 }
 
@@ -520,7 +515,6 @@ fn decode_log_key(key: &[u8]) -> Result<u64, StorageError<u64>> {
 mod tests {
     use super::*;
     use conf::raft_type::{Binlog, BinlogEntry, OperateType};
-    use engine::RocksdbEngine;
     use openraft::storage::RaftLogStorageExt;
     use openraft::{Entry, EntryPayload, LeaderId, LogId, Vote};
     use proptest::prelude::*;
@@ -675,7 +669,7 @@ mod tests {
     // Unit tests for initialization
 
     /// Helper function to create a test database with required column families
-    fn create_test_db_with_cfs() -> (TempDir, Arc<dyn Engine>) {
+    fn create_test_db_with_cfs() -> (TempDir, Arc<DB>) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -691,19 +685,17 @@ mod tests {
         let db =
             DB::open_cf_descriptors(&opts, temp_dir.path(), cfs).expect("Failed to open database");
 
-        let engine: Arc<dyn Engine> = Arc::new(RocksdbEngine::new(db));
-        (temp_dir, engine)
+        (temp_dir, Arc::new(db))
     }
 
     /// Helper function to create a test database without column families
-    fn create_test_db_without_cfs() -> (TempDir, Arc<dyn Engine>) {
+    fn create_test_db_without_cfs() -> (TempDir, Arc<DB>) {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let mut opts = Options::default();
         opts.create_if_missing(true);
 
         let db = DB::open(&opts, temp_dir.path()).expect("Failed to open database");
-        let engine: Arc<dyn Engine> = Arc::new(RocksdbEngine::new(db));
-        (temp_dir, engine)
+        (temp_dir, Arc::new(db))
     }
 
     #[test]
@@ -758,9 +750,9 @@ mod tests {
         let db =
             DB::open_cf_descriptors(&opts, temp_dir.path(), cfs).expect("Failed to open database");
 
-        let engine: Arc<dyn Engine> = Arc::new(RocksdbEngine::new(db));
+        let db = Arc::new(db);
 
-        let result = RocksdbLogStore::new(engine);
+        let result = RocksdbLogStore::new(db);
         assert!(
             result.is_err(),
             "Initialization should fail when not all column families are present"
@@ -838,7 +830,7 @@ mod tests {
             .build_append_batch(entries.clone())
             .expect("build_append_batch should succeed");
 
-        engine.write(batch).expect("write should succeed");
+        engine.write(&batch).expect("write should succeed");
 
         let read = log_store
             .do_try_get_log_entries(1..=2)
@@ -870,7 +862,7 @@ mod tests {
 
         // Writing an empty batch is a no-op but must not fail.
         engine
-            .write(batch)
+            .write(&batch)
             .expect("write empty batch should succeed");
     }
 
@@ -879,7 +871,7 @@ mod tests {
         // If the logs CF is absent, build_append_batch must return an error.
         let (_temp_dir, engine) = create_test_db_without_cfs();
         // Bypass new() validation by constructing directly.
-        let log_store = RocksdbLogStore { engine };
+        let log_store = RocksdbLogStore { db: engine };
 
         let entry = Entry {
             log_id: LogId::new(LeaderId::new(1, 1), 1),
@@ -918,7 +910,7 @@ mod tests {
                 let batch = log_store
                     .build_append_batch(unique_entries.clone())
                     .expect("build_append_batch should succeed");
-                engine.write(batch).expect("write should succeed");
+                engine.write(&batch).expect("write should succeed");
 
                 let read = log_store
                     .do_try_get_log_entries(1..=max_index)
@@ -978,7 +970,7 @@ mod tests {
                         batch.put_cf(&logs_cf, key, &value);
                     }
 
-                    engine_clone.write(batch).unwrap();
+                    engine_clone.write(&batch).unwrap();
                 }
 
                 // Generate random range within the valid indices
@@ -1114,7 +1106,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Query range that doesn't exist (100..=200)
@@ -1164,7 +1156,7 @@ mod tests {
             let corrupted_value = vec![0xFF, 0xFF, 0xFF, 0xFF]; // Invalid JSON
             batch.put_cf(&logs_cf, key, &corrupted_value);
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Try to read the corrupted entry
@@ -1240,7 +1232,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Query range 1..=7 should return all 4 entries
@@ -1303,7 +1295,7 @@ mod tests {
             let value = serialize(&entry).unwrap();
             batch.put_cf(&logs_cf, key, &value);
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Query exactly that entry
@@ -1706,7 +1698,7 @@ mod tests {
                         batch.put_cf(&logs_cf, key, &value);
                     }
 
-                    engine_clone.write(batch).unwrap();
+                    engine_clone.write(&batch).unwrap();
                 }
 
                 // Get the log state
@@ -1786,7 +1778,7 @@ mod tests {
                         batch.put_cf(&logs_cf, key, &value);
                     }
 
-                    engine_clone.write(batch).unwrap();
+                    engine_clone.write(&batch).unwrap();
                 }
 
                 // Determine which entry to purge up to (must be within valid range)
@@ -1880,7 +1872,7 @@ mod tests {
                         batch.put_cf(&logs_cf, key, &value);
                     }
 
-                    engine_clone.write(batch).unwrap();
+                    engine_clone.write(&batch).unwrap();
                 }
 
                 // Determine which entry to purge up to (must be within valid range)
@@ -2020,7 +2012,7 @@ mod tests {
                         batch.put_cf(&logs_cf, key, &value);
                     }
 
-                    engine_clone.write(batch).unwrap();
+                    engine_clone.write(&batch).unwrap();
                 }
 
                 // Determine which entry to truncate at (must be within valid range)
@@ -2145,7 +2137,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Truncate at index 100 (doesn't exist, beyond all entries)
@@ -2222,7 +2214,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Truncate at index 4 (doesn't exist, in a gap)
@@ -2298,7 +2290,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Truncate at index 1 (first entry)
@@ -2387,7 +2379,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Truncate at index 3
@@ -2503,7 +2495,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Get log state
@@ -2558,7 +2550,7 @@ mod tests {
             let value = serialize(&entry).unwrap();
             batch.put_cf(&logs_cf, key, &value);
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Get log state
@@ -2625,7 +2617,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Create new instance and check log state
@@ -2717,7 +2709,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // First purge up to index 3
@@ -2785,7 +2777,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // First purge up to index 2
@@ -2852,7 +2844,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Purge up to index 1 (first entry only)
@@ -2942,7 +2934,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Purge all entries (up to index 3)
@@ -3044,7 +3036,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Purge up to index 4 (which doesn't exist, but should purge 1 and 3)
@@ -3120,7 +3112,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
 
             // Purge up to index 2
             let purge_log_id = LogId::new(LeaderId::new(1, 1), 2);
@@ -3208,7 +3200,7 @@ mod tests {
             let value = serialize(&entry).unwrap();
             batch.put_cf(&logs_cf, key, &value);
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Clone the store
@@ -3267,7 +3259,7 @@ mod tests {
                 batch.put_cf(&logs_cf, key, &value);
             }
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Clone the store for use in another task
@@ -3330,7 +3322,7 @@ mod tests {
             let value = serialize(&entry1).unwrap();
             batch.put_cf(&logs_cf, key, &value);
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Read from the cloned store - should see the new entry
@@ -3366,7 +3358,7 @@ mod tests {
             let value = serialize(&entry2).unwrap();
             batch.put_cf(&logs_cf, key, &value);
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Read from the original store - should see both entries
@@ -3411,7 +3403,7 @@ mod tests {
             let value = serialize(&entry).unwrap();
             batch.put_cf(&logs_cf, key, &value);
 
-            engine_clone.write(batch).unwrap();
+            engine_clone.write(&batch).unwrap();
         }
 
         // Create multiple clones

@@ -57,14 +57,28 @@ impl Storage {
         self.insts[instance_id].get(key)
     }
 
+    pub fn get_binary(&self, key: &[u8]) -> Result<Vec<u8>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].get_binary(key)
+    }
+
     pub fn mget(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
+        Ok(self
+            .mget_binary(keys)?
+            .into_iter()
+            .map(|value| value.map(|value| String::from_utf8_lossy(&value).to_string()))
+            .collect())
+    }
+
+    pub fn mget_binary(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<Vec<u8>>>> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
 
         // If single instance, process directly for better performance
         if self.insts.len() == 1 {
-            return self.insts[0].mget(keys);
+            return self.insts[0].mget_binary(keys);
         }
 
         // Multi-instance: group keys by instance and process
@@ -85,7 +99,7 @@ impl Storage {
         for (instance_id, key_indices) in instance_keys {
             let instance_keys: Vec<Vec<u8>> =
                 key_indices.iter().map(|(_, key)| (*key).clone()).collect();
-            let instance_results = self.insts[instance_id].mget(&instance_keys)?;
+            let instance_results = self.insts[instance_id].mget_binary(&instance_keys)?;
 
             for ((original_idx, _), result) in key_indices.iter().zip(instance_results) {
                 results[*original_idx] = result;
@@ -150,20 +164,14 @@ impl Storage {
                 .push((key.clone(), value.clone()));
         }
 
-        // Sort keys to prevent deadlock, then dedup to avoid re-locking the same key
-        let mut sorted_keys: Vec<&Vec<u8>> = kvs.iter().map(|(key, _)| key).collect();
-        sorted_keys.sort();
-        sorted_keys.dedup();
-
-        // Acquire locks on all keys to ensure atomicity
-        // Use hex encoding to avoid lock aliasing from binary keys
-        let _locks: Vec<_> = sorted_keys
+        // Match the lossy UTF-8 lock identity used by ordinary key operations.
+        // LockMgr sorts and deduplicates shard indexes before acquiring them,
+        // preventing self-deadlock when different keys map to the same shard.
+        let lock_keys: Vec<String> = kvs
             .iter()
-            .map(|key| {
-                let key_hex = key.iter().map(|b| format!("{:02x}", b)).collect::<String>();
-                self.lock_mgr.lock(&key_hex)
-            })
+            .map(|(key, _)| String::from_utf8_lossy(key).into_owned())
             .collect();
+        let _locks = self.lock_mgr.multi_lock(&lock_keys);
 
         // Check if any key already exists
         for (instance_id, kv_pairs) in &instance_kvs {
@@ -384,9 +392,9 @@ impl Storage {
         &self,
         key: &[u8],
         cursor: u64,
-        pattern: Option<&str>,
+        pattern: Option<&[u8]>,
         count: Option<usize>,
-    ) -> Result<(u64, Vec<(String, String)>)> {
+    ) -> Result<crate::redis_hashes::HashScanResult> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].hscan(key, cursor, pattern, count)
@@ -706,14 +714,11 @@ impl Storage {
     }
 
     /// Find all keys matching the given pattern
-    pub fn keys(&self, pattern: &str) -> Result<Vec<String>> {
+    pub fn keys(&self, pattern: &[u8]) -> Result<Vec<Vec<u8>>> {
         let mut all_keys = Vec::new();
 
         for inst in &self.insts {
-            // Continue with other instances on error
-            if let Ok(keys) = inst.scan_keys(pattern) {
-                all_keys.extend(keys);
-            }
+            all_keys.extend(inst.scan_keys(pattern)?);
         }
 
         Ok(all_keys)
@@ -937,9 +942,9 @@ impl Storage {
         &self,
         key: &[u8],
         cursor: u64,
-        pattern: Option<&str>,
+        pattern: Option<&[u8]>,
         count: Option<usize>,
-    ) -> Result<(u64, Vec<String>)> {
+    ) -> Result<(u64, Vec<Vec<u8>>)> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].sscan(key, cursor, pattern, count)

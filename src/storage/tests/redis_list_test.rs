@@ -43,7 +43,6 @@ mod redis_list_test {
         let result = redis.open(test_db_path.to_str().unwrap());
         assert!(result.is_ok(), "open redis db failed: {:?}", result.err());
 
-        redis.set_need_close(true);
         redis
     }
 
@@ -228,6 +227,65 @@ mod redis_list_test {
         // List should be empty now
         let len = redis.llen(key).expect("llen should succeed");
         assert_eq!(len, 0);
+    }
+
+    #[tokio::test]
+    async fn test_rpop_after_initial_lpush_preserves_tail_order() {
+        let redis = create_test_redis();
+
+        redis
+            .lpush(b"single", &[b"single-value".to_vec()])
+            .expect("single lpush should succeed");
+        assert_eq!(
+            redis
+                .rpop(b"single", None)
+                .expect("single rpop should succeed"),
+            Some(vec![b"single-value".to_vec()])
+        );
+
+        redis
+            .lpush(
+                b"multiple",
+                &[b"first".to_vec(), b"second".to_vec(), b"third".to_vec()],
+            )
+            .expect("multiple lpush should succeed");
+
+        for expected in [b"first".as_slice(), b"second", b"third"] {
+            assert_eq!(
+                redis.rpop(b"multiple", None).expect("rpop should succeed"),
+                Some(vec![expected.to_vec()])
+            );
+        }
+        assert_eq!(
+            redis
+                .rpop(b"multiple", None)
+                .expect("empty rpop should succeed"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lpop_after_initial_rpush_preserves_head_order() {
+        let redis = create_test_redis();
+        redis
+            .rpush(
+                b"symmetric",
+                &[b"first".to_vec(), b"second".to_vec(), b"third".to_vec()],
+            )
+            .expect("rpush should succeed");
+
+        for expected in [b"first".as_slice(), b"second", b"third"] {
+            assert_eq!(
+                redis.lpop(b"symmetric", None).expect("lpop should succeed"),
+                Some(vec![expected.to_vec()])
+            );
+        }
+        assert_eq!(
+            redis
+                .lpop(b"symmetric", None)
+                .expect("empty lpop should succeed"),
+            None
+        );
     }
 
     #[tokio::test]
@@ -1032,6 +1090,101 @@ mod redis_list_test {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_lpush_rpop_accounts_for_every_value() {
+        use std::collections::HashSet;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Barrier, Mutex};
+        use std::thread;
+
+        const PRODUCERS: usize = 4;
+        const CONSUMERS: usize = 4;
+        const VALUES_PER_PRODUCER: usize = 100;
+
+        let redis = Arc::new(create_test_redis());
+        let key = b"concurrent_lpush_rpop".to_vec();
+        let start = Arc::new(Barrier::new(PRODUCERS + CONSUMERS + 1));
+        let finished_producers = Arc::new(AtomicUsize::new(0));
+        let popped = Arc::new(Mutex::new(Vec::new()));
+        let mut handles = Vec::new();
+
+        for producer_id in 0..PRODUCERS {
+            let redis = redis.clone();
+            let key = key.clone();
+            let start = start.clone();
+            let finished_producers = finished_producers.clone();
+            handles.push(thread::spawn(move || {
+                start.wait();
+                for value_id in 0..VALUES_PER_PRODUCER {
+                    let value = format!("producer-{producer_id}-value-{value_id}").into_bytes();
+                    redis
+                        .lpush(&key, &[value])
+                        .expect("concurrent lpush should succeed");
+                }
+                finished_producers.fetch_add(1, Ordering::Release);
+            }));
+        }
+
+        for _ in 0..CONSUMERS {
+            let redis = redis.clone();
+            let key = key.clone();
+            let start = start.clone();
+            let finished_producers = finished_producers.clone();
+            let popped = popped.clone();
+            handles.push(thread::spawn(move || {
+                start.wait();
+                loop {
+                    match redis
+                        .rpop(&key, None)
+                        .expect("concurrent rpop should succeed")
+                    {
+                        Some(values) => popped
+                            .lock()
+                            .expect("popped values mutex should not be poisoned")
+                            .extend(values),
+                        None if finished_producers.load(Ordering::Acquire) == PRODUCERS => {
+                            break;
+                        }
+                        None => thread::yield_now(),
+                    }
+                }
+            }));
+        }
+
+        start.wait();
+        for handle in handles {
+            handle.join().expect("list worker should not panic");
+        }
+
+        let mut observed = popped
+            .lock()
+            .expect("popped values mutex should not be poisoned")
+            .clone();
+        let remaining = redis
+            .lrange(&key, 0, -1)
+            .expect("remaining list read should succeed");
+        observed.extend(remaining);
+
+        let expected: HashSet<Vec<u8>> = (0..PRODUCERS)
+            .flat_map(|producer_id| {
+                (0..VALUES_PER_PRODUCER).map(move |value_id| {
+                    format!("producer-{producer_id}-value-{value_id}").into_bytes()
+                })
+            })
+            .collect();
+        let observed_unique: HashSet<Vec<u8>> = observed.iter().cloned().collect();
+
+        assert_eq!(
+            observed.len(),
+            expected.len(),
+            "a pushed value was lost or duplicated"
+        );
+        assert_eq!(
+            observed_unique, expected,
+            "popped plus remaining values differ"
+        );
     }
 
     #[tokio::test]

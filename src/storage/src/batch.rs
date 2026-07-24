@@ -40,7 +40,7 @@
 use std::sync::Arc;
 
 use conf::raft_type::{Binlog, BinlogEntry, BinlogResponse, OperateType};
-use rocksdb::{BoundColumnFamily, WriteBatch, WriteOptions};
+use rocksdb::{BoundColumnFamily, DB, WriteBatch, WriteOptions};
 use snafu::ResultExt;
 
 use crate::ColumnFamilyIndex;
@@ -48,7 +48,6 @@ use crate::error::{BatchSnafu, InvalidFormatSnafu, Result, RocksSnafu};
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage_define::{PREFIX_RESERVE_LENGTH, decode_user_key, seek_userkey_delim};
 use bytes::BytesMut;
-use engine::Engine;
 
 /// Trait for batch write operations.
 ///
@@ -103,7 +102,7 @@ pub type CfHandles<'a> = Vec<Option<Arc<BoundColumnFamily<'a>>>>;
 /// This implementation directly uses RocksDB's WriteBatch for atomic writes.
 pub struct RocksBatch<'a> {
     inner: WriteBatch,
-    db: &'a dyn Engine,
+    db: &'a DB,
     write_options: &'a WriteOptions,
     cf_handles: CfHandles<'a>,
     count: u32,
@@ -113,18 +112,14 @@ impl<'a> RocksBatch<'a> {
     /// Create a new RocksBatch.
     ///
     /// # Arguments
-    /// * `db` - Reference to the database engine
+    /// * `db` - Reference to the RocksDB database
     /// * `write_options` - Write options for the batch commit
     /// * `cf_handles` - Column family handles for all column families
     ///
     /// # Panics
     /// Panics if cf_handles length doesn't match ColumnFamilyIndex::COUNT.
     /// This is a programming error that should be caught during development.
-    pub fn new(
-        db: &'a dyn Engine,
-        write_options: &'a WriteOptions,
-        cf_handles: CfHandles<'a>,
-    ) -> Self {
+    pub fn new(db: &'a DB, write_options: &'a WriteOptions, cf_handles: CfHandles<'a>) -> Self {
         // Validate cf_handles length matches expected column family count.
         // This catches mismatches between ColumnFamilyIndex enum and cf_handles vec
         // at batch creation time rather than during put/delete operations.
@@ -211,7 +206,7 @@ impl<'a> Batch for RocksBatch<'a> {
 
     fn commit(self: Box<Self>) -> Result<()> {
         self.db
-            .write_opt(self.inner, self.write_options)
+            .write_opt(&self.inner, self.write_options)
             .context(RocksSnafu)
     }
 

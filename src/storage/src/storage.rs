@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use foyer::{Cache, CacheBuilder};
 use kstd::lock_mgr::LockMgr;
 use snafu::ResultExt;
-use tokio::sync::mpsc;
+use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, mpsc};
 
 use crate::error::{Error, MpscSnafu, Result};
 use crate::expiration_manager::ExpirationManager;
@@ -93,6 +93,7 @@ pub struct Storage {
     pub insts: Vec<Arc<Redis>>,
     pub slot_indexer: SlotIndexer,
     pub lock_mgr: Arc<LockMgr>,
+    command_access_gate: Arc<RwLock<()>>,
     pub is_opened: AtomicBool,
 
     // For bg task
@@ -128,6 +129,7 @@ impl Storage {
             slot_indexer: SlotIndexer::new(db_instance_num),
             is_opened: AtomicBool::new(false),
             lock_mgr: Arc::new(LockMgr::new(1000)),
+            command_access_gate: Arc::new(RwLock::new(())),
             cursors_store: Arc::new(CacheBuilder::new(1000).build()),
             db_instance_num,
             db_id,
@@ -139,6 +141,24 @@ impl Storage {
             expiration_manager: None,
             expiration_cleanup_task: None,
         }
+    }
+
+    /// Wait for shared top-level command access without blocking a runtime worker.
+    ///
+    /// The owned guard is `Send`, so a dispatcher may keep it while command
+    /// execution enters `tokio::task::block_in_place`. Raft apply writes through
+    /// `on_binlog_write` directly and therefore does not recursively acquire it.
+    pub async fn acquire_shared_command_access(&self) -> OwnedRwLockReadGuard<()> {
+        Arc::clone(&self.command_access_gate).read_owned().await
+    }
+
+    /// Wait for exclusive top-level command access without blocking a runtime worker.
+    ///
+    /// The owned guard has the same `Send` and Raft-apply properties as the
+    /// shared guard. This provides in-process visibility across separate RocksDB instances.
+    /// It does not make their writes crash-atomic or add rollback on failure.
+    pub async fn acquire_exclusive_command_access(&self) -> OwnedRwLockWriteGuard<()> {
+        Arc::clone(&self.command_access_gate).write_owned().await
     }
 
     /// Internal method to release all resources.
@@ -154,11 +174,8 @@ impl Storage {
             handle.abort();
         }
 
-        // Set need_close flag for all Redis instances so they close RocksDB on drop
-        for inst in &self.insts {
-            inst.set_need_close(true);
-        }
-        // Clear the vector to drop all Redis instances
+        // Release only the Redis owners held by this Storage. External Arc<Redis>
+        // owners remain valid and keep their RocksDB handles alive.
         self.insts.clear();
     }
 
@@ -224,10 +241,11 @@ impl Storage {
         }
     }
 
-    /// Close all RocksDB instances and release file handles.
+    /// Release the Redis owners held by this Storage.
+    /// External `Arc<Redis>` owners remain valid and may keep RocksDB open.
     /// Used before reopening Storage after snapshot installation.
     pub fn close(&mut self) {
-        log::info!("Closing Storage (releasing RocksDB file handles)");
+        log::info!("Closing Storage (releasing Redis owners held by Storage)");
 
         // Release all resources (Redis instances, background tasks, etc.)
         self.release_resources();
@@ -237,10 +255,11 @@ impl Storage {
         self.expiration_manager = None;
 
         self.is_opened.store(false, Ordering::SeqCst);
-        log::info!("Storage closed successfully");
+        log::info!("Storage released its Redis owners");
     }
 
-    /// Atomic operation: close old DB + open new DB at given path.
+    /// Release this Storage's Redis owners, then open the database at `db_path`.
+    /// External owners may keep the previous RocksDB path open and make reopening fail.
     /// Used during snapshot installation to switch to restored data.
     pub fn reopen(
         &mut self,
@@ -249,7 +268,7 @@ impl Storage {
     ) -> Result<mpsc::Receiver<BgTask>> {
         log::info!("Reopening Storage at path: {:?}", db_path.as_ref());
 
-        // Close existing instances first
+        // Release the Redis owners held by this Storage first.
         self.close();
 
         // Open new instances at the new path
@@ -601,14 +620,14 @@ impl Storage {
         for inst in &self.insts {
             if let Some(ref cf_tracker) = inst.logindex_cf_tracker {
                 if let Some(ref db) = inst.db {
-                    // Query each CF's table properties through the Engine trait so the
+                    // Query each CF's table properties through the concrete RocksDB so the
                     // tracker mirrors the (log_index, seqno) high-water mark recorded in
                     // the restored SST files.
-                    let engine = db.as_ref();
+                    let rocksdb = db.as_ref();
                     for cf_id in 0..crate::logindex::types::cf_metadata::COLUMN_FAMILY_COUNT {
                         let cf_name = crate::logindex::types::cf_metadata::CF_NAMES_STR[cf_id];
-                        if let Some(cf) = engine.cf_handle(cf_name) {
-                            match engine.get_properties_of_all_tables_cf(&cf) {
+                        if let Some(cf) = rocksdb.cf_handle(cf_name) {
+                            match rocksdb.get_properties_of_all_tables_cf(&cf) {
                                 Ok(collection) => {
                                     if let Some(pair) = crate::logindex::table_properties::get_largest_log_index_from_collection(&collection) {
                                         let log_index = pair.applied_log_index();
@@ -822,5 +841,113 @@ mod append_log_fn_tests {
         }
 
         crate::safe_cleanup_test_db(&path);
+    }
+}
+
+#[cfg(test)]
+mod command_access_gate_tests {
+    use super::Storage;
+    use std::sync::Arc;
+    use std::time::Duration;
+    use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, oneshot};
+
+    #[test]
+    fn owned_command_access_guards_are_send() {
+        fn assert_send<T: Send>() {}
+
+        assert_send::<OwnedRwLockReadGuard<()>>();
+        assert_send::<OwnedRwLockWriteGuard<()>>();
+    }
+
+    #[tokio::test]
+    async fn exclusive_command_access_blocks_shared_access() {
+        let storage = Arc::new(Storage::new(1, 0));
+        let exclusive = storage.acquire_exclusive_command_access().await;
+
+        let (shared_attempted_tx, shared_attempted_rx) = oneshot::channel();
+        let (shared_entered_tx, mut shared_entered_rx) = oneshot::channel();
+        let shared_storage = Arc::clone(&storage);
+        let shared = tokio::spawn(async move {
+            shared_attempted_tx
+                .send(())
+                .expect("shared waiter should report its attempt");
+            let _guard = shared_storage.acquire_shared_command_access().await;
+            shared_entered_tx
+                .send(())
+                .expect("shared holder should report entry");
+        });
+        shared_attempted_rx
+            .await
+            .expect("shared waiter should reach the gate");
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut shared_entered_rx)
+                .await
+                .is_err(),
+            "shared access must wait while exclusive access is held"
+        );
+        drop(exclusive);
+        tokio::time::timeout(Duration::from_secs(1), &mut shared_entered_rx)
+            .await
+            .expect("shared access should enter after exclusive access exits")
+            .expect("shared holder should report entry");
+        shared.await.expect("shared task should finish");
+    }
+
+    #[tokio::test]
+    async fn shared_command_access_blocks_exclusive_access() {
+        let storage = Arc::new(Storage::new(1, 0));
+        let shared = storage.acquire_shared_command_access().await;
+
+        let (exclusive_attempted_tx, exclusive_attempted_rx) = oneshot::channel();
+        let (exclusive_entered_tx, mut exclusive_entered_rx) = oneshot::channel();
+        let exclusive_storage = Arc::clone(&storage);
+        let exclusive = tokio::spawn(async move {
+            exclusive_attempted_tx
+                .send(())
+                .expect("exclusive waiter should report its attempt");
+            let _guard = exclusive_storage.acquire_exclusive_command_access().await;
+            exclusive_entered_tx
+                .send(())
+                .expect("exclusive holder should report entry");
+        });
+        exclusive_attempted_rx
+            .await
+            .expect("exclusive waiter should reach the gate");
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut exclusive_entered_rx)
+                .await
+                .is_err(),
+            "exclusive access must wait while shared access is held"
+        );
+        drop(shared);
+        tokio::time::timeout(Duration::from_secs(1), &mut exclusive_entered_rx)
+            .await
+            .expect("exclusive access should enter after shared access exits")
+            .expect("exclusive holder should report entry");
+        exclusive.await.expect("exclusive task should finish");
+    }
+
+    #[tokio::test]
+    async fn shared_command_access_allows_parallel_readers() {
+        let storage = Arc::new(Storage::new(1, 0));
+        let first = storage.acquire_shared_command_access().await;
+
+        let (second_entered_tx, second_entered_rx) = oneshot::channel();
+        let second_storage = Arc::clone(&storage);
+        let second = tokio::spawn(async move {
+            let _guard = second_storage.acquire_shared_command_access().await;
+            second_entered_tx
+                .send(())
+                .expect("second shared holder should report entry");
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), second_entered_rx)
+            .await
+            .expect("a second shared access should enter concurrently")
+            .expect("second shared holder should report entry");
+        drop(first);
+        second.await.expect("second shared task should finish");
     }
 }
