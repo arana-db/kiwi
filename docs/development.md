@@ -124,5 +124,5 @@ Storage tests use `tempfile::tempdir()` for isolated RocksDB instances.
 
 ## Gotchas
 
-- **RocksDB fork**: The project uses `arana-db/rust-rocksdb` (pinned to a specific rev), not the official `rust-rocksdb` crate. This fork adds TablePropertiesCollector FFI functions required by the Raft module.
+- **RocksDB fork**: The project uses the `v0.51.0-arana.1` maintenance release tag from `arana-db/rust-rocksdb`, not the official `rust-rocksdb` crate. Published release tags must not be moved. This fork adds the TableProperties Collector/Factory FFI required by Storage LogIndex, and `Cargo.lock` records the exact resolved commit.
 - **Binary name is `kiwi`**, not `server` — defined in `src/server/Cargo.toml` as `[[bin]] name = "kiwi"`.
