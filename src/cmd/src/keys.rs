@@ -163,7 +163,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn keys_command_preserves_allkeys_behavior_for_empty_key() {
+    async fn keys_command_matches_redis_empty_key_pattern_edges() {
         let db_path = unique_test_db_path();
         safe_cleanup_test_db(&db_path);
         let mut storage = Storage::new(1, 0);
@@ -182,11 +182,11 @@ mod tests {
         );
         assert_eq!(
             run_keys(&command, &client, &storage, b"**"),
-            vec![Vec::new(), b"literal".to_vec()]
+            vec![b"literal".to_vec()]
         );
         assert_eq!(
             run_keys(&command, &client, &storage, b"***"),
-            vec![Vec::new(), b"literal".to_vec()]
+            vec![b"literal".to_vec()]
         );
         assert_eq!(
             run_keys(&command, &client, &storage, b"literal*"),

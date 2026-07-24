@@ -202,7 +202,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hscan_command_matches_empty_field_with_repeated_star() {
+    async fn hscan_command_matches_redis_empty_field_pattern_edges() {
         let db_path = unique_test_db_path();
         safe_cleanup_test_db(&db_path);
         let mut storage = Storage::new(1, 0);
@@ -217,7 +217,7 @@ mod tests {
             b"empty_field_hash".to_vec(),
             b"0".to_vec(),
             b"match".to_vec(),
-            b"**".to_vec(),
+            b"*".to_vec(),
         ]);
 
         HScanCmd::new().do_cmd(&client, Arc::clone(&storage));
@@ -230,6 +230,22 @@ mod tests {
                     RespData::BulkString(Some(Vec::new().into())),
                     RespData::BulkString(Some(b"value".to_vec().into())),
                 ])),
+            ]))
+        );
+
+        client.set_argv(&[
+            b"hscan".to_vec(),
+            b"empty_field_hash".to_vec(),
+            b"0".to_vec(),
+            b"match".to_vec(),
+            b"**".to_vec(),
+        ]);
+        HScanCmd::new().do_cmd(&client, Arc::clone(&storage));
+        assert_eq!(
+            client.take_reply(),
+            RespData::Array(Some(vec![
+                RespData::BulkString(Some(b"0".to_vec().into())),
+                RespData::Array(Some(Vec::new())),
             ]))
         );
 

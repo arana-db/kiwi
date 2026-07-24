@@ -197,7 +197,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sscan_command_matches_empty_member_with_repeated_star() {
+    async fn sscan_command_matches_redis_empty_member_pattern_edges() {
         let db_path = unique_test_db_path();
         safe_cleanup_test_db(&db_path);
         let mut storage = Storage::new(1, 0);
@@ -212,7 +212,7 @@ mod tests {
             b"empty_member_set".to_vec(),
             b"0".to_vec(),
             b"match".to_vec(),
-            b"**".to_vec(),
+            b"*".to_vec(),
         ]);
 
         SscanCmd::new().do_cmd(&client, Arc::clone(&storage));
@@ -222,6 +222,22 @@ mod tests {
             RespData::Array(Some(vec![
                 RespData::BulkString(Some(b"0".to_vec().into())),
                 RespData::Array(Some(vec![RespData::BulkString(Some(Vec::new().into()))])),
+            ]))
+        );
+
+        client.set_argv(&[
+            b"sscan".to_vec(),
+            b"empty_member_set".to_vec(),
+            b"0".to_vec(),
+            b"match".to_vec(),
+            b"**".to_vec(),
+        ]);
+        SscanCmd::new().do_cmd(&client, Arc::clone(&storage));
+        assert_eq!(
+            client.take_reply(),
+            RespData::Array(Some(vec![
+                RespData::BulkString(Some(b"0".to_vec().into())),
+                RespData::Array(Some(Vec::new())),
             ]))
         );
 
