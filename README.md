@@ -112,7 +112,7 @@ See [docs/cluster.md](docs/cluster.md) for the manual step-by-step procedure and
 
 ### RocksDB (Arana-maintained Fork)
 
-Kiwi uses the [Arana-maintained rust-rocksdb fork](https://github.com/arana-db/rust-rocksdb) to provide the TableProperties Collector/Factory FFI required by Storage LogIndex. The dependency is pinned to an exact revision so native builds are auditable and reproducible.
+Kiwi uses the [Arana-maintained rust-rocksdb fork](https://github.com/arana-db/rust-rocksdb) to provide the TableProperties Collector/Factory FFI required by Storage LogIndex. The dependency uses the maintenance release tag [`v0.51.0-arana.1`](https://github.com/arana-db/rust-rocksdb/tree/v0.51.0-arana.1). Published release tags must not be moved, and `Cargo.lock` records the exact resolved commit for auditable and reproducible builds.
 
 ## Contributing
 

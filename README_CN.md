@@ -114,9 +114,9 @@ redis-cli -p 7379 get foo         # "bar"
 
 ## 依赖说明
 
-### RocksDB（临时 Fork）
+### RocksDB（Arana 维护的 Fork）
 
-本项目使用 [rust-rocksdb 的自定义 fork](https://github.com/arana-db/rust-rocksdb/tree/addtableproperties)，因为官方 crate 尚不支持 Raft 模块所需的 TablePropertiesCollector FFI 函数。一旦官方 [rust-rocksdb](https://github.com/rust-rocksdb/rust-rocksdb) 支持所需功能，我们将切换回官方 crate。
+Kiwi 使用 [Arana 维护的 rust-rocksdb fork](https://github.com/arana-db/rust-rocksdb) 提供 Storage LogIndex 所需的 TableProperties Collector/Factory FFI。依赖使用维护发布标签 [`v0.51.0-arana.1`](https://github.com/arana-db/rust-rocksdb/tree/v0.51.0-arana.1)。已发布的标签不得移动，同时由 `Cargo.lock` 记录解析后的精确提交，保证构建可审计、可复现。
 
 ## 贡献
 
