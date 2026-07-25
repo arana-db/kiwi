@@ -241,6 +241,19 @@ where
             log::debug!("Cleaned up {} idle connections from pool", removed_count);
         }
     }
+
+    /// Drop every currently available connection, regardless of the configured
+    /// minimum. Active connections are unaffected and remain accounted for by
+    /// their semaphore permits.
+    pub async fn clear_idle(&self) -> usize {
+        let removed = {
+            let mut available = self.available.lock().await;
+            available.drain(..).collect::<Vec<_>>()
+        };
+        let removed_count = removed.len();
+        drop(removed);
+        removed_count
+    }
 }
 
 /// Pool statistics
@@ -364,5 +377,25 @@ mod tests {
 
         let active_stats = pool.stats().await;
         assert_eq!(active_stats.active_connections, 1);
+    }
+
+    #[tokio::test]
+    async fn clear_idle_connections_removes_all_available_entries() {
+        let pool = ConnectionPool::new(PoolConfig {
+            max_connections: 2,
+            connection_timeout: Duration::from_millis(100),
+            idle_timeout: Duration::from_secs(60),
+            min_connections: 1,
+        });
+        let connection = pool
+            .get_connection(|| async { Ok(MockConnection { id: 1 }) })
+            .await
+            .expect("create pooled connection");
+        pool.return_connection(connection).await;
+
+        assert_eq!(pool.clear_idle().await, 1);
+        let stats = pool.stats().await;
+        assert_eq!(stats.active_connections, 0);
+        assert_eq!(stats.available_connections, 0);
     }
 }

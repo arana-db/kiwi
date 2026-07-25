@@ -15,6 +15,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#![allow(clippy::unwrap_used)]
+
 //! End-to-end regression tests for the unified storage command dispatch path.
 //!
 //! These tests start a full dual-runtime stack (real `RuntimeManager`, RocksDB
@@ -32,7 +34,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use net::{ServerTrait, network_server::NetworkServer, storage_client::StorageClient};
+use net::network_server::NetworkServer;
+use net::storage_client::StorageClient;
 use resp::{
     Parse, RespData, RespEncode, RespParse, RespParseResult, RespVersion, encode::RespEncoder,
 };
@@ -42,6 +45,8 @@ use runtime::{
 };
 use storage::{StorageOptions, safe_cleanup_test_db, storage::Storage, unique_test_db_path};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 /// A full dual-runtime test stack with a bound TCP endpoint.
 struct TestServer {
@@ -49,6 +54,9 @@ struct TestServer {
     runtime_manager: RuntimeManager,
     db_path: PathBuf,
     storage_client: Arc<StorageClient>,
+    network_server: Arc<NetworkServer>,
+    network_shutdown: CancellationToken,
+    network_task: Option<JoinHandle<Result<(), String>>>,
 }
 
 impl TestServer {
@@ -110,9 +118,14 @@ impl TestServer {
         );
         let addr = network_server.bind().await.expect("bind network server");
 
+        let network_shutdown = CancellationToken::new();
+        let shutdown_for_task = network_shutdown.clone();
         let server_clone = network_server.clone();
-        network_handle.spawn(async move {
-            let _ = server_clone.run().await;
+        let network_task = network_handle.spawn(async move {
+            server_clone
+                .run_until_cancelled(shutdown_for_task)
+                .await
+                .map_err(|error| error.to_string())
         });
 
         // Start the storage server on the storage runtime.
@@ -136,11 +149,32 @@ impl TestServer {
             runtime_manager,
             db_path,
             storage_client: net_storage_client,
+            network_server,
+            network_shutdown,
+            network_task: Some(network_task),
+        }
+    }
+
+    async fn stop_network(&mut self) -> Result<(), String> {
+        self.network_shutdown.cancel();
+        self.wait_for_network_stop().await
+    }
+
+    async fn wait_for_network_stop(&mut self) -> Result<(), String> {
+        let Some(network_task) = self.network_task.take() else {
+            return Ok(());
+        };
+
+        match tokio::time::timeout(Duration::from_secs(1), network_task).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => Err(format!("network task join failed: {error}")),
+            Err(_) => Err("network task did not stop within one second".to_string()),
         }
     }
 
     /// Stop the runtimes and clean up the temporary storage directory.
     async fn shutdown(mut self) {
+        self.stop_network().await.expect("stop network server");
         let _ = tokio::time::timeout(Duration::from_secs(5), self.runtime_manager.stop()).await;
         safe_cleanup_test_db(&self.db_path);
     }
@@ -244,6 +278,473 @@ async fn send_command_and_read_line(stream: &mut tokio::net::TcpStream, args: &[
     })
     .await
     .expect("timed out waiting for RESP line")
+}
+
+async fn wait_for_connection_tasks_reaped(server: &NetworkServer, minimum_accepted: u64) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        let stats = server.lifecycle_stats();
+        if stats.accepted_connection_tasks >= minimum_accepted
+            && stats.completed_connection_tasks == stats.accepted_connection_tasks
+            && stats.reaped_connection_tasks == stats.accepted_connection_tasks
+            && stats.tracked_connection_tasks == 0
+        {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "connection tasks did not drain: {stats:?}"
+        );
+        tokio::task::yield_now().await;
+    }
+}
+
+async fn wait_for_idle_pool_entry(server: &NetworkServer) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        let stats = server.pool_stats().await;
+        if stats.active_connections == 0 && stats.available_connections > 0 {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "network resource did not return to pool: {stats:?}"
+        );
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test]
+async fn network_server_cancel_stops_listener_and_existing_connection() {
+    let mut server = TestServer::start(None).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    let reply = send_command(&mut stream, &["PING"]).await;
+    assert_eq!(reply, RespData::SimpleString(Bytes::from_static(b"PONG")));
+
+    let key = "cancelled-connection-must-not-write";
+    server.network_shutdown.cancel();
+    let command = encode_command(&["SET", key, "unexpected"]);
+    let _ = stream.write_all(command.as_ref()).await;
+    server
+        .wait_for_network_stop()
+        .await
+        .expect("cancel network server");
+
+    let reply = server
+        .storage_client
+        .execute_command(b"GET", &[b"GET".to_vec(), key.as_bytes().to_vec()])
+        .await
+        .expect("read directly through storage client");
+    assert_eq!(
+        reply,
+        RespData::BulkString(None),
+        "the keep-alive connection executed SET after cancellation"
+    );
+
+    assert!(
+        tokio::net::TcpStream::connect(server.addr).await.is_err(),
+        "listener still accepted connections after shutdown completed"
+    );
+
+    let mut byte = [0u8; 1];
+    match tokio::time::timeout(Duration::from_secs(1), stream.read(&mut byte)).await {
+        Ok(Ok(0)) | Ok(Err(_)) => {}
+        Ok(Ok(_)) => panic!("existing connection returned a response after cancellation"),
+        Err(_) => panic!("existing connection remained open after cancellation"),
+    }
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn network_server_reaps_short_lived_connection_tasks_while_running() {
+    const WAVE_SIZE: u64 = 8;
+    const WAVES: u64 = 8;
+
+    let server = TestServer::start(None).await;
+    wait_for_connection_tasks_reaped(&server.network_server, 1).await;
+    let baseline = server.network_server.lifecycle_stats();
+
+    for wave in 1..=WAVES {
+        for _ in 0..WAVE_SIZE {
+            let mut stream = tokio::net::TcpStream::connect(server.addr)
+                .await
+                .expect("connect short-lived client");
+            let reply = send_command(&mut stream, &["PING"]).await;
+            assert_eq!(reply, RespData::SimpleString(Bytes::from_static(b"PONG")));
+            stream
+                .shutdown()
+                .await
+                .expect("shutdown short-lived client");
+        }
+
+        wait_for_connection_tasks_reaped(
+            &server.network_server,
+            baseline.accepted_connection_tasks + wave * WAVE_SIZE,
+        )
+        .await;
+    }
+
+    let stats = server.network_server.lifecycle_stats();
+    assert_eq!(stats.tracked_connection_tasks, 0);
+    assert_eq!(
+        stats.reaped_connection_tasks,
+        stats.accepted_connection_tasks
+    );
+    assert!(stats.reaped_connection_tasks >= baseline.reaped_connection_tasks + WAVE_SIZE * WAVES);
+    assert!(
+        stats.max_tracked_connection_tasks <= WAVE_SIZE as usize,
+        "tracked task high-water mark followed historical connections: {stats:?}"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn network_server_protocol_error_only_closes_the_bad_connection() {
+    let server = TestServer::start(None).await;
+    let mut malformed = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect malformed client");
+    malformed
+        .write_all(b"$not-a-number\r\n")
+        .await
+        .expect("write malformed RESP");
+    let mut byte = [0u8; 1];
+    match tokio::time::timeout(Duration::from_secs(1), malformed.read(&mut byte)).await {
+        Ok(Ok(0)) | Ok(Err(_)) => {}
+        Ok(Ok(_)) => panic!("malformed connection unexpectedly received a response"),
+        Err(_) => panic!("malformed connection was not closed"),
+    }
+
+    let mut healthy = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect healthy client after protocol error");
+    assert_eq!(
+        send_command(&mut healthy, &["PING"]).await,
+        RespData::SimpleString(Bytes::from_static(b"PONG"))
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn network_server_shutdown_joins_cleanup_clears_pool_and_releases_channel() {
+    let mut message_channel = runtime::MessageChannel::new(16);
+    let mut request_receiver = message_channel
+        .take_request_receiver()
+        .expect("take request receiver");
+    let message_channel = Arc::new(message_channel);
+    let runtime_storage_client = Arc::new(runtime::StorageClient::new(
+        message_channel.clone(),
+        Duration::from_secs(1),
+    ));
+    let storage_client = Arc::new(StorageClient::new(runtime_storage_client.clone()));
+    let cmd_table = Arc::new(cmd::table::create_command_table(Arc::new(|| None)));
+    let executor = Arc::new(executor::CmdExecutorBuilder::new().build());
+    let server = Arc::new(
+        NetworkServer::new(
+            Some("127.0.0.1:0".to_string()),
+            storage_client.clone(),
+            cmd_table,
+            executor,
+            None,
+            None,
+        )
+        .expect("network server"),
+    );
+    let addr = server.bind().await.expect("bind network server");
+    let shutdown = CancellationToken::new();
+    let shutdown_for_task = shutdown.clone();
+    let server_for_task = server.clone();
+    let network_task = tokio::spawn(async move {
+        server_for_task
+            .run_until_cancelled(shutdown_for_task)
+            .await
+            .map_err(|error| error.to_string())
+    });
+
+    let mut stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .expect("connect to server");
+    assert_eq!(
+        send_command(&mut stream, &["PING"]).await,
+        RespData::SimpleString(Bytes::from_static(b"PONG"))
+    );
+    stream.shutdown().await.expect("shutdown client");
+    wait_for_idle_pool_entry(&server).await;
+
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(1), network_task)
+        .await
+        .expect("network shutdown timeout")
+        .expect("network task join")
+        .expect("network server shutdown");
+
+    let pool_stats = server.pool_stats().await;
+    assert_eq!(pool_stats.active_connections, 0);
+    assert_eq!(pool_stats.available_connections, 0);
+    let lifecycle_stats = server.lifecycle_stats();
+    assert!(!lifecycle_stats.pool_cleanup_running);
+    assert!(lifecycle_stats.pool_cleanup_finished);
+
+    drop(server);
+    drop(storage_client);
+    drop(runtime_storage_client);
+    drop(message_channel);
+
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), request_receiver.recv())
+            .await
+            .expect("request receiver EOF timeout")
+            .is_none(),
+        "request receiver remained open after the minimal ownership chain was dropped"
+    );
+}
+
+#[tokio::test]
+async fn network_server_abort_releases_cleanup_pool_and_storage_sender() {
+    let mut message_channel = runtime::MessageChannel::new(16);
+    let mut request_receiver = message_channel
+        .take_request_receiver()
+        .expect("take request receiver");
+    let message_channel = Arc::new(message_channel);
+    let runtime_storage_client = Arc::new(runtime::StorageClient::new(
+        message_channel.clone(),
+        Duration::from_secs(1),
+    ));
+    let storage_client = Arc::new(StorageClient::new(runtime_storage_client.clone()));
+    let server = Arc::new(
+        NetworkServer::new(
+            Some("127.0.0.1:0".to_string()),
+            storage_client.clone(),
+            Arc::new(cmd::table::create_command_table(Arc::new(|| None))),
+            Arc::new(executor::CmdExecutorBuilder::new().build()),
+            None,
+            None,
+        )
+        .expect("network server"),
+    );
+    let addr = server.bind().await.expect("bind network server");
+    let server_for_task = server.clone();
+    let network_task = tokio::spawn(async move {
+        server_for_task
+            .run_until_cancelled(CancellationToken::new())
+            .await
+            .map_err(|error| error.to_string())
+    });
+
+    let mut stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .expect("connect to server");
+    assert_eq!(
+        send_command(&mut stream, &["PING"]).await,
+        RespData::SimpleString(Bytes::from_static(b"PONG"))
+    );
+    stream.shutdown().await.expect("shutdown client");
+    wait_for_idle_pool_entry(&server).await;
+
+    network_task.abort();
+    let join_error = network_task
+        .await
+        .expect_err("aborted network task joined cleanly");
+    assert!(join_error.is_cancelled());
+
+    let repeated_error = server
+        .run_until_cancelled(CancellationToken::new())
+        .await
+        .expect_err("aborted server ran again");
+    assert!(repeated_error.to_string().contains("already terminated"));
+    assert!(server.bind().await.is_err(), "aborted server rebound");
+
+    drop(server);
+    drop(storage_client);
+    drop(runtime_storage_client);
+    drop(message_channel);
+
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), request_receiver.recv())
+            .await
+            .expect("request receiver EOF timeout after abort")
+            .is_none(),
+        "detached cleanup task retained a pooled storage sender after abort"
+    );
+}
+
+#[tokio::test]
+async fn network_server_waits_for_inflight_storage_request_before_shutdown() {
+    let message_channel = Arc::new(runtime::MessageChannel::new(1));
+    let request_sender = message_channel.request_sender();
+    let (response_sender, _response_receiver) = tokio::sync::oneshot::channel();
+    request_sender
+        .send(runtime::StorageRequest {
+            id: runtime::RequestId::new(),
+            command: runtime::StorageCommand::Execute {
+                cmd_name: b"GET".to_vec(),
+                argv: vec![b"GET".to_vec(), b"channel-saturation".to_vec()],
+            },
+            response_channel: response_sender,
+            timeout: Duration::from_secs(1),
+            timestamp: std::time::Instant::now(),
+            priority: runtime::RequestPriority::Normal,
+        })
+        .await
+        .expect("saturate storage request channel");
+
+    let runtime_storage_client = Arc::new(runtime::StorageClient::new(
+        message_channel.clone(),
+        Duration::from_millis(250),
+    ));
+    let storage_client = Arc::new(StorageClient::new(runtime_storage_client.clone()));
+    let server = Arc::new(
+        NetworkServer::new(
+            Some("127.0.0.1:0".to_string()),
+            storage_client,
+            Arc::new(cmd::table::create_command_table(Arc::new(|| None))),
+            Arc::new(executor::CmdExecutorBuilder::new().build()),
+            None,
+            None,
+        )
+        .expect("network server"),
+    );
+    let addr = server.bind().await.expect("bind network server");
+    let shutdown = CancellationToken::new();
+    let shutdown_for_task = shutdown.clone();
+    let server_for_task = server.clone();
+    let network_task = tokio::spawn(async move {
+        server_for_task
+            .run_until_cancelled(shutdown_for_task)
+            .await
+            .map_err(|error| error.to_string())
+    });
+
+    let mut stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .expect("connect to server");
+    assert_eq!(
+        send_command(&mut stream, &["PING"]).await,
+        RespData::SimpleString(Bytes::from_static(b"PONG"))
+    );
+    stream
+        .write_all(encode_command(&["SET", "inflight", "value"]).as_ref())
+        .await
+        .expect("start storage command");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    while runtime_storage_client.pending_request_count().await == 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "storage command never entered pending state"
+        );
+        tokio::task::yield_now().await;
+    }
+
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(1), network_task)
+        .await
+        .expect("network shutdown timeout")
+        .expect("network task join")
+        .expect("network server shutdown");
+    assert_eq!(
+        runtime_storage_client.pending_request_count().await,
+        0,
+        "cancellation dropped an in-flight storage future and leaked pending state"
+    );
+}
+
+#[tokio::test]
+async fn network_server_rejects_concurrent_and_repeated_run() {
+    let message_channel = Arc::new(runtime::MessageChannel::new(16));
+    let runtime_storage_client = Arc::new(runtime::StorageClient::new(
+        message_channel,
+        Duration::from_secs(1),
+    ));
+    let server = Arc::new(
+        NetworkServer::new(
+            Some("127.0.0.1:0".to_string()),
+            Arc::new(StorageClient::new(runtime_storage_client)),
+            Arc::new(cmd::table::create_command_table(Arc::new(|| None))),
+            Arc::new(executor::CmdExecutorBuilder::new().build()),
+            None,
+            None,
+        )
+        .expect("network server"),
+    );
+    let addr = server.bind().await.expect("bind network server");
+    let shutdown = CancellationToken::new();
+    let shutdown_for_task = shutdown.clone();
+    let server_for_task = server.clone();
+    let first_run = tokio::spawn(async move {
+        server_for_task
+            .run_until_cancelled(shutdown_for_task)
+            .await
+            .map_err(|error| error.to_string())
+    });
+
+    let mut stream = tokio::net::TcpStream::connect(addr)
+        .await
+        .expect("connect to first run");
+    assert_eq!(
+        send_command(&mut stream, &["PING"]).await,
+        RespData::SimpleString(Bytes::from_static(b"PONG"))
+    );
+
+    let concurrent_error = tokio::time::timeout(
+        Duration::from_millis(100),
+        server.run_until_cancelled(CancellationToken::new()),
+    )
+    .await
+    .expect("concurrent run did not fail fast")
+    .expect_err("concurrent run unexpectedly succeeded");
+    assert!(concurrent_error.to_string().contains("already running"));
+
+    assert_eq!(
+        send_command(&mut stream, &["PING"]).await,
+        RespData::SimpleString(Bytes::from_static(b"PONG")),
+        "failed concurrent run disrupted the active server"
+    );
+
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(1), first_run)
+        .await
+        .expect("first run shutdown timeout")
+        .expect("first run join")
+        .expect("first run shutdown");
+
+    let repeated_error = tokio::time::timeout(
+        Duration::from_millis(100),
+        server.run_until_cancelled(CancellationToken::new()),
+    )
+    .await
+    .expect("repeated run did not fail fast")
+    .expect_err("repeated run unexpectedly succeeded");
+    assert!(repeated_error.to_string().contains("already terminated"));
+    assert!(server.bind().await.is_err(), "terminated server rebound");
+}
+
+#[tokio::test]
+async fn network_server_rejects_duplicate_bind() {
+    let message_channel = Arc::new(runtime::MessageChannel::new(16));
+    let runtime_storage_client = Arc::new(runtime::StorageClient::new(
+        message_channel,
+        Duration::from_secs(1),
+    ));
+    let server = NetworkServer::new(
+        Some("127.0.0.1:0".to_string()),
+        Arc::new(StorageClient::new(runtime_storage_client)),
+        Arc::new(cmd::table::create_command_table(Arc::new(|| None))),
+        Arc::new(executor::CmdExecutorBuilder::new().build()),
+        None,
+        None,
+    )
+    .expect("network server");
+
+    server.bind().await.expect("first bind");
+    let error = server.bind().await.expect_err("duplicate bind succeeded");
+    assert!(error.to_string().contains("already bound"));
 }
 
 #[tokio::test]

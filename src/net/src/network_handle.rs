@@ -33,6 +33,7 @@ use log::{debug, error, warn};
 use resp::encode::RespEncoder;
 use resp::{Parse, RespData, RespEncode, RespParseResult};
 use tokio::select;
+use tokio_util::sync::CancellationToken;
 
 use crate::executor_ext::CmdExecutorNetworkExt;
 use crate::storage_client::StorageClient;
@@ -51,6 +52,28 @@ pub async fn process_network_connection(
     executor: Arc<CmdExecutor>,
     leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 ) -> std::io::Result<()> {
+    process_network_connection_until_cancelled(
+        client,
+        storage_client,
+        cmd_table,
+        executor,
+        leader_gate,
+        CancellationToken::new(),
+    )
+    .await
+}
+
+/// Process a network connection until cancellation is observed at a safe read
+/// boundary. Once a read completes, every command from that read is allowed to
+/// reach a terminal result before cancellation is checked again.
+pub async fn process_network_connection_until_cancelled(
+    client: Arc<Client>,
+    storage_client: Arc<StorageClient>,
+    cmd_table: Arc<CmdTable>,
+    executor: Arc<CmdExecutor>,
+    leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
+    shutdown: CancellationToken,
+) -> std::io::Result<()> {
     let mut buf = vec![0; 4096]; // Increased buffer size for better performance
     let mut resp_parser = resp::RespParse::new(client.resp_version());
     let mut pending_commands = Vec::new();
@@ -59,6 +82,12 @@ pub async fn process_network_connection(
 
     loop {
         select! {
+            biased;
+
+            _ = shutdown.cancelled() => {
+                debug!("Connection cancelled before next read");
+                return Ok(());
+            }
             result = client.read(&mut buf) => {
                 match result {
                     Ok(n) => {
