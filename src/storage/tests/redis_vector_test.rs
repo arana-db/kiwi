@@ -443,6 +443,49 @@ fn test_type_returns_vectorset() {
     });
 }
 
+#[test]
+fn test_vadd_rebuilds_expired_vectorset_with_newer_generation() {
+    with_redis(|redis| {
+        let key = b"expiring-vectors";
+        let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
+        redis.vadd(key, b"old", &vector).expect("insert old member");
+
+        let db = redis.db().expect("db is initialized");
+        let meta_cf = redis
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .expect("MetaCF exists");
+        let meta_key = BaseMetaKey::new(key).encode().expect("meta key");
+        let mut meta = db
+            .get_cf(&meta_cf, &meta_key)
+            .expect("read vector meta")
+            .expect("vector meta exists");
+        let previous_generation = u64::MAX - 1;
+        meta[9..17].copy_from_slice(&previous_generation.to_le_bytes());
+        let etime_offset = meta.len() - size_of::<u64>();
+        meta[etime_offset..].copy_from_slice(&1_u64.to_le_bytes());
+        db.put_cf(&meta_cf, &meta_key, &meta)
+            .expect("store expired vector meta");
+
+        assert_eq!(redis.vcard(key).expect("expired card"), 0);
+        assert_eq!(count_cf_entries(redis, ColumnFamilyIndex::VectorDataCF), 1);
+
+        redis
+            .vadd(key, b"new", &vector)
+            .expect("rebuild vector set");
+
+        assert_eq!(redis.vcard(key).expect("rebuilt card"), 1);
+        assert!(!redis.vismember(key, b"old").expect("old membership"));
+        assert!(redis.vismember(key, b"new").expect("new membership"));
+        let rebuilt_meta = db
+            .get_cf(&meta_cf, &meta_key)
+            .expect("read rebuilt vector meta")
+            .expect("rebuilt vector meta exists");
+        let rebuilt_generation =
+            u64::from_le_bytes(rebuilt_meta[9..17].try_into().expect("generation bytes"));
+        assert!(rebuilt_generation > previous_generation);
+    });
+}
+
 #[tokio::test]
 async fn test_expired_vectorset_reads_as_missing() {
     let test_db_path = unique_test_db_path();

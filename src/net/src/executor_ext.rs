@@ -60,9 +60,16 @@ impl CmdExecutorNetworkExt for CmdExecutor {
                 return Ok(());
             }
 
-            // Cluster-mode leader gate: reject writes on non-leaders before any
-            // command-specific setup runs.
+            // Cluster-mode gates run before any command-specific setup: reject
+            // unsupported module commands on every node, then writes on followers.
             if let Some(gate) = exec.leader_gate.as_ref() {
+                if exec.cmd.has_flag(CmdFlags::MODULE_NO_CLUSTER) {
+                    exec.client.set_reply(RespData::Error(
+                        "ERR Vector Set is not supported in cluster mode".into(),
+                    ));
+                    return Ok(());
+                }
+
                 if exec.cmd.has_flag(CmdFlags::WRITE) && !gate.is_leader() {
                     // Simplified redirect: Kiwi returns "MOVED <addr>" (no hash slot,
                     // unlike Redis Cluster's "MOVED <slot> <ip:port>"). Clients are

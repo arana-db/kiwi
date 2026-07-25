@@ -33,6 +33,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use net::{ServerTrait, network_server::NetworkServer, storage_client::StorageClient};
+use raft::leader_gate::LeaderGate;
 use resp::{
     Parse, RespData, RespEncode, RespParse, RespParseResult, RespVersion, encode::RespEncoder,
 };
@@ -51,10 +52,29 @@ struct TestServer {
     storage_client: Arc<StorageClient>,
 }
 
+struct FollowerGate;
+
+impl LeaderGate for FollowerGate {
+    fn is_leader(&self) -> bool {
+        false
+    }
+
+    fn leader_resp_addr(&self) -> Option<String> {
+        Some("127.0.0.1:7380".to_string())
+    }
+}
+
 impl TestServer {
     /// Start the network and storage runtimes, open a real storage DB, and bind
     /// a `NetworkServer` to an ephemeral port.
     async fn start(requirepass: Option<String>) -> Self {
+        Self::start_with_leader_gate(requirepass, None).await
+    }
+
+    async fn start_with_leader_gate(
+        requirepass: Option<String>,
+        leader_gate: Option<Arc<dyn LeaderGate>>,
+    ) -> Self {
         let db_path = unique_test_db_path();
         safe_cleanup_test_db(&db_path);
 
@@ -104,7 +124,7 @@ impl TestServer {
                 cmd_table,
                 executor,
                 requirepass,
-                None,
+                leader_gate,
             )
             .expect("network server"),
         );
@@ -399,6 +419,29 @@ async fn storage_command_e2e_generic_storage_commands_use_storage_path() {
         after.requests_sent >= before.requests_sent + 4,
         "generic commands should traverse the storage channel"
     );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_no_cluster_commands_precede_follower_redirect() {
+    let server = TestServer::start_with_leader_gate(None, Some(Arc::new(FollowerGate))).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+    let expected = RespData::Error(Bytes::from_static(
+        b"ERR Vector Set is not supported in cluster mode",
+    ));
+
+    let reply = send_command(
+        &mut stream,
+        &["VADD", "vectors", "VALUES", "2", "1", "member"],
+    )
+    .await;
+    assert_eq!(reply, expected);
+
+    let reply = send_command(&mut stream, &["VREM", "vectors", "member"]).await;
+    assert_eq!(reply, expected);
 
     server.shutdown().await;
 }

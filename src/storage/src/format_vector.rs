@@ -45,11 +45,15 @@ pub(crate) struct VectorMeta {
 }
 
 impl VectorMeta {
-    pub(crate) fn new(count: u64, dimension: u32) -> Self {
+    pub(crate) fn new_after(count: u64, dimension: u32, previous_version: u64) -> Self {
         let now = Utc::now().timestamp_micros() as u64;
+        let version = match previous_version >= now {
+            true => previous_version + 1,
+            false => now,
+        };
         Self {
             count,
-            version: now,
+            version,
             dimension,
             ctime: now,
             etime: 0,
@@ -306,7 +310,7 @@ mod tests {
 
     #[test]
     fn vector_meta_round_trips() {
-        let mut meta = VectorMeta::new(2, 2);
+        let mut meta = VectorMeta::new_after(2, 2, 0);
         meta.version = 42;
         let encoded = meta.encode();
         let decoded = VectorMeta::decode(&encoded).expect("decode vector meta");
@@ -334,7 +338,7 @@ mod tests {
         non_finite_payload[10..14].copy_from_slice(&f32::NAN.to_le_bytes());
         assert!(VectorDataValue::decode(&non_finite_payload).is_err());
 
-        let encoded_meta = VectorMeta::new(2, 2).encode();
+        let encoded_meta = VectorMeta::new_after(2, 2, 0).encode();
         assert!(VectorMeta::decode(&encoded_meta[..encoded_meta.len() - 1]).is_err());
 
         let mut bad_meta_format = encoded_meta;

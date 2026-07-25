@@ -119,6 +119,12 @@ impl Redis {
             .map(|value| self.parse_vector_meta(value))
             .transpose()?
             .flatten();
+        let previous_generation = stored_meta
+            .as_deref()
+            .filter(|value| value.first().copied() == Some(DataType::VectorSet as u8))
+            .map(VectorMeta::decode)
+            .transpose()?
+            .map_or(0, |meta| meta.version());
 
         let is_new_set = live_meta.is_none();
         let mut meta = match live_meta {
@@ -135,7 +141,7 @@ impl Redis {
                 }
                 meta
             }
-            None => VectorMeta::new(1, vector.dimension()),
+            None => VectorMeta::new_after(1, vector.dimension(), previous_generation),
         };
 
         let member_key = MemberDataKey::new(key, meta.version(), element).encode()?;
