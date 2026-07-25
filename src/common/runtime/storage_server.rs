@@ -1753,6 +1753,8 @@ mod tests {
             timeout: Duration::from_secs(1),
             timestamp: Instant::now(),
             priority: RequestPriority::Normal,
+            #[cfg(feature = "runtime-baseline")]
+            baseline_attempt: None,
         };
         let batch = vec![request];
         let batch_processing = server.process_request_batch(batch);

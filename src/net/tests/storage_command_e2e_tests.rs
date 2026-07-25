@@ -580,17 +580,16 @@ async fn network_server_waits_for_inflight_storage_request_before_shutdown() {
     let request_sender = message_channel.request_sender();
     let (response_sender, _response_receiver) = tokio::sync::oneshot::channel();
     request_sender
-        .send(runtime::StorageRequest {
-            id: runtime::RequestId::new(),
-            command: runtime::StorageCommand::Execute {
+        .send(runtime::StorageRequest::new(
+            runtime::RequestId::new(),
+            runtime::StorageCommand::Execute {
                 cmd_name: b"GET".to_vec(),
                 argv: vec![b"GET".to_vec(), b"channel-saturation".to_vec()],
             },
-            response_channel: response_sender,
-            timeout: Duration::from_secs(1),
-            timestamp: std::time::Instant::now(),
-            priority: runtime::RequestPriority::Normal,
-        })
+            response_sender,
+            Duration::from_secs(1),
+            runtime::RequestPriority::Normal,
+        ))
         .await
         .expect("saturate storage request channel");
 

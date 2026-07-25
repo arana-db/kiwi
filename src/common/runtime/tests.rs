@@ -657,6 +657,8 @@ mod integration_tests {
             timeout: Duration::from_secs(1),
             timestamp: Instant::now(),
             priority: RequestPriority::Normal,
+            #[cfg(feature = "runtime-baseline")]
+            baseline_attempt: None,
         };
 
         // Send request
@@ -1156,6 +1158,8 @@ mod storage_server_composition_tests {
                 timeout: Duration::from_secs(1),
                 timestamp: Instant::now(),
                 priority: RequestPriority::Normal,
+                #[cfg(feature = "runtime-baseline")]
+                baseline_attempt: None,
             })
             .await
             .expect("request channel should remain open");

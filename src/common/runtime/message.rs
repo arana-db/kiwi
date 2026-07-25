@@ -145,6 +145,31 @@ pub struct StorageRequest {
     pub timestamp: Instant,
     /// Priority level for request processing
     pub priority: RequestPriority,
+    /// Baseline lifecycle token carried across the storage runtime boundary.
+    #[cfg(feature = "runtime-baseline")]
+    pub baseline_attempt: Option<crate::baseline::BaselineAttempt>,
+}
+
+impl StorageRequest {
+    /// Create a request without feature-specific instrumentation.
+    pub fn new(
+        id: RequestId,
+        command: StorageCommand,
+        response_channel: oneshot::Sender<StorageResponse>,
+        timeout: Duration,
+        priority: RequestPriority,
+    ) -> Self {
+        Self {
+            id,
+            command,
+            response_channel,
+            timeout,
+            timestamp: Instant::now(),
+            priority,
+            #[cfg(feature = "runtime-baseline")]
+            baseline_attempt: None,
+        }
+    }
 }
 
 /// Priority levels for storage request processing
@@ -1008,6 +1033,8 @@ impl StorageClient {
             timeout,
             timestamp: Instant::now(),
             priority,
+            #[cfg(feature = "runtime-baseline")]
+            baseline_attempt: None,
         };
 
         // Store the response receiver for tracking
@@ -1223,6 +1250,8 @@ impl StorageClient {
             timeout,
             timestamp: Instant::now(),
             priority,
+            #[cfg(feature = "runtime-baseline")]
+            baseline_attempt: None,
         };
 
         // Try to queue the request
@@ -1413,6 +1442,30 @@ mod tests {
         assert_eq!(stats.bytes_written, 0);
         assert!(!stats.cache_hit);
         assert_eq!(stats.compaction_level, None);
+    }
+
+    #[test]
+    fn test_storage_request_constructor_preserves_request_metadata() {
+        let id = RequestId::new();
+        let command = StorageCommand::Execute {
+            cmd_name: b"get".to_vec(),
+            argv: vec![b"get".to_vec(), b"key".to_vec()],
+        };
+        let (response_channel, _response_receiver) = oneshot::channel();
+
+        let request = StorageRequest::new(
+            id,
+            command,
+            response_channel,
+            Duration::from_secs(3),
+            RequestPriority::High,
+        );
+
+        assert_eq!(request.id, id);
+        assert_eq!(request.timeout, Duration::from_secs(3));
+        assert_eq!(request.priority, RequestPriority::High);
+        #[cfg(feature = "runtime-baseline")]
+        assert!(request.baseline_attempt.is_none());
     }
 
     #[tokio::test]
