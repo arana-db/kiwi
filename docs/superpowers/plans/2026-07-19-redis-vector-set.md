@@ -420,7 +420,7 @@ Implementation sequence inside `Redis::vadd`:
 1. Reject cluster mode by checking `self.append_log_fn.get().is_some()`.
 2. Acquire `ScopeRecordLock` using the user key.
 3. Read `MetaCF[BaseMetaKey::new(key)]`.
-4. Missing or stale meta creates `VectorMeta::new(1, dimension)` with a new timestamp-based version and does not increment it again.
+4. Missing or stale meta creates `VectorMeta::new_after(1, dimension, previous_generation)` whose version is the current timestamp clamped above the previous generation (monotonic, so a recreated VectorSet can never address stale `VectorDataCF` rows), and does not increment it again.
 5. Live non-VectorSet meta returns the same WRONGTYPE text used by `check_type_state`.
 6. Live VectorSet requires equal dimension.
 7. Point-read `VectorDataCF[MemberDataKey(key, version, element)]` to distinguish insert from update.
@@ -464,7 +464,8 @@ Run:
 
 ```bash
 RUST_TEST_THREADS=1 cargo test -p storage --test redis_vector_test
-cargo test -p storage vector::tests format_vector::tests
+cargo test -p storage vector::tests
+cargo test -p storage format_vector::tests
 ```
 
 Expected: all tests PASS, including rollback-visible behavior after dimension mismatch.
