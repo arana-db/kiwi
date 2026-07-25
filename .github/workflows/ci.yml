@@ -52,7 +52,6 @@ jobs:
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
           components: rustfmt
 
       - name: Check formatting
@@ -84,7 +83,6 @@ jobs:
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
           components: clippy
 
       - name: Configure sccache
@@ -152,8 +150,6 @@ jobs:
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
 
       - name: Configure sccache
         run: |
@@ -222,8 +218,6 @@ jobs:
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
 
       - name: Cache Cargo registry
         uses: actions/cache@v6
@@ -258,6 +252,8 @@ jobs:
   sanitizers:
     name: Sanitizers (${{ matrix.sanitizer }})
     runs-on: ubuntu-latest
+    env:
+      SANITIZER_TOOLCHAIN: nightly-2026-07-17
     strategy:
       fail-fast: false
       matrix:
@@ -268,7 +264,7 @@ jobs:
       - name: Setup Rust nightly with sanitizer support
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: nightly
+          toolchain: ${{ env.SANITIZER_TOOLCHAIN }}
           components: rust-src
 
       - name: Install protoc
@@ -296,7 +292,7 @@ jobs:
             # the rest of the workspace and storage unit tests; regular tests and
             # ASan still cover the RocksDB-backed integration tests.
             {
-              cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu \
+              cargo +${SANITIZER_TOOLCHAIN} test -Z build-std --target x86_64-unknown-linux-gnu \
                 --workspace --exclude storage \
                 -- --skip cursor_snapshot_roundtrip \
                 --skip install_snapshot_with_existing_data \
@@ -305,11 +301,11 @@ jobs:
                 --skip test_on_binlog_write_updates_collector \
                 --skip test_collector_state_export_restore \
                 --skip storage_command_e2e_
-              cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu \
+              cargo +${SANITIZER_TOOLCHAIN} test -Z build-std --target x86_64-unknown-linux-gnu \
                 -p storage --lib
             } 2>&1 | tee sanitizer.log
           else
-            cargo +nightly test -Z build-std --target x86_64-unknown-linux-gnu 2>&1 | tee sanitizer.log
+            cargo +${SANITIZER_TOOLCHAIN} test -Z build-std --target x86_64-unknown-linux-gnu 2>&1 | tee sanitizer.log
           fi
 
       - name: Upload results on failure
@@ -351,8 +347,6 @@ jobs:
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: stable
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
