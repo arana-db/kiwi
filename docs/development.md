@@ -2,16 +2,44 @@
 
 ## Prerequisites
 
+Normal development, CI, and release builds use the exact Rust 1.97.1 stable
+toolchain pinned in the repository root. After rustup is installed,
+`rust-toolchain.toml` selects it automatically whenever commands run inside this
+repository. The source currently uses Rust 2021 Edition. Rust 2024 Edition is a
+separate follow-up migration, not part of this toolchain baseline.
+
+Kiwi also requires `protoc` and a native C/C++ toolchain because RocksDB is built
+from source:
+
+- Windows: use the Rust MSVC target and install Visual Studio Build Tools with
+  the C++ workload.
+- Linux: install `clang`, CMake, libclang/LLVM development packages,
+  `pkg-config`, and `protobuf-compiler` as required by the project build.
+- macOS: install the Xcode Command Line Tools and the corresponding project build
+  dependencies; Homebrew provides `protobuf` and CMake.
+
 ```bash
-# Rust toolchain
+# Install rustup; rust-toolchain.toml selects Rust 1.97.1 stable in this repo
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# protobuf compiler (macOS)
-brew install protobuf
+# macOS
+xcode-select --install
+brew install protobuf cmake
 
-# protobuf compiler (Linux)
-apt install protobuf-compiler
+# Debian/Ubuntu Linux
+sudo apt install clang cmake libclang-dev llvm-dev pkg-config protobuf-compiler
 ```
+
+Verify the compiler selected for the current checkout:
+
+```bash
+rustup show active-toolchain
+rustc --version --verbose
+```
+
+Dated nightly toolchains are used only by specialized checks such as
+Sanitizers. Do not use a floating `stable` channel or a nightly toolchain as the
+normal project baseline.
 
 ## Quick Start
 

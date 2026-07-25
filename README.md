@@ -61,8 +61,18 @@ Client → TCP accept [network runtime] → RESP parse → Command lookup
 
 ### Prerequisites
 
+Kiwi's normal development, CI, and release baseline is Rust 1.97.1 stable. After
+you clone the repository, `rust-toolchain.toml` makes rustup select that exact
+toolchain automatically. The source remains on Rust 2021 Edition; the Rust 2024
+Edition migration is a separate follow-up change.
+
+`protoc` and the native C/C++ tools needed to build RocksDB are also required.
+On Windows, use the Rust MSVC target and install the Visual Studio C++ build
+tools. On Linux and macOS, install the platform C/C++ build dependencies used by
+the project in addition to `protoc`.
+
 ```bash
-# Rust toolchain
+# Install rustup; rust-toolchain.toml selects Rust 1.97.1 stable in this repo
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # protobuf compiler (macOS)
@@ -72,11 +82,18 @@ brew install protobuf
 apt install protobuf-compiler
 ```
 
+Dated nightly toolchains are reserved for specialized checks such as
+Sanitizers. They do not define the normal development or release baseline.
+
 ### Get the Code
 
 ```bash
 git clone https://github.com/arana-db/kiwi.git
 cd kiwi
+
+# Verify the compiler selected by this checkout
+rustup show active-toolchain
+rustc --version --verbose
 ```
 
 ### Standalone Mode

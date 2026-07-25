@@ -61,8 +61,16 @@ Client → TCP accept [网络运行时] → RESP 解析 → 命令查找
 
 ### 环境要求
 
+Kiwi 的普通开发、CI 和发布基线是精确固定的 Rust 1.97.1 stable。克隆仓库后，
+`rust-toolchain.toml` 会让 rustup 自动选择该工具链。当前源码仍使用 Rust 2021
+Edition；Rust 2024 Edition 迁移将在后续独立变更中完成。
+
+项目还必须安装 `protoc`，以及编译 RocksDB 所需的原生 C/C++ 工具。Windows
+使用 Rust MSVC target，并安装 Visual Studio C++ 构建工具；Linux 和 macOS 除
+`protoc` 外，还需安装项目在对应平台使用的 C/C++ 构建依赖。
+
 ```bash
-# Rust 工具链
+# 安装 rustup；进入本仓库后由 rust-toolchain.toml 选择 Rust 1.97.1 stable
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # protobuf 编译器 (macOS)
@@ -72,11 +80,17 @@ brew install protobuf
 apt install protobuf-compiler
 ```
 
+固定日期的 nightly 只用于 Sanitizer 等专项检查，不定义普通开发或发布基线。
+
 ### 获取代码
 
 ```bash
 git clone https://github.com/arana-db/kiwi.git
 cd kiwi
+
+# 核验当前 checkout 实际选择的编译器
+rustup show active-toolchain
+rustc --version --verbose
 ```
 
 ### 单机模式
