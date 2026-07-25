@@ -187,6 +187,44 @@ mod runtime_manager_tests {
 
         manager.stop().await.unwrap();
     }
+
+    #[tokio::test]
+    async fn test_close_storage_requests_releases_receiver_after_external_clients_drop() {
+        let mut manager = RuntimeManager::with_defaults().unwrap();
+        let mut request_receiver = manager.initialize_storage_components().unwrap();
+        let external_client = manager.storage_client().unwrap();
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), request_receiver.recv())
+                .await
+                .is_err(),
+            "manager-owned StorageClient must keep the request receiver open"
+        );
+
+        drop(external_client);
+        assert!(manager.close_storage_requests());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), request_receiver.recv())
+                .await
+                .expect("request receiver should close within the test deadline")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_close_storage_requests_is_idempotent_and_preserves_manager_state() {
+        let mut manager = RuntimeManager::with_defaults().unwrap();
+        let _request_receiver = manager.initialize_storage_components().unwrap();
+        let state_before_close = manager.state().await;
+        let network_threads = manager.config().network_threads;
+        let storage_threads = manager.config().storage_threads;
+
+        assert!(manager.close_storage_requests());
+        assert!(!manager.close_storage_requests());
+        assert_eq!(manager.state().await, state_before_close);
+        assert_eq!(manager.config().network_threads, network_threads);
+        assert_eq!(manager.config().storage_threads, storage_threads);
+    }
 }
 
 // MessageChannel Tests

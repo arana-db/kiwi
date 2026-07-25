@@ -405,6 +405,15 @@ impl RuntimeManager {
         })
     }
 
+    /// Drop the manager-owned storage request sender.
+    ///
+    /// The request receiver closes once all other [`StorageClient`] clones have
+    /// also been dropped. Returns `true` only when this call releases the
+    /// manager-owned client.
+    pub fn close_storage_requests(&mut self) -> bool {
+        self.storage_client.take().is_some()
+    }
+
     /// Initialize storage components by extracting the receiver and creating the storage client
     /// This must be called before the storage server is started and before the storage client is used
     /// Returns the receiver that should be passed to the storage server
