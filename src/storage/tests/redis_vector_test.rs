@@ -45,7 +45,6 @@ fn with_redis(test: impl FnOnce(&Redis)) {
 
     test(&redis);
 
-    redis.set_need_close(true);
     drop(redis);
     safe_cleanup_test_db(&path);
 }
@@ -66,7 +65,7 @@ fn search_options(count: usize, mode: VectorSearchMode) -> VectorSearchOptions {
 }
 
 fn count_cf_entries(redis: &Redis, cf_index: ColumnFamilyIndex) -> usize {
-    let db = redis.db.as_ref().expect("db is initialized");
+    let db = redis.db().expect("db is initialized");
     let cf = redis.get_cf_handle(cf_index).expect("column family exists");
     db.iterator_cf(&cf, IteratorMode::Start)
         .map(|entry| entry.expect("read column family entry"))
@@ -205,7 +204,7 @@ fn test_vector_meta_and_member_are_committed_together() {
     assert!(redis.vadd(b"vectors", b"member", &vector).expect("insert"));
 
     {
-        let db = redis.db.as_ref().expect("db is initialized");
+        let db = redis.db().expect("db is initialized");
         let meta_cf = redis
             .get_cf_handle(ColumnFamilyIndex::MetaCF)
             .expect("MetaCF exists");
@@ -234,7 +233,6 @@ fn test_vector_meta_and_member_are_committed_together() {
     assert_eq!(redis.vcard(b"vectors").expect("card"), 1);
     assert!(redis.vismember(b"vectors", b"member").expect("membership"));
 
-    redis.set_need_close(true);
     drop(redis);
     safe_cleanup_test_db(&path);
 }
@@ -413,7 +411,7 @@ async fn test_storage_routes_all_members_of_one_vectorset_to_one_instance() {
     let selected = storage.slot_indexer.get_instance_id(slot_id);
     let meta_key = BaseMetaKey::new(key).encode().expect("meta key");
     for (instance_id, redis) in storage.insts.iter().enumerate() {
-        let db = redis.db.as_ref().expect("db is initialized");
+        let db = redis.db().expect("db is initialized");
         let meta_cf = redis
             .get_cf_handle(ColumnFamilyIndex::MetaCF)
             .expect("MetaCF exists");
