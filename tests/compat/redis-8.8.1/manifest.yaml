@@ -1,0 +1,6 @@
+schema: kiwi-redis-compat/v1
+profile: redis_8_8_1_core
+redis:
+  tag: 8.8.1
+  commit: 77b6c308396c9700672390a210143a8496fb4b10
+commands: []
