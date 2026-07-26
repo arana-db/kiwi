@@ -135,11 +135,11 @@ pub trait RespEncode {
 
     fn append_double(&mut self, value: f64) -> &mut Self;
 
-    fn append_big_number(&mut self, value: &str) -> &mut Self;
+    fn append_big_number(&mut self, value: &[u8]) -> &mut Self;
 
     fn append_bulk_error(&mut self, value: &[u8]) -> &mut Self;
 
-    fn append_verbatim_string(&mut self, format: &str, data: &[u8]) -> &mut Self;
+    fn append_verbatim_string(&mut self, format: &[u8], data: &[u8]) -> &mut Self;
 
     fn append_map(&mut self, pairs: &[(RespData, RespData)]) -> &mut Self;
 
@@ -226,111 +226,14 @@ impl RespEncoder {
             }
             RespData::Array(None) => self.set_array_len(-1),
             RespData::Null => self.append_null(),
-            RespData::Boolean(value) => {
-                if self.is_resp3() {
-                    self.buffer.extend_from_slice(b"#");
-                    self.buffer
-                        .extend_from_slice(if *value { b"t" } else { b"f" });
-                    self.append_crlf()
-                } else {
-                    self.append_integer(if *value { 1 } else { 0 })
-                }
-            }
-            RespData::Double(value) => {
-                if self.is_resp3() {
-                    if value.is_nan() {
-                        self.buffer.extend_from_slice(b",nan");
-                    } else if value.is_infinite() {
-                        self.buffer.extend_from_slice(if value.is_sign_negative() {
-                            b",-inf"
-                        } else {
-                            b",inf"
-                        });
-                    } else {
-                        let _ = write!(self.buffer, ",{value}");
-                    }
-                    self.append_crlf()
-                } else {
-                    self.append_bulk_string(value.to_string().as_bytes())
-                }
-            }
-            RespData::BigNumber(bytes) => {
-                if self.is_resp3() {
-                    self.buffer.extend_from_slice(b"(");
-                    self.buffer.extend_from_slice(bytes);
-                    self.append_crlf()
-                } else {
-                    self.append_bulk_string(bytes)
-                }
-            }
-            RespData::BulkError(bytes) => {
-                if self.is_resp3() {
-                    let _ = write!(self.buffer, "!{}", bytes.len());
-                    self.append_crlf();
-                    self.buffer.extend_from_slice(bytes);
-                    self.append_crlf()
-                } else {
-                    self.buffer.extend_from_slice(b"-");
-                    self.buffer.extend_from_slice(bytes);
-                    self.append_crlf()
-                }
-            }
-            RespData::VerbatimString { format, data } => {
-                if self.is_resp3() {
-                    if format.len() != 3 {
-                        panic!(
-                            "RESP3 VerbatimString format must be exactly 3 bytes, got {}",
-                            format.len()
-                        );
-                    }
-                    let total_len = format.len() + 1 + data.len();
-                    let _ = write!(self.buffer, "={total_len}");
-                    self.append_crlf();
-                    self.buffer.extend_from_slice(format);
-                    self.buffer.extend_from_slice(b":");
-                    self.buffer.extend_from_slice(data);
-                    self.append_crlf()
-                } else {
-                    self.append_bulk_string(data)
-                }
-            }
-            RespData::Map(pairs) => {
-                if self.is_resp3() {
-                    let _ = write!(self.buffer, "%{}", pairs.len());
-                    self.append_crlf();
-                } else {
-                    self.append_array_len((pairs.len() * 2) as i64);
-                }
-                for (key, value) in pairs {
-                    self.encode_resp_data_inner(key);
-                    self.encode_resp_data_inner(value);
-                }
-                self
-            }
-            RespData::Set(items) => {
-                if self.is_resp3() {
-                    let _ = write!(self.buffer, "~{}", items.len());
-                    self.append_crlf();
-                } else {
-                    self.append_array_len(items.len() as i64);
-                }
-                for item in items {
-                    self.encode_resp_data_inner(item);
-                }
-                self
-            }
-            RespData::Push(items) => {
-                if self.is_resp3() {
-                    let _ = write!(self.buffer, ">{}", items.len());
-                    self.append_crlf();
-                } else {
-                    self.append_array_len(items.len() as i64);
-                }
-                for item in items {
-                    self.encode_resp_data_inner(item);
-                }
-                self
-            }
+            RespData::Boolean(value) => self.append_boolean(*value),
+            RespData::Double(value) => self.append_double(*value),
+            RespData::BigNumber(bytes) => self.append_big_number(bytes),
+            RespData::BulkError(bytes) => self.append_bulk_error(bytes),
+            RespData::VerbatimString { format, data } => self.append_verbatim_string(format, data),
+            RespData::Map(pairs) => self.append_map(pairs),
+            RespData::Set(items) => self.append_set(items),
+            RespData::Push(items) => self.append_push(items),
         }
     }
 }
@@ -510,80 +413,114 @@ impl RespEncode for RespEncoder {
     }
 
     fn append_boolean(&mut self, value: bool) -> &mut Self {
-        self.buffer.extend_from_slice(b"#");
-        self.buffer
-            .extend_from_slice(if value { b"t" } else { b"f" });
-        self.append_crlf()
+        if self.is_resp3() {
+            self.buffer.extend_from_slice(b"#");
+            self.buffer
+                .extend_from_slice(if value { b"t" } else { b"f" });
+            self.append_crlf()
+        } else {
+            self.append_integer(if value { 1 } else { 0 })
+        }
     }
 
     fn append_double(&mut self, value: f64) -> &mut Self {
-        if value.is_nan() {
-            self.buffer.extend_from_slice(b",nan");
-        } else if value.is_infinite() {
-            self.buffer.extend_from_slice(if value.is_sign_negative() {
-                b",-inf"
+        if self.is_resp3() {
+            if value.is_nan() {
+                self.buffer.extend_from_slice(b",nan");
+            } else if value.is_infinite() {
+                self.buffer.extend_from_slice(if value.is_sign_negative() {
+                    b",-inf"
+                } else {
+                    b",inf"
+                });
             } else {
-                b",inf"
-            });
+                let _ = write!(self.buffer, ",{value}");
+            }
+            self.append_crlf()
         } else {
-            let _ = write!(self.buffer, ",{}", value);
+            self.append_bulk_string(value.to_string().as_bytes())
         }
-        self.append_crlf()
     }
 
-    fn append_big_number(&mut self, value: &str) -> &mut Self {
-        self.buffer.extend_from_slice(b"(");
-        self.buffer.extend_from_slice(value.as_bytes());
-        self.append_crlf()
+    fn append_big_number(&mut self, value: &[u8]) -> &mut Self {
+        if self.is_resp3() {
+            self.buffer.extend_from_slice(b"(");
+            self.buffer.extend_from_slice(value);
+            self.append_crlf()
+        } else {
+            self.append_bulk_string(value)
+        }
     }
 
     fn append_bulk_error(&mut self, value: &[u8]) -> &mut Self {
-        let _ = write!(self.buffer, "!{}", value.len());
-        self.append_crlf();
-        self.buffer.extend_from_slice(value);
-        self.append_crlf()
+        if self.is_resp3() {
+            let _ = write!(self.buffer, "!{}", value.len());
+            self.append_crlf();
+            self.buffer.extend_from_slice(value);
+            self.append_crlf()
+        } else {
+            self.buffer.extend_from_slice(b"-");
+            self.buffer.extend_from_slice(value);
+            self.append_crlf()
+        }
     }
 
-    fn append_verbatim_string(&mut self, format: &str, data: &[u8]) -> &mut Self {
-        if format.len() != 3 {
-            panic!(
-                "RESP3 VerbatimString format must be exactly 3 bytes, got {}",
-                format.len()
-            );
+    fn append_verbatim_string(&mut self, format: &[u8], data: &[u8]) -> &mut Self {
+        if self.is_resp3() {
+            if format.len() != 3 {
+                panic!(
+                    "RESP3 VerbatimString format must be exactly 3 bytes, got {}",
+                    format.len()
+                );
+            }
+            let total_len = format.len() + 1 + data.len(); // format + ':' + data
+            let _ = write!(self.buffer, "={total_len}");
+            self.append_crlf();
+            self.buffer.extend_from_slice(format);
+            self.buffer.extend_from_slice(b":");
+            self.buffer.extend_from_slice(data);
+            self.append_crlf()
+        } else {
+            self.append_bulk_string(data)
         }
-        let total_len = format.len() + 1 + data.len(); // format + ':' + data
-        let _ = write!(self.buffer, "={total_len}");
-        self.append_crlf();
-        self.buffer.extend_from_slice(format.as_bytes());
-        self.buffer.extend_from_slice(b":");
-        self.buffer.extend_from_slice(data);
-        self.append_crlf()
     }
 
     fn append_map(&mut self, pairs: &[(RespData, RespData)]) -> &mut Self {
-        let _ = write!(self.buffer, "%{}", pairs.len());
-        self.append_crlf();
+        if self.is_resp3() {
+            let _ = write!(self.buffer, "%{}", pairs.len());
+            self.append_crlf();
+        } else {
+            self.append_array_len((pairs.len() * 2) as i64);
+        }
         for (key, value) in pairs {
-            self.encode_resp_data(key);
-            self.encode_resp_data(value);
+            self.encode_resp_data_inner(key);
+            self.encode_resp_data_inner(value);
         }
         self
     }
 
     fn append_set(&mut self, items: &[RespData]) -> &mut Self {
-        let _ = write!(self.buffer, "~{}", items.len());
-        self.append_crlf();
+        if self.is_resp3() {
+            let _ = write!(self.buffer, "~{}", items.len());
+            self.append_crlf();
+        } else {
+            self.append_array_len(items.len() as i64);
+        }
         for item in items {
-            self.encode_resp_data(item);
+            self.encode_resp_data_inner(item);
         }
         self
     }
 
     fn append_push(&mut self, items: &[RespData]) -> &mut Self {
-        let _ = write!(self.buffer, ">{}", items.len());
-        self.append_crlf();
+        if self.is_resp3() {
+            let _ = write!(self.buffer, ">{}", items.len());
+            self.append_crlf();
+        } else {
+            self.append_array_len(items.len() as i64);
+        }
         for item in items {
-            self.encode_resp_data(item);
+            self.encode_resp_data_inner(item);
         }
         self
     }
@@ -773,7 +710,7 @@ mod tests {
         encoder.clear().append_double(2.718);
         assert_eq!(encoder.get_response(), Bytes::from(",2.718\r\n"));
 
-        encoder.clear().append_big_number("999999999999999999999");
+        encoder.clear().append_big_number(b"999999999999999999999");
         assert_eq!(
             encoder.get_response(),
             Bytes::from("(999999999999999999999\r\n")
@@ -789,7 +726,7 @@ mod tests {
 
         encoder
             .clear()
-            .append_verbatim_string("txt", b"Hello World");
+            .append_verbatim_string(b"txt", b"Hello World");
         assert_eq!(
             encoder.get_response(),
             Bytes::from("=15\r\ntxt:Hello World\r\n")

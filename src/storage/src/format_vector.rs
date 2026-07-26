@@ -36,7 +36,7 @@ const VECTOR_META_ZERO_RESERVE_LENGTH: usize = 8;
 const VECTOR_VALUE_HEADER_LENGTH: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct VectorMeta {
+pub struct VectorMeta {
     count: u64,
     pub(crate) version: u64,
     dimension: u32,
@@ -60,7 +60,7 @@ impl VectorMeta {
         }
     }
 
-    pub(crate) fn encode(&self) -> BytesMut {
+    pub fn encode(&self) -> BytesMut {
         let mut output = BytesMut::with_capacity(BASE_META_VALUE_LENGTH);
         output.put_u8(DataType::VectorSet as u8);
         output.put_u64_le(self.count);
@@ -76,7 +76,7 @@ impl VectorMeta {
         output
     }
 
-    pub(crate) fn decode(value: &[u8]) -> Result<Self> {
+    pub fn decode(value: &[u8]) -> Result<Self> {
         ensure!(
             value.len() == BASE_META_VALUE_LENGTH,
             InvalidFormatSnafu {
@@ -157,8 +157,12 @@ impl VectorMeta {
         self.count = count;
     }
 
-    pub(crate) fn version(&self) -> u64 {
+    pub fn version(&self) -> u64 {
         self.version
+    }
+
+    pub fn set_version(&mut self, version: u64) {
+        self.version = version;
     }
 
     pub(crate) fn dimension(&self) -> u32 {
@@ -167,6 +171,10 @@ impl VectorMeta {
 
     pub(crate) fn is_stale(&self) -> bool {
         self.etime != 0 && self.etime < Utc::now().timestamp_micros() as u64
+    }
+
+    pub fn set_etime(&mut self, etime: u64) {
+        self.etime = etime;
     }
 }
 
@@ -344,5 +352,10 @@ mod tests {
         let mut bad_meta_format = encoded_meta;
         bad_meta_format[17] = 0;
         assert!(VectorMeta::decode(&bad_meta_format).is_err());
+
+        let mut bad_metric = bad_meta_format;
+        bad_metric[17] = VECTOR_META_FORMAT;
+        bad_metric[19] = 0xFF;
+        assert!(VectorMeta::decode(&bad_metric).is_err());
     }
 }

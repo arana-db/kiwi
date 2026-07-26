@@ -55,6 +55,10 @@ impl PartialOrd for HeapHit {
 }
 
 impl Ord for HeapHit {
+    // Score is reversed so `BinaryHeap` (a max-heap) surfaces the *worst*
+    // candidate via `peek()`, enabling top-`count` retention by evicting it.
+    // The element tie-break is intentionally NOT reversed; it must match the
+    // final `sort_by` ordering used when draining the heap.
     fn cmp(&self, other: &Self) -> Ordering {
         other
             .score

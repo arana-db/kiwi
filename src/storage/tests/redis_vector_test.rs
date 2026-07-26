@@ -23,7 +23,8 @@ use kstd::lock_mgr::LockMgr;
 use rocksdb::{IteratorMode, ReadOptions};
 use storage::{
     BaseMetaKey, BgTaskHandler, CanonicalVector, ColumnFamilyIndex, Redis, StorageOptions,
-    VectorQuery, VectorSearchMode, VectorSearchOptions, safe_cleanup_test_db, unique_test_db_path,
+    VectorQuery, VectorSearchMode, VectorSearchOptions, format_vector::VectorMeta,
+    safe_cleanup_test_db, unique_test_db_path,
 };
 use storage::{slot_indexer::key_to_slot_id, storage::Storage};
 
@@ -455,15 +456,16 @@ fn test_vadd_rebuilds_expired_vectorset_with_newer_generation() {
             .get_cf_handle(ColumnFamilyIndex::MetaCF)
             .expect("MetaCF exists");
         let meta_key = BaseMetaKey::new(key).encode().expect("meta key");
-        let mut meta = db
-            .get_cf(&meta_cf, &meta_key)
-            .expect("read vector meta")
-            .expect("vector meta exists");
+        let mut meta = VectorMeta::decode(
+            &db.get_cf(&meta_cf, &meta_key)
+                .expect("read vector meta")
+                .expect("vector meta exists"),
+        )
+        .expect("decode vector meta");
         let previous_generation = u64::MAX - 1;
-        meta[9..17].copy_from_slice(&previous_generation.to_le_bytes());
-        let etime_offset = meta.len() - size_of::<u64>();
-        meta[etime_offset..].copy_from_slice(&1_u64.to_le_bytes());
-        db.put_cf(&meta_cf, &meta_key, &meta)
+        meta.set_version(previous_generation);
+        meta.set_etime(1);
+        db.put_cf(&meta_cf, &meta_key, &meta.encode())
             .expect("store expired vector meta");
 
         assert_eq!(redis.vcard(key).expect("expired card"), 0);
@@ -476,13 +478,13 @@ fn test_vadd_rebuilds_expired_vectorset_with_newer_generation() {
         assert_eq!(redis.vcard(key).expect("rebuilt card"), 1);
         assert!(!redis.vismember(key, b"old").expect("old membership"));
         assert!(redis.vismember(key, b"new").expect("new membership"));
-        let rebuilt_meta = db
-            .get_cf(&meta_cf, &meta_key)
-            .expect("read rebuilt vector meta")
-            .expect("rebuilt vector meta exists");
-        let rebuilt_generation =
-            u64::from_le_bytes(rebuilt_meta[9..17].try_into().expect("generation bytes"));
-        assert!(rebuilt_generation > previous_generation);
+        let rebuilt_meta = VectorMeta::decode(
+            &db.get_cf(&meta_cf, &meta_key)
+                .expect("read rebuilt vector meta")
+                .expect("rebuilt vector meta exists"),
+        )
+        .expect("decode rebuilt vector meta");
+        assert!(rebuilt_meta.version() > previous_generation);
     });
 }
 

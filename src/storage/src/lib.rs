@@ -19,7 +19,7 @@ extern crate core;
 
 mod format_base_data_value;
 mod format_member_data_key;
-mod format_vector;
+pub mod format_vector;
 pub mod vector;
 
 mod data_compaction_filter;
