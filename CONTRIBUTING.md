@@ -62,3 +62,15 @@ docs: update installation instructions
 ## License
 
 By contributing, you agree that your contributions will be licensed under the Apache License 2.0.
+
+## Compatibility and Third-Party Source Rules
+
+- Redis compatibility and public interface changes target exact Redis `8.8.1` commit `77b6c308396c9700672390a210143a8496fb4b10`.
+- Update the machine-readable compatibility manifest and raw differential tests when changing public command behavior.
+- A skipped Redis test must include an owner, Issue, exact reason, introduction date, and removal condition.
+- Kiwi-authored source remains Apache-2.0. Future Redis-derived native source is maintained in the separately governed AGPL-3.0-only fork and must retain upstream copyright, license, exact source identity, patch history, and reproducible build records.
+- The Embedded Redis Hot Tier is design-only. Until the system stability gate passes and the user explicitly authorizes a separate implementation task, do not add Redis-derived production dependencies, dynamic-library loaders, hot-tier data paths, default settings, or release packaging.
+- Do not vendor or copy RedisRaft source or tests into Kiwi. RedisRaft is used as a clean-room public behavior reference.
+- redis-rs is permitted only in compatibility tooling or development/test dependencies. Production server crates must not depend on it.
+
+Every implementation PR must reference the relevant `REQ-*` entries in `.planning/REQUIREMENTS.md`. When a work item is completed, update `.planning/STATE.md` and `.planning/KANBAN.md` with the exact validation command and result.

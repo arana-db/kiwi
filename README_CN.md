@@ -4,13 +4,16 @@
 
 ## 简介
 
-Kiwi 是一个用 Rust 构建的 Redis 兼容键值数据库，通过 RocksDB 和 Raft 协议提供高容量和强一致性。
+Kiwi 是一个以 Redis 8.8.1 可观察行为为兼容目标的 Rust 数据库。RocksDB 保存全量、权威、可恢复的数据，OpenRaft 提供强一致与高可用。
+
+兼容与接口设计基线固定为 Redis tag `8.8.1`、commit `77b6c308396c9700672390a210143a8496fb4b10`。当前 required 工作统一运行在 Cache OFF 模式，重点推进兼容性、权威恢复、Raft 正确性和系统稳定性。内嵌 Redis 热数据层目前只保留未来设计边界；稳定性门禁通过并获得单独批准前，不进入实现。
 
 ## 特性
 
 - **双运行时架构**：网络和存储运行时分离，实现性能隔离
-- **RocksDB 后端**：使用 RocksDB 作为持久化存储后端
-- **Redis 协议兼容**：高度兼容 Redis 协议
+- **RocksDB 权威存储**：保存全量、持久、可恢复的数据
+- **Redis 8.8.1 兼容目标**：协议、命令、错误、TTL、事务和客户端行为必须对照 exact upstream 验证
+- **稳定优先交付**：兼容性、RocksDB 真正 close/reopen 恢复和 OpenRaft 单 Group 正确性必须先通过系统稳定性门禁，才重新评估延期的加速工作
 - **Raft 共识**：集成 OpenRaft 实现强一致性和高可用性
 - **适配器模式**：自定义适配器层连接存储与 OpenRaft
 - **高性能**：通过专用线程池优化请求处理
@@ -47,15 +50,15 @@ Client → TCP accept [网络运行时] → RESP 解析 → 命令查找
 
 ## 开发路线图
 
-- ✅ 双运行时架构实现性能隔离
-- ✅ 基于消息通道的异步通信
-- ✅ 基本 Redis 命令支持（GET、SET、DEL 等）
-- ✅ 使用适配器模式集成 OpenRaft
-- 🚧 大多数 Redis 命令
-- 🚧 完整的集群模式
-- 🚧 扩展命令支持与执行优化
-- 🚧 模块化扩展能力
-- 🚧 全面的指标和监控
+项目北极星、需求、阶段路线、当前状态和 Kanban 统一维护在：
+
+- [项目宪法](.planning/PROJECT.md)
+- [可验收需求](.planning/REQUIREMENTS.md)
+- [唯一路线图](.planning/ROADMAP.md)
+- [当前状态](.planning/STATE.md)
+- [Kanban](.planning/KANBAN.md)
+
+README 不再维护第二份容易漂移的路线清单。
 
 ## 快速开始
 
@@ -123,6 +126,11 @@ redis-cli -p 7379 get foo         # "bar"
 | [docs/development.md](docs/development.md) | 开发环境、构建优化、sccache |
 | [docs/cluster.md](docs/cluster.md) | Raft 集群快速入门与写路径验证 |
 | [docs/key-encoding.md](docs/key-encoding.md) | Key 编码内部实现 |
+| [Redis 8.8.1 兼容合同](docs/compatibility/redis-8.8.1.md) | Exact Oracle、原始 RESP、TCL 和客户端测试边界 |
+| [Redis 8.8.1 系统边界](docs/architecture/redis-8.8.1-system-boundaries.md) | Cache OFF 请求、存储和共识边界 |
+| [系统稳定性门禁](docs/quality/system-stability-gate.md) | 重新评估延期热层工作前的 required 证据 |
+| [延期的 Native ABI 合同](docs/architecture/redis-hot-tier-native-abi.md) | 未来接口设计，不构成实现授权 |
+| [组合发行许可证设计](docs/architecture/combined-distribution-licensing.md) | 未来 Redis 派生库和源码发行义务 |
 | `kiwi --sample-config` | 生成默认配置文件 |
 | `kiwi --full-sample-config` | 生成包含所有配置项的完整配置文件 |
 
@@ -138,4 +146,4 @@ Kiwi 使用 [Arana 维护的 rust-rocksdb fork](https://github.com/arana-db/rust
 
 ## 许可证
 
-Apache License 2.0。详见 [LICENSE](LICENSE)。
+Kiwi 自有源码采用 Apache License 2.0。详见 [LICENSE](LICENSE)。未来包含 Redis 派生原生库的官方组合发行必须履行适用的 AGPL-3.0-only 义务，具体边界记录在架构文档和 [第三方通知](THIRD_PARTY_NOTICES.md)。

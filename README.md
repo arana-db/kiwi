@@ -4,13 +4,16 @@ English | [简体中文](README_CN.md)
 
 ## Introduction
 
-Kiwi is a Redis-compatible key-value database built in Rust, providing high capacity and strong consistency through RocksDB and the Raft protocol.
+Kiwi is a Rust database targeting the observable behavior of Redis 8.8.1. RocksDB is the complete authoritative storage layer, and OpenRaft provides strong consistency and high availability.
+
+The compatibility and interface-design baseline is pinned to Redis tag `8.8.1`, commit `77b6c308396c9700672390a210143a8496fb4b10`. Current required work runs Cache OFF and focuses on compatibility, authoritative recovery, Raft correctness, and system stability. The Embedded Redis Hot Tier is a future design boundary and is not authorized for implementation until the stability gate passes and a separate approval is given.
 
 ## Features
 
 - **Dual Runtime Architecture**: Network and storage runtimes are separated for performance isolation
-- **RocksDB Backend**: Uses RocksDB as the persistent storage backend
-- **Redis Protocol Compatibility**: Highly compatible with Redis protocol
+- **RocksDB Authority**: RocksDB stores the complete, durable, recoverable data set
+- **Redis 8.8.1 Compatibility Target**: Protocol, commands, errors, TTL, transactions, and client behavior must be verified against an exact upstream baseline
+- **Stability-First Delivery**: Compatibility, RocksDB close/reopen recovery, and single-group OpenRaft correctness must pass the system stability gate before deferred acceleration work is reconsidered
 - **Raft Consensus**: Integrates OpenRaft for strong consistency and high availability
 - **Adaptor Pattern**: Custom adapter layer bridging storage with OpenRaft
 - **High Performance**: Optimized request processing with dedicated thread pools
@@ -47,15 +50,15 @@ Client → TCP accept [network runtime] → RESP parse → Command lookup
 
 ## Roadmap
 
-- ✅ Dual-runtime architecture for performance isolation
-- ✅ Message channel-based async communication
-- ✅ Basic Redis commands (GET, SET, DEL, etc.)
-- ✅ OpenRaft integration via adaptor pattern
-- 🚧 Most Redis commands
-- 🚧 Complete cluster mode
-- 🚧 Extended command support and execution optimization
-- 🚧 Module extension capabilities
-- 🚧 Comprehensive metrics and monitoring
+The authoritative north star, requirements, milestones, current state, and Kanban are maintained in:
+
+- [Project constitution](.planning/PROJECT.md)
+- [Requirements](.planning/REQUIREMENTS.md)
+- [Roadmap](.planning/ROADMAP.md)
+- [Current state](.planning/STATE.md)
+- [Kanban](.planning/KANBAN.md)
+
+README checklists are intentionally not used as a second roadmap.
 
 ## Getting Started
 
@@ -122,6 +125,11 @@ See [docs/cluster.md](docs/cluster.md) for the manual step-by-step procedure and
 | [docs/development.md](docs/development.md) | Dev environment, build optimization, sccache |
 | [docs/cluster.md](docs/cluster.md) | Raft cluster quickstart and write-path verification |
 | [docs/key-encoding.md](docs/key-encoding.md) | Key encoding internals (Chinese) |
+| [Redis 8.8.1 compatibility contract](docs/compatibility/redis-8.8.1.md) | Exact Oracle, raw RESP, TCL, and client-test boundaries |
+| [Redis 8.8.1 system boundaries](docs/architecture/redis-8.8.1-system-boundaries.md) | Cache OFF request, storage, and consensus boundaries |
+| [System stability gate](docs/quality/system-stability-gate.md) | Required evidence before deferred hot-tier work can be reconsidered |
+| [Deferred native ABI contract](docs/architecture/redis-hot-tier-native-abi.md) | Future interface design; not an implementation authorization |
+| [Combined distribution licensing](docs/architecture/combined-distribution-licensing.md) | Future Redis-derived library and source-distribution obligations |
 | `kiwi --sample-config` | Generate a default config file |
 | `kiwi --full-sample-config` | Generate a config with all available keys |
 
@@ -137,4 +145,4 @@ Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+Kiwi-authored source is licensed under the Apache License 2.0. See [LICENSE](LICENSE). Future official distributions that include the Redis-derived native library must satisfy the applicable AGPL-3.0-only obligations described in the architecture and [third-party notices](THIRD_PARTY_NOTICES.md).

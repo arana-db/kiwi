@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Kiwi is a Redis-compatible key-value database written in Rust. It persists data with RocksDB, replicates with OpenRaft, and separates network I/O and storage into two distinct Tokio runtimes that communicate via async message channels.
+Kiwi is a Rust database targeting Redis 8.8.1 compatibility. It persists the complete authoritative data set with RocksDB, replicates with OpenRaft, and separates network I/O and storage into two distinct Tokio runtimes that communicate via async message channels.
+
+The exact Redis compatibility and interface-design baseline is tag `8.8.1`, commit `77b6c308396c9700672390a210143a8496fb4b10`. Current required work runs Cache OFF and focuses on compatibility, authoritative RocksDB recovery, OpenRaft correctness, and system stability. The Embedded Redis Hot Tier remains design-only until the stability gate passes and the user explicitly authorizes a separate implementation task.
 
 ## Common Development Commands
 
@@ -127,7 +129,7 @@ When `config.raft` is present, `src/server/src/main.rs`:
 
 - `clippy::unwrap_used` is denied project-wide. Use `expect("descriptive message")` or propagate errors with `?`/`Result`.
 - In tests, add `#![allow(clippy::unwrap_used)]` at the top of the test module.
-- All new `.rs` files must include the Apache 2.0 license header (enforced by CI). Copy the header from any existing source file.
+- All Kiwi-authored `.rs` files must include the Apache 2.0 license header (enforced by CI). Copy the header from an existing Kiwi source file. Future Redis-derived source belongs to the separately governed AGPL-3.0-only fork and must not be relabeled as Apache-2.0.
 - PR titles follow Conventional Commits (checked by CI).
 - Run `make fmt && make lint && make test` before opening a PR.
 
@@ -180,6 +182,29 @@ For multi-step tasks, state a brief plan:
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+## Project Continuity and Crash Recovery
+
+Before modifying files in every new session:
+
+1. Read this file, `CONTRIBUTING.md`, `.planning/PROJECT.md`, `.planning/STATE.md`, and `.planning/KANBAN.md` completely.
+2. Read the current plan linked by `.planning/STATE.md`.
+3. Read `.codex/recovery/ACTIVE.md` if it exists.
+4. Run `git status --porcelain=v2 --branch --untracked-files=all`.
+5. Compare branch, HEAD, and dirty ownership with the recovery record.
+
+If branch, HEAD, or dirty ownership differs, report the drift and stop before modifying files. Never automatically run checkout, restore, reset, stash, clean, whole-tree formatting, or deletion to make the state match.
+
+`.planning/` is the versioned project truth. `.codex/recovery/` is ignored local runtime state containing the active task, append-only checkpoints, authority boundaries, and Git snapshots. Save checkpoints with `scripts/codex-workstate.ps1` before long-running work, authority changes, verified milestones, blockers, and session handoff.
+
+Architecture terminology and boundaries:
+
+- Use only **Embedded Redis Hot Tier** or **内嵌 Redis 8.8.1 原生内存热数据层** as the canonical terminology.
+- The hot tier is design-only. Do not add Redis-derived production dependencies, loaders, dynamic-library build paths, runtime integration, or release packaging until the system stability gate passes and the user explicitly approves a separate implementation task.
+- RocksDB is the only complete authoritative storage; the future hot tier is disposable and rebuildable.
+- Cache hits cannot bypass OpenRaft consistency gates.
+- RedisRaft defines the public behavioral profile; OpenRaft remains the implementation.
+- redis-rs is test-only and must not enter production server dependencies.
 
 ## Subagent Policy
 
