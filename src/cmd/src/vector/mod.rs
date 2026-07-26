@@ -15,17 +15,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
-
-use bytes::Bytes;
 use client::Client;
 use resp::RespData;
-use storage::{
-    CanonicalVector, VectorQuery, VectorSearchMode, VectorSearchOptions, error::Error,
-    storage::Storage,
-};
-
-use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
+use storage::{CanonicalVector, VectorQuery, VectorSearchMode, VectorSearchOptions, error::Error};
 
 const ERR_INVALID_VECTOR: &str = "ERR invalid vector specification";
 const ERR_VECTOR_DIMENSION: &str = "ERR vector dimension mismatch";
@@ -178,17 +170,17 @@ fn parse_vemb(argv: &[Vec<u8>]) -> ParseResult<Vec<u8>> {
     }
 }
 
-fn error_reply(message: impl Into<String>) -> RespData {
+pub(crate) fn error_reply(message: impl Into<String>) -> RespData {
     RespData::Error(message.into().into())
 }
 
 #[derive(Clone, Copy)]
-enum MissingError {
+pub(crate) enum MissingError {
     Key,
     Element,
 }
 
-fn storage_error_reply(error: Error, missing: MissingError) -> RespData {
+pub(crate) fn storage_error_reply(error: Error, missing: MissingError) -> RespData {
     match &error {
         Error::RedisErr { message, .. } => error_reply(message.clone()),
         Error::InvalidArgument { message, .. } if message.contains("dimension mismatch") => {
@@ -205,7 +197,7 @@ fn storage_error_reply(error: Error, missing: MissingError) -> RespData {
     }
 }
 
-fn set_command_key(client: &Client) -> bool {
+pub(crate) fn set_command_key(client: &Client) -> bool {
     let argv = client.argv();
     let Some(key) = argv.get(1) else {
         client.set_reply(error_reply(ERR_INVALID_VECTOR));
@@ -215,7 +207,7 @@ fn set_command_key(client: &Client) -> bool {
     true
 }
 
-fn integer_reply(value: u64) -> RespData {
+pub(crate) fn integer_reply(value: u64) -> RespData {
     match i64::try_from(value) {
         Ok(value) => RespData::Integer(value),
         Err(error) => {
@@ -225,6 +217,7 @@ fn integer_reply(value: u64) -> RespData {
     }
 }
 
+#[macro_export]
 macro_rules! define_vector_command {
     ($type:ident, $name:literal, $arity:expr, $flags:expr, $acl:expr) => {
         #[derive(Clone, Default)]
@@ -248,214 +241,21 @@ macro_rules! define_vector_command {
     };
 }
 
-define_vector_command!(
-    VAddCmd,
-    "vadd",
-    -5,
-    CmdFlags::WRITE | CmdFlags::FAST | CmdFlags::MODULE_NO_CLUSTER,
-    AclCategory::KEYSPACE | AclCategory::WRITE
-);
-define_vector_command!(
-    VSimCmd,
-    "vsim",
-    -4,
-    CmdFlags::READONLY | CmdFlags::MODULE_NO_CLUSTER,
-    AclCategory::KEYSPACE | AclCategory::READ | AclCategory::SLOW
-);
-define_vector_command!(
-    VRemCmd,
-    "vrem",
-    3,
-    CmdFlags::WRITE | CmdFlags::FAST | CmdFlags::MODULE_NO_CLUSTER,
-    AclCategory::KEYSPACE | AclCategory::WRITE
-);
-define_vector_command!(
-    VCardCmd,
-    "vcard",
-    2,
-    CmdFlags::READONLY | CmdFlags::FAST | CmdFlags::MODULE_NO_CLUSTER,
-    AclCategory::KEYSPACE | AclCategory::READ
-);
-define_vector_command!(
-    VDimCmd,
-    "vdim",
-    2,
-    CmdFlags::READONLY | CmdFlags::FAST | CmdFlags::MODULE_NO_CLUSTER,
-    AclCategory::KEYSPACE | AclCategory::READ
-);
-define_vector_command!(
-    VEmbCmd,
-    "vemb",
-    -3,
-    CmdFlags::READONLY | CmdFlags::FAST | CmdFlags::MODULE_NO_CLUSTER,
-    AclCategory::KEYSPACE | AclCategory::READ
-);
-define_vector_command!(
-    VIsMemberCmd,
-    "vismember",
-    3,
-    CmdFlags::READONLY | CmdFlags::FAST | CmdFlags::MODULE_NO_CLUSTER,
-    AclCategory::KEYSPACE | AclCategory::READ
-);
+pub mod vadd;
+pub mod vcard;
+pub mod vdim;
+pub mod vemb;
+pub mod vismember;
+pub mod vrem;
+pub mod vsim;
 
-impl Cmd for VAddCmd {
-    impl_cmd_meta!();
-    impl_cmd_clone_box!();
-
-    fn do_initial(&self, client: &Client) -> bool {
-        set_command_key(client)
-    }
-
-    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
-        let parsed = match parse_vadd(&client.argv()) {
-            Ok(parsed) => parsed,
-            Err(message) => {
-                client.set_reply(error_reply(message));
-                return;
-            }
-        };
-        let reply = match storage.vadd(&client.key(), &parsed.element, &parsed.vector) {
-            Ok(inserted) => RespData::Integer(i64::from(inserted)),
-            Err(error) => storage_error_reply(error, MissingError::Key),
-        };
-        client.set_reply(reply);
-    }
-}
-
-impl Cmd for VSimCmd {
-    impl_cmd_meta!();
-    impl_cmd_clone_box!();
-
-    fn do_initial(&self, client: &Client) -> bool {
-        set_command_key(client)
-    }
-
-    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
-        let parsed = match parse_vsim(&client.argv()) {
-            Ok(parsed) => parsed,
-            Err(message) => {
-                client.set_reply(error_reply(message));
-                return;
-            }
-        };
-        let reply = match storage.vsim(&client.key(), parsed.query, parsed.options) {
-            Ok(hits) if parsed.with_scores => RespData::Map(
-                hits.into_iter()
-                    .map(|hit| {
-                        (
-                            RespData::BulkString(Some(Bytes::from(hit.element))),
-                            RespData::Double(hit.score),
-                        )
-                    })
-                    .collect(),
-            ),
-            Ok(hits) => RespData::Array(Some(
-                hits.into_iter()
-                    .map(|hit| RespData::BulkString(Some(Bytes::from(hit.element))))
-                    .collect(),
-            )),
-            Err(error) => storage_error_reply(error, MissingError::Element),
-        };
-        client.set_reply(reply);
-    }
-}
-
-impl Cmd for VRemCmd {
-    impl_cmd_meta!();
-    impl_cmd_clone_box!();
-
-    fn do_initial(&self, client: &Client) -> bool {
-        set_command_key(client)
-    }
-
-    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
-        let argv = client.argv();
-        let reply = match storage.vrem(&client.key(), &argv[2]) {
-            Ok(removed) => RespData::Integer(i64::from(removed)),
-            Err(error) => storage_error_reply(error, MissingError::Key),
-        };
-        client.set_reply(reply);
-    }
-}
-
-impl Cmd for VCardCmd {
-    impl_cmd_meta!();
-    impl_cmd_clone_box!();
-
-    fn do_initial(&self, client: &Client) -> bool {
-        set_command_key(client)
-    }
-
-    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
-        let reply = match storage.vcard(&client.key()) {
-            Ok(count) => integer_reply(count),
-            Err(error) => storage_error_reply(error, MissingError::Key),
-        };
-        client.set_reply(reply);
-    }
-}
-
-impl Cmd for VDimCmd {
-    impl_cmd_meta!();
-    impl_cmd_clone_box!();
-
-    fn do_initial(&self, client: &Client) -> bool {
-        set_command_key(client)
-    }
-
-    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
-        let reply = match storage.vdim(&client.key()) {
-            Ok(dimension) => integer_reply(u64::from(dimension)),
-            Err(error) => storage_error_reply(error, MissingError::Key),
-        };
-        client.set_reply(reply);
-    }
-}
-
-impl Cmd for VEmbCmd {
-    impl_cmd_meta!();
-    impl_cmd_clone_box!();
-
-    fn do_initial(&self, client: &Client) -> bool {
-        set_command_key(client)
-    }
-
-    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
-        let element = match parse_vemb(&client.argv()) {
-            Ok(element) => element,
-            Err(message) => {
-                client.set_reply(error_reply(message));
-                return;
-            }
-        };
-        let reply = match storage.vemb(&client.key(), &element) {
-            Ok(Some(values)) => {
-                RespData::Array(Some(values.into_iter().map(RespData::Double).collect()))
-            }
-            Ok(None) => RespData::BulkString(None),
-            Err(error) => storage_error_reply(error, MissingError::Key),
-        };
-        client.set_reply(reply);
-    }
-}
-
-impl Cmd for VIsMemberCmd {
-    impl_cmd_meta!();
-    impl_cmd_clone_box!();
-
-    fn do_initial(&self, client: &Client) -> bool {
-        set_command_key(client)
-    }
-
-    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
-        let argv = client.argv();
-        let reply = match storage.vismember(&client.key(), &argv[2]) {
-            Ok(is_member) => RespData::Integer(i64::from(is_member)),
-            Err(error) => storage_error_reply(error, MissingError::Key),
-        };
-        client.set_reply(reply);
-    }
-}
+pub use vadd::VAddCmd;
+pub use vcard::VCardCmd;
+pub use vdim::VDimCmd;
+pub use vemb::VEmbCmd;
+pub use vismember::VIsMemberCmd;
+pub use vrem::VRemCmd;
+pub use vsim::VSimCmd;
 
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
@@ -463,6 +263,7 @@ mod tests {
     use storage::{VectorQuery, VectorSearchMode};
 
     use super::*;
+    use crate::Cmd;
 
     fn fp32(values: &[f32]) -> Vec<u8> {
         values

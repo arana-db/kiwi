@@ -15,18 +15,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::{cmp::Ordering, collections::BinaryHeap};
-
 use kstd::lock_mgr::ScopeRecordLock;
 use rocksdb::{Direction, IteratorMode, ReadOptions};
 use snafu::{OptionExt, ResultExt};
 
 use crate::{
     CanonicalVector, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckState, VectorHit,
-    VectorQuery, VectorSearchOptions,
+    VectorQuery, VectorSearchEngine, VectorSearchOptions,
     error::{
-        InvalidArgumentSnafu, InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RedisErrSnafu,
-        RocksSnafu,
+        InvalidArgumentSnafu, InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu, RocksSnafu,
     },
     format_base_key::BaseMetaKey,
     format_member_data_key::MemberDataKey,
@@ -34,50 +31,7 @@ use crate::{
     storage_define::SUFFIX_RESERVE_LENGTH,
 };
 
-#[derive(Debug)]
-struct HeapHit {
-    element: Vec<u8>,
-    score: f64,
-}
-
-impl PartialEq for HeapHit {
-    fn eq(&self, other: &Self) -> bool {
-        self.score.total_cmp(&other.score) == Ordering::Equal && self.element == other.element
-    }
-}
-
-impl Eq for HeapHit {}
-
-impl PartialOrd for HeapHit {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for HeapHit {
-    fn cmp(&self, other: &Self) -> Ordering {
-        other
-            .score
-            .total_cmp(&self.score)
-            .then_with(|| self.element.cmp(&other.element))
-    }
-}
-
 impl Redis {
-    pub fn is_cluster_mode(&self) -> bool {
-        self.append_log_fn.get().is_some()
-    }
-
-    fn ensure_vector_standalone(&self) -> Result<()> {
-        if self.is_cluster_mode() {
-            return RedisErrSnafu {
-                message: "ERR Vector Set is not supported in cluster mode".to_string(),
-            }
-            .fail();
-        }
-        Ok(())
-    }
-
     fn parse_vector_meta(&self, value: &[u8]) -> Result<Option<VectorMeta>> {
         if value.is_empty() {
             return Ok(None);
@@ -95,7 +49,6 @@ impl Redis {
     }
 
     pub fn vadd(&self, key: &[u8], element: &[u8], vector: &CanonicalVector) -> Result<bool> {
-        self.ensure_vector_standalone()?;
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -173,7 +126,6 @@ impl Redis {
     }
 
     pub fn vrem(&self, key: &[u8], element: &[u8]) -> Result<bool> {
-        self.ensure_vector_standalone()?;
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -221,12 +173,10 @@ impl Redis {
     }
 
     pub fn vcard(&self, key: &[u8]) -> Result<u64> {
-        self.ensure_vector_standalone()?;
         Ok(self.read_vector_meta(key)?.map_or(0, |meta| meta.count()))
     }
 
     pub fn vdim(&self, key: &[u8]) -> Result<u32> {
-        self.ensure_vector_standalone()?;
         match self.read_vector_meta(key)? {
             Some(meta) => Ok(meta.dimension()),
             None => KeyNotFoundSnafu {
@@ -237,7 +187,6 @@ impl Redis {
     }
 
     pub fn vemb(&self, key: &[u8], element: &[u8]) -> Result<Option<Vec<f64>>> {
-        self.ensure_vector_standalone()?;
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -287,7 +236,6 @@ impl Redis {
     }
 
     pub fn vismember(&self, key: &[u8], element: &[u8]) -> Result<bool> {
-        self.ensure_vector_standalone()?;
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -328,7 +276,6 @@ impl Redis {
         query: VectorQuery,
         options: VectorSearchOptions,
     ) -> Result<Vec<VectorHit>> {
-        self.ensure_vector_standalone()?;
         if options.count == 0 {
             return InvalidArgumentSnafu {
                 message: "vector search count must be greater than zero".to_string(),
@@ -399,60 +346,39 @@ impl Redis {
             scan_options,
             IteratorMode::From(&prefix, Direction::Forward),
         );
-        let mut heap = BinaryHeap::new();
-
-        for entry in iterator {
-            let (encoded_key, encoded_value) = entry.context(RocksSnafu)?;
-            if !encoded_key.starts_with(&prefix) {
-                break;
-            }
-            if encoded_key.len() < prefix.len() + SUFFIX_RESERVE_LENGTH {
-                return InvalidFormatSnafu {
-                    message: "vector member key is shorter than its generation prefix".to_string(),
-                }
-                .fail();
-            }
-
-            let element_end = encoded_key.len() - SUFFIX_RESERVE_LENGTH;
-            let element = encoded_key[prefix.len()..element_end].to_vec();
-            let value = VectorDataValue::decode(&encoded_value)?;
-            if value.dimension() != meta.dimension() {
-                return InvalidFormatSnafu {
-                    message: format!(
-                        "vector member dimension {} does not match meta dimension {}",
-                        value.dimension(),
-                        meta.dimension()
-                    ),
-                }
-                .fail();
-            }
-            let hit = HeapHit {
-                element,
-                score: query_vector.score(value.canonical())?,
-            };
-
-            if heap.len() < options.count {
-                heap.push(hit);
-            } else if heap.peek().is_some_and(|worst| hit < *worst) {
-                heap.pop();
-                heap.push(hit);
-            }
-        }
-
-        let mut hits = heap
-            .into_iter()
-            .map(|hit| VectorHit {
-                element: hit.element,
-                score: hit.score,
+        let engine = VectorSearchEngine::Flat;
+        let candidates = iterator
+            .take_while(|result| match result {
+                Ok((encoded_key, _)) => encoded_key.starts_with(&prefix),
+                Err(_) => true,
             })
-            .collect::<Vec<_>>();
-        hits.sort_by(|left, right| {
-            right
-                .score
-                .total_cmp(&left.score)
-                .then_with(|| left.element.cmp(&right.element))
-        });
-        Ok(hits)
+            .map(|entry| {
+                let (encoded_key, encoded_value) = entry.context(RocksSnafu)?;
+                if encoded_key.len() < prefix.len() + SUFFIX_RESERVE_LENGTH {
+                    return InvalidFormatSnafu {
+                        message: "vector member key is shorter than its generation prefix"
+                            .to_string(),
+                    }
+                    .fail();
+                }
+
+                let element_end = encoded_key.len() - SUFFIX_RESERVE_LENGTH;
+                let element = encoded_key[prefix.len()..element_end].to_vec();
+                let value = VectorDataValue::decode(&encoded_value)?;
+                if value.dimension() != meta.dimension() {
+                    return InvalidFormatSnafu {
+                        message: format!(
+                            "vector member dimension {} does not match meta dimension {}",
+                            value.dimension(),
+                            meta.dimension()
+                        ),
+                    }
+                    .fail();
+                }
+                Ok((element, value.canonical().clone()))
+            });
+
+        engine.search(&query_vector, &meta.metric(), options.count, candidates)
     }
 
     fn read_vector_meta(&self, key: &[u8]) -> Result<Option<VectorMeta>> {

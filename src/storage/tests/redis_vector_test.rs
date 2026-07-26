@@ -17,7 +17,7 @@
 
 #![allow(clippy::unwrap_used)]
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc, sync::Mutex};
 
 use kstd::lock_mgr::LockMgr;
 use rocksdb::{IteratorMode, ReadOptions};
@@ -549,32 +549,64 @@ fn test_flushdb_removes_vector_meta_and_members() {
 }
 
 #[tokio::test]
-async fn test_vector_storage_rejects_cluster_mode() {
+async fn test_vector_storage_proposes_binlog_in_cluster_mode() {
     let test_db_path = unique_test_db_path();
     safe_cleanup_test_db(&test_db_path);
     let mut storage = Storage::new(1, 0);
     let _receiver = storage
         .open(Arc::new(StorageOptions::default()), &test_db_path)
         .expect("open storage");
-    storage.set_append_log_fn(Arc::new(|_| panic!("vector API must not append Raft log")));
-    let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
 
-    assert!(storage.vadd(b"vectors", b"member", &vector).is_err());
-    assert!(
+    // Wrap Storage in an Arc so the append_log_fn callback can apply binlogs
+    // back to the local instance. A Weak reference is used to avoid creating a
+    // strong-reference cycle between the callback and Storage.
+    let storage_arc = Arc::new(storage);
+    let storage_weak = Arc::downgrade(&storage_arc);
+    let captured = Arc::new(Mutex::new(None));
+    let captured_clone = captured.clone();
+    storage_arc.set_append_log_fn(Arc::new(move |binlog| {
+        *captured_clone.lock().expect("lock captured binlog") = Some(binlog.clone());
+        let storage = storage_weak
+            .upgrade()
+            .ok_or("storage dropped before binlog apply")?;
         storage
-            .vsim(
-                b"vectors",
-                VectorQuery::Vector(vector),
-                search_options(1, VectorSearchMode::Approximate),
-            )
-            .is_err()
-    );
-    assert!(storage.vrem(b"vectors", b"member").is_err());
-    assert!(storage.vcard(b"vectors").is_err());
-    assert!(storage.vdim(b"vectors").is_err());
-    assert!(storage.vemb(b"vectors", b"member").is_err());
-    assert!(storage.vismember(b"vectors", b"member").is_err());
+            .on_binlog_write(&binlog, 1)
+            .map_err(|error| error.to_string())?;
+        Ok(conf::raft_type::BinlogResponse::ok())
+    }));
 
+    let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
+    assert!(
+        storage_arc
+            .vadd(b"vectors", b"member", &vector)
+            .expect("vadd in cluster mode"),
+        "vadd should insert a new member"
+    );
+    {
+        let binlog = captured.lock().expect("lock captured binlog").take();
+        let binlog = binlog.expect("vadd should propose a binlog");
+        assert!(
+            !binlog.entries.is_empty(),
+            "vadd binlog should contain vector writes"
+        );
+    }
+
+    assert!(
+        storage_arc
+            .vrem(b"vectors", b"member")
+            .expect("vrem in cluster mode"),
+        "vrem should remove the member"
+    );
+    let binlog = captured.lock().expect("lock captured binlog").take();
+    let binlog = binlog.expect("vrem should propose a binlog");
+    assert!(
+        !binlog.entries.is_empty(),
+        "vrem binlog should contain vector deletes"
+    );
+
+    // Weak reference, so the strong count is 1.
+    let mut storage = Arc::try_unwrap(storage_arc)
+        .unwrap_or_else(|_| panic!("storage should not be shared after test operations"));
     storage.shutdown().await;
     safe_cleanup_test_db(&test_db_path);
 }

@@ -28,6 +28,9 @@ use crate::{
 // used for Hash/Set/Zset's member data key. format:
 // | reserve1 | key | version | data | reserve2 |
 // |    8B    |     |    8B   |      |   16B    |
+//
+// For vector sets, `data` is the element name and the value stored at this key
+// is a VectorDataValue (see format_vector.rs).
 
 #[derive(Debug, Clone)]
 pub struct MemberDataKey {

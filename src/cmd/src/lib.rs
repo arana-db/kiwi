@@ -139,7 +139,6 @@ bitflags! {
         const NO_AUTH            = 1 << 10; // Skip ACL checks
         const MAY_REPLICATE      = 1 << 11; // May replicate even if writes are disabled
         const PROTECTED          = 1 << 12; // Don't accept in scripts
-        const MODULE_NO_CLUSTER  = 1 << 13; // No cluster mode support
         const NO_MULTI           = 1 << 14; // Cannot be pipelined
         const EXCLUSIVE          = 1 << 15; // May change Storage pointer
         const RAFT               = 1 << 16;
