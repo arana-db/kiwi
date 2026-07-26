@@ -158,8 +158,7 @@ impl OptimizedConnectionHandler {
         loop {
             // Read data using optimized buffer management
             let mut read_buffer = if self.config.enable_buffer_pooling {
-                let pooled_buffer = self.buffer_manager.get_buffer().await;
-                pooled_buffer
+                self.buffer_manager.get_buffer().await
             } else {
                 crate::buffer::PooledBuffer::new(8192, 0)
             };

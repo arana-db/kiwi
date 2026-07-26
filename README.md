@@ -63,13 +63,13 @@ Client → TCP accept [network runtime] → RESP parse → Command lookup
 
 Kiwi's normal development, CI, and release baseline is Rust 1.97.1 stable. After
 you clone the repository, `rust-toolchain.toml` makes rustup select that exact
-toolchain automatically. The source remains on Rust 2021 Edition; the Rust 2024
-Edition migration is a separate follow-up change.
+toolchain automatically. All Kiwi workspace crates use Rust 2024 Edition.
 
 `protoc` and the native C/C++ tools needed to build RocksDB are also required.
 On Windows, use the Rust MSVC target and install the Visual Studio C++ build
 tools. On Linux and macOS, install the platform C/C++ build dependencies used by
-the project in addition to `protoc`.
+the project in addition to `protoc`. See the platform-specific commands in the
+[development guide](docs/development.md#prerequisites).
 
 ```bash
 # Install rustup; rust-toolchain.toml selects Rust 1.97.1 stable in this repo

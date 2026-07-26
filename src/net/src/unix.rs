@@ -85,10 +85,10 @@ mod unix_impl {
     #[async_trait]
     impl ServerTrait for UnixServer {
         async fn run(&self) -> Result<(), Box<dyn Error>> {
-            if let Err(e) = std::fs::remove_file(&self.path) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    return Err(e.into());
-                }
+            if let Err(e) = std::fs::remove_file(&self.path)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(e.into());
             }
 
             let listener = UnixListener::bind(&self.path)?;

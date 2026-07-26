@@ -356,16 +356,16 @@ async fn process_command_batch(
         // Auth check: deny non-NO_AUTH commands when not authenticated
         if !client.is_authenticated() {
             let cmd_name_str = String::from_utf8_lossy(&command.cmd_name).to_lowercase();
-            if let Some(cmd) = cmd_table.get(&cmd_name_str) {
-                if !cmd.has_flag(CmdFlags::NO_AUTH) {
-                    client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
-                    let response = client.take_reply();
-                    let encoder_version = client.resp_version();
-                    let mut encoder = RespEncoder::new(encoder_version);
-                    encoder.encode_resp_data(&response);
-                    let _ = client.write(encoder.get_response().as_ref()).await;
-                    continue;
-                }
+            if let Some(cmd) = cmd_table.get(&cmd_name_str)
+                && !cmd.has_flag(CmdFlags::NO_AUTH)
+            {
+                client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
+                let response = client.take_reply();
+                let encoder_version = client.resp_version();
+                let mut encoder = RespEncoder::new(encoder_version);
+                encoder.encode_resp_data(&response);
+                let _ = client.write(encoder.get_response().as_ref()).await;
+                continue;
             }
         }
 

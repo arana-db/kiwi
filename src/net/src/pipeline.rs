@@ -211,16 +211,16 @@ impl CommandPipeline {
                             }
                             None => {
                                 // Channel closed, process remaining batch and exit
-                                if let Some(batch) = current_batch.take() {
-                                    if !batch.is_empty() {
-                                        Self::process_batch(
-                                            batch,
-                                            storage.clone(),
-                                            cmd_table.clone(),
-                                            executor.clone(),
-                                            semaphore.clone(),
-                                        ).await;
-                                    }
+                                if let Some(batch) = current_batch.take()
+                                    && !batch.is_empty()
+                                {
+                                    Self::process_batch(
+                                        batch,
+                                        storage.clone(),
+                                        cmd_table.clone(),
+                                        executor.clone(),
+                                        semaphore.clone(),
+                                    ).await;
                                 }
                                 break;
                             }

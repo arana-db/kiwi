@@ -578,10 +578,10 @@ impl Redis {
             let score_str = format!("{}", score_key.score());
 
             // Apply pattern matching if specified
-            if let Some(pat) = pattern {
-                if !glob_match(&member, pat) {
-                    continue;
-                }
+            if let Some(pat) = pattern
+                && !glob_match(&member, pat)
+            {
+                continue;
             }
 
             results.push((member, score_str));
@@ -955,10 +955,10 @@ impl Redis {
             let member = score_key.member();
 
             // Check if we've passed the max boundary - break early for optimization
-            if let Some(ref max_m) = max_member {
-                if member > max_m.as_slice() {
-                    break;
-                }
+            if let Some(ref max_m) = max_member
+                && member > max_m.as_slice()
+            {
+                break;
             }
 
             // Check if member is within the lexicographical range
@@ -1261,35 +1261,35 @@ impl Redis {
         // fail with WRONGTYPE when the destination holds a different data type.
         if !dest_meta_val.is_empty() {
             // If the destination is a parseable ZSet, clean up its score/member data.
-            if let Ok(dest_meta) = ParsedZSetsMetaValue::new(&dest_meta_val[..]) {
-                if dest_meta.is_valid() {
-                    let dest_version = dest_meta.version();
+            if let Ok(dest_meta) = ParsedZSetsMetaValue::new(&dest_meta_val[..])
+                && dest_meta.is_valid()
+            {
+                let dest_version = dest_meta.version();
 
-                    // Delete all score keys and member keys
-                    let min_score_key =
-                        ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
-                            .encode_seek_key()?;
-                    let iter = db.iterator_cf_opt(
-                        &cf_score,
-                        ReadOptions::default(),
-                        IteratorMode::From(&min_score_key, Direction::Forward),
-                    );
+                // Delete all score keys and member keys
+                let min_score_key =
+                    ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
+                        .encode_seek_key()?;
+                let iter = db.iterator_cf_opt(
+                    &cf_score,
+                    ReadOptions::default(),
+                    IteratorMode::From(&min_score_key, Direction::Forward),
+                );
 
-                    for item in iter {
-                        let (raw_key, _) = item.context(RocksSnafu)?;
-                        let score_key = ParsedZSetsScoreKey::new(&raw_key)?;
+                for item in iter {
+                    let (raw_key, _) = item.context(RocksSnafu)?;
+                    let score_key = ParsedZSetsScoreKey::new(&raw_key)?;
 
-                        if destination != score_key.key() || dest_version != score_key.version() {
-                            break;
-                        }
-
-                        // Delete score key and member key
-                        batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
-                        let member_key =
-                            MemberDataKey::new(destination, dest_version, score_key.member())
-                                .encode()?;
-                        batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
+                    if destination != score_key.key() || dest_version != score_key.version() {
+                        break;
                     }
+
+                    // Delete score key and member key
+                    batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
+                    let member_key =
+                        MemberDataKey::new(destination, dest_version, score_key.member())
+                            .encode()?;
+                    batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
                 }
             }
             // Remove the old destination meta key so the new result can replace it.
@@ -1416,10 +1416,10 @@ impl Redis {
             let member = score_key.member();
 
             // Check if we've passed the max boundary
-            if let Some(ref max_m) = max_member {
-                if member > max_m.as_slice() {
-                    break;
-                }
+            if let Some(ref max_m) = max_member
+                && member > max_m.as_slice()
+            {
+                break;
             }
 
             if is_in_lex_range(
@@ -1599,10 +1599,10 @@ impl Redis {
 
             let member = score_key.member();
 
-            if let Some(ref max_m) = max_member {
-                if member > max_m.as_slice() {
-                    break;
-                }
+            if let Some(ref max_m) = max_member
+                && member > max_m.as_slice()
+            {
+                break;
             }
 
             if is_in_lex_range(

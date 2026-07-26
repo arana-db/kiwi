@@ -152,13 +152,12 @@ pub fn get_largest_log_index_from_collection(
 
     for (_, props) in collection.iter() {
         let user_props = props.user_collected_properties();
-        if let Some(pair) = read_stats_from_table_props(&user_props) {
-            if pair.applied_log_index() > max_log_index
-                || (pair.applied_log_index() == max_log_index && pair.seqno() > max_seqno)
-            {
-                max_log_index = pair.applied_log_index();
-                max_seqno = pair.seqno();
-            }
+        if let Some(pair) = read_stats_from_table_props(&user_props)
+            && (pair.applied_log_index() > max_log_index
+                || (pair.applied_log_index() == max_log_index && pair.seqno() > max_seqno))
+        {
+            max_log_index = pair.applied_log_index();
+            max_seqno = pair.seqno();
         }
     }
 

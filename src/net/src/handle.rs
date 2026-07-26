@@ -100,13 +100,12 @@ async fn handle_command(
     let cmd_name = String::from_utf8_lossy(&client.cmd_name()).to_lowercase();
 
     // Auth check: deny non-NO_AUTH commands when not authenticated
-    if !client.is_authenticated() {
-        if let Some(cmd) = cmd_table.get(&cmd_name) {
-            if !cmd.has_flag(CmdFlags::NO_AUTH) {
-                client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
-                return;
-            }
-        }
+    if !client.is_authenticated()
+        && let Some(cmd) = cmd_table.get(&cmd_name)
+        && !cmd.has_flag(CmdFlags::NO_AUTH)
+    {
+        client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
+        return;
     }
 
     if let Some(cmd) = cmd_table.get(&cmd_name) {

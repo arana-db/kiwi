@@ -2234,10 +2234,10 @@ impl Redis {
                 // Check if the string key is not expired
                 if !value_bytes.is_empty() {
                     let parsed_string_result = ParsedStringsValue::new(&value_bytes[..]);
-                    if let Ok(parsed) = parsed_string_result {
-                        if !parsed.is_stale() {
-                            return Ok(Some(String::from_utf8_lossy(base_key.key()).to_string()));
-                        }
+                    if let Ok(parsed) = parsed_string_result
+                        && !parsed.is_stale()
+                    {
+                        return Ok(Some(String::from_utf8_lossy(base_key.key()).to_string()));
                     }
                 }
             } else {

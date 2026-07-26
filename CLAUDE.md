@@ -51,8 +51,7 @@ make -C tests test-python
 - Normal development, CI, and release builds use Rust 1.97.1 stable. The root
   `rust-toolchain.toml` selects the exact toolchain automatically; verify it with
   `rustup show active-toolchain` and `rustc --version --verbose`.
-- The source remains on Rust 2021 Edition. Rust 2024 Edition migration is a
-  separate follow-up change; do not treat it as part of the baseline update.
+- All Kiwi workspace crates use Rust 2024 Edition.
 - Dated nightly toolchains are reserved for specialized checks such as
   Sanitizers and do not define the normal development baseline.
 - The first build compiles `librocksdb-sys` from source and can take ~18 minutes. Incremental builds with `sccache` are typically 30 seconds–2 minutes.

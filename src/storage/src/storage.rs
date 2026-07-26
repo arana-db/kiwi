@@ -618,34 +618,30 @@ impl Storage {
     /// the cf_tracker with the actual state from the restored SST files.
     pub fn init_cf_trackers(&self) -> crate::Result<()> {
         for inst in &self.insts {
-            if let Some(ref cf_tracker) = inst.logindex_cf_tracker {
-                if let Some(ref db) = inst.db {
-                    // Query each CF's table properties through the concrete RocksDB so the
-                    // tracker mirrors the (log_index, seqno) high-water mark recorded in
-                    // the restored SST files.
-                    let rocksdb = db.as_ref();
-                    for cf_id in 0..crate::logindex::types::cf_metadata::COLUMN_FAMILY_COUNT {
-                        let cf_name = crate::logindex::types::cf_metadata::CF_NAMES_STR[cf_id];
-                        let cf_handle = rocksdb.cf_handle(cf_name);
-                        if let Some(cf) = cf_handle {
-                            let properties = rocksdb.get_properties_of_all_tables_cf(&cf);
-                            match properties {
-                                Ok(collection) => {
-                                    if let Some(pair) = crate::logindex::table_properties::get_largest_log_index_from_collection(&collection) {
-                                        let log_index = pair.applied_log_index();
-                                        let seqno = pair.seqno();
-                                        cf_tracker.set_flushed_log_index(cf_id, log_index, seqno);
-                                        // On snapshot restore, flushed and applied should be consistent
-                                        cf_tracker.set_applied_log_index(cf_id, log_index, seqno);
-                                    }
+            if let Some(ref cf_tracker) = inst.logindex_cf_tracker
+                && let Some(ref db) = inst.db
+            {
+                // Query each CF's table properties through the concrete RocksDB so the
+                // tracker mirrors the (log_index, seqno) high-water mark recorded in
+                // the restored SST files.
+                let rocksdb = db.as_ref();
+                for cf_id in 0..crate::logindex::types::cf_metadata::COLUMN_FAMILY_COUNT {
+                    let cf_name = crate::logindex::types::cf_metadata::CF_NAMES_STR[cf_id];
+                    let cf_handle = rocksdb.cf_handle(cf_name);
+                    if let Some(cf) = cf_handle {
+                        let properties = rocksdb.get_properties_of_all_tables_cf(&cf);
+                        match properties {
+                            Ok(collection) => {
+                                if let Some(pair) = crate::logindex::table_properties::get_largest_log_index_from_collection(&collection) {
+                                    let log_index = pair.applied_log_index();
+                                    let seqno = pair.seqno();
+                                    cf_tracker.set_flushed_log_index(cf_id, log_index, seqno);
+                                    // On snapshot restore, flushed and applied should be consistent
+                                    cf_tracker.set_applied_log_index(cf_id, log_index, seqno);
                                 }
-                                Err(e) => {
-                                    log::warn!(
-                                        "Failed to get properties for CF {}: {}",
-                                        cf_name,
-                                        e
-                                    );
-                                }
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to get properties for CF {}: {}", cf_name, e);
                             }
                         }
                     }

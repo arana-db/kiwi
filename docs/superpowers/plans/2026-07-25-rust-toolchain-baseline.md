@@ -10,7 +10,7 @@
 
 ---
 
-### 任务 1：统一 Cargo workspace 和本地工具链
+## 任务 1：统一 Cargo workspace 和本地工具链
 
 **文件：**
 - 修改：`rust-toolchain.toml`
@@ -24,7 +24,7 @@
 - [ ] 运行 `cargo fmt --all -- --check` 和 `cargo check --workspace --all-features --locked`。
 - [ ] 只提交工具链和 manifest：`build: pin Rust 1.97.1 toolchain`。
 
-### 任务 2：统一 CI、Sanitizer 和 Docker
+## 任务 2：统一 CI、Sanitizer 和 Docker
 
 **文件：**
 - 修改：`.github/workflows/ci.yml`
@@ -40,7 +40,7 @@
 - [ ] 运行 GitHub Actions YAML 语法检查，并人工审查全部 setup-rust-toolchain 和 Cargo override 行。
 - [ ] 提交：`ci: align builds with pinned Rust toolchain`。
 
-### 任务 3：更新开发者合同文档
+## 任务 3：更新开发者合同文档
 
 **文件：**
 - 修改：`README.md`
@@ -55,7 +55,7 @@
 - [ ] 删除生效文档中 `nightly-2025-08-20` 和浮动 stable 是标准的表述；历史 plan 证据不改写。
 - [ ] 运行 `rg` 残留扫描、`git diff --check`，并提交：`docs: define the Kiwi Rust baseline`。
 
-### 任务 4：完整验证 PR 1
+## 任务 4：完整验证 PR 1
 
 - [ ] 运行 `rustup show active-toolchain` 和 `rustc --version --verbose`，确认当前 checkout 使用 Rust 1.97.1 stable。
 - [ ] Windows 验证必须在 Visual Studio Developer Command Prompt 或已加载等价 VS C++ 环境的终端中执行；`rustc --version --verbose` 必须严格包含 `host: x86_64-pc-windows-msvc`，且 `where cl`（PowerShell 使用 `where.exe cl`）必须解析到可执行的 MSVC `cl.exe`。任一条件不满足时立即停止，不得把后续结果记为 Windows MSVC 验证。
