@@ -3,6 +3,7 @@ name = "runtime"
 version.workspace = true
 description = "Dual runtime architecture for Kiwi database"
 edition.workspace = true
+rust-version.workspace = true
 
 [lib]
 name = "runtime"
