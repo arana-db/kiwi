@@ -20,7 +20,7 @@ PR 2 基于 PR 1 的 Head；PR 1 合并前，PR 2 作为 stacked PR 审查。PR 
 - 普通 GitHub Actions job 不指定 `stable`，由 `actions-rust-lang/setup-rust-toolchain` 读取根目录工具链文件。
 - Docker builder 明确使用 `rust:1.97.1-bookworm`，修改时与工具链文件在同一工具链升级 PR 中复核。
 - Sanitizer 保留独立、精确日期的 nightly；它是质量工具，不定义产品语言标准。
-- `Cargo.lock` 继续提交，构建和发布使用 `--locked`。
+- `Cargo.lock` 继续提交；发布、Docker 构建和本设计定义的基线验证命令使用 `--locked`。普通开发命令不强制该参数。
 
 ## 门禁设计
 
