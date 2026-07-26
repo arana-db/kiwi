@@ -109,9 +109,10 @@ impl Redis {
                                     ParsedBaseDataValue::new(&existing_member_val[..])?;
                                 parsed_base_data_val.strip_suffix();
                                 not_found = false;
-                                match String::from_utf8_lossy(&parsed_base_data_val.user_value())
-                                    .parse::<f64>()
-                                {
+                                let user_value = parsed_base_data_val.user_value();
+                                let parsed_score =
+                                    String::from_utf8_lossy(&user_value).parse::<f64>();
+                                match parsed_score {
                                     Ok(existing_score) => {
                                         if (existing_score - sm.score).abs() < f64::EPSILON {
                                             continue;
@@ -373,10 +374,10 @@ impl Redis {
                         let mut parsed_base_data_val =
                             ParsedBaseDataValue::new(&existing_member_val[..])?;
                         parsed_base_data_val.strip_suffix();
+                        let user_value = parsed_base_data_val.user_value();
+                        let parsed_score = String::from_utf8_lossy(&user_value).parse::<f64>();
 
-                        match String::from_utf8_lossy(&parsed_base_data_val.user_value())
-                            .parse::<f64>()
-                        {
+                        match parsed_score {
                             Ok(current_score) => {
                                 new_score = current_score + increment;
                                 if new_score.is_nan() || new_score.is_infinite() {
@@ -847,8 +848,10 @@ impl Redis {
                 // Get the member's score
                 let mut parsed_base_data_val = ParsedBaseDataValue::new(&existing_member_val[..])?;
                 parsed_base_data_val.strip_suffix();
+                let user_value = parsed_base_data_val.user_value();
+                let parsed_score = String::from_utf8_lossy(&user_value).parse::<f64>();
 
-                match String::from_utf8_lossy(&parsed_base_data_val.user_value()).parse::<f64>() {
+                match parsed_score {
                     Ok(score) => {
                         // Delete score key
                         let score_key = ZSetsScoreKey::new(key, version, score, member).encode()?;
@@ -2180,7 +2183,7 @@ fn is_in_lex_range(
     max_exclusive: bool,
 ) -> bool {
     // Check min boundary
-    if let Some(ref min) = min_member {
+    if let Some(min) = min_member {
         match member.cmp(min.as_slice()) {
             std::cmp::Ordering::Less => return false,
             std::cmp::Ordering::Equal if min_exclusive => return false,
@@ -2189,7 +2192,7 @@ fn is_in_lex_range(
     }
 
     // Check max boundary
-    if let Some(ref max) = max_member {
+    if let Some(max) = max_member {
         match member.cmp(max.as_slice()) {
             std::cmp::Ordering::Greater => return false,
             std::cmp::Ordering::Equal if max_exclusive => return false,

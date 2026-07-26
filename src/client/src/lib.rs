@@ -68,12 +68,16 @@ impl Client {
 
     pub async fn read(&self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
         let mut stream = self.stream.lock().await;
-        stream.read(buf).await
+        let result = stream.read(buf).await;
+        drop(stream);
+        result
     }
 
     pub async fn write(&self, data: &[u8]) -> Result<usize, std::io::Error> {
         let mut stream = self.stream.lock().await;
-        stream.write(data).await
+        let result = stream.write(data).await;
+        drop(stream);
+        result
     }
 
     pub fn set_argv(&self, argv: &[Vec<u8>]) {

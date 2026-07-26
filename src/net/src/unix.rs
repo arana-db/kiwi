@@ -95,7 +95,8 @@ mod unix_impl {
             info!("Listening on Unix Socket: {}", self.path);
 
             loop {
-                match listener.accept().await {
+                let accept_result = listener.accept().await;
+                match accept_result {
                     Ok((socket, _)) => {
                         let s = UnixStreamWrapper::new(socket);
                         let client = Arc::new(Client::new(Box::new(s)));

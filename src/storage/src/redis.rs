@@ -539,7 +539,8 @@ impl Redis {
             for (i, cf_name) in self.handles.iter().enumerate() {
                 if i > 0 {
                     // Skip already compacted default CF
-                    if let Some(cf) = db.cf_handle(cf_name) {
+                    let cf_handle = db.cf_handle(cf_name);
+                    if let Some(cf) = cf_handle {
                         db.compact_range_cf(&cf, begin, end);
                     }
                 }
@@ -988,7 +989,7 @@ impl Redis {
 /// Returns an error if the database is not initialized or if any column family handle is not found.
 #[macro_export]
 macro_rules! get_db_and_cfs {
-    ($self:expr $(, $cf:expr)*) => {{
+    ($self:expr_2021 $(, $cf:expr_2021)*) => {{
         let db = $self.db().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;

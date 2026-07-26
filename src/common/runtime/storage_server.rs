@@ -460,7 +460,11 @@ impl StorageServer {
     ) -> Result<(), DualRuntimeError> {
         info!("Storage server running without batching");
 
-        while let Some(request) = request_receiver.recv().await {
+        loop {
+            let received = request_receiver.recv().await;
+            let Some(request) = received else {
+                break;
+            };
             debug!("Received storage request: {:?}", request.id);
 
             let access_guard = self.access_gate.enter().await;
@@ -504,7 +508,8 @@ impl StorageServer {
 
         // Wait for all requests in the batch to complete
         for handle in handles {
-            if let Err(e) = handle.await {
+            let join_result = handle.await;
+            if let Err(e) = join_result {
                 error!("Failed to process request in batch: {}", e);
             }
         }
@@ -999,7 +1004,8 @@ impl BackgroundTaskManager {
             _ = async {
                 // Wait for any task to complete (which would indicate an error)
                 for (name, handle) in handles {
-                    if let Err(e) = handle.await {
+                    let join_result = handle.await;
+                    if let Err(e) = join_result {
                         error!("Background task '{}' failed: {}", name, e);
                         return;
                     }
@@ -1059,7 +1065,12 @@ impl BackgroundTaskManager {
                     }
 
                     // Check if compaction is needed
-                    if let Ok(needs_compaction) = Self::check_compaction_needed(&storage, config.compaction_trigger_threshold).await {
+                    let compaction_check = Self::check_compaction_needed(
+                        &storage,
+                        config.compaction_trigger_threshold,
+                    )
+                    .await;
+                    if let Ok(needs_compaction) = compaction_check {
                         if needs_compaction {
                             info!("Triggering background compaction");
 

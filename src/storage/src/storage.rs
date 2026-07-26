@@ -626,8 +626,10 @@ impl Storage {
                     let rocksdb = db.as_ref();
                     for cf_id in 0..crate::logindex::types::cf_metadata::COLUMN_FAMILY_COUNT {
                         let cf_name = crate::logindex::types::cf_metadata::CF_NAMES_STR[cf_id];
-                        if let Some(cf) = rocksdb.cf_handle(cf_name) {
-                            match rocksdb.get_properties_of_all_tables_cf(&cf) {
+                        let cf_handle = rocksdb.cf_handle(cf_name);
+                        if let Some(cf) = cf_handle {
+                            let properties = rocksdb.get_properties_of_all_tables_cf(&cf);
+                            match properties {
                                 Ok(collection) => {
                                     if let Some(pair) = crate::logindex::table_properties::get_largest_log_index_from_collection(&collection) {
                                         let log_index = pair.applied_log_index();

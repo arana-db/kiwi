@@ -177,10 +177,11 @@ impl Redis {
             let meta_val = ParsedHashesMetaValue::new(&meta_val_bytes[..])?;
             let version = meta_val.version();
             let data_key = MemberDataKey::new(_key, version, _field);
-            if let Some(data_val_bytes) = db
-                .get_cf_opt(data_cf, &data_key.encode()?, &read_options)
-                .context(RocksSnafu)?
-            {
+            let encoded_data_key = data_key.encode()?;
+            let data_value = db
+                .get_cf_opt(data_cf, &encoded_data_key, &read_options)
+                .context(RocksSnafu)?;
+            if let Some(data_val_bytes) = data_value {
                 let mut data_val = ParsedBaseDataValue::new(&data_val_bytes[..])?;
                 data_val.strip_suffix();
                 return Ok(Some(
@@ -343,11 +344,12 @@ impl Redis {
                 } else {
                     let version = parsed_meta.version();
                     let data_key = MemberDataKey::new(key, version, field);
+                    let encoded_data_key = data_key.encode()?;
+                    let data_value = db
+                        .get_cf_opt(data_cf, &encoded_data_key, &self.read_options)
+                        .context(RocksSnafu)?;
 
-                    match db
-                        .get_cf_opt(data_cf, &data_key.encode()?, &self.read_options)
-                        .context(RocksSnafu)?
-                    {
+                    match data_value {
                         Some(existing_data_bytes) => {
                             let mut existing_data =
                                 ParsedBaseDataValue::new(&existing_data_bytes[..])?;
@@ -550,10 +552,11 @@ impl Redis {
                 let version = meta_val.version();
                 for field in fields {
                     let data_key = MemberDataKey::new(key, version, field);
-                    match db
-                        .get_cf_opt(data_cf, &data_key.encode()?, &read_options)
-                        .context(RocksSnafu)?
-                    {
+                    let encoded_data_key = data_key.encode()?;
+                    let data_value = db
+                        .get_cf_opt(data_cf, &encoded_data_key, &read_options)
+                        .context(RocksSnafu)?;
+                    match data_value {
                         Some(data_val_bytes) => {
                             let mut data_val = ParsedBaseDataValue::new(&data_val_bytes[..])?;
                             data_val.strip_suffix();
@@ -788,11 +791,12 @@ impl Redis {
                 } else {
                     let version = parsed_meta.version();
                     let data_key = MemberDataKey::new(key, version, field);
+                    let encoded_data_key = data_key.encode()?;
+                    let data_value = db
+                        .get_cf_opt(data_cf, &encoded_data_key, &self.read_options)
+                        .context(RocksSnafu)?;
 
-                    match db
-                        .get_cf_opt(data_cf, &data_key.encode()?, &self.read_options)
-                        .context(RocksSnafu)?
-                    {
+                    match data_value {
                         Some(_) => Ok(0), // Field already exists
                         None => {
                             if !parsed_meta.check_modify_count(1) {
@@ -905,11 +909,12 @@ impl Redis {
                 } else {
                     let version = parsed_meta.version();
                     let data_key = MemberDataKey::new(key, version, field);
+                    let encoded_data_key = data_key.encode()?;
+                    let data_value = db
+                        .get_cf_opt(data_cf, &encoded_data_key, &self.read_options)
+                        .context(RocksSnafu)?;
 
-                    match db
-                        .get_cf_opt(data_cf, &data_key.encode()?, &self.read_options)
-                        .context(RocksSnafu)?
-                    {
+                    match data_value {
                         Some(old_val_bytes) => {
                             let mut old_val = ParsedBaseDataValue::new(&old_val_bytes[..])?;
                             old_val.strip_suffix();
@@ -1051,11 +1056,12 @@ impl Redis {
                 } else {
                     let version = parsed_meta.version();
                     let data_key = MemberDataKey::new(key, version, field);
+                    let encoded_data_key = data_key.encode()?;
+                    let data_value = db
+                        .get_cf_opt(data_cf, &encoded_data_key, &self.read_options)
+                        .context(RocksSnafu)?;
 
-                    match db
-                        .get_cf_opt(data_cf, &data_key.encode()?, &self.read_options)
-                        .context(RocksSnafu)?
-                    {
+                    match data_value {
                         Some(old_val_bytes) => {
                             let mut old_val = ParsedBaseDataValue::new(&old_val_bytes[..])?;
                             old_val.strip_suffix();

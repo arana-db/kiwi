@@ -46,7 +46,9 @@ pub async fn process_connection(
                     Ok(n) => {
                         if n == 0 { return Ok(()); }
 
-                        match resp_parser.parse(Bytes::copy_from_slice(&buf[..n])) {
+                        let parse_result =
+                            resp_parser.parse(Bytes::copy_from_slice(&buf[..n]));
+                        match parse_result {
                             RespParseResult::Complete(data) => {
                                 if let RespData::Array(Some(params)) = data {
                                     if params.is_empty() { continue; }
@@ -61,7 +63,9 @@ pub async fn process_connection(
                                     let response = client.take_reply();
                                     let mut encoder = RespEncoder::new(client.resp_version());
                                     encoder.encode_resp_data(&response);
-                                    match client.write(encoder.get_response().as_ref()).await {
+                                    let write_result =
+                                        client.write(encoder.get_response().as_ref()).await;
+                                    match write_result {
                                         Ok(_) => (),
                                         Err(e) => error!("Write error: {e}"),
                                     }

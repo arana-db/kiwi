@@ -158,7 +158,8 @@ impl OptimizedConnectionHandler {
         loop {
             // Read data using optimized buffer management
             let mut read_buffer = if self.config.enable_buffer_pooling {
-                self.buffer_manager.get_buffer().await
+                let pooled_buffer = self.buffer_manager.get_buffer().await;
+                pooled_buffer
             } else {
                 crate::buffer::PooledBuffer::new(8192, 0)
             };
@@ -178,12 +179,17 @@ impl OptimizedConnectionHandler {
                             match resp_parser.parse(Bytes::copy_from_slice(&read_buffer.buffer[..n])) {
                                 RespParseResult::Complete(data) => {
                                     // Submit to pipeline for processing
-                                    match pipeline.submit_command(data, client.clone()).await {
+                                    let pipeline_result =
+                                        pipeline.submit_command(data, client.clone()).await;
+                                    match pipeline_result {
                                         Ok(response) => {
                                             // Send response
                                             let mut encoder = RespEncoder::new(RespVersion::RESP2);
                                             encoder.encode_resp_data(&response);
-                                            if let Err(e) = client.write(encoder.get_response().as_ref()).await {
+                                            let write_result = client
+                                                .write(encoder.get_response().as_ref())
+                                                .await;
+                                            if let Err(e) = write_result {
                                                 error!("Write error: {}", e);
                                                 if self.config.enable_buffer_pooling {
                                                     self.buffer_manager.return_buffer(read_buffer).await;
@@ -256,7 +262,9 @@ impl OptimizedConnectionHandler {
                                 return Ok(());
                             }
 
-                            match resp_parser.parse(Bytes::copy_from_slice(&read_buffer.buffer[..n])) {
+                            let parse_result = resp_parser
+                                .parse(Bytes::copy_from_slice(&read_buffer.buffer[..n]));
+                            match parse_result {
                                 RespParseResult::Complete(data) => {
                                     if let RespData::Array(Some(params)) = data {
                                         if params.is_empty() { continue; }
@@ -279,7 +287,10 @@ impl OptimizedConnectionHandler {
                                         let response = client.take_reply();
                                         let mut encoder = RespEncoder::new(RespVersion::RESP2);
                                         encoder.encode_resp_data(&response);
-                                        if let Err(e) = client.write(encoder.get_response().as_ref()).await {
+                                        let write_result = client
+                                            .write(encoder.get_response().as_ref())
+                                            .await;
+                                        if let Err(e) = write_result {
                                             error!("Write error: {}", e);
                                             if self.config.enable_buffer_pooling {
                                                 self.buffer_manager.return_buffer(read_buffer).await;

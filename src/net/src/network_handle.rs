@@ -387,7 +387,8 @@ async fn process_command_batch(
         let mut encoder = RespEncoder::new(encoder_version);
         encoder.encode_resp_data(&response);
 
-        match client.write(encoder.get_response().as_ref()).await {
+        let write_result = client.write(encoder.get_response().as_ref()).await;
+        match write_result {
             Ok(_) => debug!("Pipelined response sent successfully"),
             Err(e) => {
                 error!("Write error in pipeline: {}", e);

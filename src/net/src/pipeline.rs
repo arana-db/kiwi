@@ -229,7 +229,8 @@ impl CommandPipeline {
 
                     // Batch timeout - process partial batch
                     _ = batch_timer.tick() => {
-                        if let Some(batch) = current_batch.take() {
+                        let pending_batch = current_batch.take();
+                        if let Some(batch) = pending_batch {
                             if !batch.is_empty() && batch.is_expired(config.batch_timeout) {
                                 Self::process_batch(
                                     batch,
@@ -302,7 +303,8 @@ impl CommandPipeline {
 
         // Wait for all commands in batch to complete
         for handle in handles {
-            if let Err(e) = handle.await {
+            let join_result = handle.await;
+            if let Err(e) = join_result {
                 warn!("Command execution failed in batch {}: {}", batch_id, e);
             }
         }

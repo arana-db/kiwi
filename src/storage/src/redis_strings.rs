@@ -561,11 +561,12 @@ impl Redis {
 
         for key in keys {
             let string_key = BaseKey::new(key);
+            let encoded_string_key = string_key.encode()?;
+            let string_value = db
+                .get_opt(&encoded_string_key, &self.read_options)
+                .context(RocksSnafu)?;
 
-            match db
-                .get_opt(&string_key.encode()?, &self.read_options)
-                .context(RocksSnafu)?
-            {
+            match string_value {
                 Some(val) => {
                     let type_state = match self.check_type_state(val.as_slice(), DataType::String) {
                         Ok(state) => state,
@@ -2046,7 +2047,8 @@ impl Redis {
                 ColumnFamilyIndex::ZsetsDataCF,
                 ColumnFamilyIndex::ZsetsScoreCF,
             ] {
-                if let Some(cf) = self.get_cf_handle(cf_index) {
+                let cf_handle = self.get_cf_handle(cf_index);
+                if let Some(cf) = cf_handle {
                     // Prefix-scan data CF and delete all derived keys
                     let iter = db.iterator_cf(
                         &cf,
@@ -2146,7 +2148,8 @@ impl Redis {
         ];
 
         for cf_index in all_cf_indexes {
-            if let Some(cf) = self.get_cf_handle(cf_index) {
+            let cf_handle = self.get_cf_handle(cf_index);
+            if let Some(cf) = cf_handle {
                 let mut keys_chunk: Vec<Vec<u8>> = Vec::with_capacity(CHUNK_SIZE);
 
                 let iter = db.iterator_cf(&cf, rocksdb::IteratorMode::Start);
@@ -2226,33 +2229,44 @@ impl Redis {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
 
             // Decode the key to get the actual user key
-            if let Ok(base_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]) {
+            let parsed_base_key_result = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]);
+            if let Ok(base_key) = parsed_base_key_result {
                 // Check if the string key is not expired
                 if !value_bytes.is_empty() {
-                    if let Ok(parsed) = ParsedStringsValue::new(&value_bytes[..]) {
+                    let parsed_string_result = ParsedStringsValue::new(&value_bytes[..]);
+                    if let Ok(parsed) = parsed_string_result {
                         if !parsed.is_stale() {
                             return Ok(Some(String::from_utf8_lossy(base_key.key()).to_string()));
                         }
                     }
                 }
-            } else if let Ok(meta_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..])
-            {
-                // Check if meta key is not expired
-                if !value_bytes.is_empty() {
-                    let is_valid = if let Ok(meta) =
-                        crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
-                    {
-                        !meta.is_stale() && meta.count() > 0
-                    } else if let Ok(list_meta) =
-                        crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
-                    {
-                        !list_meta.is_stale() && list_meta.count() > 0
-                    } else {
-                        false
-                    };
+            } else {
+                let parsed_meta_key_result =
+                    crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]);
+                if let Ok(meta_key) = parsed_meta_key_result {
+                    // Check if meta key is not expired
+                    if !value_bytes.is_empty() {
+                        let parsed_meta_result =
+                            crate::format_base_meta_value::ParsedBaseMetaValue::new(
+                                &value_bytes[..],
+                            );
+                        let is_valid = if let Ok(meta) = parsed_meta_result {
+                            !meta.is_stale() && meta.count() > 0
+                        } else {
+                            let parsed_list_meta_result =
+                                crate::format_list_meta_value::ParsedListsMetaValue::new(
+                                    &value_bytes[..],
+                                );
+                            if let Ok(list_meta) = parsed_list_meta_result {
+                                !list_meta.is_stale() && list_meta.count() > 0
+                            } else {
+                                false
+                            }
+                        };
 
-                    if is_valid {
-                        return Ok(Some(String::from_utf8_lossy(meta_key.key()).to_string()));
+                        if is_valid {
+                            return Ok(Some(String::from_utf8_lossy(meta_key.key()).to_string()));
+                        }
                     }
                 }
             }

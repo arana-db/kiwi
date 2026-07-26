@@ -246,10 +246,10 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
             }
 
             let mut client = self.client.lock().await;
-            match client
+            let append_result = client
                 .append_entries(TonicRequest::new(proto_req.clone()))
-                .await
-            {
+                .await;
+            match append_result {
                 Ok(response) => {
                     let proto_resp = response.into_inner();
                     return (&proto_resp).try_into().map_err(|e| {
@@ -302,7 +302,8 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
             }
 
             let mut client = self.client.lock().await;
-            match client.vote(TonicRequest::new(proto_req)).await {
+            let vote_result = client.vote(TonicRequest::new(proto_req)).await;
+            match vote_result {
                 Ok(response) => {
                     let proto_resp = response.into_inner();
                     // Proto → OpenRaft

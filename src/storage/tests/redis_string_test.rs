@@ -804,10 +804,13 @@ mod redis_string_test {
             handle.join().unwrap();
         }
 
-        if let Ok(redis) = Arc::try_unwrap(redis_arc) {
-            cleanup_redis(redis, &test_db_path);
-        } else {
-            safe_cleanup_test_db(&test_db_path);
+        match Arc::try_unwrap(redis_arc) {
+            Ok(redis) => {
+                cleanup_redis(redis, &test_db_path);
+            }
+            _ => {
+                safe_cleanup_test_db(&test_db_path);
+            }
         }
     }
 
