@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM rust:1.95-bookworm AS builder
+FROM rust:1.97.1-bookworm AS builder
 
 WORKDIR /kiwi
 
