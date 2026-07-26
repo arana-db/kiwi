@@ -74,6 +74,7 @@ pub use storage_server::{
 
 #[cfg(feature = "runtime-baseline")]
 pub use baseline::{
-    AttemptState, BaselineAttempt, BaselineEvent, BaselineObserver, BaselineTrace,
-    BaselineTransitionError, ExecutionOutcome, LogicalRequestId,
+    AttemptState, BaselineAttempt, BaselineEvent, BaselineObserver, BaselineObserverHandle,
+    BaselineTrace, BaselineTransitionError, BaselineTransitionFailure, ExecutionOutcome,
+    LogicalRequestId,
 };
