@@ -59,7 +59,7 @@
 
 - [ ] 运行 `rustup show active-toolchain` 和 `rustc --version --verbose`，确认当前 checkout 使用 Rust 1.97.1 stable。
 - [ ] Windows 验证必须在 Visual Studio Developer Command Prompt 或已加载等价 VS C++ 环境的终端中执行；`rustc --version --verbose` 必须严格包含 `host: x86_64-pc-windows-msvc`，且 `where cl`（PowerShell 使用 `where.exe cl`）必须解析到可执行的 MSVC `cl.exe`。任一条件不满足时立即停止，不得把后续结果记为 Windows MSVC 验证。
-- [ ] Windows MSVC + Protoc 27.1：`cargo fmt --all -- --check`、`cargo check --workspace --all-features --locked`、`cargo clippy --all-features --workspace -- -D warnings -D clippy::unwrap_used`、`cargo test --workspace --all-features --locked`。
+- [ ] Windows MSVC + Protoc 27.1：`cargo fmt --all -- --check`、`cargo check --workspace --all-features --locked`、`cargo clippy --locked --all-features --workspace -- -D warnings -D clippy::unwrap_used`、`cargo test --workspace --all-features --locked`。
 - [ ] WSL/Linux 使用独立 target 重复 check、Clippy 和 test，不与 Windows 共享 native artifacts。
 - [ ] 运行 `docker build --target builder -t kiwi-rust-1.97.1-builder .`。
 - [ ] 运行 `git diff --check origin/main...HEAD`并确认无 Edition 2024 语义迁移或业务源码改动。
