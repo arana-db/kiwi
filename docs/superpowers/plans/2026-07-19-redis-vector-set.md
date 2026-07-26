@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - 基线为 `origin/main` 的 `cdada8b`；忽略尚未合入的 error-catalog/error-model 分支，错误处理遵循当前主分支模式。
-- 首版只支持 standalone；所有 Vector Set storage API 在 Raft append hook 已安装时返回 `ERR Vector Set is not supported in cluster mode`。
+- 首版支持 standalone 与 Raft Group cluster 模式；暂不支持 Redis Cluster 的槽位路由。
 - 首版只支持 cosine、canonical FP32 little-endian 和显式 `NOQUANT`；默认 Q8、显式 `Q8`、`BIN`、VEMB `RAW` 均返回明确的 unsupported 错误。
 - 首版只实现 FLAT；`TRUTH` 与普通 `VSIM` 都走同一个精确引擎，但保留不同的搜索模式枚举。
 - 首版不实现 `VINFO`、`INFO VECTOR`、HNSW、FAISS/IVF、`storage_incarnation`、O(1) `DEL`、Raft logical mutation、ReadIndex、snapshot barrier 和滚动升级门禁。
@@ -41,7 +41,14 @@
 | `src/conf/src/raft_type.rs` | 追加跨 crate 使用的 VectorDataCF index |
 | `src/storage/src/logindex/types.rs` | 追加 VectorDataCF 的 log-index 元数据 |
 | `src/raft/src/lib.rs` | 追加 CF 名称和一致性断言 |
-| `src/cmd/src/vector.rs` | 七个命令、参数解析、错误和 RESP reply 构造 |
+| `src/cmd/src/vector/mod.rs` | 共享解析器、错误/回复辅助函数与命令注册测试 |
+| `src/cmd/src/vector/vadd.rs` | `VAddCmd` 实现 |
+| `src/cmd/src/vector/vsim.rs` | `VSimCmd` 实现 |
+| `src/cmd/src/vector/vrem.rs` | `VRemCmd` 实现 |
+| `src/cmd/src/vector/vcard.rs` | `VCardCmd` 实现 |
+| `src/cmd/src/vector/vdim.rs` | `VDimCmd` 实现 |
+| `src/cmd/src/vector/vemb.rs` | `VEmbCmd` 实现 |
+| `src/cmd/src/vector/vismember.rs` | `VIsMemberCmd` 实现 |
 | `src/cmd/src/lib.rs` | 导出 vector 命令模块 |
 | `src/cmd/src/table.rs` | 注册七个命令 |
 | `src/resp/src/encode.rs` | RESP2 下递归降级 Map/Double，RESP3 保持原生类型 |
@@ -417,8 +424,7 @@ mod redis_vectors;
 
 Implementation sequence inside `Redis::vadd`:
 
-1. Reject cluster mode by checking `self.append_log_fn.get().is_some()`.
-2. Acquire `ScopeRecordLock` using the user key.
+1. Acquire `ScopeRecordLock` using the user key.
 3. Read `MetaCF[BaseMetaKey::new(key)]`.
 4. Missing or stale meta creates `VectorMeta::new_after(1, dimension, previous_generation)` whose version is the current timestamp clamped above the previous generation (monotonic, so a recreated VectorSet can never address stale `VectorDataCF` rows), and does not increment it again.
 5. Live non-VectorSet meta returns the same WRONGTYPE text used by `check_type_state`.
@@ -787,9 +793,9 @@ Reply contracts:
 
 Flags and ACL categories:
 
-- VADD/VREM: `WRITE | FAST | MODULE_NO_CLUSTER`, `KEYSPACE | WRITE`.
-- VSIM: `READONLY | MODULE_NO_CLUSTER`, `KEYSPACE | READ | SLOW`.
-- VCARD/VDIM/VEMB/VISMEMBER: `READONLY | FAST | MODULE_NO_CLUSTER`, `KEYSPACE | READ`.
+- VADD/VREM: `WRITE | FAST`, `KEYSPACE | WRITE`.
+- VSIM: `READONLY`, `KEYSPACE | READ | SLOW`.
+- VCARD/VDIM/VEMB/VISMEMBER: `READONLY | FAST`, `KEYSPACE | READ`.
 
 - [x] **Step 5: Export and register all seven commands**
 
@@ -1046,7 +1052,7 @@ The Phase 1 implementation is complete only when all statements below are true:
 - VADD accepts FP32 and VALUES only with explicit NOQUANT and is binary-safe for elements.
 - VSIM returns exact, deterministic Top-K results without collecting and sorting every hit.
 - RESP2 and RESP3 WITHSCORES replies use their native compatible shapes.
-- Cluster mode rejects all seven Vector Set operations before creating a batch or snapshot.
+- Raft Group cluster 模式支持所有七个命令的写入和读取（通过 binlog 复制到 follower）；Redis Cluster 槽位路由不在本版范围内。
 - Focused Rust/Python tests and the complete Kiwi verification pipeline pass.
 - The final diff contains no FT prototype extraction, HNSW, Raft/snapshot design implementation, or unrelated cleanup.
 
@@ -1054,7 +1060,8 @@ The Phase 1 implementation is complete only when all statements below are true:
 
 Create separate reviewed designs and plans before implementing any of these independent projects:
 
-1. Redis-compatible VINFO and INFO VECTOR observability.
-2. Raft logical VectorSet mutations, leader-linearizable reads and snapshots.
-3. O(1) generation deletion with background compaction cleanup.
-4. HNSW derived index, rebuild/recovery and rolling-upgrade capability gates.
+1. Redis Cluster 槽位路由与跨 slot 查询。
+2. Redis-compatible VINFO and INFO VECTOR observability.
+3. Raft logical VectorSet mutations, leader-linearizable reads and snapshots.
+4. O(1) generation deletion with background compaction cleanup.
+5. HNSW derived index, rebuild/recovery and rolling-upgrade capability gates.

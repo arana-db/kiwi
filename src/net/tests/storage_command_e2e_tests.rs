@@ -424,14 +424,12 @@ async fn storage_command_e2e_generic_storage_commands_use_storage_path() {
 }
 
 #[tokio::test]
-async fn storage_command_e2e_no_cluster_commands_precede_follower_redirect() {
+async fn storage_command_e2e_vector_write_commands_redirect_on_follower() {
     let server = TestServer::start_with_leader_gate(None, Some(Arc::new(FollowerGate))).await;
     let mut stream = tokio::net::TcpStream::connect(server.addr)
         .await
         .expect("connect to server");
-    let expected = RespData::Error(Bytes::from_static(
-        b"ERR Vector Set is not supported in cluster mode",
-    ));
+    let expected = RespData::Error(Bytes::from_static(b"MOVED 127.0.0.1:7380"));
 
     let reply = send_command(
         &mut stream,

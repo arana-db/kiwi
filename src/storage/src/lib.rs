@@ -83,4 +83,7 @@ pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use storage_impl::BeforeOrAfter;
 pub use util::{safe_cleanup_test_db, unique_test_db_path};
-pub use vector::{CanonicalVector, VectorHit, VectorQuery, VectorSearchMode, VectorSearchOptions};
+pub use vector::{
+    CanonicalVector, VectorHit, VectorQuery, VectorSearchEngine, VectorSearchMode,
+    VectorSearchOptions,
+};

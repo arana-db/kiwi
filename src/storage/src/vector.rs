@@ -15,9 +15,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::{cmp::Ordering, collections::BinaryHeap};
+
 use snafu::ensure;
 
 use crate::error::{InvalidArgumentSnafu, Result};
+use crate::format_vector::SimilarityMetric;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CanonicalVector {
@@ -120,6 +123,10 @@ impl CanonicalVector {
     }
 
     pub fn score(&self, other: &Self) -> Result<f64> {
+        self.cosine_score(other)
+    }
+
+    pub fn cosine_score(&self, other: &Self) -> Result<f64> {
         ensure!(
             self.dimension == other.dimension,
             InvalidArgumentSnafu {
@@ -170,6 +177,95 @@ pub struct VectorSearchOptions {
 pub struct VectorHit {
     pub element: Vec<u8>,
     pub score: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ScoredCandidate {
+    element: Vec<u8>,
+    score: f64,
+}
+
+impl PartialOrd for ScoredCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ScoredCandidate {
+    // Score is reversed so `BinaryHeap` (a max-heap) surfaces the *worst*
+    // candidate via `peek()`, enabling top-`count` retention by evicting it.
+    // The element tie-break is intentionally NOT reversed; it must match the
+    // final `sort_by` ordering used when draining the heap.
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .score
+            .total_cmp(&self.score)
+            .then_with(|| self.element.cmp(&other.element))
+    }
+}
+
+impl Eq for ScoredCandidate {}
+
+/// Search strategy for vector-similarity queries.
+///
+/// Currently only exhaustive flat search is implemented. Future variants can
+/// hold pre-built approximate indices such as HNSW.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VectorSearchEngine {
+    Flat,
+}
+
+impl VectorSearchEngine {
+    /// Search `candidates` and return up to `count` best hits according to
+    /// `metric`.
+    pub fn search(
+        &self,
+        query: &CanonicalVector,
+        metric: &SimilarityMetric,
+        count: usize,
+        candidates: impl Iterator<Item = Result<(Vec<u8>, CanonicalVector)>>,
+    ) -> Result<Vec<VectorHit>> {
+        match self {
+            Self::Flat => Self::flat_search(query, metric, count, candidates),
+        }
+    }
+
+    fn flat_search(
+        query: &CanonicalVector,
+        metric: &SimilarityMetric,
+        count: usize,
+        candidates: impl Iterator<Item = Result<(Vec<u8>, CanonicalVector)>>,
+    ) -> Result<Vec<VectorHit>> {
+        let mut heap = BinaryHeap::new();
+
+        for candidate in candidates {
+            let (element, vector) = candidate?;
+            let score = metric.score(query, &vector)?;
+            let item = ScoredCandidate { element, score };
+
+            if heap.len() < count {
+                heap.push(item);
+            } else if heap.peek().is_some_and(|worst| item < *worst) {
+                heap.pop();
+                heap.push(item);
+            }
+        }
+
+        let mut hits = heap
+            .into_iter()
+            .map(|item| VectorHit {
+                element: item.element,
+                score: item.score,
+            })
+            .collect::<Vec<_>>();
+        hits.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.element.cmp(&right.element))
+        });
+        Ok(hits)
+    }
 }
 
 #[cfg(test)]

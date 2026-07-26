@@ -32,14 +32,64 @@ pub const VECTOR_METRIC_COSINE: u8 = 1;
 pub const VECTOR_VALUE_MAGIC: u8 = 0x56;
 pub const VECTOR_VALUE_FORMAT: u8 = 1;
 
+// Vector set meta value layout stored in MetaCF:
+//
+// | data_type | count | version | format | encoding | metric | flags | dimension | zero_reserve | ctime | etime |
+// |    1B     |  8B   |   8B    |   1B   |    1B    |   1B   |   1B  |    4B     |     8B       |  8B   |  8B   |
+//
+// `data_type` is DataType::VectorSet, `encoding` is VECTOR_ENCODING_FP32_LE,
+// and `metric` is the similarity metric used for VSIM (e.g. cosine).
+
+// Vector member data value layout stored in VectorDataCF:
+//
+// | magic | format | dimension | original_l2 | normalized_components ... |
+// |  1B   |   1B   |    4B     |     4B      |      4B * dimension       |
+//
+// `magic` is VECTOR_VALUE_MAGIC and `original_l2` preserves the pre-normalization
+// L2 norm so VEMB can reconstruct the original FP32 vector.
+
 const VECTOR_META_ZERO_RESERVE_LENGTH: usize = 8;
 const VECTOR_VALUE_HEADER_LENGTH: usize = 10;
+
+/// Similarity metric used to compare vectors in a vector set.
+///
+/// The metric is persisted in `VectorMeta` so all future VSIM queries against
+/// the set use the same formula that was established at creation time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimilarityMetric {
+    Cosine,
+}
+
+impl SimilarityMetric {
+    pub fn from_u8(value: u8) -> Result<Self> {
+        match value {
+            VECTOR_METRIC_COSINE => Ok(Self::Cosine),
+            _ => InvalidFormatSnafu {
+                message: format!("unsupported vector metric: {value}"),
+            }
+            .fail(),
+        }
+    }
+
+    pub const fn to_u8(self) -> u8 {
+        match self {
+            Self::Cosine => VECTOR_METRIC_COSINE,
+        }
+    }
+
+    pub fn score(&self, left: &CanonicalVector, right: &CanonicalVector) -> Result<f64> {
+        match self {
+            Self::Cosine => left.cosine_score(right),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VectorMeta {
     count: u64,
     pub(crate) version: u64,
     dimension: u32,
+    metric: SimilarityMetric,
     ctime: u64,
     etime: u64,
 }
@@ -55,9 +105,14 @@ impl VectorMeta {
             count,
             version,
             dimension,
+            metric: SimilarityMetric::Cosine,
             ctime: now,
             etime: 0,
         }
+    }
+
+    pub(crate) fn metric(&self) -> SimilarityMetric {
+        self.metric
     }
 
     pub fn encode(&self) -> BytesMut {
@@ -67,7 +122,7 @@ impl VectorMeta {
         output.put_u64_le(self.version);
         output.put_u8(VECTOR_META_FORMAT);
         output.put_u8(VECTOR_ENCODING_FP32_LE);
-        output.put_u8(VECTOR_METRIC_COSINE);
+        output.put_u8(self.metric.to_u8());
         output.put_u8(0);
         output.put_u32_le(self.dimension);
         output.put_bytes(0, VECTOR_META_ZERO_RESERVE_LENGTH);
@@ -121,12 +176,7 @@ impl VectorMeta {
                 message: format!("unsupported vector encoding: {encoding}")
             }
         );
-        ensure!(
-            metric == VECTOR_METRIC_COSINE,
-            InvalidFormatSnafu {
-                message: format!("unsupported vector metric: {metric}")
-            }
-        );
+        let metric = SimilarityMetric::from_u8(metric)?;
         ensure!(
             flags == 0 && zero_reserve.iter().all(|byte| *byte == 0),
             InvalidFormatSnafu {
@@ -144,6 +194,7 @@ impl VectorMeta {
             count,
             version,
             dimension,
+            metric,
             ctime,
             etime,
         })
