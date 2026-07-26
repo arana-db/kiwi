@@ -44,7 +44,7 @@ log = "0.4"
 # Kiwi uses the Arana-maintained arana-db/rust-rocksdb fork to provide the
 # TableProperties Collector/Factory FFI required by Storage LogIndex. The
 # maintenance tag names the baseline; Cargo.lock records the resolved commit.
-rocksdb = { package = "rust-rocksdb", git = "https://github.com/arana-db/rust-rocksdb", tag = "v0.51.0-arana.1", features = ["multi-threaded-cf"] }
+rocksdb = { package = "rust-rocksdb", git = "https://github.com/arana-db/rust-rocksdb", tag = "v0.51.0-arana.2", features = ["multi-threaded-cf"] }
 thiserror = "2.0"
 serde = "1.0"
 serde_json = "1.0"

@@ -116,7 +116,7 @@ redis-cli -p 7379 get foo         # "bar"
 
 ### RocksDB（Arana 维护的 Fork）
 
-Kiwi 使用 [Arana 维护的 rust-rocksdb fork](https://github.com/arana-db/rust-rocksdb) 提供 Storage LogIndex 所需的 TableProperties Collector/Factory FFI。依赖使用维护发布标签 [`v0.51.0-arana.1`](https://github.com/arana-db/rust-rocksdb/tree/v0.51.0-arana.1)。已发布的标签不得移动，同时由 `Cargo.lock` 记录解析后的精确提交，保证构建可审计、可复现。
+Kiwi 使用 [Arana 维护的 rust-rocksdb fork](https://github.com/arana-db/rust-rocksdb) 提供 Storage LogIndex 所需的 TableProperties Collector/Factory FFI。依赖使用维护发布标签 [`v0.51.0-arana.2`](https://github.com/arana-db/rust-rocksdb/tree/v0.51.0-arana.2)。已发布的标签不得移动，同时由 `Cargo.lock` 记录解析后的精确提交，保证构建可审计、可复现。
 
 ## 贡献
 
