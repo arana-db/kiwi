@@ -131,6 +131,7 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         crate::admin::ConfigCmd,
         // Set commands
         crate::sadd::SaddCmd,
+        crate::scan::ScanCmd,
         crate::scard::ScardCmd,
         crate::sdiff::SdiffCmd,
         crate::sdiffstore::SdiffstoreCmd,
