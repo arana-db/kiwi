@@ -97,6 +97,7 @@ pub mod zcount;
 pub mod zincrby;
 pub mod zinterstore;
 pub mod zlexcount;
+pub mod zmscore;
 pub mod zrange;
 pub mod zrangebylex;
 pub mod zrangebyscore;
