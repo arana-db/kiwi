@@ -46,6 +46,7 @@ mod redis;
 mod storage_define;
 mod storage_impl;
 mod storage_murmur3;
+mod storage_scan;
 
 // commands
 mod redis_hashes;
