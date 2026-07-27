@@ -2228,47 +2228,42 @@ impl Redis {
         for item in iter {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
 
-            // Decode the key to get the actual user key
-            let parsed_base_key_result = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]);
-            if let Ok(base_key) = parsed_base_key_result {
-                // Check if the string key is not expired
-                if !value_bytes.is_empty() {
-                    let parsed_string_result = ParsedStringsValue::new(&value_bytes[..]);
-                    if let Ok(parsed) = parsed_string_result
-                        && !parsed.is_stale()
-                    {
-                        return Ok(Some(String::from_utf8_lossy(base_key.key()).to_string()));
-                    }
-                }
-            } else {
-                let parsed_meta_key_result =
-                    crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]);
-                if let Ok(meta_key) = parsed_meta_key_result {
-                    // Check if meta key is not expired
-                    if !value_bytes.is_empty() {
-                        let parsed_meta_result =
-                            crate::format_base_meta_value::ParsedBaseMetaValue::new(
-                                &value_bytes[..],
-                            );
-                        let is_valid = if let Ok(meta) = parsed_meta_result {
-                            !meta.is_stale() && meta.count() > 0
-                        } else {
-                            let parsed_list_meta_result =
-                                crate::format_list_meta_value::ParsedListsMetaValue::new(
-                                    &value_bytes[..],
-                                );
-                            if let Ok(list_meta) = parsed_list_meta_result {
-                                !list_meta.is_stale() && list_meta.count() > 0
-                            } else {
-                                false
-                            }
-                        };
+            if value_bytes.is_empty() {
+                continue;
+            }
 
-                        if is_valid {
-                            return Ok(Some(String::from_utf8_lossy(meta_key.key()).to_string()));
-                        }
-                    }
-                }
+            // MetaCF stores both string values and the meta values of
+            // hash/set/zset/list under the same key encoding (BaseMetaKey is a
+            // type alias of BaseKey), so the user key is decoded once and the
+            // value bytes decide whether the key is live. This mirrors the type
+            // probing order used by `get_key_type`.
+            let Ok(parsed_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]) else {
+                continue;
+            };
+
+            // String value: the entry is a plain string key.
+            if let Ok(parsed) = ParsedStringsValue::new(&value_bytes[..])
+                && !parsed.is_stale()
+            {
+                return Ok(Some(String::from_utf8_lossy(parsed_key.key()).to_string()));
+            }
+
+            // Otherwise the value is a collection meta value: hash/set/zset use
+            // the base meta layout and list uses the list meta layout.
+            let is_live_collection = if let Ok(meta) =
+                crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
+            {
+                !meta.is_stale() && meta.count() > 0
+            } else if let Ok(list_meta) =
+                crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
+            {
+                !list_meta.is_stale() && list_meta.count() > 0
+            } else {
+                false
+            };
+
+            if is_live_collection {
+                return Ok(Some(String::from_utf8_lossy(parsed_key.key()).to_string()));
             }
         }
 

@@ -1167,4 +1167,35 @@ mod redis_string_test {
 
         cleanup_redis(redis, &test_db_path);
     }
+
+    // Regression: string keys and meta keys share the same encoding in MetaCF
+    // (`pub type BaseMetaKey = BaseKey`), so `random_key` must distinguish the
+    // stored type by the *value*, not by re-parsing the key. A non-string key
+    // (e.g. a hash) must still be returned.
+    #[test]
+    fn test_random_key_returns_non_string_type() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        // Only a hash key exists — no string keys at all.
+        let hash_key = b"only_hash_key";
+        assert_eq!(redis.hset(hash_key, b"field", b"value").unwrap(), 1);
+
+        let random = redis
+            .random_key()
+            .expect("random_key should not error with a live hash key");
+        assert_eq!(
+            random.as_deref(),
+            Some("only_hash_key"),
+            "random_key must return a non-string (hash) key"
+        );
+
+        cleanup_redis(redis, &test_db_path);
+    }
 }
