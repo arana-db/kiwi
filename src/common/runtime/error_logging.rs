@@ -546,14 +546,14 @@ pub fn get_global_error_logger() -> Option<Arc<ErrorLogger>> {
 /// Convenience macro for logging errors with the global logger
 #[macro_export]
 macro_rules! log_dual_runtime_error {
-    ($error:expr, $runtime:expr) => {
+    ($error:expr_2021, $runtime:expr_2021) => {
         if let Some(logger) = $crate::runtime::error_logging::get_global_error_logger() {
             tokio::spawn(async move {
                 logger.log_simple_error($error, $runtime).await;
             });
         }
     };
-    ($error:expr, $runtime:expr, $correlation_id:expr) => {
+    ($error:expr_2021, $runtime:expr_2021, $correlation_id:expr_2021) => {
         if let Some(logger) = $crate::runtime::error_logging::get_global_error_logger() {
             tokio::spawn(async move {
                 logger

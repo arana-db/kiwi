@@ -241,11 +241,12 @@ impl<'a> Drop for ScopeRecordMultiLock<'a> {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicI32, AtomicI64, AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier};
     use std::thread;
     use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn test_basic_lock_unlock() {
@@ -447,17 +448,23 @@ mod tests {
     fn test_parallel_try_multi_lock() {
         let mgr = Arc::new(LockMgr::new(16));
         let counter = Arc::new(AtomicUsize::new(0));
+        let start = Arc::new(Barrier::new(4));
+        let attempted = Arc::new(Barrier::new(4));
 
         let handles: Vec<_> = (0..4)
             .map(|_| {
                 let mgr = mgr.clone();
                 let counter = counter.clone();
+                let start = start.clone();
+                let attempted = attempted.clone();
                 thread::spawn(move || {
-                    if let Some(_guard) = ScopeRecordMultiLock::try_new(&mgr, ["p", "q"]) {
+                    start.wait();
+                    let guard = ScopeRecordMultiLock::try_new(&mgr, ["p", "q"]);
+                    if guard.is_some() {
                         counter.fetch_add(1, Ordering::SeqCst);
-                        thread::sleep(Duration::from_millis(50));
-                        // guard is only released when it leaves the scope
                     }
+                    attempted.wait();
+                    drop(guard);
                 })
             })
             .collect();

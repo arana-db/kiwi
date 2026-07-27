@@ -701,15 +701,15 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         let _snapshot_state = Arc::clone(&self.snapshot_state_gate).lock_owned().await;
         // On first access, lazily load from persisted snapshot to recover last_applied
         // after restart (otherwise openraft would scan from index 0 and fail if logs were purged).
-        if self.last_applied.is_none() {
-            if let Some(snap) = load_current_snapshot(&self.snapshot_work_dir)? {
-                self.last_applied = snap.meta.last_log_id;
-                self.last_membership = snap.meta.last_membership.clone();
-                log::info!(
-                    "Recovered last_applied={:?} from persisted snapshot",
-                    self.last_applied
-                );
-            }
+        if self.last_applied.is_none()
+            && let Some(snap) = load_current_snapshot(&self.snapshot_work_dir)?
+        {
+            self.last_applied = snap.meta.last_log_id;
+            self.last_membership = snap.meta.last_membership.clone();
+            log::info!(
+                "Recovered last_applied={:?} from persisted snapshot",
+                self.last_applied
+            );
         }
         Ok((self.last_applied, self.last_membership.clone()))
     }

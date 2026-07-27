@@ -109,9 +109,10 @@ impl Redis {
                                     ParsedBaseDataValue::new(&existing_member_val[..])?;
                                 parsed_base_data_val.strip_suffix();
                                 not_found = false;
-                                match String::from_utf8_lossy(&parsed_base_data_val.user_value())
-                                    .parse::<f64>()
-                                {
+                                let user_value = parsed_base_data_val.user_value();
+                                let parsed_score =
+                                    String::from_utf8_lossy(&user_value).parse::<f64>();
+                                match parsed_score {
                                     Ok(existing_score) => {
                                         if (existing_score - sm.score).abs() < f64::EPSILON {
                                             continue;
@@ -373,10 +374,10 @@ impl Redis {
                         let mut parsed_base_data_val =
                             ParsedBaseDataValue::new(&existing_member_val[..])?;
                         parsed_base_data_val.strip_suffix();
+                        let user_value = parsed_base_data_val.user_value();
+                        let parsed_score = String::from_utf8_lossy(&user_value).parse::<f64>();
 
-                        match String::from_utf8_lossy(&parsed_base_data_val.user_value())
-                            .parse::<f64>()
-                        {
+                        match parsed_score {
                             Ok(current_score) => {
                                 new_score = current_score + increment;
                                 if new_score.is_nan() || new_score.is_infinite() {
@@ -577,10 +578,10 @@ impl Redis {
             let score_str = format!("{}", score_key.score());
 
             // Apply pattern matching if specified
-            if let Some(pat) = pattern {
-                if !glob_match(&member, pat) {
-                    continue;
-                }
+            if let Some(pat) = pattern
+                && !glob_match(&member, pat)
+            {
+                continue;
             }
 
             results.push((member, score_str));
@@ -847,8 +848,10 @@ impl Redis {
                 // Get the member's score
                 let mut parsed_base_data_val = ParsedBaseDataValue::new(&existing_member_val[..])?;
                 parsed_base_data_val.strip_suffix();
+                let user_value = parsed_base_data_val.user_value();
+                let parsed_score = String::from_utf8_lossy(&user_value).parse::<f64>();
 
-                match String::from_utf8_lossy(&parsed_base_data_val.user_value()).parse::<f64>() {
+                match parsed_score {
                     Ok(score) => {
                         // Delete score key
                         let score_key = ZSetsScoreKey::new(key, version, score, member).encode()?;
@@ -952,10 +955,10 @@ impl Redis {
             let member = score_key.member();
 
             // Check if we've passed the max boundary - break early for optimization
-            if let Some(ref max_m) = max_member {
-                if member > max_m.as_slice() {
-                    break;
-                }
+            if let Some(ref max_m) = max_member
+                && member > max_m.as_slice()
+            {
+                break;
             }
 
             // Check if member is within the lexicographical range
@@ -1258,35 +1261,35 @@ impl Redis {
         // fail with WRONGTYPE when the destination holds a different data type.
         if !dest_meta_val.is_empty() {
             // If the destination is a parseable ZSet, clean up its score/member data.
-            if let Ok(dest_meta) = ParsedZSetsMetaValue::new(&dest_meta_val[..]) {
-                if dest_meta.is_valid() {
-                    let dest_version = dest_meta.version();
+            if let Ok(dest_meta) = ParsedZSetsMetaValue::new(&dest_meta_val[..])
+                && dest_meta.is_valid()
+            {
+                let dest_version = dest_meta.version();
 
-                    // Delete all score keys and member keys
-                    let min_score_key =
-                        ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
-                            .encode_seek_key()?;
-                    let iter = db.iterator_cf_opt(
-                        &cf_score,
-                        ReadOptions::default(),
-                        IteratorMode::From(&min_score_key, Direction::Forward),
-                    );
+                // Delete all score keys and member keys
+                let min_score_key =
+                    ZSetsScoreKey::new(destination, dest_version, f64::NEG_INFINITY, &[])
+                        .encode_seek_key()?;
+                let iter = db.iterator_cf_opt(
+                    &cf_score,
+                    ReadOptions::default(),
+                    IteratorMode::From(&min_score_key, Direction::Forward),
+                );
 
-                    for item in iter {
-                        let (raw_key, _) = item.context(RocksSnafu)?;
-                        let score_key = ParsedZSetsScoreKey::new(&raw_key)?;
+                for item in iter {
+                    let (raw_key, _) = item.context(RocksSnafu)?;
+                    let score_key = ParsedZSetsScoreKey::new(&raw_key)?;
 
-                        if destination != score_key.key() || dest_version != score_key.version() {
-                            break;
-                        }
-
-                        // Delete score key and member key
-                        batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
-                        let member_key =
-                            MemberDataKey::new(destination, dest_version, score_key.member())
-                                .encode()?;
-                        batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
+                    if destination != score_key.key() || dest_version != score_key.version() {
+                        break;
                     }
+
+                    // Delete score key and member key
+                    batch.delete(ColumnFamilyIndex::ZsetsScoreCF, &raw_key)?;
+                    let member_key =
+                        MemberDataKey::new(destination, dest_version, score_key.member())
+                            .encode()?;
+                    batch.delete(ColumnFamilyIndex::ZsetsDataCF, &member_key)?;
                 }
             }
             // Remove the old destination meta key so the new result can replace it.
@@ -1413,10 +1416,10 @@ impl Redis {
             let member = score_key.member();
 
             // Check if we've passed the max boundary
-            if let Some(ref max_m) = max_member {
-                if member > max_m.as_slice() {
-                    break;
-                }
+            if let Some(ref max_m) = max_member
+                && member > max_m.as_slice()
+            {
+                break;
             }
 
             if is_in_lex_range(
@@ -1596,10 +1599,10 @@ impl Redis {
 
             let member = score_key.member();
 
-            if let Some(ref max_m) = max_member {
-                if member > max_m.as_slice() {
-                    break;
-                }
+            if let Some(ref max_m) = max_member
+                && member > max_m.as_slice()
+            {
+                break;
             }
 
             if is_in_lex_range(
@@ -2180,7 +2183,7 @@ fn is_in_lex_range(
     max_exclusive: bool,
 ) -> bool {
     // Check min boundary
-    if let Some(ref min) = min_member {
+    if let Some(min) = min_member {
         match member.cmp(min.as_slice()) {
             std::cmp::Ordering::Less => return false,
             std::cmp::Ordering::Equal if min_exclusive => return false,
@@ -2189,7 +2192,7 @@ fn is_in_lex_range(
     }
 
     // Check max boundary
-    if let Some(ref max) = max_member {
+    if let Some(max) = max_member {
         match member.cmp(max.as_slice()) {
             std::cmp::Ordering::Greater => return false,
             std::cmp::Ordering::Equal if max_exclusive => return false,

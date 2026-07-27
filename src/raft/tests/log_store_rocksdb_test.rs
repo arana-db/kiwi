@@ -301,10 +301,8 @@ async fn close_and_reopen_recovers_complete_raft_state() {
 
     let recovered_entries = {
         let mut reader = reopened.get_log_reader().await;
-        reader
-            .try_get_log_entries(1..=10)
-            .await
-            .expect("Failed to read recovered entries")
+        let read_result = reader.try_get_log_entries(1..=10).await;
+        read_result.expect("Failed to read recovered entries")
     };
     assert_eq!(recovered_entries.len(), 6);
     assert_eq!(
@@ -356,10 +354,8 @@ async fn dropping_one_log_store_clone_keeps_remaining_owner_usable() {
 
     let visible_entries = {
         let mut reader = remaining.get_log_reader().await;
-        reader
-            .try_get_log_entries(1..=6)
-            .await
-            .expect("Remaining clone should read entries")
+        let read_result = reader.try_get_log_entries(1..=6).await;
+        read_result.expect("Remaining clone should read entries")
     };
     assert_eq!(
         serde_json::to_vec(&visible_entries).expect("Failed to serialize visible entries"),
@@ -408,10 +404,8 @@ async fn dropping_one_log_store_clone_keeps_remaining_owner_usable() {
 
     let reopened_entries = {
         let mut reader = reopened.get_log_reader().await;
-        reader
-            .try_get_log_entries(1..=6)
-            .await
-            .expect("Reopened store should recover retained entries")
+        let read_result = reader.try_get_log_entries(1..=6).await;
+        read_result.expect("Reopened store should recover retained entries")
     };
     assert_eq!(
         serde_json::to_vec(&reopened_entries).expect("Failed to serialize reopened entries"),

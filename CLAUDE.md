@@ -48,10 +48,17 @@ make -C tests test-python
 
 ## Toolchain & Build Notes
 
-- The Rust toolchain is pinned in `rust-toolchain.toml` to `nightly-2025-08-20`.
+- Normal development, CI, and release builds use Rust 1.97.1 stable. The root
+  `rust-toolchain.toml` selects the exact toolchain automatically; verify it with
+  `rustup show active-toolchain` and `rustc --version --verbose`.
+- All Kiwi workspace crates use Rust 2024 Edition.
+- Dated nightly toolchains are reserved for specialized checks such as
+  Sanitizers and do not define the normal development baseline.
 - The first build compiles `librocksdb-sys` from source and can take ~18 minutes. Incremental builds with `sccache` are typically 30 seconds–2 minutes.
 - The project depends on a forked RocksDB crate (`arana-db/rust-rocksdb`) because upstream does not yet expose the `TablePropertiesCollector` FFI functions required by the Raft module. Do not switch to the official `rust-rocksdb` crate.
-- `protoc` (protobuf compiler) is required.
+- `protoc` (protobuf compiler) is required. Windows builds use the Rust MSVC
+  target and Visual Studio C++ build tools; Linux and macOS builds need the
+  project's native C/C++ build dependencies.
 
 ## Architecture
 

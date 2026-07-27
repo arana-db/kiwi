@@ -2331,7 +2331,7 @@ dependencies = [
 [[package]]
 name = "rust-librocksdb-sys"
 version = "0.47.1+11.1.2"
-source = "git+https://github.com/arana-db/rust-rocksdb?tag=v0.51.0-arana.1#971c792f3d6312204a5e162bd60d4d3c84a9e8a8"
+source = "git+https://github.com/arana-db/rust-rocksdb?tag=v0.51.0-arana.2#d256effe16ad56702864c115ebed1e8c8f2dfda4"
 dependencies = [
  "bindgen",
  "bzip2-sys",
@@ -2348,7 +2348,7 @@ dependencies = [
 [[package]]
 name = "rust-rocksdb"
 version = "0.51.0"
-source = "git+https://github.com/arana-db/rust-rocksdb?tag=v0.51.0-arana.1#971c792f3d6312204a5e162bd60d4d3c84a9e8a8"
+source = "git+https://github.com/arana-db/rust-rocksdb?tag=v0.51.0-arana.2#d256effe16ad56702864c115ebed1e8c8f2dfda4"
 dependencies = [
  "libc",
  "parking_lot",

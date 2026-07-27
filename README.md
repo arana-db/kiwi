@@ -61,8 +61,18 @@ Client → TCP accept [network runtime] → RESP parse → Command lookup
 
 ### Prerequisites
 
+Kiwi's normal development, CI, and release baseline is Rust 1.97.1 stable. After
+you clone the repository, `rust-toolchain.toml` makes rustup select that exact
+toolchain automatically. All Kiwi workspace crates use Rust 2024 Edition.
+
+`protoc` and the native C/C++ tools needed to build RocksDB are also required.
+On Windows, use the Rust MSVC target and install the Visual Studio C++ build
+tools. On Linux and macOS, install the platform C/C++ build dependencies used by
+the project in addition to `protoc`. See the platform-specific commands in the
+[development guide](docs/development.md#prerequisites).
+
 ```bash
-# Rust toolchain
+# Install rustup; rust-toolchain.toml selects Rust 1.97.1 stable in this repo
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # protobuf compiler (macOS)
@@ -72,11 +82,18 @@ brew install protobuf
 apt install protobuf-compiler
 ```
 
+Dated nightly toolchains are reserved for specialized checks such as
+Sanitizers. They do not define the normal development or release baseline.
+
 ### Get the Code
 
 ```bash
 git clone https://github.com/arana-db/kiwi.git
 cd kiwi
+
+# Verify the compiler selected by this checkout
+rustup show active-toolchain
+rustc --version --verbose
 ```
 
 ### Standalone Mode
@@ -112,7 +129,7 @@ See [docs/cluster.md](docs/cluster.md) for the manual step-by-step procedure and
 
 ### RocksDB (Arana-maintained Fork)
 
-Kiwi uses the [Arana-maintained rust-rocksdb fork](https://github.com/arana-db/rust-rocksdb) to provide the TableProperties Collector/Factory FFI required by Storage LogIndex. The dependency uses the maintenance release tag [`v0.51.0-arana.1`](https://github.com/arana-db/rust-rocksdb/tree/v0.51.0-arana.1). Published release tags must not be moved, and `Cargo.lock` records the exact resolved commit for auditable and reproducible builds.
+Kiwi uses the [Arana-maintained rust-rocksdb fork](https://github.com/arana-db/rust-rocksdb) to provide the TableProperties Collector/Factory FFI required by Storage LogIndex. The dependency uses the maintenance release tag [`v0.51.0-arana.2`](https://github.com/arana-db/rust-rocksdb/tree/v0.51.0-arana.2). Published release tags must not be moved, and `Cargo.lock` records the exact resolved commit for auditable and reproducible builds.
 
 ## Contributing
 

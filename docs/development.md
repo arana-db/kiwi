@@ -2,16 +2,79 @@
 
 ## Prerequisites
 
+Normal development, CI, and release builds use the exact Rust 1.97.1 stable
+toolchain pinned in the repository root. After rustup is installed,
+`rust-toolchain.toml` selects it automatically whenever commands run inside this
+repository. All Kiwi workspace crates use Rust 2024 Edition.
+
+Kiwi also requires `protoc` and a native C/C++ toolchain because RocksDB is built
+from source:
+
+- Windows: use the Rust MSVC target and install Visual Studio Build Tools with
+  the C++ workload.
+- Linux: install `clang`, CMake, libclang/LLVM development packages,
+  `pkg-config`, and `protobuf-compiler` as required by the project build.
+- macOS: install the Xcode Command Line Tools and the corresponding project build
+  dependencies; Homebrew provides `protobuf` and CMake.
+
 ```bash
-# Rust toolchain
+# Install rustup; rust-toolchain.toml selects Rust 1.97.1 stable in this repo
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# protobuf compiler (macOS)
-brew install protobuf
+# macOS
+xcode-select --install
+brew install protobuf cmake
 
-# protobuf compiler (Linux)
-apt install protobuf-compiler
+# Debian/Ubuntu Linux
+sudo apt install clang cmake libclang-dev llvm-dev pkg-config protobuf-compiler
 ```
+
+On Windows, install the Visual Studio Build Tools C++ workload first, then run
+the following commands in PowerShell to install the same official Protobuf 27.1
+release used by CI and add it to both the current process and the user `PATH`:
+
+```powershell
+$protocVersion = "27.1"
+$protocZip = "protoc-$protocVersion-win64.zip"
+$protocUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/$protocZip"
+$protocArchive = Join-Path $env:TEMP $protocZip
+$protocRoot = Join-Path $env:LOCALAPPDATA "Programs\protoc-$protocVersion"
+
+Invoke-WebRequest -Uri $protocUrl -OutFile $protocArchive
+Expand-Archive -Path $protocArchive -DestinationPath $protocRoot -Force
+
+$protocBin = Join-Path $protocRoot "bin"
+$processPath = $env:Path
+if ([string]::IsNullOrWhiteSpace($processPath)) {
+    $env:Path = $protocBin
+} elseif (($processPath -split ";") -notcontains $protocBin) {
+    $env:Path = "$protocBin;$processPath"
+}
+
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ([string]::IsNullOrWhiteSpace($userPath)) {
+    [Environment]::SetEnvironmentVariable("Path", $protocBin, "User")
+} elseif (($userPath -split ";") -notcontains $protocBin) {
+    [Environment]::SetEnvironmentVariable("Path", "$protocBin;$userPath", "User")
+}
+
+protoc --version
+```
+
+The final command must report `libprotoc 27.1`. New terminals pick up the user
+`PATH` automatically.
+
+Verify the compiler selected for the current checkout:
+
+```bash
+rustup show active-toolchain
+rustc --version --verbose
+protoc --version
+```
+
+Dated nightly toolchains are used only by specialized checks such as
+Sanitizers. Do not use a floating `stable` channel or a nightly toolchain as the
+normal project baseline.
 
 ## Quick Start
 
@@ -124,5 +187,5 @@ Storage tests use `tempfile::tempdir()` for isolated RocksDB instances.
 
 ## Gotchas
 
-- **RocksDB fork**: The project uses the `v0.51.0-arana.1` maintenance release tag from `arana-db/rust-rocksdb`, not the official `rust-rocksdb` crate. Published release tags must not be moved. This fork adds the TableProperties Collector/Factory FFI required by Storage LogIndex, and `Cargo.lock` records the exact resolved commit.
+- **RocksDB fork**: The project uses the `v0.51.0-arana.2` maintenance release tag from `arana-db/rust-rocksdb`, not the official `rust-rocksdb` crate. Published release tags must not be moved. This fork adds the TableProperties Collector/Factory FFI required by Storage LogIndex, and `Cargo.lock` records the exact resolved commit.
 - **Binary name is `kiwi`**, not `server` — defined in `src/server/Cargo.toml` as `[[bin]] name = "kiwi"`.

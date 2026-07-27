@@ -165,7 +165,11 @@ impl BufferManager {
         let mut stats = self.stats.lock().await;
 
         // Try to get an existing buffer from pool
-        while let Some(mut buffer) = pool.pop_front() {
+        loop {
+            let next_buffer = pool.pop_front();
+            let Some(mut buffer) = next_buffer else {
+                break;
+            };
             // Check if buffer is still good to use
             if !buffer.should_replace(self.config.max_buffer_size) {
                 buffer.reset();
@@ -279,7 +283,11 @@ impl BufferManager {
                 // Keep only non-idle buffers, but maintain minimum pool size
                 let mut kept_buffers = VecDeque::new();
 
-                while let Some(buffer) = pool_guard.pop_front() {
+                loop {
+                    let next_buffer = pool_guard.pop_front();
+                    let Some(buffer) = next_buffer else {
+                        break;
+                    };
                     if buffer.is_idle(config.max_idle_time)
                         && (kept_buffers.len() + pool_guard.len()) > config.min_pool_size
                     {

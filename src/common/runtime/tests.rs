@@ -760,7 +760,8 @@ mod integration_tests {
         let mut error_count = 0;
 
         for handle in handles {
-            match handle.await.unwrap() {
+            let request_result = handle.await.unwrap();
+            match request_result {
                 Ok(_) => _success_count += 1,
                 Err(_) => error_count += 1,
             }
@@ -1054,7 +1055,8 @@ mod integration_tests {
         let mut error_count = 0;
 
         for handle in handles {
-            match handle.await.unwrap() {
+            let request_result = handle.await.unwrap();
+            match request_result {
                 Ok(_) => success_count += 1,
                 Err(_) => error_count += 1,
             }

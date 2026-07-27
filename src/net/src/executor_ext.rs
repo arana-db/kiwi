@@ -60,19 +60,21 @@ impl CmdExecutorNetworkExt for CmdExecutor {
                 return Ok(());
             }
 
-            // Cluster-mode gate: redirect write commands on followers to the leader.
-            if let Some(gate) = exec.leader_gate.as_ref() {
-                if exec.cmd.has_flag(CmdFlags::WRITE) && !gate.is_leader() {
-                    // Simplified redirect: Kiwi returns "MOVED <addr>" (no hash slot,
-                    // unlike Redis Cluster's "MOVED <slot> <ip:port>"). Clients are
-                    // expected to reconnect to the returned leader address directly.
-                    let reply = match gate.leader_resp_addr() {
-                        Some(addr) => format!("MOVED {addr}"),
-                        None => "ERR not leader".to_string(),
-                    };
-                    exec.client.set_reply(RespData::Error(reply.into()));
-                    return Ok(());
-                }
+            // Cluster-mode leader gate: reject writes on non-leaders before any
+            // command-specific setup runs.
+            if let Some(gate) = exec.leader_gate.as_ref()
+                && exec.cmd.has_flag(CmdFlags::WRITE)
+                && !gate.is_leader()
+            {
+                // Simplified redirect: Kiwi returns "MOVED <addr>" (no hash slot,
+                // unlike Redis Cluster's "MOVED <slot> <ip:port>"). Clients are
+                // expected to reconnect to the returned leader address directly.
+                let reply = match gate.leader_resp_addr() {
+                    Some(addr) => format!("MOVED {addr}"),
+                    None => "ERR not leader".to_string(),
+                };
+                exec.client.set_reply(RespData::Error(reply.into()));
+                return Ok(());
             }
 
             // Execute do_initial if needed

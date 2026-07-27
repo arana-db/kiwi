@@ -526,7 +526,8 @@ mod tests {
             Ok(mut executor) => executor.close().await,
             Err(_) => panic!("all exclusive executor owners should be released"),
         }
-        match Arc::try_unwrap(shared_executor) {
+        let shared_executor = Arc::try_unwrap(shared_executor);
+        match shared_executor {
             Ok(mut executor) => executor.close().await,
             Err(_) => panic!("all shared executor owners should be released"),
         }

@@ -4,6 +4,24 @@ Thank you for your interest in contributing to Kiwi!
 
 For development environment setup, build commands, and architecture overview, see [docs/development.md](docs/development.md).
 
+## Development Baseline
+
+Normal development, CI, and release builds use Rust 1.97.1 stable. The repository
+root contains `rust-toolchain.toml`, so rustup selects the exact toolchain
+automatically. Verify it with:
+
+```bash
+rustup show active-toolchain
+rustc --version --verbose
+```
+
+All Kiwi workspace crates use Rust 2024 Edition.
+Dated nightly toolchains are limited to specialized checks such as Sanitizers.
+
+`protoc` is required. Windows builds use the Rust MSVC target and the Visual
+Studio C++ build tools; Linux and macOS builds require the native C/C++ tooling
+documented in [docs/development.md](docs/development.md).
+
 ## Pull Request Workflow
 
 1. Fork the repository and clone your fork

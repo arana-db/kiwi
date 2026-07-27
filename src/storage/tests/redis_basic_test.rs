@@ -449,19 +449,22 @@ mod is_stale_tests {
         let mut meta = HashesMetaValue::new(Bytes::copy_from_slice(&count.to_le_bytes()));
         meta.inner.data_type = data_type;
         meta.set_etime(etime);
-        meta.encode().to_vec()
+        let encoded = meta.encode();
+        encoded.to_vec()
     }
 
     fn create_list_meta_value(count: u64, etime: u64) -> Vec<u8> {
         let mut meta = ListsMetaValue::new(Bytes::copy_from_slice(&count.to_le_bytes()));
         meta.set_etime(etime);
-        meta.encode().to_vec()
+        let encoded = meta.encode();
+        encoded.to_vec()
     }
 
     fn create_string_value(value: &[u8], etime: u64) -> Vec<u8> {
         let mut string_val = StringValue::new(Bytes::copy_from_slice(value));
         string_val.set_etime(etime);
-        string_val.encode().to_vec()
+        let encoded = string_val.encode();
+        encoded.to_vec()
     }
 
     #[test]
