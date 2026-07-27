@@ -1199,6 +1199,34 @@ mod redis_string_test {
         cleanup_redis(redis, &test_db_path);
     }
 
+    // List metadata has a distinct layout and parser from hash/set/zset metadata,
+    // so keep a list-only regression for the dedicated `DataType::List` branch.
+    #[test]
+    fn test_random_key_returns_list_key() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let list_key = b"only_list_key";
+        assert_eq!(redis.lpush(list_key, &[b"value".to_vec()]).unwrap(), 1);
+
+        let random = redis
+            .random_key()
+            .expect("random_key should not error with a live list key");
+        assert_eq!(
+            random.as_deref(),
+            Some("only_list_key"),
+            "random_key must return the only live list key"
+        );
+
+        cleanup_redis(redis, &test_db_path);
+    }
+
     // Regression: `ParsedStringsValue::new` accepts any value whose leading byte
     // is a valid DataType tag and applies no count check, so a string-first
     // probe would misread a collection meta value as a live string and return a
