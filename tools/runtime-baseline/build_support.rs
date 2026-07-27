@@ -140,12 +140,14 @@ pub fn git_dir_from_gitfile(
     source_root: &Path,
     contents: &str,
 ) -> Result<PathBuf, String> {
-    let git_dir = contents
+    let Some(git_dir) = contents
         .trim()
         .strip_prefix("gitdir:")
         .map(str::trim)
         .filter(|path| !path.is_empty())
-        .ok_or_else(|| format!("{} is not a valid Git gitfile", dot_git.display()))?;
+    else {
+        return Err(format!("{} is not a valid Git gitfile", dot_git.display()));
+    };
     Ok(accessible_path(Path::new(git_dir), source_root))
 }
 
