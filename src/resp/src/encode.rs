@@ -198,44 +198,6 @@ impl RespEncoder {
         let _ = write!(self.buffer, "*{len}");
         self.append_crlf()
     }
-
-    fn encode_resp_data_inner(&mut self, data: &RespData) -> &mut Self {
-        match data {
-            RespData::SimpleString(bytes) => {
-                self.buffer.extend_from_slice(b"+");
-                self.buffer.extend_from_slice(bytes);
-                self.append_crlf()
-            }
-            RespData::Error(bytes) => {
-                self.buffer.extend_from_slice(b"-");
-                self.buffer.extend_from_slice(bytes);
-                self.append_crlf()
-            }
-            RespData::Integer(num) => self.append_integer(*num),
-            RespData::BulkString(Some(bytes)) => self.append_bulk_string(bytes),
-            RespData::BulkString(None) | RespData::Array(None) if self.is_resp3() => {
-                self.append_null()
-            }
-            RespData::BulkString(None) => self.set_bulk_string_len(-1),
-            RespData::Array(Some(array)) => {
-                self.append_array_len(array.len() as i64);
-                for item in array {
-                    self.encode_resp_data_inner(item);
-                }
-                self
-            }
-            RespData::Array(None) => self.set_array_len(-1),
-            RespData::Null => self.append_null(),
-            RespData::Boolean(value) => self.append_boolean(*value),
-            RespData::Double(value) => self.append_double(*value),
-            RespData::BigNumber(bytes) => self.append_big_number(bytes),
-            RespData::BulkError(bytes) => self.append_bulk_error(bytes),
-            RespData::VerbatimString { format, data } => self.append_verbatim_string(format, data),
-            RespData::Map(pairs) => self.append_map(pairs),
-            RespData::Set(items) => self.append_set(items),
-            RespData::Push(items) => self.append_push(items),
-        }
-    }
 }
 
 impl RespEncode for RespEncoder {
@@ -400,7 +362,41 @@ impl RespEncode for RespEncoder {
     }
 
     fn encode_resp_data(&mut self, data: &RespData) -> &mut Self {
-        self.encode_resp_data_inner(data)
+        match data {
+            RespData::SimpleString(bytes) => {
+                self.buffer.extend_from_slice(b"+");
+                self.buffer.extend_from_slice(bytes);
+                self.append_crlf()
+            }
+            RespData::Error(bytes) => {
+                self.buffer.extend_from_slice(b"-");
+                self.buffer.extend_from_slice(bytes);
+                self.append_crlf()
+            }
+            RespData::Integer(num) => self.append_integer(*num),
+            RespData::BulkString(Some(bytes)) => self.append_bulk_string(bytes),
+            RespData::BulkString(None) | RespData::Array(None) if self.is_resp3() => {
+                self.append_null()
+            }
+            RespData::BulkString(None) => self.set_bulk_string_len(-1),
+            RespData::Array(Some(array)) => {
+                self.append_array_len(array.len() as i64);
+                for item in array {
+                    self.encode_resp_data(item);
+                }
+                self
+            }
+            RespData::Array(None) => self.set_array_len(-1),
+            RespData::Null => self.append_null(),
+            RespData::Boolean(value) => self.append_boolean(*value),
+            RespData::Double(value) => self.append_double(*value),
+            RespData::BigNumber(bytes) => self.append_big_number(bytes),
+            RespData::BulkError(bytes) => self.append_bulk_error(bytes),
+            RespData::VerbatimString { format, data } => self.append_verbatim_string(format, data),
+            RespData::Map(pairs) => self.append_map(pairs),
+            RespData::Set(items) => self.append_set(items),
+            RespData::Push(items) => self.append_push(items),
+        }
     }
 
     fn append_null(&mut self) -> &mut Self {
@@ -493,8 +489,8 @@ impl RespEncode for RespEncoder {
             self.append_array_len((pairs.len() * 2) as i64);
         }
         for (key, value) in pairs {
-            self.encode_resp_data_inner(key);
-            self.encode_resp_data_inner(value);
+            self.encode_resp_data(key);
+            self.encode_resp_data(value);
         }
         self
     }
@@ -507,7 +503,7 @@ impl RespEncode for RespEncoder {
             self.append_array_len(items.len() as i64);
         }
         for item in items {
-            self.encode_resp_data_inner(item);
+            self.encode_resp_data(item);
         }
         self
     }
@@ -520,7 +516,7 @@ impl RespEncode for RespEncoder {
             self.append_array_len(items.len() as i64);
         }
         for item in items {
-            self.encode_resp_data_inner(item);
+            self.encode_resp_data(item);
         }
         self
     }

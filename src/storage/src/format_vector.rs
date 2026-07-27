@@ -32,22 +32,6 @@ pub const VECTOR_METRIC_COSINE: u8 = 1;
 pub const VECTOR_VALUE_MAGIC: u8 = 0x56;
 pub const VECTOR_VALUE_FORMAT: u8 = 1;
 
-// Vector set meta value layout stored in MetaCF:
-//
-// | data_type | count | version | format | encoding | metric | flags | dimension | zero_reserve | ctime | etime |
-// |    1B     |  8B   |   8B    |   1B   |    1B    |   1B   |   1B  |    4B     |     8B       |  8B   |  8B   |
-//
-// `data_type` is DataType::VectorSet, `encoding` is VECTOR_ENCODING_FP32_LE,
-// and `metric` is the similarity metric used for VSIM (e.g. cosine).
-
-// Vector member data value layout stored in VectorDataCF:
-//
-// | magic | format | dimension | original_l2 | normalized_components ... |
-// |  1B   |   1B   |    4B     |     4B      |      4B * dimension       |
-//
-// `magic` is VECTOR_VALUE_MAGIC and `original_l2` preserves the pre-normalization
-// L2 norm so VEMB can reconstruct the original FP32 vector.
-
 const VECTOR_META_ZERO_RESERVE_LENGTH: usize = 8;
 const VECTOR_VALUE_HEADER_LENGTH: usize = 10;
 
@@ -84,6 +68,13 @@ impl SimilarityMetric {
     }
 }
 
+// Vector set meta value layout stored in MetaCF:
+//
+// | data_type | count | version | format | encoding | metric | flags | dimension | zero_reserve | ctime | etime |
+// |    1B     |  8B   |   8B    |   1B   |    1B    |   1B   |   1B  |    4B     |     8B       |  8B   |  8B   |
+//
+// `data_type` is DataType::VectorSet, `encoding` is VECTOR_ENCODING_FP32_LE,
+// and `metric` is the similarity metric used for VSIM (e.g. cosine).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VectorMeta {
     count: u64,
@@ -229,6 +220,13 @@ impl VectorMeta {
     }
 }
 
+// Vector member data value layout stored in VectorDataCF:
+//
+// | magic | format | dimension | original_l2 | normalized_components ... |
+// |  1B   |   1B   |    4B     |     4B      |      4B * dimension       |
+//
+// `magic` is VECTOR_VALUE_MAGIC and `original_l2` preserves the pre-normalization
+// L2 norm so VEMB can reconstruct the original FP32 vector.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct VectorDataValue {
     canonical: CanonicalVector,
