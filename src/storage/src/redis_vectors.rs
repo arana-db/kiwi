@@ -32,20 +32,30 @@ use crate::{
 };
 
 impl Redis {
-    fn parse_vector_meta(&self, value: &[u8]) -> Result<Option<VectorMeta>> {
+    /// Decode raw meta bytes into a `VectorMeta` without liveness filtering:
+    /// stale or emptied sets are still returned so callers can inspect their
+    /// version. Returns an error when the key holds another live data type.
+    fn decode_vector_meta(&self, value: &[u8]) -> Result<Option<VectorMeta>> {
         if value.is_empty() {
             return Ok(None);
         }
 
         if value[0] == DataType::VectorSet as u8 {
-            let meta = VectorMeta::decode(value)?;
-            return Ok((!meta.is_stale() && meta.count() != 0).then_some(meta));
+            return VectorMeta::decode(value).map(Some);
         }
 
         match self.check_type_state(value, DataType::VectorSet)? {
             TypeCheckState::Missing | TypeCheckState::Stale => Ok(None),
             TypeCheckState::Match => VectorMeta::decode(value).map(Some),
         }
+    }
+
+    /// Decode raw meta bytes into a live `VectorMeta`, treating stale or
+    /// emptied sets as absent.
+    fn parse_vector_meta(&self, value: &[u8]) -> Result<Option<VectorMeta>> {
+        Ok(self
+            .decode_vector_meta(value)?
+            .filter(|meta| !meta.is_stale() && meta.count() != 0))
     }
 
     pub fn vadd(&self, key: &[u8], element: &[u8], vector: &CanonicalVector) -> Result<bool> {
@@ -66,18 +76,15 @@ impl Redis {
         let lock_key = String::from_utf8_lossy(key);
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &lock_key);
         let meta_key = BaseMetaKey::new(key).encode()?;
-        let stored_meta = db.get_cf(&meta_cf, &meta_key).context(RocksSnafu)?;
-        let live_meta = stored_meta
-            .as_deref()
-            .map(|value| self.parse_vector_meta(value))
-            .transpose()?
-            .flatten();
-        let previous_generation = stored_meta
-            .as_deref()
-            .filter(|value| value.first().copied() == Some(DataType::VectorSet as u8))
-            .map(VectorMeta::decode)
-            .transpose()?
-            .map_or(0, |meta| meta.version());
+        let stored_raw = db.get_cf(&meta_cf, &meta_key).context(RocksSnafu)?;
+        let stored_meta = match stored_raw.as_deref() {
+            Some(value) => self.decode_vector_meta(value)?,
+            None => None,
+        };
+        // Keep the previous version even for stale or emptied sets so a
+        // recreated set always gets a fresh, monotonically increasing generation.
+        let previous_generation = stored_meta.as_ref().map_or(0, VectorMeta::version);
+        let live_meta = stored_meta.filter(|meta| !meta.is_stale() && meta.count() != 0);
 
         let is_new_set = live_meta.is_none();
         let mut meta = match live_meta {
@@ -94,7 +101,12 @@ impl Redis {
                 }
                 meta
             }
-            None => VectorMeta::new_after(1, vector.dimension(), previous_generation),
+            None => VectorMeta::new_after(
+                1,
+                vector.dimension(),
+                vector.quantization(),
+                previous_generation,
+            ),
         };
 
         let member_key = MemberDataKey::new(key, meta.version(), element).encode()?;
@@ -116,7 +128,10 @@ impl Redis {
             meta.set_count(count);
         }
 
-        let member_value = VectorDataValue::from_canonical(vector).encode();
+        // Quantization is a per-set property: store the member in the set's
+        // quantization regardless of the form the client supplied.
+        let vector = vector.to_quantized(meta.quantization())?;
+        let member_value = VectorDataValue::from_canonical(&vector).encode();
         let meta_value = meta.encode();
         let mut batch = self.create_batch()?;
         batch.put(ColumnFamilyIndex::VectorDataCF, &member_key, &member_value)?;
@@ -129,11 +144,6 @@ impl Redis {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
-        let meta_cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "MetaCF is not initialized".to_string(),
-            })?;
         let vector_cf = self
             .get_cf_handle(ColumnFamilyIndex::VectorDataCF)
             .context(OptionNoneSnafu {
@@ -142,11 +152,7 @@ impl Redis {
 
         let lock_key = String::from_utf8_lossy(key);
         let _lock = ScopeRecordLock::new(self.lock_mgr.as_ref(), &lock_key);
-        let meta_key = BaseMetaKey::new(key).encode()?;
-        let Some(meta_raw) = db.get_cf(&meta_cf, &meta_key).context(RocksSnafu)? else {
-            return Ok(false);
-        };
-        let Some(mut meta) = self.parse_vector_meta(&meta_raw)? else {
+        let Some(mut meta) = self.read_vector_meta(key)? else {
             return Ok(false);
         };
 
@@ -159,6 +165,7 @@ impl Redis {
             return Ok(false);
         }
 
+        let meta_key = BaseMetaKey::new(key).encode()?;
         let mut batch = self.create_batch()?;
         batch.delete(ColumnFamilyIndex::VectorDataCF, &member_key)?;
         if meta.count() > 1 {
@@ -190,11 +197,6 @@ impl Redis {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
-        let meta_cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "MetaCF is not initialized".to_string(),
-            })?;
         let vector_cf = self
             .get_cf_handle(ColumnFamilyIndex::VectorDataCF)
             .context(OptionNoneSnafu {
@@ -204,14 +206,7 @@ impl Redis {
         let mut read_options = ReadOptions::default();
         read_options.set_snapshot(&snapshot);
 
-        let meta_key = BaseMetaKey::new(key).encode()?;
-        let Some(meta_raw) = db
-            .get_cf_opt(&meta_cf, &meta_key, &read_options)
-            .context(RocksSnafu)?
-        else {
-            return Ok(None);
-        };
-        let Some(meta) = self.parse_vector_meta(&meta_raw)? else {
+        let Some(meta) = self.read_vector_meta_opt(key, Some(&read_options))? else {
             return Ok(None);
         };
         let member_key = MemberDataKey::new(key, meta.version(), element).encode()?;
@@ -239,11 +234,6 @@ impl Redis {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
-        let meta_cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "MetaCF is not initialized".to_string(),
-            })?;
         let vector_cf = self
             .get_cf_handle(ColumnFamilyIndex::VectorDataCF)
             .context(OptionNoneSnafu {
@@ -253,14 +243,7 @@ impl Redis {
         let mut read_options = ReadOptions::default();
         read_options.set_snapshot(&snapshot);
 
-        let meta_key = BaseMetaKey::new(key).encode()?;
-        let Some(meta_raw) = db
-            .get_cf_opt(&meta_cf, &meta_key, &read_options)
-            .context(RocksSnafu)?
-        else {
-            return Ok(false);
-        };
-        let Some(meta) = self.parse_vector_meta(&meta_raw)? else {
+        let Some(meta) = self.read_vector_meta_opt(key, Some(&read_options))? else {
             return Ok(false);
         };
         let member_key = MemberDataKey::new(key, meta.version(), element).encode()?;
@@ -286,11 +269,6 @@ impl Redis {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
-        let meta_cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "MetaCF is not initialized".to_string(),
-            })?;
         let vector_cf = self
             .get_cf_handle(ColumnFamilyIndex::VectorDataCF)
             .context(OptionNoneSnafu {
@@ -300,14 +278,7 @@ impl Redis {
         let mut point_read_options = ReadOptions::default();
         point_read_options.set_snapshot(&snapshot);
 
-        let meta_key = BaseMetaKey::new(key).encode()?;
-        let Some(meta_raw) = db
-            .get_cf_opt(&meta_cf, &meta_key, &point_read_options)
-            .context(RocksSnafu)?
-        else {
-            return Ok(Vec::new());
-        };
-        let Some(meta) = self.parse_vector_meta(&meta_raw)? else {
+        let Some(meta) = self.read_vector_meta_opt(key, Some(&point_read_options))? else {
             return Ok(Vec::new());
         };
 
@@ -337,6 +308,9 @@ impl Redis {
             }
             .fail();
         }
+        // Score the query in the set's quantization so it is comparable to
+        // the stored members.
+        let query_vector = query_vector.to_quantized(meta.quantization())?;
 
         let prefix = MemberDataKey::new(key, meta.version(), b"").encode_seek_key()?;
         let mut scan_options = ReadOptions::default();
@@ -381,7 +355,11 @@ impl Redis {
         engine.search(&query_vector, &meta.metric(), options.count, candidates)
     }
 
-    fn read_vector_meta(&self, key: &[u8]) -> Result<Option<VectorMeta>> {
+    fn read_vector_meta_opt(
+        &self,
+        key: &[u8],
+        read_options: Option<&ReadOptions>,
+    ) -> Result<Option<VectorMeta>> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
@@ -391,9 +369,18 @@ impl Redis {
                 message: "MetaCF is not initialized".to_string(),
             })?;
         let meta_key = BaseMetaKey::new(key).encode()?;
-        match db.get_cf(&meta_cf, &meta_key).context(RocksSnafu)? {
+        let value = match read_options {
+            Some(opts) => db.get_cf_opt(&meta_cf, &meta_key, opts),
+            None => db.get_cf(&meta_cf, &meta_key),
+        }
+        .context(RocksSnafu)?;
+        match value {
             Some(value) => self.parse_vector_meta(&value),
             None => Ok(None),
         }
+    }
+
+    fn read_vector_meta(&self, key: &[u8]) -> Result<Option<VectorMeta>> {
+        self.read_vector_meta_opt(key, None)
     }
 }
