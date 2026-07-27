@@ -24,8 +24,8 @@ mod redis_string_test {
     use kstd::lock_mgr::LockMgr;
     use storage::{
         BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, DataType, Redis, StorageOptions,
-        ZsetScoreMember, safe_cleanup_test_db, slot_indexer::key_to_slot_id, storage::Storage,
-        unique_test_db_path,
+        ZsetScoreMember, format_base_meta_value::BaseMetaValue, safe_cleanup_test_db,
+        slot_indexer::key_to_slot_id, storage::Storage, unique_test_db_path,
     };
 
     fn cleanup_redis(redis: Redis, test_db_path: &Path) {
@@ -1164,6 +1164,112 @@ mod redis_string_test {
             "GETSET should return WRONGTYPE"
         );
         assert_eq!(redis.get_key_type(key).unwrap(), DataType::Hash);
+
+        cleanup_redis(redis, &test_db_path);
+    }
+
+    // Regression: string keys and meta keys share the same encoding in MetaCF
+    // (`pub type BaseMetaKey = BaseKey`), so `random_key` must distinguish the
+    // stored type by the *value*, not by re-parsing the key. A non-string key
+    // (e.g. a hash) must still be returned.
+    #[test]
+    fn test_random_key_returns_non_string_type() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        // Only a hash key exists — no string keys at all.
+        let hash_key = b"only_hash_key";
+        assert_eq!(redis.hset(hash_key, b"field", b"value").unwrap(), 1);
+
+        let random = redis
+            .random_key()
+            .expect("random_key should not error with a live hash key");
+        assert_eq!(
+            random.as_deref(),
+            Some("only_hash_key"),
+            "random_key must return a non-string (hash) key"
+        );
+
+        cleanup_redis(redis, &test_db_path);
+    }
+
+    // List metadata has a distinct layout and parser from hash/set/zset metadata,
+    // so keep a list-only regression for the dedicated `DataType::List` branch.
+    #[test]
+    fn test_random_key_returns_list_key() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let list_key = b"only_list_key";
+        assert_eq!(redis.lpush(list_key, &[b"value".to_vec()]).unwrap(), 1);
+
+        let random = redis
+            .random_key()
+            .expect("random_key should not error with a live list key");
+        assert_eq!(
+            random.as_deref(),
+            Some("only_list_key"),
+            "random_key must return the only live list key"
+        );
+
+        cleanup_redis(redis, &test_db_path);
+    }
+
+    // Regression: `ParsedStringsValue::new` accepts any value whose leading byte
+    // is a valid DataType tag and applies no count check, so a string-first
+    // probe would misread a collection meta value as a live string and return a
+    // logically-empty (count == 0) collection. `random_key` must dispatch on the
+    // type tag and honor the count guard, treating an empty collection as absent.
+    #[test]
+    fn test_random_key_skips_empty_collection() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        // Write a hash meta value with count == 0 directly (etime 0 => not stale).
+        // This is the shape a drained collection leaves behind in MetaCF.
+        let empty_hash_key = b"drained_hash";
+        let count: u64 = 0;
+        let mut meta = BaseMetaValue::new(bytes::Bytes::copy_from_slice(&count.to_le_bytes()));
+        meta.inner.data_type = DataType::Hash;
+        let encoded_meta_key = BaseMetaKey::new(empty_hash_key).encode().unwrap();
+        let mut batch = redis.create_batch().unwrap();
+        batch
+            .put(ColumnFamilyIndex::MetaCF, &encoded_meta_key, &meta.encode())
+            .unwrap();
+        batch.commit().unwrap();
+
+        // The empty collection is the only entry, so no live key should be found.
+        assert_eq!(
+            redis.random_key().unwrap(),
+            None,
+            "random_key must not return a count==0 collection"
+        );
+
+        // Once a live string is added, it is returned rather than the empty hash.
+        redis.set(b"live_string", b"value").unwrap();
+        assert_eq!(
+            redis.random_key().unwrap().as_deref(),
+            Some("live_string"),
+            "random_key must return the live string, skipping the empty collection"
+        );
 
         cleanup_redis(redis, &test_db_path);
     }

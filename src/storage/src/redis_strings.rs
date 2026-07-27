@@ -2228,47 +2228,48 @@ impl Redis {
         for item in iter {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
 
-            // Decode the key to get the actual user key
-            let parsed_base_key_result = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]);
-            if let Ok(base_key) = parsed_base_key_result {
-                // Check if the string key is not expired
-                if !value_bytes.is_empty() {
-                    let parsed_string_result = ParsedStringsValue::new(&value_bytes[..]);
-                    if let Ok(parsed) = parsed_string_result
-                        && !parsed.is_stale()
-                    {
-                        return Ok(Some(String::from_utf8_lossy(base_key.key()).to_string()));
-                    }
-                }
-            } else {
-                let parsed_meta_key_result =
-                    crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]);
-                if let Ok(meta_key) = parsed_meta_key_result {
-                    // Check if meta key is not expired
-                    if !value_bytes.is_empty() {
-                        let parsed_meta_result =
-                            crate::format_base_meta_value::ParsedBaseMetaValue::new(
-                                &value_bytes[..],
-                            );
-                        let is_valid = if let Ok(meta) = parsed_meta_result {
-                            !meta.is_stale() && meta.count() > 0
-                        } else {
-                            let parsed_list_meta_result =
-                                crate::format_list_meta_value::ParsedListsMetaValue::new(
-                                    &value_bytes[..],
-                                );
-                            if let Ok(list_meta) = parsed_list_meta_result {
-                                !list_meta.is_stale() && list_meta.count() > 0
-                            } else {
-                                false
-                            }
-                        };
+            if value_bytes.is_empty() {
+                continue;
+            }
 
-                        if is_valid {
-                            return Ok(Some(String::from_utf8_lossy(meta_key.key()).to_string()));
-                        }
-                    }
+            // MetaCF stores both string values and the meta values of
+            // hash/set/zset/list under the same key encoding (BaseMetaKey is a
+            // type alias of BaseKey), so the user key is decoded once and the
+            // value bytes decide whether the key is live.
+            let Ok(parsed_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]) else {
+                continue;
+            };
+
+            // The stored type is determined by the leading type-tag byte, not by
+            // which parser happens to accept the bytes. `ParsedStringsValue::new`
+            // only validates that the tag is a *valid* DataType (not that it is
+            // String) and applies no count check, so probing string-first would
+            // misclassify collection meta values and could return an empty
+            // (count == 0) collection. Dispatch on the tag exactly like
+            // `get_key_type` does.
+            let Ok(data_type) = DataType::try_from(value_bytes[0]) else {
+                continue;
+            };
+
+            let is_live = match data_type {
+                DataType::String => ParsedStringsValue::new(&value_bytes[..])
+                    .map(|parsed| !parsed.is_stale())
+                    .unwrap_or(false),
+                DataType::Hash | DataType::Set | DataType::ZSet => {
+                    crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
+                        .map(|meta| !meta.is_stale() && meta.count() > 0)
+                        .unwrap_or(false)
                 }
+                DataType::List => {
+                    crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
+                        .map(|list_meta| !list_meta.is_stale() && list_meta.count() > 0)
+                        .unwrap_or(false)
+                }
+                _ => false,
+            };
+
+            if is_live {
+                return Ok(Some(String::from_utf8_lossy(parsed_key.key()).to_string()));
             }
         }
 
