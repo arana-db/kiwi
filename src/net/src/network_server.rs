@@ -550,21 +550,23 @@ impl NetworkServer {
 
         while let Some(join_result) = connection_tasks.join_next().await {
             self.lifecycle.connection_reaped();
-            if let Err(error) = join_result {
-                if server_error.is_none() {
+            match join_result {
+                Err(error) if server_error.is_none() => {
                     server_error = Some(std::io::Error::other(format!(
                         "network connection task failed during shutdown: {error}"
                     )));
                 }
+                _ => {}
             }
         }
 
-        if let Err(error) = cleanup_task.join().await {
-            if server_error.is_none() {
+        match cleanup_task.join().await {
+            Err(error) if server_error.is_none() => {
                 server_error = Some(std::io::Error::other(format!(
                     "network pool cleanup task failed: {error}"
                 )));
             }
+            _ => {}
         }
 
         self.connection_pool.clear_idle().await;
