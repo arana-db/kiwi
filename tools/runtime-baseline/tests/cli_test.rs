@@ -126,6 +126,33 @@ fn rejects_output_paths_that_normalize_to_the_same_target() {
     assert!(error.to_string().contains("must be distinct"));
 }
 
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn rejects_output_paths_that_differ_only_by_case() {
+    let dir = TempDir::new().expect("temp directory");
+    let mut args = valid_args(&dir);
+    args.startup_event = dir.path().join("Startup.json");
+    args.metrics_output = dir.path().join("STARTUP.JSON");
+
+    let error = args
+        .validate()
+        .expect_err("case-insensitive platforms must reject one output target");
+    assert!(error.to_string().contains("must be distinct"));
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn rejects_non_ascii_output_file_names_on_case_insensitive_platforms() {
+    let dir = TempDir::new().expect("temp directory");
+    let mut args = valid_args(&dir);
+    args.startup_event = dir.path().join("Σ.json");
+
+    let error = args
+        .validate()
+        .expect_err("non-ASCII output names must fail closed on this platform");
+    assert!(error.to_string().contains("must use ASCII"));
+}
+
 #[test]
 fn rejects_an_output_parent_alias_that_resolves_inside_the_data_directory() {
     let dir = TempDir::new().expect("temp directory");

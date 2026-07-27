@@ -324,25 +324,36 @@ impl BaselineAttempt {
         AttemptState::from_u8(self.inner.state.load(Ordering::Acquire))
     }
 
-    /// Prevent an attempt that was never accepted by the request channel from
-    /// producing an accepted terminal event when its final token is dropped.
+    /// Irrevocably reject a physical attempt before the request channel accepts it.
     ///
-    /// Returns `true` while the attempt is still pre-accept, including repeated
-    /// calls, and `false` once the attempt has reached `ChannelQueued`.
-    pub fn disarm_pre_accept(&self) -> bool {
+    /// Returns `Ok(true)` while the attempt is still pre-accept, including repeated
+    /// calls, and `Ok(false)` once the attempt has reached `ChannelQueued`. Observer
+    /// reentrancy and a previously poisoned observer are returned explicitly.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn disarm_pre_accept(&self) -> Result<bool, BaselineTransitionFailure> {
+        if CallbackScope::is_active() || self.inner.callback_active.load(Ordering::Acquire) {
+            return Err(BaselineTransitionFailure::ReentrantObserver);
+        }
+        if self.observer_failed() {
+            return Err(BaselineTransitionFailure::AttemptPoisoned);
+        }
+
         let _last_transition = self
             .inner
             .last_transition
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.observer_failed() {
+            return Err(BaselineTransitionFailure::AttemptPoisoned);
+        }
         if self.state() != AttemptState::Offered {
-            return false;
+            return Ok(false);
         }
 
         self.inner
             .pre_accept_disarmed
             .store(true, Ordering::Release);
-        true
+        Ok(true)
     }
 
     pub fn transition(&self, next: AttemptState) -> Result<(), BaselineTransitionError> {
@@ -695,6 +706,41 @@ mod tests {
     struct CrossAttemptObserver {
         target: Mutex<Option<BaselineAttempt>>,
         result: Mutex<Option<Result<(), BaselineTransitionError>>>,
+    }
+
+    #[derive(Default)]
+    struct CrossAttemptDisarmObserver {
+        target: Mutex<Option<BaselineAttempt>>,
+        result: Mutex<Option<Result<bool, BaselineTransitionFailure>>>,
+    }
+
+    impl BaselineObserver for CrossAttemptDisarmObserver {
+        fn on_event(&self, event: BaselineEvent) {
+            if !matches!(
+                event,
+                BaselineEvent::StateTransition {
+                    next: AttemptState::ChannelQueued,
+                    ..
+                }
+            ) {
+                return;
+            }
+            let Some(target) = self
+                .target
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .take()
+            else {
+                return;
+            };
+            let result = target.disarm_pre_accept();
+            *self
+                .result
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result);
+        }
+
+        fn before_execute(&self, _trace: &BaselineTrace) {}
     }
 
     impl BaselineObserver for CrossAttemptObserver {
@@ -1207,6 +1253,59 @@ mod tests {
     }
 
     #[test]
+    fn observer_cross_attempt_disarm_is_rejected_without_mutation() {
+        let target_observer = Arc::new(RecordingObserver::default());
+        let target_handle = BaselineObserverHandle::new(target_observer);
+        let target = BaselineAttempt::new(LogicalRequestId::new(), 0, target_handle.clone());
+
+        let source_observer = Arc::new(CrossAttemptDisarmObserver::default());
+        *source_observer
+            .target
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(target.clone());
+        let source = BaselineAttempt::new(
+            LogicalRequestId::new(),
+            0,
+            BaselineObserverHandle::new(source_observer.clone()),
+        );
+
+        source.transition(AttemptState::ChannelQueued).unwrap();
+
+        let error = source_observer
+            .result
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+            .expect("observer must record the cross-attempt disarm result")
+            .expect_err("observer callback must not disarm another attempt");
+        assert_eq!(error, BaselineTransitionFailure::ReentrantObserver);
+        assert_eq!(target.state(), AttemptState::Offered);
+        assert!(!target_handle.failed());
+        target.transition(AttemptState::ChannelQueued).unwrap();
+        target
+            .transition(AttemptState::ShutdownRejectedAfterAccept)
+            .unwrap();
+        source
+            .transition(AttemptState::ShutdownRejectedAfterAccept)
+            .unwrap();
+    }
+
+    #[test]
+    fn poisoned_observer_rejects_pre_accept_disarm() {
+        let observer = BaselineObserverHandle::new(Arc::new(PanicBeforeExecuteObserver));
+        let attempt = BaselineAttempt::new(LogicalRequestId::new(), 0, observer.clone());
+        attempt.before_execute();
+
+        let error = attempt
+            .disarm_pre_accept()
+            .expect_err("poisoned observer must reject pre-accept disarm");
+
+        assert_eq!(error, BaselineTransitionFailure::AttemptPoisoned);
+        assert!(observer.failed());
+        assert_eq!(attempt.state(), AttemptState::Offered);
+    }
+
+    #[test]
     fn before_execute_panic_is_contained_and_poison_is_visible() {
         let observer = BaselineObserverHandle::new(Arc::new(PanicBeforeExecuteObserver));
         let attempt = BaselineAttempt::new(LogicalRequestId::new(), 0, observer.clone());
@@ -1388,8 +1487,8 @@ mod tests {
         let observer = Arc::new(RecordingObserver::default());
         let attempt = attempt(observer.clone());
 
-        assert!(attempt.disarm_pre_accept());
-        assert!(attempt.disarm_pre_accept());
+        assert!(attempt.disarm_pre_accept().unwrap());
+        assert!(attempt.disarm_pre_accept().unwrap());
         drop(attempt);
 
         assert!(observer.events().is_empty());
@@ -1399,7 +1498,7 @@ mod tests {
     fn disarmed_pre_accept_attempt_cannot_later_be_accepted() {
         let observer = Arc::new(RecordingObserver::default());
         let attempt = attempt(observer.clone());
-        assert!(attempt.disarm_pre_accept());
+        assert!(attempt.disarm_pre_accept().unwrap());
 
         let error = attempt.transition(AttemptState::ChannelQueued).unwrap_err();
 
@@ -1424,7 +1523,7 @@ mod tests {
         let attempt = attempt(observer.clone());
         attempt.transition(AttemptState::ChannelQueued).unwrap();
 
-        assert!(!attempt.disarm_pre_accept());
+        assert!(!attempt.disarm_pre_accept().unwrap());
         drop(attempt);
 
         assert_eq!(
@@ -1466,10 +1565,10 @@ mod tests {
         let disarmed = disarm.join().expect("disarm thread must not panic");
         let accepted = accept.join().expect("accept thread must not panic");
         match (disarmed, accepted) {
-            (true, Err(error)) => {
+            (Ok(true), Err(error)) => {
                 assert_eq!(error.reason(), BaselineTransitionFailure::InvalidTransition);
             }
-            (false, Ok(())) => {}
+            (Ok(false), Ok(())) => {}
             outcome => panic!("race must linearize to disarmed or accepted: {outcome:?}"),
         }
         drop(attempt);
@@ -1501,7 +1600,10 @@ mod tests {
             })
             .count();
         assert_eq!(accepted_count, abandoned_count);
-        assert_eq!(accepted_count, usize::from(!disarmed));
+        assert_eq!(
+            accepted_count,
+            usize::from(!disarmed.expect("disarm race must not fail"))
+        );
     }
 
     #[test]

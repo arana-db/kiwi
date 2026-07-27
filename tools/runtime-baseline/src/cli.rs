@@ -82,7 +82,7 @@ impl ServerArgs {
         let normalized_metrics_output =
             normalize_output_path("metrics-output", &self.metrics_output)?;
 
-        if normalized_startup_event == normalized_metrics_output {
+        if output_paths_may_alias(&normalized_startup_event, &normalized_metrics_output) {
             bail!("startup-event and metrics-output must be distinct paths");
         }
         if normalized_startup_event.starts_with(&normalized_data_dir)
@@ -115,6 +115,30 @@ impl ServerArgs {
     }
 }
 
+fn output_paths_may_alias(first: &Path, second: &Path) -> bool {
+    if first == second {
+        return true;
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    {
+        first.parent() == second.parent()
+            && first
+                .file_name()
+                .zip(second.file_name())
+                .is_some_and(|(first, second)| {
+                    first
+                        .as_encoded_bytes()
+                        .eq_ignore_ascii_case(second.as_encoded_bytes())
+                })
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        false
+    }
+}
+
 fn validate_loopback(name: &str, address: SocketAddr) -> Result<()> {
     if !address.ip().is_loopback() {
         bail!("{name} must use a loopback address");
@@ -143,6 +167,10 @@ fn normalize_output_path(name: &str, path: &Path) -> Result<PathBuf> {
     let file_name = path
         .file_name()
         .with_context(|| format!("{name} must name an output file"))?;
+    #[cfg(any(windows, target_os = "macos"))]
+    if !file_name.as_encoded_bytes().is_ascii() {
+        bail!("{name} file name must use ASCII characters on this platform");
+    }
     let parent = parent
         .canonicalize()
         .with_context(|| format!("cannot canonicalize {name} parent {}", parent.display()))?;

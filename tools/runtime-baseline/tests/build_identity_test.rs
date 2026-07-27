@@ -160,6 +160,36 @@ fn identity_marks_an_untracked_source_change_dirty_and_watches_it() {
 }
 
 #[test]
+fn explicit_build_sha_must_match_checkout_head() {
+    let repo = initialized_repository();
+    let actual_head = git_stdout(repo.path(), &["rev-parse", "HEAD"]);
+    let different_sha = if actual_head == "f".repeat(40) {
+        "e".repeat(40)
+    } else {
+        "f".repeat(40)
+    };
+
+    let error = match BuildIdentity::collect(repo.path(), Some(&different_sha)) {
+        Ok(_) => panic!("an explicit build SHA must identify the checked-out commit"),
+        Err(error) => error,
+    };
+
+    assert!(error.contains("does not match checkout HEAD"));
+}
+
+#[test]
+fn explicit_build_sha_accepts_uppercase_and_embeds_lowercase_head() {
+    let repo = initialized_repository();
+    let actual_head = git_stdout(repo.path(), &["rev-parse", "HEAD"]);
+    let uppercase_head = actual_head.to_ascii_uppercase();
+
+    let identity = BuildIdentity::collect(repo.path(), Some(&uppercase_head))
+        .expect("Git SHA comparison must be case insensitive");
+
+    assert_eq!(identity.compiled_git_sha, actual_head.to_ascii_lowercase());
+}
+
+#[test]
 fn cargo_rebuilds_the_real_build_script_after_a_tracked_source_edit() {
     let fixture = TempDir::new().expect("temporary Cargo fixture");
     create_cargo_fixture(fixture.path());

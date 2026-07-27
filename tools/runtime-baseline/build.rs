@@ -35,12 +35,12 @@ fn configure_build_identity() -> Result<(), String> {
     println!("cargo:rerun-if-env-changed={BUILD_GIT_SHA_ENV}");
 
     let source_root = source_root()?;
-    let explicit_git_sha = match env::var(BUILD_GIT_SHA_ENV) {
+    let expected_git_sha = match env::var(BUILD_GIT_SHA_ENV) {
         Ok(git_sha) => Some(git_sha),
         Err(env::VarError::NotPresent) => None,
         Err(error) => return Err(format!("cannot read {BUILD_GIT_SHA_ENV}: {error}")),
     };
-    let identity = BuildIdentity::collect(&source_root, explicit_git_sha.as_deref())?;
+    let identity = BuildIdentity::collect(&source_root, expected_git_sha.as_deref())?;
     for path in identity.rerun_paths {
         println!("cargo:rerun-if-changed={}", path.display());
     }

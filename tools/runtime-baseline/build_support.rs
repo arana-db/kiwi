@@ -55,16 +55,19 @@ pub struct GitMetadata {
 }
 
 impl BuildIdentity {
-    pub fn collect(source_root: &Path, explicit_git_sha: Option<&str>) -> Result<Self, String> {
+    pub fn collect(source_root: &Path, expected_git_sha: Option<&str>) -> Result<Self, String> {
         let metadata = GitMetadata::discover(source_root)?;
-        let git_sha = match explicit_git_sha {
-            Some(git_sha) => git_sha.to_owned(),
-            None => metadata
-                .git_output(source_root, &["rev-parse", "HEAD"])?
-                .trim()
-                .to_owned(),
-        };
-        validate_git_sha(&git_sha, "KIWI_BASELINE_BUILD_GIT_SHA")?;
+        let git_sha = metadata
+            .git_output(source_root, &["rev-parse", "HEAD"])?
+            .trim()
+            .to_owned();
+        validate_git_sha(&git_sha, "git rev-parse HEAD")?;
+        if let Some(expected_git_sha) = expected_git_sha {
+            validate_git_sha(expected_git_sha, "KIWI_BASELINE_BUILD_GIT_SHA")?;
+            if !expected_git_sha.eq_ignore_ascii_case(&git_sha) {
+                return Err("KIWI_BASELINE_BUILD_GIT_SHA does not match checkout HEAD".to_owned());
+            }
+        }
 
         let mut status_arguments = vec!["status", "--porcelain", "--untracked-files=all", "--"];
         status_arguments.extend(SOURCE_INPUTS);
