@@ -2,7 +2,7 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** 为 Issue #350 第一阶段交付一个可重复、fail-closed 的真实 `TCP -> RuntimeManager -> StorageServer -> RocksDB` 基线 harness，并在 CI 中真实执行 4 个 GET/SET smoke case，而不是只编译 benchmark target。
+**目标：** 为 Issue #350 原第一阶段交付一个可重复、fail-closed 的真实 `TCP -> RuntimeManager -> StorageServer -> RocksDB` 基线 harness，并在 CI 中真实执行 4 个 GET/SET smoke case，而不是只编译 benchmark target；原第一阶段拆成 Foundation PR（Tasks 1-5）和 Wiring and Smoke PR（Tasks 6-12）两个有序 PR。
 
 **架构：** `runtime` crate 在 `runtime-baseline` feature 下只定义请求身份、生命周期事件和同步 observer 接口；具体原子指标、采样 collector、控制协议和真实服务编排由新的 `tools/runtime-baseline` crate 实现。`NetworkServer` 增加可取消且可等待的通用生命周期入口，harness 按“停止 accept/连接 -> 关闭 request sender -> 等待 StorageServer -> 停止 runtimes”顺序退出。Python 标准库控制器只负责编排、资源采样、memtier 调用和结果验证，主要负载固定使用可校验 provenance 的 `memtier_benchmark 2.5.1`。
 
@@ -10,15 +10,27 @@
 
 ---
 
+## 交付拓扑与 PR 门禁
+
+```text
+Foundation PR（Tasks 1-5，当前 PR #378）
+  -> Wiring and Smoke PR（Tasks 6-12，完成原第一阶段）
+  -> Baseline Results PR（原第二阶段）
+```
+
+- **Foundation PR（当前 PR #378）：** 只交付工具 crate 骨架、组合与生命周期入口、request sender 显式关闭点、feature-gated observer contract、请求身份和状态 token。Ready 前必须完成 Tasks 1-5 的构建、测试、feature 隔离和生产路径无影响验证。binary 仍必须以 `harness not initialized` 非零退出；这表示真实接线尚未开始，不是可运行 smoke。该 PR 不关闭 #350。
+- **Wiring and Smoke PR：** 交付 Tasks 6-12，把 observer 接入真实请求生命周期，实现 benchmark-only server、控制器、4-case smoke、结果校验和 CI fail-closed 门禁，完成原第一阶段。Ready 前必须具备本文“Wiring and Smoke PR Ready/验收证据”列出的全部证据。该 PR 不发布正式性能结论，也不关闭 #350。
+- **Baseline Results PR：** 执行原第二阶段，在固定 WSL/Linux 或固定 self-hosted 环境运行完整版本化矩阵，提交可追溯结果，冻结 #351 阈值并给出 executor 选择建议。只有该 PR 验收后才关闭 #350。
+
 ## 实施边界
 
-- 本计划只实现 #350 第一阶段 harness、观测、4-case smoke 和 CI 门禁，不实现 #351 bounded executor。
+- 本计划的 Tasks 1-12 只实现 #350 原第一阶段的 harness、观测、4-case smoke 和 CI 门禁，不实现 Baseline Results PR，也不实现 #351 bounded executor。
 - 不改变当前 storage 调度模型、RocksDB 配置、命令语义、fsync、一致性或 batching 算法来改善结果。
 - 不启用现有 `StorageMetricsTracker`；其 async Mutex 和样本容器会污染热路径。
 - 不把 benchmark control 命令加入 Redis 命令表；控制协议只存在于 `kiwi-runtime-baseline` target。
 - 不将 GitHub hosted runner 的 QPS/P99 作为性能回归阈值；CI 只验证真实执行、非零结果、状态守恒和 fail-closed。
 - 普通 `cargo build` 和 `cargo build -p server` 不得启用 `runtime-baseline` feature；只有工具 target 和显式 `--all-features` 验证启用。
-- 第一阶段允许 `MEMTIER_BIN` 运行 smoke，但无可信 provenance 的结果必须标记 `non_publishable`；第二阶段正式 baseline 只接受 bootstrap 产物。
+- Wiring and Smoke PR 允许 `MEMTIER_BIN` 运行 smoke，但无可信 provenance 的结果必须标记 `non_publishable`；Baseline Results PR 的正式 baseline 只接受 bootstrap 产物。
 - 所有新增 `.rs`、`.py`、`.sh` 和普通 `.yaml` 文件必须包含仓库认可的 Apache 2.0 license header；不能等到最终 license job 才补。
 
 ## 实施前事实校正
@@ -184,6 +196,8 @@ pub async fn run_until_cancelled(
 
 响应固定为 `{request_id, ok, result}` 或 `{request_id, ok:false, error:{code,message}}`。未知字段、未知命令、重复 shutdown、非 loopback peer、超限行、invalid JSON 和 timeout 都必须显式失败。
 
+> **Foundation PR 边界：** Tasks 1-5 属于当前 PR #378。完成 Task 5 后仍不得接入真实 harness 或声称 smoke 可运行。
+
 ## 任务 1：校正设计约束并创建可独立编译的工具 crate 骨架
 
 **文件：**
@@ -214,7 +228,7 @@ pub async fn run_until_cancelled(
 - [ ] 添加 build identity 测试：startup 报告 `env!("KIWI_BASELINE_COMPILED_GIT_SHA")`；`--expected-git-sha` 不同则 binary 在 listener/startup 之前失败，不能回显 caller 输入。
 - [ ] 添加 startup JSON 测试：临时文件与目标同目录；目标出现时 JSON 完整；PID、两个地址、canonical data dir、compiled Git SHA 和 schema version 正确；临时文件不残留。
 - [ ] 运行 `cargo test -p runtime-baseline --test startup_test`，确认先红后绿。
-- [ ] 保持 `main.rs` 只解析参数并返回“harness not initialized”非零；不得伪装成可运行 smoke。
+- [ ] 保持 `main.rs` 只解析参数并返回“harness not initialized”非零；该行为必须保持到 Foundation PR #378 合并，且不得伪装成可运行 smoke。只有后续 Wiring and Smoke PR 的任务 8 才删除占位失败。
 - [ ] 运行 `cargo build -p server`，并用 `cargo tree -p server -e features | rg "runtime-baseline"` 确认普通 server 构建未启用 feature。
 - [ ] 运行 `cargo build`，确认默认 root build 不构建 `runtime-baseline` package。
 - [ ] 运行 `cargo test -p runtime-baseline --test cli_test --test startup_test` 和 `git diff --check`。
@@ -311,6 +325,8 @@ pub fn close_storage_requests(&mut self) -> bool {
 - [ ] 运行 feature tests、`cargo test -p runtime` 和 `cargo check -p server`，确认 feature off 生产调用方无需 observer。
 - [ ] 提交：`feat(runtime): add baseline request observer`。
 
+> **Wiring and Smoke PR 起点：** Tasks 6-12 必须在 Foundation PR 之后实施；这一 PR 完成原第一阶段的真实接线、smoke 和 CI 门禁。
+
 ## 任务 6：接通 MessageChannel、StorageClient、retry、timeout 和 response 事件
 
 **文件：**
@@ -387,7 +403,7 @@ pub fn close_storage_requests(&mut self) -> bool {
 - [ ] 实现 control response request-id 回显和结构化错误；`pause` 必须等待 active drain；blocker 必须返回 started/completed event 进度。
 - [ ] 实现 harness shutdown 顺序和各阶段 deadline；任一 JoinHandle panic、timeout、metrics 不守恒，或四个 active current 任一非零，均使 binary 非零退出。
 - [ ] shutdown 最后关闭 sample sender、等待 collector JoinHandle flush 完成，再生成最终 snapshot；collector 丢样可以计数，但 collector 未退出/未 flush 不能 pass。
-- [ ] `main.rs` 删除任务 1 的占位失败，进入真实 `start -> wait control shutdown -> drain -> exit`。
+- [ ] 在 Wiring and Smoke PR 中删除任务 1 的占位失败，使 `main.rs` 进入真实 `start -> wait control shutdown -> drain -> exit`。
 - [ ] 运行 `cargo test -p runtime-baseline`、`cargo test -p net`、`cargo test -p runtime --features runtime-baseline`。
 - [ ] 提交：`test(runtime): add baseline harness control plane`。
 
@@ -505,7 +521,7 @@ timeout --signal=TERM --kill-after=30s 5m \
 - 必要时修改：前述实现文件中的审查问题
 
 - [ ] 文档记录 WSL/Linux prerequisites、bootstrap、build、run、verify、结果目录、publishable/non-publishable、4-case smoke 非性能门限、常见 failure code 和安全 cleanup 边界。
-- [ ] 明确第二阶段仍需固定机器、完整 `cases.yaml`、重复 5 次、CV 稳定性和 #351 阈值冻结；第一阶段不关闭 #350。
+- [ ] 明确 Baseline Results PR 仍需固定机器、完整 `cases.yaml`、重复 5 次、CV 稳定性和 #351 阈值冻结；Foundation PR 与 Wiring and Smoke PR 都不关闭 #350。
 - [ ] 运行格式检查：`cargo fmt --all -- --check`。
 - [ ] 运行 feature 测试：`cargo test -p runtime --features runtime-baseline`。
 - [ ] 运行受影响 crates：`cargo test -p runtime`、`cargo test -p net`、`cargo test -p runtime-baseline`。
@@ -523,9 +539,9 @@ timeout --signal=TERM --kill-after=30s 5m \
 - [ ] push/创建 PR 前重新获取 GitHub main、确认 branch base 和 diff；push 与 PR 创建仍等待用户单独授权。
 - [ ] PR 创建后实时查询 ruleset/branch protection，确认 `Runtime Baseline Smoke` 是否被配置为 required；无管理权限或尚未 required 时，在 PR 和收尾对账中列为仓库配置待办，不得声称门禁已生效。
 
-## 最终验收证据
+## Wiring and Smoke PR Ready/验收证据（完成原第一阶段）
 
-完成第一阶段时必须同时具备：
+Wiring and Smoke PR 达到 Ready、完成原第一阶段时必须同时具备：
 
 - `cargo build -p server` 的 feature tree 不含 `runtime-baseline`。
 - `cargo test -p runtime --features runtime-baseline` 覆盖 logical/physical identity、channel/batch/gate/running/terminal、timeout/drop、panic/cancel，以及 `accepted_total = active_current + terminal_total` shutdown 守恒。
@@ -538,3 +554,13 @@ timeout --signal=TERM --kill-after=30s 5m \
 - production `kiwi` 不包含 benchmark control endpoint 或 benchmark CLI。
 - 当前 GitHub Python integration 继续真实通过；#350 不重新引入 server-missing 全 skip 假绿。
 - 没有把 hosted runner 性能数值作为 #351 阈值，也没有提前改变 storage 调度模型。
+
+## Baseline Results PR Ready/验收证据（原第二阶段）
+
+Baseline Results PR 达到 Ready、关闭 #350 前必须同时具备：
+
+- 在固定 WSL/Linux 或固定 self-hosted 环境按版本化 `cases.yaml` 执行完整矩阵。
+- 每个正式 case 独立重复 5 次，并满足设计规格定义的 CV 稳定性要求；不使用 hosted runner 数值冻结阈值。
+- 提交环境清单、exact SHA、binary/provenance digest、原始 JSON/CSV、日志和可复核摘要。
+- 覆盖 batching、runtime threads、pipeline、value size、queue saturation、慢 storage、storage-gate pause 和 shutdown drain 行为。
+- 基于稳定结果冻结 #351 的量化验收阈值，并给出 executor 模型选择建议，但不在该 PR 中实施 #351。

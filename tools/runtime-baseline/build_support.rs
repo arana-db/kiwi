@@ -49,7 +49,6 @@ pub struct BuildIdentity {
 
 #[allow(dead_code)]
 pub struct GitMetadata {
-    pub dot_git: PathBuf,
     pub git_dir: PathBuf,
     pub common_dir: PathBuf,
     pub rerun_paths: BTreeSet<PathBuf>,
@@ -123,7 +122,6 @@ impl GitMetadata {
         }
 
         Ok(Self {
-            dot_git,
             git_dir,
             common_dir,
             rerun_paths,

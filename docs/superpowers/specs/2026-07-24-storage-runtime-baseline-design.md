@@ -80,11 +80,30 @@ workflow 已运行真实负载。当前 `.github/workflows/ci.yml` 调用
 pause、慢 storage 和 pending shutdown 场景。不采用完全自研高性能客户端，因为开发
 成本高，且客户端实现本身会成为新的性能变量。
 
-## 交付分段
+## 交付拓扑
 
-#350 通过两个小 PR 完成，避免把工具、观测接线和大量结果混在一个 PR 中。
+#350 通过三个有序 PR 完成，避免把基础设施、真实接线与 smoke、完整性能结果混在一个
+PR 中：
 
-### 第一阶段：基线 harness 与 smoke
+```text
+Foundation PR（Tasks 1-5，当前 PR #378）
+  -> Wiring and Smoke PR（Tasks 6-12，完成原第一阶段）
+  -> Baseline Results PR（原第二阶段）
+```
+
+### Foundation PR：Tasks 1-5（当前 PR #378）
+
+交付 workspace/tool binary 骨架、`StorageServer` 组合入口、`NetworkServer` 可等待生命周期、
+request sender 显式关闭点，以及 feature-gated observer contract、请求身份和状态 token。
+
+当前 binary 必须保持 fail-closed：只解析参数后以非零状态返回
+`harness not initialized`。它尚未接入真实 runtime、控制协议或 smoke，不能被描述为可运行
+的 baseline harness。
+
+PR #378 的 Ready/验收门禁是 Tasks 1-5 的构建、测试、feature 隔离和生产路径无影响均有
+证据；不得提前声称原第一阶段完成。PR #378 不关闭 #350。
+
+### Wiring and Smoke PR：Tasks 6-12（完成原第一阶段）
 
 建议标题：
 
@@ -101,9 +120,11 @@ test(runtime): add reproducible storage baseline harness
 - CI 继续编译所有 benchmark target，并额外运行不用于性能判定的短 smoke。
 - smoke 失败时上传 controller log、Kiwi log、环境清单和部分 JSON。
 
-第一阶段不发布“优化后更快”等性能结论，也不关闭 #350。
+该 PR 的 Ready/验收门禁包括：observer 已接入真实请求生命周期，benchmark-only server、
+控制器、4 个显式 smoke case、结果校验和 CI fail-closed 门禁均真实可运行，且生产 binary
+不暴露 benchmark 控制面。该 PR 不发布“优化后更快”等性能结论，也不关闭 #350。
 
-### 第二阶段：完整基线与阈值冻结
+### Baseline Results PR（原第二阶段）：完整基线与阈值冻结
 
 建议标题：
 
@@ -119,6 +140,10 @@ perf(runtime): publish storage execution baseline
 - 记录 storage-gate pause 与 shutdown 的请求归属和 drain 行为。
 - 在 #350 文档中冻结 #351 的量化验收阈值。
 - 给出 #351 executor 模型的选择建议，但不在该 PR 中实施。
+
+该 PR 的 Ready/验收门禁是：在固定 WSL/Linux 或固定 self-hosted 环境按版本化
+`cases.yaml` 完成全量矩阵，每个正式 case 重复 5 次并满足稳定性要求，提交可追溯原始结果，
+冻结 #351 阈值并给出 executor 选择建议。只有该 PR 验收后才关闭 #350。
 
 ## Harness 架构
 
@@ -148,7 +173,7 @@ harness 已运行。
 
 当前 StorageServer 的 `with_config`、`with_pause_controller` 和 `with_metrics` 不能同时组合
 自定义 config、共享 access gate 和 observer；RuntimeManager 又在内部创建 MessageChannel
-和 StorageClient。第一阶段允许增加最小的组合构造入口，把同一个可选 observer contract
+和 StorageClient。Foundation PR 与 Wiring and Smoke PR 允许增加最小的组合构造入口，把同一个可选 observer contract
 注入完整请求链。`runtime` crate 只定义该 contract 和随请求传递的 token；具体
 `BaselineMetrics` 由工具 crate 拥有并实现 contract，避免形成 `runtime -> tools/runtime-baseline`
 依赖环：
@@ -242,7 +267,7 @@ probe。若达到目标并发前已有 blocker completed，该 case 失败；控
 规定的更长 duration 重新执行，但不能把未形成重叠阻塞窗口的样本记为成功。
 
 `shutdown` 触发 benchmark target 中与当前 NetworkServer、StorageServer 和 RuntimeManager
-一致的 stop 路径，不预设当前实现一定 drain 或一定取消。第一阶段增加最小的 lifecycle
+一致的 stop 路径，不预设当前实现一定 drain 或一定取消。Foundation PR 增加最小的 lifecycle
 handle：停止 accept、停止从现有连接接受新命令、保留 accept/connection/StorageServer
 JoinHandle、关闭 request sender，然后观察当前 queued/batch/waiting/running 请求如何结束，
 最后关闭 runtime。该 handle 复用真正的 NetworkServer，不另写简化 TCP server。
@@ -349,7 +374,7 @@ CURRENT、MANIFEST 和 OPTIONS 文件 SHA-256。主矩阵统一测 warm workload
 
 ## 测量矩阵
 
-第一阶段 smoke 固定为 4 个显式 case，不做组合展开：
+Wiring and Smoke PR 的 smoke 固定为 4 个显式 case，不做组合展开：
 
 - GET，connections 1，pipeline 1，batching off；
 - GET，connections 8，pipeline 8，batching on；
@@ -361,7 +386,7 @@ case 预热 1 秒、测量 2 秒、总超时 15 秒。controller 的 4-case smok
 GitHub job 总超时为 45 分钟，以覆盖冷 runner 的 release RocksDB 编译。它只验证真实执行和
 fail-closed，不用于性能比较。
 
-第二阶段使用版本化 `cases.yaml` 作为唯一可执行 case 清单。下表是可选维度，不做全
+Baseline Results PR 使用版本化 `cases.yaml` 作为唯一可执行 case 清单。下表是可选维度，不做全
 笛卡尔积。manifest 分为以下组，合计不得超过 60 个 case variant：
 
 1. 基础吞吐：在 1 KiB value 下扫描 3 种 operation、3 种 connections、3 种 pipeline，
@@ -465,7 +490,7 @@ required 的 check。CI 只验证：
 避免把 target 编译成功表述为性能验证成功。
 
 workflow 只能创建独立 check，是否 required 由 GitHub ruleset/branch protection 控制。
-第一阶段收尾必须实时核验 ruleset；若执行账号无权修改，应把“将 Runtime Baseline Smoke
+Wiring and Smoke PR 收尾必须实时核验 ruleset；若执行账号无权修改，应把“将 Runtime Baseline Smoke
 设为 required”记录为明确的仓库配置待办，不能仅凭 job 存在声称 required 门禁已生效。
 
 ## 错误处理
@@ -518,7 +543,7 @@ workflow 只能创建独立 check，是否 required 由 GitHub ruleset/branch pr
 
 ## 验证命令
 
-第一阶段实现后至少执行：
+Wiring and Smoke PR 达到 Ready 前至少执行：
 
 ```bash
 cargo fmt --all -- --check
@@ -538,7 +563,7 @@ git diff --check
 
 ## #351 阈值冻结规则
 
-第二阶段不预先拍脑袋指定 executor 参数，但必须从稳定 baseline 产生以下阈值：
+Baseline Results PR 不预先拍脑袋指定 executor 参数，但必须从稳定 baseline 产生以下阈值：
 
 - 正常负载吞吐允许回退比例；
 - P99 与 max latency 允许变化；

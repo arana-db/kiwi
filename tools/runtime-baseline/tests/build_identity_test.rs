@@ -76,7 +76,6 @@ fn discovers_linked_worktree_metadata_from_gitfile_and_commondir() {
     fs::write(common_dir.join("packed-refs"), "# pack-refs with: peeled\n").expect("packed refs");
 
     let metadata = GitMetadata::discover(&worktree).expect("linked worktree metadata");
-    assert_eq!(metadata.dot_git, worktree.join(".git"));
     assert_eq!(metadata.git_dir, git_dir);
     assert_eq!(metadata.common_dir, common_dir);
     for path in [
@@ -292,9 +291,7 @@ fn create_cargo_fixture(root: &Path) {
     )
     .expect("fixture tracked source");
     fs::write(root.join(".gitignore"), "target/\n").expect("fixture Git ignore");
-    fs::write(
-        root.join("Cargo.toml"),
-        r#"[workspace]
+    let fixture_manifest = r#"[workspace]
 resolver = "2"
 members = ["tools/runtime-baseline"]
 
@@ -303,6 +300,7 @@ version = "0.1.0"
 description = "runtime baseline fixture"
 repository = "https://example.test/runtime-baseline"
 edition = "2021"
+rust-version = "__RUST_VERSION__"
 
 [workspace.dependencies]
 anyhow = "1.0"
@@ -317,9 +315,9 @@ implicit_clone = "warn"
 
 [workspace.lints.rust]
 unknown_lints = "deny"
-"#,
-    )
-    .expect("fixture Cargo manifest");
+"#
+    .replace("__RUST_VERSION__", env!("CARGO_PKG_RUST_VERSION"));
+    fs::write(root.join("Cargo.toml"), fixture_manifest).expect("fixture Cargo manifest");
 
     let source_crate = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let fixture_crate = root.join("tools/runtime-baseline");
@@ -374,7 +372,7 @@ struct FixtureIdentity {
 }
 
 fn run_fixture_identity(root: &Path) -> FixtureIdentity {
-    let output = Command::new("cargo")
+    let output = fixture_cargo(root)
         .args([
             "run",
             "-p",
@@ -383,7 +381,6 @@ fn run_fixture_identity(root: &Path) -> FixtureIdentity {
             "identity",
             "--quiet",
         ])
-        .current_dir(root)
         .env("CARGO_TARGET_DIR", root.join("target"))
         .output()
         .expect("fixture cargo starts");
@@ -396,9 +393,8 @@ fn run_fixture_identity(root: &Path) -> FixtureIdentity {
 }
 
 fn generate_fixture_lockfile(root: &Path) {
-    let output = Command::new("cargo")
+    let output = fixture_cargo(root)
         .arg("generate-lockfile")
-        .current_dir(root)
         .output()
         .expect("fixture lockfile generation starts");
     assert!(
@@ -406,6 +402,16 @@ fn generate_fixture_lockfile(root: &Path) {
         "fixture lockfile generation failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn fixture_cargo(root: &Path) -> Command {
+    let mut command = Command::new("cargo");
+    command
+        .current_dir(root)
+        .env_remove("RUSTFLAGS")
+        .env_remove("RUSTDOCFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS");
+    command
 }
 
 fn git_stdout(directory: &Path, args: &[&str]) -> String {
