@@ -993,11 +993,8 @@ mod tests {
                     }
 
                     // Query the range
-                    let read_entries = {
-
-                        log_store.do_try_get_log_entries(start..=end).await
-                            .expect("Read should succeed")
-                    };
+                    let read_result = log_store.do_try_get_log_entries(start..=end).await;
+                    let read_entries = read_result.expect("Read should succeed");
 
                     // Expected entries in this range
                     let expected_entries: Vec<_> = sequential_entries.iter()
@@ -3413,12 +3410,8 @@ mod tests {
 
         // All clones should see the same data
         for (i, store) in [&log_store, &clone1, &clone2, &clone3].iter().enumerate() {
-            let read_entries = {
-                store
-                    .do_try_get_log_entries(1..=1)
-                    .await
-                    .expect("Read should succeed")
-            };
+            let read_result = store.do_try_get_log_entries(1..=1).await;
+            let read_entries = read_result.expect("Read should succeed");
 
             assert_eq!(read_entries.len(), 1, "Clone {} should see the entry", i);
             assert_eq!(read_entries[0].log_id.index, 1);

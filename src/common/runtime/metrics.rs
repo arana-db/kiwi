@@ -396,20 +396,20 @@ impl MetricsCollector {
                 *last_metrics.write().expect("lock poisoned") = Some(runtime_metrics.clone());
 
                 // Log key metrics periodically
-                if let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH) {
-                    if elapsed.as_secs() % 60 == 0 {
-                        // Log every minute
-                        info!(
-                            "Runtime Metrics - Network RPS: {:.2}, Storage OPS: {:.2}, Channel Util: {:.1}%, Health: {:?}",
-                            runtime_metrics.network_metrics.requests_per_second,
-                            runtime_metrics.storage_metrics.operations_per_second,
-                            runtime_metrics
-                                .channel_metrics
-                                .buffer_metrics
-                                .buffer_utilization_percent,
-                            runtime_metrics.health_status.overall_health
-                        );
-                    }
+                if let Ok(elapsed) = SystemTime::now().duration_since(UNIX_EPOCH)
+                    && elapsed.as_secs() % 60 == 0
+                {
+                    // Log every minute
+                    info!(
+                        "Runtime Metrics - Network RPS: {:.2}, Storage OPS: {:.2}, Channel Util: {:.1}%, Health: {:?}",
+                        runtime_metrics.network_metrics.requests_per_second,
+                        runtime_metrics.storage_metrics.operations_per_second,
+                        runtime_metrics
+                            .channel_metrics
+                            .buffer_metrics
+                            .buffer_utilization_percent,
+                        runtime_metrics.health_status.overall_health
+                    );
                 }
             }
         });

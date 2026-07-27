@@ -132,14 +132,14 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
     async fn new_client(&mut self, target: NodeId, node: &Node) -> Self::Network {
         // Get the read lock to check if a client already exists for the target node
         let networks = self.networks.read().await;
-        if let Some(network) = networks.get(&target) {
-            if network.target == node.raft_addr {
-                return KiwiNetwork {
-                    client: Arc::clone(&network.client),
-                    target: node.raft_addr.clone(),
-                    config: self.config.clone(),
-                };
-            }
+        if let Some(network) = networks.get(&target)
+            && network.target == node.raft_addr
+        {
+            return KiwiNetwork {
+                client: Arc::clone(&network.client),
+                target: node.raft_addr.clone(),
+                config: self.config.clone(),
+            };
         }
 
         // Drop the read lock before acquiring the write lock
@@ -149,14 +149,14 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
         let mut networks = self.networks.write().await;
 
         // Double-check if another async task has already created the client while we were waiting for the write lock
-        if let Some(network) = networks.get(&target) {
-            if network.target == node.raft_addr {
-                return KiwiNetwork {
-                    client: Arc::clone(&network.client),
-                    target: node.raft_addr.clone(),
-                    config: self.config.clone(),
-                };
-            }
+        if let Some(network) = networks.get(&target)
+            && network.target == node.raft_addr
+        {
+            return KiwiNetwork {
+                client: Arc::clone(&network.client),
+                target: node.raft_addr.clone(),
+                config: self.config.clone(),
+            };
         }
 
         networks.remove(&target);
@@ -246,10 +246,10 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
             }
 
             let mut client = self.client.lock().await;
-            match client
+            let append_result = client
                 .append_entries(TonicRequest::new(proto_req.clone()))
-                .await
-            {
+                .await;
+            match append_result {
                 Ok(response) => {
                     let proto_resp = response.into_inner();
                     return (&proto_resp).try_into().map_err(|e| {
@@ -302,7 +302,8 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
             }
 
             let mut client = self.client.lock().await;
-            match client.vote(TonicRequest::new(proto_req)).await {
+            let vote_result = client.vote(TonicRequest::new(proto_req)).await;
+            match vote_result {
                 Ok(response) => {
                     let proto_resp = response.into_inner();
                     // Proto → OpenRaft

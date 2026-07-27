@@ -211,16 +211,16 @@ impl CommandPipeline {
                             }
                             None => {
                                 // Channel closed, process remaining batch and exit
-                                if let Some(batch) = current_batch.take() {
-                                    if !batch.is_empty() {
-                                        Self::process_batch(
-                                            batch,
-                                            storage.clone(),
-                                            cmd_table.clone(),
-                                            executor.clone(),
-                                            semaphore.clone(),
-                                        ).await;
-                                    }
+                                if let Some(batch) = current_batch.take()
+                                    && !batch.is_empty()
+                                {
+                                    Self::process_batch(
+                                        batch,
+                                        storage.clone(),
+                                        cmd_table.clone(),
+                                        executor.clone(),
+                                        semaphore.clone(),
+                                    ).await;
                                 }
                                 break;
                             }
@@ -229,7 +229,8 @@ impl CommandPipeline {
 
                     // Batch timeout - process partial batch
                     _ = batch_timer.tick() => {
-                        if let Some(batch) = current_batch.take() {
+                        let pending_batch = current_batch.take();
+                        if let Some(batch) = pending_batch {
                             if !batch.is_empty() && batch.is_expired(config.batch_timeout) {
                                 Self::process_batch(
                                     batch,
@@ -302,7 +303,8 @@ impl CommandPipeline {
 
         // Wait for all commands in batch to complete
         for handle in handles {
-            if let Err(e) = handle.await {
+            let join_result = handle.await;
+            if let Err(e) = join_result {
                 warn!("Command execution failed in batch {}: {}", batch_id, e);
             }
         }

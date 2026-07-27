@@ -130,12 +130,12 @@ impl ExpirationManager {
         let mut key_expiry = self.key_expiry.write();
 
         // Remove old expiration if exists
-        if let Some(old_expire_time) = key_expiry.get(key) {
-            if let Some(keys_set) = expiry_index.get_mut(old_expire_time) {
-                keys_set.remove(key);
-                if keys_set.is_empty() {
-                    expiry_index.remove(old_expire_time);
-                }
+        if let Some(old_expire_time) = key_expiry.get(key)
+            && let Some(keys_set) = expiry_index.get_mut(old_expire_time)
+        {
+            keys_set.remove(key);
+            if keys_set.is_empty() {
+                expiry_index.remove(old_expire_time);
             }
         }
 

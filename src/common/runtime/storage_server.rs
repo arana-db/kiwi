@@ -460,7 +460,11 @@ impl StorageServer {
     ) -> Result<(), DualRuntimeError> {
         info!("Storage server running without batching");
 
-        while let Some(request) = request_receiver.recv().await {
+        loop {
+            let received = request_receiver.recv().await;
+            let Some(request) = received else {
+                break;
+            };
             debug!("Received storage request: {:?}", request.id);
 
             let access_guard = self.access_gate.enter().await;
@@ -504,7 +508,8 @@ impl StorageServer {
 
         // Wait for all requests in the batch to complete
         for handle in handles {
-            if let Err(e) = handle.await {
+            let join_result = handle.await;
+            if let Err(e) = join_result {
                 error!("Failed to process request in batch: {}", e);
             }
         }
@@ -736,9 +741,7 @@ impl BatchProcessor {
         });
 
         let batch_size = self.max_batch_size.min(state.requests.len());
-        let batch = state.requests.drain(0..batch_size).collect();
-
-        batch
+        state.requests.drain(0..batch_size).collect()
     }
 
     /// Wait for batch condition to be met (size or efficiency threshold)
@@ -999,7 +1002,8 @@ impl BackgroundTaskManager {
             _ = async {
                 // Wait for any task to complete (which would indicate an error)
                 for (name, handle) in handles {
-                    if let Err(e) = handle.await {
+                    let join_result = handle.await;
+                    if let Err(e) = join_result {
                         error!("Background task '{}' failed: {}", name, e);
                         return;
                     }
@@ -1059,31 +1063,36 @@ impl BackgroundTaskManager {
                     }
 
                     // Check if compaction is needed
-                    if let Ok(needs_compaction) = Self::check_compaction_needed(&storage, config.compaction_trigger_threshold).await {
-                        if needs_compaction {
-                            info!("Triggering background compaction");
+                    let compaction_check = Self::check_compaction_needed(
+                        &storage,
+                        config.compaction_trigger_threshold,
+                    )
+                    .await;
+                    if let Ok(needs_compaction) = compaction_check
+                        && needs_compaction
+                    {
+                        info!("Triggering background compaction");
 
-                            // Record compaction started
+                        // Record compaction started
+                        if let Some(ref _tracker) = metrics_tracker {
+                            // TODO: Fix type annotation issue
+                            // tracker.record_compaction_started().await;
+                        }
+
+                        let compaction_start = Instant::now();
+                        if let Err(e) = storage.compact_all(false).await {
+                            warn!("Failed to trigger background compaction: {}", e);
+                        } else {
+                            let _compaction_duration = compaction_start.elapsed();
+
+                            // Update statistics
+                            let mut stats_guard = stats.lock().await;
+                            stats_guard.compactions_triggered += 1;
+
+                            // Record compaction completed
                             if let Some(ref _tracker) = metrics_tracker {
                                 // TODO: Fix type annotation issue
-                                // tracker.record_compaction_started().await;
-                            }
-
-                            let compaction_start = Instant::now();
-                            if let Err(e) = storage.compact_all(false).await {
-                                warn!("Failed to trigger background compaction: {}", e);
-                            } else {
-                                let _compaction_duration = compaction_start.elapsed();
-
-                                // Update statistics
-                                let mut stats_guard = stats.lock().await;
-                                stats_guard.compactions_triggered += 1;
-
-                                // Record compaction completed
-                                if let Some(ref _tracker) = metrics_tracker {
-                                    // TODO: Fix type annotation issue
-                                    // tracker.record_compaction_completed(0, compaction_duration).await; // TODO: Get actual bytes compacted
-                                }
+                                // tracker.record_compaction_completed(0, compaction_duration).await; // TODO: Get actual bytes compacted
                             }
                         }
                     }
@@ -1133,25 +1142,25 @@ impl BackgroundTaskManager {
 
                     // Check flush status for each storage instance
                     for (i, instance) in storage.insts.iter().enumerate() {
-                        if let Ok(flush_pending) = Self::check_flush_status(instance).await {
-                            if flush_pending {
-                                debug!("Flush pending detected on storage instance {}", i);
+                        if let Ok(flush_pending) = Self::check_flush_status(instance).await
+                            && flush_pending
+                        {
+                            debug!("Flush pending detected on storage instance {}", i);
 
-                                // Record flush started
-                                if let Some(ref _tracker) = metrics_tracker {
-                                    // TODO: Fix type annotation issue
-                                    // tracker.record_flush_started().await;
-                                }
+                            // Record flush started
+                            if let Some(ref _tracker) = metrics_tracker {
+                                // TODO: Fix type annotation issue
+                                // tracker.record_flush_started().await;
+                            }
 
-                                // Update statistics
-                                let mut stats_guard = stats.lock().await;
-                                stats_guard.flushes_detected += 1;
+                            // Update statistics
+                            let mut stats_guard = stats.lock().await;
+                            stats_guard.flushes_detected += 1;
 
-                                // Record flush completed (simulated)
-                                if let Some(ref _tracker) = metrics_tracker {
-                                    // TODO: Fix type annotation issue
-                                    // tracker.record_flush_completed(0, Duration::from_millis(10)).await; // TODO: Get actual flush metrics
-                                }
+                            // Record flush completed (simulated)
+                            if let Some(ref _tracker) = metrics_tracker {
+                                // TODO: Fix type annotation issue
+                                // tracker.record_flush_completed(0, Duration::from_millis(10)).await; // TODO: Get actual flush metrics
                             }
                         }
                     }
@@ -1245,17 +1254,17 @@ impl BackgroundTaskManager {
         // Check each storage instance
         for instance in &storage.insts {
             // Get number of SST files (placeholder - would use actual RocksDB property)
-            if let Ok(sst_count) = instance.get_property("rocksdb.num-files-at-level0") {
-                if sst_count as usize > threshold {
-                    return Ok(true);
-                }
+            if let Ok(sst_count) = instance.get_property("rocksdb.num-files-at-level0")
+                && sst_count as usize > threshold
+            {
+                return Ok(true);
             }
 
             // Check for write stalls
-            if let Ok(write_stall) = instance.get_property("rocksdb.actual-delayed-write-rate") {
-                if write_stall > 0 {
-                    return Ok(true);
-                }
+            if let Ok(write_stall) = instance.get_property("rocksdb.actual-delayed-write-rate")
+                && write_stall > 0
+            {
+                return Ok(true);
             }
         }
 
@@ -1295,24 +1304,24 @@ impl BackgroundTaskManager {
             }
 
             // Check compaction status
-            if let Ok(compaction) = instance.get_property("rocksdb.compaction-pending") {
-                if compaction > 0 {
-                    stats.compaction_pending = true;
-                }
+            if let Ok(compaction) = instance.get_property("rocksdb.compaction-pending")
+                && compaction > 0
+            {
+                stats.compaction_pending = true;
             }
 
             // Check flush status
-            if let Ok(flush) = instance.get_property("rocksdb.mem-table-flush-pending") {
-                if flush > 0 {
-                    stats.flush_pending = true;
-                }
+            if let Ok(flush) = instance.get_property("rocksdb.mem-table-flush-pending")
+                && flush > 0
+            {
+                stats.flush_pending = true;
             }
 
             // Check write stall status
-            if let Ok(stall) = instance.get_property("rocksdb.actual-delayed-write-rate") {
-                if stall > 0 {
-                    stats.write_stall_active = true;
-                }
+            if let Ok(stall) = instance.get_property("rocksdb.actual-delayed-write-rate")
+                && stall > 0
+            {
+                stats.write_stall_active = true;
             }
         }
 

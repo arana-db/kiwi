@@ -583,7 +583,8 @@ impl Redis {
         {
             Some(data_value) => {
                 let parsed_data = ParsedBaseDataValue::new(BytesMut::from(data_value.as_slice()))?;
-                Ok(Some(parsed_data.user_value().to_vec()))
+                let user_value = parsed_data.user_value().to_vec();
+                Ok(Some(user_value))
             }
             None => Ok(None),
         }

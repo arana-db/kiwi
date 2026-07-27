@@ -101,12 +101,13 @@ impl Cmd for HelloCmd {
             }
         };
 
-        match client.handle_hello(
+        let hello_result = client.handle_hello(
             &command,
             client.is_authenticated(),
             authentication_required,
             &mut authenticate,
-        ) {
+        );
+        match hello_result {
             Ok((response, _)) => {
                 // handle_hello only succeeds when the client is already
                 // authenticated or the HELLO included an AUTH clause that

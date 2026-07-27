@@ -2271,27 +2271,27 @@ impl Redis {
         let meta_val = db
             .get_cf(&cf_meta, &dest_base_meta_key)
             .context(RocksSnafu)?;
-        if let Some(val) = meta_val {
-            if val.first().copied() == Some(DataType::Set as u8) {
-                let set_meta = ParsedSetsMetaValue::new(&val[..])?;
-                if set_meta.is_valid() {
-                    let version = set_meta.version();
+        if let Some(val) = meta_val
+            && val.first().copied() == Some(DataType::Set as u8)
+        {
+            let set_meta = ParsedSetsMetaValue::new(&val[..])?;
+            if set_meta.is_valid() {
+                let version = set_meta.version();
 
-                    // Delete all existing members
-                    let prefix = MemberDataKey::new(destination, version, &[]).encode_seek_key()?;
-                    let iter = db.iterator_cf_opt(
-                        &cf_data,
-                        ReadOptions::default(),
-                        IteratorMode::From(&prefix, Direction::Forward),
-                    );
+                // Delete all existing members
+                let prefix = MemberDataKey::new(destination, version, &[]).encode_seek_key()?;
+                let iter = db.iterator_cf_opt(
+                    &cf_data,
+                    ReadOptions::default(),
+                    IteratorMode::From(&prefix, Direction::Forward),
+                );
 
-                    for item in iter {
-                        let (raw_key, _) = item.context(RocksSnafu)?;
-                        if !raw_key.starts_with(&prefix) {
-                            break;
-                        }
-                        keys_to_delete.push(raw_key.to_vec());
+                for item in iter {
+                    let (raw_key, _) = item.context(RocksSnafu)?;
+                    if !raw_key.starts_with(&prefix) {
+                        break;
                     }
+                    keys_to_delete.push(raw_key.to_vec());
                 }
             }
         }
@@ -2444,10 +2444,11 @@ impl Redis {
 
             for member in &all_members[start_index..end_index] {
                 // Apply pattern matching if specified
-                if let Some(pat) = pattern {
-                    if pat != b"*" && !glob_match_bytes(pat, member) {
-                        continue;
-                    }
+                if let Some(pat) = pattern
+                    && pat != b"*"
+                    && !glob_match_bytes(pat, member)
+                {
+                    continue;
                 }
                 result_members.push(member.clone());
             }
