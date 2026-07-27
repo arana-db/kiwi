@@ -2235,34 +2235,40 @@ impl Redis {
             // MetaCF stores both string values and the meta values of
             // hash/set/zset/list under the same key encoding (BaseMetaKey is a
             // type alias of BaseKey), so the user key is decoded once and the
-            // value bytes decide whether the key is live. This mirrors the type
-            // probing order used by `get_key_type`.
+            // value bytes decide whether the key is live.
             let Ok(parsed_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]) else {
                 continue;
             };
 
-            // String value: the entry is a plain string key.
-            if let Ok(parsed) = ParsedStringsValue::new(&value_bytes[..])
-                && !parsed.is_stale()
-            {
-                return Ok(Some(String::from_utf8_lossy(parsed_key.key()).to_string()));
-            }
-
-            // Otherwise the value is a collection meta value: hash/set/zset use
-            // the base meta layout and list uses the list meta layout.
-            let is_live_collection = if let Ok(meta) =
-                crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
-            {
-                !meta.is_stale() && meta.count() > 0
-            } else if let Ok(list_meta) =
-                crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
-            {
-                !list_meta.is_stale() && list_meta.count() > 0
-            } else {
-                false
+            // The stored type is determined by the leading type-tag byte, not by
+            // which parser happens to accept the bytes. `ParsedStringsValue::new`
+            // only validates that the tag is a *valid* DataType (not that it is
+            // String) and applies no count check, so probing string-first would
+            // misclassify collection meta values and could return an empty
+            // (count == 0) collection. Dispatch on the tag exactly like
+            // `get_key_type` does.
+            let Ok(data_type) = DataType::try_from(value_bytes[0]) else {
+                continue;
             };
 
-            if is_live_collection {
+            let is_live = match data_type {
+                DataType::String => ParsedStringsValue::new(&value_bytes[..])
+                    .map(|parsed| !parsed.is_stale())
+                    .unwrap_or(false),
+                DataType::Hash | DataType::Set | DataType::ZSet => {
+                    crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
+                        .map(|meta| !meta.is_stale() && meta.count() > 0)
+                        .unwrap_or(false)
+                }
+                DataType::List => {
+                    crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
+                        .map(|list_meta| !list_meta.is_stale() && list_meta.count() > 0)
+                        .unwrap_or(false)
+                }
+                _ => false,
+            };
+
+            if is_live {
                 return Ok(Some(String::from_utf8_lossy(parsed_key.key()).to_string()));
             }
         }
