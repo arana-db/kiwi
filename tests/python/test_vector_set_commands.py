@@ -36,6 +36,8 @@ def vector_client(request):
         prefix + b"expired",
         prefix + b"recreated",
         prefix + b"errors",
+        prefix + b"errors:q8",
+        prefix + b"errors:bin",
         prefix + b"string",
         prefix + b"malformed",
     ]
@@ -211,9 +213,32 @@ def test_wrongtype_and_unsupported_options(vector_client):
     )
 
     base = (b"VADD", key, b"VALUES", 2, 1, 0, b"member")
-    assert_response_error(client, "default Q8 quantization is not supported", *base)
-    assert_response_error(client, "VADD option Q8 is not supported yet", *base, b"Q8")
-    assert_response_error(client, "VADD option BIN is not supported yet", *base, b"BIN")
+    # The quantization option defaults to NOQUANT and Q8/BIN are accepted.
+    assert client.execute_command(*base) == 1
+    assert vadd_values(client, prefix + b"errors:q8", [1, 0], b"member", b"Q8") == 1
+    assert vadd_values(client, prefix + b"errors:bin", [1, 0], b"member", b"BIN") == 1
+
+    # Recognized but not yet supported options get dedicated errors.
+    for option in (b"CAS", b"EF", b"SETATTR", b"M"):
+        assert_response_error(
+            client,
+            f"VADD option {option.decode()} is not supported yet",
+            *base,
+            option,
+        )
+    assert_response_error(
+        client,
+        "VADD option REDUCE is not supported yet",
+        b"VADD",
+        key,
+        b"REDUCE",
+        2,
+        b"VALUES",
+        2,
+        1,
+        0,
+        b"member",
+    )
 
     vadd_values(client, key, [1, 0], b"member")
     assert_response_error(

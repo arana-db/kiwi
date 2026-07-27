@@ -23,15 +23,26 @@ use storage::storage::Storage;
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
-use super::{MissingError, error_reply, parse_vemb, storage_error_reply};
+use super::{ERR_INVALID_VECTOR, MissingError, ParseResult, error_reply, storage_error_reply};
+
+const ERR_VEMB_RAW: &str = "ERR VEMB option RAW is not supported yet";
 
 crate::define_vector_command!(
     VEmbCmd,
     "vemb",
-    -3,
+    -3, // VEMB key element
     CmdFlags::READONLY | CmdFlags::FAST,
     AclCategory::KEYSPACE | AclCategory::READ
 );
+
+fn parse_vemb(argv: &[Vec<u8>]) -> ParseResult<Vec<u8>> {
+    let element = argv.get(2).cloned().ok_or(ERR_INVALID_VECTOR)?;
+    match &argv[3..] {
+        [] => Ok(element),
+        [option] if option.eq_ignore_ascii_case(b"RAW") => Err(ERR_VEMB_RAW),
+        _ => Err(ERR_INVALID_VECTOR),
+    }
+}
 
 impl Cmd for VEmbCmd {
     impl_cmd_meta!();
@@ -57,5 +68,35 @@ impl Cmd for VEmbCmd {
             Err(error) => storage_error_reply(error, MissingError::Key),
         };
         client.set_reply(reply);
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_vemb_raw_and_unknown_trailing_options() {
+        assert_eq!(
+            parse_vemb(&[
+                b"vemb".to_vec(),
+                b"key".to_vec(),
+                b"member".to_vec(),
+                b"RAW".to_vec(),
+            ])
+            .unwrap_err(),
+            ERR_VEMB_RAW
+        );
+        assert_eq!(
+            parse_vemb(&[
+                b"vemb".to_vec(),
+                b"key".to_vec(),
+                b"member".to_vec(),
+                b"unknown".to_vec(),
+            ])
+            .unwrap_err(),
+            ERR_INVALID_VECTOR
+        );
     }
 }

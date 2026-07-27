@@ -27,7 +27,7 @@ use super::{MissingError, integer_reply, storage_error_reply};
 crate::define_vector_command!(
     VDimCmd,
     "vdim",
-    2,
+    2, // VDIM key
     CmdFlags::READONLY | CmdFlags::FAST,
     AclCategory::KEYSPACE | AclCategory::READ
 );

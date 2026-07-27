@@ -28,7 +28,7 @@ use super::{MissingError, storage_error_reply};
 crate::define_vector_command!(
     VIsMemberCmd,
     "vismember",
-    3,
+    3, // VISMEMBER key element
     CmdFlags::READONLY | CmdFlags::FAST,
     AclCategory::KEYSPACE | AclCategory::READ
 );

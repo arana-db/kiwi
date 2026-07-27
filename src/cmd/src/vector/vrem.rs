@@ -28,7 +28,7 @@ use super::{MissingError, storage_error_reply};
 crate::define_vector_command!(
     VRemCmd,
     "vrem",
-    3,
+    3, // VREM key element
     CmdFlags::WRITE | CmdFlags::FAST,
     AclCategory::KEYSPACE | AclCategory::WRITE
 );

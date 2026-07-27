@@ -27,7 +27,7 @@ use super::{MissingError, integer_reply, storage_error_reply};
 crate::define_vector_command!(
     VCardCmd,
     "vcard",
-    2,
+    2, // VCARD key
     CmdFlags::READONLY | CmdFlags::FAST,
     AclCategory::KEYSPACE | AclCategory::READ
 );
