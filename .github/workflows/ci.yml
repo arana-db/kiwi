@@ -125,6 +125,9 @@ jobs:
 
       - run: make lint
 
+      - name: Lint runtime baseline tool targets
+        run: cargo clippy -p runtime-baseline --all-targets -- -D warnings -D clippy::unwrap_used
+
   build-and-test:
     strategy:
       fail-fast: false
@@ -192,12 +195,18 @@ jobs:
       - name: Build
         run: make build
 
+      - name: Build runtime baseline tool
+        run: cargo build -p runtime-baseline --bin kiwi-runtime-baseline
+
       - name: Run Unit Test with retry
         uses: nick-fields/retry@v4
         with:
           timeout_minutes: 30
           max_attempts: 2
           command: bash -o pipefail -c "make test 2>&1 | tee cargo-test.log"
+
+      - name: Test runtime baseline tool
+        run: cargo test -p runtime-baseline --all-targets
 
       - name: Upload test results on failure
         if: failure()

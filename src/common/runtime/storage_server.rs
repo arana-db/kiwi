@@ -281,10 +281,11 @@ impl StorageServer {
         global_storage: GlobalStorage,
         request_receiver: mpsc::Receiver<StorageRequest>,
     ) -> Self {
-        Self::with_config(
+        Self::with_config_and_gate(
             global_storage,
             request_receiver,
             StorageServerConfig::default(),
+            StorageAccessGate::new(),
         )
     }
 
@@ -298,6 +299,21 @@ impl StorageServer {
             global_storage,
             request_receiver,
             StorageServerConfig::default(),
+            pause_controller.access_gate(),
+        )
+    }
+
+    /// Create a storage server with custom configuration and a pause controller.
+    pub fn with_config_and_pause_controller(
+        global_storage: GlobalStorage,
+        request_receiver: mpsc::Receiver<StorageRequest>,
+        config: StorageServerConfig,
+        pause_controller: StorageServerPauseController,
+    ) -> Self {
+        Self::with_config_and_gate(
+            global_storage,
+            request_receiver,
+            config,
             pause_controller.access_gate(),
         )
     }
@@ -1438,6 +1454,44 @@ mod tests {
     }
 
     #[test]
+    fn test_config_and_pause_controller_share_gate() {
+        let global_storage = GlobalStorage::new(Storage::new(1, 0));
+        let (_request_sender, request_receiver) = mpsc::channel(1);
+        let pause_controller = StorageServerPauseController::new();
+        let config = StorageServerConfig {
+            max_batch_size: 7,
+            batch_timeout_ms: 13,
+            worker_count: 2,
+            enable_batching: true,
+            enable_background_tasks: false,
+        };
+
+        let server = StorageServer::with_config_and_pause_controller(
+            global_storage,
+            request_receiver,
+            config,
+            pause_controller.clone(),
+        );
+
+        assert!(Arc::ptr_eq(
+            &server.access_gate.inner,
+            &pause_controller.access_gate.inner
+        ));
+        assert_eq!(server.config.max_batch_size, 7);
+        assert_eq!(server.config.batch_timeout_ms, 13);
+        assert_eq!(server.config.worker_count, 2);
+        assert!(server.config.enable_batching);
+        assert!(!server.config.enable_background_tasks);
+
+        let batch_processor = server
+            .batch_processor
+            .as_ref()
+            .expect("batching config should create a batch processor");
+        assert_eq!(batch_processor.max_batch_size, 7);
+        assert_eq!(batch_processor.batch_timeout_ms, 13);
+    }
+
+    #[test]
     fn test_batch_processor_creation() {
         let processor = BatchProcessor::new(50, 20);
 
@@ -1708,6 +1762,8 @@ mod tests {
             timeout: Duration::from_secs(1),
             timestamp: Instant::now(),
             priority: RequestPriority::Normal,
+            #[cfg(feature = "runtime-baseline")]
+            baseline_attempt: None,
         };
         let batch = vec![request];
         let batch_processing = server.process_request_batch(batch);

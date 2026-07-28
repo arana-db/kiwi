@@ -9,6 +9,10 @@ rust-version.workspace = true
 name = "runtime"
 path = "lib.rs"
 
+[features]
+default = []
+runtime-baseline = []
+
 [dependencies]
 tokio = { workspace = true }
 log = { workspace = true }

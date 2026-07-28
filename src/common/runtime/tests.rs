@@ -187,6 +187,44 @@ mod runtime_manager_tests {
 
         manager.stop().await.unwrap();
     }
+
+    #[tokio::test]
+    async fn test_close_storage_requests_releases_receiver_after_external_clients_drop() {
+        let mut manager = RuntimeManager::with_defaults().unwrap();
+        let mut request_receiver = manager.initialize_storage_components().unwrap();
+        let external_client = manager.storage_client().unwrap();
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), request_receiver.recv())
+                .await
+                .is_err(),
+            "manager-owned StorageClient must keep the request receiver open"
+        );
+
+        drop(external_client);
+        assert!(manager.close_storage_requests());
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), request_receiver.recv())
+                .await
+                .expect("request receiver should close within the test deadline")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_close_storage_requests_is_idempotent_and_preserves_manager_state() {
+        let mut manager = RuntimeManager::with_defaults().unwrap();
+        let _request_receiver = manager.initialize_storage_components().unwrap();
+        let state_before_close = manager.state().await;
+        let network_threads = manager.config().network_threads;
+        let storage_threads = manager.config().storage_threads;
+
+        assert!(manager.close_storage_requests());
+        assert!(!manager.close_storage_requests());
+        assert_eq!(manager.state().await, state_before_close);
+        assert_eq!(manager.config().network_threads, network_threads);
+        assert_eq!(manager.config().storage_threads, storage_threads);
+    }
 }
 
 // MessageChannel Tests
@@ -619,6 +657,8 @@ mod integration_tests {
             timeout: Duration::from_secs(1),
             timestamp: Instant::now(),
             priority: RequestPriority::Normal,
+            #[cfg(feature = "runtime-baseline")]
+            baseline_attempt: None,
         };
 
         // Send request
@@ -1071,5 +1111,91 @@ mod integration_tests {
         // Should have some errors due to capacity limits
         assert!(error_count > 0);
         assert_eq!(success_count + error_count, num_requests);
+    }
+}
+
+#[cfg(test)]
+mod storage_server_composition_tests {
+    use std::time::{Duration, Instant};
+
+    use resp::RespData;
+    use storage::storage::Storage;
+    use tokio::sync::{mpsc, oneshot};
+
+    use crate::{
+        GlobalStorage, RequestId, RequestPriority, StorageCommand, StorageRequest, StorageServer,
+        StorageServerConfig, StorageServerPauseController,
+    };
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn combined_config_pause_blocks_request_until_resume() {
+        let global_storage = GlobalStorage::new(Storage::new(1, 0));
+        let (request_sender, request_receiver) = mpsc::channel(1);
+        let pause_controller = StorageServerPauseController::new();
+        pause_controller.request_pause().await;
+
+        let config = StorageServerConfig {
+            max_batch_size: 1,
+            batch_timeout_ms: 1,
+            worker_count: 1,
+            enable_batching: true,
+            enable_background_tasks: false,
+        };
+        let server = StorageServer::with_config_and_pause_controller(
+            global_storage,
+            request_receiver,
+            config,
+            pause_controller.clone(),
+        );
+        let server_task = tokio::spawn(server.run());
+
+        let (response_sender, mut response_receiver) = oneshot::channel();
+        request_sender
+            .send(StorageRequest {
+                id: RequestId::new(),
+                command: StorageCommand::Batch {
+                    commands: Vec::new(),
+                },
+                response_channel: response_sender,
+                timeout: Duration::from_secs(1),
+                timestamp: Instant::now(),
+                priority: RequestPriority::Normal,
+                #[cfg(feature = "runtime-baseline")]
+                baseline_attempt: None,
+            })
+            .await
+            .expect("request channel should remain open");
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while request_sender.capacity() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("storage server should accept the paused request");
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), &mut response_receiver)
+                .await
+                .is_err(),
+            "request execution must remain blocked while the supplied controller is paused"
+        );
+
+        pause_controller.resume();
+        let response = tokio::time::timeout(Duration::from_secs(1), &mut response_receiver)
+            .await
+            .expect("request should finish after resume")
+            .expect("storage server should send a response");
+        assert_eq!(
+            response.result.expect("empty batch should succeed"),
+            RespData::Array(Some(Vec::new()))
+        );
+
+        drop(request_sender);
+        tokio::time::timeout(Duration::from_secs(1), server_task)
+            .await
+            .expect("storage server should stop after the request channel closes")
+            .expect("storage server task should not panic")
+            .expect("storage server should stop cleanly");
     }
 }
