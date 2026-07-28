@@ -76,19 +76,22 @@ fn discovers_linked_worktree_metadata_from_gitfile_and_commondir() {
     fs::write(common_dir.join("packed-refs"), "# pack-refs with: peeled\n").expect("packed refs");
 
     let metadata = GitMetadata::discover(&worktree).expect("linked worktree metadata");
-    assert_eq!(metadata.git_dir, git_dir);
-    assert_eq!(metadata.common_dir, common_dir);
+    let expected_git_dir = build_support::accessible_path(&git_dir, &worktree);
+    let expected_common_dir = build_support::accessible_path(&common_dir, &expected_git_dir);
+    assert_eq!(metadata.git_dir, expected_git_dir);
+    assert_eq!(metadata.common_dir, expected_common_dir);
     for path in [
         worktree.join(".git"),
-        git_dir.join("HEAD"),
-        git_dir.join("index"),
-        git_dir.join("commondir"),
-        branch_ref.clone(),
-        branch_ref
+        expected_git_dir.join("HEAD"),
+        expected_git_dir.join("index"),
+        expected_git_dir.join("commondir"),
+        expected_common_dir.join("refs/heads/baseline"),
+        expected_common_dir
+            .join("refs/heads/baseline")
             .parent()
             .expect("branch ref parent")
             .to_path_buf(),
-        common_dir.join("packed-refs"),
+        expected_common_dir.join("packed-refs"),
     ] {
         assert!(
             metadata.rerun_paths.contains(&path),
@@ -99,7 +102,7 @@ fn discovers_linked_worktree_metadata_from_gitfile_and_commondir() {
 }
 
 #[test]
-fn identity_ignores_generated_target_and_results_files() {
+fn identity_ignores_unrelated_docs_and_generated_artifacts() {
     let repo = initialized_repository();
     let clean = BuildIdentity::collect(repo.path(), None).expect("clean identity");
     assert_eq!(clean.compiled_git_sha.len(), 40);
@@ -107,7 +110,13 @@ fn identity_ignores_generated_target_and_results_files() {
     assert!(clean.rerun_paths.contains(&repo.path().join("src")));
     assert!(clean.rerun_paths.contains(&repo.path().join(".cargo")));
 
-    for excluded in ["src/results/output.json", "src/target/artifact"] {
+    for excluded in [
+        "docs/unrelated.md",
+        "target/artifact",
+        "tools/runtime-baseline/results/output.json",
+        "src/results/output.json",
+        "src/target/artifact",
+    ] {
         let path = repo.path().join(excluded);
         fs::create_dir_all(path.parent().expect("excluded path parent"))
             .expect("excluded directory");
@@ -157,6 +166,31 @@ fn identity_marks_an_untracked_source_change_dirty_and_watches_it() {
             .rerun_paths
             .contains(&repo.path().join("src"))
     );
+}
+
+#[test]
+fn identity_marks_each_canonical_source_area_dirty() {
+    for source_input in [
+        "Cargo.toml",
+        ".cargo/config.toml",
+        "tools/runtime-baseline/build_support.rs",
+        "tools/runtime-baseline/src/lib.rs",
+        "tools/runtime-baseline/tests/contract.rs",
+    ] {
+        let repo = initialized_repository();
+        let path = repo.path().join(source_input);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("canonical source parent");
+        }
+        fs::write(&path, "canonical source input\n").expect("canonical source input");
+
+        let identity = BuildIdentity::collect(repo.path(), None)
+            .expect("identity with canonical source input");
+        assert!(
+            identity.source_dirty,
+            "canonical source input was ignored: {source_input}"
+        );
+    }
 }
 
 #[test]

@@ -41,6 +41,13 @@ const SOURCE_EXCLUSIONS: &[&str] = &[
     ":(exclude,glob)**/results/**",
 ];
 
+pub fn source_status_arguments() -> Vec<&'static str> {
+    let mut arguments = vec!["status", "--porcelain", "--untracked-files=all", "--"];
+    arguments.extend(SOURCE_INPUTS);
+    arguments.extend(SOURCE_EXCLUSIONS);
+    arguments
+}
+
 pub struct BuildIdentity {
     pub compiled_git_sha: String,
     pub source_dirty: bool,
@@ -69,9 +76,7 @@ impl BuildIdentity {
             }
         }
 
-        let mut status_arguments = vec!["status", "--porcelain", "--untracked-files=all", "--"];
-        status_arguments.extend(SOURCE_INPUTS);
-        status_arguments.extend(SOURCE_EXCLUSIONS);
+        let status_arguments = source_status_arguments();
         let source_dirty = !metadata
             .git_output(source_root, &status_arguments)?
             .trim()

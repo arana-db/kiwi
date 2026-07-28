@@ -161,7 +161,7 @@ pub async fn run_until_cancelled(
 ) -> Result<(), Box<dyn Error>>;
 ```
 
-现有 `ServerTrait::run()` 调用该方法并传入永不取消的 token，保持生产行为。新方法以一个三路 `tokio::select!` 同时处理 listener accept、cancellation 和 `JoinSet::join_next()`：运行期间持续 reap 已完成连接，不能等 shutdown 才清空而导致连接 churn 下 JoinSet 无界增长。普通连接 EOF/协议错误继续记录日志且不终止生产 server；只有 task panic/JoinError 或 server 级错误才使 server 返回 error。
+现有 `ServerTrait::run()` 调用该方法并传入永不取消的 token，保持生产行为。新方法以一个三路 `tokio::select!` 同时处理 listener accept、cancellation 和 `JoinSet::join_next()`：运行期间持续 reap 已完成连接，不能等 shutdown 才清空而导致连接 churn 下 JoinSet 无界增长。普通连接 EOF/协议错误继续记录日志且不终止生产 server；单连接 task panic/JoinError 记录 warning 和 lifecycle failure counter 后继续 accept，只有 listener、cleanup、pool 守恒等 server 级错误才使 server 返回 error。
 
 当前 `start_pool_cleanup()` 是 detached 无限任务，`ConnectionPool<NetworkResources>` 的 idle entries 又持有 `StorageClient` clone。实现必须让 pool cleanup 受同一个 cancellation token 控制并被等待；connection tasks 全部结束后显式清空 pool 中的空闲 `NetworkResources`，确认 pool stats 为 active=0、available=0，再允许 `run_until_cancelled` 返回。
 
@@ -223,8 +223,8 @@ pub async fn run_until_cancelled(
 - [ ] 添加失败测试：相对 `--data-dir`、非 loopback listen、已含 RocksDB `CURRENT` 的 data dir、相对 startup/metrics path 均被 CLI 拒绝。
 - [ ] 运行 `cargo test -p runtime-baseline --test cli_test`，确认测试因 CLI 尚未实现而红灯。
 - [ ] 最小实现 `ServerArgs`：`--listen`、`--control-listen`、`--data-dir`、`--startup-event`、`--metrics-output`、`--expected-git-sha`、runtime thread/capacity/timeout/batching/instrumentation 参数。
-- [ ] 在 `build.rs` 中优先读取 CI 显式提供的 `KIWI_BASELINE_BUILD_GIT_SHA`，否则从当前 checkout 执行 `git rev-parse HEAD`；两者都必须是 40 位 hex，结果通过 `cargo:rustc-env=KIWI_BASELINE_COMPILED_GIT_SHA=...` 编入 binary。构建时同时执行受边界限制的 `git status --porcelain`，嵌入 `KIWI_BASELINE_SOURCE_DIRTY=true|false`。设置 `rerun-if-env-changed`，并覆盖 worktree `.git` 指针/HEAD 的 rerun 依赖。
-- [ ] dirty build 允许执行 smoke，但 startup/outcome 的 `publishability` 必须为 `non_publishable` 且包含 `dirty_source_tree`；CI Compile job 必须在 build 前断言 checkout clean。
+- [ ] 在 `build.rs` 中优先读取 CI 显式提供的 `KIWI_BASELINE_BUILD_GIT_SHA`，否则从当前 checkout 执行 `git rev-parse HEAD`；两者都必须是 40 位 hex，结果通过 `cargo:rustc-env=KIWI_BASELINE_COMPILED_GIT_SHA=...` 编入 binary。构建时必须通过 `build_support::source_status_arguments()` 执行 canonical `git status --porcelain --untracked-files=all -- <inputs/exclusions>`：根 `Cargo.toml`、`Cargo.lock`、`rust-toolchain.toml`、`.cargo/`、`src/`，工具 `Cargo.toml`、`build.rs`、`build_support.rs`、`src/`、`tests/`，并排除任意层级 `.git`、`target`、`results`。嵌入 `KIWI_BASELINE_SOURCE_DIRTY=true|false`，设置 `rerun-if-env-changed`，并覆盖 worktree `.git` 指针/HEAD 的 rerun 依赖。
+- [ ] dirty build 允许执行 smoke，但 startup/outcome 的 `publishability` 必须为 `non_publishable` 且包含 `dirty_source_tree`；CI Compile job 必须在 build 前使用同一 `source_status_arguments()` 精确断言 canonical source scope clean，不得扩大成全仓库 status。
 - [ ] 添加 build identity 测试：startup 报告 `env!("KIWI_BASELINE_COMPILED_GIT_SHA")`；`--expected-git-sha` 不同则 binary 在 listener/startup 之前失败，不能回显 caller 输入。
 - [ ] 添加 startup JSON 测试：临时文件与目标同目录；目标出现时 JSON 完整；PID、两个地址、canonical data dir、compiled Git SHA 和 schema version 正确；临时文件不残留。
 - [ ] 运行 `cargo test -p runtime-baseline --test startup_test`，确认先红后绿。
@@ -277,7 +277,7 @@ pub fn with_config_and_pause_controller(
 - [ ] 实现 `NetworkServer::run_until_cancelled(CancellationToken)`，accept、cancellation 和 `JoinSet::join_next()` 使用三路 `tokio::select!`，运行期间持续 reap 完成 task。
 - [ ] 用 `JoinSet` 保存 connection tasks；每个 task 使用 child token，在 shutdown 后停止从连接读取新命令并退出。普通连接错误在 task 内日志记录后正常结束，不升级为 server 失败。
 - [ ] 把 pool cleanup task 纳入可取消、可等待生命周期；为 `ConnectionPool` 增加清空 idle entries 的 API。
-- [ ] cancellation 后停止 accept、取消 child token、持续等待所有 JoinSet task和 cleanup task；JoinError/panic 必须传播为 server error；最后清空 pool 并验证 active/available 均为 0。
+- [ ] cancellation 后停止 accept、取消 child token、持续等待所有 JoinSet task和 cleanup task；单连接 JoinError/panic 必须计入 failure counter 并记录 warning，但不改变 server shutdown 返回值；最后清空 pool 并验证 active/available 均为 0。cleanup JoinError 和 pool 守恒失败仍作为 server error 传播。
 - [ ] 现有 `ServerTrait::run()` 调用 `run_until_cancelled(CancellationToken::new())`，保持普通生产 server 的无限运行语义。
 - [ ] 运行新增测试、`cargo test -p net --test storage_command_e2e_tests` 和 `cargo test -p net`。
 - [ ] 提交：`feat(net): add cancellable server lifecycle`。
@@ -477,6 +477,9 @@ pub fn close_storage_requests(&mut self) -> bool {
 - [ ] 在 WSL/Linux bootstrap memtier，并运行：
 
 ```bash
+MEMTIER_PREFIX="${MEMTIER_PREFIX:?set MEMTIER_PREFIX to the memtier install prefix}"
+TMPDIR="${TMPDIR:-${RUNNER_TEMP:-/tmp}}"
+RESULTS_ROOT="$TMPDIR/runtime-baseline-results"
 timeout --signal=TERM --kill-after=30s 5m \
   python3 tools/runtime-baseline/run_baseline.py run \
     --suite smoke \
@@ -484,11 +487,21 @@ timeout --signal=TERM --kill-after=30s 5m \
     --server-binary target/release/kiwi-runtime-baseline \
     --memtier-binary "$MEMTIER_PREFIX/bin/memtier_benchmark" \
     --memtier-provenance "$MEMTIER_PREFIX/memtier-provenance.json" \
-    --results-root "$TMPDIR/runtime-baseline-results" \
+    --results-root "$RESULTS_ROOT" \
     --expected-git-sha "$(git rev-parse HEAD)"
 ```
 
-- [ ] 独立运行 verify，确认 expected/executed/outcome 精确为 4、passed=4、failed=0、skipped=0、每 case successful requests/QPS 和 execution terminal 非零。
+```bash
+TMPDIR="${TMPDIR:-${RUNNER_TEMP:-/tmp}}"
+RESULTS_ROOT="$TMPDIR/runtime-baseline-results"
+python3 tools/runtime-baseline/run_baseline.py verify \
+  --suite smoke \
+  --cases tools/runtime-baseline/cases/cases.yaml \
+  --results-root "$RESULTS_ROOT" \
+  --expected-git-sha "$(git rev-parse HEAD)"
+```
+
+- [ ] 使用上述独立 `verify` 命令，确认 expected/executed/outcome 精确为 4、passed=4、failed=0、skipped=0、每 case successful requests/QPS 和 execution terminal 非零。
 - [ ] verifier 对 batch-off case 强制 `batch_queued_max=0`、`batch_count=0`、所有 flush counters=0；对 batch-on case强制 `batch_queued_max>0`、`batch_count>0`，且 size/timeout/high-priority flush counter 至少一个大于 0。任一不满足都标记路径未覆盖并使 smoke 失败。
 - [ ] 检查结果不含 RocksDB data dir、core dump、本机凭据或仓库外绝对用户路径。
 - [ ] 提交：`build(runtime): pin memtier smoke dependency`。
@@ -500,7 +513,7 @@ timeout --signal=TERM --kill-after=30s 5m \
 - 修改：`.github/workflows/benchmark.yml`
 
 - [ ] 保留 job/check 名称 `Compile Benchmarks`，继续执行 `cargo bench --no-run`。
-- [ ] Compile job 先断言 `git status --porcelain` 为空，再安装 protoc/memtier build dependencies、bootstrap memtier，并设置 `KIWI_BASELINE_BUILD_GIT_SHA=${{ github.sha }}` 构建 exact-head `kiwi-runtime-baseline` release binary；生成包含 compiled Git SHA、source_dirty=false、harness SHA-256 和两个 binary `ldd` 输出的 artifact manifest，并把 harness binary、memtier binary、provenance/manifest 上传为短期 artifact。
+- [ ] Compile job 先使用 `build_support::source_status_arguments()` 对应的 canonical `git status --porcelain --untracked-files=all -- <inputs/exclusions>` 精确断言 source scope 为空，再安装 protoc/memtier build dependencies、bootstrap memtier，并设置 `KIWI_BASELINE_BUILD_GIT_SHA=${{ github.sha }}` 构建 exact-head `kiwi-runtime-baseline` release binary；生成包含 compiled Git SHA、source_dirty=false、harness SHA-256 和两个 binary `ldd` 输出的 artifact manifest，并把 harness binary、memtier binary、provenance/manifest 上传为短期 artifact。
 - [ ] 新增独立 job/check `Runtime Baseline Smoke`，依赖 Compile job，`timeout-minutes: 45`；checkout 同一个 `${{ github.sha }}` 以取得 controller/tests/cases，然后只下载 Compile job 的 exact-run binary artifact，不重新使用 runner 上未知 binary。
 - [ ] Smoke job 显式安装两个 binary 所需的 runtime packages。download-artifact 后执行 `chmod +x`，重新校验 harness artifact digest、compiled SHA/source_dirty、memtier provenance digest/commit/version；分别运行 `ldd` 并拒绝任何 `not found`，同时保存实际 `ldd` 与 Compile manifest 对账。GitHub artifact 不保留 Unix executable bit，不能直接假定可执行。
 - [ ] Smoke job 先运行 Python unit tests，再用 GNU `timeout ... 5m` 执行 controller，随后独立 verify 4 个结果。

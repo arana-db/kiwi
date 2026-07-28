@@ -190,9 +190,11 @@ terminal 保持不变。现有生产构造路径统一传入 `None`，benchmark 
 协议通过 `runtime-baseline` feature 编译，普通生产 `kiwi` 不包含这些 hooks。根 workspace 的
 `default-members` 精确保留 12 个生产 crate 并排除工具 crate，使普通 root build 不与工具 target
 处于同一 Cargo invocation，隔离 feature unification。组合 API 不改变 worker/batching 调度。
-构建身份中的 `source_dirty` 是受限的可编译输入状态：根 `src/`、`.cargo/`、根
-`Cargo.toml`/`Cargo.lock`/`rust-toolchain.toml`，以及工具 crate 的 manifest、build script、
-`src/` 和 `tests/`。build script 以同一集合执行有 pathspec 的 `git status --porcelain` 并注册
+构建身份中的 `source_dirty` 是受限的可编译输入状态：根 `Cargo.toml`、`Cargo.lock`、
+`rust-toolchain.toml`、`.cargo/`、`src/`，以及工具 crate 的 `Cargo.toml`、`build.rs`、
+`build_support.rs`、`src/` 和 `tests/`。`build_support::source_status_arguments()` 是 build script、
+测试和 Compile CI 共用的 canonical pathspec，执行带 canonical inputs/exclusions 的
+`git status --porcelain --untracked-files=all -- ...` 并注册
 `rerun-if-changed`；`.git`、Cargo target 和 benchmark results 都不属于该集合，避免构建产物或
 结果归档造成自触发重编译。若这个受限 source 集合有未暂存或未跟踪修改，startup/outcome 必须
 标为 `non_publishable` 并包含 `dirty_source_tree`。
@@ -553,9 +555,22 @@ cargo test --package net
 cargo test --package runtime-baseline
 cargo test --workspace
 bash tests/run_python_integration.sh
-python3 tools/runtime-baseline/run_baseline.py \
-  --smoke \
-  --server-binary target/release/kiwi-runtime-baseline
+MEMTIER_PREFIX="${MEMTIER_PREFIX:?set MEMTIER_PREFIX to the memtier install prefix}"
+TMPDIR="${TMPDIR:-${RUNNER_TEMP:-/tmp}}"
+RESULTS_ROOT="$TMPDIR/runtime-baseline-results"
+python3 tools/runtime-baseline/run_baseline.py run \
+  --suite smoke \
+  --cases tools/runtime-baseline/cases/cases.yaml \
+  --server-binary target/release/kiwi-runtime-baseline \
+  --memtier-binary "$MEMTIER_PREFIX/bin/memtier_benchmark" \
+  --memtier-provenance "$MEMTIER_PREFIX/memtier-provenance.json" \
+  --results-root "$RESULTS_ROOT" \
+  --expected-git-sha "$(git rev-parse HEAD)"
+python3 tools/runtime-baseline/run_baseline.py verify \
+  --suite smoke \
+  --cases tools/runtime-baseline/cases/cases.yaml \
+  --results-root "$RESULTS_ROOT" \
+  --expected-git-sha "$(git rev-parse HEAD)"
 git diff --check
 ```
 

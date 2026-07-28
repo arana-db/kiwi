@@ -119,6 +119,9 @@ pub struct NetworkLifecycleStats {
     pub accepted_connection_tasks: u64,
     pub completed_connection_tasks: u64,
     pub reaped_connection_tasks: u64,
+    /// Connection tasks that ended with a Tokio `JoinError`, including panic
+    /// and cancellation. Ordinary protocol and socket errors are not counted.
+    pub failed_connection_tasks: u64,
     pub tracked_connection_tasks: usize,
     pub max_tracked_connection_tasks: usize,
     pub pool_cleanup_running: bool,
@@ -130,6 +133,7 @@ struct NetworkLifecycleCounters {
     accepted_connection_tasks: AtomicU64,
     completed_connection_tasks: AtomicU64,
     reaped_connection_tasks: AtomicU64,
+    failed_connection_tasks: AtomicU64,
     tracked_connection_tasks: AtomicUsize,
     max_tracked_connection_tasks: AtomicUsize,
     pool_cleanup_running: AtomicBool,
@@ -160,11 +164,16 @@ impl NetworkLifecycleCounters {
         debug_assert!(result.is_ok(), "reaped an untracked connection task");
     }
 
+    fn connection_failed(&self) {
+        self.failed_connection_tasks.fetch_add(1, Ordering::SeqCst);
+    }
+
     fn snapshot(&self) -> NetworkLifecycleStats {
         NetworkLifecycleStats {
             accepted_connection_tasks: self.accepted_connection_tasks.load(Ordering::SeqCst),
             completed_connection_tasks: self.completed_connection_tasks.load(Ordering::SeqCst),
             reaped_connection_tasks: self.reaped_connection_tasks.load(Ordering::SeqCst),
+            failed_connection_tasks: self.failed_connection_tasks.load(Ordering::SeqCst),
             tracked_connection_tasks: self.tracked_connection_tasks.load(Ordering::SeqCst),
             max_tracked_connection_tasks: self.max_tracked_connection_tasks.load(Ordering::SeqCst),
             pool_cleanup_running: self.pool_cleanup_running.load(Ordering::SeqCst),
@@ -334,6 +343,14 @@ impl NetworkServer {
         self.lifecycle.snapshot()
     }
 
+    fn record_connection_join(&self, join_result: Result<(), tokio::task::JoinError>) {
+        self.lifecycle.connection_reaped();
+        if let Err(error) = join_result {
+            self.lifecycle.connection_failed();
+            warn!("network connection task failed: {error}");
+        }
+    }
+
     /// Check if the server is healthy
     pub fn is_healthy(&self) -> bool {
         self.storage_client.is_healthy()
@@ -461,13 +478,7 @@ impl NetworkServer {
                 _ = shutdown.cancelled() => break,
                 join_result = connection_tasks.join_next(), if !connection_tasks.is_empty() => {
                     if let Some(join_result) = join_result {
-                        self.lifecycle.connection_reaped();
-                        if let Err(error) = join_result {
-                            server_error = Some(std::io::Error::other(format!(
-                                "network connection task failed: {error}"
-                            )));
-                            break;
-                        }
+                        self.record_connection_join(join_result);
                     }
                 }
                 accept_result = listener.accept() => {
@@ -549,15 +560,7 @@ impl NetworkServer {
         lifecycle_shutdown.cancel();
 
         while let Some(join_result) = connection_tasks.join_next().await {
-            self.lifecycle.connection_reaped();
-            match join_result {
-                Err(error) if server_error.is_none() => {
-                    server_error = Some(std::io::Error::other(format!(
-                        "network connection task failed during shutdown: {error}"
-                    )));
-                }
-                _ => {}
-            }
+            self.record_connection_join(join_result);
         }
 
         match cleanup_task.join().await {
@@ -681,6 +684,39 @@ mod tests {
         assert!(server.is_ok());
         let server = server.unwrap();
         assert_eq!(server.addr(), "127.0.0.1:7379");
+    }
+
+    #[tokio::test]
+    async fn live_connection_task_panic_is_recorded_without_stopping_server() {
+        let message_channel = Arc::new(MessageChannel::new(1000));
+        let runtime_client = Arc::new(RuntimeStorageClient::new(
+            message_channel,
+            Duration::from_secs(30),
+        ));
+        let storage_client = Arc::new(crate::storage_client::StorageClient::new(runtime_client));
+        let cmd_table = Arc::new(create_command_table(Arc::new(|| None)));
+        let executor = Arc::new(CmdExecutorBuilder::new().build());
+        let server = NetworkServer::new(
+            Some("127.0.0.1:0".to_string()),
+            storage_client,
+            cmd_table,
+            executor,
+            None,
+            None,
+        )
+        .expect("network server");
+        server.lifecycle.connection_spawned();
+
+        let join_error = tokio::spawn(async { panic!("simulated connection panic") })
+            .await
+            .expect_err("connection task unexpectedly completed");
+        server.lifecycle.connection_completed();
+        server.record_connection_join(Err(join_error));
+
+        let stats = server.lifecycle_stats();
+        assert_eq!(stats.failed_connection_tasks, 1);
+        assert_eq!(stats.reaped_connection_tasks, 1);
+        assert_eq!(stats.tracked_connection_tasks, 0);
     }
 
     #[test]

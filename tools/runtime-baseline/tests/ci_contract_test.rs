@@ -21,6 +21,10 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+#[allow(dead_code)]
+#[path = "../build_support.rs"]
+mod build_support;
+
 const STABLE_PLATFORMS: [&str; 3] = ["ubuntu-latest", "macos-latest", "windows-latest"];
 
 #[derive(Deserialize)]
@@ -117,6 +121,78 @@ fn benchmark_contract_rejects_a_commented_build() {
     assert!(validate_benchmark_contract(&commented).is_err());
 }
 
+#[test]
+fn benchmark_contract_rejects_a_weakened_or_misordered_clean_check() {
+    let workflow = read_workspace_file(".github/workflows/benchmark.yml");
+    let clean = source_clean_assignment();
+
+    let commented = workflow.replace(&clean, &format!("# {clean}"));
+    assert!(validate_benchmark_contract(&commented).is_err());
+
+    let unbounded = workflow.replace(&clean, "dirty=\"$(git status --porcelain)\"");
+    assert!(validate_benchmark_contract(&unbounded).is_err());
+
+    let missing_condition = workflow.replace("          if [[ -n \"$dirty\" ]]; then\n", "");
+    assert!(validate_benchmark_contract(&missing_condition).is_err());
+
+    let missing_failure = workflow.replace("            exit 1\n", "");
+    assert!(validate_benchmark_contract(&missing_failure).is_err());
+
+    let ignored_failure = workflow.replace("            exit 1\n", "            exit 0\n");
+    assert!(validate_benchmark_contract(&ignored_failure).is_err());
+
+    let conditional = workflow.replace(
+        "      - name: Verify runtime baseline source inputs are clean\n        shell: bash",
+        "      - name: Verify runtime baseline source inputs are clean\n        if: false\n        shell: bash",
+    );
+    assert!(validate_benchmark_contract(&conditional).is_err());
+
+    let after_build = workflow
+        .replace(&clean, "true")
+        .replace(
+            "          cargo build --release -p runtime-baseline --bin kiwi-runtime-baseline",
+            &format!(
+                "          cargo build --release -p runtime-baseline --bin kiwi-runtime-baseline\n          {clean}"
+            ),
+        );
+    assert!(validate_benchmark_contract(&after_build).is_err());
+}
+
+#[test]
+fn runtime_baseline_docs_define_separate_run_and_verify_commands() {
+    for path in [
+        "docs/superpowers/specs/2026-07-24-storage-runtime-baseline-design.md",
+        "docs/superpowers/plans/2026-07-24-storage-runtime-baseline-harness.md",
+    ] {
+        let contents = read_workspace_file(path);
+        assert!(
+            !contents.contains("run_baseline.py \\\n  --smoke"),
+            "{path} still documents the removed top-level --smoke form"
+        );
+        for required in [
+            "MEMTIER_PREFIX=\"${MEMTIER_PREFIX:?set MEMTIER_PREFIX to the memtier install prefix}\"",
+            "TMPDIR=\"${TMPDIR:-${RUNNER_TEMP:-/tmp}}\"",
+            "RESULTS_ROOT=\"$TMPDIR/runtime-baseline-results\"",
+            "run_baseline.py run",
+            "run_baseline.py verify",
+            "--suite smoke",
+            "--cases tools/runtime-baseline/cases/cases.yaml",
+            "--results-root \"$RESULTS_ROOT\"",
+            "--expected-git-sha \"$(git rev-parse HEAD)\"",
+        ] {
+            assert!(
+                contents.contains(required),
+                "{path} is missing documented controller contract `{required}`"
+            );
+        }
+        assert_eq!(
+            contents.matches("--results-root \"$RESULTS_ROOT\"").count(),
+            2,
+            "{path} must use the same explicit results root for run and verify"
+        );
+    }
+}
+
 fn read_workspace_file(path: &str) -> String {
     fs::read_to_string(workspace_root().join(path))
         .expect("workflow file must be readable")
@@ -145,10 +221,63 @@ fn validate_ci_contract(contents: &str) -> Result<(), String> {
 fn validate_benchmark_contract(contents: &str) -> Result<(), String> {
     let workflow = parse_workflow(contents)?;
     let benchmark_job = required_job(&workflow, "benchmark")?;
-    require_unconditional_command(
+    let clean = require_fail_closed_clean_gate(benchmark_job)?;
+    let build = require_unconditional_command_location(
         benchmark_job,
         "cargo build --release -p runtime-baseline --bin kiwi-runtime-baseline",
-    )
+    )?;
+    if clean < build {
+        Ok(())
+    } else {
+        Err("runtime baseline source clean check must run before the release build".to_string())
+    }
+}
+
+fn require_fail_closed_clean_gate(job: &Job) -> Result<(usize, usize), String> {
+    let assignment = source_clean_assignment();
+    let (step_index, step, assignment_index) = find_command(job, &assignment)?;
+    if step.condition.is_some() || step.continue_on_error.is_some() {
+        return Err(
+            "runtime baseline source clean gate must be unconditional and blocking".to_string(),
+        );
+    }
+
+    let lines = step
+        .run
+        .as_deref()
+        .expect("command step has a run body")
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>();
+    let strict_index = lines
+        .iter()
+        .position(|line| *line == "set -Eeuo pipefail")
+        .ok_or_else(|| {
+            "runtime baseline source clean gate must enable strict shell mode".to_string()
+        })?;
+    let condition_index = lines
+        .iter()
+        .position(|line| *line == "if [[ -n \"$dirty\" ]]; then")
+        .ok_or_else(|| {
+            "runtime baseline source clean gate must reject non-empty status".to_string()
+        })?;
+    let exit_index = lines
+        .iter()
+        .position(|line| *line == "exit 1")
+        .ok_or_else(|| "runtime baseline source clean gate must fail the job".to_string())?;
+    let fi_index = lines
+        .iter()
+        .position(|line| *line == "fi")
+        .ok_or_else(|| "runtime baseline source clean gate condition is incomplete".to_string())?;
+    if strict_index < assignment_index
+        && assignment_index < condition_index
+        && condition_index < exit_index
+        && exit_index < fi_index
+    {
+        Ok((step_index, assignment_index))
+    } else {
+        Err("runtime baseline source clean gate commands are out of order".to_string())
+    }
 }
 
 fn parse_workflow(contents: &str) -> Result<Workflow, String> {
@@ -198,22 +327,45 @@ fn require_matrix_runner(job: &Job, name: &str) -> Result<(), String> {
 }
 
 fn require_unconditional_command(job: &Job, command: &str) -> Result<(), String> {
-    let step = job
-        .steps
-        .iter()
-        .find(|step| {
-            step.run
-                .as_deref()
-                .is_some_and(|run| run.lines().map(str::trim).any(|line| line == command))
-        })
-        .ok_or_else(|| format!("job is missing active command `{command}`"))?;
+    require_unconditional_command_location(job, command).map(|_| ())
+}
+
+fn require_unconditional_command_location(
+    job: &Job,
+    command: &str,
+) -> Result<(usize, usize), String> {
+    let (step_index, step, line_index) = find_command(job, command)?;
     if step.condition.is_some() || step.continue_on_error.is_some() {
         Err(format!(
             "command `{command}` must be unconditional and blocking"
         ))
     } else {
-        Ok(())
+        Ok((step_index, line_index))
     }
+}
+
+fn find_command<'a>(job: &'a Job, command: &str) -> Result<(usize, &'a Step, usize), String> {
+    job.steps
+        .iter()
+        .enumerate()
+        .find_map(|(step_index, step)| {
+            step.run.as_deref().and_then(|run| {
+                run.lines()
+                    .map(str::trim)
+                    .position(|line| line == command)
+                    .map(|line_index| (step_index, step, line_index))
+            })
+        })
+        .ok_or_else(|| format!("job is missing active command `{command}`"))
+}
+
+fn source_clean_assignment() -> String {
+    let arguments = build_support::source_status_arguments()
+        .into_iter()
+        .map(|argument| format!("'{argument}'"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("dirty=\"$(git {arguments})\"")
 }
 
 fn workspace_root() -> PathBuf {

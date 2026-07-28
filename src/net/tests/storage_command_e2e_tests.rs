@@ -34,6 +34,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use client::Client;
+use cmd::{AclCategory, Cmd, CmdFlags, CmdMeta};
 use net::network_server::NetworkServer;
 use net::storage_client::StorageClient;
 use resp::{
@@ -47,6 +49,43 @@ use storage::{StorageOptions, safe_cleanup_test_db, storage::Storage, unique_tes
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
+
+#[derive(Clone)]
+struct PanickingPingCmd {
+    meta: CmdMeta,
+}
+
+impl PanickingPingCmd {
+    fn new() -> Self {
+        Self {
+            meta: CmdMeta {
+                name: "ping".to_string(),
+                arity: -1,
+                flags: CmdFlags::READONLY | CmdFlags::FAST | CmdFlags::NO_AUTH,
+                acl_category: AclCategory::FAST | AclCategory::CONNECTION,
+                ..Default::default()
+            },
+        }
+    }
+}
+
+impl Cmd for PanickingPingCmd {
+    fn meta(&self) -> &CmdMeta {
+        &self.meta
+    }
+
+    fn do_initial(&self, _client: &Client) -> bool {
+        true
+    }
+
+    fn do_cmd(&self, _client: &Client, _storage: Arc<Storage>) {
+        panic!("simulated connection task panic");
+    }
+
+    fn clone_box(&self) -> Box<dyn Cmd> {
+        Box::new(self.clone())
+    }
+}
 
 /// A full dual-runtime test stack with a bound TCP endpoint.
 struct TestServer {
@@ -429,6 +468,93 @@ async fn network_server_protocol_error_only_closes_the_bad_connection() {
     );
 
     server.shutdown().await;
+}
+
+#[tokio::test]
+async fn network_server_continues_after_connection_task_panic() {
+    let message_channel = Arc::new(runtime::MessageChannel::new(16));
+    let runtime_storage_client = Arc::new(runtime::StorageClient::new(
+        message_channel,
+        Duration::from_secs(1),
+    ));
+    let mut cmd_table = cmd::table::create_command_table(Arc::new(|| Some("secret".to_string())));
+    cmd_table.insert("ping".to_string(), Arc::new(PanickingPingCmd::new()));
+    let server = Arc::new(
+        NetworkServer::new(
+            Some("127.0.0.1:0".to_string()),
+            Arc::new(StorageClient::new(runtime_storage_client)),
+            Arc::new(cmd_table),
+            Arc::new(executor::CmdExecutorBuilder::new().build()),
+            Some("secret".to_string()),
+            None,
+        )
+        .expect("network server"),
+    );
+    let addr = server.bind().await.expect("bind network server");
+    let shutdown = CancellationToken::new();
+    let server_for_task = server.clone();
+    let shutdown_for_task = shutdown.clone();
+    let network_task = tokio::spawn(async move {
+        server_for_task
+            .run_until_cancelled(shutdown_for_task)
+            .await
+            .map_err(|error| error.to_string())
+    });
+
+    let mut panicking_client = tokio::net::TcpStream::connect(addr)
+        .await
+        .expect("connect panicking client");
+    panicking_client
+        .write_all(encode_command(&["PING"]).as_ref())
+        .await
+        .expect("send panicking command");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        let stats = server.lifecycle_stats();
+        if stats.failed_connection_tasks == 1
+            && stats.reaped_connection_tasks >= 1
+            && stats.tracked_connection_tasks == 0
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "panicking connection task was not recorded and reaped: {stats:?}"
+        );
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        !network_task.is_finished(),
+        "one connection panic stopped the network server"
+    );
+
+    let mut healthy_client = tokio::net::TcpStream::connect(addr)
+        .await
+        .expect("connect healthy client after panic");
+    assert_eq!(
+        send_command(&mut healthy_client, &["AUTH", "secret"]).await,
+        RespData::SimpleString(Bytes::from_static(b"OK"))
+    );
+
+    shutdown.cancel();
+    tokio::time::timeout(Duration::from_secs(1), network_task)
+        .await
+        .expect("network shutdown timeout")
+        .expect("network task join")
+        .expect("network server shutdown");
+
+    let stats = server.lifecycle_stats();
+    assert_eq!(stats.failed_connection_tasks, 1);
+    assert_eq!(
+        stats.accepted_connection_tasks,
+        stats.completed_connection_tasks
+    );
+    assert_eq!(
+        stats.accepted_connection_tasks,
+        stats.reaped_connection_tasks
+    );
+    assert_eq!(stats.tracked_connection_tasks, 0);
 }
 
 #[tokio::test]
