@@ -63,6 +63,8 @@ pub mod redis_zsets;
 // LogIndex module for Raft snapshot integration
 pub mod logindex;
 
+#[cfg(any(test, feature = "test-fault-injection"))]
+pub use batch::fail_next_rocks_batch_commit;
 pub use batch::{AppendLogFn, Batch, BinlogBatch, RocksBatch};
 pub use checkpoint::{
     PreparedCheckpointRestore, RAFT_SNAPSHOT_META_FILE, RaftSnapshotMeta,

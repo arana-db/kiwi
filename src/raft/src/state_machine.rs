@@ -478,22 +478,41 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         let mut responses = Vec::new();
 
         for entry in entries {
-            self.last_applied = Some(entry.log_id);
+            let log_id = entry.log_id;
 
             let response = match entry.payload {
                 EntryPayload::Blank => BinlogResponse::ok(),
                 EntryPayload::Normal(binlog) => {
-                    match self.apply_binlog(&binlog, entry.log_id.index).await {
-                        Ok(_) => BinlogResponse::ok(),
-                        Err(e) => BinlogResponse::error(e.to_string()),
+                    // Persist the mutation BEFORE advancing applied state. A binlog
+                    // carries physical put/delete ops only; deterministic business
+                    // rejections (e.g. WRONGTYPE) are decided upstream at command
+                    // execution and never reach apply. Any failure here (I/O,
+                    // corruption, invalid CF/slot) is therefore a fatal storage
+                    // error and must abort apply rather than be reported as a normal
+                    // response. Advancing `last_applied` past an entry that did not
+                    // durably commit would let this replica claim progress it does
+                    // not hold, diverging from the rest of the group.
+                    if let Err(e) = self.apply_binlog(&binlog, log_id.index).await {
+                        // Diagnostics only: log id, slot and mutation shape. Keys and
+                        // values are never logged.
+                        log::error!(
+                            "fatal storage error applying binlog: log_id={:?}, slot={}, ops={}",
+                            log_id,
+                            binlog.slot_idx,
+                            binlog.entries.len()
+                        );
+                        return Err(io_err_to_raft(e));
                     }
+                    BinlogResponse::ok()
                 }
                 EntryPayload::Membership(mem) => {
-                    self.last_membership = StoredMembership::new(Some(entry.log_id), mem);
+                    self.last_membership = StoredMembership::new(Some(log_id), mem);
                     BinlogResponse::ok()
                 }
             };
 
+            // Reached only after the entry has been durably applied.
+            self.last_applied = Some(log_id);
             responses.push(response);
         }
 
@@ -1158,5 +1177,312 @@ mod marker_cleanup_tests {
                 .contains(&cleanup_path.display().to_string()),
             "restart refusal must identify cleanup marker: {restart_error}"
         );
+    }
+}
+
+#[cfg(test)]
+mod apply_ordering_tests {
+    //! Covers issue #333: applied state must only advance after a committed entry
+    //! is durably applied, and a storage failure during apply is a fatal error
+    //! that aborts apply instead of being reported as a normal response.
+    #![allow(clippy::unwrap_used)]
+
+    use std::pin::Pin;
+
+    use conf::raft_type::{BinlogEntry, OperateType};
+    use openraft::{Entry, LeaderId};
+    use storage::BaseMetaKey;
+    use storage::format_strings_value::StringValue;
+    use storage::slot_indexer::key_to_slot_id;
+    use storage::{
+        ColumnFamilyIndex, fail_next_rocks_batch_commit, safe_cleanup_test_db, unique_test_db_path,
+    };
+
+    use super::*;
+
+    struct NoopPermit;
+    impl StorageAccessPermit for NoopPermit {}
+
+    /// The apply path only takes the snapshot-state gate; it never drives the
+    /// pause controller, so a no-op implementation is sufficient here.
+    struct NoopPauseController;
+    impl PauseController for NoopPauseController {
+        fn request_pause(&self) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+            Box::pin(async {})
+        }
+
+        fn enter(
+            self: Arc<Self>,
+        ) -> Pin<Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>>
+        {
+            Box::pin(async { Box::new(NoopPermit) as Box<dyn StorageAccessPermit> })
+        }
+
+        fn resume(&self) {}
+    }
+
+    struct Fixture {
+        state_machine: KiwiStateMachine,
+        storage_swap: Arc<ArcSwap<Storage>>,
+        db_path: PathBuf,
+        snapshot_work_dir: PathBuf,
+        storage_rx: Box<dyn std::any::Any + Send>,
+    }
+
+    struct ClosedFixture {
+        db_path: PathBuf,
+        snapshot_work_dir: PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let db_path = unique_test_db_path();
+            let snapshot_work_dir = unique_test_db_path();
+            std::fs::create_dir_all(&snapshot_work_dir)
+                .expect("snapshot work directory should be created");
+
+            let mut storage = Storage::new(1, 0);
+            let options = Arc::new(StorageOptions::default());
+            let storage_rx = storage
+                .open(options, &db_path)
+                .expect("test storage should open");
+            let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+            let state_machine = KiwiStateMachine::new(
+                1,
+                Arc::clone(&storage_swap),
+                db_path.clone(),
+                snapshot_work_dir.clone(),
+                Arc::new(NoopPauseController),
+                None,
+            );
+
+            Self {
+                state_machine,
+                storage_swap,
+                db_path,
+                snapshot_work_dir,
+                storage_rx: Box::new(storage_rx),
+            }
+        }
+
+        async fn close(self) -> ClosedFixture {
+            let Fixture {
+                state_machine,
+                storage_swap,
+                db_path,
+                snapshot_work_dir,
+                storage_rx,
+            } = self;
+            drop(state_machine);
+            let storage = storage_swap.load_full();
+            drop(storage_swap);
+            let mut storage = match Arc::try_unwrap(storage) {
+                Ok(storage) => storage,
+                Err(_) => panic!("test storage should not retain Arc references during cleanup"),
+            };
+            storage.shutdown().await;
+            storage.close();
+            drop(storage_rx);
+            drop(storage);
+
+            ClosedFixture {
+                db_path,
+                snapshot_work_dir,
+            }
+        }
+
+        fn rocksdb_path(&self) -> PathBuf {
+            self.storage_swap
+                .load_full()
+                .insts
+                .first()
+                .and_then(|instance| instance.db())
+                .expect("test storage should expose its RocksDB instance")
+                .path()
+                .to_path_buf()
+        }
+    }
+
+    impl ClosedFixture {
+        async fn assert_reopened_values(self, expected: &[(&[u8], Option<&str>)]) {
+            let mut reopened = Storage::new(1, 0);
+            let reopened_rx = reopened
+                .open(Arc::new(StorageOptions::default()), &self.db_path)
+                .expect("test storage should reopen from the original path");
+
+            for (key, value) in expected {
+                match value {
+                    Some(value) => assert_eq!(
+                        reopened
+                            .get(key)
+                            .expect("reopened storage should read the applied value"),
+                        *value
+                    ),
+                    None => assert!(
+                        reopened.get(key).is_err(),
+                        "reopened storage must not contain an unapplied key"
+                    ),
+                }
+            }
+
+            reopened.shutdown().await;
+            reopened.close();
+            drop(reopened_rx);
+            drop(reopened);
+            safe_cleanup_test_db(&self.db_path);
+            safe_cleanup_test_db(&self.snapshot_work_dir);
+        }
+    }
+
+    fn entry_at(index: u64, payload: EntryPayload<KiwiTypeConfig>) -> Entry<KiwiTypeConfig> {
+        Entry {
+            log_id: LogId::new(LeaderId::new(1, 1), index),
+            payload,
+        }
+    }
+
+    fn string_put_binlog(key: &[u8], value: &[u8]) -> Binlog {
+        Binlog {
+            db_id: 0,
+            slot_idx: key_to_slot_id(key) as u32,
+            entries: vec![BinlogEntry {
+                cf_idx: ColumnFamilyIndex::MetaCF as u32,
+                op_type: OperateType::Put,
+                key: BaseMetaKey::new(key)
+                    .encode()
+                    .expect("test string key should encode")
+                    .to_vec(),
+                value: Some(StringValue::new(value.to_vec()).encode().to_vec()),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn apply_advances_applied_only_on_success() {
+        let mut fx = Fixture::new();
+        let key = b"durable-success";
+        assert!(fx.state_machine.last_applied.is_none());
+
+        let responses = fx
+            .state_machine
+            .apply([entry_at(
+                5,
+                EntryPayload::Normal(string_put_binlog(key, b"value")),
+            )])
+            .await
+            .expect("a valid binlog should apply cleanly");
+
+        assert_eq!(responses.len(), 1);
+        assert!(responses[0].success, "successful apply reports success");
+        assert_eq!(
+            fx.state_machine.last_applied.map(|l| l.index),
+            Some(5),
+            "applied state advances to the committed entry"
+        );
+        assert_eq!(
+            fx.storage_swap
+                .load_full()
+                .get(key)
+                .expect("applied value should be readable before close"),
+            "value"
+        );
+
+        fx.close()
+            .await
+            .assert_reopened_values(&[(key, Some("value"))])
+            .await;
+    }
+
+    #[tokio::test]
+    async fn apply_does_not_advance_applied_on_fatal_storage_error() {
+        let mut fx = Fixture::new();
+        let key = b"fatal-write";
+        let _failure = fail_next_rocks_batch_commit(&fx.rocksdb_path());
+
+        let err = fx
+            .state_machine
+            .apply([entry_at(
+                7,
+                EntryPayload::Normal(string_put_binlog(key, b"value")),
+            )])
+            .await
+            .expect_err("a storage failure during apply must surface as a fatal error");
+        // A non-empty error is enough; the point is that it is Err, not Ok.
+        let _ = err;
+
+        assert!(
+            fx.state_machine.last_applied.is_none(),
+            "applied state must not advance past an entry that failed to commit"
+        );
+        assert!(
+            fx.storage_swap.load_full().get(key).is_err(),
+            "a failed RocksDB commit must not expose the mutation"
+        );
+
+        fx.close()
+            .await
+            .assert_reopened_values(&[(key, None)])
+            .await;
+    }
+
+    #[tokio::test]
+    async fn apply_stops_at_first_fatal_error() {
+        let mut fx = Fixture::new();
+
+        fx.state_machine
+            .apply([entry_at(
+                2,
+                EntryPayload::Normal(string_put_binlog(b"before-failure", b"before")),
+            )])
+            .await
+            .expect("the entry before the injected failure should apply");
+
+        let _failure = fail_next_rocks_batch_commit(&fx.rocksdb_path());
+
+        let err = fx
+            .state_machine
+            .apply([
+                entry_at(
+                    3,
+                    EntryPayload::Normal(string_put_binlog(b"failed-write", b"failed")),
+                ),
+                entry_at(
+                    4,
+                    EntryPayload::Normal(string_put_binlog(b"after-failure", b"after")),
+                ),
+            ])
+            .await
+            .expect_err("apply must abort at the first fatal error");
+        let _ = err;
+
+        assert_eq!(
+            fx.state_machine.last_applied.map(|l| l.index),
+            Some(2),
+            "entries after a fatal error must not be applied"
+        );
+        assert_eq!(
+            fx.storage_swap
+                .load_full()
+                .get(b"before-failure")
+                .expect("the mutation before the failure should remain applied"),
+            "before"
+        );
+        assert!(
+            fx.storage_swap.load_full().get(b"failed-write").is_err(),
+            "the mutation whose RocksDB commit failed must remain absent"
+        );
+        assert!(
+            fx.storage_swap.load_full().get(b"after-failure").is_err(),
+            "the mutation after the failure must not execute"
+        );
+
+        fx.close()
+            .await
+            .assert_reopened_values(&[
+                (b"before-failure", Some("before")),
+                (b"failed-write", None),
+                (b"after-failure", None),
+            ])
+            .await;
     }
 }

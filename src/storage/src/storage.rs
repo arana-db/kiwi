@@ -517,10 +517,36 @@ impl Storage {
     /// commit, which is monotonic but per-DB-global; concurrent writers from other
     /// threads would inflate the captured seqno and break the
     /// "log L is persisted at seqno >= S" guarantee that snapshot/purge depends on.
+    pub fn validate_binlog(&self, binlog: &Binlog) -> Result<()> {
+        let expected_db_id = u32::try_from(self.db_id).map_err(|_| Error::InvalidFormat {
+            message: format!("Storage database ID {} exceeds the Raft format", self.db_id),
+            location: snafu::location!(),
+        })?;
+        if binlog.db_id != expected_db_id {
+            return Err(Error::InvalidFormat {
+                message: format!(
+                    "Binlog database {} does not match storage database {expected_db_id}",
+                    binlog.db_id
+                ),
+                location: snafu::location!(),
+            });
+        }
+
+        crate::batch::BinlogBatch::validate_binlog_entries(binlog)
+    }
+
     pub fn on_binlog_write(&self, binlog: &Binlog, raft_log_index: u64) -> Result<()> {
+        self.validate_binlog(binlog)?;
+
         let slot_id = binlog.slot_idx as usize;
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        let instance = &self.insts[instance_id];
+        let instance = self.insts.get(instance_id).ok_or_else(|| Error::System {
+            message: format!(
+                "Storage instance {instance_id} is unavailable for slot {}",
+                binlog.slot_idx
+            ),
+            location: snafu::location!(),
+        })?;
 
         let mut batch = instance.create_rocks_batch()?;
 
@@ -542,14 +568,21 @@ impl Storage {
 
             match entry.op_type {
                 OperateType::Put => {
-                    if let Some(value) = &entry.value {
-                        batch.put(cf_idx, &entry.key, value)?;
-                    }
+                    let value = entry.value.as_ref().ok_or_else(|| Error::InvalidFormat {
+                        message: "Put binlog entry must contain a value".to_string(),
+                        location: snafu::location!(),
+                    })?;
+                    batch.put(cf_idx, &entry.key, value)?;
                 }
                 OperateType::Delete => {
                     batch.delete(cf_idx, &entry.key)?;
                 }
-                OperateType::NoOp => {}
+                OperateType::NoOp => {
+                    return Err(Error::InvalidFormat {
+                        message: "Normal Raft binlog cannot contain NoOp entries".to_string(),
+                        location: snafu::location!(),
+                    });
+                }
             }
         }
 
@@ -657,7 +690,10 @@ impl Storage {
 mod append_log_fn_tests {
     use super::*;
     use crate::batch::AppendLogFn;
-    use conf::raft_type::BinlogResponse;
+    use crate::format_base_key::BaseMetaKey;
+    use crate::format_strings_value::StringValue;
+    use crate::slot_indexer::key_to_slot_id;
+    use conf::raft_type::{Binlog, BinlogEntry, BinlogResponse, OperateType};
     use std::sync::Arc;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -671,6 +707,101 @@ mod append_log_fn_tests {
     // there; they still run in normal CI and locally.
     fn running_under_sanitizer() -> bool {
         std::env::var_os("LSAN_OPTIONS").is_some()
+    }
+
+    fn string_put_binlog(db_id: u32, key: &[u8], value: &[u8]) -> Binlog {
+        Binlog {
+            db_id,
+            slot_idx: key_to_slot_id(key) as u32,
+            entries: vec![BinlogEntry {
+                cf_idx: ColumnFamilyIndex::MetaCF as u32,
+                op_type: OperateType::Put,
+                key: BaseMetaKey::new(key)
+                    .encode()
+                    .expect("test string key should encode")
+                    .to_vec(),
+                value: Some(StringValue::new(value.to_vec()).encode().to_vec()),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn on_binlog_write_rejects_noncanonical_binlogs_before_commit() {
+        if running_under_sanitizer() {
+            return;
+        }
+
+        let path = crate::unique_test_db_path();
+        let mut storage = Storage::new(2, 0);
+        let _rx = storage
+            .open(Arc::new(crate::StorageOptions::default()), &path)
+            .expect("test storage should open");
+
+        let mut wrong_db = string_put_binlog(1, b"wrong-db", b"value");
+        assert!(
+            storage.on_binlog_write(&wrong_db, 1).is_err(),
+            "a binlog for another database must be rejected"
+        );
+        assert!(storage.get(b"wrong-db").is_err());
+
+        let correct_slot = wrong_db.slot_idx;
+        wrong_db.db_id = 0;
+        wrong_db.slot_idx = correct_slot.wrapping_add(1);
+        assert!(
+            storage.on_binlog_write(&wrong_db, 2).is_err(),
+            "declared slot must match every encoded user key"
+        );
+        assert!(storage.get(b"wrong-db").is_err());
+
+        let mut invalid_cf = string_put_binlog(0, b"invalid-cf", b"value");
+        invalid_cf.entries[0].cf_idx = 99;
+        assert!(
+            storage.on_binlog_write(&invalid_cf, 3).is_err(),
+            "unknown column families must be rejected"
+        );
+
+        let mut put_without_value = string_put_binlog(0, b"missing-value", b"value");
+        put_without_value.entries[0].value = None;
+        assert!(
+            storage.on_binlog_write(&put_without_value, 4).is_err(),
+            "Put without a value must be rejected"
+        );
+
+        let mut delete_with_value = string_put_binlog(0, b"delete-value", b"value");
+        delete_with_value.entries[0].op_type = OperateType::Delete;
+        assert!(
+            storage.on_binlog_write(&delete_with_value, 5).is_err(),
+            "Delete with a value must be rejected"
+        );
+
+        let mut noop = string_put_binlog(0, b"noop", b"value");
+        noop.entries[0].op_type = OperateType::NoOp;
+        noop.entries[0].value = None;
+        assert!(
+            storage.on_binlog_write(&noop, 6).is_err(),
+            "Normal Raft binlogs must contain physical Put/Delete operations"
+        );
+
+        let empty = Binlog {
+            db_id: 0,
+            slot_idx: 0,
+            entries: Vec::new(),
+        };
+        assert!(
+            storage.on_binlog_write(&empty, 7).is_err(),
+            "empty batches must not create Normal Raft entries"
+        );
+
+        let mut malformed_key = string_put_binlog(0, b"malformed", b"value");
+        malformed_key.entries[0].key = b"not-a-physical-key".to_vec();
+        assert!(
+            storage.on_binlog_write(&malformed_key, 8).is_err(),
+            "column-family key layout must be validated"
+        );
+
+        storage.shutdown().await;
+        storage.close();
+        crate::safe_cleanup_test_db(&path);
     }
 
     #[tokio::test]
@@ -745,7 +876,6 @@ mod append_log_fn_tests {
 
     #[tokio::test]
     async fn test_on_binlog_write_does_not_recurse_in_cluster_mode() {
-        use conf::raft_type::{Binlog, BinlogEntry, OperateType};
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         if running_under_sanitizer() {
@@ -766,16 +896,7 @@ mod append_log_fn_tests {
         });
         storage.set_append_log_fn(f);
 
-        let binlog = Binlog {
-            db_id: 0,
-            slot_idx: 0,
-            entries: vec![BinlogEntry {
-                cf_idx: 0,
-                op_type: OperateType::Put,
-                key: b"applied_key".to_vec(),
-                value: Some(b"applied_val".to_vec()),
-            }],
-        };
+        let binlog = string_put_binlog(0, b"applied_key", b"applied_val");
 
         storage.on_binlog_write(&binlog, 1).unwrap();
 
