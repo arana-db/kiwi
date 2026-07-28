@@ -196,6 +196,20 @@ If branch, HEAD, or dirty ownership differs, report the drift and stop before mo
 
 `.planning/` is the versioned project truth. `.codex/recovery/` is ignored local runtime state containing the active task, append-only checkpoints, authority boundaries, and Git snapshots. Save checkpoints with `scripts/codex-workstate.ps1` before long-running work, authority changes, verified milestones, blockers, and session handoff.
 
+### Planning and implementation task separation
+
+- A planning-only task may update `AGENTS.md`/`CLAUDE.md`, `.planning/`, design documents, implementation plans, and recovery records. It must not continue, stage, commit, push, or present source implementation as accepted work.
+- An approved design or implementation plan does not authorize implementation. Start implementation in a separate Codex task with its own branch or linked worktree, recovery checkpoint, dirty-path ownership, and Git authority.
+- If implementation was started before a planning boundary was clarified, freeze that worktree exactly as found. Record it as an unaccepted draft; do not clean it, continue it, or use its green tests as project truth from the planning task.
+- A later implementation task may inspect a frozen draft as read-only evidence, but every reused design or code path must be re-audited against the approved plan in the new clean worktree.
+
+### Trusted Redis Oracle provenance
+
+- Oracle build metadata and build logs are audit records, not a trust root. A self-consistent metadata file cannot prove that an arbitrary ignored `src/redis-server` was built from the declared source.
+- The accepted provenance design requires the verifier to create a fresh disposable checkout of exact Redis 8.8.1, independently rebuild it with controlled tools, require the rebuilt binary hash to match the primary build, and run the independently rebuilt binary for `INFO server` evidence.
+- Controller bootstrap and all external tools must come from the declared Linux trust boundary, be identity/hash recorded, and use held file descriptors where executable replacement would otherwise create a TOCTOU window. Ambient `PATH`, `PYTHONPATH`, and `PYTHONHOME` must not select controller code.
+- The verifier must publish no provenance until Redis processes, process groups, runtime directories, independent checkouts, and all fallible cleanup have completed successfully.
+
 Architecture terminology and boundaries:
 
 - Use only **Embedded Redis Hot Tier** or **内嵌 Redis 8.8.1 原生内存热数据层** as the canonical terminology.

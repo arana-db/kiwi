@@ -6,7 +6,7 @@
 >
 > Required 运行模式：Cache OFF
 >
-> 更新日期：2026-07-26
+> 更新日期：2026-07-28
 
 ## 1. 目的
 
@@ -62,7 +62,7 @@ Gate Review 必须绑定：
 
 ### Required
 
-- [ ] Oracle 固定到 Redis 8.8.1 exact source/binary，来源和 binary hash 可验证。
+- [ ] Oracle 固定到 Redis 8.8.1 exact commit；primary build 与 verifier-owned fresh-checkout independent rebuild 的 binary SHA-256 完全一致，正式 `INFO server` evidence 只来自 verifier rebuild binary。
 - [ ] RESP2/RESP3 使用 raw frame 比较，覆盖 binary payload、null、error、push、attribute 和 aggregate 类型。
 - [ ] Pipeline 覆盖中间错误、partial I/O、半关闭、连接重置和 reply 顺序。
 - [ ] Required 命令矩阵记录参数模式、返回类型、错误、TTL、ACL 和连接状态行为。
@@ -205,6 +205,14 @@ gate-review/
   git-state.txt
   toolchains.txt
   compatibility/
+    oracle-rebuild/
+      primary-build-metadata.json
+      primary-build-log.sha256
+      verification-rebuild-metadata.json
+      verification-build-log.sha256
+      binary-hash-comparison.json
+      oracle-provenance.json
+      oracle-provenance-validation.json
   storage-recovery/
   raft-simulator/
   process-faults/
@@ -217,7 +225,9 @@ gate-review/
   decision.md
 ```
 
-`manifest.json` 必须列出每个产物的 SHA-256。`decision.md` 必须列出每项 Gate 的 PASS/FAIL、未覆盖范围、P0/P1 对账和用户批准记录。
+`manifest.json` 必须列出每个产物的 SHA-256。`compatibility/oracle-rebuild/oracle-provenance-validation.json` 必须记录 required artifact presence、strict schema/key/type/size 校验、受控 toolchain identity、versioned recipe、binary equality、rebuild-bound runtime identity，以及 `oracle-provenance.json.cleanup` 的全部成功结果。`decision.md` 必须列出每项 Gate 的 PASS/FAIL、未覆盖范围、P0/P1 对账和用户批准记录。
+
+`compatibility/oracle-rebuild/` 任一 required artifact 缺失、provenance schema/跨字段不变量失败、toolchain identity 不受控、versioned recipe 不匹配、两个 binary hash 不一致、runtime evidence 没有绑定 verifier rebuild、cleanup 任一步失败，或只存在 self-reported metadata 时，G1 必须判定 `FAIL`。
 
 ## 13. 进入 Embedded Redis Hot Tier 的条件
 

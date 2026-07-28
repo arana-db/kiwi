@@ -28,6 +28,7 @@ Consensus:                    OpenRaft
 Future hot-tier source:       arana-db/redis planned; downstream exact pin pending
 Raft API model:               RedisRaft public compatibility profile
 Rust client:                  redis-rs test-only compatibility client
+Oracle provenance:            independent rebuild and binary-hash equality
 ```
 
 Redis 8.8.1 exact commit 是当前唯一兼容、接口设计、行为 Oracle、测试和未来原生热层的上游来源基线。`arana-db/redis` 的下游 exact commit、patch 清单、构建配置和产物 hash 尚未建立前，它不是 Kiwi 构建输入；不得使用浮动 tag、branch、binary 或未校验来源替代上述 exact commit。
@@ -39,6 +40,7 @@ Redis 8.8.1 exact commit 是当前唯一兼容、接口设计、行为 Oracle、
 - RESP2、RESP3、Pipeline、错误、连接和二进制安全行为必须可对照验证。
 - 命令、参数、返回类型、边界、TTL、事务、Lua、Pub/Sub、阻塞命令和客户端行为必须有机器可读兼容矩阵。
 - Redis 8.8.1 exact binary/source 是普通 Redis 语义的唯一权威 Oracle。
+- Oracle verifier 必须在全新的 disposable exact checkout 中独立重建 Redis，要求 primary build 与 verifier rebuild 的 binary hash 完全一致，并只运行独立重建产物取得正式 `INFO server` 证据；调用者提供的 metadata、build log 和 ignored binary 不能自证来源。
 - 任何 skip 都必须有 owner、原因、Issue、引入日期和解除条件。
 - 新增公共命令、配置、协议字段和管理接口必须先核对 Redis 8.8.1 的行为，不得凭经验推断。
 
@@ -101,6 +103,7 @@ Redis 8.8.1 exact commit 是当前唯一兼容、接口设计、行为 Oracle、
 9. 第三方源码必须固定 exact commit，保留许可证、来源、补丁清单和可复现构建证据。
 10. 绿色测试不能替代真实边界验证，尤其是 RocksDB 全 handle 释放后按路径 reopen。
 11. 接口文档可以先行，但被延期的生产实现不得以 spike、重构或顺手适配的名义提前进入主线。
+12. 规划 task 与实施 task 必须分离；规划批准不构成源码实现、暂存、提交、push 或 PR 更新授权，未接受的实现草稿必须冻结并由后续独立 task 重新审计。
 
 ## 当前非目标
 
@@ -121,5 +124,6 @@ Redis 8.8.1 exact commit 是当前唯一兼容、接口设计、行为 Oracle、
 - 状态可恢复：崩溃后代理和数据库都能从持久证据继续。
 - 性能可解释：性能结果包含版本、硬件、配置、数据集和 P99/P99.9。
 - 依赖可追溯：来源、许可证、补丁、构建输入和 SBOM 完整。
+- Oracle 可证明：primary build 与 verifier 独立重建结果一致，正式运行证据来自独立重建产物，不能由自洽 JSON 和任意 ignored binary 拼接。
 - 差异不隐藏：known difference 和 skip 都进入清单。
 - 延期可执行：稳定性门禁未批准时，热层相关生产实现保持冻结。

@@ -5,9 +5,9 @@
 > Oracle license options：RSALv2、SSPLv1、AGPLv3
 > Kiwi 当前运行基线：Cache OFF
 
-关联决定：`D001`、`D009`。
+关联决定：`D001`、`D009`、`D011`、`D012`。
 
-主要需求：`REQ-COMPAT-001..008`、`REQ-STABILITY-001..006`。
+主要需求：`REQ-COMPAT-001` 至 `REQ-COMPAT-010`、`REQ-STABILITY-001` 至 `REQ-STABILITY-006`。
 
 ## 1. 合同目的
 
@@ -54,6 +54,8 @@ build_command
 build_environment_allowlist
 build_log_sha256
 binary_sha256
+verification_rebuild_binary_sha256
+binary_hash_equal
 redis_version_output
 host_os_and_arch
 ```
@@ -63,10 +65,14 @@ host_os_and_arch
 1. source checkout 的 `HEAD` 等于 exact commit；
 2. tag 正确解析到该 commit；
 3. 构建前 tracked、untracked 和 ignored 变更符合受控规则；
-4. binary 来自该 canonical source tree；
-5. 运行时身份和 binary hash 与 provenance 一致。
+4. primary build binary 来自 primary exact checkout；
+5. verifier 在自己创建的全新 disposable exact checkout 中按受控 recipe 独立重建；
+6. primary binary 与 verification rebuild binary 的 SHA-256 完全一致；
+7. 正式运行时身份来自 verification rebuild binary，并与 provenance 一致。
 
-版本字符串相同但来源、commit 或 binary hash 不可证明时，不得作为 required evidence。
+Metadata、build log、文件 identity、版本字符串和 ignored binary 即使完全自洽，也不能单独证明构建来源。版本相同但 fresh independent rebuild、exact hash equality 或 runtime binding 不可证明时，不得作为 required evidence。
+
+详细信任边界和执行顺序见 `docs/superpowers/specs/2026-07-28-redis-8.8.1-trusted-oracle-provenance-design.md`。
 
 ## 4. Oracle 优先级
 
@@ -202,6 +208,11 @@ Cache OFF 下不得存在：
 
 - Kiwi exact commit 和二进制 hash；
 - Redis exact commit 和二进制 hash；
+- Primary build 和 verifier rebuild 各自独立的 source、toolchain、command、environment、build log 和 binary hash；
+- 两个 binary 的 exact SHA-256 equality 结果；
+- 正式 `INFO server` evidence 与 verifier rebuild binary 的绑定；
+- 受控 toolchain identity、versioned recipe 和 required evidence artifact/schema 的严格校验结果；
+- provenance 中全部 cleanup boolean 与完成时间，包括进程回收、runtime/checkout/verification log/temporary root 删除、primary/source/tool-FD/output-parent 最终复核和 fallible evidence handle 关闭结果；
 - manifest/schema version；
 - OS、架构、编译器和关键配置；
 - 原始 request/response transcript；
@@ -219,7 +230,7 @@ Cache OFF 下不得存在：
 2. 完成许可证和发行边界复核；
 3. 生成命令、协议、配置、持久化格式和官方测试差异；
 4. 更新所有 Profile、manifest、known difference 和 skip；
-5. 重建受控 Oracle provenance；
+5. 重新执行 primary build、verifier fresh-checkout independent rebuild、binary hash equality 和 rebuild runtime identity；
 6. 重新运行 Cache OFF 系统稳定性门禁；
 7. 单独评估未来热层 fork、patch 和 ABI pairing。
 
