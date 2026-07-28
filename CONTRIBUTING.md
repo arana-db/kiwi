@@ -66,6 +66,7 @@ By contributing, you agree that your contributions will be licensed under the Ap
 
 - Redis compatibility and public interface changes target exact Redis `8.8.1` commit `77b6c308396c9700672390a210143a8496fb4b10`.
 - Update the machine-readable compatibility manifest and raw differential tests when changing public command behavior.
+- Required Redis Oracle evidence must pass the repository's fresh-checkout independent-rebuild verifier, controlled toolchain identity and versioned-recipe checks, required artifact/schema validation, exact primary/rebuild binary SHA-256 equality, rebuild-bound runtime identity, and cleanup-before-publish gate; self-reported build metadata is insufficient.
 - A skipped Redis test must include an owner, Issue, exact reason, introduction date, and removal condition.
 - Kiwi-authored source remains Apache-2.0. Future Redis-derived native source is maintained in the separately governed AGPL-3.0-only fork and must retain upstream copyright, license, exact source identity, patch history, and reproducible build records.
 - The Embedded Redis Hot Tier is design-only. Until the system stability gate passes and the user explicitly authorizes a separate implementation task, do not add Redis-derived production dependencies, dynamic-library loaders, hot-tier data paths, default settings, or release packaging.

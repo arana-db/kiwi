@@ -6,7 +6,7 @@
 >
 > 当前运行模式：Cache OFF
 >
-> 更新日期：2026-07-26
+> 更新日期：2026-07-28
 
 ## 路线原则
 
@@ -62,6 +62,8 @@ M1 与 M2 可以在边界清晰的隔离任务中有限并行；M3 依赖二者�
 交付：
 
 - Redis 8.8.1 exact binary/source pin。
+- Primary build 与 verifier fresh-checkout rebuild 的 binary hash equality；两边受控 toolchain identity、versioned recipe 和 required evidence artifact/schema 全部通过校验；正式 `INFO server` 证据只来自独立重建产物。
+- Cleanup-before-publish 全部成功并留下可审计 cleanup 结果；任一进程回收、临时目录删除、evidence handle 关闭或 identity/hash 复核失败都不得发布 provenance。
 - 机器可读命令、模式和证据兼容矩阵。
 - RESP2/RESP3 raw wire differential harness。
 - Redis TCL external-server runner。
@@ -69,7 +71,7 @@ M1 与 M2 可以在边界清晰的隔离任务中有限并行；M3 依赖二者�
 - partial-I/O property test、parser fuzz corpus 和连接生命周期测试。
 - skip/known-difference 治理。
 
-退出门禁：基础 String/Hash/List/Set/ZSet 命令能够在 Redis 8.8.1 与 Kiwi Cache OFF 之间产生可重复 transcript；任何差异都有 owner、Issue、理由和解除条件。
+退出门禁：Redis 8.8.1 Oracle provenance 不能由 exact source、自洽 metadata 和任意 ignored binary 拼接；受控 toolchain identity 与 versioned recipe 已验证，required evidence artifact/schema 完整，双构建 hash 一致，正式运行证据来自 verifier rebuild，且 cleanup-before-publish 全部成功。基础 String/Hash/List/Set/ZSet 命令能够在 Redis 8.8.1 与 Kiwi Cache OFF 之间产生可重复 transcript；任何差异都有 owner、Issue、理由和解除条件。
 
 ## M2：RocksDB 权威状态与恢复正确性
 

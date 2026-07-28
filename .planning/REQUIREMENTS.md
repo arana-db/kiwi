@@ -13,7 +13,9 @@
 - `REQ-COMPAT-005`：redis-rs 只能进入独立测试工具或 dev dependency，生产 server crate 不得依赖它。
 - `REQ-COMPAT-006`：Pipeline 中间错误、partial I/O、连接关闭、Push 交错和二进制 payload 必须有回归测试。
 - `REQ-COMPAT-007`：所有新增公共命令、配置、错误、RESP 类型和客户端可见接口必须先取得 Redis 8.8.1 exact Oracle 证据。
-- `REQ-COMPAT-008`：Oracle 构建和运行证据必须记录 exact source commit、构建命令、环境、binary hash 和 `INFO server` 身份，禁止任意源码与任意二进制拼接。
+- `REQ-COMPAT-008`：Oracle 构建和运行证据必须记录 exact source commit、构建命令、环境、binary hash 和 `INFO server` 身份。Verifier 必须从全新的 disposable exact checkout 独立重建 Redis，要求 primary build 与 verifier rebuild 的 binary hash 完全一致，并只运行独立重建产物生成正式运行证据；调用者提供的 metadata、build log、文件 identity、版本字符串和 ignored binary 即使完全自洽，也不得单独证明构建来源。
+- `REQ-COMPAT-009`：Oracle controller bootstrap、Git、CC、Make 和其他外部工具必须来自声明的 Linux 信任边界，记录路径、版本、SHA-256 和文件 identity，并在存在路径替换风险时通过 held file descriptor 执行。Ambient `PATH`、`PYTHONPATH`、`PYTHONHOME` 或 metadata 不得选择将被执行的 controller 或工具；所有短命令必须有墙钟 deadline、输出上限和进程组回收。
+- `REQ-COMPAT-010`：Oracle provenance 只能在 primary build、独立 checkout、独立 rebuild、binary hash equality、`INFO server`、Redis 进程组回收、runtime/checkout 清理和最终 identity/hash 复核全部成功后原子发布。任一失败不得留下可被误认成功的最终 provenance；不支持的平台必须显式 FAIL 或带原因静态忽略，不得 early-return 假 PASS。
 
 ## RocksDB 权威存储与格式
 
@@ -87,3 +89,4 @@
 - `REQ-WORK-002`：当前任务状态写入 `.codex/recovery/ACTIVE.md`，checkpoint 追加式保存。
 - `REQ-WORK-003`：恢复状态必须记录 branch、HEAD、授权、dirty 归属、证据、剩余工作和下一条安全动作。
 - `REQ-WORK-004`：branch、HEAD 或 dirty 漂移时，新会话必须停止写操作并报告差异。
+- `REQ-WORK-005`：规划 task 和实施 task 必须使用不同的任务边界。规划 task 只能写长期事实、设计、计划和恢复记录；批准规划不授权继续源码实现。提前产生的实现草稿必须冻结，后续实施必须在新的隔离工作树和 recovery checkpoint 中重新开始或逐项审计后复用。

@@ -79,3 +79,22 @@
 - ABI 边界：使用版本化 C ABI 和受控动态加载；不得跨边界暴露 Redis 内部对象指针、SDS 所有权或 allocator 私有状态。
 - 正确性边界：RocksDB 始终权威；热层可丢弃、可重建；cache hit 不得绕过 OpenRaft；更新失败必须 invalidate；Cache OFF/ON 必须产生相同的 Redis 8.8.1 可观察行为。
 - 说明：本决定冻结未来接口和验收方向，不解除 D009 的实现延期。
+
+## D011：Redis Oracle provenance 使用 verifier 独立重建
+
+- 日期：2026-07-28
+- 状态：accepted
+- 决定：采用方案 A。Primary build controller 产生构建产物和审计 metadata；verifier 不把 metadata、build log 或 primary binary 当作构建来源信任根，而是在全新的 disposable exact Redis 8.8.1 checkout 中独立执行同一受控构建。
+- 接受条件：primary binary 与 verifier rebuild binary 的 SHA-256 必须完全一致；正式 `INFO server` 证据必须来自 verifier rebuild binary。任一不一致、独立构建失败或 cleanup 失败时不得发布 provenance。
+- 工具边界：controller bootstrap 使用固定 Linux 解释器信任边界和 isolated Python 模式；Git、CC、Make 及其他外部工具必须从受控目录解析，记录路径、版本、SHA-256 和文件 identity，并通过 held FD 执行需要防路径替换的调用。
+- 理由：同一调用者可以伪造完全自洽的 metadata、build log、hash、identity 和 ignored `src/redis-server`。只有独立重建、hash equality 和运行独立产物才能关闭任意 source/binary 拼接路径。
+- 失败处理：如果 Redis 8.8.1 在两个受控独立 checkout 中不能产生一致 binary，实施 task 必须停在可复现性调查门禁；不得把 equality 降级为版本字符串、宽松字段比较或允许列表。
+
+## D012：规划 task 与实施 task 分离
+
+- 日期：2026-07-28
+- 状态：accepted
+- 决定：项目规划、设计固化和实施计划编写必须与源码实现使用不同的 Codex task。规划 task 不继续源码、测试、构建脚本或 CI 实现，也不把提前产生的草稿提交到实现 PR。
+- 当前应用：Redis 8.8.1 Oracle provenance 的六文件实现草稿保持未暂存、未提交、未 push，并在原 recovery worktree 冻结。本 task 只发布方案 A 的项目真相、设计和后续实施计划。
+- 后续要求：实施必须另开 task，在新的隔离 worktree 保存独立 recovery checkpoint；可只读参考冻结草稿，但必须逐项对照 `D011` 和 `REQ-COMPAT-008` 至 `REQ-COMPAT-010` 重新审计，不能把既有绿测当作接受证据。
+- 理由：Kiwi 底层兼容、存储和 Raft 工作并行且依赖严格。混合规划和实现会隐式改变任务优先级、污染 dirty ownership，并让未批准代码反向定义架构。

@@ -5,9 +5,9 @@
 > 当前运行模式：Cache OFF
 > 热层状态：仅设计冻结，未获生产实现授权
 
-关联决定：`D001`、`D009`、`D010`。
+关联决定：`D001`、`D009`、`D010`、`D011`、`D012`。
 
-主要需求：`REQ-STORAGE-001..006`、`REQ-STABILITY-001..006`、`REQ-HOT-001..012`、`REQ-RAFT-001..008`。
+主要需求：`REQ-COMPAT-008` 至 `REQ-COMPAT-010`、`REQ-STORAGE-001` 至 `REQ-STORAGE-006`、`REQ-STABILITY-001` 至 `REQ-STABILITY-006`、`REQ-HOT-001` 至 `REQ-HOT-012`、`REQ-RAFT-001` 至 `REQ-RAFT-008`。
 
 ## 1. 系统定义
 
@@ -157,7 +157,10 @@ RocksDB 必须在没有任何 Redis 派生运行时组件时保存完整业务�
 
 ### 5.6 Compatibility tooling
 
-- 构建并验证 exact Redis 8.8.1 Oracle；
+- Primary builder 在 exact checkout 中产生候选 binary 和审计 metadata；
+- Verifier 不信任候选 metadata 的构建来源，在自己创建的 fresh disposable exact checkout 中独立重建；
+- 要求 primary/rebuild binary SHA-256 完全一致，只运行 rebuild binary取得正式 `INFO server` evidence；
+- 使用受控 bootstrap、held tool FD、有界子进程和 cleanup-before-publish；
 - 保存 raw transcript 和最终状态；
 - 管理 required、known difference、deferred、unsupported 和 skip；
 - 保持测试依赖与生产依赖隔离。
@@ -215,7 +218,7 @@ Kiwi Rust process
 | RocksDB reopen failure | 启动失败或进入明确不可服务状态 |
 | Snapshot corruption | 拒绝安装并保留可诊断证据 |
 | Client disconnect during write | 标记 `SUBMIT_UNKNOWN`，查询后再决定 |
-| Redis Oracle failure | 兼容测试失败；不影响生产运行 |
+| Redis Oracle primary/rebuild mismatch、工具链不可控或证据清理失败 | 兼容证据 FAIL/BLOCKED；不影响 Kiwi 生产运行，不得降级为 self-reported provenance |
 | Future hot-tier failure | 当前不存在；未来只能降级性能，不能改变结果 |
 
 ## 10. 热层准入条件
