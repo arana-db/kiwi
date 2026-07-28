@@ -33,7 +33,7 @@
 - `REQ-STABILITY-005`：任何解除冻结的决定必须追加到 `.planning/DECISIONS.md`，并同步更新 Roadmap、State 和 Kanban；不得由实现 PR 隐式解除。
 - `REQ-STABILITY-006`：稳定性门禁通过只允许提交新的热层规划与授权请求，不自动授权 Redis fork 改造、动态库构建、loader、发行接入或热层生产实现。
 
-## 未来内嵌 Redis 热数据层合同
+## 未来内嵌 Redis 8.8.1 原生内存热数据层合同
 
 本节是延期功能的验收合同，不构成当前实现授权。
 

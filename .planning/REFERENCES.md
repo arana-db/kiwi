@@ -27,4 +27,4 @@
 
 ## 本地研究镜像
 
-本地只读研究镜像位于 `D:\test\github\review\research-*`。这些镜像不是 Kiwi 构建输入，也不能替代上游 tag、commit、许可证、patch 或 binary/source pairing 清单。
+本地只读研究镜像应放在 Kiwi 仓库之外、由使用者自行配置的隔离目录中；具体工作站绝对路径不得写入版本化项目真相。这些镜像不是 Kiwi 构建输入，也不能替代上游 tag、commit、许可证、patch 或 binary/source pairing 清单。

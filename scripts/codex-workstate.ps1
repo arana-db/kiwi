@@ -92,6 +92,61 @@ function Normalize-ListArgument {
     return @($result)
 }
 
+function Convert-ToYamlDoubleQuotedScalar {
+    param(
+        [AllowEmptyString()]
+        [string]$Value
+    )
+
+    $builder = [System.Text.StringBuilder]::new()
+    foreach ($character in $Value.ToCharArray()) {
+        $codePoint = [int]$character
+        $escapedCharacter = switch ($codePoint) {
+            0 { '\0' }
+            7 { '\a' }
+            8 { '\b' }
+            9 { '\t' }
+            10 { '\n' }
+            11 { '\v' }
+            12 { '\f' }
+            13 { '\r' }
+            27 { '\e' }
+            34 { '\"' }
+            92 { '\\' }
+            default { $null }
+        }
+
+        if ($null -ne $escapedCharacter) {
+            [void]$builder.Append($escapedCharacter)
+        }
+        elseif ($codePoint -lt 0x20 -or ($codePoint -ge 0x7F -and $codePoint -le 0x9F)) {
+            [void]$builder.Append(('\u{0:X4}' -f $codePoint))
+        }
+        else {
+            [void]$builder.Append($character)
+        }
+    }
+
+    return '"' + $builder.ToString() + '"'
+}
+
+function Test-ContainsOrdinalIgnoreCase {
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Collections.IEnumerable]$Values,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Candidate
+    )
+
+    foreach ($value in $Values) {
+        if ([string]::Equals([string]$value, $Candidate, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
 $ResolvedRepoRoot = [System.IO.Path]::GetFullPath($RepoRoot)
 $repoProbe = @(& git -C $ResolvedRepoRoot rev-parse --show-toplevel 2>&1)
 if ($LASTEXITCODE -ne 0) {
@@ -109,6 +164,7 @@ $mixedPaths = Normalize-ListArgument -Value $MixedPath
 $remainingItems = Normalize-ListArgument -Value $RemainingWork
 $decisionItems = Normalize-ListArgument -Value $Decision
 $validationItems = Normalize-ListArgument -Value $Validation
+$titleScalar = Convert-ToYamlDoubleQuotedScalar -Value $Title
 
 $branch = ((Invoke-GitReadOnly -Arguments @('branch', '--show-current')) -join '').Trim()
 if ([string]::IsNullOrWhiteSpace($branch)) {
@@ -147,7 +203,7 @@ foreach ($path in $taskPaths) {
     if ($normalized.StartsWith('./', [System.StringComparison]::Ordinal)) {
         $normalized = $normalized.Substring(2)
     }
-    if (-not $taskOwned.Contains($normalized)) {
+    if (-not (Test-ContainsOrdinalIgnoreCase -Values $taskOwned -Candidate $normalized)) {
         $taskOwned.Add($normalized)
     }
 }
@@ -158,13 +214,14 @@ foreach ($path in $mixedPaths) {
     if ($normalized.StartsWith('./', [System.StringComparison]::Ordinal)) {
         $normalized = $normalized.Substring(2)
     }
-    if (-not $mixedOwned.Contains($normalized)) {
+    if (-not (Test-ContainsOrdinalIgnoreCase -Values $mixedOwned -Candidate $normalized)) {
         $mixedOwned.Add($normalized)
     }
 }
 
 $preExisting = @($dirtyPaths | Where-Object {
-    -not $taskOwned.Contains($_) -and -not $mixedOwned.Contains($_)
+    -not (Test-ContainsOrdinalIgnoreCase -Values $taskOwned -Candidate $_) -and
+        -not (Test-ContainsOrdinalIgnoreCase -Values $mixedOwned -Candidate $_)
 })
 $timestamp = Get-Date
 $timestampSlug = $timestamp.ToString('yyyyMMdd-HHmmss-fff')
@@ -203,7 +260,7 @@ $contentLines = [System.Collections.Generic.List[string]]::new()
     'status: active',
     "updated_at: $timestampIso",
     "task_id: $TaskId",
-    "title: $Title",
+    "title: $titleScalar",
     "repo_root: $ResolvedRepoRoot",
     "branch: $branch",
     "head_sha: $headSha",

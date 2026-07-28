@@ -25,12 +25,12 @@ Kiwi language:                Rust
 Kiwi-authored source:         Apache-2.0
 Durable truth:                RocksDB
 Consensus:                    OpenRaft
-Future hot-tier source:       arana-db/redis pinned from Redis 8.8.1
+Future hot-tier source:       arana-db/redis planned; downstream exact pin pending
 Raft API model:               RedisRaft public compatibility profile
 Rust client:                  redis-rs test-only compatibility client
 ```
 
-Redis 8.8.1 是当前唯一兼容、接口设计、行为 Oracle、测试和未来原生热层来源基线。不得使用浮动 tag、branch、binary 或未校验来源替代上述 exact commit。
+Redis 8.8.1 exact commit 是当前唯一兼容、接口设计、行为 Oracle、测试和未来原生热层的上游来源基线。`arana-db/redis` 的下游 exact commit、patch 清单、构建配置和产物 hash 尚未建立前，它不是 Kiwi 构建输入；不得使用浮动 tag、branch、binary 或未校验来源替代上述 exact commit。
 
 ## 当前产品主线
 
@@ -57,7 +57,7 @@ Redis 8.8.1 是当前唯一兼容、接口设计、行为 Oracle、测试和未�
 - Raft 正确性必须通过确定性模型、多进程故障测试和 Elle/Jepsen 历史证明。
 - Cache hit、未来热层或其他加速路径均不得绕过 Leader、ReadIndex、Lease、Commit 或 Apply 门禁。
 
-## 延期的内嵌 Redis 热数据层
+## 延期的内嵌 Redis 8.8.1 原生内存热数据层
 
 未来的内嵌 Redis 原生内存热数据层必须以 Redis 8.8.1 为接口与来源基线，并满足以下预先冻结的合同：
 

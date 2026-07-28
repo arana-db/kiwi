@@ -25,7 +25,9 @@ Redis 8.8.1 顶层 `LICENSE.txt` 提供 RSALv2、SSPLv1 和 AGPLv3 三种选择�
 AGPL-3.0-only
 ```
 
-选择必须在 fork、源码包、二进制包、SBOM、NOTICE 和 release provenance 中保持一致，不能在不同平台或发行渠道隐式切换。
+顶层三选一只确定可选授权路径，不能替代文件级来源和许可证判定。发布 fork 合同前必须建立覆盖全部 tracked、imported、generated 和 third-party 文件的 inventory，逐项记录来源、版权主体、许可证表达式、生成规则和修改状态；历史贡献、生成文件或第三方代码存在独立条款时必须原样保留，只有经 inventory 确认适用 Redis AGPL 选项的部分才能标记为 `AGPL-3.0-only`。任何来源或许可证无法确认的文件都使发布门禁进入 `BLOCKED`。
+
+经文件级判定后的许可证选择必须在 fork、源码包、二进制包、SBOM、NOTICE 和 release provenance 中保持一致，不能在不同平台或发行渠道隐式切换。
 
 上游依据：<https://github.com/redis/redis/blob/8.8.1/LICENSE.txt>
 
@@ -40,7 +42,8 @@ Kiwi 自有 Rust 源码继续按其文件头和仓库声明使用 Apache-2.0。�
 `arana-db/redis` 中来自或派生自 Redis 8.8.1 的源码、生成物和 native library 必须：
 
 - 保留 Redis 上游版权和许可证文本；
-- 明确选择 `AGPL-3.0-only`；
+- 对文件级 inventory 确认适用 Redis AGPL 选项的部分明确选择 `AGPL-3.0-only`；
+- 对具有独立许可证的历史贡献、生成文件和第三方代码保留各自条款与 notice；
 - 标识 Kiwi/Arana 的修改；
 - 记录 exact upstream/downstream commit 和 patch history；
 - 满足 AGPL 的源码提供及网络交互义务。
@@ -64,6 +67,7 @@ downstream_commit:   <exact commit>
 selected_license:    AGPL-3.0-only
 patch_series_hash:   <sha256>
 source_archive_hash: <sha256>
+file_license_inventory_hash: <sha256>
 ```
 
 导入和维护规则：
@@ -85,9 +89,12 @@ kiwi-distribution/
   bin/kiwi
   lib/libkiwi_redis_hot_tier.so        # platform equivalent where applicable
   manifests/redis-hot-tier-pairing.json
+  manifests/file-license-inventory.spdx.json
   licenses/AGPL-3.0-only.txt
   licenses/Apache-2.0.txt
   licenses/redis-LICENSE.txt
+  licenses/redis-REDISCONTRIBUTIONS.txt
+  licenses/inventory/                  # every additional license/notice named by the inventory
   NOTICE
   THIRD_PARTY_NOTICES.md
   SOURCE_OFFER.md
@@ -109,7 +116,7 @@ kiwi-distribution/
 - 构建、链接、安装和打包脚本；
 - 编译器、feature、allocator 和关键环境配置；
 - 生成源文件所需脚本和输入；
-- pairing manifest、SBOM、NOTICE 和许可证；
+- pairing manifest、file-level license inventory、SBOM、NOTICE，以及 inventory 引用的每份许可证和 notice（至少包括 Redis exact commit 的 `LICENSE.txt` 与 `REDISCONTRIBUTIONS.txt`）；
 - 重建发布二进制所需的其他适用材料。
 
 源码 URL 必须绑定 release tag、immutable archive 或 exact commit，不能只指向浮动默认分支。二进制、source archive 和 build provenance 的 hash 必须相互对账。
@@ -175,7 +182,7 @@ SBOM 必须覆盖 Kiwi、Redis 派生库、native dependencies、allocator 和�
 
 首次组合发行前 required checks：
 
-- license text/notice 存在且与选择一致；
+- file-level inventory 完整，且它引用的每份 license text/notice 都进入 source archive 和发行包；Redis exact commit 的 `LICENSE.txt` 与 `REDISCONTRIBUTIONS.txt` 不得缺失；
 - 上游和下游 exact commit 可验证；
 - source/patch/build 可重复；
 - dynamic library hash 与 pairing manifest 一致；
@@ -203,6 +210,7 @@ SBOM 必须覆盖 Kiwi、Redis 派生库、native dependencies、allocator 和�
 ## 12. 参考
 
 - Redis 8.8.1 license：<https://github.com/redis/redis/blob/8.8.1/LICENSE.txt>
+- Redis 8.8.1 historical contributions license：<https://github.com/redis/redis/blob/8.8.1/REDISCONTRIBUTIONS.txt>
 - GNU AGPLv3：<https://www.gnu.org/licenses/agpl-3.0.html>
 - Apache Software Foundation GPL compatibility：<https://www.apache.org/licenses/GPL-compatibility.html>
 - OSI AGPL-3.0：<https://opensource.org/license/agpl-3-0>
