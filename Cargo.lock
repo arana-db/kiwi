@@ -1447,6 +1447,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiwi-compat"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror 2.0.19",
+ "yaml_serde",
+]
+
+[[package]]
 name = "kstd"
 version = "0.1.0"
 dependencies = [
