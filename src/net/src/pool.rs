@@ -168,7 +168,8 @@ where
             }
 
             // Return an available connection if one exists
-            if let Some(mut conn) = available.pop_front() {
+            let available_connection = available.pop_front();
+            if let Some(mut conn) = available_connection {
                 conn.touch();
                 return Ok(ActiveConnection::new(conn, permit));
             }
@@ -224,7 +225,11 @@ where
         let mut kept = VecDeque::new();
         let mut removed_count = 0;
 
-        while let Some(conn) = available.pop_front() {
+        loop {
+            let next_connection = available.pop_front();
+            let Some(conn) = next_connection else {
+                break;
+            };
             if conn.is_idle(self.config.idle_timeout)
                 && (kept.len() + available.len()) > self.config.min_connections
             {

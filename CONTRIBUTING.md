@@ -15,8 +15,7 @@ rustup show active-toolchain
 rustc --version --verbose
 ```
 
-The source currently remains on Rust 2021 Edition. Migrating to Rust 2024 Edition
-is a separate follow-up change and is not part of the toolchain baseline update.
+All Kiwi workspace crates use Rust 2024 Edition.
 Dated nightly toolchains are limited to specialized checks such as Sanitizers.
 
 `protoc` is required. Windows builds use the Rust MSVC target and the Visual

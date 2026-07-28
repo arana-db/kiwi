@@ -360,7 +360,11 @@ async fn start_server(
         // backpressure via a bounded channel.
         let raft_for_drain = raft_app.clone();
         tokio::spawn(async move {
-            while let Some((binlog, resp_tx)) = log_rx.recv().await {
+            loop {
+                let received = log_rx.recv().await;
+                let Some((binlog, resp_tx)) = received else {
+                    break;
+                };
                 let result = raft_for_drain
                     .client_write(binlog)
                     .await
@@ -433,28 +437,30 @@ async fn start_server(
             }
         });
 
-        Some(raft_app as Arc<dyn raft::leader_gate::LeaderGate>)
+        let raft_leader_gate = raft_app as Arc<dyn raft::leader_gate::LeaderGate>;
+        Some(raft_leader_gate)
     } else {
         None
     };
 
-    if let Some(server) = net::ServerFactory::create_server(
+    match net::ServerFactory::create_server(
         protocol,
         Some(addr.to_string()),
         runtime_manager,
         config.requirepass.clone(),
         leader_gate,
     ) {
-        tokio::spawn(async move {
-            if let Err(e) = server.run().await {
-                error!("Redis server error: {}", e);
-            }
-        });
-        Ok(())
-    } else {
-        Err(std::io::Error::other(format!(
+        Some(server) => {
+            tokio::spawn(async move {
+                if let Err(e) = server.run().await {
+                    error!("Redis server error: {}", e);
+                }
+            });
+            Ok(())
+        }
+        _ => Err(std::io::Error::other(format!(
             "Failed to create server for protocol '{}' on address '{}'",
             protocol, addr
-        )))
+        ))),
     }
 }

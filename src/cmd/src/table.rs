@@ -25,7 +25,7 @@ pub type CmdTable = HashMap<String, Arc<dyn Cmd>>;
 
 #[macro_export]
 macro_rules! register_cmd {
-    ($cmd_table:expr, $($cmd_struct:ty),+ $(,)?) => {
+    ($cmd_table:expr_2021, $($cmd_struct:ty),+ $(,)?) => {
         $(
             {
                 let cmd = <$cmd_struct>::new();
@@ -39,7 +39,7 @@ macro_rules! register_cmd {
 
 #[macro_export]
 macro_rules! register_group_cmd {
-    ($cmd_table:expr, $($constructor:path),+ $(,)?) => {
+    ($cmd_table:expr_2021, $($constructor:path),+ $(,)?) => {
         $(
             {
                 let group_cmd = $constructor();

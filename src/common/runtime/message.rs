@@ -986,10 +986,10 @@ impl StorageClient {
             }
             let remaining_timeout = timeout - elapsed;
 
-            match self
+            let attempt_result = self
                 .try_send_request(command.clone(), remaining_timeout, priority)
-                .await
-            {
+                .await;
+            match attempt_result {
                 Ok(data) => {
                     // Success - record in circuit breaker and recovery manager
                     {
@@ -1262,10 +1262,10 @@ impl StorageClient {
         let degraded_retries = self.retry_config.max_retries.min(2);
 
         for attempt in 0..=degraded_retries {
-            match self
+            let attempt_result = self
                 .try_send_request(command.clone(), degraded_timeout, priority)
-                .await
-            {
+                .await;
+            match attempt_result {
                 Ok(data) => {
                     // Success in degraded mode
                     let mut recovery_manager = self.recovery_manager.lock().await;

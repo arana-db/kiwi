@@ -490,8 +490,8 @@ impl Redis {
         // Set compaction filter factory
         if cf_name == ColumnFamilyIndex::MetaCF.name() {
             cf_opts.set_compaction_filter_factory(MetaCompactionFilterFactory);
-        } else if let Some(db_once_cell) = db_once_cell {
-            if let Some(data_type) = [
+        } else if let Some(db_once_cell) = db_once_cell
+            && let Some(data_type) = [
                 ColumnFamilyIndex::HashesDataCF,
                 ColumnFamilyIndex::SetsDataCF,
                 ColumnFamilyIndex::ListsDataCF,
@@ -501,10 +501,9 @@ impl Redis {
             .iter()
             .find(|cf| cf.name() == cf_name)
             .and_then(|cf| cf.data_type())
-            {
-                let factory = DataCompactionFilterFactory::new(Arc::clone(db_once_cell), data_type);
-                cf_opts.set_compaction_filter_factory(factory);
-            }
+        {
+            let factory = DataCompactionFilterFactory::new(Arc::clone(db_once_cell), data_type);
+            cf_opts.set_compaction_filter_factory(factory);
         }
 
         ColumnFamilyDescriptor::new(cf_name, cf_opts)
@@ -539,7 +538,8 @@ impl Redis {
             for (i, cf_name) in self.handles.iter().enumerate() {
                 if i > 0 {
                     // Skip already compacted default CF
-                    if let Some(cf) = db.cf_handle(cf_name) {
+                    let cf_handle = db.cf_handle(cf_name);
+                    if let Some(cf) = cf_handle {
                         db.compact_range_cf(&cf, begin, end);
                     }
                 }
@@ -550,10 +550,10 @@ impl Redis {
     }
 
     pub fn get_property(&self, property: &str) -> Result<u64> {
-        if let Some(db) = &self.db {
-            if let Some(value) = db.property_int_value(property).context(RocksSnafu)? {
-                return Ok(value);
-            }
+        if let Some(db) = &self.db
+            && let Some(value) = db.property_int_value(property).context(RocksSnafu)?
+        {
+            return Ok(value);
         }
 
         OptionNoneSnafu {
@@ -567,10 +567,10 @@ impl Redis {
         &self,
         cf_index: ColumnFamilyIndex,
     ) -> Option<Arc<rocksdb::BoundColumnFamily<'_>>> {
-        if let Some(db) = &self.db {
-            if let Some(cf_name) = self.handles.get(cf_index as usize) {
-                return db.cf_handle(cf_name);
-            }
+        if let Some(db) = &self.db
+            && let Some(cf_name) = self.handles.get(cf_index as usize)
+        {
+            return db.cf_handle(cf_name);
         }
         None
     }
@@ -988,7 +988,7 @@ impl Redis {
 /// Returns an error if the database is not initialized or if any column family handle is not found.
 #[macro_export]
 macro_rules! get_db_and_cfs {
-    ($self:expr $(, $cf:expr)*) => {{
+    ($self:expr_2021 $(, $cf:expr_2021)*) => {{
         let db = $self.db().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;

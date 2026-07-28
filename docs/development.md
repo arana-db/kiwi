@@ -5,8 +5,7 @@
 Normal development, CI, and release builds use the exact Rust 1.97.1 stable
 toolchain pinned in the repository root. After rustup is installed,
 `rust-toolchain.toml` selects it automatically whenever commands run inside this
-repository. The source currently uses Rust 2021 Edition. Rust 2024 Edition is a
-separate follow-up migration, not part of this toolchain baseline.
+repository. All Kiwi workspace crates use Rust 2024 Edition.
 
 Kiwi also requires `protoc` and a native C/C++ toolchain because RocksDB is built
 from source:
@@ -30,11 +29,47 @@ brew install protobuf cmake
 sudo apt install clang cmake libclang-dev llvm-dev pkg-config protobuf-compiler
 ```
 
+On Windows, install the Visual Studio Build Tools C++ workload first, then run
+the following commands in PowerShell to install the same official Protobuf 27.1
+release used by CI and add it to both the current process and the user `PATH`:
+
+```powershell
+$protocVersion = "27.1"
+$protocZip = "protoc-$protocVersion-win64.zip"
+$protocUrl = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/$protocZip"
+$protocArchive = Join-Path $env:TEMP $protocZip
+$protocRoot = Join-Path $env:LOCALAPPDATA "Programs\protoc-$protocVersion"
+
+Invoke-WebRequest -Uri $protocUrl -OutFile $protocArchive
+Expand-Archive -Path $protocArchive -DestinationPath $protocRoot -Force
+
+$protocBin = Join-Path $protocRoot "bin"
+$processPath = $env:Path
+if ([string]::IsNullOrWhiteSpace($processPath)) {
+    $env:Path = $protocBin
+} elseif (($processPath -split ";") -notcontains $protocBin) {
+    $env:Path = "$protocBin;$processPath"
+}
+
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+if ([string]::IsNullOrWhiteSpace($userPath)) {
+    [Environment]::SetEnvironmentVariable("Path", $protocBin, "User")
+} elseif (($userPath -split ";") -notcontains $protocBin) {
+    [Environment]::SetEnvironmentVariable("Path", "$protocBin;$userPath", "User")
+}
+
+protoc --version
+```
+
+The final command must report `libprotoc 27.1`. New terminals pick up the user
+`PATH` automatically.
+
 Verify the compiler selected for the current checkout:
 
 ```bash
 rustup show active-toolchain
 rustc --version --verbose
+protoc --version
 ```
 
 Dated nightly toolchains are used only by specialized checks such as

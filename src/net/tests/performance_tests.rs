@@ -119,7 +119,8 @@ impl NetworkPerformanceTests {
 
         // Collect results
         for handle in handles {
-            if let Ok((client_latencies, client_successful)) = handle.await {
+            let client_result = handle.await;
+            if let Ok((client_latencies, client_successful)) = client_result {
                 latencies.extend(client_latencies);
                 successful_ops += client_successful;
                 total_ops += test_config.operations_per_client;
@@ -190,7 +191,8 @@ impl NetworkPerformanceTests {
 
         // Collect results
         for handle in handles {
-            if let Ok((client_latencies, client_successful)) = handle.await {
+            let client_result = handle.await;
+            if let Ok((client_latencies, client_successful)) = client_result {
                 latencies.extend(client_latencies);
                 successful_ops += client_successful;
                 total_ops += test_config.operations_per_client;
@@ -260,7 +262,8 @@ impl NetworkPerformanceTests {
 
         // Collect results
         for handle in handles {
-            if let Ok((client_latencies, client_successful)) = handle.await {
+            let client_result = handle.await;
+            if let Ok((client_latencies, client_successful)) = client_result {
                 latencies.extend(client_latencies);
                 successful_ops += client_successful;
                 total_ops += test_config.operations_per_client;
@@ -332,7 +335,8 @@ impl NetworkPerformanceTests {
 
         // Collect results
         for handle in handles {
-            if let Ok((client_latencies, client_successful, _use_pooling)) = handle.await {
+            let client_result = handle.await;
+            if let Ok((client_latencies, client_successful, _use_pooling)) = client_result {
                 latencies.extend(client_latencies);
                 successful_ops += client_successful;
                 total_ops += test_config.operations_per_client;

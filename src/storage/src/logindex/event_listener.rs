@@ -32,8 +32,8 @@ const EMPTY: u64 = u64::MAX;
 
 /// Pack generation (high 32 bits) and cf_id (low 32 bits) to avoid ABA in watchdog.
 #[inline]
-fn pack(gen: u64, cf_id: u32) -> u64 {
-    (gen << 32) | (cf_id as u64)
+fn pack(r#gen: u64, cf_id: u32) -> u64 {
+    (r#gen << 32) | (cf_id as u64)
 }
 
 /// Extract cf_id from packed value.
@@ -90,9 +90,9 @@ impl LogIndexAndSequenceCollectorPurger {
         if cf_id < 0 {
             self.manual_flushing_cf.store(EMPTY, Ordering::SeqCst);
         } else {
-            let gen = self.next_generation.fetch_add(1, Ordering::SeqCst);
+            let r#gen = self.next_generation.fetch_add(1, Ordering::SeqCst);
             self.manual_flushing_cf
-                .store(pack(gen, cf_id as u32), Ordering::SeqCst);
+                .store(pack(r#gen, cf_id as u32), Ordering::SeqCst);
         }
     }
 
@@ -174,8 +174,8 @@ impl EventListener for LogIndexAndSequenceCollectorPurger {
             return;
         };
 
-        let gen = self.next_generation.fetch_add(1, Ordering::SeqCst);
-        let packed = pack(gen, target_cf as u32);
+        let r#gen = self.next_generation.fetch_add(1, Ordering::SeqCst);
+        let packed = pack(r#gen, target_cf as u32);
 
         // Attempt to claim manual-flush state; abort if another flush is already in progress
         if self

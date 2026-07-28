@@ -123,7 +123,8 @@ impl TryInto<AppendEntriesRequest<KiwiTypeConfig>> for &proto::AppendEntriesRequ
         // 转换 entries
         let mut entries = Vec::new();
         for proto_entry in &self.entries {
-            match proto_entry.try_into() {
+            let conversion_result = proto_entry.try_into();
+            match conversion_result {
                 Ok(entry) => entries.push(entry),
                 Err(e) => {
                     return Err(tonic::Status::invalid_argument(format!(
@@ -266,7 +267,8 @@ impl TryFrom<AppendEntriesRequest<KiwiTypeConfig>> for proto::AppendEntriesReque
         let mut entries = Vec::new();
         let mut errors = Vec::new();
         for (idx, e) in req.entries.into_iter().enumerate() {
-            match e.try_into() {
+            let conversion_result = e.try_into();
+            match conversion_result {
                 Ok(entry) => entries.push(entry),
                 Err(e) => errors.push(format!("entry[{}]: {}", idx, e)),
             }

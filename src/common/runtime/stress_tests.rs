@@ -132,7 +132,7 @@ impl ChaosTestFramework {
     }
 
     fn should_inject_failure(&mut self) -> bool {
-        self.rng.gen::<f64>() < self.failure_rate
+        self.rng.r#gen::<f64>() < self.failure_rate
     }
 
     fn random_failure_type(&mut self) -> ChaosFailureType {
@@ -290,7 +290,8 @@ mod memory_pressure_tests {
         let mut channel_error_count = 0;
 
         for handle in handles {
-            match handle.await.unwrap() {
+            let request_result = handle.await.unwrap();
+            match request_result {
                 Ok(_) => _success_count += 1,
                 Err(DualRuntimeError::Timeout { .. }) => timeout_count += 1,
                 Err(DualRuntimeError::Channel(_)) => channel_error_count += 1,

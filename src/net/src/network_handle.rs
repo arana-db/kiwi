@@ -398,11 +398,11 @@ async fn process_command_batch(
         let mut auth_rejected = false;
         if !client.is_authenticated() {
             let cmd_name_str = String::from_utf8_lossy(&command.cmd_name).to_lowercase();
-            if let Some(cmd) = cmd_table.get(&cmd_name_str) {
-                if !cmd.has_flag(CmdFlags::NO_AUTH) {
-                    client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
-                    auth_rejected = true;
-                }
+            if let Some(cmd) = cmd_table.get(&cmd_name_str)
+                && !cmd.has_flag(CmdFlags::NO_AUTH)
+            {
+                client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
+                auth_rejected = true;
             }
         }
 
@@ -644,6 +644,47 @@ mod tests {
         assert!(
             client.is_authenticated(),
             "AUTH from the same socket read did not reach a terminal result"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_unblocks_noauth_write_and_finishes_commands_from_same_read() {
+        let write_started = Arc::new(Semaphore::new(0));
+        let client = Arc::new(Client::new(Box::new(BlockingWriteStream {
+            inbound: Some(
+                b"*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n*2\r\n$4\r\nAUTH\r\n$6\r\nsecret\r\n".to_vec(),
+            ),
+            write_started: write_started.clone(),
+        })));
+        let (storage_client, _cmd_table, executor) = create_test_components();
+        let cmd_table = Arc::new(create_command_table(Arc::new(|| {
+            Some("secret".to_string())
+        })));
+        let shutdown = CancellationToken::new();
+        let connection_task = tokio::spawn(process_network_connection_until_cancelled(
+            client.clone(),
+            storage_client,
+            cmd_table,
+            executor,
+            None,
+            shutdown.clone(),
+        ));
+
+        let write_permit = tokio::time::timeout(Duration::from_secs(1), write_started.acquire())
+            .await
+            .expect("NOAUTH response write did not start")
+            .expect("write-start semaphore closed");
+        drop(write_permit);
+        shutdown.cancel();
+
+        tokio::time::timeout(Duration::from_secs(1), connection_task)
+            .await
+            .expect("connection stayed blocked in NOAUTH response write after shutdown")
+            .expect("connection task panicked")
+            .expect("connection processing failed");
+        assert!(
+            client.is_authenticated(),
+            "AUTH after the rejected command did not reach a terminal result"
         );
     }
 

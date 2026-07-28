@@ -133,7 +133,8 @@ impl StorageClient {
         if commands.len() <= 3 {
             let mut results = Vec::new();
             for command in commands {
-                match self.inner.send_request(command).await {
+                let request_result = self.inner.send_request(command).await;
+                match request_result {
                     Ok(result) => results.push(result),
                     Err(e) => return Err(e),
                 }
@@ -167,7 +168,8 @@ impl StorageClient {
         // Wait for all responses
         let mut results = Vec::new();
         for future in futures {
-            match future.await {
+            let response_result = future.await;
+            match response_result {
                 Ok(result) => results.push(result),
                 Err(e) => {
                     // For pipelined requests, we continue processing other commands

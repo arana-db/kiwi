@@ -85,17 +85,18 @@ mod unix_impl {
     #[async_trait]
     impl ServerTrait for UnixServer {
         async fn run(&self) -> Result<(), Box<dyn Error>> {
-            if let Err(e) = std::fs::remove_file(&self.path) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    return Err(e.into());
-                }
+            if let Err(e) = std::fs::remove_file(&self.path)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(e.into());
             }
 
             let listener = UnixListener::bind(&self.path)?;
             info!("Listening on Unix Socket: {}", self.path);
 
             loop {
-                match listener.accept().await {
+                let accept_result = listener.accept().await;
+                match accept_result {
                     Ok((socket, _)) => {
                         let s = UnixStreamWrapper::new(socket);
                         let client = Arc::new(Client::new(Box::new(s)));

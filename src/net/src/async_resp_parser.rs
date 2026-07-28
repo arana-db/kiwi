@@ -181,23 +181,23 @@ impl CommandBatch {
         let mut max_priority = BatchPriority::Normal;
 
         for command in commands {
-            if let RespData::Array(Some(params)) = command {
-                if let Some(RespData::BulkString(Some(cmd_name))) = params.first() {
-                    let cmd_str = String::from_utf8_lossy(cmd_name).to_lowercase();
-                    let cmd_priority = match cmd_str.as_str() {
-                        // Critical commands
-                        "auth" | "hello" | "quit" => BatchPriority::Critical,
-                        // High priority commands
-                        "ping" | "echo" => BatchPriority::High,
-                        // Low priority commands
-                        "info" | "keys" | "scan" => BatchPriority::Low,
-                        // Normal priority for everything else
-                        _ => BatchPriority::Normal,
-                    };
+            if let RespData::Array(Some(params)) = command
+                && let Some(RespData::BulkString(Some(cmd_name))) = params.first()
+            {
+                let cmd_str = String::from_utf8_lossy(cmd_name).to_lowercase();
+                let cmd_priority = match cmd_str.as_str() {
+                    // Critical commands
+                    "auth" | "hello" | "quit" => BatchPriority::Critical,
+                    // High priority commands
+                    "ping" | "echo" => BatchPriority::High,
+                    // Low priority commands
+                    "info" | "keys" | "scan" => BatchPriority::Low,
+                    // Normal priority for everything else
+                    _ => BatchPriority::Normal,
+                };
 
-                    if cmd_priority > max_priority {
-                        max_priority = cmd_priority;
-                    }
+                if cmd_priority > max_priority {
+                    max_priority = cmd_priority;
                 }
             }
         }
