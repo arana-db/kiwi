@@ -141,6 +141,15 @@ fn benchmark_contract_rejects_a_weakened_or_misordered_clean_check() {
     let ignored_failure = workflow.replace("            exit 1\n", "            exit 0\n");
     assert!(validate_benchmark_contract(&ignored_failure).is_err());
 
+    let cleared_status = workflow.replace(&clean, &format!("{clean}\n          dirty=\"\""));
+    assert!(validate_benchmark_contract(&cleared_status).is_err());
+
+    let unreachable_failure = workflow.replace(
+        "            exit 1\n",
+        "            if false; then\n              exit 1\n            fi\n",
+    );
+    assert!(validate_benchmark_contract(&unreachable_failure).is_err());
+
     let conditional = workflow.replace(
         "      - name: Verify runtime baseline source inputs are clean\n        shell: bash",
         "      - name: Verify runtime baseline source inputs are clean\n        if: false\n        shell: bash",
@@ -185,12 +194,47 @@ fn runtime_baseline_docs_define_separate_run_and_verify_commands() {
                 "{path} is missing documented controller contract `{required}`"
             );
         }
+        for command in ["run_baseline.py run", "run_baseline.py verify"] {
+            assert_definition_precedes_command_in_same_shell_block(
+                &contents,
+                path,
+                command,
+                "TMPDIR=\"${TMPDIR:-${RUNNER_TEMP:-/tmp}}\"",
+            );
+            assert_definition_precedes_command_in_same_shell_block(
+                &contents,
+                path,
+                command,
+                "RESULTS_ROOT=\"$TMPDIR/runtime-baseline-results\"",
+            );
+        }
         assert_eq!(
             contents.matches("--results-root \"$RESULTS_ROOT\"").count(),
             2,
             "{path} must use the same explicit results root for run and verify"
         );
     }
+}
+
+fn assert_definition_precedes_command_in_same_shell_block(
+    contents: &str,
+    path: &str,
+    command: &str,
+    definition: &str,
+) {
+    let command_index = contents
+        .find(command)
+        .unwrap_or_else(|| panic!("{path} is missing `{command}`"));
+    let shell_block_index = contents[..command_index]
+        .rfind("```bash")
+        .unwrap_or_else(|| panic!("{path} does not place `{command}` in a bash block"));
+    let definition_index = contents[..command_index]
+        .rfind(definition)
+        .unwrap_or_else(|| panic!("{path} does not define `{definition}` before `{command}`"));
+    assert!(
+        definition_index > shell_block_index,
+        "{path} must define `{definition}` in the same bash block before `{command}`"
+    );
 }
 
 fn read_workspace_file(path: &str) -> String {
@@ -248,35 +292,23 @@ fn require_fail_closed_clean_gate(job: &Job) -> Result<(usize, usize), String> {
         .expect("command step has a run body")
         .lines()
         .map(str::trim)
+        .filter(|line| !line.is_empty())
         .collect::<Vec<_>>();
-    let strict_index = lines
-        .iter()
-        .position(|line| *line == "set -Eeuo pipefail")
-        .ok_or_else(|| {
-            "runtime baseline source clean gate must enable strict shell mode".to_string()
-        })?;
-    let condition_index = lines
-        .iter()
-        .position(|line| *line == "if [[ -n \"$dirty\" ]]; then")
-        .ok_or_else(|| {
-            "runtime baseline source clean gate must reject non-empty status".to_string()
-        })?;
-    let exit_index = lines
-        .iter()
-        .position(|line| *line == "exit 1")
-        .ok_or_else(|| "runtime baseline source clean gate must fail the job".to_string())?;
-    let fi_index = lines
-        .iter()
-        .position(|line| *line == "fi")
-        .ok_or_else(|| "runtime baseline source clean gate condition is incomplete".to_string())?;
-    if strict_index < assignment_index
-        && assignment_index < condition_index
-        && condition_index < exit_index
-        && exit_index < fi_index
-    {
+    let expected = [
+        "set -Eeuo pipefail",
+        assignment.as_str(),
+        "if [[ -n \"$dirty\" ]]; then",
+        "printf '%s\\n' \"$dirty\" >&2",
+        "exit 1",
+        "fi",
+    ];
+    if lines == expected {
         Ok((step_index, assignment_index))
     } else {
-        Err("runtime baseline source clean gate commands are out of order".to_string())
+        Err(
+            "runtime baseline source clean gate must match the fail-closed body exactly"
+                .to_string(),
+        )
     }
 }
 
