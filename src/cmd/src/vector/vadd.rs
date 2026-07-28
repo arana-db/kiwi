@@ -29,6 +29,10 @@ use super::{
 };
 
 const ERR_VADD_REDUCE: &str = "ERR VADD option REDUCE is not supported yet";
+const ERR_VADD_DEFAULT_QUANTIZATION: &str =
+    "ERR default Q8 quantization is not supported in Phase 1; specify NOQUANT";
+const ERR_VADD_Q8: &str = "ERR VADD option Q8 is not supported yet";
+const ERR_VADD_BIN: &str = "ERR VADD option BIN is not supported yet";
 const ERR_VADD_CAS: &str = "ERR VADD option CAS is not supported yet";
 const ERR_VADD_EF: &str = "ERR VADD option EF is not supported yet";
 const ERR_VADD_SETATTR: &str = "ERR VADD option SETATTR is not supported yet";
@@ -62,19 +66,16 @@ fn parse_vadd(argv: &[Vec<u8>]) -> ParseResult<ParsedVAdd> {
 
     let mut quantization = None;
     for option in &argv[element_index + 1..] {
-        if option.eq_ignore_ascii_case(b"NOQUANT")
-            || option.eq_ignore_ascii_case(b"Q8")
-            || option.eq_ignore_ascii_case(b"BIN")
-        {
+        if option.eq_ignore_ascii_case(b"NOQUANT") {
             if quantization.is_some() {
                 return Err(ERR_INVALID_VECTOR);
-            } else if option.eq_ignore_ascii_case(b"NOQUANT") {
-                quantization = Some(QuantizationType::None);
-            } else if option.eq_ignore_ascii_case(b"Q8") {
-                quantization = Some(QuantizationType::Int8);
             } else {
-                quantization = Some(QuantizationType::Binary);
+                quantization = Some(QuantizationType::None);
             }
+        } else if option.eq_ignore_ascii_case(b"Q8") {
+            return Err(ERR_VADD_Q8);
+        } else if option.eq_ignore_ascii_case(b"BIN") {
+            return Err(ERR_VADD_BIN);
         } else if option.eq_ignore_ascii_case(b"CAS") {
             return Err(ERR_VADD_CAS);
         } else if option.eq_ignore_ascii_case(b"EF") {
@@ -91,7 +92,7 @@ fn parse_vadd(argv: &[Vec<u8>]) -> ParseResult<ParsedVAdd> {
     // Fold the requested quantization into the vector here; from this point
     // on the vector's own quantization is the single source of truth.
     let vector = vector
-        .to_quantized(quantization.unwrap_or(QuantizationType::None))
+        .to_quantized(quantization.ok_or(ERR_VADD_DEFAULT_QUANTIZATION)?)
         .map_err(|_| ERR_INVALID_VECTOR)?;
     Ok(ParsedVAdd { vector, element })
 }
@@ -113,7 +114,7 @@ impl Cmd for VAddCmd {
             }
         };
         let reply = match storage.vadd(&client.key(), &parsed.element, &parsed.vector) {
-            Ok(inserted) => RespData::Integer(i64::from(inserted)),
+            Ok(inserted) => RespData::Boolean(inserted),
             Err(error) => storage_error_reply(error, MissingError::Key),
         };
         client.set_reply(reply);
@@ -162,7 +163,7 @@ mod tests {
         assert_eq!(parsed.vector.dimension(), 2);
         assert_eq!(parsed.element, b"element");
 
-        // The quantization option defaults to NOQUANT and accepts Q8/BIN.
+        // Phase 1 requires explicit NOQUANT and does not support Q8/BIN yet.
         let base = vec![
             b"vadd".to_vec(),
             b"key".to_vec(),
@@ -171,25 +172,16 @@ mod tests {
             b"element".to_vec(),
         ];
         assert_eq!(
-            parse_vadd(&base)
-                .expect("default VADD")
-                .vector
-                .quantization(),
-            QuantizationType::None
+            parse_vadd(&base).unwrap_err(),
+            "ERR default Q8 quantization is not supported in Phase 1; specify NOQUANT"
         );
         for (option, expected) in [
-            (b"Q8".to_vec(), QuantizationType::Int8),
-            (b"BIN".to_vec(), QuantizationType::Binary),
+            (b"Q8".to_vec(), "ERR VADD option Q8 is not supported yet"),
+            (b"BIN".to_vec(), "ERR VADD option BIN is not supported yet"),
         ] {
             let mut argv = base.clone();
             argv.push(option);
-            assert_eq!(
-                parse_vadd(&argv)
-                    .expect("quantized VADD")
-                    .vector
-                    .quantization(),
-                expected
-            );
+            assert_eq!(parse_vadd(&argv).unwrap_err(), expected);
         }
     }
 
@@ -245,10 +237,10 @@ mod tests {
             b"element".to_vec(),
         ];
 
-        // Quantization options are mutually exclusive.
+        // Q8 is rejected before a following quantization option is considered.
         let mut duplicated = base.clone();
         duplicated.extend([b"Q8".to_vec(), b"BIN".to_vec()]);
-        assert_eq!(parse_vadd(&duplicated).unwrap_err(), ERR_INVALID_VECTOR);
+        assert_eq!(parse_vadd(&duplicated).unwrap_err(), ERR_VADD_Q8);
 
         // Recognized but not yet supported options get dedicated errors.
         for (option, expected) in [

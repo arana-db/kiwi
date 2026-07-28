@@ -44,7 +44,7 @@ impl Cmd for VRemCmd {
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let argv = client.argv();
         let reply = match storage.vrem(&client.key(), &argv[2]) {
-            Ok(removed) => RespData::Integer(i64::from(removed)),
+            Ok(removed) => RespData::Boolean(removed),
             Err(error) => storage_error_reply(error, MissingError::Key),
         };
         client.set_reply(reply);

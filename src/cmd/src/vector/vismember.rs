@@ -44,7 +44,7 @@ impl Cmd for VIsMemberCmd {
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let argv = client.argv();
         let reply = match storage.vismember(&client.key(), &argv[2]) {
-            Ok(is_member) => RespData::Integer(i64::from(is_member)),
+            Ok(is_member) => RespData::Boolean(is_member),
             Err(error) => storage_error_reply(error, MissingError::Key),
         };
         client.set_reply(reply);

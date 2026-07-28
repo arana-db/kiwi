@@ -79,15 +79,28 @@ def assert_vector(values, expected):
     assert [float(value) for value in values] == pytest.approx(expected)
 
 
+def assert_membership_reply(reply, protocol, expected):
+    if protocol == 2:
+        assert type(reply) is int
+        assert reply == int(expected)
+    else:
+        assert type(reply) is bool
+        assert reply is expected
+
+
 def test_values_create_update_and_point_commands(vector_client):
-    client, _protocol, prefix = vector_client
+    client, protocol, prefix = vector_client
     key = prefix + b"values"
 
-    assert vadd_values(client, key, [1, 0], b"member") == 1
-    assert vadd_values(client, key, [0.5, 0.5], b"member") == 0
+    assert_membership_reply(vadd_values(client, key, [1, 0], b"member"), protocol, True)
+    assert_membership_reply(
+        vadd_values(client, key, [0.5, 0.5], b"member"), protocol, False
+    )
     assert client.execute_command(b"VCARD", key) == 1
     assert client.execute_command(b"VDIM", key) == 2
-    assert client.execute_command(b"VISMEMBER", key, b"member") == 1
+    assert_membership_reply(
+        client.execute_command(b"VISMEMBER", key, b"member"), protocol, True
+    )
     assert_vector(client.execute_command(b"VEMB", key, b"member"), [0.5, 0.5])
     assert client.type(key) == b"vectorset"
 
@@ -107,19 +120,31 @@ def test_values_create_update_and_point_commands(vector_client):
 
 
 def test_fp32_binary_members_and_last_member_removal(vector_client):
-    client, _protocol, prefix = vector_client
+    client, protocol, prefix = vector_client
     key = prefix + b"binary:\x00key"
     blob = struct.pack("<2f", 1.0, 0.0)
 
-    assert client.execute_command(b"VADD", key, b"FP32", blob, b"", b"NOQUANT") == 1
-    assert vadd_values(client, key, [0, 1], b"\x00member") == 1
+    assert_membership_reply(
+        client.execute_command(b"VADD", key, b"FP32", blob, b"", b"NOQUANT"),
+        protocol,
+        True,
+    )
+    assert_membership_reply(
+        vadd_values(client, key, [0, 1], b"\x00member"), protocol, True
+    )
     assert client.execute_command(b"VCARD", key) == 2
     assert_vector(client.execute_command(b"VEMB", key, b""), [1.0, 0.0])
-    assert client.execute_command(b"VISMEMBER", key, b"\x00member") == 1
+    assert_membership_reply(
+        client.execute_command(b"VISMEMBER", key, b"\x00member"), protocol, True
+    )
 
-    assert client.execute_command(b"VREM", key, b"") == 1
-    assert client.execute_command(b"VREM", key, b"\x00member") == 1
-    assert client.execute_command(b"VREM", key, b"\x00member") == 0
+    assert_membership_reply(client.execute_command(b"VREM", key, b""), protocol, True)
+    assert_membership_reply(
+        client.execute_command(b"VREM", key, b"\x00member"), protocol, True
+    )
+    assert_membership_reply(
+        client.execute_command(b"VREM", key, b"\x00member"), protocol, False
+    )
     assert client.type(key) == b"none"
 
 
@@ -213,10 +238,23 @@ def test_wrongtype_and_unsupported_options(vector_client):
     )
 
     base = (b"VADD", key, b"VALUES", 2, 1, 0, b"member")
-    # The quantization option defaults to NOQUANT and Q8/BIN are accepted.
-    assert client.execute_command(*base) == 1
-    assert vadd_values(client, prefix + b"errors:q8", [1, 0], b"member", b"Q8") == 1
-    assert vadd_values(client, prefix + b"errors:bin", [1, 0], b"member", b"BIN") == 1
+    assert_response_error(
+        client,
+        "default Q8 quantization is not supported in Phase 1; specify NOQUANT",
+        *base,
+    )
+    assert_response_error(
+        client,
+        "VADD option Q8 is not supported yet",
+        *base,
+        b"Q8",
+    )
+    assert_response_error(
+        client,
+        "VADD option BIN is not supported yet",
+        *base,
+        b"BIN",
+    )
 
     # Recognized but not yet supported options get dedicated errors.
     for option in (b"CAS", b"EF", b"SETATTR", b"M"):

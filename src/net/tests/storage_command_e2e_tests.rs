@@ -444,6 +444,149 @@ async fn storage_command_e2e_vector_write_commands_redirect_on_follower() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn storage_command_e2e_vector_membership_replies_follow_negotiated_protocol() {
+    let server = TestServer::start(None).await;
+
+    let mut resp2_stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect RESP2 client");
+    assert_eq!(
+        send_command(
+            &mut resp2_stream,
+            &[
+                "VADD",
+                "resp2-vectors",
+                "VALUES",
+                "2",
+                "1",
+                "0",
+                "member",
+                "NOQUANT"
+            ],
+        )
+        .await,
+        RespData::Integer(1)
+    );
+    assert_eq!(
+        send_command(
+            &mut resp2_stream,
+            &[
+                "VADD",
+                "resp2-vectors",
+                "VALUES",
+                "2",
+                "1",
+                "0",
+                "member",
+                "NOQUANT"
+            ]
+        )
+        .await,
+        RespData::Integer(0)
+    );
+    assert_eq!(
+        send_command(&mut resp2_stream, &["VISMEMBER", "resp2-vectors", "member"]).await,
+        RespData::Integer(1)
+    );
+    assert_eq!(
+        send_command(&mut resp2_stream, &["VREM", "resp2-vectors", "member"]).await,
+        RespData::Integer(1)
+    );
+    assert_eq!(
+        send_command(&mut resp2_stream, &["VREM", "resp2-vectors", "member"]).await,
+        RespData::Integer(0)
+    );
+    assert_eq!(
+        send_command(&mut resp2_stream, &["VISMEMBER", "resp2-vectors", "member"]).await,
+        RespData::Integer(0)
+    );
+
+    let mut resp3_stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect RESP3 client");
+    let reply =
+        send_command_with_version(&mut resp3_stream, &["HELLO", "3"], RespVersion::RESP3).await;
+    assert!(
+        matches!(reply, RespData::Map(_)),
+        "expected RESP3 HELLO map, got {reply:?}"
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &[
+                "VADD",
+                "resp3-vectors",
+                "VALUES",
+                "2",
+                "1",
+                "0",
+                "member",
+                "NOQUANT"
+            ],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(true)
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &[
+                "VADD",
+                "resp3-vectors",
+                "VALUES",
+                "2",
+                "1",
+                "0",
+                "member",
+                "NOQUANT"
+            ],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(false)
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &["VISMEMBER", "resp3-vectors", "member"],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(true)
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &["VREM", "resp3-vectors", "member"],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(true)
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &["VREM", "resp3-vectors", "member"],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(false)
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &["VISMEMBER", "resp3-vectors", "member"],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(false)
+    );
+
+    server.shutdown().await;
+}
+
 // Regression for issue #349: GET/MGET must return stored bytes unchanged over RESP.
 #[tokio::test]
 async fn storage_command_e2e_get_and_mget_preserve_binary_values() {
