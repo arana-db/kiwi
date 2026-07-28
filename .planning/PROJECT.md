@@ -10,7 +10,7 @@
 
 Kiwi 是一个以 Redis 8.8.1 exact tag 可观察语义兼容为目标的生产级 Rust Redis-compatible 数据库。
 
-Kiwi 使用 RocksDB 保存全量、权威、可恢复的数据，使用 OpenRaft 提供经过故障验证的强一致、高可用、成员变更、快照和恢复能力。内嵌 Redis 原生内存热数据层属于后续性能增强：现在只冻结面向 Redis 8.8.1 的来源、许可证、ABI、正确性和发行接口合同，不进入生产实现；只有整体系统通过稳定性门禁并获得明确批准后，才能启动该实现。
+Kiwi 使用 RocksDB 保存全量、权威、可恢复的数据，使用 OpenRaft 提供经过故障验证的强一致、高可用、成员变更、快照和恢复能力。内嵌 Redis 8.8.1 原生内存热数据层属于后续性能增强：现在只冻结面向 Redis 8.8.1 的来源、许可证、ABI、正确性和发行接口合同，不进入生产实现；只有整体系统通过稳定性门禁并获得明确批准后，才能启动该实现。
 
 任何 Raft、分片、存储格式、兼容性或未来热层优化，都不得改变 Redis 8.8.1 的可观察语义、已经声明的持久化边界和一致性承诺。
 
@@ -59,7 +59,7 @@ Redis 8.8.1 exact commit 是当前唯一兼容、接口设计、行为 Oracle、
 
 ## 延期的内嵌 Redis 8.8.1 原生内存热数据层
 
-未来的内嵌 Redis 原生内存热数据层必须以 Redis 8.8.1 为接口与来源基线，并满足以下预先冻结的合同：
+未来的内嵌 Redis 8.8.1 原生内存热数据层必须以 Redis 8.8.1 为接口与来源基线，并满足以下预先冻结的合同：
 
 - 使用 `arana-db/redis` 中可追溯到 exact upstream commit 的 Redis-derived native library。
 - 通过版本化 C ABI 和受控动态加载边界接入，不向 Rust 暴露 Redis 内部对象指针、SDS 所有权或 allocator 私有状态。
@@ -74,8 +74,7 @@ Redis 8.8.1 exact commit 是当前唯一兼容、接口设计、行为 Oracle、
 
 ```text
 中文：内嵌 Redis 8.8.1 原生内存热数据层
-英文：Embedded Redis 8.8.1-derived Native Hot Tier
-简称：Embedded Redis Hot Tier
+英文：Embedded Redis Hot Tier
 ```
 
 上述术语是唯一现行口径。上述内容是未来设计合同，不是当前实现授权。只有系统稳定性门禁通过、风险复核完成并由用户明确批准后，相关生产代码、fork 改造、动态库构建和运行时加载工作才能进入执行。

@@ -75,7 +75,7 @@
 
 - 日期：2026-07-26
 - 状态：accepted
-- 决定：未来热层统一称为“内嵌 Redis 8.8.1 原生内存热数据层”或 `Embedded Redis 8.8.1-derived Native Hot Tier`。
+- 决定：未来热层统一称为“内嵌 Redis 8.8.1 原生内存热数据层”或 `Embedded Redis Hot Tier`。
 - ABI 边界：使用版本化 C ABI 和受控动态加载；不得跨边界暴露 Redis 内部对象指针、SDS 所有权或 allocator 私有状态。
 - 正确性边界：RocksDB 始终权威；热层可丢弃、可重建；cache hit 不得绕过 OpenRaft；更新失败必须 invalidate；Cache OFF/ON 必须产生相同的 Redis 8.8.1 可观察行为。
 - 说明：本决定冻结未来接口和验收方向，不解除 D009 的实现延期。

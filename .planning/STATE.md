@@ -1,12 +1,12 @@
 # Kiwi 当前状态
 
-> 更新时间：2026-07-26
+> 更新时间：2026-07-28
 >
 > 发布分支：`codex/redis-8.8.1-doc-foundation`
 >
-> 发布 Base：`main` at `3c55165d1c76f656b4a4d9f576e5ed7d2274086e`
+> 发布 Base：`main`（PR #371）
 >
-> 状态：M0 文档与架构基线已验证；等待 Cache OFF 实现授权
+> 状态：文档基线由 PR #371 发布；`M1-001` 已获授权并处于 In Progress
 >
 > 当前设计：`docs/superpowers/specs/2026-07-26-redis-8.8.1-stability-first-design.md`
 >
@@ -14,7 +14,7 @@
 
 ## 当前目标
 
-先把 Redis 8.8.1 的项目基线、兼容合同、系统边界、许可证方案、未来动态库 ABI 和稳定性门禁写入本地权威文档；随后以 Cache OFF 为唯一 required 运行模式，推进 Redis 8.8.1 兼容、RocksDB 正确性和 OpenRaft 稳定性证明。
+通过 PR #371 发布 Redis 8.8.1 的项目基线、兼容合同、系统边界、许可证方案、未来动态库 ABI 和稳定性门禁，并在恢复时实时确认该 PR 与 `main` 的当前关系；同时只在独立工作边界内推进已获授权的 `M1-001`，以 Cache OFF 为唯一 required 运行模式建立 exact Oracle、机器可读 manifest 和 provenance。
 
 Embedded Redis Hot Tier 当前只做文档、方案和接口设计。系统稳定门禁通过且用户重新明确批准之前，不实现、不编译、不接入、不加载，也不进入生产依赖图。
 
@@ -22,17 +22,19 @@ Embedded Redis Hot Tier 当前只做文档、方案和接口设计。系统稳�
 
 允许：
 
-- 更新项目宪法、需求、决定、Roadmap、State 和 Kanban。
-- 创建设计、兼容、许可证、ABI、稳定门禁和后续实施计划文档。
-- 执行只读检查、Markdown 一致性检查和 Git diff 检查。
+- 在 PR #371 范围内维护项目宪法、需求、决定、Roadmap、State、Kanban 和已批准计划，并完成该文档基线的审查修正。
+- 在独立工作树 `codex/redis-8.8.1-stability-foundation` 内执行 `M1-001` 的 Task 1 和 Task 2：Redis 8.8.1 exact manifest、Oracle provenance、对应的 compatibility 测试与受控验证脚本。
+- 运行与上述范围直接对应的测试、Clippy、格式检查、脚本语法检查和真实 WSL/Linux Oracle 构建验证，并保存 recovery checkpoint。
+- 按当前实现任务的显式授权和 `.codex/recovery/` 记录执行暂存、提交或 push；版本化状态文件不扩大 Git 权限边界。
 
 禁止：
 
-- 修改生产源码、测试代码、构建脚本或 CI 行为。
+- 在 `M1-001` 验收前启动 `M1-002` 或其他后续实现卡。
+- 修改 Kiwi 生产源码、生产依赖、通用构建路径或 CI 行为；`M1-001` 只允许 compatibility 工具、测试、manifest 和受控 Oracle 脚本。
 - 创建 Redis 生产 fork 改动、动态库实现、FFI binding、loader 或 Cache ON 路径。
 - 覆盖、续写、清理或回退此前冻结的实现工作树。
 
-项目真相和恢复机制可以通过独立文档 PR 发布，但 PR 必须使用显式文件 allowlist，不得带入无关 dirty 文件。PR 之外的源码实现、暂存、提交或 push 仍需要与对应实现卡匹配的明确授权。
+PR #371 是当前文档基线的远端发布记录。PR #372 基于该文档分支，只包含 `M1-001` Task 1；截至 2026-07-28，它为 Draft 且尚未合并。恢复工作时必须实时复检两个 PR 的 state、base、Head 和 merge 状态，不能把本文件中的快照当作 GitHub 当前状态。Task 2 已启动但尚未提交、尚未验收。各工作树的精确 branch、HEAD、index 和 dirty ownership 只以对应 `.codex/recovery/` 的当前记录为准，不在版本化状态文件中复制易漂移的本机路径清单。
 
 ## 已确认决定
 
@@ -53,7 +55,14 @@ Embedded Redis Hot Tier 当前只做文档、方案和接口设计。系统稳�
 5. 建立 `docs/quality/system-stability-gate.md`，把热层实现变成门禁后的延期里程碑。
 6. 保留此前冻结实现工作树及其 Git/验证证据，不覆盖、不续写，也不把其中改动混入当前文档任务。
 
-上述内容通过独立文档 PR 形成远端恢复锚点；PR 之外的本机运行状态继续保存在被忽略的 `.codex/recovery/`。
+上述内容以 PR #371 作为远端发布记录；恢复时先查询该 PR 的实时状态，并确认 `main` 是否已经包含对应文档基线。PR 之外的本机运行状态继续保存在被忽略的 `.codex/recovery/`。
+
+## M1-001 当前进度
+
+- `M1-001` 已获得实现授权并处于 In Progress，不得再恢复为“等待授权”。
+- Task 1 已提交至 PR #372；截至 2026-07-28，该 PR 为 Draft，Head 为 `2507a0c7b47707ef0f29ad360f51676976ffb483`，尚未合并；恢复时必须实时复检。
+- Task 2 已在对应隔离工作树启动，但仍是未提交、未验收的本机工作；不得把绿色局部测试、未提交 Diff 或 PR #372 的 Task 1 状态表述为 Task 2 或 `M1-001` 完成。
+- Task 2 的精确 dirty paths、验证结果和剩余问题以该工作树对应的 `.codex/recovery/ACTIVE.md` 与 checkpoint 为准。
 
 ## 本轮验证证据
 
@@ -67,9 +76,9 @@ Embedded Redis Hot Tier 当前只做文档、方案和接口设计。系统稳�
 
 ## 当前实施顺序
 
-文档迁移通过一致性检查后，下一项实现工作必须新建清晰的隔离工作边界，并按以下顺序推进：
+文档基线以 PR #371 作为发布记录；`M1-001` 已在独立工作边界内启动。后续工作仍按以下顺序推进，同一时间不得把下一张实现卡隐式转为 In Progress：
 
-1. `M1-001`：Redis 8.8.1 exact Oracle、manifest 和 provenance。
+1. `M1-001`：Redis 8.8.1 exact Oracle、manifest 和 provenance（In Progress；Task 1 在 Draft PR #372，Task 2 尚未验收）。
 2. `M1-002`：RESP2/RESP3 持久连接级 raw wire differential。
 3. `M2-001`：RocksDB authority/durability contract。
 4. `M2-002`：审计并扩展现有 close/reopen 回归，补齐全部 handle、TTL/metadata、Snapshot 和故障恢复门禁。
@@ -80,22 +89,24 @@ Embedded Redis Hot Tier 当前只做文档、方案和接口设计。系统稳�
 
 在第 8 项通过并取得用户新授权之前，不启动任何 M7/M8 实现卡。
 
-## 冻结工作树保护
+## 本机工作树与恢复边界
 
-此前实现工作树的精确路径、分支、HEAD、dirty paths 和验证证据以 `.codex/recovery/ACTIVE.md` 的冻结记录为准。
+每个实现工作树的精确路径、分支、HEAD、index、dirty paths、验证证据和授权边界以该工作树自己的 `.codex/recovery/ACTIVE.md` 为准。版本化 `.planning/` 只记录项目级里程碑和已验收结果，不替代本机恢复记录。
 
 恢复或继续工作时：
 
-- 不在冻结工作树上叠加 Redis 8.8.1 实现。
-- 不暂存、提交、清理、回退或删除冻结改动。
-- 不把冻结成果表述为当前 Redis 8.8.1 基线已经实现。
-- 需要复用思路时，只能重新审计并在新的隔离工作边界中实现。
+- 先核对任务身份、工作树、branch、HEAD、index 和 dirty ownership；任何漂移都必须停止写操作并报告。
+- 不跨工作树混入 PR #371 文档修正、PR #372 Task 1 或尚未验收的 Task 2 改动。
+- 不暂存、提交、清理、回退或删除不属于当前任务授权的改动。
+- 不把 PR、未提交 Diff、局部测试或规格审查表述为 `M1-001` 已完成；只有任务要求的真实构建、验证和验收全部闭环后才能更新为 Done。
 
 ## 下一条安全动作
 
-1. 发布并复核本独立文档 PR，不触碰此前冻结实现工作树。
-2. PR 建立远端恢复锚点后，为 `M1-001` 创建新的隔离工作边界并保存独立 recovery checkpoint。
-3. 先实现 Redis 8.8.1 exact Oracle、机器可读 manifest 和 provenance；不启动任何热层实现卡。
+1. 实时查询 PR #371：若为 OPEN，完成修复和复审并等待明确 merge 授权；若为 MERGED，确认 `main` 已包含对应文档基线；若为 CLOSED 且未合并，停止并报告新的发布边界。
+2. 实时查询 PR #372 的 state、base、Head、Draft 和 merge 状态，并与 `M1-001` recovery checkpoint 对账。
+3. 继续在 `M1-001` 的既有隔离工作树内修复和验证 Task 2；以对应 `.codex/recovery/` 恢复精确本机状态，不从本文件推断 dirty ownership。
+4. Task 2 通过代码质量复核、完整测试和真实 WSL/Linux Oracle 构建验证后，再按授权提交到 PR #372 并复审；在 `M1-001` 验收前不启动 `M1-002`。
+5. 不启动任何 Embedded Redis Hot Tier 实现卡。
 
 ## 恢复检查
 
