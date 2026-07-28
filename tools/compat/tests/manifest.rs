@@ -16,24 +16,31 @@
 // limitations under the License.
 
 use kiwi_compat::manifest::{
-    Classification, CompatibilityManifest, Mode, Protocol, REDIS_COMMIT, REDIS_TAG,
+    ArgumentSemantics, Classification, CompatibilityManifest, ErrorSemantics, Mode, Profile,
+    Protocol, REDIS_COMMIT, REDIS_TAG, ReplySchema, TestEvidence, TtlSemantics,
 };
 
 const VALID_MANIFEST: &str = r#"
 schema: kiwi-redis-compat/v1
-profile: redis_8_8_1_core
+profile: redis_8_8_1_standalone_cache_off
 redis:
   tag: 8.8.1
   commit: 77b6c308396c9700672390a210143a8496fb4b10
 commands:
   - command: get
-    classification: known_difference
+    classification: required
     modes:
       standalone_cache_off: required
       raft_single_group_cache_off: deferred
     protocols:
       - resp2
       - resp3
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [wire-differential, final-state]
+    known_differences: []
     owner: cmd-string
 "#;
 
@@ -60,10 +67,21 @@ fn rejects_a_manifest_with_an_incorrect_schema() {
 #[test]
 fn rejects_an_unknown_top_level_field() {
     let yaml = VALID_MANIFEST.replace(
-        "profile: redis_8_8_1_core",
-        "profile: redis_8_8_1_core\nunexpected: true",
+        "profile: redis_8_8_1_standalone_cache_off",
+        "profile: redis_8_8_1_standalone_cache_off\nunexpected: true",
     );
     assert_error_contains(&yaml, "unknown field");
+}
+
+#[test]
+fn rejects_empty_or_unknown_profiles() {
+    for profile in ["''", "redis_8_8_1_typo"] {
+        let yaml = VALID_MANIFEST.replace(
+            "profile: redis_8_8_1_standalone_cache_off",
+            &format!("profile: {profile}"),
+        );
+        assert_error_contains(&yaml, "profile");
+    }
 }
 
 #[test]
@@ -131,6 +149,12 @@ fn rejects_duplicate_commands_after_ascii_canonicalization() {
     modes:
       standalone_cache_off: required
     protocols: [resp2]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [wire-differential]
+    known_differences: []
     owner: cmd-string
 "#;
     let yaml = VALID_MANIFEST.replace(
@@ -139,6 +163,25 @@ fn rejects_duplicate_commands_after_ascii_canonicalization() {
     );
     assert_error_contains(&yaml, "duplicates");
     assert_error_contains(&yaml, "GET");
+}
+
+#[test]
+fn rejects_duplicate_modes_before_they_can_override_required_or_known_difference() {
+    for first_classification in ["required", "known_difference"] {
+        let yaml = VALID_MANIFEST
+            .replace("classification: required", "classification: deferred")
+            .replace(
+                "      standalone_cache_off: required\n      raft_single_group_cache_off: deferred",
+                &format!(
+                    "      standalone_cache_off: {first_classification}\n      standalone_cache_off: deferred\n      raft_single_group_cache_off: deferred"
+                ),
+            )
+            .replace(
+                "tests: [wire-differential, final-state]",
+                "tests: []",
+            );
+        assert_error_contains(&yaml, "duplicate");
+    }
 }
 
 #[test]
@@ -194,6 +237,37 @@ fn rejects_empty_protocols() {
 }
 
 #[test]
+fn rejects_empty_test_evidence_for_a_required_command() {
+    let yaml = VALID_MANIFEST.replace("tests: [wire-differential, final-state]", "tests: []");
+    assert_error_contains(&yaml, "tests");
+}
+
+#[test]
+fn rejects_empty_test_evidence_when_only_a_mode_is_required() {
+    let yaml = VALID_MANIFEST
+        .replace("classification: required", "classification: deferred")
+        .replace("tests: [wire-differential, final-state]", "tests: []");
+    assert_error_contains(&yaml, "tests");
+}
+
+#[test]
+fn accepts_test_evidence_when_only_a_mode_is_required() {
+    let yaml = VALID_MANIFEST.replace("classification: required", "classification: deferred");
+    let manifest = parse_valid(&yaml);
+
+    assert_eq!(
+        first_command(&manifest).classification(),
+        Classification::Deferred
+    );
+    assert_eq!(
+        first_command(&manifest)
+            .modes()
+            .get(&Mode::StandaloneCacheOff),
+        Some(&Classification::Required)
+    );
+}
+
+#[test]
 fn rejects_an_empty_owner_after_trimming() {
     let yaml = VALID_MANIFEST.replace("owner: cmd-string", "owner: '   '");
     assert_error_contains(&yaml, "owner");
@@ -201,11 +275,107 @@ fn rejects_an_empty_owner_after_trimming() {
 
 #[test]
 fn rejects_an_unsupported_classification() {
-    let yaml = VALID_MANIFEST.replace(
-        "classification: known_difference",
-        "classification: partial",
-    );
+    let yaml = VALID_MANIFEST.replace("classification: required", "classification: partial");
     assert_error_contains(&yaml, "classification");
+}
+
+#[test]
+fn rejects_a_known_difference_without_governance_metadata() {
+    let yaml = VALID_MANIFEST.replace(
+        "classification: required",
+        "classification: known_difference",
+    );
+    assert_error_contains(&yaml, "known_differences");
+}
+
+#[test]
+fn rejects_missing_governance_when_only_a_mode_has_a_known_difference() {
+    let yaml = VALID_MANIFEST
+        .replace("classification: required", "classification: deferred")
+        .replace(
+            "standalone_cache_off: required",
+            "standalone_cache_off: known_difference",
+        );
+    assert_error_contains(&yaml, "known_differences");
+}
+
+#[test]
+fn loads_governance_when_only_a_mode_has_a_known_difference() {
+    let yaml = governed_known_difference_manifest()
+        .replace(
+            "classification: known_difference",
+            "classification: deferred",
+        )
+        .replace(
+            "standalone_cache_off: required",
+            "standalone_cache_off: known_difference",
+        )
+        .replace("tests: [wire-differential, final-state]", "tests: []");
+    let manifest = parse_valid(&yaml);
+    let command = first_command(&manifest);
+
+    assert_eq!(command.classification(), Classification::Deferred);
+    assert_eq!(
+        command.modes().get(&Mode::StandaloneCacheOff),
+        Some(&Classification::KnownDifference)
+    );
+    assert_eq!(command.known_differences().len(), 1);
+}
+
+#[test]
+fn rejects_known_difference_metadata_without_a_matching_classification() {
+    let yaml = VALID_MANIFEST.replace(
+        "known_differences: []",
+        "known_differences:\n      - owner: cmd-string\n        issue: https://github.com/arana-db/kiwi/issues/999\n        reason: Redis behavior is not implemented yet\n        remove_when: wire differential and final-state evidence pass",
+    );
+    assert_error_contains(&yaml, "known_differences");
+}
+
+#[test]
+fn loads_governed_known_difference_metadata() {
+    let yaml = governed_known_difference_manifest();
+    let manifest = parse_valid(&yaml);
+    let differences = first_command(&manifest).known_differences();
+
+    assert_eq!(differences.len(), 1);
+    assert_eq!(differences[0].owner(), "cmd-string");
+    assert_eq!(
+        differences[0].issue(),
+        "https://github.com/arana-db/kiwi/issues/999"
+    );
+    assert_eq!(
+        differences[0].reason(),
+        "Redis behavior is not implemented yet"
+    );
+    assert_eq!(
+        differences[0].remove_when(),
+        "wire differential and final-state evidence pass"
+    );
+}
+
+#[test]
+fn rejects_blank_known_difference_governance_fields() {
+    for (field, original, replacement) in [
+        ("owner", "      - owner: cmd-string", "      - owner: '   '"),
+        (
+            "issue",
+            "        issue: https://github.com/arana-db/kiwi/issues/999",
+            "        issue: '   '",
+        ),
+        (
+            "reason",
+            "        reason: Redis behavior is not implemented yet",
+            "        reason: '   '",
+        ),
+        (
+            "remove_when",
+            "        remove_when: wire differential and final-state evidence pass",
+            "        remove_when: '   '",
+        ),
+    ] {
+        let yaml = governed_known_difference_manifest().replace(original, replacement);
+        assert_error_contains(&yaml, field);
+    }
 }
 
 #[test]
@@ -224,16 +394,73 @@ fn rejects_an_unsupported_protocol() {
 }
 
 #[test]
+fn loads_the_authoritative_command_contract_fields() {
+    let manifest = parse_valid(VALID_MANIFEST);
+    let command = first_command(&manifest);
+
+    assert_eq!(command.arguments(), ArgumentSemantics::Exact);
+    assert_eq!(command.reply_schema(), ReplySchema::Exact);
+    assert_eq!(command.errors(), ErrorSemantics::ExactPrefix);
+    assert_eq!(command.ttl_semantics(), TtlSemantics::Applicable);
+    assert_eq!(
+        command.tests(),
+        &[TestEvidence::WireDifferential, TestEvidence::FinalState]
+    );
+    assert!(command.known_differences().is_empty());
+}
+
+#[test]
+fn rejects_missing_authoritative_command_contract_fields() {
+    for (field, line) in [
+        ("arguments", "    arguments: exact\n"),
+        ("reply_schema", "    reply_schema: exact\n"),
+        ("errors", "    errors: exact-prefix\n"),
+        ("ttl_semantics", "    ttl_semantics: applicable\n"),
+        ("tests", "    tests: [wire-differential, final-state]\n"),
+        ("known_differences", "    known_differences: []\n"),
+    ] {
+        let yaml = VALID_MANIFEST.replace(line, "");
+        assert_error_contains(&yaml, field);
+    }
+}
+
+#[test]
+fn rejects_unsupported_authoritative_command_contract_values() {
+    for (field, supported, unsupported) in [
+        ("arguments", "arguments: exact", "arguments: normalized"),
+        (
+            "reply_schema",
+            "reply_schema: exact",
+            "reply_schema: approximate",
+        ),
+        ("errors", "errors: exact-prefix", "errors: ignored"),
+        (
+            "ttl_semantics",
+            "ttl_semantics: applicable",
+            "ttl_semantics: unspecified",
+        ),
+        (
+            "tests",
+            "tests: [wire-differential, final-state]",
+            "tests: [manual-only]",
+        ),
+    ] {
+        let yaml = VALID_MANIFEST.replace(supported, unsupported);
+        assert_error_contains(&yaml, field);
+    }
+}
+
+#[test]
 fn loads_a_valid_manifest_through_read_only_getters() {
     let manifest = parse_valid(VALID_MANIFEST);
     let command = first_command(&manifest);
 
     assert_eq!(manifest.schema(), "kiwi-redis-compat/v1");
-    assert_eq!(manifest.profile(), "redis_8_8_1_core");
+    assert_eq!(manifest.profile(), Profile::Redis881StandaloneCacheOff);
     assert_eq!(manifest.redis().tag(), REDIS_TAG);
     assert_eq!(manifest.redis().commit(), REDIS_COMMIT);
     assert_eq!(manifest.commands().len(), 1);
-    assert_eq!(command.classification(), Classification::KnownDifference);
+    assert_eq!(command.classification(), Classification::Required);
     assert_eq!(command.protocols(), &[Protocol::Resp2, Protocol::Resp3]);
     assert_eq!(command.owner(), "cmd-string");
 }
@@ -244,7 +471,7 @@ fn loads_the_repository_redis_8_8_1_manifest() {
     let manifest = parse_valid(yaml);
 
     assert_eq!(manifest.schema(), "kiwi-redis-compat/v1");
-    assert_eq!(manifest.profile(), "redis_8_8_1_core");
+    assert_eq!(manifest.profile(), Profile::Redis881StandaloneCacheOff);
     assert_eq!(manifest.redis().tag(), REDIS_TAG);
     assert_eq!(manifest.redis().commit(), REDIS_COMMIT);
     assert!(manifest.commands().is_empty());
@@ -274,4 +501,16 @@ fn assert_error_contains(yaml: &str, expected: &str) {
         message.contains(expected),
         "error {message:?} did not contain {expected:?}"
     );
+}
+
+fn governed_known_difference_manifest() -> String {
+    VALID_MANIFEST
+        .replace(
+            "classification: required",
+            "classification: known_difference",
+        )
+        .replace(
+            "known_differences: []",
+            "known_differences:\n      - owner: cmd-string\n        issue: https://github.com/arana-db/kiwi/issues/999\n        reason: Redis behavior is not implemented yet\n        remove_when: wire differential and final-state evidence pass",
+        )
 }
