@@ -36,6 +36,14 @@ use crate::raft_proto::raft_metrics_service_server::RaftMetricsServiceServer;
 use crate::state_machine::{KiwiStateMachine, PauseController};
 use storage::storage::Storage;
 
+#[derive(Debug, thiserror::Error)]
+pub enum ClientWriteError {
+    #[error("invalid binlog: {0}")]
+    InvalidBinlog(#[source] storage::error::Error),
+    #[error("Raft client write failed: {0}")]
+    Raft(#[source] anyhow::Error),
+}
+
 pub struct RaftApp {
     pub node_id: u64,
     pub raft_addr: String,
@@ -64,8 +72,16 @@ impl RaftApp {
         None
     }
 
-    pub async fn client_write(&self, binlog: Binlog) -> Result<BinlogResponse, anyhow::Error> {
-        let res = self.raft.client_write(binlog).await?;
+    pub async fn client_write(&self, binlog: Binlog) -> Result<BinlogResponse, ClientWriteError> {
+        self.storage_swap
+            .load_full()
+            .validate_binlog(&binlog)
+            .map_err(ClientWriteError::InvalidBinlog)?;
+        let res = self
+            .raft
+            .client_write(binlog)
+            .await
+            .map_err(|error| ClientWriteError::Raft(anyhow::Error::new(error)))?;
         let log_id = Some(res.log_id.index);
         Ok(BinlogResponse {
             success: res.data.success,
@@ -230,10 +246,18 @@ pub async fn create_raft_node(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::time::Duration;
+
     use super::*;
     use crate::state_machine::{StorageAccessPermit, snapshot_install_marker_path};
+    use conf::raft_type::{BinlogEntry, OperateType};
     use openraft::storage::{RaftLogStorage, RaftLogStorageExt};
     use openraft::{Entry, EntryPayload, LeaderId, LogId, Vote};
+    use storage::BaseMetaKey;
+    use storage::ColumnFamilyIndex;
+    use storage::format_strings_value::StringValue;
+    use storage::slot_indexer::key_to_slot_id;
     use tempfile::TempDir;
 
     struct NoopPauseController;
@@ -261,6 +285,98 @@ mod tests {
 
     fn noop_pause_controller() -> Arc<dyn PauseController> {
         Arc::new(NoopPauseController)
+    }
+
+    fn string_put_binlog(key: &[u8], value: &[u8]) -> Binlog {
+        Binlog {
+            db_id: 0,
+            slot_idx: key_to_slot_id(key) as u32,
+            entries: vec![BinlogEntry {
+                cf_idx: ColumnFamilyIndex::MetaCF as u32,
+                op_type: OperateType::Put,
+                key: BaseMetaKey::new(key)
+                    .encode()
+                    .expect("test string key should encode")
+                    .to_vec(),
+                value: Some(StringValue::new(value.to_vec()).encode().to_vec()),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_binlog_is_rejected_before_raft_and_next_valid_write_succeeds() {
+        let temp_dir = TempDir::new().expect("test should create a temporary directory");
+        let db_path = temp_dir.path().join("data");
+        let mut storage = Storage::new(1, 0);
+        let storage_rx = storage
+            .open(Arc::new(storage::StorageOptions::default()), &db_path)
+            .expect("test storage should open");
+        let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+        let config = RaftConfig {
+            node_id: 1,
+            data_dir: temp_dir.path().join("raft-data"),
+            db_path: db_path.clone(),
+            ..Default::default()
+        };
+        let app = create_raft_node(
+            config,
+            Arc::clone(&storage_swap),
+            noop_pause_controller(),
+            None,
+        )
+        .await
+        .expect("single-node Raft should start");
+
+        let mut nodes = BTreeMap::new();
+        nodes.insert(
+            1,
+            KiwiNode {
+                raft_addr: "127.0.0.1:0".to_string(),
+                resp_addr: "127.0.0.1:0".to_string(),
+            },
+        );
+        app.raft
+            .initialize(nodes)
+            .await
+            .expect("single-node Raft should initialize");
+        app.raft
+            .wait(Some(Duration::from_secs(10)))
+            .current_leader(1, "single-node test should elect itself")
+            .await
+            .expect("single-node Raft should become leader");
+
+        let mut invalid = string_put_binlog(b"poison", b"bad");
+        invalid.entries[0].cf_idx = 99;
+        app.client_write(invalid)
+            .await
+            .expect_err("invalid binlog must be rejected before proposal");
+
+        let valid = string_put_binlog(b"healthy", b"value");
+        let response = app
+            .client_write(valid)
+            .await
+            .expect("a valid write after rejection should still reach consensus");
+        assert!(response.success);
+        assert_eq!(
+            storage_swap
+                .load_full()
+                .get(b"healthy")
+                .expect("valid write should be applied"),
+            "value"
+        );
+
+        app.raft
+            .shutdown()
+            .await
+            .expect("test Raft should shut down cleanly");
+        drop(app);
+        let storage = storage_swap.load_full();
+        drop(storage_swap);
+        let mut storage = Arc::try_unwrap(storage)
+            .unwrap_or_else(|_| panic!("test storage should not retain Arc references"));
+        storage.shutdown().await;
+        storage.close();
+        drop(storage_rx);
     }
 
     #[tokio::test]

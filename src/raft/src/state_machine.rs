@@ -1191,7 +1191,12 @@ mod apply_ordering_tests {
 
     use conf::raft_type::{BinlogEntry, OperateType};
     use openraft::{Entry, LeaderId};
-    use storage::{safe_cleanup_test_db, unique_test_db_path};
+    use storage::BaseMetaKey;
+    use storage::format_strings_value::StringValue;
+    use storage::slot_indexer::key_to_slot_id;
+    use storage::{
+        ColumnFamilyIndex, fail_next_rocks_batch_commit, safe_cleanup_test_db, unique_test_db_path,
+    };
 
     use super::*;
 
@@ -1222,6 +1227,11 @@ mod apply_ordering_tests {
         db_path: PathBuf,
         snapshot_work_dir: PathBuf,
         storage_rx: Box<dyn std::any::Any + Send>,
+    }
+
+    struct ClosedFixture {
+        db_path: PathBuf,
+        snapshot_work_dir: PathBuf,
     }
 
     impl Fixture {
@@ -1255,7 +1265,7 @@ mod apply_ordering_tests {
             }
         }
 
-        async fn cleanup(self) {
+        async fn close(self) -> ClosedFixture {
             let Fixture {
                 state_machine,
                 storage_swap,
@@ -1273,8 +1283,54 @@ mod apply_ordering_tests {
             storage.shutdown().await;
             storage.close();
             drop(storage_rx);
-            safe_cleanup_test_db(&db_path);
-            safe_cleanup_test_db(&snapshot_work_dir);
+            drop(storage);
+
+            ClosedFixture {
+                db_path,
+                snapshot_work_dir,
+            }
+        }
+
+        fn rocksdb_path(&self) -> PathBuf {
+            self.storage_swap
+                .load_full()
+                .insts
+                .first()
+                .and_then(|instance| instance.db())
+                .expect("test storage should expose its RocksDB instance")
+                .path()
+                .to_path_buf()
+        }
+    }
+
+    impl ClosedFixture {
+        async fn assert_reopened_values(self, expected: &[(&[u8], Option<&str>)]) {
+            let mut reopened = Storage::new(1, 0);
+            let reopened_rx = reopened
+                .open(Arc::new(StorageOptions::default()), &self.db_path)
+                .expect("test storage should reopen from the original path");
+
+            for (key, value) in expected {
+                match value {
+                    Some(value) => assert_eq!(
+                        reopened
+                            .get(key)
+                            .expect("reopened storage should read the applied value"),
+                        *value
+                    ),
+                    None => assert!(
+                        reopened.get(key).is_err(),
+                        "reopened storage must not contain an unapplied key"
+                    ),
+                }
+            }
+
+            reopened.shutdown().await;
+            reopened.close();
+            drop(reopened_rx);
+            drop(reopened);
+            safe_cleanup_test_db(&self.db_path);
+            safe_cleanup_test_db(&self.snapshot_work_dir);
         }
     }
 
@@ -1285,30 +1341,18 @@ mod apply_ordering_tests {
         }
     }
 
-    fn valid_put_binlog() -> Binlog {
+    fn string_put_binlog(key: &[u8], value: &[u8]) -> Binlog {
         Binlog {
             db_id: 0,
-            slot_idx: 0,
+            slot_idx: key_to_slot_id(key) as u32,
             entries: vec![BinlogEntry {
-                cf_idx: 0, // MetaCF
+                cf_idx: ColumnFamilyIndex::MetaCF as u32,
                 op_type: OperateType::Put,
-                key: b"k".to_vec(),
-                value: Some(b"v".to_vec()),
-            }],
-        }
-    }
-
-    /// An out-of-range column-family index makes `on_binlog_write` reject the
-    /// mutation, standing in for any fatal storage/corruption error at apply.
-    fn corrupt_binlog() -> Binlog {
-        Binlog {
-            db_id: 0,
-            slot_idx: 0,
-            entries: vec![BinlogEntry {
-                cf_idx: 99,
-                op_type: OperateType::Put,
-                key: b"k".to_vec(),
-                value: Some(b"v".to_vec()),
+                key: BaseMetaKey::new(key)
+                    .encode()
+                    .expect("test string key should encode")
+                    .to_vec(),
+                value: Some(StringValue::new(value.to_vec()).encode().to_vec()),
             }],
         }
     }
@@ -1316,11 +1360,15 @@ mod apply_ordering_tests {
     #[tokio::test]
     async fn apply_advances_applied_only_on_success() {
         let mut fx = Fixture::new();
+        let key = b"durable-success";
         assert!(fx.state_machine.last_applied.is_none());
 
         let responses = fx
             .state_machine
-            .apply([entry_at(5, EntryPayload::Normal(valid_put_binlog()))])
+            .apply([entry_at(
+                5,
+                EntryPayload::Normal(string_put_binlog(key, b"value")),
+            )])
             .await
             .expect("a valid binlog should apply cleanly");
 
@@ -1331,17 +1379,32 @@ mod apply_ordering_tests {
             Some(5),
             "applied state advances to the committed entry"
         );
+        assert_eq!(
+            fx.storage_swap
+                .load_full()
+                .get(key)
+                .expect("applied value should be readable before close"),
+            "value"
+        );
 
-        fx.cleanup().await;
+        fx.close()
+            .await
+            .assert_reopened_values(&[(key, Some("value"))])
+            .await;
     }
 
     #[tokio::test]
     async fn apply_does_not_advance_applied_on_fatal_storage_error() {
         let mut fx = Fixture::new();
+        let key = b"fatal-write";
+        let _failure = fail_next_rocks_batch_commit(&fx.rocksdb_path());
 
         let err = fx
             .state_machine
-            .apply([entry_at(7, EntryPayload::Normal(corrupt_binlog()))])
+            .apply([entry_at(
+                7,
+                EntryPayload::Normal(string_put_binlog(key, b"value")),
+            )])
             .await
             .expect_err("a storage failure during apply must surface as a fatal error");
         // A non-empty error is enough; the point is that it is Err, not Ok.
@@ -1351,20 +1414,42 @@ mod apply_ordering_tests {
             fx.state_machine.last_applied.is_none(),
             "applied state must not advance past an entry that failed to commit"
         );
+        assert!(
+            fx.storage_swap.load_full().get(key).is_err(),
+            "a failed RocksDB commit must not expose the mutation"
+        );
 
-        fx.cleanup().await;
+        fx.close()
+            .await
+            .assert_reopened_values(&[(key, None)])
+            .await;
     }
 
     #[tokio::test]
     async fn apply_stops_at_first_fatal_error() {
         let mut fx = Fixture::new();
 
+        fx.state_machine
+            .apply([entry_at(
+                2,
+                EntryPayload::Normal(string_put_binlog(b"before-failure", b"before")),
+            )])
+            .await
+            .expect("the entry before the injected failure should apply");
+
+        let _failure = fail_next_rocks_batch_commit(&fx.rocksdb_path());
+
         let err = fx
             .state_machine
             .apply([
-                entry_at(2, EntryPayload::Blank),
-                entry_at(3, EntryPayload::Normal(corrupt_binlog())),
-                entry_at(4, EntryPayload::Blank),
+                entry_at(
+                    3,
+                    EntryPayload::Normal(string_put_binlog(b"failed-write", b"failed")),
+                ),
+                entry_at(
+                    4,
+                    EntryPayload::Normal(string_put_binlog(b"after-failure", b"after")),
+                ),
             ])
             .await
             .expect_err("apply must abort at the first fatal error");
@@ -1375,7 +1460,29 @@ mod apply_ordering_tests {
             Some(2),
             "entries after a fatal error must not be applied"
         );
+        assert_eq!(
+            fx.storage_swap
+                .load_full()
+                .get(b"before-failure")
+                .expect("the mutation before the failure should remain applied"),
+            "before"
+        );
+        assert!(
+            fx.storage_swap.load_full().get(b"failed-write").is_err(),
+            "the mutation whose RocksDB commit failed must remain absent"
+        );
+        assert!(
+            fx.storage_swap.load_full().get(b"after-failure").is_err(),
+            "the mutation after the failure must not execute"
+        );
 
-        fx.cleanup().await;
+        fx.close()
+            .await
+            .assert_reopened_values(&[
+                (b"before-failure", Some("before")),
+                (b"failed-write", None),
+                (b"after-failure", None),
+            ])
+            .await;
     }
 }
