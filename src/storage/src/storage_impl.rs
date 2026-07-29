@@ -784,6 +784,13 @@ impl Storage {
         self.insts[instance_id].sismember(key, member)
     }
 
+    // Check if each member is a member of the set stored at key.
+    pub fn smismember(&self, key: &[u8], members: &[&[u8]]) -> Result<Vec<bool>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].smismember(key, members)
+    }
+
     // Get random members from a set.
     pub fn srandmember(&self, key: &[u8], count: Option<i32>) -> Result<Vec<String>> {
         let slot_id = key_to_slot_id(key);

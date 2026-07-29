@@ -79,6 +79,7 @@ pub mod sinter;
 pub mod sinterstore;
 pub mod sismember;
 pub mod smembers;
+pub mod smismember;
 pub mod smove;
 pub mod spop;
 pub mod srandmember;

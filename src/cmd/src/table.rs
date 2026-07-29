@@ -137,6 +137,7 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         crate::sinterstore::SinterstoreCmd,
         crate::sismember::SismemberCmd,
         crate::smembers::SmembersCmd,
+        crate::smismember::SmismemberCmd,
         crate::smove::SmoveCmd,
         crate::spop::SpopCmd,
         crate::srandmember::SrandmemberCmd,
