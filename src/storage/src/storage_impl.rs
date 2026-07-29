@@ -1005,6 +1005,12 @@ impl Storage {
         Ok(ret)
     }
 
+    pub fn zmscore(&self, key: &[u8], members: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].zmscore(key, members)
+    }
+
     pub fn zscan(
         &self,
         key: &[u8],

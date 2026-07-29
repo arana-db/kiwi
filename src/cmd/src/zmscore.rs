@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use client::Client;
-use resp::RespData;
+use resp::{RespData, RespVersion};
 use storage::storage::Storage;
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta};
@@ -57,37 +57,94 @@ impl Cmd for ZmscoreCmd {
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let key = client.key();
         let argv = client.argv();
+        let members = argv[2..].iter().map(Vec::as_slice).collect::<Vec<_>>();
 
-        // One reply element per requested member, preserving input order.
-        // `zscore` returns Ok(None) for a missing/expired key or an absent
-        // member (both map to a nil reply), so a non-existent sorted set
-        // yields all nils; it only errors on a wrong-type key, in which case
-        // the whole command reports that error (matching Redis, which rejects
-        // ZMSCORE on a non-zset key).
-        let mut replies = Vec::with_capacity(argv.len().saturating_sub(2));
-        for member in &argv[2..] {
-            match storage.zscore(&key, member) {
-                Ok(Some(score_bytes)) => {
-                    replies.push(RespData::BulkString(Some(score_bytes.into())));
+        match storage.zmscore(&key, &members) {
+            Ok(scores) => {
+                let mut replies = Vec::with_capacity(scores.len());
+                for score in scores {
+                    let reply = match (score, client.resp_version()) {
+                        (Some(score), RespVersion::RESP3) => {
+                            let Some(score) = std::str::from_utf8(&score)
+                                .ok()
+                                .and_then(|score| score.parse::<f64>().ok())
+                            else {
+                                client.set_reply(RespData::Error(
+                                    "ERR invalid score format".to_string().into(),
+                                ));
+                                return;
+                            };
+                            RespData::Double(score)
+                        }
+                        (Some(score), RespVersion::RESP1 | RespVersion::RESP2) => {
+                            RespData::BulkString(Some(score.into()))
+                        }
+                        (None, _) => RespData::BulkString(None),
+                    };
+                    replies.push(reply);
                 }
-                Ok(None) => {
-                    replies.push(RespData::BulkString(None));
-                }
-                Err(e) => {
-                    client.set_reply(RespData::Error(format!("ERR {e}").into()));
-                    return;
-                }
+                client.set_reply(RespData::Array(Some(replies)));
+            }
+            Err(error) => {
+                let message = error.to_string();
+                let message = if message.starts_with("WRONGTYPE") {
+                    message
+                } else {
+                    format!("ERR {message}")
+                };
+                client.set_reply(RespData::Error(message.into()));
             }
         }
-
-        client.set_reply(RespData::Array(Some(replies)));
     }
 }
 
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
+    use client::StreamTrait;
+    use resp::{RespEncode, RespVersion, encode::RespEncoder};
+    use storage::{StorageOptions, ZsetScoreMember, safe_cleanup_test_db, unique_test_db_path};
+
     use super::*;
+
+    struct TestStream;
+
+    #[async_trait::async_trait]
+    impl StreamTrait for TestStream {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+
+        async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+    }
+
+    fn encode(reply: &RespData, version: RespVersion) -> Vec<u8> {
+        let mut encoder = RespEncoder::new(version);
+        encoder.encode_resp_data(reply);
+        encoder.get_response().to_vec()
+    }
+
+    fn open_storage() -> (std::path::PathBuf, Arc<Storage>) {
+        let db_path = unique_test_db_path();
+        safe_cleanup_test_db(&db_path);
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), &db_path)
+            .unwrap();
+        (db_path, Arc::new(storage))
+    }
+
+    fn run_zmscore(client: &Client, storage: &Arc<Storage>, members: &[Vec<u8>]) -> RespData {
+        let mut argv = vec![b"zmscore".to_vec(), b"zmscore-key".to_vec()];
+        argv.extend_from_slice(members);
+        client.set_argv(&argv);
+        let command = ZmscoreCmd::new();
+        assert!(command.do_initial(client));
+        command.do_cmd(client, Arc::clone(storage));
+        client.take_reply()
+    }
 
     #[test]
     fn test_zmscore_cmd_meta() {
@@ -127,5 +184,80 @@ mod tests {
         assert!(!cmd.check_arg(2)); // Missing member
         assert!(!cmd.check_arg(1)); // Missing key and member
         assert!(!cmd.check_arg(0)); // No arguments
+    }
+
+    #[tokio::test]
+    async fn zmscore_raw_reply_matches_resp2_and_resp3_types_and_order() {
+        let (db_path, storage) = open_storage();
+        storage
+            .zadd(
+                b"zmscore-key",
+                &[
+                    ZsetScoreMember::new(1.5, b"first".to_vec()),
+                    ZsetScoreMember::new(-2.25, b"binary\x00\xff".to_vec()),
+                ],
+            )
+            .unwrap();
+        let members = vec![
+            b"first".to_vec(),
+            b"missing".to_vec(),
+            b"binary\x00\xff".to_vec(),
+            b"first".to_vec(),
+        ];
+
+        let resp2_client = Client::new(Box::new(TestStream));
+        let resp2_reply = run_zmscore(&resp2_client, &storage, &members);
+        assert_eq!(
+            encode(&resp2_reply, RespVersion::RESP2),
+            b"*4\r\n$3\r\n1.5\r\n$-1\r\n$5\r\n-2.25\r\n$3\r\n1.5\r\n"
+        );
+
+        let resp3_client = Client::new(Box::new(TestStream));
+        resp3_client.set_argv(&[b"hello".to_vec(), b"3".to_vec()]);
+        crate::hello::HelloCmd::default().do_cmd(&resp3_client, Arc::clone(&storage));
+        let _hello_reply = resp3_client.take_reply();
+        let resp3_reply = run_zmscore(&resp3_client, &storage, &members);
+        assert_eq!(
+            encode(&resp3_reply, RespVersion::RESP3),
+            b"*4\r\n,1.5\r\n_\r\n,-2.25\r\n,1.5\r\n"
+        );
+
+        drop(storage);
+        safe_cleanup_test_db(&db_path);
+    }
+
+    #[tokio::test]
+    async fn zmscore_returns_exact_wrongtype_error_and_expired_key_nils() {
+        let (db_path, storage) = open_storage();
+        let client = Client::new(Box::new(TestStream));
+        storage.set(b"zmscore-key", b"not-a-zset").unwrap();
+
+        let wrongtype = run_zmscore(&client, &storage, &[b"member".to_vec()]);
+        assert_eq!(
+            encode(&wrongtype, RespVersion::RESP2),
+            b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"
+        );
+
+        storage.del(&[b"zmscore-key".to_vec()]).unwrap();
+        storage
+            .zadd(
+                b"zmscore-key",
+                &[ZsetScoreMember::new(1.0, b"member".to_vec())],
+            )
+            .unwrap();
+        assert!(storage.pexpire(b"zmscore-key", 1).unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let expired = run_zmscore(
+            &client,
+            &storage,
+            &[b"member".to_vec(), b"missing".to_vec()],
+        );
+        assert_eq!(
+            encode(&expired, RespVersion::RESP2),
+            b"*2\r\n$-1\r\n$-1\r\n"
+        );
+
+        drop(storage);
+        safe_cleanup_test_db(&db_path);
     }
 }

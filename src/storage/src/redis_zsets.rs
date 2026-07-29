@@ -497,6 +497,62 @@ impl Redis {
         Ok(())
     }
 
+    /// Get scores for multiple members from one consistent RocksDB snapshot.
+    pub fn zmscore(&self, key: &[u8], members: &[&[u8]]) -> Result<Vec<Option<Vec<u8>>>> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        let cf_data =
+            self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF)
+                .context(OptionNoneSnafu {
+                    message: "cf data is not initialized".to_string(),
+                })?;
+        let missing = || vec![None; members.len()];
+        let snapshot = db.snapshot();
+
+        let base_meta_key = BaseMetaKey::new(key);
+        let base_meta_val = snapshot
+            .get(base_meta_key.encode()?)
+            .context(RocksSnafu)?
+            .unwrap_or_default();
+        if base_meta_val.is_empty() {
+            return Ok(missing());
+        }
+
+        match self.check_type_state(base_meta_val.as_ref(), DataType::ZSet)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => return Ok(missing()),
+            TypeCheckState::Match => {}
+        }
+
+        let zset_meta = ParsedZSetsMetaValue::new(base_meta_val.as_slice())?;
+        if !zset_meta.is_valid() {
+            return Ok(missing());
+        }
+
+        let version = zset_meta.version();
+        let member_keys = members
+            .iter()
+            .map(|member| MemberDataKey::new(key, version, member).encode())
+            .collect::<Result<Vec<_>>>()?;
+        let values =
+            snapshot.multi_get_cf(member_keys.iter().map(|member_key| (&cf_data, member_key)));
+
+        values
+            .into_iter()
+            .map(|value| {
+                let Some(value) = value.context(RocksSnafu)? else {
+                    return Ok(None);
+                };
+                if value.is_empty() {
+                    return Ok(None);
+                }
+                let mut parsed_value = ParsedBaseDataValue::new(value.as_slice())?;
+                parsed_value.strip_suffix();
+                Ok(Some(parsed_value.user_value().to_vec()))
+            })
+            .collect()
+    }
+
     /// Scan members and scores in a sorted set
     pub fn zscan(
         &self,
