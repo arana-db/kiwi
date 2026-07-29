@@ -41,6 +41,7 @@ version = "0.1.0"
 description = "An enhanced Redis server implemented in Rust"
 readme = "README.md"
 repository = "https://github.com/arana-db/kiwi"
+license = "Apache-2.0"
 edition = "2024"
 rust-version = "1.97.1"
 

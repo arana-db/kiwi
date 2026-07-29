@@ -1,0 +1,17 @@
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste is a transitive foyer dependency with no safe upgrade; remove this exception when foyer migrates to a maintained replacement" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1.3.3 has no safe upgrade; remove this exception after the Raft serialization format is migrated and compatibility-tested" },
+]
+
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.8

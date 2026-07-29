@@ -3,6 +3,7 @@ name = "runtime-baseline"
 version.workspace = true
 description = "Kiwi storage runtime baseline harness"
 repository.workspace = true
+license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 build = "build.rs"
