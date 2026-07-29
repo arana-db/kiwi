@@ -152,6 +152,7 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         crate::zincrby::ZincrbyCmd,
         crate::zinterstore::ZinterstoreCmd,
         crate::zlexcount::ZlexcountCmd,
+        crate::zmscore::ZmscoreCmd,
         crate::zrange::ZrangeCmd,
         crate::zrangebylex::ZrangebylexCmd,
         crate::zrangebyscore::ZrangebyscoreCmd,

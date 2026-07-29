@@ -20,4 +20,17 @@ profile: redis_8_8_1_standalone_cache_off
 redis:
   tag: 8.8.1
   commit: 77b6c308396c9700672390a210143a8496fb4b10
-commands: []
+commands:
+  - command: ZMSCORE
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [final-state]
+    known_differences: []
+    owner: cmd-zset
