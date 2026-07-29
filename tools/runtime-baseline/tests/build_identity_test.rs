@@ -363,6 +363,7 @@ members = ["tools/runtime-baseline"]
 version = "0.1.0"
 description = "runtime baseline fixture"
 repository = "https://example.test/runtime-baseline"
+license = "Apache-2.0"
 edition = "2021"
 rust-version = "__RUST_VERSION__"
 
