@@ -151,10 +151,8 @@ impl Redis {
             if !is_live {
                 continue;
             }
-            if let Some(wanted) = type_filter {
-                if data_type != wanted {
-                    continue;
-                }
+            if let Some(wanted) = type_filter && data_type != wanted {
+                continue;
             }
             if pattern != b"*" && !glob_match_bytes(pattern, base_key.key()) {
                 continue;
