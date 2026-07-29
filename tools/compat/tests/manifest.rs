@@ -474,7 +474,12 @@ fn loads_the_repository_redis_8_8_1_manifest() {
     assert_eq!(manifest.profile(), Profile::Redis881StandaloneCacheOff);
     assert_eq!(manifest.redis().tag(), REDIS_TAG);
     assert_eq!(manifest.redis().commit(), REDIS_COMMIT);
-    assert!(manifest.commands().is_empty());
+    assert!(!manifest.commands().is_empty());
+    for command in manifest.commands() {
+        assert_eq!(command.command(), command.command().to_ascii_uppercase());
+        assert!(!command.protocols().is_empty());
+        assert!(!command.owner().is_empty());
+    }
 }
 
 fn parse_valid(yaml: &str) -> CompatibilityManifest {
