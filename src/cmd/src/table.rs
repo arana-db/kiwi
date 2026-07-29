@@ -83,6 +83,7 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         // Keyspace and TTL commands
         crate::del::DelCmd,
         crate::exists::ExistsCmd,
+        crate::scan::ScanCmd,
         crate::expire::ExpireCmd,
         crate::expireat::ExpireatCmd,
         crate::pexpire::PexpireCmd,
@@ -131,7 +132,6 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         crate::admin::ConfigCmd,
         // Set commands
         crate::sadd::SaddCmd,
-        crate::scan::ScanCmd,
         crate::scard::ScardCmd,
         crate::sdiff::SdiffCmd,
         crate::sdiffstore::SdiffstoreCmd,

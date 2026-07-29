@@ -172,4 +172,106 @@ mod scan_test {
             "cursor must be non-zero while iteration continues"
         );
     }
+
+    #[tokio::test]
+    async fn scan_resume_is_not_shifted_when_consumed_key_is_deleted() {
+        let (storage, _dir) = open_storage(1);
+        let expected = HashSet::from([
+            b"key:a".to_vec(),
+            b"key:b".to_vec(),
+            b"key:c".to_vec(),
+            b"key:d".to_vec(),
+        ]);
+        for key in &expected {
+            storage.set(key, b"v").unwrap();
+        }
+
+        let (mut cursor, first_page) = storage.scan(0, 1, None, b"*").unwrap();
+        assert_ne!(cursor, 0);
+        assert_eq!(first_page.len(), 1);
+        let consumed_key = first_page[0].clone();
+        assert_eq!(storage.del(std::slice::from_ref(&consumed_key)).unwrap(), 1);
+
+        let mut found = Vec::new();
+        while cursor != 0 {
+            let (next, keys) = storage.scan(cursor, 1, None, b"*").unwrap();
+            found.extend(keys);
+            cursor = next;
+        }
+
+        let mut remaining = expected;
+        remaining.remove(&consumed_key);
+        assert_eq!(as_set(found), remaining);
+    }
+
+    #[tokio::test]
+    async fn scan_rejects_unknown_nonzero_cursor() {
+        let (storage, _dir) = open_storage(1);
+        storage.set(b"key", b"v").unwrap();
+
+        let error = storage.scan(u64::MAX, 10, None, b"*").unwrap_err();
+        assert_eq!(error.to_string(), "ERR invalid cursor");
+    }
+
+    #[tokio::test]
+    async fn scan_cursors_are_scoped_to_the_storage_instance() {
+        let (first_storage, _first_dir) = open_storage(1);
+        let (second_storage, _second_dir) = open_storage(1);
+        first_storage.set(b"first:a", b"v").unwrap();
+        first_storage.set(b"first:b", b"v").unwrap();
+        second_storage.set(b"second:a", b"v").unwrap();
+        second_storage.set(b"second:b", b"v").unwrap();
+
+        let (cursor, _) = first_storage.scan(0, 1, None, b"*").unwrap();
+        assert_ne!(cursor, 0);
+        assert!(second_storage.scan(cursor, 1, None, b"*").is_err());
+    }
+
+    #[tokio::test]
+    async fn independent_scan_starts_receive_distinct_cursors() {
+        let (storage, _dir) = open_storage(1);
+        storage.set(b"key:a", b"v").unwrap();
+        storage.set(b"key:b", b"v").unwrap();
+
+        let (first_cursor, first_keys) = storage.scan(0, 1, None, b"*").unwrap();
+        let (second_cursor, second_keys) = storage.scan(0, 1, None, b"*").unwrap();
+
+        assert_ne!(first_cursor, 0);
+        assert_ne!(second_cursor, 0);
+        assert_ne!(first_cursor, second_cursor);
+        assert_eq!(first_keys, second_keys);
+    }
+
+    #[tokio::test]
+    async fn scan_cursor_is_invalidated_when_storage_is_reopened() {
+        let (mut storage, dir) = open_storage(1);
+        storage.set(b"key:a", b"v").unwrap();
+        storage.set(b"key:b", b"v").unwrap();
+        let (cursor, _) = storage.scan(0, 1, None, b"*").unwrap();
+        assert_ne!(cursor, 0);
+
+        storage.close();
+        let _rx = storage
+            .open(Arc::new(StorageOptions::default()), dir.path())
+            .unwrap();
+
+        let error = storage.scan(cursor, 1, None, b"*").unwrap_err();
+        assert_eq!(error.to_string(), "ERR invalid cursor");
+        assert!(!scan_all(&storage, 1, None, b"*").is_empty());
+    }
+
+    #[tokio::test]
+    async fn scan_cursor_preserves_binary_seek_keys() {
+        let (storage, _dir) = open_storage(1);
+        let expected = HashSet::from([
+            b"key:\0".to_vec(),
+            b"key:\x7f".to_vec(),
+            b"key:\xff".to_vec(),
+        ]);
+        for key in &expected {
+            storage.set(key, b"v").unwrap();
+        }
+
+        assert_eq!(as_set(scan_all(&storage, 1, None, b"*")), expected);
+    }
 }
