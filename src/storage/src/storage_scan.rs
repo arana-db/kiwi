@@ -17,19 +17,22 @@
 
 //! Cursor-based keyspace iteration backing the Redis `SCAN` command.
 //!
-//! A `SCAN` cursor is a single `u64`. Kiwi shards the keyspace across several
-//! independent RocksDB instances, so the cursor packs two fields: the high 8
-//! bits select the instance and the low 56 bits are a raw-entry offset into
-//! that instance's `MetaCF`. Instances are scanned in a fixed order, so a full
-//! sweep visits every live key exactly once when the keyspace is not mutated
-//! concurrently — the same coverage guarantee the existing HSCAN/SSCAN/ZSCAN
-//! cursors provide.
+//! Redis cursors are opaque. Kiwi maps each non-zero cursor to the RocksDB
+//! instance and the next unconsumed physical `MetaCF` key. Resuming with a
+//! RocksDB seek keeps every page O(COUNT) and avoids ordinal offsets shifting
+//! when keys are deleted between calls.
+//!
+//! Cursor state is process-local and bounded. Unknown or evicted non-zero
+//! cursors fail explicitly instead of silently restarting or truncating a scan.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use rocksdb::{Direction, IteratorMode};
 use snafu::{OptionExt, ResultExt};
 
 use crate::{
     ColumnFamilyIndex, DataType, Redis, Result,
-    error::{InvalidFormatSnafu, OptionNoneSnafu, RocksSnafu},
+    error::{Error, InvalidFormatSnafu, OptionNoneSnafu, RocksSnafu},
     format_base_key::ParsedBaseKey,
     format_base_meta_value::ParsedBaseMetaValue,
     format_list_meta_value::ParsedListsMetaValue,
@@ -38,20 +41,34 @@ use crate::{
     storage::Storage,
 };
 
-/// Bits of the cursor reserved for the per-instance raw offset. The remaining
-/// high bits select the instance, which comfortably covers the handful of
-/// RocksDB instances a deployment uses.
-const INSTANCE_SHIFT: u32 = 56;
-const OFFSET_MASK: u64 = (1u64 << INSTANCE_SHIFT) - 1;
+static NEXT_SCAN_CURSOR: AtomicU64 = AtomicU64::new(1);
+pub(crate) const SCAN_CURSOR_STATE_CAPACITY: usize = 5000;
+
+#[derive(Clone, Debug)]
+pub(crate) struct ScanCursorState {
+    instance_index: usize,
+    next_key: Option<Vec<u8>>,
+}
+
+fn allocate_scan_cursor() -> Result<u64> {
+    NEXT_SCAN_CURSOR
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+            next.checked_add(1)
+        })
+        .map_err(|_| Error::System {
+            message: "SCAN cursor space exhausted".to_string(),
+            location: snafu::location!(),
+        })
+}
 
 /// One instance's contribution to a single `SCAN` step.
 struct ScanPage {
     /// Live user keys matching the type and pattern filters.
     keys: Vec<Vec<u8>>,
-    /// Raw `MetaCF` entries consumed this step (matched or not); advances the cursor.
-    scanned: u64,
-    /// Whether this instance's `MetaCF` was fully consumed.
-    exhausted: bool,
+    /// Raw `MetaCF` entries consumed this step (matched or not).
+    scanned: usize,
+    /// First raw key not consumed by this page, if this instance has more data.
+    next_key: Option<Vec<u8>>,
 }
 
 /// Map a `SCAN TYPE` argument to a stored data type. An unrecognized type maps
@@ -69,13 +86,13 @@ fn parse_scan_type(name: &[u8]) -> DataType {
 }
 
 impl Redis {
-    /// Scan up to `limit` raw `MetaCF` entries starting `offset` entries in,
+    /// Scan up to `limit` raw `MetaCF` entries starting at `start_key`,
     /// returning the live keys among them that pass the type and pattern
-    /// filters, how many raw entries were consumed, and whether the instance
-    /// was fully drained.
+    /// filters, how many raw entries were consumed, and the first unconsumed
+    /// physical key.
     fn scan_meta(
         &self,
-        offset: u64,
+        start_key: Option<&[u8]>,
         limit: usize,
         type_filter: Option<DataType>,
         pattern: &[u8],
@@ -90,21 +107,20 @@ impl Redis {
             })?;
 
         let mut keys = Vec::new();
-        let mut scanned = 0u64;
-        let mut exhausted = true;
+        let mut scanned = 0usize;
+        let iterator_mode = match start_key {
+            Some(key) => IteratorMode::From(key, Direction::Forward),
+            None => IteratorMode::Start,
+        };
+        let mut iter = db.iterator_cf(&meta_cf, iterator_mode);
 
-        let mut iter = db
-            .iterator_cf(&meta_cf, rocksdb::IteratorMode::Start)
-            .skip(offset as usize);
-
-        loop {
-            if scanned >= limit as u64 {
-                // Stopped on the work budget, not the end of the instance.
-                exhausted = false;
-                break;
-            }
+        while scanned < limit {
             let Some(item) = iter.next() else {
-                break;
+                return Ok(ScanPage {
+                    keys,
+                    scanned,
+                    next_key: None,
+                });
             };
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
             scanned += 1;
@@ -146,10 +162,18 @@ impl Redis {
             keys.push(base_key.key().to_vec());
         }
 
+        let next_key = match iter.next() {
+            Some(item) => {
+                let (key_bytes, _) = item.context(RocksSnafu)?;
+                Some(key_bytes.to_vec())
+            }
+            None => None,
+        };
+
         Ok(ScanPage {
             keys,
             scanned,
-            exhausted,
+            next_key,
         })
     }
 }
@@ -171,27 +195,43 @@ impl Storage {
     ) -> Result<(u64, Vec<Vec<u8>>)> {
         let type_filter = type_filter.map(parse_scan_type);
         let mut remaining = count.max(1);
-        let mut inst_idx = (cursor >> INSTANCE_SHIFT) as usize;
-        let mut offset = cursor & OFFSET_MASK;
+        let (mut inst_idx, mut next_key) = if cursor == 0 {
+            (0, None)
+        } else {
+            self.scan_cursor_states
+                .get(&cursor)
+                .map(|entry| {
+                    let state = entry.value();
+                    (state.instance_index, state.next_key.clone())
+                })
+                .ok_or_else(|| Error::RedisErr {
+                    message: "ERR invalid cursor".to_string(),
+                    location: snafu::location!(),
+                })?
+        };
         let mut out = Vec::new();
 
         while inst_idx < self.insts.len() {
-            let page = self.insts[inst_idx].scan_meta(offset, remaining, type_filter, pattern)?;
+            let page = self.insts[inst_idx].scan_meta(
+                next_key.as_deref(),
+                remaining,
+                type_filter,
+                pattern,
+            )?;
             out.extend(page.keys);
-            remaining -= page.scanned as usize;
+            remaining -= page.scanned;
 
-            if page.exhausted {
+            if let Some(unconsumed_key) = page.next_key {
+                next_key = Some(unconsumed_key);
+                break;
+            } else {
                 // Move to the next instance from its start; spend any leftover
                 // budget there within this same call.
                 inst_idx += 1;
-                offset = 0;
+                next_key = None;
                 if remaining == 0 {
                     break;
                 }
-            } else {
-                // Budget spent partway through this instance; resume here later.
-                offset += page.scanned;
-                break;
             }
         }
 
@@ -199,7 +239,14 @@ impl Storage {
             // Every instance drained: signal completion with cursor 0.
             return Ok((0, out));
         }
-        let next_cursor = ((inst_idx as u64) << INSTANCE_SHIFT) | offset;
+        let next_cursor = allocate_scan_cursor()?;
+        self.scan_cursor_states.insert(
+            next_cursor,
+            ScanCursorState {
+                instance_index: inst_idx,
+                next_key,
+            },
+        );
         Ok((next_cursor, out))
     }
 }

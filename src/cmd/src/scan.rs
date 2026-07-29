@@ -52,12 +52,16 @@ fn parse_scan_args(cursor: &[u8], options: &[Vec<u8>]) -> Result<ScanArgs, &'sta
             index += 2;
         } else if options[index].eq_ignore_ascii_case(b"COUNT") {
             let value = options.get(index + 1).ok_or("ERR syntax error")?;
+            let parsed = std::str::from_utf8(value)
+                .ok()
+                .and_then(|value| value.parse::<i64>().ok())
+                .ok_or("ERR value is not an integer or out of range")?;
+            if parsed < 1 {
+                return Err("ERR syntax error");
+            }
             count = Some(
-                std::str::from_utf8(value)
-                    .ok()
-                    .and_then(|value| value.parse::<usize>().ok())
-                    .filter(|count| *count > 0)
-                    .ok_or("ERR value is not an integer or out of range")?,
+                usize::try_from(parsed)
+                    .map_err(|_| "ERR value is not an integer or out of range")?,
             );
             index += 2;
         } else if options[index].eq_ignore_ascii_case(b"TYPE") {
@@ -137,9 +141,10 @@ impl Cmd for ScanCmd {
 
                 client.set_reply(RespData::Array(Some(response)));
             }
-            Err(e) => {
-                client.set_reply(RespData::Error(format!("ERR {e}").into()));
+            Err(storage::error::Error::RedisErr { message, .. }) => {
+                client.set_reply(RespData::Error(message.into()));
             }
+            Err(e) => client.set_reply(RespData::Error(format!("ERR {e}").into())),
         }
     }
 }
@@ -222,8 +227,23 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_count_must_be_positive_integer() {
+    fn test_parse_count_must_be_positive() {
         let opts = vec![b"COUNT".to_vec(), b"0".to_vec()];
+        assert_eq!(parse_scan_args(b"0", &opts).err(), Some("ERR syntax error"));
+
+        let opts = vec![b"COUNT".to_vec(), b"-1".to_vec()];
+        assert_eq!(parse_scan_args(b"0", &opts).err(), Some("ERR syntax error"));
+    }
+
+    #[test]
+    fn test_parse_count_uses_redis_signed_integer_range() {
+        let opts = vec![b"COUNT".to_vec(), i64::MAX.to_string().into_bytes()];
+        assert_eq!(
+            parse_scan_args(b"0", &opts).unwrap().count,
+            Some(i64::MAX as usize)
+        );
+
+        let opts = vec![b"COUNT".to_vec(), b"9223372036854775808".to_vec()];
         assert_eq!(
             parse_scan_args(b"0", &opts).err(),
             Some("ERR value is not an integer or out of range")
