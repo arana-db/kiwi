@@ -239,7 +239,7 @@ async fn send_command_and_read_line(stream: &mut tokio::net::TcpStream, args: &[
             if response.ends_with(b"\r\n") {
                 return Bytes::from(response);
             }
-            assert!(response.len() < 64, "unexpectedly long RESP line");
+            assert!(response.len() < 256, "unexpectedly long RESP line");
         }
     })
     .await
@@ -512,6 +512,98 @@ async fn storage_command_e2e_rank_nulls_follow_negotiated_wire_protocol() {
             send_command_and_read_line(&mut stream, &[command, "missing-zset", "member"]).await;
         assert_eq!(reply, Bytes::from_static(b"_\r\n"), "{command}");
     }
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_smismember_matches_redis_semantics() {
+    let server = TestServer::start(None).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    let reply = send_command(&mut stream, &["SADD", "members", "a", "b"]).await;
+    assert_eq!(reply, RespData::Integer(2));
+
+    let reply = send_command(
+        &mut stream,
+        &["SMISMEMBER", "members", "a", "missing", "b", "a"],
+    )
+    .await;
+    assert_eq!(
+        reply,
+        RespData::Array(Some(vec![
+            RespData::Integer(1),
+            RespData::Integer(0),
+            RespData::Integer(1),
+            RespData::Integer(1),
+        ]))
+    );
+
+    let reply = send_command(&mut stream, &["SMISMEMBER", "missing-set", "a", "b"]).await;
+    assert_eq!(
+        reply,
+        RespData::Array(Some(vec![RespData::Integer(0), RespData::Integer(0)]))
+    );
+
+    let binary_member = [0xff, 0, 0xfe];
+    let reply = send_binary_command(
+        &mut stream,
+        &[b"SADD", b"binary-members", &binary_member, b""],
+    )
+    .await;
+    assert_eq!(reply, RespData::Integer(2));
+
+    let reply = send_binary_command(
+        &mut stream,
+        &[
+            b"SMISMEMBER",
+            b"binary-members",
+            &binary_member,
+            b"absent",
+            b"",
+        ],
+    )
+    .await;
+    assert_eq!(
+        reply,
+        RespData::Array(Some(vec![
+            RespData::Integer(1),
+            RespData::Integer(0),
+            RespData::Integer(1),
+        ]))
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_smismember_preserves_redis_errors() {
+    let server = TestServer::start(None).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    let reply = send_command(&mut stream, &["SET", "not-a-set", "value"]).await;
+    assert_eq!(reply, RespData::SimpleString(Bytes::from_static(b"OK")));
+
+    let reply =
+        send_command_and_read_line(&mut stream, &["SMISMEMBER", "not-a-set", "member"]).await;
+    assert_eq!(
+        reply,
+        Bytes::from_static(
+            b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"
+        )
+    );
+
+    let reply = send_command(&mut stream, &["SMISMEMBER", "members"]).await;
+    assert_eq!(
+        reply,
+        RespData::Error(Bytes::from_static(
+            b"ERR wrong number of arguments for 'smismember' command"
+        ))
+    );
 
     server.shutdown().await;
 }

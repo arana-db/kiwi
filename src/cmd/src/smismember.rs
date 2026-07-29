@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use client::Client;
 use resp::RespData;
-use storage::storage::Storage;
+use storage::{error::Error, storage::Storage};
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta};
 use crate::{impl_cmd_clone_box, impl_cmd_meta};
@@ -58,25 +58,22 @@ impl Cmd for SmismemberCmd {
         let key = client.key();
         let argv = client.argv();
 
-        // One reply element per requested member, preserving input order.
-        // `sismember` returns Ok(false) for a missing or expired key, so a
-        // non-existent set yields all zeros; it only errors on a wrong-type
-        // key, in which case the whole command reports that error (matching
-        // Redis, which rejects SMISMEMBER on a non-set key).
-        let mut replies = Vec::with_capacity(argv.len().saturating_sub(2));
-        for member in &argv[2..] {
-            match storage.sismember(&key, member) {
-                Ok(is_member) => {
-                    replies.push(RespData::Integer(if is_member { 1 } else { 0 }));
-                }
-                Err(e) => {
-                    client.set_reply(RespData::Error(format!("ERR {e}").into()));
-                    return;
-                }
+        let members: Vec<&[u8]> = argv[2..].iter().map(|member| member.as_ref()).collect();
+        match storage.smismember(&key, &members) {
+            Ok(results) => {
+                let replies = results
+                    .into_iter()
+                    .map(|is_member| RespData::Integer(if is_member { 1 } else { 0 }))
+                    .collect();
+                client.set_reply(RespData::Array(Some(replies)));
+            }
+            Err(Error::RedisErr { message, .. }) => {
+                client.set_reply(RespData::Error(message.into()));
+            }
+            Err(e) => {
+                client.set_reply(RespData::Error(format!("ERR {e}").into()));
             }
         }
-
-        client.set_reply(RespData::Array(Some(replies)));
     }
 }
 

@@ -20,6 +20,12 @@
 
 use std::collections::HashSet;
 
+#[cfg(test)]
+use std::sync::{
+    Arc as TestArc, Mutex, OnceLock, Weak,
+    atomic::{AtomicBool, Ordering},
+};
+
 use bytes::Bytes;
 use kstd::lock_mgr::ScopeRecordLock;
 use rocksdb::{Direction, IteratorMode, ReadOptions};
@@ -35,6 +41,98 @@ use crate::{
     format_member_data_key::MemberDataKey,
     storage_define::SUFFIX_RESERVE_LENGTH,
 };
+
+#[cfg(test)]
+struct SmismemberSnapshotTestGate {
+    key: Vec<u8>,
+    entered: AtomicBool,
+    released: AtomicBool,
+}
+
+#[cfg(test)]
+impl SmismemberSnapshotTestGate {
+    fn new(key: &[u8]) -> TestArc<Self> {
+        TestArc::new(Self {
+            key: key.to_vec(),
+            entered: AtomicBool::new(false),
+            released: AtomicBool::new(false),
+        })
+    }
+
+    fn wait_until_entered(&self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !self.entered.load(Ordering::SeqCst) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "SMISMEMBER did not reach the first membership lookup"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
+    }
+
+    fn enter_and_wait(&self) {
+        self.entered.store(true, Ordering::SeqCst);
+        while !self.released.load(Ordering::SeqCst) {
+            std::thread::yield_now();
+        }
+    }
+}
+
+#[cfg(test)]
+type SmismemberSnapshotTestGateRegistry = Mutex<Option<Weak<SmismemberSnapshotTestGate>>>;
+
+#[cfg(test)]
+fn smismember_snapshot_test_gate_registry() -> &'static SmismemberSnapshotTestGateRegistry {
+    static GATE: OnceLock<SmismemberSnapshotTestGateRegistry> = OnceLock::new();
+    GATE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+struct SmismemberSnapshotTestGateGuard {
+    gate: TestArc<SmismemberSnapshotTestGate>,
+}
+
+#[cfg(test)]
+impl Drop for SmismemberSnapshotTestGateGuard {
+    fn drop(&mut self) {
+        self.gate.release();
+        *smismember_snapshot_test_gate_registry()
+            .lock()
+            .expect("SMISMEMBER snapshot test gate registry should not be poisoned") = None;
+    }
+}
+
+#[cfg(test)]
+fn install_smismember_snapshot_test_gate(
+    gate: TestArc<SmismemberSnapshotTestGate>,
+) -> SmismemberSnapshotTestGateGuard {
+    let mut installed = smismember_snapshot_test_gate_registry()
+        .lock()
+        .expect("SMISMEMBER snapshot test gate registry should not be poisoned");
+    assert!(
+        installed.is_none(),
+        "only one SMISMEMBER snapshot test gate may be installed"
+    );
+    *installed = Some(TestArc::downgrade(&gate));
+    drop(installed);
+    SmismemberSnapshotTestGateGuard { gate }
+}
+
+#[cfg(test)]
+fn block_after_first_smismember_lookup_for_test(key: &[u8]) {
+    let gate = smismember_snapshot_test_gate_registry()
+        .lock()
+        .expect("SMISMEMBER snapshot test gate registry should not be poisoned")
+        .as_ref()
+        .and_then(Weak::upgrade);
+    if let Some(gate) = gate.filter(|gate| gate.key == key) {
+        gate.enter_and_wait();
+    }
+}
 
 impl Redis {
     /// Add one or more members to a set
@@ -321,6 +419,64 @@ impl Redis {
             .is_some();
 
         Ok(exists)
+    }
+
+    /// Check if each member is a member of the set stored at key.
+    pub fn smismember(&self, key: &[u8], members: &[&[u8]]) -> Result<Vec<bool>> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+
+        let cf_meta = self
+            .get_cf_handle(ColumnFamilyIndex::MetaCF)
+            .context(OptionNoneSnafu {
+                message: "cf is not initialized".to_string(),
+            })?;
+        let cf_data =
+            self.get_cf_handle(ColumnFamilyIndex::SetsDataCF)
+                .context(OptionNoneSnafu {
+                    message: "cf data is not initialized".to_string(),
+                })?;
+
+        let snapshot = db.snapshot();
+        let mut read_options = ReadOptions::default();
+        read_options.set_snapshot(&snapshot);
+
+        let base_meta_key = BaseMetaKey::new(key).encode()?;
+        let meta_val = db
+            .get_cf_opt(&cf_meta, &base_meta_key, &read_options)
+            .context(RocksSnafu)?;
+        let Some(val) = meta_val else {
+            return Ok(vec![false; members.len()]);
+        };
+
+        match self.check_type_state(val.as_ref(), DataType::Set)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => {
+                return Ok(vec![false; members.len()]);
+            }
+            TypeCheckState::Match => {}
+        }
+
+        let set_meta = ParsedSetsMetaValue::new(&val[..])?;
+        if !set_meta.is_valid() {
+            return Ok(vec![false; members.len()]);
+        }
+        let version = set_meta.version();
+
+        let mut result = Vec::with_capacity(members.len());
+        for &member in members {
+            let member_key = MemberDataKey::new(key, version, member).encode()?;
+            let exists = db
+                .get_cf_opt(&cf_data, &member_key, &read_options)
+                .context(RocksSnafu)?
+                .is_some();
+            result.push(exists);
+
+            #[cfg(test)]
+            block_after_first_smismember_lookup_for_test(key);
+        }
+
+        Ok(result)
     }
 
     /// Get random members from a set
@@ -2692,5 +2848,47 @@ mod glob_tests {
         assert!(glob_match_bytes(b"literal*", b"literal"));
         assert!(glob_match_bytes(b"**", b"x"));
         assert!(glob_match_bytes(b"***", b"x"));
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+mod smismember_tests {
+    use std::sync::Arc;
+
+    use kstd::lock_mgr::LockMgr;
+
+    use super::{SmismemberSnapshotTestGate, install_smismember_snapshot_test_gate};
+    use crate::{BgTaskHandler, Redis, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+
+    #[test]
+    fn smismember_reads_all_members_from_one_snapshot() {
+        let db_path = unique_test_db_path();
+        safe_cleanup_test_db(&db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(db_path.to_str().unwrap()).unwrap();
+        let redis = Arc::new(redis);
+
+        let key = b"smismember_snapshot";
+        assert_eq!(redis.sadd(key, &[b"a"]).unwrap(), 1);
+
+        let gate = SmismemberSnapshotTestGate::new(key);
+        let gate_guard = install_smismember_snapshot_test_gate(Arc::clone(&gate));
+        let reader = Arc::clone(&redis);
+        let handle = std::thread::spawn(move || reader.smismember(key, &[b"a", b"b"]));
+
+        gate.wait_until_entered();
+        assert_eq!(redis.sadd(key, &[b"b"]).unwrap(), 1);
+        gate.release();
+
+        assert_eq!(handle.join().unwrap().unwrap(), vec![true, false]);
+
+        drop(gate_guard);
+        drop(redis);
+        safe_cleanup_test_db(&db_path);
     }
 }
