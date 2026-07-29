@@ -238,25 +238,31 @@ impl Redis {
 
         let decode_value = ParsedStringsValue::new(&encode_value[..])?;
         let user_value = decode_value.user_value();
-        let len = user_value.len() as i64;
+        let len = user_value.len();
 
         // Handle empty string
         if len == 0 {
             return Ok(Vec::new());
         }
 
-        // Normalize negative indices
-        let start_idx = if start < 0 {
-            (len + start).max(0)
-        } else {
-            start.min(len)
-        };
+        // Redis rejects reversed ranges while both indexes are still negative,
+        // before clamping indexes that precede the start of the value.
+        if start < 0 && end < 0 && start > end {
+            return Ok(Vec::new());
+        }
 
-        let end_idx = if end < 0 {
-            (len + end).max(-1)
-        } else {
-            end.min(len - 1)
+        // Use i128 so adding an i64 offset to the value length cannot overflow.
+        // Redis clamps negative offsets before the start of the value to zero.
+        let len = len as i128;
+        let normalize = |index: i64| {
+            if index < 0 {
+                (len + index as i128).max(0)
+            } else {
+                index as i128
+            }
         };
+        let start_idx = normalize(start).min(len);
+        let end_idx = normalize(end).min(len - 1);
 
         // If start > end after normalization, return empty string
         if start_idx > end_idx {

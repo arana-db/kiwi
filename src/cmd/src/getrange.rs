@@ -56,48 +56,52 @@ impl Cmd for GetrangeCmd {
     }
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
-        let key = client.key();
-        let argv = client.argv();
+        execute_getrange(client, storage);
+    }
+}
 
-        // Parse start offset
-        let start = match String::from_utf8_lossy(&argv[2]).parse::<i64>() {
-            Ok(n) => n,
-            Err(_) => {
-                client.set_reply(RespData::Error(
-                    "ERR value is not an integer or out of range".into(),
-                ));
-                return;
-            }
-        };
+pub(crate) fn execute_getrange(client: &Client, storage: Arc<Storage>) {
+    let key = client.key();
+    let argv = client.argv();
 
-        // Parse end offset
-        let end = match String::from_utf8_lossy(&argv[3]).parse::<i64>() {
-            Ok(n) => n,
-            Err(_) => {
-                client.set_reply(RespData::Error(
-                    "ERR value is not an integer or out of range".into(),
-                ));
-                return;
-            }
-        };
-
-        let result = storage.getrange(&key, start, end);
-
-        match result {
-            Ok(substring) => {
-                client.set_reply(RespData::BulkString(Some(substring.into())));
-            }
-            Err(e) => match e {
-                storage::error::Error::RedisErr { ref message, .. }
-                    if message.starts_with("WRONGTYPE") =>
-                {
-                    // RedisErr already contains the formatted message
-                    client.set_reply(RespData::Error(message.clone().into()));
-                }
-                _ => {
-                    client.set_reply(RespData::Error(format!("ERR {e}").into()));
-                }
-            },
+    // Parse start offset
+    let start = match String::from_utf8_lossy(&argv[2]).parse::<i64>() {
+        Ok(n) => n,
+        Err(_) => {
+            client.set_reply(RespData::Error(
+                "ERR value is not an integer or out of range".into(),
+            ));
+            return;
         }
+    };
+
+    // Parse end offset
+    let end = match String::from_utf8_lossy(&argv[3]).parse::<i64>() {
+        Ok(n) => n,
+        Err(_) => {
+            client.set_reply(RespData::Error(
+                "ERR value is not an integer or out of range".into(),
+            ));
+            return;
+        }
+    };
+
+    let result = storage.getrange(&key, start, end);
+
+    match result {
+        Ok(substring) => {
+            client.set_reply(RespData::BulkString(Some(substring.into())));
+        }
+        Err(e) => match e {
+            storage::error::Error::RedisErr { ref message, .. }
+                if message.starts_with("WRONGTYPE") =>
+            {
+                // RedisErr already contains the formatted message
+                client.set_reply(RespData::Error(message.clone().into()));
+            }
+            _ => {
+                client.set_reply(RespData::Error(format!("ERR {e}").into()));
+            }
+        },
     }
 }

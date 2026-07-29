@@ -90,7 +90,6 @@ pub mod substr;
 pub mod sunion;
 pub mod sunionstore;
 pub mod table;
-pub mod touch;
 pub mod ttl;
 pub mod type_cmd;
 pub mod zadd;

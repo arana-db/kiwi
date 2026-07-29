@@ -445,6 +445,64 @@ mod redis_string_test {
     }
 
     #[test]
+    fn test_redis_getrange_clamps_extreme_negative_indexes() {
+        let test_db_path = unique_test_db_path();
+
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+        redis.set(b"key", b"Hello World").unwrap();
+
+        for (start, end, expected) in [
+            (0, -100, b"H".as_slice()),
+            (1, -100, b"".as_slice()),
+            (-1, -100, b"".as_slice()),
+            (-100, -99, b"H".as_slice()),
+            (-100, -100, b"H".as_slice()),
+            (-100, -101, b"".as_slice()),
+        ] {
+            assert_eq!(redis.getrange(b"key", start, end).unwrap(), expected);
+        }
+        assert_eq!(redis.getrange(b"key", i64::MIN, 0).unwrap(), b"H");
+        assert_eq!(
+            redis.getrange(b"key", i64::MIN, i64::MAX).unwrap(),
+            b"Hello World"
+        );
+        assert!(
+            redis
+                .getrange(b"key", i64::MAX, i64::MIN)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(redis.getrange(b"missing", 0, -100).unwrap().is_empty());
+
+        cleanup_redis(redis, &test_db_path);
+    }
+
+    #[tokio::test]
+    async fn test_storage_getrange_treats_expired_keys_as_missing() {
+        let db_path = unique_test_db_path();
+        safe_cleanup_test_db(&db_path);
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(StorageOptions::default()), &db_path)
+            .unwrap();
+
+        storage.set(b"expired", b"value").unwrap();
+        assert!(storage.expireat(b"expired", 1).unwrap());
+        assert!(storage.getrange(b"expired", 0, -1).unwrap().is_empty());
+
+        storage.shutdown().await;
+        drop(storage);
+        safe_cleanup_test_db(&db_path);
+    }
+
+    #[test]
     fn test_redis_setrange() {
         let test_db_path = unique_test_db_path();
 

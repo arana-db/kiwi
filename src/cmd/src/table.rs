@@ -83,7 +83,6 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         // Keyspace and TTL commands
         crate::del::DelCmd,
         crate::exists::ExistsCmd,
-        crate::touch::TouchCmd,
         crate::expire::ExpireCmd,
         crate::expireat::ExpireatCmd,
         crate::pexpire::PexpireCmd,
@@ -203,6 +202,14 @@ mod tests {
     use storage::storage::Storage;
 
     use super::create_command_table;
+
+    #[test]
+    fn registers_substr_but_not_touch_until_access_metadata_exists() {
+        let table = create_command_table(Arc::new(|| None));
+
+        assert!(table.contains_key("substr"));
+        assert!(!table.contains_key("touch"));
+    }
 
     struct TestStream;
 

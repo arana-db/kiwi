@@ -34,3 +34,29 @@ commands:
     tests: [final-state]
     known_differences: []
     owner: cmd-zset
+  - command: SUBSTR
+    classification: deferred
+    modes:
+      standalone_cache_off: deferred
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: []
+    known_differences: []
+    owner: cmd-string
+  - command: TOUCH
+    classification: deferred
+    modes:
+      standalone_cache_off: deferred
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: []
+    known_differences: []
+    owner: cmd-keyspace
