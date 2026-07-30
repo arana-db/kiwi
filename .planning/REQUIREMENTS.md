@@ -58,7 +58,7 @@
 - `REQ-RAFT-001` {priority: P0}：写成功回复必须发生在 quorum commit、本地 apply 和所选 durability profile 满足之后。
 - `REQ-RAFT-002` {priority: P0}：Linearizable Read 即使经过未来热层也必须通过 Leader/ReadIndex/Lease 门禁。
 - `REQ-RAFT-003` {priority: P0}：实现并冻结 `kiwi_redisraft_public_v1`，公开清单内行为 100% 通过。
-- `REQ-RAFT-004` {priority: P2}：RedisRaft 内部 `RAFT.AE`、`RAFT.REQUESTVOTE`、`RAFT.SNAPSHOT` 等不是公共兼容要求。
+- `REQ-RAFT-004` {priority: P0}：RedisRaft 内部 `RAFT.AE`、`RAFT.REQUESTVOTE`、`RAFT.SNAPSHOT` 等不是公共兼容要求。
 - `REQ-RAFT-005` {priority: P1}：成员变更、Leader Transfer、Snapshot、日志回滚和真正 close/reopen 必须进入 required CI 或分层门禁。
 - `REQ-RAFT-006` {priority: P1}：建立带 seed 的 OpenRaft deterministic simulator，检查 Election Safety、Log Matching 和 State Machine Safety。
 - `REQ-RAFT-007` {priority: P1}：建立 3/5 节点进程级 kill、pause、partition、restart、disk fault 和 Elle/Jepsen history 测试。
