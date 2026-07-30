@@ -70,7 +70,7 @@
 
 1. **启动 Kiwi 服务器**（Python 测试需要）:
    ```bash
-   cargo run --bin server --release
+   cargo run --bin kiwi --release
    ```
 
 2. **安装 Python 依赖**:

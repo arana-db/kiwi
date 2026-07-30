@@ -4,7 +4,7 @@
 
 ### 1. 启动服务器
 ```bash
-cargo run --bin server
+cargo run --bin kiwi
 ```
 
 ### 2. 使用 Redis CLI 连接并测试
