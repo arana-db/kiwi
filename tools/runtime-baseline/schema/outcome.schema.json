@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$comment": "Baseline Results PR 回填真实数字、且 thresholds.rs 全部常量脱离占位哨兵值后，outcome 才可 publishable。本 schema 描述 verifier (src/verify.rs) 期望的 outcome 结构；verifier 使用 serde 反序列化，容忍未知字段以便前向兼容。",
+  "title": "BaselineOutcome",
+  "type": "object",
+  "required": [
+    "case_id",
+    "qps",
+    "p99_ms",
+    "max_latency_ms",
+    "error_rate",
+    "queued_plus_running_max"
+  ],
+  "properties": {
+    "case_id": { "type": "string" },
+    "qps": { "type": "number" },
+    "p99_ms": { "type": "number" },
+    "max_latency_ms": { "type": "number" },
+    "error_rate": { "type": "number" },
+    "overload_120pct_error_rate": { "type": "number" },
+    "queued_plus_running_max": { "type": "integer" },
+    "storage_gate_pause_ms": { "type": "integer" },
+    "storage_gate_resume_drain_ms": { "type": "integer" },
+    "shutdown_drain_ms": { "type": "integer" },
+    "slow_storage_new_conn_ms": { "type": "integer" },
+    "slow_storage_ping_ms": { "type": "integer" },
+    "cpu_change_ratio": { "type": "number" },
+    "rss_change_ratio": { "type": "number" },
+    "threads_delta": { "type": "integer" }
+  }
+}

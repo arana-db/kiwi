@@ -18,3 +18,5 @@
 pub mod cli;
 pub mod schema;
 pub mod startup;
+pub mod thresholds;
+pub mod verify;
