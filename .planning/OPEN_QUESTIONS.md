@@ -55,7 +55,7 @@
 ## OQ-10 [OPEN] 统一测试策略的落地取舍
 - **背景**：#325 提案 `kiwi-test-harness` + Oracle 对比 + property-based + 确定性网络模拟（turmoil）。
 - **待确认**：
-  - Redis 8.8.1 exact Oracle 对比如何在 fast gate 与完整定期门禁之间分层（见 OQ-3）；
+  - Redis 8.8.1 Oracle 的 gate 分层与兼容矩阵以 OQ-3 为唯一决策入口，本项只消费该结论；
   - 是否值得 port Redis 官方 TCL suite，还是以 `resp-compatibility` 为 fast gate；
   - Python 测试保留为多语言 client 验证，还是逐步迁到 Rust harness；
   - 集群/哨兵功能当前可用程度。
