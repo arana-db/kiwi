@@ -60,6 +60,10 @@ Client → TCP accept [网络运行时] → RESP 解析 → 命令查找
 
 README 不再维护第二份容易漂移的路线清单。
 
+## 实现状态
+
+Kiwi 以 Redis 8.8.1 兼容为目标，但兼容目前仍是**进行中的目标**，而非已交付状态。已知的差距与代码审查结论以 [`code-review-findings.md`](code-review-findings.md) 为准。在假定某个 Redis 命令或行为已完整支持之前，请先查阅该文件，并参考上文相关门禁文档确认当前的稳定性门槛。
+
 ## 快速开始
 
 ### 环境要求
@@ -137,6 +141,11 @@ redis-cli -p 7379 get foo         # "bar"
 | [系统稳定性门禁](docs/quality/system-stability-gate.md) | 重新评估延期热层工作前的 required 证据 |
 | [延期的 Native ABI 合同](docs/architecture/redis-hot-tier-native-abi.md) | 未来接口设计，不构成实现授权 |
 | [组合发行许可证设计](docs/architecture/combined-distribution-licensing.md) | 未来 Redis 派生库和源码发行义务 |
+| [产品需求文档 (PRD)](docs/prd.md) | 目标、范围与 Redis 8.8.1 兼容基线 |
+| [工程质量门禁](docs/quality/quality-gates.md) | 代码、测试与发布质量门禁 |
+| [人物角色与用户故事](docs/personas-and-user-stories.md) | 目标用户与使用场景 |
+| [文档索引](docs/INDEX.md) | 整个 `docs/` 树的地图与建议阅读顺序 |
+| [设计计划与规格](docs/superpowers/) | 带日期的设计记录（plans + specs） |
 | `kiwi --sample-config` | 生成默认配置文件 |
 | `kiwi --full-sample-config` | 生成包含所有配置项的完整配置文件 |
 
