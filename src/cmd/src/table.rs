@@ -65,6 +65,7 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         crate::decr::DecrCmd,
         crate::decrby::DecrbyCmd,
         crate::strlen::StrlenCmd,
+        crate::substr::SubstrCmd,
         crate::getrange::GetrangeCmd,
         crate::setrange::SetrangeCmd,
         crate::setex::SetexCmd,
@@ -201,6 +202,14 @@ mod tests {
     use storage::storage::Storage;
 
     use super::create_command_table;
+
+    #[test]
+    fn registers_substr_but_not_touch_until_access_metadata_exists() {
+        let table = create_command_table(Arc::new(|| None));
+
+        assert!(table.contains_key("substr"));
+        assert!(!table.contains_key("touch"));
+    }
 
     struct TestStream;
 

@@ -86,6 +86,7 @@ pub mod srandmember;
 pub mod srem;
 pub mod sscan;
 pub mod strlen;
+pub mod substr;
 pub mod sunion;
 pub mod sunionstore;
 pub mod table;

@@ -53,6 +53,7 @@ pub enum CommandType {
     Get,
     GetBit,
     GetRange,
+    Substr,
     GetSet,
     Incr,
     IncrBy,
@@ -208,6 +209,7 @@ impl FromStr for CommandType {
             "GET" => Ok(CommandType::Get),
             "GETBIT" => Ok(CommandType::GetBit),
             "GETRANGE" => Ok(CommandType::GetRange),
+            "SUBSTR" => Ok(CommandType::Substr),
             "GETSET" => Ok(CommandType::GetSet),
             "INCR" => Ok(CommandType::Incr),
             "INCRBY" => Ok(CommandType::IncrBy),
@@ -363,6 +365,7 @@ impl fmt::Display for CommandType {
             CommandType::Get => write!(f, "GET"),
             CommandType::GetBit => write!(f, "GETBIT"),
             CommandType::GetRange => write!(f, "GETRANGE"),
+            CommandType::Substr => write!(f, "SUBSTR"),
             CommandType::GetSet => write!(f, "GETSET"),
             CommandType::Incr => write!(f, "INCR"),
             CommandType::IncrBy => write!(f, "INCRBY"),
@@ -554,5 +557,21 @@ impl Command for RespData {
             }
             _ => Err(RespError::InvalidData("Invalid command format".to_string())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use super::CommandType;
+
+    #[test]
+    fn substr_has_a_typed_command_mapping() {
+        assert_eq!(
+            CommandType::from_str("SUBSTR").expect("SUBSTR should parse"),
+            CommandType::Substr
+        );
+        assert_eq!(CommandType::Substr.to_string(), "SUBSTR");
     }
 }
