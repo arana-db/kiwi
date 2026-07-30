@@ -39,7 +39,7 @@ header:
 
   paths-ignore:
     - '**/*.md'
-    - '*.json'
+    - '**/*.json'
     - 'LICENSE'
     - 'NOTICE'
     - 'Cargo.lock'
