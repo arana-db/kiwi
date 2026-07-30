@@ -21,6 +21,9 @@ use async_trait::async_trait;
 use resp::{ProtocolNegotiator, RespCommand, RespData, RespResult};
 use tokio::sync::Mutex;
 
+pub mod storage_stats;
+pub use storage_stats::*;
+
 #[async_trait]
 pub trait StreamTrait: Send + Sync {
     async fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error>;

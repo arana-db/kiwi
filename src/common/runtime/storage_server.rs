@@ -35,8 +35,8 @@ use storage::storage::Storage;
 use crate::error::DualRuntimeError;
 use crate::global_storage::GlobalStorage;
 use crate::message::{
-    NoopStorageStatsCollector, RequestPriority, StorageCommand, StorageRequest, StorageResponse,
-    StorageStatsCollector,
+    RealStorageStatsCollector, RequestPriority, STORAGE_STATS_COLLECTOR, StorageCommand,
+    StorageRequest, StorageResponse, StorageStatsCollector,
 };
 use crate::metrics::StorageMetricsTracker;
 
@@ -563,13 +563,21 @@ impl StorageServer {
             // tracker.record_operation_started();
         }
 
-        // TODO(storage-stats): Pass this request-local collector through
-        // `Cmd::execute` and into the storage crate so stats are recorded by
-        // actual storage operations instead of inferred from command arguments.
-        let stats_collector = NoopStorageStatsCollector;
+        // Per-request storage stats collector, scoped for the duration of the
+        // command execution so the storage engine records real I/O counters
+        // instead of values inferred from command arguments.
+        // See <https://github.com/arana-db/kiwi/issues/312>.
+        let stats_collector: Arc<dyn StorageStatsCollector + Send + Sync> =
+            Arc::new(RealStorageStatsCollector::new());
 
-        // Route the request based on command type
-        let result = Self::execute_storage_command(&storage, &request.command).await;
+        // Route the request based on command type. The collector is installed as a
+        // task-local so the storage facade methods can read it without changing
+        // every `Cmd::execute` signature.
+        let result = STORAGE_STATS_COLLECTOR
+            .scope(Arc::clone(&stats_collector), async move {
+                Self::execute_storage_command(&storage, &request.command).await
+            })
+            .await;
 
         let execution_time = start_time.elapsed();
         debug!(

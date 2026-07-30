@@ -20,6 +20,8 @@ use crate::format_zset_score_key::ZsetScoreMember;
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage::Storage;
 
+use client::storage_stats::try_collector;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BeforeOrAfter {
     Before,
@@ -46,6 +48,9 @@ impl Storage {
     // Set key to hold the string value. if key
     // already holds a value, it is overwritten
     pub fn set(&self, key: &[u8], value: &[u8]) -> Result<()> {
+        if let Some(c) = try_collector() {
+            c.record_write(key.len() as u64, value.len() as u64);
+        }
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].set(key, value)
@@ -54,13 +59,21 @@ impl Storage {
     pub fn get(&self, key: &[u8]) -> Result<String> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        self.insts[instance_id].get(key)
+        let value = self.insts[instance_id].get(key)?;
+        if let Some(c) = try_collector() {
+            c.record_read(key.len() as u64, value.len() as u64);
+        }
+        Ok(value)
     }
 
     pub fn get_binary(&self, key: &[u8]) -> Result<Vec<u8>> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        self.insts[instance_id].get_binary(key)
+        let value = self.insts[instance_id].get_binary(key)?;
+        if let Some(c) = try_collector() {
+            c.record_read(key.len() as u64, value.len() as u64);
+        }
+        Ok(value)
     }
 
     pub fn mget(&self, keys: &[Vec<u8>]) -> Result<Vec<Option<String>>> {
@@ -76,9 +89,21 @@ impl Storage {
             return Ok(Vec::new());
         }
 
+        // Record per-key read stats with the actual returned value sizes.
+        let record = |keys: &[Vec<u8>], results: &[Option<Vec<u8>>]| {
+            if let Some(c) = try_collector() {
+                for (key, value) in keys.iter().zip(results.iter()) {
+                    let value_len = value.as_ref().map(|v| v.len()).unwrap_or(0);
+                    c.record_read(key.len() as u64, value_len as u64);
+                }
+            }
+        };
+
         // If single instance, process directly for better performance
         if self.insts.len() == 1 {
-            return self.insts[0].mget_binary(keys);
+            let results = self.insts[0].mget_binary(keys)?;
+            record(keys, &results);
+            return Ok(results);
         }
 
         // Multi-instance: group keys by instance and process
@@ -106,12 +131,19 @@ impl Storage {
             }
         }
 
+        record(keys, &results);
         Ok(results)
     }
 
     pub fn mset(&self, kvs: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
         if kvs.is_empty() {
             return Ok(());
+        }
+
+        if let Some(c) = try_collector() {
+            for (k, v) in kvs {
+                c.record_write(k.len() as u64, v.len() as u64);
+            }
         }
 
         // If single instance, process directly for better performance
@@ -148,7 +180,15 @@ impl Storage {
         }
 
         if self.insts.len() == 1 {
-            return self.insts[0].msetnx(kvs);
+            let ok = self.insts[0].msetnx(kvs)?;
+            if ok {
+                if let Some(c) = try_collector() {
+                    for (k, v) in kvs {
+                        c.record_write(k.len() as u64, v.len() as u64);
+                    }
+                }
+            }
+            return Ok(ok);
         }
 
         type InstanceKvs = std::collections::HashMap<usize, Vec<(Vec<u8>, Vec<u8>)>>;
@@ -190,6 +230,12 @@ impl Storage {
             self.insts[instance_id].mset(&kv_pairs)?;
         }
 
+        if let Some(c) = try_collector() {
+            for (k, v) in kvs {
+                c.record_write(k.len() as u64, v.len() as u64);
+            }
+        }
+
         Ok(true)
     }
 
@@ -200,6 +246,9 @@ impl Storage {
     }
 
     pub fn append(&self, key: &[u8], value: &[u8]) -> Result<i32> {
+        if let Some(c) = try_collector() {
+            c.record_write(key.len() as u64, value.len() as u64);
+        }
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].append(key, value)
@@ -214,16 +263,26 @@ impl Storage {
     pub fn getrange(&self, key: &[u8], start: i64, end: i64) -> Result<Vec<u8>> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        self.insts[instance_id].getrange(key, start, end)
+        let value = self.insts[instance_id].getrange(key, start, end)?;
+        if let Some(c) = try_collector() {
+            c.record_read(key.len() as u64, value.len() as u64);
+        }
+        Ok(value)
     }
 
     pub fn setrange(&self, key: &[u8], offset: i64, value: &[u8]) -> Result<i32> {
+        if let Some(c) = try_collector() {
+            c.record_write(key.len() as u64, value.len() as u64);
+        }
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].setrange(key, offset, value)
     }
 
     pub fn setex(&self, key: &[u8], seconds: i64, value: &[u8]) -> Result<()> {
+        if let Some(c) = try_collector() {
+            c.record_write(key.len() as u64, value.len() as u64);
+        }
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].setex(key, seconds, value)
@@ -236,18 +295,27 @@ impl Storage {
     }
 
     pub fn setnx(&self, key: &[u8], value: &[u8]) -> Result<i32> {
+        if let Some(c) = try_collector() {
+            c.record_write(key.len() as u64, value.len() as u64);
+        }
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].setnx(key, value)
     }
 
     pub fn setbit(&self, key: &[u8], offset: i64, value: i64) -> Result<i64> {
+        if let Some(c) = try_collector() {
+            c.record_write(key.len() as u64, 0);
+        }
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].setbit(key, offset, value)
     }
 
     pub fn getbit(&self, key: &[u8], offset: i64) -> Result<i64> {
+        if let Some(c) = try_collector() {
+            c.record_read(key.len() as u64, 0);
+        }
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].getbit(key, offset)
@@ -291,6 +359,9 @@ impl Storage {
     }
 
     pub fn getset(&self, key: &[u8], value: &[u8]) -> Result<Option<String>> {
+        if let Some(c) = try_collector() {
+            c.record_write(key.len() as u64, value.len() as u64);
+        }
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].getset(key, value)
@@ -305,6 +376,9 @@ impl Storage {
     // Hash Commands Implementation
 
     pub fn hset(&self, key: &[u8], field: &[u8], value: &[u8]) -> Result<i32> {
+        if let Some(c) = try_collector() {
+            c.record_write(key.len() as u64, value.len() as u64);
+        }
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].hset(key, field, value)
@@ -313,10 +387,18 @@ impl Storage {
     pub fn hget(&self, key: &[u8], field: &[u8]) -> Result<Option<String>> {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
-        self.insts[instance_id].hget(key, field)
+        let value = self.insts[instance_id].hget(key, field)?;
+        if let Some(c) = try_collector() {
+            let value_len = value.as_ref().map(|v| v.len()).unwrap_or(0);
+            c.record_read(key.len() as u64, value_len as u64);
+        }
+        Ok(value)
     }
 
     pub fn hdel(&self, key: &[u8], fields: &[Vec<u8>]) -> Result<i32> {
+        if let Some(c) = try_collector() {
+            c.record_delete(key.len() as u64);
+        }
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].hdel(key, fields)
@@ -701,7 +783,12 @@ impl Storage {
 
             // Try to delete the key - this will handle all data types
             match self.insts[instance_id].del_key(key) {
-                Ok(true) => deleted_count += 1,
+                Ok(true) => {
+                    deleted_count += 1;
+                    if let Some(c) = try_collector() {
+                        c.record_delete(key.len() as u64);
+                    }
+                }
                 Ok(false) => {} // Key doesn't exist
                 Err(e) => {
                     // Log error but continue deleting other keys

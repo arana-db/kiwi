@@ -11,4 +11,5 @@ rust-version.workspace = true
 async-trait = "0.1"
 resp = { path = "../resp" }
 parking_lot = { workspace = true }
-tokio = { version = "1.50", features = ["sync"] }
+serde = { workspace = true, features = ["derive"] }
+tokio = { version = "1.50", features = ["sync", "rt"] }

@@ -454,6 +454,7 @@ dependencies = [
  "async-trait",
  "parking_lot",
  "resp",
+ "serde",
  "tokio",
 ]
 
@@ -2643,6 +2644,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "chrono",
+ "client",
  "common-macro",
  "conf",
  "crc16",
