@@ -102,7 +102,7 @@ pytest tests/python/test_mset.py -v
 3. **服务器运行**：
    ```bash
    # 启动 Kiwi 服务器
-   cargo run --bin server --release
+   cargo run --bin kiwi --release
    
    # 或使用 Makefile
    make run
@@ -118,7 +118,7 @@ cargo test
 
 # 2. Python 集成测试（需要先启动服务器）
 # 终端 1：启动服务器
-cargo run --bin server --release
+cargo run --bin kiwi --release
 
 # 终端 2：运行测试
 pytest tests/python/ -v
