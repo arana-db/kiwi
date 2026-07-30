@@ -272,6 +272,16 @@ impl Redis {
     }
 
     pub fn hset(&self, key: &[u8], field: &[u8], value: &[u8]) -> Result<i32> {
+        self.hset_with_outcome(key, field, value)
+            .map(|(added, _changed)| added)
+    }
+
+    pub(crate) fn hset_with_outcome(
+        &self,
+        key: &[u8],
+        field: &[u8],
+        value: &[u8],
+    ) -> Result<(i32, bool)> {
         let (db, cfs) = get_db_and_cfs!(
             self,
             ColumnFamilyIndex::MetaCF,
@@ -316,7 +326,7 @@ impl Redis {
                 match self.check_type_state(meta_val_bytes.as_ref(), DataType::Hash)? {
                     TypeCheckState::Missing | TypeCheckState::Stale => {
                         create_new_hash(self, key, field, value)?;
-                        return Ok(1);
+                        return Ok((1, true));
                     }
                     TypeCheckState::Match => {}
                 }
@@ -340,7 +350,7 @@ impl Redis {
                         &data_value.encode(),
                     )?;
                     batch.commit()?;
-                    Ok(1)
+                    Ok((1, true))
                 } else {
                     let version = parsed_meta.version();
                     let data_key = MemberDataKey::new(key, version, field);
@@ -356,7 +366,7 @@ impl Redis {
                             existing_data.strip_suffix();
 
                             if existing_data.user_value() == value {
-                                Ok(0)
+                                Ok((0, false))
                             } else {
                                 let data_value = BaseDataValue::new(value.to_vec());
                                 let mut batch = self.create_batch()?;
@@ -366,7 +376,7 @@ impl Redis {
                                     &data_value.encode(),
                                 )?;
                                 batch.commit()?;
-                                Ok(0)
+                                Ok((0, true))
                             }
                         }
                         None => {
@@ -391,14 +401,14 @@ impl Redis {
                                 &data_value.encode(),
                             )?;
                             batch.commit()?;
-                            Ok(1)
+                            Ok((1, true))
                         }
                     }
                 }
             }
             None => {
                 create_new_hash(self, key, field, value)?;
-                Ok(1)
+                Ok((1, true))
             }
         }
     }

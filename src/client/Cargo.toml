@@ -13,3 +13,6 @@ resp = { path = "../resp" }
 parking_lot = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tokio = { version = "1.50", features = ["sync", "rt"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

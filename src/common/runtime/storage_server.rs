@@ -558,14 +558,13 @@ impl StorageServer {
         );
 
         // Record operation started
-        if let Some(ref _tracker) = metrics_tracker {
-            // TODO: Fix type annotation issue
-            // tracker.record_operation_started();
+        if let Some(ref tracker) = metrics_tracker {
+            tracker.record_operation_started();
         }
 
         // Per-request storage stats collector, scoped for the duration of the
-        // command execution so the storage engine records real I/O counters
-        // instead of values inferred from command arguments.
+        // command execution so the storage facade records successful logical
+        // operations after backend outcomes are known.
         // See <https://github.com/arana-db/kiwi/issues/312>.
         let stats_collector: Arc<dyn StorageStatsCollector + Send + Sync> =
             Arc::new(RealStorageStatsCollector::new());
@@ -585,25 +584,23 @@ impl StorageServer {
             request_id, execution_time
         );
 
-        // Record operation completed
-        if let Some(ref _tracker) = metrics_tracker {
-            match result {
-                Ok(_) => {
-                    // TODO: Fix type annotation issue
-                    // tracker.record_operation_success(execution_time).await
-                }
-                Err(_) => {
-                    // TODO: Fix type annotation issue
-                    // tracker.record_operation_failure(execution_time).await
-                }
+        let storage_stats = stats_collector.finish();
+
+        // Record operation outcome and request-local I/O in runtime metrics.
+        if let Some(ref tracker) = metrics_tracker {
+            if result.is_ok() {
+                tracker.record_operation_success(execution_time).await;
+            } else {
+                tracker.record_operation_failure(execution_time).await;
             }
+            tracker.record_storage_stats(&storage_stats).await;
         }
 
         let response = StorageResponse {
             id: request_id,
             result,
             execution_time,
-            storage_stats: stats_collector.finish(),
+            storage_stats,
         };
 
         // Send response back to network runtime
@@ -1384,10 +1381,10 @@ impl StorageServer {
 
         if command.requires_exclusive_storage_access() {
             let _guard = storage.acquire_exclusive_command_access().await;
-            command.execute(&client, Arc::clone(storage));
+            storage.with_storage_perf_context(|| command.execute(&client, Arc::clone(storage)));
         } else {
             let _guard = storage.acquire_shared_command_access().await;
-            command.execute(&client, Arc::clone(storage));
+            storage.with_storage_perf_context(|| command.execute(&client, Arc::clone(storage)));
         }
         Ok(client.take_reply())
     }

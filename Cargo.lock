@@ -455,6 +455,7 @@ dependencies = [
  "parking_lot",
  "resp",
  "serde",
+ "serde_json",
  "tokio",
 ]
 

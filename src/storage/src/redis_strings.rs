@@ -304,6 +304,16 @@ impl Redis {
     /// O(1) for small strings when offset is within current length,
     /// O(M) where M is the length of the value argument for other cases.
     pub fn setrange(&self, key: &[u8], offset: i64, value: &[u8]) -> Result<i32> {
+        self.setrange_with_outcome(key, offset, value)
+            .map(|(length, _changed)| length)
+    }
+
+    pub(crate) fn setrange_with_outcome(
+        &self,
+        key: &[u8],
+        offset: i64,
+        value: &[u8],
+    ) -> Result<(i32, bool)> {
         // Validate offset early to avoid unnecessary database operations
         if offset < 0 {
             return Err(RedisErr {
@@ -357,7 +367,7 @@ impl Redis {
             let current_len = existing_value.len() as i32;
             // If offset is within current string, no modification needed
             if offset <= current_len as i64 {
-                return Ok(current_len);
+                return Ok((current_len, false));
             }
             // If offset is beyond current string, we need to pad
         }
@@ -406,7 +416,7 @@ impl Redis {
         )?;
         batch.commit()?;
 
-        Ok(new_len as i32)
+        Ok((new_len as i32, true))
     }
 
     /// Append a value to a key

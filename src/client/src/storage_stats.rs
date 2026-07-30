@@ -11,7 +11,7 @@
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF KIND, either express or implied.
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
@@ -25,9 +25,9 @@
 //!
 //! The real collector ([`RealStorageStatsCollector`]) is installed once per
 //! storage request via the [`STORAGE_STATS_COLLECTOR`] task-local and read by
-//! the storage engine at the point where reads, writes and deletes actually
-//! happen, so the byte/key counters reflect true I/O rather than values
-//! inferred from Redis command arguments.
+//! the storage facade after backend outcomes are known. Key and byte counters
+//! describe successful logical storage operations and their payload sizes;
+//! RocksDB-specific observations are reported separately when available.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -36,6 +36,7 @@ use serde::{Deserialize, Serialize};
 
 /// Statistics about storage operations for monitoring.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
 pub struct StorageStats {
     /// Number of keys read during the operation
     pub keys_read: u64,
@@ -43,33 +44,53 @@ pub struct StorageStats {
     pub keys_written: u64,
     /// Number of keys deleted during the operation
     pub keys_deleted: u64,
-    /// Size of data read in bytes (key bytes + value bytes)
+    /// Logical payload read in bytes (key bytes + returned value bytes)
     pub bytes_read: u64,
-    /// Size of data written in bytes (key bytes + value bytes)
+    /// Logical payload written in bytes (key bytes + accepted value bytes)
     pub bytes_written: u64,
-    /// Size of data removed by delete operations in bytes
+    /// Logical key bytes affected by successful delete operations
     pub bytes_deleted: u64,
     /// Whether the operation hit a cache (e.g. block/moka cache)
     pub cache_hit: bool,
-    /// RocksDB compaction level accessed
+    /// RocksDB compaction level accessed, when the engine can attribute one
     pub compaction_level: Option<u32>,
+}
+
+impl StorageStats {
+    /// Merge another completed request into this aggregate without wrapping.
+    pub fn merge(&mut self, request: &Self) {
+        self.keys_read = self.keys_read.saturating_add(request.keys_read);
+        self.keys_written = self.keys_written.saturating_add(request.keys_written);
+        self.keys_deleted = self.keys_deleted.saturating_add(request.keys_deleted);
+        self.bytes_read = self.bytes_read.saturating_add(request.bytes_read);
+        self.bytes_written = self.bytes_written.saturating_add(request.bytes_written);
+        self.bytes_deleted = self.bytes_deleted.saturating_add(request.bytes_deleted);
+        self.cache_hit |= request.cache_hit;
+        if request.compaction_level.is_some() {
+            self.compaction_level = request.compaction_level;
+        }
+    }
 }
 
 /// Request-local collector for storage-layer instrumentation.
 ///
-/// Implementations must record the *actual* byte sizes measured by the storage
-/// layer, not sizes inferred from Redis command arguments.
+/// Implementations record sizes observed by the storage facade after the
+/// backend outcome is known, rather than inferring success in command parsing.
 pub trait StorageStatsCollector: Send + Sync {
-    /// Record a storage read. `key_bytes` and `value_bytes` are measured by the
-    /// storage layer.
+    /// Record a successful logical storage read.
     fn record_read(&self, key_bytes: u64, value_bytes: u64);
 
-    /// Record a storage write. `key_bytes` and `value_bytes` are measured after
-    /// the storage layer accepts the mutation.
+    /// Record a logical storage write after the backend accepts the mutation.
     fn record_write(&self, key_bytes: u64, value_bytes: u64);
 
-    /// Record a storage delete. `key_bytes` is measured by the storage layer.
+    /// Record a logical delete after the backend confirms a mutation.
     fn record_delete(&self, key_bytes: u64);
+
+    /// Record that this request was served from a storage cache.
+    fn record_cache_hit(&self) {}
+
+    /// Record the RocksDB compaction level that served this request.
+    fn record_compaction_level(&self, _level: u32) {}
 
     /// Return the accumulated statistics for the request.
     fn finish(&self) -> StorageStats;
@@ -126,16 +147,6 @@ impl RealStorageStatsCollector {
             compaction_level: StdMutex::new(None),
         }
     }
-
-    /// Mark that this request hit a cache (e.g. block/moka cache).
-    pub fn mark_cache_hit(&self) {
-        self.cache_hit.store(true, Ordering::Relaxed);
-    }
-
-    /// Record the RocksDB compaction level that served this request.
-    pub fn set_compaction_level(&self, level: u32) {
-        *self.compaction_level.lock().expect("compaction_level poisoned") = Some(level);
-    }
 }
 
 impl StorageStatsCollector for RealStorageStatsCollector {
@@ -156,6 +167,17 @@ impl StorageStatsCollector for RealStorageStatsCollector {
         self.bytes_deleted.fetch_add(key_bytes, Ordering::Relaxed);
     }
 
+    fn record_cache_hit(&self) {
+        self.cache_hit.store(true, Ordering::Relaxed);
+    }
+
+    fn record_compaction_level(&self, level: u32) {
+        *self
+            .compaction_level
+            .lock()
+            .expect("compaction_level poisoned") = Some(level);
+    }
+
     fn finish(&self) -> StorageStats {
         StorageStats {
             keys_read: self.keys_read.load(Ordering::Relaxed),
@@ -165,7 +187,10 @@ impl StorageStatsCollector for RealStorageStatsCollector {
             bytes_written: self.bytes_written.load(Ordering::Relaxed),
             bytes_deleted: self.bytes_deleted.load(Ordering::Relaxed),
             cache_hit: self.cache_hit.load(Ordering::Relaxed),
-            compaction_level: *self.compaction_level.lock().expect("compaction_level poisoned"),
+            compaction_level: *self
+                .compaction_level
+                .lock()
+                .expect("compaction_level poisoned"),
         }
     }
 }
@@ -189,7 +214,23 @@ pub fn try_collector() -> Option<Arc<dyn StorageStatsCollector + Send + Sync>> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
+
+    struct LegacyCollector;
+
+    impl StorageStatsCollector for LegacyCollector {
+        fn record_read(&self, _key_bytes: u64, _value_bytes: u64) {}
+
+        fn record_write(&self, _key_bytes: u64, _value_bytes: u64) {}
+
+        fn record_delete(&self, _key_bytes: u64) {}
+
+        fn finish(&self) -> StorageStats {
+            StorageStats::default()
+        }
+    }
 
     #[test]
     fn real_collector_accumulates_reads_writes_deletes() {
@@ -212,6 +253,46 @@ mod tests {
     #[test]
     fn noop_yields_empty_stats() {
         assert_eq!(NoopStorageStatsCollector.finish(), StorageStats::default());
+    }
+
+    #[test]
+    fn legacy_collectors_use_default_optional_recorders() {
+        LegacyCollector.record_cache_hit();
+        LegacyCollector.record_compaction_level(3);
+        assert_eq!(LegacyCollector.finish(), StorageStats::default());
+    }
+
+    #[test]
+    fn legacy_serialized_stats_default_new_fields() {
+        let stats: StorageStats = serde_json::from_str(
+            r#"{
+                "keys_read": 1,
+                "keys_written": 2,
+                "keys_deleted": 3,
+                "bytes_read": 4,
+                "bytes_written": 5,
+                "cache_hit": true,
+                "compaction_level": null
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(stats.bytes_deleted, 0);
+        assert_eq!(stats.keys_read, 1);
+        assert!(stats.cache_hit);
+    }
+
+    #[test]
+    fn trait_object_records_cache_and_compaction_details() {
+        let collector: Arc<dyn StorageStatsCollector + Send + Sync> =
+            Arc::new(RealStorageStatsCollector::new());
+
+        collector.record_cache_hit();
+        collector.record_compaction_level(3);
+
+        let stats = collector.finish();
+        assert!(stats.cache_hit);
+        assert_eq!(stats.compaction_level, Some(3));
     }
 
     #[test]

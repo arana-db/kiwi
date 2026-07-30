@@ -81,8 +81,8 @@ pub enum StorageCommand {
 /// creating a dependency cycle. Re-exported here for backward compatibility with
 /// existing `runtime::message::*` importers.
 pub use client::storage_stats::{
-    RealStorageStatsCollector, STORAGE_STATS_COLLECTOR, StorageStats, StorageStatsCollector,
-    NoopStorageStatsCollector, try_collector,
+    NoopStorageStatsCollector, RealStorageStatsCollector, STORAGE_STATS_COLLECTOR, StorageStats,
+    StorageStatsCollector, try_collector,
 };
 
 /// Request sent from network runtime to storage runtime
@@ -792,6 +792,8 @@ pub struct StorageClient {
     message_channel: Arc<MessageChannel>,
     /// Map of pending requests waiting for responses
     pending_requests: Arc<Mutex<HashMap<RequestId, oneshot::Receiver<StorageResponse>>>>,
+    /// Aggregate logical storage I/O from all received responses
+    storage_io_stats: Arc<Mutex<StorageStats>>,
     /// Default timeout for storage requests
     default_timeout: Duration,
     /// Retry configuration
@@ -821,6 +823,7 @@ impl StorageClient {
         Self {
             message_channel,
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            storage_io_stats: Arc::new(Mutex::new(StorageStats::default())),
             default_timeout,
             retry_config,
             circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, Duration::from_secs(30)))),
@@ -842,6 +845,7 @@ impl StorageClient {
         Self {
             message_channel,
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            storage_io_stats: Arc::new(Mutex::new(StorageStats::default())),
             default_timeout,
             retry_config,
             circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, Duration::from_secs(30)))),
@@ -860,6 +864,7 @@ impl StorageClient {
         Self {
             message_channel,
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            storage_io_stats: Arc::new(Mutex::new(StorageStats::default())),
             default_timeout,
             retry_config: RetryConfig::default(),
             circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, Duration::from_secs(30)))),
@@ -876,6 +881,11 @@ impl StorageClient {
     ) -> Result<RespData, crate::error::DualRuntimeError> {
         self.send_request_with_timeout(command, self.default_timeout)
             .await
+    }
+
+    /// Return aggregate logical storage I/O from responses received by this client.
+    pub async fn storage_io_stats(&self) -> StorageStats {
+        self.storage_io_stats.lock().await.clone()
     }
 
     /// Send a storage request with a custom timeout
@@ -1087,12 +1097,18 @@ impl StorageClient {
                 };
 
                 match tokio::time::timeout(timeout, response_receiver).await {
-                    Ok(Ok(response)) => match response.result {
-                        Ok(data) => Ok(data),
-                        Err(storage_err) => Err(
-                            crate::error::DualRuntimeError::from_storage_error(storage_err),
-                        ),
-                    },
+                    Ok(Ok(response)) => {
+                        self.storage_io_stats
+                            .lock()
+                            .await
+                            .merge(&response.storage_stats);
+                        match response.result {
+                            Ok(data) => Ok(data),
+                            Err(storage_err) => Err(
+                                crate::error::DualRuntimeError::from_storage_error(storage_err),
+                            ),
+                        }
+                    }
                     Ok(Err(_)) => {
                         // Response channel was closed
                         Err(crate::error::DualRuntimeError::Channel(
@@ -1620,6 +1636,52 @@ mod tests {
 
         assert!(client.is_healthy());
         assert_eq!(client.pending_request_count().await, 0);
+        assert_eq!(client.storage_io_stats().await, StorageStats::default());
+    }
+
+    #[tokio::test]
+    async fn storage_client_aggregates_stats_from_responses() {
+        let mut channel = MessageChannel::new(4);
+        let mut requests = channel.take_request_receiver().unwrap();
+        let client = StorageClient::new(Arc::new(channel), Duration::from_secs(1));
+
+        let responder = tokio::spawn(async move {
+            let request = requests.recv().await.unwrap();
+            request
+                .response_channel
+                .send(StorageResponse {
+                    id: request.id,
+                    result: Ok(RespData::Integer(1)),
+                    execution_time: Duration::from_millis(1),
+                    storage_stats: StorageStats {
+                        keys_read: 1,
+                        bytes_read: 9,
+                        cache_hit: true,
+                        ..StorageStats::default()
+                    },
+                })
+                .expect("storage client should still be waiting for the response");
+        });
+
+        let result = client
+            .send_request(StorageCommand::Execute {
+                cmd_name: b"get".to_vec(),
+                argv: vec![b"get".to_vec(), b"key".to_vec()],
+            })
+            .await
+            .unwrap();
+
+        responder.await.unwrap();
+        assert_eq!(result, RespData::Integer(1));
+        assert_eq!(
+            client.storage_io_stats().await,
+            StorageStats {
+                keys_read: 1,
+                bytes_read: 9,
+                cache_hit: true,
+                ..StorageStats::default()
+            }
+        );
     }
 
     #[tokio::test]
