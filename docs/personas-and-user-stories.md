@@ -16,8 +16,8 @@
 1. **[事实/证据]** As a 平台/SRE 工程师, I want Redis 8.8.1 exact Oracle 可重复验证 Kiwi 兼容, so that 升级或重构不会在客户端无感知的情况下破坏语义。
    → 映射：`REQ-COMPAT-001`、`REQ-COMPAT-002`、`REQ-COMPAT-003`。
 
-2. **[事实/证据]** As a 平台/SRE 工程师, I want 系统稳定性门禁 G1–G7 全部 PASS 且经用户重新明确批准后才允许进入热层, so that 引入内存状态层之前生产风险已被证明可控。
-   → 映射：`REQ-STABILITY-001`、`REQ-STABILITY-002`、`REQ-STABILITY-005`；门禁 G1–G7（system-stability-gate.md L61–L186）。
+2. **[事实/证据]** As a 平台/SRE 工程师, I want 系统稳定性门禁 G1–G7 全部 PASS 后只提出新的授权请求，并由用户明确批准一个单独的 implementation task, so that Gate PASS、PR 合并或 M7 Ready 都不会被误当成生产实现授权。
+   → 映射：`REQ-STABILITY-001`、`REQ-STABILITY-002`、`REQ-STABILITY-005`、`REQ-STABILITY-006`；门禁 G1–G7 与授权边界（system-stability-gate.md L37、L57、L234–L240）。
 
 3. **[事实/证据]** As a 平台/SRE 工程师, I want Raft 暴露 term/role/leader/commit index/last applied/snapshot/fsync 等指标, so that 排障时无需侵入进程即可定位一致性问题。
    → 映射：`REQ-OBS-002`。
@@ -26,7 +26,10 @@
    → 映射：`REQ-STORAGE-002`；门禁 G2（system-stability-gate.md L80–L97）。
 
 5. **[事实/证据]** As a 平台/SRE 工程师, I want 运维手册覆盖磁盘满/无 Leader/Snapshot 失败/`SUBMIT_UNKNOWN` 处置, so that 故障时有可执行的处置流程而非依赖人工救火。
-   → 映射：门禁 G7（system-stability-gate.md L170–L185）；`REQ-RAFT-008`。
+   → 映射：门禁 G7（system-stability-gate.md L171–L186）；`REQ-RAFT-008`。
+
+6. **[事实/证据]** As a 平台/SRE 工程师, I want Gate Review 绑定可重放证据，并在 M7 前完成许可证、ABI、安全加载和验收合同设计, so that 前置设计能够接受审查而 Redis-derived 生产实现仍保持冻结。
+   → 映射：`REQ-STABILITY-003`、`REQ-STABILITY-004`、`REQ-STABILITY-006`；`REQ-LICENSE-002~008`（仅设计与发布前复核）；门禁前允许项（system-stability-gate.md L21–L27）与 M7 进入条件（L234–L240）。
 
 ---
 
@@ -36,7 +39,7 @@
 
 ### 用户故事
 
-1. **[事实/证据]** As a Redis 迁移用户, I want RESP2 与 RESP3 原始 frame 与 Redis 8.8.1 字节级一致（含二进制 payload、null、error、push、attribute、aggregate 类型）, so that 现有客户端无需改造即可切换。
+1. **[事实/证据]** As a Redis 迁移用户, I want RESP2 与 RESP3 原始 frame 与 Redis 8.8.1 做字节级 differential（含二进制 payload、null、error、push、attribute、aggregate 类型）, so that 我能评估迁移改造并通过兼容矩阵识别仍需处理的差异。
    → 映射：`REQ-COMPAT-002`；门禁 G1（system-stability-gate.md L65–L66）。
 
 2. **[事实/证据]** As a Redis 迁移用户, I want Pipeline 中间错误、partial I/O、连接关闭、Push 交错都有回归测试, so that 高并发/弱网场景下的客户端行为不漂移。
@@ -103,9 +106,9 @@
 
 | 画像 | 主要 REQ 覆盖 | 关联门禁 |
 |---|---|---|
-| 平台/SRE 工程师 | REQ-STABILITY-001~006、REQ-OBS-002、REQ-STORAGE-002、REQ-RAFT-008 | G1–G7（尤其 G2/G7） |
-| Redis 迁移用户 | REQ-COMPAT-001~007 | G1 |
-| 存储/内核开发者 | REQ-STORAGE-001~006 | G2 |
+| 平台/SRE 工程师 | REQ-COMPAT-001~003、REQ-STABILITY-001~006、REQ-OBS-002、REQ-STORAGE-002、REQ-RAFT-008、REQ-LICENSE-002~008（设计/复核） | G1–G7（尤其 G2/G6/G7） |
+| Redis 迁移用户 | REQ-COMPAT-001~004、REQ-COMPAT-006/007 | G1 |
+| 存储/内核开发者 | REQ-STORAGE-001~006；关联 REQ-HOT-001 验收合同 | G2 |
 | QA/稳定性工程师 | REQ-COMPAT-008~010、REQ-RAFT-006~008、REQ-PERF-002/003 | G1/G3/G4/G5 |
 
-> 说明：所有 P2 冻结项（`REQ-HOT-*`、`REQ-LICENSE-002~008`、`REQ-OBS-003`）在当前主线（Cache OFF）中无对应活跃用户故事，仅作为 M7 之后解冻时的待办合同，故未在上述活跃故事中展开。
+> 说明：当前没有任何 P2 **生产实现**用户故事获得授权。M7 前的来源、许可证、ABI、安全加载、可观测性接口和验收合同设计仍是活跃前置工作；上文对 `REQ-HOT-001`、`REQ-LICENSE-002~008` 的关联只表示设计/复核责任，不授权 fork、动态库、loader、发行接入或 Cache ON 数据路径。

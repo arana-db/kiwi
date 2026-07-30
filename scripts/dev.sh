@@ -115,8 +115,14 @@ else
     # Check and setup sccache if available (normal builds)
     if command -v sccache &> /dev/null; then
         export RUSTC_WRAPPER=sccache
-        export CC="sccache cc"
-        export CXX="sccache c++"
+        case "$(uname -s 2>/dev/null || true)" in
+            MINGW*|MSYS*|CYGWIN*)
+                ;;
+            *)
+                export CC="${CC:-sccache cc}"
+                export CXX="${CXX:-sccache c++}"
+                ;;
+        esac
         # sccache doesn't support incremental compilation, so disable it
         export CARGO_INCREMENTAL=0
         unset CARGO_CACHE_RUSTC_INFO
