@@ -1146,3 +1146,148 @@ mod lifecycle_tests {
         safe_cleanup_test_db(&path);
     }
 }
+
+/// Regression tests for GitHub issue #185 ("The timing of Type and Etime checks
+/// is incorrect").
+///
+/// Invariant under test: `Redis::check_type_state` must evaluate the expiration
+/// timestamp (`etime`) BEFORE the stored type tag. An expired key must be
+/// reported as `Stale` (i.e. treated as if it does not exist), even when its
+/// type byte is wrong. A buggy implementation that checked the type first would
+/// return `WRONGTYPE` for an expired key whose type tag is wrong — the exact
+/// Redis-incompatible behavior that #185 fixed.
+///
+/// These are pure unit tests: `Redis` is built with `db: None` (via
+/// `Redis::new`) because `check_type_state` -> `is_stale` -> `is_stale_static`
+/// is fully type-agnostic and never touches the RocksDB handle. No real database
+/// is opened.
+#[cfg(test)]
+mod type_check_state_tests {
+    use std::sync::Arc;
+
+    use chrono::Utc;
+    use kstd::lock_mgr::LockMgr;
+
+    use super::{DataType, Redis, TypeCheckState};
+    use crate::{BgTaskHandler, StorageOptions};
+
+    /// Valid `DataType` discriminants used to forge raw value headers.
+    const TYPE_STRING: u8 = DataType::String as u8; // 0
+    const TYPE_SET: u8 = DataType::Set as u8; // 2
+
+    /// Build a `Redis` instance backed by no RocksDB database.
+    fn new_redis_no_db() -> Redis {
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        Redis::new(
+            Arc::new(StorageOptions::default()),
+            0,
+            Arc::new(bg_task_handler),
+            Arc::new(LockMgr::new(64)),
+        )
+    }
+
+    /// Forge a raw on-disk value that matches `format_base_value::is_stale`:
+    ///   * `type_byte`  at offset 0      (a valid `DataType` tag, 0..=6)
+    ///   * `count`      at offset 1..9    (meta count; only consulted for
+    ///                        Set/Hash/ZSet/List — kept non-zero so those types
+    ///                        are not short-circuited as stale by `count == 0`)
+    ///   * `etime`      in the final 8 bytes (microseconds since epoch).
+    ///                        `etime == 0` means "permanent" (never stale); any
+    ///                        `etime < now` is stale.
+    fn make_value(type_byte: u8, count: u64, etime: u64, total_len: usize) -> Vec<u8> {
+        assert!(
+            total_len >= 8,
+            "value must be long enough to hold the etime field"
+        );
+        let mut v = vec![0u8; total_len];
+        v[0] = type_byte;
+        v[1..9].copy_from_slice(&count.to_le_bytes());
+        v[total_len - 8..total_len].copy_from_slice(&etime.to_le_bytes());
+        v
+    }
+
+    // String value minimum length: TYPE_LENGTH(1) + STRING_VALUE_SUFFIXLENGTH(32) = 33.
+    const STRING_LEN: usize = 40;
+    // Set value minimum length: BASE_META_VALUE_LENGTH = 49.
+    const SET_LEN: usize = 60;
+
+    // 1) CORE REGRESSION for #185: an expired value with a WRONG type tag must be
+    //    `Stale`, never `WRONGTYPE`.
+    #[test]
+    fn expired_value_with_wrong_type_is_stale_not_wrongtype() {
+        let redis = new_redis_no_db();
+        // Expect a Set, but the stored header claims String (wrong tag). A bug
+        // that checks the type byte before etime would answer WRONGTYPE here.
+        let value = make_value(TYPE_STRING, 0, 1, STRING_LEN);
+        let state = redis
+            .check_type_state(&value, DataType::Set)
+            .expect("check_type_state must not error for an expired value");
+        assert_eq!(
+            state,
+            TypeCheckState::Stale,
+            "issue #185: an expired key must be Stale even when its type tag is wrong"
+        );
+    }
+
+    // 2) Expired value with the CORRECT type tag must also be `Stale`.
+    #[test]
+    fn expired_value_with_correct_type_is_stale() {
+        let redis = new_redis_no_db();
+        let value = make_value(TYPE_SET, 1, 1, SET_LEN);
+        let state = redis
+            .check_type_state(&value, DataType::Set)
+            .expect("check_type_state must not error for an expired value");
+        assert_eq!(state, TypeCheckState::Stale);
+    }
+
+    // 3) Non-expired value with a WRONG type tag must be `Err` (WRONGTYPE).
+    #[test]
+    fn not_expired_value_with_wrong_type_is_wrongtype() {
+        let redis = new_redis_no_db();
+        // etime == 0 => permanent (never stale). Header claims String, expect Set.
+        let value = make_value(TYPE_STRING, 0, 0, STRING_LEN);
+        let result = redis.check_type_state(&value, DataType::Set);
+        assert!(
+            result.is_err(),
+            "a non-expired value with a wrong type tag must return WRONGTYPE, got {result:?}"
+        );
+    }
+
+    // 4) Non-expired value with the CORRECT type tag must be `Match`.
+    #[test]
+    fn not_expired_value_with_correct_type_is_match() {
+        let redis = new_redis_no_db();
+        // etime == 0 => permanent (never stale).
+        let value = make_value(TYPE_SET, 1, 0, SET_LEN);
+        let state = redis
+            .check_type_state(&value, DataType::Set)
+            .expect("check_type_state must not error for a valid value");
+        assert_eq!(state, TypeCheckState::Match);
+    }
+
+    // 5) Empty value must be `Missing`.
+    #[test]
+    fn empty_value_is_missing() {
+        let redis = new_redis_no_db();
+        let value: Vec<u8> = Vec::new();
+        let state = redis
+            .check_type_state(&value, DataType::Set)
+            .expect("check_type_state must not error for an empty value");
+        assert_eq!(state, TypeCheckState::Missing);
+    }
+
+    // 6) Robustness: a value whose etime is explicitly in the FUTURE (not merely
+    //    the `etime == 0` permanent sentinel) and whose type tag is correct must
+    //    still be `Match` — i.e. the expiration ordering does not accidentally
+    //    flip a live key to Stale.
+    #[test]
+    fn future_etime_with_correct_type_is_match() {
+        let redis = new_redis_no_db();
+        let future = (Utc::now().timestamp_micros() as u64) + 1_000_000_000;
+        let value = make_value(TYPE_SET, 1, future, SET_LEN);
+        let state = redis
+            .check_type_state(&value, DataType::Set)
+            .expect("check_type_state must not error for a live value");
+        assert_eq!(state, TypeCheckState::Match);
+    }
+}
