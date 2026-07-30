@@ -387,16 +387,30 @@ unknown_lints = "deny"
     let source_crate = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let fixture_crate = root.join("tools/runtime-baseline");
     fs::create_dir_all(fixture_crate.join("src/bin")).expect("fixture crate directory");
+    fs::create_dir_all(fixture_crate.join("schema")).expect("fixture schema directory");
     for file in ["Cargo.toml", "build.rs", "build_support.rs"] {
         fs::copy(source_crate.join(file), fixture_crate.join(file)).expect("fixture build input");
     }
-    for file in ["cli.rs", "lib.rs", "main.rs", "schema.rs", "startup.rs"] {
+    for file in [
+        "cli.rs",
+        "lib.rs",
+        "main.rs",
+        "schema.rs",
+        "startup.rs",
+        "thresholds.rs",
+        "verify.rs",
+    ] {
         fs::copy(
             source_crate.join("src").join(file),
             fixture_crate.join("src").join(file),
         )
         .expect("fixture crate source");
     }
+    fs::copy(
+        source_crate.join("schema/outcome.schema.json"),
+        fixture_crate.join("schema/outcome.schema.json"),
+    )
+    .expect("fixture outcome schema");
     fs::write(
         fixture_crate.join("src/bin/identity.rs"),
         r#"use runtime_baseline::schema::{Publishability, source_dirty};

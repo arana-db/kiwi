@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arana-db.github.io/kiwi/schemas/runtime-baseline/threshold-outcome.schema.json",
+  "title": "RuntimeBaselineThresholdOutcome",
+  "description": "Strict input for one case threshold check. A passing case is not a publishable baseline run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "qps",
+    "p99_ms",
+    "max_latency_ms",
+    "error_rate",
+    "queued_plus_running_max",
+    "cpu_change_ratio",
+    "rss_change_ratio",
+    "threads_delta",
+    "case"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": ".*\\S.*"
+    },
+    "qps": {
+      "type": "number",
+      "minimum": 0
+    },
+    "p99_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "max_latency_ms": {
+      "type": "number",
+      "minimum": 0
+    },
+    "error_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "queued_plus_running_max": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "cpu_change_ratio": {
+      "type": "number",
+      "minimum": -1
+    },
+    "rss_change_ratio": {
+      "type": "number",
+      "minimum": -1
+    },
+    "threads_delta": {
+      "type": "integer"
+    },
+    "case": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "anchor_qps",
+            "anchor_p99_ms",
+            "anchor_max_latency_ms"
+          ],
+          "properties": {
+            "kind": {
+              "const": "normal_load"
+            },
+            "anchor_qps": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "anchor_p99_ms": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "anchor_max_latency_ms": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "error_kinds"
+          ],
+          "properties": {
+            "kind": {
+              "const": "overload_120pct"
+            },
+            "error_kinds": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "pattern": "^\\S(?:.*\\S)?$"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "pause_ms",
+            "resume_drain_ms"
+          ],
+          "properties": {
+            "kind": {
+              "const": "storage_gate"
+            },
+            "pause_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "resume_drain_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "drain_ms"
+          ],
+          "properties": {
+            "kind": {
+              "const": "shutdown"
+            },
+            "drain_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "new_conn_ms",
+            "ping_ms"
+          ],
+          "properties": {
+            "kind": {
+              "const": "slow_storage"
+            },
+            "new_conn_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ping_ms": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
+    }
+  }
+}
