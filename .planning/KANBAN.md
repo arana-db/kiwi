@@ -1,10 +1,10 @@
 # Kiwi Kanban
 
-> 更新日期：2026-07-28
+> 更新日期：2026-07-30
 >
 > 当前里程碑：M1 Redis 8.8.1 Cache OFF compatibility foundation
 >
-> 当前 task 类型：planning-only；方案 A 规划完成并合并后，implementation 另开 task
+> 当前 task：PR `#388` implementation（`feat/rocksdb-build-accel-and-prd`）；已验证远端 Base `0f8d96238860a5c29a5582e461e4cdeb974431b3`、Head `b47cb1eebe098e2d4d2d784020dc283a8d026d28`
 >
 > 当前运行模式：Cache OFF
 >
@@ -12,7 +12,9 @@
 
 ## In Progress
 
-无。本 task 只完成方案 A 的规划落盘，不持有 implementation card。
+| ID | 工作项 | Requirement / Gate 关系 | 当前状态 |
+|---|---|---|---|
+| `PR388-001` | C/C++ sccache 构建接入、跨平台回归探针、PRD/用户故事及 review 一致性修复 | `REQ-STABILITY-003`、`REQ-WORK-001`、`REQ-WORK-003`、`REQ-WORK-005`；跨平台构建修复只维护 G6 CI 的可执行性与证据条件，不构成 Gate 通过证据 | 本地针对性验证通过并形成提交；远端发布状态和新 Head CI 结果以 PR/checks/threads 实时查询为准 |
 
 ## Ready for a separate implementation task
 
@@ -20,7 +22,7 @@
 
 | ID | 工作项 | Requirement / Decision | 前置条件 |
 |---|---|---|---|
-| `M1-001-T2` | Redis 8.8.1 trusted Oracle provenance：primary build、fresh-checkout independent rebuild、binary hash equality、rebuild runtime evidence | `REQ-COMPAT-001`、`REQ-COMPAT-008`、`REQ-COMPAT-009`、`REQ-COMPAT-010`；`D011`、`D012` | 本规划 PR 合并；新 implementation task/worktree；真实双 checkout reproducibility 是卡片内第一道实现门禁，不是启动前置条件 |
+| `M1-001-T2` | Redis 8.8.1 trusted Oracle provenance：primary build、fresh-checkout independent rebuild、binary hash equality、rebuild runtime evidence | `REQ-COMPAT-001`、`REQ-COMPAT-008`、`REQ-COMPAT-009`、`REQ-COMPAT-010`；`D011`、`D012` | PR `#383` 已合并；仍须新建专用 implementation task/worktree；当前 PR `#388` 不替代该任务；真实双 checkout reproducibility 是卡片内第一道实现门禁 |
 | `M1-002` | RESP2/RESP3 持久连接级 raw wire differential harness | `REQ-COMPAT-002`、`REQ-COMPAT-006` | `M1-001-T2` 产生可验证 provenance |
 | `M1-003` | Redis 8.8.1 TCL external-server runner | `REQ-COMPAT-004` | `M1-001-T2` |
 | `M1-004` | redis-rs test-only compatibility crate | `REQ-COMPAT-005`、`REQ-COMPAT-006` | `M1-001-T2` |
@@ -44,14 +46,14 @@
 
 ## Frozen by system stability gate
 
-下列卡片在 `docs/quality/system-stability-gate.md` 全部通过且用户重新批准前不得转入 Ready 或 In Progress。
+下列卡片在 `docs/quality/system-stability-gate.md` 全部通过、M7 前置设计完成审查且用户明确批准对应的单独 implementation task 前，不得转入 Ready 或 In Progress。Gate PASS、PR 合并或里程碑 Ready 均不自动授权生产实现。
 
 | ID | 工作项 | Requirement | Gate | 冻结范围 |
 |---|---|---|---|---|
-| `M7-001` | 建立并修改用于 Kiwi 发行的 Redis fork | `REQ-HOT-002`；`REQ-LICENSE-002` 至 `REQ-LICENSE-008` | System Stability Gate + 用户新批准 | fork 代码、patch、生产构建均禁止 |
-| `M7-002` | Embedded Redis Hot Tier 动态库 C ABI spike | `REQ-HOT-010`、`REQ-HOT-012`；`REQ-LICENSE-003`、`REQ-LICENSE-005`、`REQ-LICENSE-007` | System Stability Gate + 用户新批准 | `.so`、`.dylib`、`.dll`、import/static library 均禁止 |
-| `M7-003` | Kiwi 安全 loader、pairing manifest 和 FFI binding | `REQ-HOT-010`、`REQ-HOT-011`、`REQ-HOT-012` | System Stability Gate + 用户新批准 | 生产 crate 依赖、配置和加载路径均禁止 |
-| `M7-004` | String update-or-invalidate MVP | `REQ-HOT-001`、`REQ-HOT-003` 至 `REQ-HOT-007`、`REQ-HOT-009` | System Stability Gate + 用户新批准 | Cache ON 读写路径禁止 |
+| `M7-001` | 建立并修改用于 Kiwi 发行的 Redis fork | `REQ-HOT-002`；`REQ-LICENSE-002` 至 `REQ-LICENSE-008` | Gate PASS + 单独 implementation task 明确批准 | fork 代码、patch、生产构建均禁止 |
+| `M7-002` | Embedded Redis Hot Tier 动态库 C ABI spike | `REQ-HOT-010`、`REQ-HOT-012`；`REQ-LICENSE-003`、`REQ-LICENSE-005`、`REQ-LICENSE-007` | Gate PASS + 单独 implementation task 明确批准 | `.so`、`.dylib`、`.dll`、import/static library 均禁止 |
+| `M7-003` | Kiwi 安全 loader、pairing manifest 和 FFI binding | `REQ-HOT-010`、`REQ-HOT-011`、`REQ-HOT-012` | Gate PASS + 单独 implementation task 明确批准 | 生产 crate 依赖、配置和加载路径均禁止 |
+| `M7-004` | String update-or-invalidate MVP | `REQ-HOT-001`、`REQ-HOT-003` 至 `REQ-HOT-007`、`REQ-HOT-009` | Gate PASS + 单独 implementation task 明确批准 | Cache ON 读写路径禁止 |
 | `M8-001` | Cache OFF/ON differential 与热层故障注入 | `REQ-HOT-004` 至 `REQ-HOT-008`；`REQ-RAFT-002` | M7 全部资格门禁 | 不得用未实现热层替代当前正确性测试 |
 | `M8-002` | Redis/Kiwi OFF/Kiwi ON 性能与资源基线 | `REQ-PERF-001`、`REQ-PERF-002`、`REQ-PERF-003`；`REQ-OBS-003` | M7/M8 正确性门禁 | 性能工作不得先于语义与故障证明 |
 
@@ -87,9 +89,9 @@
 
 ## WIP 与授权规则
 
-- 同一时间只允许一个 implementation card 处于 In Progress；planning/docs task 不得隐式持有 implementation card。
+- 同一时间只允许一个 implementation card 处于 In Progress；当前为 `PR388-001`，planning/docs task 不得隐式持有 implementation card。
 - 规划批准不授权修改 source、tests、build scripts 或 CI，也不授权 stage/commit/push 实现文件。
 - 从 planning 转 implementation 必须创建新 Codex task、TaskId、worktree、dirty allowlist 和 recovery checkpoint；不能只把 recovery mode 从 `planning` 改成 `implementation`。
 - 冻结草稿不得覆盖、续写、清理或回退；后续实施只读参考并重新审计。
 - `M1-001-T2` 必须先通过真实双 checkout reproducibility；不能把方案 A 降级为 metadata self-attestation。
-- 系统稳定门禁通过后，M7 仍需用户重新明确批准，不能自动启动。
+- 系统稳定门禁通过后，M7 仍需用户明确批准一个单独 implementation task，不能因 Gate PASS、PR 合并或 Ready 状态自动启动。
