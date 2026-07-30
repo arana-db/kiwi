@@ -1196,7 +1196,7 @@ mod type_check_state_tests {
     ///                        `etime < now` is stale.
     fn make_value(type_byte: u8, count: u64, etime: u64, total_len: usize) -> Vec<u8> {
         assert!(
-            total_len >= 8,
+            total_len >= 9,
             "value must be long enough to hold the etime field"
         );
         let mut v = vec![0u8; total_len];
@@ -1247,10 +1247,15 @@ mod type_check_state_tests {
         // etime == 0 => permanent (never stale). Header claims String, expect Set.
         let value = make_value(TYPE_STRING, 0, 0, STRING_LEN);
         let result = redis.check_type_state(&value, DataType::Set);
-        assert!(
-            result.is_err(),
-            "a non-expired value with a wrong type tag must return WRONGTYPE, got {result:?}"
-        );
+        match result {
+            Err(crate::error::Error::RedisErr { message, .. }) => assert_eq!(
+                message,
+                "WRONGTYPE Operation against a key holding the wrong kind of value"
+            ),
+            other => panic!(
+                "a non-expired value with a wrong type tag must return WRONGTYPE, got {other:?}"
+            ),
+        }
     }
 
     // 4) Non-expired value with the CORRECT type tag must be `Match`.
