@@ -454,6 +454,8 @@ dependencies = [
  "async-trait",
  "parking_lot",
  "resp",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -2643,6 +2645,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "chrono",
+ "client",
  "common-macro",
  "conf",
  "crc16",

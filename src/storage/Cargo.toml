@@ -51,6 +51,7 @@ moka = { version = "0.12", features = ["sync"] }
 foyer.workspace = true
 rand.workspace = true
 conf.workspace = true
+client = { path = "../client" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
