@@ -713,15 +713,18 @@ impl Storage {
         Ok(deleted_count)
     }
 
-    /// Find all keys matching the given pattern
+    /// Find all keys matching the given pattern.
+    ///
+    /// Each instance scans its `MetaCF` in ascending key order, so merging the
+    /// per-instance results yields a single globally ordered key list rather
+    /// than a per-instance concatenation.
     pub fn keys(&self, pattern: &[u8]) -> Result<Vec<Vec<u8>>> {
-        let mut all_keys = Vec::new();
-
+        let mut streams = Vec::with_capacity(self.insts.len());
         for inst in &self.insts {
-            all_keys.extend(inst.scan_keys(pattern)?);
+            streams.push(inst.scan_keys(pattern)?.into_iter());
         }
 
-        Ok(all_keys)
+        Ok(crate::merge_iterator::MergingIterator::new(streams, false).collect())
     }
 
     /// Remove all keys from the current database

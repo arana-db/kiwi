@@ -60,3 +60,16 @@ commands:
     tests: []
     known_differences: []
     owner: cmd-keyspace
+  - command: SCAN
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [final-state]
+    known_differences: []
+    owner: cmd-keyspace

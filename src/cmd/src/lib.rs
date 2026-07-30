@@ -66,6 +66,7 @@ pub mod psetex;
 pub mod pttl;
 pub mod randomkey;
 pub mod sadd;
+pub mod scan;
 mod scan_options;
 pub mod scard;
 pub mod sdiff;

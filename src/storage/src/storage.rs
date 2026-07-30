@@ -30,6 +30,7 @@ use crate::expiration_manager::ExpirationManager;
 use crate::format_base_value::DataType;
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
+use crate::storage_scan::{SCAN_CURSOR_STATE_CAPACITY, ScanCursorState};
 use crate::{ColumnFamilyIndex, Redis, StorageOptions, data_type_to_tag};
 use conf::raft_type::{Binlog, OperateType};
 
@@ -103,6 +104,7 @@ pub struct Storage {
     pub ignore_tasks: AtomicBool,
 
     pub cursors_store: Arc<Cache<String, String>>,
+    pub(crate) scan_cursor_states: Arc<Cache<u64, ScanCursorState>>,
 
     // For TTL management
     pub expiration_manager: Option<Arc<ExpirationManager>>,
@@ -131,6 +133,7 @@ impl Storage {
             lock_mgr: Arc::new(LockMgr::new(1000)),
             command_access_gate: Arc::new(RwLock::new(())),
             cursors_store: Arc::new(CacheBuilder::new(1000).build()),
+            scan_cursor_states: Arc::new(CacheBuilder::new(SCAN_CURSOR_STATE_CAPACITY).build()),
             db_instance_num,
             db_id,
             bg_task_handler: None,
@@ -176,6 +179,7 @@ impl Storage {
 
         // Release only the Redis owners held by this Storage. External Arc<Redis>
         // owners remain valid and keep their RocksDB handles alive.
+        self.scan_cursor_states.clear();
         self.insts.clear();
     }
 
@@ -196,6 +200,7 @@ impl Storage {
 
         let db_path = db_path.as_ref();
         let handler_for_redis = Arc::clone(&handler_arc);
+        self.scan_cursor_states.clear();
         self.insts.clear();
         for i in 0..self.db_instance_num {
             let sub_path = db_path.join(i.to_string());

@@ -36,6 +36,7 @@ mod format_lists_data_key;
 
 mod coding;
 mod expiration_manager;
+mod merge_iterator;
 pub mod slot_indexer;
 mod statistics;
 mod util;
@@ -46,6 +47,7 @@ mod redis;
 mod storage_define;
 mod storage_impl;
 mod storage_murmur3;
+mod storage_scan;
 
 // commands
 mod redis_hashes;
