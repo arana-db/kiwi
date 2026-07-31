@@ -145,7 +145,7 @@ PR `#383` 的结果只证明 Oracle 规划闭环，不证明方案 A 已实现�
 2. 只使用普通 fast-forward push 发布同一已验证组合 Head，不使用 force-push 覆盖远端变更。
 3. 等待并复核新 Head CI、GitHub merge 状态和 review thread；CI 失败时先区分 PR 回归、Base 基线与环境问题。
 4. 只有评论对应问题已在新 Head 上修复并具备验证证据时才 Resolve；不自动 merge PR #404。
-5. PR `#383` 的规划历史保持不变，旧六文件 Oracle 草稿以及 v2/v3 过期 merge worktree 继续冻结。
+5. PR `#383` 的规划历史保持不变，包含六个文件的旧 Oracle 草稿以及过期的 v2/v3 merge worktree 继续冻结。
 6. Hot Tier 继续 Frozen；Gate PASS 后仍须用户明确批准一个单独的 implementation task。
 
 ## 恢复检查

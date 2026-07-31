@@ -481,13 +481,13 @@ async fn network_server_rejects_oversized_unauthenticated_request() {
         .write_all(b"$2097152\r\n")
         .await
         .expect("write incomplete bulk header");
-    oversized
+    // The server may close as soon as this write crosses the pre-auth limit.
+    let _ = oversized
         .write_all(&vec![
             b'a';
             resp::parse::MAX_UNAUTHENTICATED_BUFFER_SIZE + 4096
         ])
-        .await
-        .expect("write oversized unauthenticated payload");
+        .await;
 
     let mut byte = [0u8; 1];
     match tokio::time::timeout(Duration::from_secs(1), oversized.read(&mut byte)).await {
