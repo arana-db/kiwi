@@ -18,7 +18,7 @@
 
 - [x] Add parser tests using small private limits for bulk length, aggregate length, exact boundaries, nesting depth, chunked buffer growth, and reset-after-error.
 - [x] Run `cargo +1.97.1-x86_64-pc-windows-msvc test -p resp --lib parse::tests --locked` and confirm the new assertions fail because over-limit frames are incomplete or complete.
-- [x] Add immutable parser limits, pre-append buffer checks, depth-aware aggregate parsing, bounded initial capacity, and fallible incremental reservation.
+- [x] Add immutable parser limits, pre-append buffer checks, depth-aware aggregate parsing, zero declaration-driven allocation, and fallible incremental reservation.
 - [x] Add uniform first-line limits, a decoded-node budget, and a cumulative incomplete-frame parse-work budget after code-quality review.
 - [x] Re-run the parser tests and all `resp` tests; require zero failures.
 - [x] Commit `fix(resp): bound request parsing resources`.
@@ -61,3 +61,21 @@
 - [x] Run `git diff --check` and verify only planned files changed.
 - [x] Complete specification compliance review, then code-quality review, and resolve every important finding.
 - [x] Fast-forward the existing PR #404 head `codex/fix-resp-parser-limits` with the consolidated fix; do not merge it.
+
+### Task 5: Integrate merged PRs #402, #403, #405, and #406
+
+**Files:**
+- Modify: `src/resp/src/parse.rs`
+- Modify: `src/net/src/pipeline.rs`
+- Modify: `src/net/Cargo.toml`
+- Modify: `.planning/STATE.md`
+- Modify: `.planning/KANBAN.md`
+- Modify: the two RESP design/plan records that conflict with merged PR #406
+
+- [x] Fetch `origin/main` at `ed49ab4c3c362ba77111dbcd9791f93ebfce74a4`, verify local `HEAD` still equals remote PR #404 Head `334a235a95c50ca1cdd71927e459a2c6ac5e5bb0`, and merge with `--no-commit --no-ff` so no publication occurs before validation.
+- [x] Resolve the RESP conflict by retaining #404's line, bulk, buffer, node, work, and depth limits while retaining #406's declaration-independent aggregate growth and allocation regressions.
+- [x] Compare the same successfully decoded Array, Map, Set, and Push elements under small and `i32::MAX` declarations; require identical non-zero allocation driven only by decoded elements.
+- [x] Retain PR #403's single outer pipeline timeout, connect it through the real `submit_command` entry point, and retain #404's explicit bounded-channel saturation regression.
+- [x] Run the parser allocation and real `submit_command` virtual-time regressions with `--exact`; require `running 1 test` plus PASS for each.
+- [x] Reconcile STATE, KANBAN, and the overlapping design/plan records so #402, #403, #405, and #406 are recorded as merged and #404 is described only as the remaining bounded-processing extension.
+- [x] Run Windows MSVC `resp` and `net --lib` tests, strict Clippy, `cargo fmt --all -- --check`, `git diff --check`, and changed Linux/WSL tests before any commit or push decision.

@@ -7,13 +7,13 @@
 ## String 结构的存储
 
 
-![img.png](images/01-string编码.png)
+![String 编码结构](images/01-string编码.png)
 
 ## Hash 结构的存储
 
 Hash 类型数据结构由两部分构成，元数据（meta_key，meta_value）和普通数据（data_key，data_value）。每个 Hash 类型数据对应一条元数据，每个 field 对应一条普通数据。具体格式如下图所示。
 
-![img.png](images/01-hash编码.png)
+![Hash 编码结构](images/01-hash编码.png)
 
 元数据中的 key 由前缀保留字段，编码后的 user key 以及后缀保留字段构成，value 中记录了 hash 中元素个数，最新版本号，保留字段，数据写入时间以及数据过期时间。version 字段使用 u64 little-endian 编码，并用于实现秒删功能。
 
@@ -29,13 +29,13 @@ Hash 类型数据结构由两部分构成，元数据（meta_key，meta_value）
 
 set 结构与 hash 类型的存储格式基本相同，也是由元数据和普通数据两部分构成。不同的是，set 类型由于没有 value字段，所以其 data value 中只需要记录保留字段和数据写入时间即可。具体格式如下所示：
 
-![img.png](images/01-set编码.png)
+![Set 编码结构](images/01-set编码.png)
 
 ## List 结构的存储
 
 list 由两部分构成，元数据(meta_key, meta_value), 和普通数据(data_key, data_value)。 元数据中存储的主要是 list 链表的一些信息， 比如说当前 list 链表结点的的数量以及当前 list 链表的版本号和过期时间(用做秒删功能), 还有当前 list 链表的左右边界, 普通数据实际上就是指的 list 中每一个结点中的数据，作为具体最后 RocksDB 落盘的 KV 格式，具体格式如下所示：
 
-![img.png](images/01-list编码.png)
+![List 编码结构](images/01-list编码.png)
 
 元数据中记录了一个 list 的信息，包括 list 元素个数，左右边界 Index，最新 version以及数据写入时间和过期时间。普通数据的 key 拼接了 list key 和 Index，value 记录用户写入数据以及写入时间。
 
@@ -47,7 +47,7 @@ list 由两部分构成，元数据(meta_key, meta_value), 和普通数据(data_
 
 zset 由两部分构成，元数据(meta_key, meta_value) 和普通数据(data_key, data_value)。元数据中存储的主要是 zset 集合的一些信息，比如当前 zset 集合中 member 的数量以及当前 zset 集合的版本号和过期时间（用于秒删功能），而普通数据就是指 zset 中每个 member 以及对应的 score。由于 zset 这种数据结构比较特殊，需要按照 member 排序，也需要按照 score 排序，所以我们会按不同格式存储两份普通数据，在这里称为 member to score 和 score to member。作为最终 RocksDB 落盘的 KV 格式，具体如下：
 
-![img.png](images/01-zset编码.png)
+![ZSet 编码结构](images/01-zset编码.png)
 
 Meta KV 记录的是一个 zset 的元信息，包括集合元素个数，最新版本号，数据写入时间以及数据过期时间。对 zset 类型数据的读写删除操作都需要先获取元数据。
 

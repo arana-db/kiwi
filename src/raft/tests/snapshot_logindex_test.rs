@@ -105,10 +105,10 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
         storage.set(b"test_key", b"test_value")?;
 
         // Force flush to ensure data is persisted to SST
-        if let Some(inst) = storage.insts.first() {
-            if let Some(db) = inst.db() {
-                db.flush().unwrap();
-            }
+        if let Some(inst) = storage.insts.first()
+            && let Some(db) = inst.db()
+        {
+            db.flush().unwrap();
         }
 
         // Simulate binlog write to update collector with (log_index, seqno) mapping

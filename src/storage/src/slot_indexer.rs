@@ -51,11 +51,16 @@ impl SlotIndexer {
     }
 
     /// Placeholder for re-sharding slots functionality.
-    pub fn reshard_slots(&self, _slots: Vec<usize>) {
-        // TODO: Implement the logic for re-sharding slots.
+    ///
+    /// Returns `Err` until the re-sharding logic is implemented (see #397).
+    pub fn reshard_slots(&self, _slots: Vec<usize>) -> Result<(), crate::error::Error> {
+        // TODO(#397): Implement the logic for re-sharding slots.
         // When we implement this method, remove the underscore.
         // Don't forget add unit test.
-        unimplemented!("Resharding logic not implemented yet.");
+        Err(crate::error::Error::System {
+            message: "reshard_slots not implemented yet".into(),
+            location: snafu::location!(),
+        })
     }
 }
 
@@ -89,5 +94,19 @@ mod tests {
         assert_eq!(indexer.get_instance_id(10), 0);
         assert_eq!(indexer.get_instance_id(8), 8);
         assert_eq!(indexer.get_instance_id(15), 5);
+    }
+
+    #[test]
+    fn reshard_slots_returns_explicit_not_implemented_error() {
+        let error = SlotIndexer::new(3)
+            .reshard_slots(vec![1, 2, 3])
+            .expect_err("resharding must remain an explicit unsupported operation");
+
+        match error {
+            crate::error::Error::System { message, .. } => {
+                assert_eq!(message, "reshard_slots not implemented yet");
+            }
+            other => panic!("expected a system error, got {other}"),
+        }
     }
 }

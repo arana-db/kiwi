@@ -43,7 +43,6 @@ struct RespLimits {
     max_buffer_len: usize,
     max_aggregate_len: usize,
     max_nesting_depth: usize,
-    initial_aggregate_capacity: usize,
     /// Maximum RESP nodes materialized by one decoded frame.
     max_decoded_nodes: usize,
     /// Maximum cumulative node visits while an incomplete frame is replayed.
@@ -58,7 +57,6 @@ impl Default for RespLimits {
             max_buffer_len: 1024 * 1024 * 1024,
             max_aggregate_len: i32::MAX as usize,
             max_nesting_depth: 128,
-            initial_aggregate_capacity: 1024,
             max_decoded_nodes: 64 * 1024,
             max_parse_work: 1_000_000,
         }
@@ -178,15 +176,11 @@ impl RespParse {
     fn push_aggregate<'a, T>(
         elements: &mut Vec<T>,
         element: T,
-        total_len: usize,
         input: &'a [u8],
-        limits: &RespLimits,
     ) -> Result<(), nom::Err<nom::error::Error<&'a [u8]>>> {
         if elements.len() == elements.capacity() {
-            let remaining = total_len.saturating_sub(elements.len());
-            let additional = remaining.min(limits.initial_aggregate_capacity).max(1);
             elements
-                .try_reserve(additional)
+                .try_reserve(1)
                 .map_err(|_| Self::resource_limit_error(input))?;
         }
         elements.push(element);
@@ -358,7 +352,7 @@ impl RespParse {
         for _ in 0..len {
             let (new_remaining, element) =
                 Self::parse_resp_data(remaining, limits, depth + 1, parse_work, decoded_nodes)?;
-            Self::push_aggregate(&mut elements, element, len, remaining, limits)?;
+            Self::push_aggregate(&mut elements, element, remaining)?;
             remaining = new_remaining;
         }
 
@@ -515,7 +509,7 @@ impl RespParse {
                 Self::parse_resp_data(remaining, limits, depth + 1, parse_work, decoded_nodes)?;
             let (new_remaining, value) =
                 Self::parse_resp_data(new_remaining, limits, depth + 1, parse_work, decoded_nodes)?;
-            Self::push_aggregate(&mut pairs, (key, value), len, remaining, limits)?;
+            Self::push_aggregate(&mut pairs, (key, value), remaining)?;
             remaining = new_remaining;
         }
 
@@ -552,7 +546,7 @@ impl RespParse {
         for _ in 0..len {
             let (new_remaining, element) =
                 Self::parse_resp_data(remaining, limits, depth + 1, parse_work, decoded_nodes)?;
-            Self::push_aggregate(&mut elements, element, len, remaining, limits)?;
+            Self::push_aggregate(&mut elements, element, remaining)?;
             remaining = new_remaining;
         }
 
@@ -589,7 +583,7 @@ impl RespParse {
         for _ in 0..len {
             let (new_remaining, element) =
                 Self::parse_resp_data(remaining, limits, depth + 1, parse_work, decoded_nodes)?;
-            Self::push_aggregate(&mut elements, element, len, remaining, limits)?;
+            Self::push_aggregate(&mut elements, element, remaining)?;
             remaining = new_remaining;
         }
 
@@ -726,6 +720,9 @@ impl Drop for RespParse {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
     use crate::command::CommandType;
 
     use super::Bytes;
@@ -741,7 +738,6 @@ mod tests {
             max_buffer_len: 32,
             max_aggregate_len: 3,
             max_nesting_depth: 2,
-            initial_aggregate_capacity: 2,
             max_decoded_nodes: 4,
             max_parse_work: 8,
         }
@@ -762,7 +758,6 @@ mod tests {
         assert_eq!(limits.max_buffer_len, 1024 * 1024 * 1024);
         assert_eq!(limits.max_aggregate_len, i32::MAX as usize);
         assert_eq!(limits.max_nesting_depth, 128);
-        assert_eq!(limits.initial_aggregate_capacity, 1024);
         assert_eq!(limits.max_decoded_nodes, 64 * 1024);
         assert_eq!(limits.max_parse_work, 1_000_000);
         assert_eq!(MAX_UNAUTHENTICATED_BUFFER_SIZE, 1024 * 1024);
@@ -945,6 +940,124 @@ mod tests {
             parser.parse(Bytes::from("$4\r\nping\r\n")),
             RespParseResult::Complete(_)
         ));
+    }
+
+    struct MeasuringAllocator;
+
+    // Measurements are thread-local so unrelated parallel tests do not affect the totals.
+    thread_local! {
+        static MEASURE_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+        static ALLOCATED_BYTES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn record_allocation(size: usize) {
+        if MEASURE_ALLOCATIONS.try_with(Cell::get).unwrap_or(false) {
+            let _ = ALLOCATED_BYTES.try_with(|total| {
+                total.set(total.get().saturating_add(size));
+            });
+        }
+    }
+
+    // SAFETY: Every allocation operation is forwarded to System with the original pointer and
+    // layout; the extra bookkeeping only updates non-allocating thread-local Cell values.
+    unsafe impl GlobalAlloc for MeasuringAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            record_allocation(layout.size());
+            // SAFETY: The caller provides the layout required by GlobalAlloc.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            record_allocation(layout.size());
+            // SAFETY: The caller provides the layout required by GlobalAlloc.
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: The pointer and layout are forwarded unchanged from the caller.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            record_allocation(new_size);
+            // SAFETY: The pointer, layout, and requested size are forwarded unchanged.
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+    }
+
+    #[global_allocator]
+    static TEST_ALLOCATOR: MeasuringAllocator = MeasuringAllocator;
+
+    struct AllocationMeasurement;
+
+    impl AllocationMeasurement {
+        fn start() -> Self {
+            ALLOCATED_BYTES.with(|total| total.set(0));
+            MEASURE_ALLOCATIONS.with(|enabled| enabled.set(true));
+            Self
+        }
+
+        fn finish(self) -> usize {
+            MEASURE_ALLOCATIONS.with(|enabled| enabled.set(false));
+            ALLOCATED_BYTES.with(Cell::get)
+        }
+    }
+
+    impl Drop for AllocationMeasurement {
+        fn drop(&mut self) {
+            let _ = MEASURE_ALLOCATIONS.try_with(|enabled| enabled.set(false));
+        }
+    }
+
+    #[test]
+    fn test_partial_aggregate_allocation_is_independent_of_declared_length() {
+        for (aggregate, small_frame, maximum_frame) in [
+            (
+                "Array",
+                b"*2\r\n:1\r\n".as_slice(),
+                b"*2147483647\r\n:1\r\n".as_slice(),
+            ),
+            (
+                "Map",
+                b"%2\r\n:1\r\n:2\r\n".as_slice(),
+                b"%2147483647\r\n:1\r\n:2\r\n".as_slice(),
+            ),
+            (
+                "Set",
+                b"~2\r\n:1\r\n".as_slice(),
+                b"~2147483647\r\n:1\r\n".as_slice(),
+            ),
+            (
+                "Push",
+                b">2\r\n:1\r\n".as_slice(),
+                b">2147483647\r\n:1\r\n".as_slice(),
+            ),
+        ] {
+            let measure_parse_allocation = |frame: &'static [u8]| {
+                let mut parser = RespParse::new(RespVersion::RESP3);
+                parser.buffer.reserve(frame.len());
+                let input = Bytes::from_static(frame);
+
+                let measurement = AllocationMeasurement::start();
+                let result = parser.parse(input);
+                let allocated = measurement.finish();
+
+                assert_eq!(result, RespParseResult::Incomplete, "{aggregate}");
+                allocated
+            };
+
+            let small_allocation = measure_parse_allocation(small_frame);
+            let maximum_allocation = measure_parse_allocation(maximum_frame);
+
+            assert!(
+                small_allocation > 0,
+                "{aggregate} did not parse and retain a complete element"
+            );
+            assert_eq!(
+                maximum_allocation, small_allocation,
+                "{aggregate} allocation depended on its declared length"
+            );
+        }
     }
 
     #[test]
@@ -1334,6 +1447,124 @@ mod tests {
                 RespData::SimpleString(Bytes::from("message")),
             ]))
         );
+    }
+
+    // Regression for #395: untrusted aggregate lengths must not drive allocation size.
+    #[test]
+    fn test_reject_oversized_aggregate_lengths_without_panicking() {
+        for frame in [
+            "*2147483648\r\n",
+            "%2147483648\r\n",
+            "~2147483648\r\n",
+            ">2147483648\r\n",
+            "*9223372036854775807\r\n",
+            "%9223372036854775807\r\n",
+            "~9223372036854775807\r\n",
+            ">9223372036854775807\r\n",
+        ] {
+            let mut parser = RespParse::new(RespVersion::RESP3);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                parser.parse(Bytes::copy_from_slice(frame.as_bytes()))
+            }));
+
+            assert!(
+                matches!(result, Ok(RespParseResult::Error(_))),
+                "expected a parse error for {frame:?}, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_maximum_aggregate_lengths_do_not_preallocate_declared_size() {
+        for frame in [
+            "*2147483647\r\n",
+            "%2147483647\r\n",
+            "~2147483647\r\n",
+            ">2147483647\r\n",
+        ] {
+            let mut parser = RespParse::new(RespVersion::RESP3);
+            assert_eq!(
+                parser.parse(Bytes::copy_from_slice(frame.as_bytes())),
+                RespParseResult::Incomplete,
+                "unexpected parse result for {frame:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_incomplete_aggregate_headers_do_not_allocate_declared_capacity() {
+        for frame in [
+            b"*2147483647\r\n".as_slice(),
+            b"%2147483647\r\n".as_slice(),
+            b"~2147483647\r\n".as_slice(),
+            b">2147483647\r\n".as_slice(),
+        ] {
+            let mut parser = RespParse::new(RespVersion::RESP3);
+            parser.buffer.reserve(frame.len());
+            let input = Bytes::from_static(frame);
+            let measurement = AllocationMeasurement::start();
+            let result = parser.parse(input);
+            let allocated = measurement.finish();
+
+            assert_eq!(result, RespParseResult::Incomplete, "{frame:?}");
+            assert_eq!(
+                allocated, 0,
+                "incomplete aggregate header {frame:?} allocated container storage"
+            );
+        }
+    }
+
+    #[test]
+    fn test_nested_incomplete_aggregate_headers_have_input_bounded_allocation() {
+        let frame = "*2147483647\r\n".repeat(RespLimits::default().max_nesting_depth);
+        let mut parser = RespParse::new(RespVersion::RESP3);
+        parser.buffer.reserve(frame.len());
+        let input = Bytes::copy_from_slice(frame.as_bytes());
+        let measurement = AllocationMeasurement::start();
+        let result = parser.parse(input);
+        let allocated = measurement.finish();
+
+        assert_eq!(result, RespParseResult::Incomplete);
+        assert_eq!(
+            allocated, 0,
+            "nested incomplete headers allocated container storage"
+        );
+    }
+
+    #[test]
+    fn test_accept_aggregate_nesting_at_limit() {
+        let frame = format!(
+            "{}:1\r\n",
+            "*1\r\n".repeat(RespLimits::default().max_nesting_depth)
+        );
+        let mut parser = RespParse::new(RespVersion::RESP2);
+
+        assert!(matches!(
+            parser.parse(Bytes::copy_from_slice(frame.as_bytes())),
+            RespParseResult::Complete(_)
+        ));
+    }
+
+    // Regression for #395: nested aggregate headers must not grow parser resources without bound.
+    #[test]
+    fn test_reject_aggregate_nesting_beyond_limit() {
+        for header in [
+            "*2147483647\r\n",
+            "%2147483647\r\n",
+            "~2147483647\r\n",
+            ">2147483647\r\n",
+        ] {
+            let frame = header.repeat(RespLimits::default().max_nesting_depth + 1);
+            let mut parser = RespParse::new(RespVersion::RESP3);
+
+            assert!(
+                matches!(
+                    parser.parse(Bytes::copy_from_slice(frame.as_bytes())),
+                    RespParseResult::Error(_)
+                ),
+                "aggregate nesting beyond the parser limit must be rejected for {header:?}"
+            );
+        }
     }
 
     #[test]

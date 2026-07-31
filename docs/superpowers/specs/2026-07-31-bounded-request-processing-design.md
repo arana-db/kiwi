@@ -36,8 +36,10 @@ descriptions; adding local locks would not repair the claimed Raft interleaving.
 - `i32::MAX` maximum aggregate item or pair count, matching Redis' multibulk
   header boundary.
 - 128 maximum aggregate nesting depth.
-- At most 1024 elements of initial aggregate reservation, followed by fallible
-  incremental reservation.
+- Aggregate capacity never derives from the declared remaining length. Each
+  successfully decoded element may request only the capacity needed for that
+  element through fallible reservation, preserving merged PR #406's zero
+  declaration-driven allocation contract.
 - At most 65,536 decoded `RespData` nodes in one frame. The `i32::MAX` wire
   count remains accepted as a protocol boundary, but it cannot force that many
   objects to be materialized.
@@ -66,10 +68,11 @@ duplicate command representation is a follow-up API cleanup.
 ## Pipeline Backpressure
 
 The optional pipeline uses `tokio::sync::mpsc::channel` with a minimum capacity
-of one. `submit_command` awaits bounded-channel capacity and applies the existing
-30-second timeout to queue admission as well as response delivery. Channel
-closure remains a distinct error. Statistics report the normalized, real queue
-capacity.
+of one. Merged PR #403 supplies one outer timeout around queue admission and
+response delivery, so saturation cannot consume 30 seconds before starting a
+second response timeout. The real `submit_command` entry point is covered to
+ensure it delegates to that shared budget. Channel closure remains a distinct
+error. Statistics report the normalized, real queue capacity.
 
 ## Error Handling
 
@@ -84,7 +87,8 @@ capacity.
 
 The implementation must prove red-green behavior for oversized first lines and
 length headers, nesting, decoded-node amplification, cumulative incomplete
-aggregate work, chunked buffer growth, parser reset, legacy queue draining, and
-bounded pipeline capacity. Final gates are targeted tests, workspace tests,
+aggregate work, chunked buffer growth, parser reset, legacy queue draining,
+bounded pipeline capacity, declaration-independent aggregate growth, and one
+total pipeline deadline. Final gates are targeted tests, workspace tests,
 strict Clippy, formatting, `git diff --check`, Linux/WSL verification, and
 current PR Head/check reconciliation.

@@ -27,6 +27,8 @@ use storage::storage::Storage;
 use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio::time::timeout;
 
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Configuration for pipeline processing
 #[derive(Debug, Clone)]
 pub struct PipelineConfig {
@@ -119,17 +121,17 @@ pub struct CommandPipeline {
 
 impl CommandPipeline {
     pub fn new(
-        config: PipelineConfig,
+        mut config: PipelineConfig,
         storage: Arc<Storage>,
         cmd_table: Arc<CmdTable>,
         executor: Arc<CmdExecutor>,
     ) -> Self {
+        // Bounded channel enforces backpressure: when the queue is full,
+        // senders await instead of growing the queue unboundedly.
+        // Guard against 0 to avoid unintentional stalls.
         let (command_tx, command_rx, queue_capacity) =
             bounded_command_channel(config.command_queue_size);
-        let config = PipelineConfig {
-            command_queue_size: queue_capacity,
-            ..config
-        };
+        config.command_queue_size = queue_capacity;
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_pipelines));
 
         let pipeline = Self {
@@ -163,17 +165,7 @@ impl CommandPipeline {
             response_tx,
         };
 
-        // Send command to pipeline
-        timeout(Duration::from_secs(30), self.command_tx.send(command))
-            .await
-            .map_err(|_| PipelineError::Timeout)?
-            .map_err(|_| PipelineError::ChannelClosed)?;
-
-        // Wait for response with timeout
-        timeout(Duration::from_secs(30), response_rx)
-            .await
-            .map_err(|_| PipelineError::Timeout)?
-            .map_err(|_| PipelineError::ResponseChannelClosed)
+        send_and_receive(&self.command_tx, command, response_rx, COMMAND_TIMEOUT).await
     }
 
     /// Start the background batch processor
@@ -378,6 +370,7 @@ impl CommandPipeline {
         PipelineStats {
             available_permits: self.semaphore.available_permits(),
             max_concurrent_pipelines: self.config.max_concurrent_pipelines,
+            // The channel is bounded by config.command_queue_size.
             queue_capacity: self.config.command_queue_size,
         }
     }
@@ -402,12 +395,189 @@ pub enum PipelineError {
     Timeout,
 }
 
+async fn send_and_receive(
+    command_tx: &mpsc::Sender<PipelineCommand>,
+    command: PipelineCommand,
+    response_rx: oneshot::Receiver<RespData>,
+    request_timeout: Duration,
+) -> Result<RespData, PipelineError> {
+    timeout(request_timeout, async {
+        command_tx
+            .send(command)
+            .await
+            .map_err(|_| PipelineError::ChannelClosed)?;
+        response_rx
+            .await
+            .map_err(|_| PipelineError::ResponseChannelClosed)
+    })
+    .await
+    .map_err(|_| PipelineError::Timeout)?
+}
+
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
-    use tokio::time::sleep;
+    use tokio::time::{advance, sleep};
+
+    struct TestStream;
+
+    #[async_trait::async_trait]
+    impl client::StreamTrait for TestStream {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+
+        async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+    }
+
+    fn pipeline_command(response_tx: oneshot::Sender<RespData>) -> PipelineCommand {
+        PipelineCommand {
+            data: RespData::Array(Some(Vec::new())),
+            client: Arc::new(Client::new(Box::new(TestStream))),
+            received_at: Instant::now(),
+            response_tx,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn queue_wait_and_response_share_single_deadline() {
+        let (command_tx, mut command_rx) = mpsc::channel(1);
+        let (filler_response_tx, _filler_response_rx) = oneshot::channel();
+        command_tx
+            .send(pipeline_command(filler_response_tx))
+            .await
+            .expect("filler command must fit in the queue");
+
+        let (target_response_tx, target_response_rx) = oneshot::channel();
+        let target_command = pipeline_command(target_response_tx);
+        let submit_task = tokio::spawn(async move {
+            send_and_receive(
+                &command_tx,
+                target_command,
+                target_response_rx,
+                Duration::from_secs(30),
+            )
+            .await
+        });
+        tokio::task::yield_now().await;
+
+        advance(Duration::from_secs(20)).await;
+        let filler_command = command_rx
+            .recv()
+            .await
+            .expect("filler command must remain queued");
+        drop(filler_command);
+        tokio::task::yield_now().await;
+
+        advance(Duration::from_secs(11)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            submit_task.is_finished(),
+            "queue wait and response wait must share one deadline"
+        );
+        let result = submit_task.await.expect("submission task must not panic");
+        assert!(matches!(result, Err(PipelineError::Timeout)));
+
+        let target_command = command_rx
+            .recv()
+            .await
+            .expect("target command must have entered the queue");
+        assert!(
+            target_command
+                .response_tx
+                .send(RespData::SimpleString("late".into()))
+                .is_err(),
+            "timing out must close the target response receiver"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn submit_command_uses_single_30_second_deadline_across_admission_and_response() {
+        let client = Arc::new(Client::new(Box::new(TestStream)));
+        let (command_tx, mut command_rx) = mpsc::channel(1);
+        let pipeline = Arc::new(CommandPipeline {
+            config: PipelineConfig {
+                command_queue_size: 1,
+                ..PipelineConfig::default()
+            },
+            storage: Arc::new(Storage::new(1, 0)),
+            cmd_table: Arc::new(CmdTable::new()),
+            executor: Arc::new(CmdExecutor::new(0, 1)),
+            command_tx: command_tx.clone(),
+            semaphore: Arc::new(Semaphore::new(1)),
+            batch_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        });
+
+        let (blocker_response_tx, _blocker_response_rx) = oneshot::channel();
+        command_tx
+            .send(PipelineCommand {
+                data: RespData::Null,
+                client: Arc::clone(&client),
+                received_at: Instant::now(),
+                response_tx: blocker_response_tx,
+            })
+            .await
+            .expect("filler command must fit in the queue");
+
+        let submit_task = tokio::spawn({
+            let pipeline = Arc::clone(&pipeline);
+            let client = Arc::clone(&client);
+            async move { pipeline.submit_command(RespData::Null, client).await }
+        });
+        tokio::task::yield_now().await;
+
+        advance(Duration::from_secs(20)).await;
+        let blocker = command_rx
+            .recv()
+            .await
+            .expect("filler command must remain queued");
+        drop(blocker);
+        tokio::task::yield_now().await;
+
+        let admitted_command = command_rx
+            .recv()
+            .await
+            .expect("submitted command must enter the queue");
+        advance(Duration::from_secs(9)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            !submit_task.is_finished(),
+            "deadline fired before 30 seconds"
+        );
+
+        advance(Duration::from_secs(2)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            submit_task.is_finished(),
+            "admission and response exceeded the shared 30-second deadline"
+        );
+        assert!(matches!(
+            submit_task.await.expect("submission task must not panic"),
+            Err(PipelineError::Timeout)
+        ));
+        drop(admitted_command);
+    }
+
+    #[tokio::test]
+    async fn zero_command_queue_size_reports_effective_capacity() {
+        let config = PipelineConfig {
+            command_queue_size: 0,
+            ..Default::default()
+        };
+        let pipeline = CommandPipeline::new(
+            config,
+            Arc::new(Storage::new(1, 0)),
+            Arc::new(CmdTable::new()),
+            Arc::new(CmdExecutor::new(1, 1)),
+        );
+
+        assert_eq!(pipeline.command_tx.max_capacity(), 1);
+        assert_eq!(pipeline.stats().queue_capacity, 1);
+    }
 
     #[tokio::test]
     async fn test_pipeline_basic() {

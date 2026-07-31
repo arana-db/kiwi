@@ -4,7 +4,7 @@
 >
 > 当前里程碑：M1 Redis 8.8.1 Cache OFF compatibility foundation
 >
-> 当前 task：`RESP-LIMITS-001` implementation（`codex/fix-resp-parser-limits`）；基线 `main` at `cbc28958f261ae049d67a8b4a9d904d794b37726`
+> 当前 task：PR `#404` integration（远端 `codex/fix-resp-parser-limits`，本地 v4）；最新基线 `main` at `ed49ab4c3c362ba77111dbcd9791f93ebfce74a4`
 >
 > 当前运行模式：Cache OFF
 >
@@ -14,7 +14,7 @@
 
 | ID | 工作项 | Requirement / Gate 关系 | 当前状态 |
 |---|---|---|---|
-| `RESP-LIMITS-001` | 有界 RESP 解析、未认证连接 buffer、parser 历史副本和 optional pipeline 背压 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-STABILITY-002`、`REQ-STABILITY-003`、`REQ-WORK-003` | 实现提交 `b2601883e315746f038620055bc04223d2df30cf` 已 fast-forward 发布到 PR `#404`；待复检最终 Head CI |
+| `RESP-LIMITS-001` | 在已合并 #406 的零声明驱动分配合同上，完成 #404 的有界 RESP 解析、未认证 buffer、parser 历史副本和 optional pipeline 背压 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-STABILITY-002`、`REQ-STABILITY-003`、`REQ-WORK-003` | #402、#403、#405、#406 已合并；v4 已解决最新 base 的 parser/pipeline 冲突，并通过 Windows/WSL 最终验证；当前发布、CI 与 review 状态从 PR #404 实时查询 |
 
 ## Ready for a separate implementation task
 

@@ -80,17 +80,17 @@ pub enum AttemptState {
 }
 
 impl AttemptState {
-    fn from_u8(value: u8) -> Self {
+    fn from_u8(value: u8) -> Option<Self> {
         match value {
-            0 => Self::Offered,
-            1 => Self::ChannelQueued,
-            2 => Self::BatchQueued,
-            3 => Self::WaitingGate,
-            4 => Self::Running,
-            5 => Self::ExecutionFinished,
-            6 => Self::ShutdownRejectedAfterAccept,
-            7 => Self::Abandoned,
-            _ => unreachable!("baseline attempt state is only written from AttemptState"),
+            0 => Some(Self::Offered),
+            1 => Some(Self::ChannelQueued),
+            2 => Some(Self::BatchQueued),
+            3 => Some(Self::WaitingGate),
+            4 => Some(Self::Running),
+            5 => Some(Self::ExecutionFinished),
+            6 => Some(Self::ShutdownRejectedAfterAccept),
+            7 => Some(Self::Abandoned),
+            _ => None,
         }
     }
 
@@ -322,6 +322,7 @@ impl BaselineAttempt {
 
     pub fn state(&self) -> AttemptState {
         AttemptState::from_u8(self.inner.state.load(Ordering::Acquire))
+            .unwrap_or(AttemptState::Abandoned)
     }
 
     /// Irrevocably reject a physical attempt before the request channel accepts it.
@@ -1012,6 +1013,45 @@ mod tests {
             0,
             BaselineObserverHandle::new(observer),
         )
+    }
+
+    #[test]
+    fn attempt_state_decodes_every_valid_discriminant() {
+        let states = [
+            AttemptState::Offered,
+            AttemptState::ChannelQueued,
+            AttemptState::BatchQueued,
+            AttemptState::WaitingGate,
+            AttemptState::Running,
+            AttemptState::ExecutionFinished,
+            AttemptState::ShutdownRejectedAfterAccept,
+            AttemptState::Abandoned,
+        ];
+
+        for state in states {
+            assert_eq!(AttemptState::from_u8(state as u8), Some(state));
+        }
+    }
+
+    #[test]
+    fn attempt_state_rejects_unknown_discriminant() {
+        assert_eq!(AttemptState::from_u8(8), None);
+        assert_eq!(AttemptState::from_u8(u8::MAX), None);
+    }
+
+    #[test]
+    fn attempt_state_accessor_falls_back_to_abandoned_for_unknown_raw_state() {
+        let observer = Arc::new(RecordingObserver::default());
+        let attempt = attempt(observer);
+
+        attempt.inner.state.store(u8::MAX, Ordering::Release);
+        assert_eq!(attempt.state(), AttemptState::Abandoned);
+
+        // Restore a valid pre-accept state so Drop follows the ordinary path.
+        attempt
+            .inner
+            .state
+            .store(AttemptState::Offered as u8, Ordering::Release);
     }
 
     #[test]
@@ -1912,7 +1952,7 @@ mod tests {
         source.transition(AttemptState::ChannelQueued).unwrap();
 
         assert_eq!(
-            AttemptState::from_u8(target_inner.state.load(Ordering::Acquire)),
+            AttemptState::from_u8(target_inner.state.load(Ordering::Acquire)).unwrap(),
             AttemptState::Abandoned
         );
         assert!(target_handle.failed());

@@ -51,7 +51,7 @@ fmt-check:
 	@cargo fmt --manifest-path ./Cargo.toml --all -- --check
 
 lint:
-	@cargo clippy --manifest-path ./Cargo.toml --all-features --workspace -- -D warnings -D clippy::unwrap_used
+	@cargo clippy --manifest-path ./Cargo.toml --all-features --workspace --all-targets -- -D warnings -D clippy::unwrap_used
 
 standalone:
 	@$(DEV) build
