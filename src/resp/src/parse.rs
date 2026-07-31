@@ -64,6 +64,9 @@ impl Default for RespParse {
 }
 
 impl RespParse {
+    const MAX_AGGREGATE_LENGTH: i64 = i32::MAX as i64;
+    const MAX_AGGREGATE_NESTING_DEPTH: usize = 128;
+
     pub fn new(version: RespVersion) -> Self {
         Self {
             version,
@@ -80,6 +83,34 @@ impl RespParse {
 
     pub fn set_version(&mut self, version: RespVersion) {
         self.version = version;
+    }
+
+    fn validate_aggregate_length(
+        input: &[u8],
+        len: i64,
+    ) -> Result<(), nom::Err<nom::error::Error<&[u8]>>> {
+        if len > Self::MAX_AGGREGATE_LENGTH {
+            return Err(nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Verify,
+            )));
+        }
+
+        Ok(())
+    }
+
+    fn nested_aggregate_depth(
+        input: &[u8],
+        depth: usize,
+    ) -> Result<usize, nom::Err<nom::error::Error<&[u8]>>> {
+        if depth >= Self::MAX_AGGREGATE_NESTING_DEPTH {
+            return Err(nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Verify,
+            )));
+        }
+
+        Ok(depth + 1)
     }
 
     /// Detect protocol version from the first byte of input
@@ -195,7 +226,7 @@ impl RespParse {
         ))
     }
 
-    fn parse_array(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_array(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
         let (input, _) = char('*')(input)?;
         let mut mut_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -211,11 +242,12 @@ impl RespParse {
             return Ok((input, RespData::Array(None)));
         }
 
+        Self::validate_aggregate_length(input, len)?;
         let mut remaining = input;
-        let mut elements = Vec::with_capacity(len as usize);
+        let mut elements = Vec::new();
 
         for _ in 0..len {
-            let (new_remaining, element) = Self::parse_resp_data(remaining)?;
+            let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
             elements.push(element);
             remaining = new_remaining;
         }
@@ -336,7 +368,7 @@ impl RespParse {
         ))
     }
 
-    fn parse_map(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_map(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
         let (input, _) = char('%')(input)?;
         let mut map_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -352,12 +384,13 @@ impl RespParse {
             return Ok((input, RespData::Map(vec![])));
         }
 
+        Self::validate_aggregate_length(input, len)?;
         let mut remaining = input;
-        let mut pairs = Vec::with_capacity(len as usize);
+        let mut pairs = Vec::new();
 
         for _ in 0..len {
-            let (new_remaining, key) = Self::parse_resp_data(remaining)?;
-            let (new_remaining, value) = Self::parse_resp_data(new_remaining)?;
+            let (new_remaining, key) = Self::parse_resp_data(remaining, depth)?;
+            let (new_remaining, value) = Self::parse_resp_data(new_remaining, depth)?;
             pairs.push((key, value));
             remaining = new_remaining;
         }
@@ -365,7 +398,7 @@ impl RespParse {
         Ok((remaining, RespData::Map(pairs)))
     }
 
-    fn parse_set(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_set(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
         let (input, _) = char('~')(input)?;
         let mut map_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -381,11 +414,12 @@ impl RespParse {
             return Ok((input, RespData::Set(vec![])));
         }
 
+        Self::validate_aggregate_length(input, len)?;
         let mut remaining = input;
-        let mut elements = Vec::with_capacity(len as usize);
+        let mut elements = Vec::new();
 
         for _ in 0..len {
-            let (new_remaining, element) = Self::parse_resp_data(remaining)?;
+            let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
             elements.push(element);
             remaining = new_remaining;
         }
@@ -393,7 +427,7 @@ impl RespParse {
         Ok((remaining, RespData::Set(elements)))
     }
 
-    fn parse_push(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_push(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
         let (input, _) = char('>')(input)?;
         let mut map_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -409,11 +443,12 @@ impl RespParse {
             return Ok((input, RespData::Push(vec![])));
         }
 
+        Self::validate_aggregate_length(input, len)?;
         let mut remaining = input;
-        let mut elements = Vec::with_capacity(len as usize);
+        let mut elements = Vec::new();
 
         for _ in 0..len {
-            let (new_remaining, element) = Self::parse_resp_data(remaining)?;
+            let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
             elements.push(element);
             remaining = new_remaining;
         }
@@ -421,7 +456,7 @@ impl RespParse {
         Ok((remaining, RespData::Push(elements)))
     }
 
-    fn parse_resp_data(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_resp_data(input: &[u8], aggregate_depth: usize) -> IResult<&[u8], RespData> {
         if input.is_empty() {
             return Err(nom::Err::Incomplete(nom::Needed::Unknown));
         }
@@ -431,7 +466,7 @@ impl RespParse {
             b'-' => Self::parse_error(input),
             b':' => Self::parse_integer(input),
             b'$' => Self::parse_bulk_string(input),
-            b'*' => Self::parse_array(input),
+            b'*' => Self::parse_array(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
             // RESP3 types
             b'_' => Self::parse_null(input),
             b'#' => Self::parse_boolean(input),
@@ -439,9 +474,9 @@ impl RespParse {
             b'(' => Self::parse_big_number(input),
             b'!' => Self::parse_bulk_error(input),
             b'=' => Self::parse_verbatim_string(input),
-            b'%' => Self::parse_map(input),
-            b'~' => Self::parse_set(input),
-            b'>' => Self::parse_push(input),
+            b'%' => Self::parse_map(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
+            b'~' => Self::parse_set(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
+            b'>' => Self::parse_push(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
             _ => Self::parse_inline(input),
         }
     }
@@ -453,7 +488,7 @@ impl RespParse {
             return RespParseResult::Incomplete;
         }
 
-        match Self::parse_resp_data(&self.buffer) {
+        match Self::parse_resp_data(&self.buffer, 0) {
             Ok((remaining, resp_data)) => {
                 let consumed = self.buffer.len() - remaining.len();
                 self.buffer.advance(consumed);
@@ -514,10 +549,80 @@ impl Drop for RespParse {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
     use crate::command::CommandType;
 
     use super::Bytes;
     use super::{Parse, RespData, RespParse, RespParseResult, RespVersion};
+
+    struct MeasuringAllocator;
+
+    // Measurements are thread-local so unrelated parallel tests do not affect the totals.
+    thread_local! {
+        static MEASURE_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+        static ALLOCATED_BYTES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn record_allocation(size: usize) {
+        if MEASURE_ALLOCATIONS.try_with(Cell::get).unwrap_or(false) {
+            let _ = ALLOCATED_BYTES.try_with(|total| {
+                total.set(total.get().saturating_add(size));
+            });
+        }
+    }
+
+    // SAFETY: Every allocation operation is forwarded to System with the original pointer and
+    // layout; the extra bookkeeping only updates non-allocating thread-local Cell values.
+    unsafe impl GlobalAlloc for MeasuringAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            record_allocation(layout.size());
+            // SAFETY: The caller provides the layout required by GlobalAlloc.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            record_allocation(layout.size());
+            // SAFETY: The caller provides the layout required by GlobalAlloc.
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: The pointer and layout are forwarded unchanged from the caller.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            record_allocation(new_size);
+            // SAFETY: The pointer, layout, and requested size are forwarded unchanged.
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+    }
+
+    #[global_allocator]
+    static TEST_ALLOCATOR: MeasuringAllocator = MeasuringAllocator;
+
+    struct AllocationMeasurement;
+
+    impl AllocationMeasurement {
+        fn start() -> Self {
+            ALLOCATED_BYTES.with(|total| total.set(0));
+            MEASURE_ALLOCATIONS.with(|enabled| enabled.set(true));
+            Self
+        }
+
+        fn finish(self) -> usize {
+            MEASURE_ALLOCATIONS.with(|enabled| enabled.set(false));
+            ALLOCATED_BYTES.with(Cell::get)
+        }
+    }
+
+    impl Drop for AllocationMeasurement {
+        fn drop(&mut self) {
+            let _ = MEASURE_ALLOCATIONS.try_with(|enabled| enabled.set(false));
+        }
+    }
 
     #[test]
     fn test_parse_simple_string_ok() {
@@ -906,6 +1011,124 @@ mod tests {
                 RespData::SimpleString(Bytes::from("message")),
             ]))
         );
+    }
+
+    // Regression for #395: untrusted aggregate lengths must not drive allocation size.
+    #[test]
+    fn test_reject_oversized_aggregate_lengths_without_panicking() {
+        for frame in [
+            "*2147483648\r\n",
+            "%2147483648\r\n",
+            "~2147483648\r\n",
+            ">2147483648\r\n",
+            "*9223372036854775807\r\n",
+            "%9223372036854775807\r\n",
+            "~9223372036854775807\r\n",
+            ">9223372036854775807\r\n",
+        ] {
+            let mut parser = RespParse::new(RespVersion::RESP3);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                parser.parse(Bytes::copy_from_slice(frame.as_bytes()))
+            }));
+
+            assert!(
+                matches!(result, Ok(RespParseResult::Error(_))),
+                "expected a parse error for {frame:?}, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_maximum_aggregate_lengths_do_not_preallocate_declared_size() {
+        for frame in [
+            "*2147483647\r\n",
+            "%2147483647\r\n",
+            "~2147483647\r\n",
+            ">2147483647\r\n",
+        ] {
+            let mut parser = RespParse::new(RespVersion::RESP3);
+            assert_eq!(
+                parser.parse(Bytes::copy_from_slice(frame.as_bytes())),
+                RespParseResult::Incomplete,
+                "unexpected parse result for {frame:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_incomplete_aggregate_headers_do_not_allocate_declared_capacity() {
+        for frame in [
+            b"*2147483647\r\n".as_slice(),
+            b"%2147483647\r\n".as_slice(),
+            b"~2147483647\r\n".as_slice(),
+            b">2147483647\r\n".as_slice(),
+        ] {
+            let mut parser = RespParse::new(RespVersion::RESP3);
+            parser.buffer.reserve(frame.len());
+            let input = Bytes::from_static(frame);
+            let measurement = AllocationMeasurement::start();
+            let result = parser.parse(input);
+            let allocated = measurement.finish();
+
+            assert_eq!(result, RespParseResult::Incomplete, "{frame:?}");
+            assert_eq!(
+                allocated, 0,
+                "incomplete aggregate header {frame:?} allocated container storage"
+            );
+        }
+    }
+
+    #[test]
+    fn test_nested_incomplete_aggregate_headers_have_input_bounded_allocation() {
+        let frame = "*2147483647\r\n".repeat(RespParse::MAX_AGGREGATE_NESTING_DEPTH);
+        let mut parser = RespParse::new(RespVersion::RESP3);
+        parser.buffer.reserve(frame.len());
+        let input = Bytes::copy_from_slice(frame.as_bytes());
+        let measurement = AllocationMeasurement::start();
+        let result = parser.parse(input);
+        let allocated = measurement.finish();
+
+        assert_eq!(result, RespParseResult::Incomplete);
+        assert_eq!(
+            allocated, 0,
+            "nested incomplete headers allocated container storage"
+        );
+    }
+
+    #[test]
+    fn test_accept_aggregate_nesting_at_limit() {
+        let frame = format!(
+            "{}:1\r\n",
+            "*1\r\n".repeat(RespParse::MAX_AGGREGATE_NESTING_DEPTH)
+        );
+        let mut parser = RespParse::new(RespVersion::RESP2);
+
+        assert!(matches!(
+            parser.parse(Bytes::copy_from_slice(frame.as_bytes())),
+            RespParseResult::Complete(_)
+        ));
+    }
+
+    // Regression for #395: nested aggregate headers must not grow parser resources without bound.
+    #[test]
+    fn test_reject_aggregate_nesting_beyond_limit() {
+        for header in [
+            "*2147483647\r\n",
+            "%2147483647\r\n",
+            "~2147483647\r\n",
+            ">2147483647\r\n",
+        ] {
+            let frame = header.repeat(RespParse::MAX_AGGREGATE_NESTING_DEPTH + 1);
+            let mut parser = RespParse::new(RespVersion::RESP3);
+
+            assert!(
+                matches!(
+                    parser.parse(Bytes::copy_from_slice(frame.as_bytes())),
+                    RespParseResult::Error(_)
+                ),
+                "aggregate nesting beyond the parser limit must be rejected for {header:?}"
+            );
+        }
     }
 
     #[test]
