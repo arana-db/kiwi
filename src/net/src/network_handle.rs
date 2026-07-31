@@ -33,6 +33,7 @@ use log::{debug, error, warn};
 use resp::encode::RespEncoder;
 use resp::{Parse, RespData, RespEncode, RespParseResult};
 use tokio::select;
+use tokio_util::sync::CancellationToken;
 
 use crate::executor_ext::CmdExecutorNetworkExt;
 use crate::storage_client::StorageClient;
@@ -51,6 +52,28 @@ pub async fn process_network_connection(
     executor: Arc<CmdExecutor>,
     leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 ) -> std::io::Result<()> {
+    process_network_connection_until_cancelled(
+        client,
+        storage_client,
+        cmd_table,
+        executor,
+        leader_gate,
+        CancellationToken::new(),
+    )
+    .await
+}
+
+/// Process a network connection until cancellation is observed at a safe read
+/// boundary. Once a read completes, every command from that read is allowed to
+/// reach a terminal result before cancellation is checked again.
+pub async fn process_network_connection_until_cancelled(
+    client: Arc<Client>,
+    storage_client: Arc<StorageClient>,
+    cmd_table: Arc<CmdTable>,
+    executor: Arc<CmdExecutor>,
+    leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
+    shutdown: CancellationToken,
+) -> std::io::Result<()> {
     let mut buf = vec![0; 4096]; // Increased buffer size for better performance
     let mut resp_parser = resp::RespParse::new(client.resp_version());
     let mut pending_commands = Vec::new();
@@ -59,6 +82,12 @@ pub async fn process_network_connection(
 
     loop {
         select! {
+            biased;
+
+            _ = shutdown.cancelled() => {
+                debug!("Connection cancelled before next read");
+                return Ok(());
+            }
             result = client.read(&mut buf) => {
                 match result {
                     Ok(n) => {
@@ -73,12 +102,14 @@ pub async fn process_network_connection(
                                     cmd_table.clone(),
                                     executor.clone(),
                                     leader_gate.clone(),
+                                    &shutdown,
                                 ).await;
                             }
                             return Ok(());
                         }
 
                         debug!("Received {} bytes from client", n);
+                        let mut shutdown_after_current_read = false;
 
                         // Parse RESP data with support for multiple commands
                         let mut parse_result = resp_parser.parse(Bytes::copy_from_slice(&buf[..n]));
@@ -93,13 +124,14 @@ pub async fn process_network_connection(
 
                                         // Check if we should process the batch
                                         if should_process_batch(&pending_commands) {
-                                            process_command_batch(
+                                            shutdown_after_current_read |= process_command_batch(
                                                 &pending_commands,
                                                 client.clone(),
                                                 storage_client.clone(),
                                                 cmd_table.clone(),
                                                 executor.clone(),
                                                 leader_gate.clone(),
+                                                &shutdown,
                                             ).await;
                                             pending_commands.clear();
                                         }
@@ -121,15 +153,21 @@ pub async fn process_network_connection(
 
                         // Process any remaining commands if we have a complete batch
                         if !pending_commands.is_empty() && should_flush_batch(&pending_commands) {
-                            process_command_batch(
+                            shutdown_after_current_read |= process_command_batch(
                                 &pending_commands,
                                 client.clone(),
                                 storage_client.clone(),
                                 cmd_table.clone(),
                                 executor.clone(),
                                 leader_gate.clone(),
+                                &shutdown,
                             ).await;
                             pending_commands.clear();
+                        }
+
+                        if shutdown_after_current_read || shutdown.is_cancelled() {
+                            debug!("Connection cancelled after completing the current socket read");
+                            return Ok(());
                         }
                     }
                     Err(e) => {
@@ -335,7 +373,8 @@ pub fn is_write_command(cmd: &str) -> bool {
     )
 }
 
-/// Process a batch of commands, potentially in parallel for read operations
+/// Process every command in a batch to a terminal result. If shutdown interrupts
+/// a response write, subsequent responses are suppressed and `true` is returned.
 async fn process_command_batch(
     commands: &[ParsedCommand],
     client: Arc<Client>,
@@ -343,8 +382,10 @@ async fn process_command_batch(
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
     leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
-) {
+    shutdown: &CancellationToken,
+) -> bool {
     debug!("Processing command batch of {} commands", commands.len());
+    let mut response_writes_cancelled = false;
 
     // For now, process commands sequentially to maintain order
     // TODO: Implement parallel processing for read-only commands
@@ -354,30 +395,28 @@ async fn process_command_batch(
         client.set_argv(&command.argv);
 
         // Auth check: deny non-NO_AUTH commands when not authenticated
+        let mut auth_rejected = false;
         if !client.is_authenticated() {
             let cmd_name_str = String::from_utf8_lossy(&command.cmd_name).to_lowercase();
             if let Some(cmd) = cmd_table.get(&cmd_name_str)
                 && !cmd.has_flag(CmdFlags::NO_AUTH)
             {
                 client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
-                let response = client.take_reply();
-                let encoder_version = client.resp_version();
-                let mut encoder = RespEncoder::new(encoder_version);
-                encoder.encode_resp_data(&response);
-                let _ = client.write(encoder.get_response().as_ref()).await;
-                continue;
+                auth_rejected = true;
             }
         }
 
         // Handle the command
-        handle_network_command(
-            client.clone(),
-            storage_client.clone(),
-            cmd_table.clone(),
-            executor.clone(),
-            leader_gate.clone(),
-        )
-        .await;
+        if !auth_rejected {
+            handle_network_command(
+                client.clone(),
+                storage_client.clone(),
+                cmd_table.clone(),
+                executor.clone(),
+                leader_gate.clone(),
+            )
+            .await;
+        }
 
         // Send the response immediately for pipelining
         let response = client.take_reply();
@@ -386,8 +425,25 @@ async fn process_command_batch(
         let encoder_version = client.resp_version();
         let mut encoder = RespEncoder::new(encoder_version);
         encoder.encode_resp_data(&response);
+        let encoded_response = encoder.get_response();
 
-        let write_result = client.write(encoder.get_response().as_ref()).await;
+        if response_writes_cancelled {
+            continue;
+        }
+
+        let write_result = tokio::select! {
+            biased;
+
+            _ = shutdown.cancelled() => {
+                response_writes_cancelled = true;
+                None
+            }
+            result = client.write(encoded_response.as_ref()) => Some(result),
+        };
+        let Some(write_result) = write_result else {
+            continue;
+        };
+
         match write_result {
             Ok(_) => debug!("Pipelined response sent successfully"),
             Err(e) => {
@@ -396,6 +452,8 @@ async fn process_command_batch(
             }
         }
     }
+
+    response_writes_cancelled
 }
 
 /// Enhanced error response generation for storage failures
@@ -488,11 +546,40 @@ fn generate_storage_error_response(error: &DualRuntimeError, command: &str) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use client::StreamTrait;
     use cmd::table::create_command_table;
     use executor::CmdExecutorBuilder;
     use runtime::{MessageChannel, StorageClient as RuntimeStorageClient};
+    use std::future::pending;
     use std::sync::Arc;
     use std::time::Duration;
+    use tokio::sync::Semaphore;
+
+    struct BlockingWriteStream {
+        inbound: Option<Vec<u8>>,
+        write_started: Arc<Semaphore>,
+    }
+
+    #[async_trait]
+    impl StreamTrait for BlockingWriteStream {
+        async fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            let Some(inbound) = self.inbound.take() else {
+                return pending::<Result<usize, std::io::Error>>().await;
+            };
+            assert!(
+                inbound.len() <= buf.len(),
+                "test payload exceeds read buffer"
+            );
+            buf[..inbound.len()].copy_from_slice(&inbound);
+            Ok(inbound.len())
+        }
+
+        async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
+            self.write_started.add_permits(1);
+            pending::<Result<usize, std::io::Error>>().await
+        }
+    }
 
     fn create_test_components() -> (
         Arc<crate::storage_client::StorageClient>,
@@ -519,6 +606,86 @@ mod tests {
         // For now, we'll just test that the storage client is healthy
         // without creating actual network connections
         assert!(storage_client.is_healthy());
+    }
+
+    #[tokio::test]
+    async fn shutdown_unblocks_response_write_and_finishes_commands_from_same_read() {
+        let write_started = Arc::new(Semaphore::new(0));
+        let client = Arc::new(Client::new(Box::new(BlockingWriteStream {
+            inbound: Some(b"*1\r\n$4\r\nPING\r\n*2\r\n$4\r\nAUTH\r\n$6\r\nsecret\r\n".to_vec()),
+            write_started: write_started.clone(),
+        })));
+        let (storage_client, _cmd_table, executor) = create_test_components();
+        let cmd_table = Arc::new(create_command_table(Arc::new(|| {
+            Some("secret".to_string())
+        })));
+        let shutdown = CancellationToken::new();
+        let connection_task = tokio::spawn(process_network_connection_until_cancelled(
+            client.clone(),
+            storage_client,
+            cmd_table,
+            executor,
+            None,
+            shutdown.clone(),
+        ));
+
+        let write_permit = tokio::time::timeout(Duration::from_secs(1), write_started.acquire())
+            .await
+            .expect("first response write did not start")
+            .expect("write-start semaphore closed");
+        drop(write_permit);
+        shutdown.cancel();
+
+        tokio::time::timeout(Duration::from_secs(1), connection_task)
+            .await
+            .expect("connection stayed blocked in response write after shutdown")
+            .expect("connection task panicked")
+            .expect("connection processing failed");
+        assert!(
+            client.is_authenticated(),
+            "AUTH from the same socket read did not reach a terminal result"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_unblocks_noauth_write_and_finishes_commands_from_same_read() {
+        let write_started = Arc::new(Semaphore::new(0));
+        let client = Arc::new(Client::new(Box::new(BlockingWriteStream {
+            inbound: Some(
+                b"*2\r\n$3\r\nGET\r\n$3\r\nkey\r\n*2\r\n$4\r\nAUTH\r\n$6\r\nsecret\r\n".to_vec(),
+            ),
+            write_started: write_started.clone(),
+        })));
+        let (storage_client, _cmd_table, executor) = create_test_components();
+        let cmd_table = Arc::new(create_command_table(Arc::new(|| {
+            Some("secret".to_string())
+        })));
+        let shutdown = CancellationToken::new();
+        let connection_task = tokio::spawn(process_network_connection_until_cancelled(
+            client.clone(),
+            storage_client,
+            cmd_table,
+            executor,
+            None,
+            shutdown.clone(),
+        ));
+
+        let write_permit = tokio::time::timeout(Duration::from_secs(1), write_started.acquire())
+            .await
+            .expect("NOAUTH response write did not start")
+            .expect("write-start semaphore closed");
+        drop(write_permit);
+        shutdown.cancel();
+
+        tokio::time::timeout(Duration::from_secs(1), connection_task)
+            .await
+            .expect("connection stayed blocked in NOAUTH response write after shutdown")
+            .expect("connection task panicked")
+            .expect("connection processing failed");
+        assert!(
+            client.is_authenticated(),
+            "AUTH after the rejected command did not reach a terminal result"
+        );
     }
 
     #[test]

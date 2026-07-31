@@ -22,7 +22,7 @@ use conf::raft_type::{Binlog, BinlogEntry, OperateType};
 use storage::slot_indexer::key_to_slot_id;
 use tonic::{Request, Response as TonicResponse, Status};
 
-use crate::node::RaftApp;
+use crate::node::{ClientWriteError, RaftApp};
 use crate::raft_proto::{
     LeaderRequest, LeaderResponse, MembersRequest, MembersResponse, MetricsRequest,
     MetricsResponse, NodeConfig, ReadRequest, ReadResponse, Response as ProtoResponse,
@@ -117,6 +117,10 @@ impl RaftClientService for RaftClientServiceImpl {
                     response: Some(proto_response),
                     log_id,
                 }))
+            }
+            Err(ClientWriteError::InvalidBinlog(e)) => {
+                log::warn!("Rejected invalid Raft binlog: {}", e);
+                Err(Status::invalid_argument(format!("Invalid binlog: {e}")))
             }
             Err(e) => {
                 log::error!("Failed to write to Raft: {}", e);
@@ -296,9 +300,22 @@ fn proto_binlog_to_binlog(
         })
         .collect::<Result<Vec<_>, Status>>()?;
 
+    let db_id = u32::try_from(proto_binlog.db_id).map_err(|_| {
+        Status::invalid_argument(format!(
+            "Database ID {} exceeds the supported range",
+            proto_binlog.db_id
+        ))
+    })?;
+    let slot_idx = u32::try_from(proto_binlog.slot_idx).map_err(|_| {
+        Status::invalid_argument(format!(
+            "Slot ID {} exceeds the supported range",
+            proto_binlog.slot_idx
+        ))
+    })?;
+
     Ok(Binlog {
-        db_id: proto_binlog.db_id as u32,
-        slot_idx: proto_binlog.slot_idx as u32,
+        db_id,
+        slot_idx,
         entries,
     })
 }
@@ -416,5 +433,29 @@ mod tests {
         assert_eq!(binlog.entries.len(), 1);
         assert_eq!(binlog.entries[0].op_type, OperateType::Delete);
         assert_eq!(binlog.entries[0].value, None);
+    }
+
+    #[test]
+    fn proto_binlog_rejects_database_id_outside_internal_range() {
+        let err = proto_binlog_to_binlog(Some(ProtoBinlog {
+            db_id: u64::from(u32::MAX) + 1,
+            slot_idx: 0,
+            entries: Vec::new(),
+        }))
+        .expect_err("database IDs must not be truncated while decoding gRPC input");
+
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[test]
+    fn proto_binlog_rejects_slot_outside_internal_range() {
+        let err = proto_binlog_to_binlog(Some(ProtoBinlog {
+            db_id: 0,
+            slot_idx: u64::from(u32::MAX) + 1,
+            entries: Vec::new(),
+        }))
+        .expect_err("slot IDs must not be truncated while decoding gRPC input");
+
+        assert_eq!(err.code(), tonic::Code::InvalidArgument);
     }
 }

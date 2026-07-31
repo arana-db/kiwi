@@ -29,6 +29,9 @@ pub mod message;
 pub mod metrics;
 pub mod storage_server;
 
+#[cfg(feature = "runtime-baseline")]
+pub mod baseline;
+
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests;
@@ -68,4 +71,11 @@ pub use storage_server::{
     BatchStats, RocksDbStats, StorageAccessGate, StorageAccessPermit, StorageServer,
     StorageServerConfig, StorageServerPauseController, initialize_storage_command_table,
     initialize_storage_command_table_with_gates,
+};
+
+#[cfg(feature = "runtime-baseline")]
+pub use baseline::{
+    AttemptState, BaselineAttempt, BaselineEvent, BaselineObserver, BaselineObserverHandle,
+    BaselineTrace, BaselineTransitionError, BaselineTransitionFailure, ExecutionOutcome,
+    LogicalRequestId,
 };

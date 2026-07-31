@@ -35,8 +35,8 @@ use storage::storage::Storage;
 use crate::error::DualRuntimeError;
 use crate::global_storage::GlobalStorage;
 use crate::message::{
-    NoopStorageStatsCollector, RequestPriority, StorageCommand, StorageRequest, StorageResponse,
-    StorageStatsCollector,
+    RealStorageStatsCollector, RequestPriority, STORAGE_STATS_COLLECTOR, StorageCommand,
+    StorageRequest, StorageResponse, StorageStatsCollector,
 };
 use crate::metrics::StorageMetricsTracker;
 
@@ -292,10 +292,11 @@ impl StorageServer {
         global_storage: GlobalStorage,
         request_receiver: mpsc::Receiver<StorageRequest>,
     ) -> Self {
-        Self::with_config(
+        Self::with_config_and_gate(
             global_storage,
             request_receiver,
             StorageServerConfig::default(),
+            StorageAccessGate::new(),
         )
     }
 
@@ -309,6 +310,21 @@ impl StorageServer {
             global_storage,
             request_receiver,
             StorageServerConfig::default(),
+            pause_controller.access_gate(),
+        )
+    }
+
+    /// Create a storage server with custom configuration and a pause controller.
+    pub fn with_config_and_pause_controller(
+        global_storage: GlobalStorage,
+        request_receiver: mpsc::Receiver<StorageRequest>,
+        config: StorageServerConfig,
+        pause_controller: StorageServerPauseController,
+    ) -> Self {
+        Self::with_config_and_gate(
+            global_storage,
+            request_receiver,
+            config,
             pause_controller.access_gate(),
         )
     }
@@ -553,18 +569,25 @@ impl StorageServer {
         );
 
         // Record operation started
-        if let Some(ref _tracker) = metrics_tracker {
-            // TODO: Fix type annotation issue
-            // tracker.record_operation_started();
+        if let Some(ref tracker) = metrics_tracker {
+            tracker.record_operation_started();
         }
 
-        // TODO(storage-stats): Pass this request-local collector through
-        // `Cmd::execute` and into the storage crate so stats are recorded by
-        // actual storage operations instead of inferred from command arguments.
-        let stats_collector = NoopStorageStatsCollector;
+        // Per-request storage stats collector, scoped for the duration of the
+        // command execution so the storage facade records successful logical
+        // operations after backend outcomes are known.
+        // See <https://github.com/arana-db/kiwi/issues/312>.
+        let stats_collector: Arc<dyn StorageStatsCollector + Send + Sync> =
+            Arc::new(RealStorageStatsCollector::new());
 
-        // Route the request based on command type
-        let result = Self::execute_storage_command(&storage, &request.command).await;
+        // Route the request based on command type. The collector is installed as a
+        // task-local so the storage facade methods can read it without changing
+        // every `Cmd::execute` signature.
+        let result = STORAGE_STATS_COLLECTOR
+            .scope(Arc::clone(&stats_collector), async move {
+                Self::execute_storage_command(&storage, &request.command).await
+            })
+            .await;
 
         let execution_time = start_time.elapsed();
         debug!(
@@ -572,25 +595,23 @@ impl StorageServer {
             request_id, execution_time
         );
 
-        // Record operation completed
-        if let Some(ref _tracker) = metrics_tracker {
-            match result {
-                Ok(_) => {
-                    // TODO: Fix type annotation issue
-                    // tracker.record_operation_success(execution_time).await
-                }
-                Err(_) => {
-                    // TODO: Fix type annotation issue
-                    // tracker.record_operation_failure(execution_time).await
-                }
+        let storage_stats = stats_collector.finish();
+
+        // Record operation outcome and request-local I/O in runtime metrics.
+        if let Some(ref tracker) = metrics_tracker {
+            if result.is_ok() {
+                tracker.record_operation_success(execution_time).await;
+            } else {
+                tracker.record_operation_failure(execution_time).await;
             }
+            tracker.record_storage_stats(&storage_stats).await;
         }
 
         let response = StorageResponse {
             id: request_id,
             result,
             execution_time,
-            storage_stats: stats_collector.finish(),
+            storage_stats,
         };
 
         // Send response back to network runtime
@@ -1371,10 +1392,10 @@ impl StorageServer {
 
         if command.requires_exclusive_storage_access() {
             let _guard = storage.acquire_exclusive_command_access().await;
-            command.execute(&client, Arc::clone(storage));
+            storage.with_storage_perf_context(|| command.execute(&client, Arc::clone(storage)));
         } else {
             let _guard = storage.acquire_shared_command_access().await;
-            command.execute(&client, Arc::clone(storage));
+            storage.with_storage_perf_context(|| command.execute(&client, Arc::clone(storage)));
         }
         Ok(client.take_reply())
     }
@@ -1446,6 +1467,44 @@ mod tests {
         assert_eq!(config.worker_count, 4);
         assert!(config.enable_batching);
         assert!(config.enable_background_tasks);
+    }
+
+    #[test]
+    fn test_config_and_pause_controller_share_gate() {
+        let global_storage = GlobalStorage::new(Storage::new(1, 0));
+        let (_request_sender, request_receiver) = mpsc::channel(1);
+        let pause_controller = StorageServerPauseController::new();
+        let config = StorageServerConfig {
+            max_batch_size: 7,
+            batch_timeout_ms: 13,
+            worker_count: 2,
+            enable_batching: true,
+            enable_background_tasks: false,
+        };
+
+        let server = StorageServer::with_config_and_pause_controller(
+            global_storage,
+            request_receiver,
+            config,
+            pause_controller.clone(),
+        );
+
+        assert!(Arc::ptr_eq(
+            &server.access_gate.inner,
+            &pause_controller.access_gate.inner
+        ));
+        assert_eq!(server.config.max_batch_size, 7);
+        assert_eq!(server.config.batch_timeout_ms, 13);
+        assert_eq!(server.config.worker_count, 2);
+        assert!(server.config.enable_batching);
+        assert!(!server.config.enable_background_tasks);
+
+        let batch_processor = server
+            .batch_processor
+            .as_ref()
+            .expect("batching config should create a batch processor");
+        assert_eq!(batch_processor.max_batch_size, 7);
+        assert_eq!(batch_processor.batch_timeout_ms, 13);
     }
 
     #[test]
@@ -1719,6 +1778,8 @@ mod tests {
             timeout: Duration::from_secs(1),
             timestamp: Instant::now(),
             priority: RequestPriority::Normal,
+            #[cfg(feature = "runtime-baseline")]
+            baseline_attempt: None,
         };
         let batch = vec![request];
         let batch_processing = server.process_request_batch(batch);

@@ -44,6 +44,7 @@ mod format_lists_data_key;
 
 mod coding;
 mod expiration_manager;
+mod merge_iterator;
 pub mod slot_indexer;
 mod statistics;
 mod util;
@@ -54,6 +55,7 @@ mod redis;
 mod storage_define;
 mod storage_impl;
 mod storage_murmur3;
+mod storage_scan;
 
 // commands
 mod redis_hashes;
@@ -72,6 +74,8 @@ pub mod redis_zsets;
 // LogIndex module for Raft snapshot integration
 pub mod logindex;
 
+#[cfg(any(test, feature = "test-fault-injection"))]
+pub use batch::fail_next_rocks_batch_commit;
 pub use batch::{AppendLogFn, Batch, BinlogBatch, RocksBatch};
 pub use checkpoint::{
     CURRENT_SNAPSHOT_VERSION, PreparedCheckpointRestore, RAFT_SNAPSHOT_META_FILE, RaftSnapshotMeta,

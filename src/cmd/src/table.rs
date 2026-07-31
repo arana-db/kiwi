@@ -189,6 +189,7 @@ pub fn create_command_table_with_gates(
         crate::decr::DecrCmd,
         crate::decrby::DecrbyCmd,
         crate::strlen::StrlenCmd,
+        crate::substr::SubstrCmd,
         crate::getrange::GetrangeCmd,
         crate::setrange::SetrangeCmd,
         crate::setex::SetexCmd,
@@ -206,6 +207,7 @@ pub fn create_command_table_with_gates(
         // Keyspace and TTL commands
         crate::del::DelCmd,
         crate::exists::ExistsCmd,
+        crate::scan::ScanCmd,
         crate::expire::ExpireCmd,
         crate::expireat::ExpireatCmd,
         crate::pexpire::PexpireCmd,
@@ -259,6 +261,7 @@ pub fn create_command_table_with_gates(
         crate::sinterstore::SinterstoreCmd,
         crate::sismember::SismemberCmd,
         crate::smembers::SmembersCmd,
+        crate::smismember::SmismemberCmd,
         crate::smove::SmoveCmd,
         crate::spop::SpopCmd,
         crate::srandmember::SrandmemberCmd,
@@ -273,6 +276,7 @@ pub fn create_command_table_with_gates(
         crate::zincrby::ZincrbyCmd,
         crate::zinterstore::ZinterstoreCmd,
         crate::zlexcount::ZlexcountCmd,
+        crate::zmscore::ZmscoreCmd,
         crate::zrange::ZrangeCmd,
         crate::zrangebylex::ZrangebylexCmd,
         crate::zrangebyscore::ZrangebyscoreCmd,
@@ -364,6 +368,14 @@ mod tests {
     use super::{
         CmdTable, CommandTableGates, create_command_table, create_command_table_with_gates,
     };
+
+    #[test]
+    fn registers_substr_but_not_touch_until_access_metadata_exists() {
+        let table = create_command_table(Arc::new(|| None));
+
+        assert!(table.contains_key("substr"));
+        assert!(!table.contains_key("touch"));
+    }
 
     struct TestStream;
 

@@ -239,25 +239,31 @@ impl Redis {
 
         let decode_value = ParsedStringsValue::new(&encode_value[..])?;
         let user_value = decode_value.user_value();
-        let len = user_value.len() as i64;
+        let len = user_value.len();
 
         // Handle empty string
         if len == 0 {
             return Ok(Vec::new());
         }
 
-        // Normalize negative indices
-        let start_idx = if start < 0 {
-            (len + start).max(0)
-        } else {
-            start.min(len)
-        };
+        // Redis rejects reversed ranges while both indexes are still negative,
+        // before clamping indexes that precede the start of the value.
+        if start < 0 && end < 0 && start > end {
+            return Ok(Vec::new());
+        }
 
-        let end_idx = if end < 0 {
-            (len + end).max(-1)
-        } else {
-            end.min(len - 1)
+        // Use i128 so adding an i64 offset to the value length cannot overflow.
+        // Redis clamps negative offsets before the start of the value to zero.
+        let len = len as i128;
+        let normalize = |index: i64| {
+            if index < 0 {
+                (len + index as i128).max(0)
+            } else {
+                index as i128
+            }
         };
+        let start_idx = normalize(start).min(len);
+        let end_idx = normalize(end).min(len - 1);
 
         // If start > end after normalization, return empty string
         if start_idx > end_idx {
@@ -299,6 +305,16 @@ impl Redis {
     /// O(1) for small strings when offset is within current length,
     /// O(M) where M is the length of the value argument for other cases.
     pub fn setrange(&self, key: &[u8], offset: i64, value: &[u8]) -> Result<i32> {
+        self.setrange_with_outcome(key, offset, value)
+            .map(|(length, _changed)| length)
+    }
+
+    pub(crate) fn setrange_with_outcome(
+        &self,
+        key: &[u8],
+        offset: i64,
+        value: &[u8],
+    ) -> Result<(i32, bool)> {
         // Validate offset early to avoid unnecessary database operations
         if offset < 0 {
             return Err(RedisErr {
@@ -352,7 +368,7 @@ impl Redis {
             let current_len = existing_value.len() as i32;
             // If offset is within current string, no modification needed
             if offset <= current_len as i64 {
-                return Ok(current_len);
+                return Ok((current_len, false));
             }
             // If offset is beyond current string, we need to pad
         }
@@ -401,7 +417,7 @@ impl Redis {
         )?;
         batch.commit()?;
 
-        Ok(new_len as i32)
+        Ok((new_len as i32, true))
     }
 
     /// Append a value to a key
@@ -2239,47 +2255,48 @@ impl Redis {
         for item in iter {
             let (key_bytes, value_bytes) = item.context(RocksSnafu)?;
 
-            // Decode the key to get the actual user key
-            let parsed_base_key_result = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]);
-            if let Ok(base_key) = parsed_base_key_result {
-                // Check if the string key is not expired
-                if !value_bytes.is_empty() {
-                    let parsed_string_result = ParsedStringsValue::new(&value_bytes[..]);
-                    if let Ok(parsed) = parsed_string_result
-                        && !parsed.is_stale()
-                    {
-                        return Ok(Some(String::from_utf8_lossy(base_key.key()).to_string()));
-                    }
-                }
-            } else {
-                let parsed_meta_key_result =
-                    crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]);
-                if let Ok(meta_key) = parsed_meta_key_result {
-                    // Check if meta key is not expired
-                    if !value_bytes.is_empty() {
-                        let parsed_meta_result =
-                            crate::format_base_meta_value::ParsedBaseMetaValue::new(
-                                &value_bytes[..],
-                            );
-                        let is_valid = if let Ok(meta) = parsed_meta_result {
-                            !meta.is_stale() && meta.count() > 0
-                        } else {
-                            let parsed_list_meta_result =
-                                crate::format_list_meta_value::ParsedListsMetaValue::new(
-                                    &value_bytes[..],
-                                );
-                            if let Ok(list_meta) = parsed_list_meta_result {
-                                !list_meta.is_stale() && list_meta.count() > 0
-                            } else {
-                                false
-                            }
-                        };
+            if value_bytes.is_empty() {
+                continue;
+            }
 
-                        if is_valid {
-                            return Ok(Some(String::from_utf8_lossy(meta_key.key()).to_string()));
-                        }
-                    }
+            // MetaCF stores both string values and the meta values of
+            // hash/set/zset/list under the same key encoding (BaseMetaKey is a
+            // type alias of BaseKey), so the user key is decoded once and the
+            // value bytes decide whether the key is live.
+            let Ok(parsed_key) = crate::format_base_key::ParsedBaseKey::new(&key_bytes[..]) else {
+                continue;
+            };
+
+            // The stored type is determined by the leading type-tag byte, not by
+            // which parser happens to accept the bytes. `ParsedStringsValue::new`
+            // only validates that the tag is a *valid* DataType (not that it is
+            // String) and applies no count check, so probing string-first would
+            // misclassify collection meta values and could return an empty
+            // (count == 0) collection. Dispatch on the tag exactly like
+            // `get_key_type` does.
+            let Ok(data_type) = DataType::try_from(value_bytes[0]) else {
+                continue;
+            };
+
+            let is_live = match data_type {
+                DataType::String => ParsedStringsValue::new(&value_bytes[..])
+                    .map(|parsed| !parsed.is_stale())
+                    .unwrap_or(false),
+                DataType::Hash | DataType::Set | DataType::ZSet => {
+                    crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
+                        .map(|meta| !meta.is_stale() && meta.count() > 0)
+                        .unwrap_or(false)
                 }
+                DataType::List => {
+                    crate::format_list_meta_value::ParsedListsMetaValue::new(&value_bytes[..])
+                        .map(|list_meta| !list_meta.is_stale() && list_meta.count() > 0)
+                        .unwrap_or(false)
+                }
+                _ => false,
+            };
+
+            if is_live {
+                return Ok(Some(String::from_utf8_lossy(parsed_key.key()).to_string()));
             }
         }
 

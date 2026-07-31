@@ -27,6 +27,7 @@ use resp::encode::RespEncoder;
 use resp::{Parse, RespData, RespEncode, RespParseResult};
 use storage::storage::Storage;
 use tokio::select;
+use tokio_util::sync::CancellationToken;
 
 use crate::storage_client::StorageClient;
 
@@ -134,13 +135,35 @@ pub async fn process_connection_with_storage_client(
     executor: Arc<CmdExecutor>,
     leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 ) -> std::io::Result<()> {
-    // Delegate to the network-aware connection handler
-    crate::network_handle::process_network_connection(
+    process_connection_with_storage_client_until_cancelled(
         client,
         storage_client,
         cmd_table,
         executor,
         leader_gate,
+        CancellationToken::new(),
+    )
+    .await
+}
+
+/// Process a dual-runtime connection and observe cancellation only before the
+/// next socket read, never by dropping an in-flight storage request.
+pub async fn process_connection_with_storage_client_until_cancelled(
+    client: Arc<Client>,
+    storage_client: Arc<StorageClient>,
+    cmd_table: Arc<CmdTable>,
+    executor: Arc<CmdExecutor>,
+    leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
+    shutdown: CancellationToken,
+) -> std::io::Result<()> {
+    // Delegate to the network-aware connection handler
+    crate::network_handle::process_network_connection_until_cancelled(
+        client,
+        storage_client,
+        cmd_table,
+        executor,
+        leader_gate,
+        shutdown,
     )
     .await
 }

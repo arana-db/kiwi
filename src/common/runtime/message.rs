@@ -73,68 +73,27 @@ pub enum StorageCommand {
     Batch { commands: Vec<StorageCommand> },
 }
 
-/// Statistics about storage operations for monitoring
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct StorageStats {
-    /// Number of keys read during the operation
-    pub keys_read: u64,
-    /// Number of keys written during the operation
-    pub keys_written: u64,
-    /// Number of keys deleted during the operation
-    pub keys_deleted: u64,
-    /// Size of data read in bytes
-    pub bytes_read: u64,
-    /// Size of data written in bytes
-    pub bytes_written: u64,
-    /// Whether the operation hit the cache
-    pub cache_hit: bool,
-    /// RocksDB compaction level accessed
-    pub compaction_level: Option<u32>,
-}
-
-/// Request-local collector for storage-layer instrumentation.
+/// Storage-layer instrumentation types.
 ///
-/// TODO(storage-stats): Thread a real collector through `Cmd::execute` and the
-/// `storage` crate APIs so these counters are recorded at the point where
-/// reads, writes, deletes, cache hits, and RocksDB details actually happen.
-/// Tracked in <https://github.com/arana-db/kiwi/issues/312>.
-pub trait StorageStatsCollector: Send + Sync {
-    /// Record a storage read. `key_bytes` and `value_bytes` should be measured
-    /// by the storage layer, not inferred from Redis command arguments.
-    fn record_read(&self, key_bytes: u64, value_bytes: u64);
-
-    /// Record a storage write. `key_bytes` and `value_bytes` should be measured
-    /// after the storage layer accepts the mutation.
-    fn record_write(&self, key_bytes: u64, value_bytes: u64);
-
-    /// Record a storage delete. `key_bytes` should be measured by the storage layer.
-    fn record_delete(&self, key_bytes: u64);
-
-    /// Return the accumulated statistics for the request.
-    fn finish(&self) -> StorageStats;
-}
-
-/// Placeholder collector used until storage-layer instrumentation is wired in.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct NoopStorageStatsCollector;
-
-impl StorageStatsCollector for NoopStorageStatsCollector {
-    fn record_read(&self, _key_bytes: u64, _value_bytes: u64) {}
-
-    fn record_write(&self, _key_bytes: u64, _value_bytes: u64) {}
-
-    fn record_delete(&self, _key_bytes: u64) {}
-
-    fn finish(&self) -> StorageStats {
-        StorageStats::default()
-    }
-}
+/// These were originally defined here (see
+/// <https://github.com/arana-db/kiwi/issues/312>) but now live in the `client`
+/// crate so that `storage`, `runtime` and `cmd` can all depend on them without
+/// creating a dependency cycle. Re-exported here for backward compatibility with
+/// existing `runtime::message::*` importers.
+pub use client::storage_stats::{
+    NoopStorageStatsCollector, RealStorageStatsCollector, STORAGE_STATS_COLLECTOR, StorageStats,
+    StorageStatsCollector, try_collector,
+};
 
 /// Request sent from network runtime to storage runtime
 #[derive(Debug)]
 pub struct StorageRequest {
     /// Unique identifier for this request
+    #[cfg(not(feature = "runtime-baseline"))]
     pub id: RequestId,
+    /// Unique identifier for this request, bound to the baseline attempt trace.
+    #[cfg(feature = "runtime-baseline")]
+    pub(crate) id: RequestId,
     /// The storage command to execute
     pub command: StorageCommand,
     /// Channel to send the response back
@@ -145,6 +104,87 @@ pub struct StorageRequest {
     pub timestamp: Instant,
     /// Priority level for request processing
     pub priority: RequestPriority,
+    /// Baseline lifecycle token carried across the storage runtime boundary.
+    #[cfg(feature = "runtime-baseline")]
+    pub(crate) baseline_attempt: Option<crate::baseline::BaselineAttempt>,
+}
+
+impl StorageRequest {
+    /// Create a request without feature-specific instrumentation.
+    pub fn new(
+        id: RequestId,
+        command: StorageCommand,
+        response_channel: oneshot::Sender<StorageResponse>,
+        timeout: Duration,
+        priority: RequestPriority,
+    ) -> Self {
+        Self {
+            id,
+            command,
+            response_channel,
+            timeout,
+            timestamp: Instant::now(),
+            priority,
+            #[cfg(feature = "runtime-baseline")]
+            baseline_attempt: None,
+        }
+    }
+
+    /// Return the immutable physical request identity.
+    pub fn id(&self) -> RequestId {
+        self.id
+    }
+
+    /// Create an instrumented request whose physical identity is derived from
+    /// its baseline attempt token.
+    ///
+    /// Instrumented request identities cannot be overwritten by callers:
+    ///
+    /// ```compile_fail
+    /// use runtime::{RequestId, StorageRequest};
+    ///
+    /// fn overwrite_id(request: &mut StorageRequest) {
+    ///     request.id = RequestId::new();
+    /// }
+    /// ```
+    ///
+    /// Instrumented requests also cannot be reconstructed with a mismatched ID:
+    ///
+    /// ```compile_fail
+    /// use runtime::{RequestId, StorageRequest};
+    ///
+    /// fn forge_id(request: StorageRequest) -> StorageRequest {
+    ///     StorageRequest {
+    ///         id: RequestId::new(),
+    ///         ..request
+    ///     }
+    /// }
+    /// ```
+    #[cfg(feature = "runtime-baseline")]
+    pub fn new_with_baseline_attempt(
+        baseline_attempt: crate::baseline::BaselineAttempt,
+        command: StorageCommand,
+        response_channel: oneshot::Sender<StorageResponse>,
+        timeout: Duration,
+        priority: RequestPriority,
+    ) -> Self {
+        Self {
+            id: baseline_attempt.trace().attempt_id,
+            command,
+            response_channel,
+            timeout,
+            timestamp: Instant::now(),
+            priority,
+            baseline_attempt: Some(baseline_attempt),
+        }
+    }
+
+    /// Return the baseline token without permitting callers to replace it with
+    /// an identity that diverges from [`StorageRequest::id()`].
+    #[cfg(feature = "runtime-baseline")]
+    pub fn baseline_attempt(&self) -> Option<&crate::baseline::BaselineAttempt> {
+        self.baseline_attempt.as_ref()
+    }
 }
 
 /// Priority levels for storage request processing
@@ -752,6 +792,8 @@ pub struct StorageClient {
     message_channel: Arc<MessageChannel>,
     /// Map of pending requests waiting for responses
     pending_requests: Arc<Mutex<HashMap<RequestId, oneshot::Receiver<StorageResponse>>>>,
+    /// Aggregate logical storage I/O from all received responses
+    storage_io_stats: Arc<Mutex<StorageStats>>,
     /// Default timeout for storage requests
     default_timeout: Duration,
     /// Retry configuration
@@ -781,6 +823,7 @@ impl StorageClient {
         Self {
             message_channel,
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            storage_io_stats: Arc::new(Mutex::new(StorageStats::default())),
             default_timeout,
             retry_config,
             circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, Duration::from_secs(30)))),
@@ -802,6 +845,7 @@ impl StorageClient {
         Self {
             message_channel,
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            storage_io_stats: Arc::new(Mutex::new(StorageStats::default())),
             default_timeout,
             retry_config,
             circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, Duration::from_secs(30)))),
@@ -820,6 +864,7 @@ impl StorageClient {
         Self {
             message_channel,
             pending_requests: Arc::new(Mutex::new(HashMap::new())),
+            storage_io_stats: Arc::new(Mutex::new(StorageStats::default())),
             default_timeout,
             retry_config: RetryConfig::default(),
             circuit_breaker: Arc::new(Mutex::new(CircuitBreaker::new(5, Duration::from_secs(30)))),
@@ -836,6 +881,11 @@ impl StorageClient {
     ) -> Result<RespData, crate::error::DualRuntimeError> {
         self.send_request_with_timeout(command, self.default_timeout)
             .await
+    }
+
+    /// Return aggregate logical storage I/O from responses received by this client.
+    pub async fn storage_io_stats(&self) -> StorageStats {
+        self.storage_io_stats.lock().await.clone()
     }
 
     /// Send a storage request with a custom timeout
@@ -1008,6 +1058,8 @@ impl StorageClient {
             timeout,
             timestamp: Instant::now(),
             priority,
+            #[cfg(feature = "runtime-baseline")]
+            baseline_attempt: None,
         };
 
         // Store the response receiver for tracking
@@ -1045,12 +1097,18 @@ impl StorageClient {
                 };
 
                 match tokio::time::timeout(timeout, response_receiver).await {
-                    Ok(Ok(response)) => match response.result {
-                        Ok(data) => Ok(data),
-                        Err(storage_err) => Err(
-                            crate::error::DualRuntimeError::from_storage_error(storage_err),
-                        ),
-                    },
+                    Ok(Ok(response)) => {
+                        self.storage_io_stats
+                            .lock()
+                            .await
+                            .merge(&response.storage_stats);
+                        match response.result {
+                            Ok(data) => Ok(data),
+                            Err(storage_err) => Err(
+                                crate::error::DualRuntimeError::from_storage_error(storage_err),
+                            ),
+                        }
+                    }
                     Ok(Err(_)) => {
                         // Response channel was closed
                         Err(crate::error::DualRuntimeError::Channel(
@@ -1223,6 +1281,8 @@ impl StorageClient {
             timeout,
             timestamp: Instant::now(),
             priority,
+            #[cfg(feature = "runtime-baseline")]
+            baseline_attempt: None,
         };
 
         // Try to queue the request
@@ -1377,6 +1437,16 @@ impl StorageClient {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "runtime-baseline")]
+    struct NoopBaselineObserver;
+
+    #[cfg(feature = "runtime-baseline")]
+    impl crate::baseline::BaselineObserver for NoopBaselineObserver {
+        fn on_event(&self, _event: crate::baseline::BaselineEvent) {}
+
+        fn before_execute(&self, _trace: &crate::baseline::BaselineTrace) {}
+    }
+
     #[test]
     fn test_request_id_creation() {
         let id1 = RequestId::new();
@@ -1413,6 +1483,60 @@ mod tests {
         assert_eq!(stats.bytes_written, 0);
         assert!(!stats.cache_hit);
         assert_eq!(stats.compaction_level, None);
+    }
+
+    #[test]
+    fn test_storage_request_constructor_preserves_request_metadata() {
+        let id = RequestId::new();
+        let command = StorageCommand::Execute {
+            cmd_name: b"get".to_vec(),
+            argv: vec![b"get".to_vec(), b"key".to_vec()],
+        };
+        let (response_channel, _response_receiver) = oneshot::channel();
+
+        let request = StorageRequest::new(
+            id,
+            command,
+            response_channel,
+            Duration::from_secs(3),
+            RequestPriority::High,
+        );
+
+        assert_eq!(request.id, id);
+        assert_eq!(request.timeout, Duration::from_secs(3));
+        assert_eq!(request.priority, RequestPriority::High);
+        #[cfg(feature = "runtime-baseline")]
+        assert!(request.baseline_attempt.is_none());
+    }
+
+    #[cfg(feature = "runtime-baseline")]
+    #[test]
+    fn storage_request_id_matches_its_baseline_attempt_trace() {
+        let attempt = crate::baseline::BaselineAttempt::new(
+            crate::baseline::LogicalRequestId::new(),
+            0,
+            crate::baseline::BaselineObserverHandle::new(std::sync::Arc::new(NoopBaselineObserver)),
+        );
+        let (response_channel, _response_receiver) = oneshot::channel();
+        let request = StorageRequest::new_with_baseline_attempt(
+            attempt.clone(),
+            StorageCommand::Execute {
+                cmd_name: b"get".to_vec(),
+                argv: vec![b"get".to_vec(), b"key".to_vec()],
+            },
+            response_channel,
+            Duration::from_secs(3),
+            RequestPriority::High,
+        );
+
+        assert_eq!(request.id, attempt.trace().attempt_id);
+        assert_eq!(
+            request
+                .baseline_attempt()
+                .expect("instrumented request must retain the baseline token")
+                .trace(),
+            attempt.trace()
+        );
     }
 
     #[tokio::test]
@@ -1512,6 +1636,52 @@ mod tests {
 
         assert!(client.is_healthy());
         assert_eq!(client.pending_request_count().await, 0);
+        assert_eq!(client.storage_io_stats().await, StorageStats::default());
+    }
+
+    #[tokio::test]
+    async fn storage_client_aggregates_stats_from_responses() {
+        let mut channel = MessageChannel::new(4);
+        let mut requests = channel.take_request_receiver().unwrap();
+        let client = StorageClient::new(Arc::new(channel), Duration::from_secs(1));
+
+        let responder = tokio::spawn(async move {
+            let request = requests.recv().await.unwrap();
+            request
+                .response_channel
+                .send(StorageResponse {
+                    id: request.id,
+                    result: Ok(RespData::Integer(1)),
+                    execution_time: Duration::from_millis(1),
+                    storage_stats: StorageStats {
+                        keys_read: 1,
+                        bytes_read: 9,
+                        cache_hit: true,
+                        ..StorageStats::default()
+                    },
+                })
+                .expect("storage client should still be waiting for the response");
+        });
+
+        let result = client
+            .send_request(StorageCommand::Execute {
+                cmd_name: b"get".to_vec(),
+                argv: vec![b"get".to_vec(), b"key".to_vec()],
+            })
+            .await
+            .unwrap();
+
+        responder.await.unwrap();
+        assert_eq!(result, RespData::Integer(1));
+        assert_eq!(
+            client.storage_io_stats().await,
+            StorageStats {
+                keys_read: 1,
+                bytes_read: 9,
+                cache_hit: true,
+                ..StorageStats::default()
+            }
+        );
     }
 
     #[tokio::test]

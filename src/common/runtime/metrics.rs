@@ -29,6 +29,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::Mutex;
 
+use client::storage_stats::StorageStats;
+
 use crate::error::DualRuntimeError;
 
 /// Comprehensive runtime metrics for monitoring and observability
@@ -99,6 +101,9 @@ pub struct StorageRuntimeMetrics {
     pub p99_execution_time_ms: f64,
     /// Number of failed operations
     pub failed_operations: u64,
+    /// Logical storage I/O accumulated from completed requests
+    #[serde(default)]
+    pub storage_io_stats: StorageStats,
     /// RocksDB specific metrics
     pub rocksdb_metrics: RocksDBMetrics,
     /// Batch processing metrics
@@ -474,6 +479,8 @@ pub struct StorageMetricsTracker {
     pending_requests: AtomicUsize,
     /// Operation statistics
     operation_stats: Arc<Mutex<OperationStats>>,
+    /// Logical storage I/O reported by request-local collectors
+    storage_io_stats: Arc<Mutex<StorageStats>>,
     /// RocksDB metrics
     rocksdb_metrics: Arc<Mutex<RocksDBMetricsData>>,
     /// Batch processing metrics
@@ -800,6 +807,7 @@ impl StorageMetricsTracker {
                 start_time: Some(Instant::now()),
                 ..Default::default()
             })),
+            storage_io_stats: Arc::new(Mutex::new(StorageStats::default())),
             rocksdb_metrics: Arc::new(Mutex::new(RocksDBMetricsData::default())),
             batch_metrics: Arc::new(Mutex::new(BatchMetricsData::default())),
             latency_samples: Arc::new(Mutex::new(LatencySamples::default())),
@@ -833,6 +841,11 @@ impl StorageMetricsTracker {
 
         let mut samples = self.latency_samples.lock().await;
         samples.add_sample(execution_time.as_millis() as u64, self.sample_window_size);
+    }
+
+    /// Merge one completed request's logical storage I/O into runtime metrics.
+    pub async fn record_storage_stats(&self, request: &StorageStats) {
+        self.storage_io_stats.lock().await.merge(request);
     }
 
     /// Update RocksDB metrics
@@ -907,6 +920,7 @@ impl StorageMetricsTracker {
     pub async fn get_metrics(&self) -> StorageRuntimeMetrics {
         let pending_requests = self.pending_requests.load(Ordering::Relaxed);
         let operation_stats = self.operation_stats.lock().await;
+        let storage_io_stats = self.storage_io_stats.lock().await;
         let rocksdb_metrics = self.rocksdb_metrics.lock().await;
         let batch_metrics = self.batch_metrics.lock().await;
         let samples = self.latency_samples.lock().await;
@@ -967,6 +981,7 @@ impl StorageMetricsTracker {
             p95_execution_time_ms: p95_execution_time,
             p99_execution_time_ms: p99_execution_time,
             failed_operations: operation_stats.failed_operations,
+            storage_io_stats: storage_io_stats.clone(),
             rocksdb_metrics: RocksDBMetrics {
                 total_keys: rocksdb_metrics.total_keys,
                 total_size_bytes: rocksdb_metrics.total_size_bytes,
@@ -1007,6 +1022,9 @@ impl StorageMetricsTracker {
             start_time: Some(Instant::now()),
             ..Default::default()
         };
+
+        let mut storage_io_stats = self.storage_io_stats.lock().await;
+        *storage_io_stats = StorageStats::default();
 
         let mut rocksdb_metrics = self.rocksdb_metrics.lock().await;
         *rocksdb_metrics = RocksDBMetricsData::default();
@@ -1419,8 +1437,25 @@ mod tests {
         tracker
             .record_operation_success(Duration::from_millis(5))
             .await;
+        tracker.record_operation_started();
         tracker
             .record_operation_failure(Duration::from_millis(15))
+            .await;
+        tracker
+            .record_storage_stats(&StorageStats {
+                keys_read: 2,
+                bytes_read: 20,
+                cache_hit: true,
+                ..StorageStats::default()
+            })
+            .await;
+        tracker
+            .record_storage_stats(&StorageStats {
+                keys_written: 1,
+                bytes_written: 8,
+                compaction_level: Some(3),
+                ..StorageStats::default()
+            })
             .await;
         tracker
             .record_batch_processed(10, Duration::from_millis(50))
@@ -1430,8 +1465,22 @@ mod tests {
         let metrics = tracker.get_metrics().await;
         assert_eq!(metrics.total_operations, 2);
         assert_eq!(metrics.failed_operations, 1);
+        assert_eq!(metrics.storage_io_stats.keys_read, 2);
+        assert_eq!(metrics.storage_io_stats.bytes_read, 20);
+        assert_eq!(metrics.storage_io_stats.keys_written, 1);
+        assert_eq!(metrics.storage_io_stats.bytes_written, 8);
+        assert!(metrics.storage_io_stats.cache_hit);
+        assert_eq!(metrics.storage_io_stats.compaction_level, Some(3));
         assert_eq!(metrics.batch_metrics.total_batches, 1);
         assert_eq!(metrics.batch_metrics.backpressure_events, 1);
+
+        tracker.reset().await;
+        let reset_metrics = tracker.get_metrics().await;
+        assert_eq!(reset_metrics.total_operations, 0);
+        assert_eq!(reset_metrics.failed_operations, 0);
+        assert_eq!(reset_metrics.storage_io_stats, StorageStats::default());
+        assert_eq!(reset_metrics.batch_metrics.total_batches, 0);
+        assert_eq!(reset_metrics.batch_metrics.backpressure_events, 0);
     }
 
     #[tokio::test]

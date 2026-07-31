@@ -27,12 +27,33 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
-use conf::raft_type::Binlog;
+use conf::raft_type::{Binlog, BinlogEntry, OperateType};
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
 use raft::state_machine::{KiwiStateMachine, PauseController, StorageAccessPermit};
+use storage::format_strings_value::StringValue;
 use storage::logindex::LogIndexAndSequenceCollector;
-use storage::{RaftSnapshotMeta, StorageOptions, storage::Storage, unique_test_db_path};
+use storage::slot_indexer::key_to_slot_id;
+use storage::{
+    BaseMetaKey, ColumnFamilyIndex, RaftSnapshotMeta, StorageOptions, storage::Storage,
+    unique_test_db_path,
+};
+
+fn string_put_binlog(key: &[u8], value: &[u8]) -> Binlog {
+    Binlog {
+        db_id: 0,
+        slot_idx: key_to_slot_id(key) as u32,
+        entries: vec![BinlogEntry {
+            cf_idx: ColumnFamilyIndex::MetaCF as u32,
+            op_type: OperateType::Put,
+            key: BaseMetaKey::new(key)
+                .encode()
+                .expect("snapshot logindex key should encode")
+                .to_vec(),
+            value: Some(StringValue::new(value.to_vec()).encode().to_vec()),
+        }],
+    }
+}
 
 struct NoopPauseController;
 struct NoopStorageAccessPermit;
@@ -93,16 +114,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
         // Simulate binlog write to update collector with (log_index, seqno) mapping
         // This simulates what happens during Raft replication
         {
-            let binlog = Binlog {
-                db_id: 0,
-                slot_idx: 0,
-                entries: vec![conf::raft_type::BinlogEntry {
-                    cf_idx: 0,
-                    op_type: conf::raft_type::OperateType::Put,
-                    key: b"test_key".to_vec(),
-                    value: Some(b"test_value".to_vec()),
-                }],
-            };
+            let binlog = string_put_binlog(b"test_key", b"test_value");
 
             const TEST_LOG_INDEX: u64 = 100;
             storage.on_binlog_write(&binlog, TEST_LOG_INDEX)?;
@@ -220,16 +232,7 @@ async fn test_on_binlog_write_updates_collector() -> anyhow::Result<()> {
     let initial_size = collector.size();
 
     // Write binlog with log_index = 100
-    let binlog = Binlog {
-        db_id: 0,
-        slot_idx: 0,
-        entries: vec![conf::raft_type::BinlogEntry {
-            cf_idx: 0,
-            op_type: conf::raft_type::OperateType::Put,
-            key: b"key1".to_vec(),
-            value: Some(b"value1".to_vec()),
-        }],
-    };
+    let binlog = string_put_binlog(b"key1", b"value1");
 
     storage.on_binlog_write(&binlog, 100)?;
 
@@ -241,16 +244,7 @@ async fn test_on_binlog_write_updates_collector() -> anyhow::Result<()> {
     );
 
     // Write another binlog with log_index = 200
-    let binlog2 = Binlog {
-        db_id: 0,
-        slot_idx: 0,
-        entries: vec![conf::raft_type::BinlogEntry {
-            cf_idx: 0,
-            op_type: conf::raft_type::OperateType::Put,
-            key: b"key2".to_vec(),
-            value: Some(b"value2".to_vec()),
-        }],
-    };
+    let binlog2 = string_put_binlog(b"key2", b"value2");
 
     storage.on_binlog_write(&binlog2, 200)?;
 

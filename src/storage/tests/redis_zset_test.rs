@@ -88,6 +88,102 @@ mod redis_zset_test {
     }
 
     #[test]
+    fn test_zmscore_preserves_order_duplicates_missing_and_binary_members() {
+        let redis = create_test_redis();
+        let key = b"zmscore-key";
+        let binary_member = b"binary\x00\xff";
+        let score_members = vec![
+            ScoreMember::new(1.5, b"first".to_vec()),
+            ScoreMember::new(-2.25, binary_member.to_vec()),
+        ];
+        let mut added = 0;
+        redis.zadd(key, &score_members, &mut added).unwrap();
+        assert_eq!(added, 2);
+
+        let members: Vec<&[u8]> = vec![b"first", b"missing", binary_member, b"first"];
+        let scores = redis.zmscore(key, &members).unwrap();
+
+        assert_eq!(
+            scores,
+            vec![
+                Some(b"1.5".to_vec()),
+                None,
+                Some(b"-2.25".to_vec()),
+                Some(b"1.5".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_zmscore_missing_key_returns_one_nil_per_member() {
+        let redis = create_test_redis();
+        let members: Vec<&[u8]> = vec![b"first", b"second"];
+
+        assert_eq!(
+            redis.zmscore(b"missing-zset", &members).unwrap(),
+            vec![None, None]
+        );
+    }
+
+    #[test]
+    fn test_zmscore_rejects_wrong_type() {
+        let redis = create_test_redis();
+        redis.set(b"not-a-zset", b"value").unwrap();
+        let members: Vec<&[u8]> = vec![b"member"];
+
+        let error = redis.zmscore(b"not-a-zset", &members).unwrap_err();
+
+        assert!(error.to_string().starts_with("WRONGTYPE"));
+    }
+
+    #[test]
+    fn test_zmscore_reads_all_members_from_one_snapshot_during_updates() {
+        let redis = Arc::new(create_test_redis());
+        let key = b"zmscore-snapshot";
+        let mut added = 0;
+        redis
+            .zadd(
+                key,
+                &[
+                    ScoreMember::new(0.0, b"left".to_vec()),
+                    ScoreMember::new(0.0, b"right".to_vec()),
+                ],
+                &mut added,
+            )
+            .unwrap();
+
+        let writer_redis = Arc::clone(&redis);
+        let writer = std::thread::spawn(move || {
+            for generation in 1..=250 {
+                let score_members = [
+                    ScoreMember::new(generation as f64, b"left".to_vec()),
+                    ScoreMember::new(generation as f64, b"right".to_vec()),
+                ];
+                let mut updated = 0;
+                writer_redis
+                    .zadd(key, &score_members, &mut updated)
+                    .unwrap();
+            }
+        });
+
+        let members = (0..200)
+            .map(|index| {
+                if index % 2 == 0 {
+                    b"left".as_slice()
+                } else {
+                    b"right".as_slice()
+                }
+            })
+            .collect::<Vec<_>>();
+        for _ in 0..100 {
+            let scores = redis.zmscore(key, &members).unwrap();
+            assert!(scores.iter().all(|score| score == &scores[0]));
+        }
+
+        writer.join().unwrap();
+    }
+
+    #[test]
     fn test_zscan_basic() {
         let redis = create_test_redis();
         let key = b"test_zset";

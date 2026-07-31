@@ -49,6 +49,10 @@ STORAGE_COMPARISON.md
 .claude
 .claude/
 
+# Codex crash-recovery runtime state. Versioned project truth lives in
+# AGENTS.md, .planning/, and scripts/codex-workstate.ps1.
+.codex/recovery/
+
 # Claude Spec Workflow configuration
 .spec-workflow/
 

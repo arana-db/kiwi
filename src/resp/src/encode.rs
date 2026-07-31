@@ -15,97 +15,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::convert::TryFrom;
 use std::fmt::Write;
 
 use bytes::{Bytes, BytesMut};
 
 use crate::{
     CRLF,
-    error::RespError,
     types::{RespData, RespVersion},
 };
 
-#[repr(i8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CmdRes {
-    None = 0,
-    Ok,
-    Pong,
-    SyntaxErr,
-    InvalidInt,
-    InvalidBitInt,
-    InvalidBitOffsetInt,
-    InvalidFloat,
-    OverFlow,
-    NotFound,
-    OutOfRange,
-    InvalidPwd,
-    NoneBgsave,
-    PurgeExist,
-    InvalidParameter,
-    WrongNum,
-    InvalidIndex,
-    InvalidDbType,
-    InvalidDB,
-    InconsistentHashTag,
-    ErrOther,
-    ErrMoved,
-    ErrClusterDown,
-    UnknownCmd,
-    UnknownSubCmd,
-    IncrByOverFlow,
-    InvalidCursor,
-    WrongLeader,
-    MultiKey,
-    NoAuth,
-}
-
-impl TryFrom<i8> for CmdRes {
-    type Error = RespError;
-
-    fn try_from(value: i8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(CmdRes::None),
-            1 => Ok(CmdRes::Ok),
-            2 => Ok(CmdRes::Pong),
-            3 => Ok(CmdRes::SyntaxErr),
-            4 => Ok(CmdRes::InvalidInt),
-            5 => Ok(CmdRes::InvalidBitInt),
-            6 => Ok(CmdRes::InvalidBitOffsetInt),
-            7 => Ok(CmdRes::InvalidFloat),
-            8 => Ok(CmdRes::OverFlow),
-            9 => Ok(CmdRes::NotFound),
-            10 => Ok(CmdRes::OutOfRange),
-            11 => Ok(CmdRes::InvalidPwd),
-            12 => Ok(CmdRes::NoneBgsave),
-            13 => Ok(CmdRes::PurgeExist),
-            14 => Ok(CmdRes::InvalidParameter),
-            15 => Ok(CmdRes::WrongNum),
-            16 => Ok(CmdRes::InvalidIndex),
-            17 => Ok(CmdRes::InvalidDbType),
-            18 => Ok(CmdRes::InvalidDB),
-            19 => Ok(CmdRes::InconsistentHashTag),
-            20 => Ok(CmdRes::ErrOther),
-            21 => Ok(CmdRes::ErrMoved),
-            22 => Ok(CmdRes::ErrClusterDown),
-            23 => Ok(CmdRes::UnknownCmd),
-            24 => Ok(CmdRes::UnknownSubCmd),
-            25 => Ok(CmdRes::IncrByOverFlow),
-            26 => Ok(CmdRes::InvalidCursor),
-            27 => Ok(CmdRes::WrongLeader),
-            28 => Ok(CmdRes::MultiKey),
-            29 => Ok(CmdRes::NoAuth),
-            _ => Err(RespError::InvalidData(format!(
-                "Invalid CmdRes value: {value}"
-            ))),
-        }
-    }
-}
-
 pub trait RespEncode {
-    fn set_res(&mut self, res: CmdRes, content: &str) -> &mut Self;
-
     fn append_array_len(&mut self, len: i64) -> &mut Self;
 
     fn append_integer(&mut self, value: i64) -> &mut Self;
@@ -151,8 +70,6 @@ pub trait RespEncode {
 pub struct RespEncoder {
     buffer: BytesMut,
 
-    res: CmdRes,
-
     version: RespVersion,
 }
 
@@ -166,7 +83,6 @@ impl RespEncoder {
     pub fn new(version: RespVersion) -> Self {
         Self {
             buffer: BytesMut::new(),
-            res: CmdRes::None,
             version,
         }
     }
@@ -201,113 +117,6 @@ impl RespEncoder {
 }
 
 impl RespEncode for RespEncoder {
-    fn set_res(&mut self, res: CmdRes, content: &str) -> &mut Self {
-        self.res = res;
-        self.buffer.clear();
-
-        match res {
-            CmdRes::None => {}
-            CmdRes::Ok => {
-                self.set_line_string("+OK");
-            }
-            CmdRes::Pong => {
-                self.set_line_string("+PONG");
-            }
-            CmdRes::SyntaxErr => {
-                let _ = write!(self.buffer, "-ERR syntax error command '{content}'{CRLF}");
-            }
-            CmdRes::UnknownCmd => {
-                let _ = write!(self.buffer, "-ERR unknown command '{content}'{CRLF}");
-            }
-            CmdRes::UnknownSubCmd => {
-                let _ = write!(self.buffer, "-ERR unknown sub command '{content}'{CRLF}");
-            }
-            CmdRes::InvalidInt => {
-                self.set_line_string("-ERR value is not an integer or out of range");
-            }
-            CmdRes::InvalidBitInt => {
-                self.set_line_string("-ERR bit is not an integer or out of range");
-            }
-            CmdRes::InvalidBitOffsetInt => {
-                self.set_line_string("-ERR bit offset is not an integer or out of range");
-            }
-            CmdRes::InvalidFloat => {
-                self.set_line_string("-ERR value is not a valid float");
-            }
-            CmdRes::OverFlow => {
-                self.set_line_string("-ERR increment or decrement would overflow");
-            }
-            CmdRes::NotFound => {
-                self.set_line_string("-ERR no such key");
-            }
-            CmdRes::OutOfRange => {
-                self.set_line_string("-ERR index out of range");
-            }
-            CmdRes::InvalidPwd => {
-                self.set_line_string("-ERR invalid password");
-            }
-            CmdRes::NoneBgsave => {
-                self.set_line_string("-ERR No BGSave Works now");
-            }
-            CmdRes::PurgeExist => {
-                self.set_line_string("-ERR binlog already in purging...");
-            }
-            CmdRes::InvalidParameter => {
-                self.set_line_string("-ERR Invalid Argument");
-            }
-            CmdRes::WrongNum => {
-                let _ = write!(
-                    self.buffer,
-                    "-ERR wrong number of arguments for '{content}' command{CRLF}",
-                );
-            }
-            CmdRes::InvalidIndex => {
-                let _ = write!(self.buffer, "-ERR invalid DB index for '{content}'{CRLF}");
-            }
-            CmdRes::InvalidDbType => {
-                let _ = write!(self.buffer, "-ERR invalid DB for '{content}'{CRLF}");
-            }
-            CmdRes::InconsistentHashTag => {
-                self.set_line_string("-ERR parameters hashtag is inconsistent");
-            }
-            CmdRes::InvalidDB => {
-                let _ = write!(self.buffer, "-ERR invalid DB for '{content}'{CRLF}");
-            }
-            CmdRes::ErrOther => {
-                let _ = write!(self.buffer, "-ERR {content}{CRLF}");
-            }
-            CmdRes::ErrMoved => {
-                let _ = write!(self.buffer, "-MOVED {content}{CRLF}");
-            }
-            CmdRes::ErrClusterDown => {
-                let _ = write!(self.buffer, "-CLUSTERDOWN {content}{CRLF}");
-            }
-            CmdRes::IncrByOverFlow => {
-                let _ = write!(
-                    self.buffer,
-                    "-ERR increment would produce NaN or Infinity {content}{CRLF}",
-                );
-            }
-            CmdRes::InvalidCursor => {
-                self.set_line_string("-ERR invalid cursor");
-            }
-            CmdRes::WrongLeader => {
-                let _ = write!(self.buffer, "-ERR wrong leader {content}{CRLF}");
-            }
-            CmdRes::MultiKey => {
-                let _ = write!(
-                    self.buffer,
-                    "-WRONGTYPE Operation against a key holding the wrong kind of value {content}{CRLF}",
-                );
-            }
-            CmdRes::NoAuth => {
-                self.set_line_string("-NOAUTH Authentication required");
-            }
-        };
-
-        self
-    }
-
     fn append_array_len(&mut self, len: i64) -> &mut Self {
         self.set_array_len(len)
     }
@@ -353,7 +162,6 @@ impl RespEncode for RespEncoder {
 
     fn clear(&mut self) -> &mut Self {
         self.buffer.clear();
-        self.res = CmdRes::None;
         self
     }
 

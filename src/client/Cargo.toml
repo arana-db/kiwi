@@ -1,6 +1,7 @@
 [package]
 name = "client"
 version = "0.1.0"
+license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
@@ -10,4 +11,8 @@ rust-version.workspace = true
 async-trait = "0.1"
 resp = { path = "../resp" }
 parking_lot = { workspace = true }
-tokio = { version = "1.50", features = ["sync"] }
+serde = { workspace = true, features = ["derive"] }
+tokio = { version = "1.50", features = ["sync", "rt"] }
+
+[dev-dependencies]
+serde_json = { workspace = true }

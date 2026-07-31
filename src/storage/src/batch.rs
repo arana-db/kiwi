@@ -39,16 +39,61 @@
 
 use std::sync::Arc;
 
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::collections::HashSet;
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::path::{Path, PathBuf};
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::sync::LazyLock;
+
 use conf::raft_type::{Binlog, BinlogEntry, BinlogResponse, OperateType};
 use rocksdb::{BoundColumnFamily, DB, WriteBatch, WriteOptions};
 use snafu::ResultExt;
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+use parking_lot::Mutex;
 
 use crate::ColumnFamilyIndex;
 use crate::error::{BatchSnafu, InvalidFormatSnafu, Result, RocksSnafu};
 use crate::format_vector_member_key::ParsedVectorMemberDataKey;
 use crate::slot_indexer::key_to_slot_id;
-use crate::storage_define::{PREFIX_RESERVE_LENGTH, decode_user_key, seek_userkey_delim};
+use crate::storage_define::{
+    PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, VERSION_LENGTH, decode_user_key,
+    seek_userkey_delim,
+};
 use bytes::BytesMut;
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+static ROCKS_BATCH_COMMIT_FAILURES: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Removes an unconsumed RocksDB batch commit failpoint when a test exits early.
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+pub struct RocksBatchCommitFailureGuard {
+    db_path: PathBuf,
+}
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+impl Drop for RocksBatchCommitFailureGuard {
+    fn drop(&mut self) {
+        ROCKS_BATCH_COMMIT_FAILURES.lock().remove(&self.db_path);
+    }
+}
+
+/// Inject exactly one failure immediately before a RocksDB batch is committed.
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+#[must_use]
+pub fn fail_next_rocks_batch_commit(db_path: &Path) -> RocksBatchCommitFailureGuard {
+    let db_path = db_path.to_path_buf();
+    assert!(
+        ROCKS_BATCH_COMMIT_FAILURES.lock().insert(db_path.clone()),
+        "RocksDB batch commit failure already registered for {}",
+        db_path.display()
+    );
+    RocksBatchCommitFailureGuard { db_path }
+}
 
 /// Trait for batch write operations.
 ///
@@ -207,6 +252,17 @@ impl<'a> Batch for RocksBatch<'a> {
     }
 
     fn commit(self: Box<Self>) -> Result<()> {
+        #[cfg(any(test, feature = "test-fault-injection"))]
+        if ROCKS_BATCH_COMMIT_FAILURES.lock().remove(self.db.path()) {
+            return BatchSnafu {
+                message: format!(
+                    "injected RocksDB batch commit failure for {}",
+                    self.db.path().display()
+                ),
+            }
+            .fail();
+        }
+
         self.db
             .write_opt(&self.inner, self.write_options)
             .context(RocksSnafu)
@@ -250,12 +306,28 @@ impl BinlogBatch {
     }
 
     pub(crate) fn infer_user_key(cf_idx: u32, encoded_key: &[u8]) -> Result<Vec<u8>> {
-        if cf_idx as usize >= ColumnFamilyIndex::COUNT {
-            return InvalidFormatSnafu {
-                message: format!("Invalid column family index: {cf_idx}"),
+        let tail_length = match cf_idx {
+            value if value == ColumnFamilyIndex::MetaCF as u32 => SUFFIX_RESERVE_LENGTH,
+            value
+                if value == ColumnFamilyIndex::HashesDataCF as u32
+                    || value == ColumnFamilyIndex::SetsDataCF as u32
+                    || value == ColumnFamilyIndex::ZsetsDataCF as u32 =>
+            {
+                VERSION_LENGTH + SUFFIX_RESERVE_LENGTH
             }
-            .fail();
-        }
+            value if value == ColumnFamilyIndex::ListsDataCF as u32 => {
+                2 * VERSION_LENGTH + SUFFIX_RESERVE_LENGTH
+            }
+            value if value == ColumnFamilyIndex::ZsetsScoreCF as u32 => {
+                2 * VERSION_LENGTH + SUFFIX_RESERVE_LENGTH
+            }
+            _ => {
+                return InvalidFormatSnafu {
+                    message: format!("Invalid column family index: {cf_idx}"),
+                }
+                .fail();
+            }
+        };
 
         // Vector member keys use the V1 vector codec, not the shared
         // MemberDataKey layout.
@@ -264,10 +336,10 @@ impl BinlogBatch {
             return Ok(parsed.key().to_vec());
         }
 
-        if encoded_key.len() <= PREFIX_RESERVE_LENGTH {
+        if encoded_key.len() < PREFIX_RESERVE_LENGTH + 2 + tail_length {
             return InvalidFormatSnafu {
                 message: format!(
-                    "Encoded key too short to infer binlog slot: len={}",
+                    "Encoded key is too short for column family {cf_idx}: len={}",
                     encoded_key.len()
                 ),
             }
@@ -277,9 +349,24 @@ impl BinlogBatch {
         let key_part_start = PREFIX_RESERVE_LENGTH;
         let key_part = &encoded_key[key_part_start..];
         let key_part_end = seek_userkey_delim(key_part);
-        if key_part_end > key_part.len() {
+        if key_part_end == key_part.len() {
             return InvalidFormatSnafu {
                 message: "Encoded key delimiter not found while inferring binlog slot".to_string(),
+            }
+            .fail();
+        }
+
+        let remaining = key_part.len() - key_part_end;
+        let has_valid_tail = match cf_idx {
+            value if value == ColumnFamilyIndex::MetaCF as u32 => remaining == tail_length,
+            value if value == ColumnFamilyIndex::ListsDataCF as u32 => remaining == tail_length,
+            _ => remaining >= tail_length,
+        };
+        if !has_valid_tail {
+            return InvalidFormatSnafu {
+                message: format!(
+                    "Encoded key has invalid physical layout for column family {cf_idx}: trailing bytes={remaining}"
+                ),
             }
             .fail();
         }
@@ -287,6 +374,53 @@ impl BinlogBatch {
         let mut user_key = BytesMut::new();
         decode_user_key(&key_part[..key_part_end], &mut user_key)?;
         Ok(user_key.to_vec())
+    }
+
+    pub(crate) fn validate_binlog_entries(binlog: &Binlog) -> Result<()> {
+        if binlog.entries.is_empty() {
+            return InvalidFormatSnafu {
+                message: "Raft binlog must contain at least one entry".to_string(),
+            }
+            .fail();
+        }
+
+        for entry in &binlog.entries {
+            match (&entry.op_type, &entry.value) {
+                (OperateType::Put, Some(_)) | (OperateType::Delete, None) => {}
+                (OperateType::Put, None) => {
+                    return InvalidFormatSnafu {
+                        message: "Put binlog entry must contain a value".to_string(),
+                    }
+                    .fail();
+                }
+                (OperateType::Delete, Some(_)) => {
+                    return InvalidFormatSnafu {
+                        message: "Delete binlog entry must not contain a value".to_string(),
+                    }
+                    .fail();
+                }
+                (OperateType::NoOp, _) => {
+                    return InvalidFormatSnafu {
+                        message: "Normal Raft binlog cannot contain NoOp entries".to_string(),
+                    }
+                    .fail();
+                }
+            }
+
+            let user_key = Self::infer_user_key(entry.cf_idx, &entry.key)?;
+            let actual_slot = key_to_slot_id(&user_key) as u32;
+            if actual_slot != binlog.slot_idx {
+                return InvalidFormatSnafu {
+                    message: format!(
+                        "Binlog slot {} does not match encoded key slot {actual_slot}",
+                        binlog.slot_idx
+                    ),
+                }
+                .fail();
+            }
+        }
+
+        Ok(())
     }
 
     fn infer_slot_idx(entries: &[BinlogEntry]) -> Result<u32> {

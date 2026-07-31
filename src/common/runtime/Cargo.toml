@@ -2,12 +2,17 @@
 name = "runtime"
 version.workspace = true
 description = "Dual runtime architecture for Kiwi database"
+license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [lib]
 name = "runtime"
 path = "lib.rs"
+
+[features]
+default = []
+runtime-baseline = []
 
 [dependencies]
 tokio = { workspace = true }

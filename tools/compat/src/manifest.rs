@@ -1,0 +1,632 @@
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+use std::collections::BTreeMap;
+use std::fmt;
+
+use serde::de::{Error as _, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
+use thiserror::Error;
+
+pub const MANIFEST_SCHEMA: &str = "kiwi-redis-compat/v1";
+pub const REDIS_TAG: &str = "8.8.1";
+pub const REDIS_COMMIT: &str = "77b6c308396c9700672390a210143a8496fb4b10";
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct CompatibilityManifest {
+    schema: String,
+    profile: Profile,
+    redis: RedisBaseline,
+    commands: Vec<CommandContract>,
+}
+
+impl CompatibilityManifest {
+    pub fn from_yaml(input: &str) -> Result<Self, ManifestError> {
+        let raw: RawCompatibilityManifest = yaml_serde::from_str(input)?;
+        Self::validate(raw)
+    }
+
+    pub fn schema(&self) -> &str {
+        &self.schema
+    }
+
+    pub fn profile(&self) -> Profile {
+        self.profile
+    }
+
+    pub fn redis(&self) -> &RedisBaseline {
+        &self.redis
+    }
+
+    pub fn commands(&self) -> &[CommandContract] {
+        &self.commands
+    }
+
+    fn validate(raw: RawCompatibilityManifest) -> Result<Self, ManifestError> {
+        if raw.schema != MANIFEST_SCHEMA {
+            return Err(ManifestError::InvalidSchema { actual: raw.schema });
+        }
+
+        if raw.redis.tag != REDIS_TAG || raw.redis.commit != REDIS_COMMIT {
+            return Err(ManifestError::InvalidRedisIdentity {
+                actual_tag: raw.redis.tag,
+                actual_commit: raw.redis.commit,
+            });
+        }
+
+        let mut command_indexes = BTreeMap::new();
+        let mut commands = Vec::with_capacity(raw.commands.len());
+        for (index, raw_command) in raw.commands.into_iter().enumerate() {
+            let mut command = raw_command.command;
+            if command.is_empty() || !command.bytes().all(|byte| (b'!'..=b'~').contains(&byte)) {
+                return Err(ManifestError::InvalidCommand { command, index });
+            }
+            command.make_ascii_uppercase();
+
+            if let Some(first_index) = command_indexes.insert(command.clone(), index) {
+                return Err(ManifestError::DuplicateCommand {
+                    command,
+                    first_index,
+                    index,
+                });
+            }
+
+            if raw_command.modes.0.is_empty() {
+                return Err(ManifestError::EmptyModes { index });
+            }
+            if raw_command.protocols.is_empty() {
+                return Err(ManifestError::EmptyProtocols { index });
+            }
+            let requires_test_evidence = raw_command.classification.is_required()
+                || raw_command
+                    .modes
+                    .0
+                    .values()
+                    .any(RawClassification::is_required);
+            if requires_test_evidence && raw_command.tests.is_empty() {
+                return Err(ManifestError::EmptyTests { index });
+            }
+            let requires_known_difference = raw_command.classification.is_known_difference()
+                || raw_command
+                    .modes
+                    .0
+                    .values()
+                    .any(RawClassification::is_known_difference);
+            if requires_known_difference && raw_command.known_differences.is_empty() {
+                return Err(ManifestError::MissingKnownDifferences { index });
+            }
+            if !requires_known_difference && !raw_command.known_differences.is_empty() {
+                return Err(ManifestError::UnexpectedKnownDifferences { index });
+            }
+            for (difference_index, difference) in raw_command.known_differences.iter().enumerate() {
+                for (field, value) in [
+                    ("owner", difference.owner.as_str()),
+                    ("issue", difference.issue.as_str()),
+                    ("reason", difference.reason.as_str()),
+                    ("remove_when", difference.remove_when.as_str()),
+                ] {
+                    if value.trim().is_empty() {
+                        return Err(ManifestError::EmptyKnownDifferenceField {
+                            index,
+                            difference_index,
+                            field,
+                        });
+                    }
+                }
+            }
+            if raw_command.owner.trim().is_empty() {
+                return Err(ManifestError::EmptyOwner { index });
+            }
+
+            commands.push(CommandContract {
+                command,
+                classification: raw_command.classification.into(),
+                modes: raw_command
+                    .modes
+                    .0
+                    .into_iter()
+                    .map(|(mode, classification)| (mode.into(), classification.into()))
+                    .collect(),
+                protocols: raw_command.protocols.into_iter().map(Into::into).collect(),
+                arguments: raw_command.arguments.into(),
+                reply_schema: raw_command.reply_schema.into(),
+                errors: raw_command.errors.into(),
+                ttl_semantics: raw_command.ttl_semantics.into(),
+                tests: raw_command.tests.into_iter().map(Into::into).collect(),
+                known_differences: raw_command
+                    .known_differences
+                    .into_iter()
+                    .map(Into::into)
+                    .collect(),
+                owner: raw_command.owner,
+            });
+        }
+
+        Ok(Self {
+            schema: raw.schema,
+            profile: raw.profile.into(),
+            redis: RedisBaseline {
+                tag: raw.redis.tag,
+                commit: raw.redis.commit,
+            },
+            commands,
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Profile {
+    Redis881CoreResp2,
+    Redis881CoreResp3,
+    Redis881Runtime,
+    Redis881ClientEcosystem,
+    Redis881StandaloneCacheOff,
+    Redis881RaftSingleGroupCacheOff,
+    KiwiRocksdbAuthorityV1,
+    KiwiRedisraftPublicV1,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RedisBaseline {
+    tag: String,
+    commit: String,
+}
+
+impl RedisBaseline {
+    pub fn tag(&self) -> &str {
+        &self.tag
+    }
+
+    pub fn commit(&self) -> &str {
+        &self.commit
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct CommandContract {
+    command: String,
+    classification: Classification,
+    modes: BTreeMap<Mode, Classification>,
+    protocols: Vec<Protocol>,
+    arguments: ArgumentSemantics,
+    reply_schema: ReplySchema,
+    errors: ErrorSemantics,
+    ttl_semantics: TtlSemantics,
+    tests: Vec<TestEvidence>,
+    known_differences: Vec<KnownDifference>,
+    owner: String,
+}
+
+impl CommandContract {
+    pub fn command(&self) -> &str {
+        &self.command
+    }
+
+    pub fn classification(&self) -> Classification {
+        self.classification
+    }
+
+    pub fn modes(&self) -> &BTreeMap<Mode, Classification> {
+        &self.modes
+    }
+
+    pub fn protocols(&self) -> &[Protocol] {
+        &self.protocols
+    }
+
+    pub fn arguments(&self) -> ArgumentSemantics {
+        self.arguments
+    }
+
+    pub fn reply_schema(&self) -> ReplySchema {
+        self.reply_schema
+    }
+
+    pub fn errors(&self) -> ErrorSemantics {
+        self.errors
+    }
+
+    pub fn ttl_semantics(&self) -> TtlSemantics {
+        self.ttl_semantics
+    }
+
+    pub fn tests(&self) -> &[TestEvidence] {
+        &self.tests
+    }
+
+    pub fn known_differences(&self) -> &[KnownDifference] {
+        &self.known_differences
+    }
+
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Classification {
+    Required,
+    KnownDifference,
+    Deferred,
+    Unsupported,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Mode {
+    StandaloneCacheOff,
+    RaftSingleGroupCacheOff,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Protocol {
+    Resp2,
+    Resp3,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArgumentSemantics {
+    Exact,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplySchema {
+    Exact,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ErrorSemantics {
+    ExactPrefix,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TtlSemantics {
+    Applicable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TestEvidence {
+    WireDifferential,
+    FinalState,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct KnownDifference {
+    owner: String,
+    issue: String,
+    reason: String,
+    remove_when: String,
+}
+
+impl KnownDifference {
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    pub fn issue(&self) -> &str {
+        &self.issue
+    }
+
+    pub fn reason(&self) -> &str {
+        &self.reason
+    }
+
+    pub fn remove_when(&self) -> &str {
+        &self.remove_when
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCompatibilityManifest {
+    schema: String,
+    profile: RawProfile,
+    redis: RawRedisBaseline,
+    commands: Vec<RawCommandContract>,
+}
+
+#[derive(Debug, Deserialize)]
+enum RawProfile {
+    #[serde(rename = "redis_8_8_1_core_resp2")]
+    Redis881CoreResp2,
+    #[serde(rename = "redis_8_8_1_core_resp3")]
+    Redis881CoreResp3,
+    #[serde(rename = "redis_8_8_1_runtime")]
+    Redis881Runtime,
+    #[serde(rename = "redis_8_8_1_client_ecosystem")]
+    Redis881ClientEcosystem,
+    #[serde(rename = "redis_8_8_1_standalone_cache_off")]
+    Redis881StandaloneCacheOff,
+    #[serde(rename = "redis_8_8_1_raft_single_group_cache_off")]
+    Redis881RaftSingleGroupCacheOff,
+    #[serde(rename = "kiwi_rocksdb_authority_v1")]
+    KiwiRocksdbAuthorityV1,
+    #[serde(rename = "kiwi_redisraft_public_v1")]
+    KiwiRedisraftPublicV1,
+}
+
+impl From<RawProfile> for Profile {
+    fn from(raw: RawProfile) -> Self {
+        match raw {
+            RawProfile::Redis881CoreResp2 => Self::Redis881CoreResp2,
+            RawProfile::Redis881CoreResp3 => Self::Redis881CoreResp3,
+            RawProfile::Redis881Runtime => Self::Redis881Runtime,
+            RawProfile::Redis881ClientEcosystem => Self::Redis881ClientEcosystem,
+            RawProfile::Redis881StandaloneCacheOff => Self::Redis881StandaloneCacheOff,
+            RawProfile::Redis881RaftSingleGroupCacheOff => Self::Redis881RaftSingleGroupCacheOff,
+            RawProfile::KiwiRocksdbAuthorityV1 => Self::KiwiRocksdbAuthorityV1,
+            RawProfile::KiwiRedisraftPublicV1 => Self::KiwiRedisraftPublicV1,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRedisBaseline {
+    tag: String,
+    commit: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCommandContract {
+    command: String,
+    classification: RawClassification,
+    modes: RawModes,
+    protocols: Vec<RawProtocol>,
+    arguments: RawArgumentSemantics,
+    reply_schema: RawReplySchema,
+    errors: RawErrorSemantics,
+    ttl_semantics: RawTtlSemantics,
+    tests: Vec<RawTestEvidence>,
+    known_differences: Vec<RawKnownDifference>,
+    owner: String,
+}
+
+#[derive(Debug)]
+struct RawModes(BTreeMap<RawMode, RawClassification>);
+
+impl<'de> Deserialize<'de> for RawModes {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(RawModesVisitor)
+    }
+}
+
+struct RawModesVisitor;
+
+impl<'de> Visitor<'de> for RawModesVisitor {
+    type Value = RawModes;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a mapping of unique compatibility modes to classifications")
+    }
+
+    fn visit_map<A>(self, mut entries: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut modes = BTreeMap::new();
+        while let Some((mode, classification)) = entries.next_entry()? {
+            if modes.contains_key(&mode) {
+                return Err(A::Error::custom(format!("duplicate mode {mode:?}")));
+            }
+            modes.insert(mode, classification);
+        }
+        Ok(RawModes(modes))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RawClassification {
+    Required,
+    KnownDifference,
+    Deferred,
+    Unsupported,
+}
+
+impl RawClassification {
+    fn is_required(&self) -> bool {
+        matches!(self, Self::Required)
+    }
+
+    fn is_known_difference(&self) -> bool {
+        matches!(self, Self::KnownDifference)
+    }
+}
+
+impl From<RawClassification> for Classification {
+    fn from(raw: RawClassification) -> Self {
+        match raw {
+            RawClassification::Required => Self::Required,
+            RawClassification::KnownDifference => Self::KnownDifference,
+            RawClassification::Deferred => Self::Deferred,
+            RawClassification::Unsupported => Self::Unsupported,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+enum RawMode {
+    StandaloneCacheOff,
+    RaftSingleGroupCacheOff,
+}
+
+impl From<RawMode> for Mode {
+    fn from(raw: RawMode) -> Self {
+        match raw {
+            RawMode::StandaloneCacheOff => Self::StandaloneCacheOff,
+            RawMode::RaftSingleGroupCacheOff => Self::RaftSingleGroupCacheOff,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum RawProtocol {
+    Resp2,
+    Resp3,
+}
+
+impl From<RawProtocol> for Protocol {
+    fn from(raw: RawProtocol) -> Self {
+        match raw {
+            RawProtocol::Resp2 => Self::Resp2,
+            RawProtocol::Resp3 => Self::Resp3,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum RawArgumentSemantics {
+    Exact,
+}
+
+impl From<RawArgumentSemantics> for ArgumentSemantics {
+    fn from(raw: RawArgumentSemantics) -> Self {
+        match raw {
+            RawArgumentSemantics::Exact => Self::Exact,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum RawReplySchema {
+    Exact,
+}
+
+impl From<RawReplySchema> for ReplySchema {
+    fn from(raw: RawReplySchema) -> Self {
+        match raw {
+            RawReplySchema::Exact => Self::Exact,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum RawErrorSemantics {
+    ExactPrefix,
+}
+
+impl From<RawErrorSemantics> for ErrorSemantics {
+    fn from(raw: RawErrorSemantics) -> Self {
+        match raw {
+            RawErrorSemantics::ExactPrefix => Self::ExactPrefix,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum RawTtlSemantics {
+    Applicable,
+}
+
+impl From<RawTtlSemantics> for TtlSemantics {
+    fn from(raw: RawTtlSemantics) -> Self {
+        match raw {
+            RawTtlSemantics::Applicable => Self::Applicable,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum RawTestEvidence {
+    WireDifferential,
+    FinalState,
+}
+
+impl From<RawTestEvidence> for TestEvidence {
+    fn from(raw: RawTestEvidence) -> Self {
+        match raw {
+            RawTestEvidence::WireDifferential => Self::WireDifferential,
+            RawTestEvidence::FinalState => Self::FinalState,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawKnownDifference {
+    owner: String,
+    issue: String,
+    reason: String,
+    remove_when: String,
+}
+
+impl From<RawKnownDifference> for KnownDifference {
+    fn from(raw: RawKnownDifference) -> Self {
+        Self {
+            owner: raw.owner,
+            issue: raw.issue,
+            reason: raw.reason,
+            remove_when: raw.remove_when,
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum ManifestError {
+    #[error("failed to parse compatibility manifest: {0}")]
+    Parse(#[from] yaml_serde::Error),
+    #[error("schema must equal {MANIFEST_SCHEMA}, got {actual:?}")]
+    InvalidSchema { actual: String },
+    #[error(
+        "redis identity must equal tag {REDIS_TAG} and commit {REDIS_COMMIT}, got tag {actual_tag:?} and commit {actual_commit:?}"
+    )]
+    InvalidRedisIdentity {
+        actual_tag: String,
+        actual_commit: String,
+    },
+    #[error("commands[{index}].command duplicates commands[{first_index}].command {command:?}")]
+    DuplicateCommand {
+        command: String,
+        first_index: usize,
+        index: usize,
+    },
+    #[error("commands[{index}].command must be a non-empty printable ASCII token, got {command:?}")]
+    InvalidCommand { command: String, index: usize },
+    #[error("commands[{index}].modes must not be empty")]
+    EmptyModes { index: usize },
+    #[error("commands[{index}].protocols must not be empty")]
+    EmptyProtocols { index: usize },
+    #[error("commands[{index}].tests must not be empty when the command is required")]
+    EmptyTests { index: usize },
+    #[error(
+        "commands[{index}].known_differences must not be empty when the command has a known difference"
+    )]
+    MissingKnownDifferences { index: usize },
+    #[error(
+        "commands[{index}].known_differences must be empty unless the command has a known_difference classification"
+    )]
+    UnexpectedKnownDifferences { index: usize },
+    #[error("commands[{index}].known_differences[{difference_index}].{field} must not be empty")]
+    EmptyKnownDifferenceField {
+        index: usize,
+        difference_index: usize,
+        field: &'static str,
+    },
+    #[error("commands[{index}].owner must not be empty")]
+    EmptyOwner { index: usize },
+}
