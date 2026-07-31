@@ -165,13 +165,20 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
         let addr = node.raft_addr.clone();
 
         // 使用配置创建 endpoint
-        let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
-            .unwrap_or_else(|e| {
-                panic!(
-                    "invalid raft address '{}': failed to parse as gRPC endpoint: {}",
-                    addr, e
-                )
-            });
+        let endpoint = match tonic::transport::Endpoint::from_shared(format!("http://{}", addr)) {
+            Ok(ep) => ep,
+            Err(e) => {
+                log::error!(
+                    "invalid raft address '{}': failed to parse as gRPC endpoint: {}; \
+                     using fallback endpoint that will fail on connect",
+                    addr,
+                    e
+                );
+                // Fallback: a syntactically valid URL that will fail on connect,
+                // surfacing the error as an RPC failure rather than panicking.
+                tonic::transport::Endpoint::from_static("http://0.0.0.0:0")
+            }
+        };
 
         let endpoint = endpoint
             .connect_timeout(self.config.connect_timeout)

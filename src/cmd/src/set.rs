@@ -48,7 +48,7 @@ impl Cmd for SetCmd {
 
     /// SET key value
     fn do_initial(&self, client: &Client) -> bool {
-        // TODO: support xx, nx, ex, px
+        // TODO(#400): support xx, nx, ex, px
         let argv = client.argv();
 
         let key = argv[1].clone();

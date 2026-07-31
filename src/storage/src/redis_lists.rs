@@ -270,7 +270,10 @@ impl Redis {
     pub fn lpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
         match self.push_core(key, values, true, true, true)? {
             Some(count) => Ok(count),
-            None => unreachable!("lpush always creates list when key doesn't exist"),
+            None => OptionNoneSnafu {
+                message: "lpush always creates list when key doesn't exist".to_string(),
+            }
+            .fail(),
         }
     }
 
@@ -278,7 +281,10 @@ impl Redis {
     pub fn rpush(&self, key: &[u8], values: &[Vec<u8>]) -> Result<i64> {
         match self.push_core(key, values, false, true, true)? {
             Some(count) => Ok(count),
-            None => unreachable!("rpush always creates list when key doesn't exist"),
+            None => OptionNoneSnafu {
+                message: "rpush always creates list when key doesn't exist".to_string(),
+            }
+            .fail(),
         }
     }
 
@@ -1106,7 +1112,12 @@ impl Redis {
                 false,
             )? {
                 Some(_) => {}
-                None => unreachable!("Destination list creation should always succeed"),
+                None => {
+                    return OptionNoneSnafu {
+                        message: "Destination list creation should always succeed".to_string(),
+                    }
+                    .fail()
+                }
             }
 
             return Ok(Some(popped_value));
@@ -1143,7 +1154,12 @@ impl Redis {
             false,
         )? {
             Some(_) => {}
-            None => unreachable!("Destination list creation should always succeed"),
+            None => {
+                return OptionNoneSnafu {
+                    message: "Destination list creation should always succeed".to_string(),
+                }
+                .fail()
+            }
         }
 
         Ok(Some(popped_value))

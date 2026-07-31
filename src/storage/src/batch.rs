@@ -470,7 +470,7 @@ impl Batch for BinlogBatch {
 
         let slot_idx = Self::infer_slot_idx(&self.entries)?;
         let binlog = Binlog {
-            db_id: 0, // TODO: thread real db_id from Redis/Storage in a later task
+            db_id: 0, // TODO(#400): thread real db_id from Redis/Storage in a later task
             slot_idx,
             entries: self.entries,
         };

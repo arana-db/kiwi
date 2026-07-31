@@ -51,11 +51,16 @@ impl SlotIndexer {
     }
 
     /// Placeholder for re-sharding slots functionality.
-    pub fn reshard_slots(&self, _slots: Vec<usize>) {
-        // TODO: Implement the logic for re-sharding slots.
+    ///
+    /// Returns `Err` until the re-sharding logic is implemented (see #397).
+    pub fn reshard_slots(&self, _slots: Vec<usize>) -> Result<(), crate::error::Error> {
+        // TODO(#397): Implement the logic for re-sharding slots.
         // When we implement this method, remove the underscore.
         // Don't forget add unit test.
-        unimplemented!("Resharding logic not implemented yet.");
+        Err(crate::error::Error::System {
+            message: "reshard_slots not implemented yet".into(),
+            location: snafu::location!(),
+        })
     }
 }
 

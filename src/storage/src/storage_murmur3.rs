@@ -54,7 +54,7 @@ pub fn murmur3_32<T: AsRef<[u8]>>(data: T, seed: u32) -> u32 {
             1 => {
                 k1 ^= remainder[0] as u32;
             }
-            _ => unreachable!(),
+            _ => unreachable!("remainder length is 0..=3, guaranteed by murmur3 finalization"),
         }
 
         k1 = k1.wrapping_mul(c1);

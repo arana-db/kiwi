@@ -27,6 +27,11 @@ path = "tests/redis_list_test.rs"
 name = "ttl_test"
 path = "tests/ttl_test.rs"
 
+[[test]]
+name = "storage_stats_test"
+path = "tests/storage_stats_test.rs"
+required-features = ["test-fault-injection"]
+
 [dependencies]
 rocksdb.workspace = true 
 log.workspace = true

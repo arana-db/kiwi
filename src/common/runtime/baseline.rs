@@ -80,17 +80,17 @@ pub enum AttemptState {
 }
 
 impl AttemptState {
-    fn from_u8(value: u8) -> Self {
+    fn from_u8(value: u8) -> Option<Self> {
         match value {
-            0 => Self::Offered,
-            1 => Self::ChannelQueued,
-            2 => Self::BatchQueued,
-            3 => Self::WaitingGate,
-            4 => Self::Running,
-            5 => Self::ExecutionFinished,
-            6 => Self::ShutdownRejectedAfterAccept,
-            7 => Self::Abandoned,
-            _ => unreachable!("baseline attempt state is only written from AttemptState"),
+            0 => Some(Self::Offered),
+            1 => Some(Self::ChannelQueued),
+            2 => Some(Self::BatchQueued),
+            3 => Some(Self::WaitingGate),
+            4 => Some(Self::Running),
+            5 => Some(Self::ExecutionFinished),
+            6 => Some(Self::ShutdownRejectedAfterAccept),
+            7 => Some(Self::Abandoned),
+            _ => None,
         }
     }
 
@@ -322,6 +322,7 @@ impl BaselineAttempt {
 
     pub fn state(&self) -> AttemptState {
         AttemptState::from_u8(self.inner.state.load(Ordering::Acquire))
+            .unwrap_or(AttemptState::Abandoned)
     }
 
     /// Irrevocably reject a physical attempt before the request channel accepts it.
@@ -1912,7 +1913,7 @@ mod tests {
         source.transition(AttemptState::ChannelQueued).unwrap();
 
         assert_eq!(
-            AttemptState::from_u8(target_inner.state.load(Ordering::Acquire)),
+            AttemptState::from_u8(target_inner.state.load(Ordering::Acquire)).unwrap(),
             AttemptState::Abandoned
         );
         assert!(target_handle.failed());

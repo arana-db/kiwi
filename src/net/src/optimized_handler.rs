@@ -201,7 +201,13 @@ impl OptimizedConnectionHandler {
                                             let error_response = RespData::Error(format!("ERR {}", e).into());
                                             let mut encoder = RespEncoder::new(RespVersion::RESP2);
                                             encoder.encode_resp_data(&error_response);
-                                            let _ = client.write(encoder.get_response().as_ref()).await;
+                                            if let Err(write_err) = client.write(encoder.get_response().as_ref()).await {
+                                                warn!("failed to write error response to client: {write_err}; closing connection");
+                                                if self.config.enable_buffer_pooling {
+                                                    self.buffer_manager.return_buffer(read_buffer).await;
+                                                }
+                                                return Ok(());
+                                            }
                                         }
                                     }
                                 }

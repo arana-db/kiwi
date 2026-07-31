@@ -322,6 +322,7 @@ fn proto_binlog_to_binlog(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
     use crate::raft_proto::{Binlog as ProtoBinlog, BinlogEntry as ProtoBinlogEntry};
     use std::sync::atomic::{AtomicUsize, Ordering};
