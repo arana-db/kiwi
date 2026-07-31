@@ -202,10 +202,12 @@ impl RocksDbOwnerDropTestGate {
 }
 
 #[cfg(test)]
-fn rocks_db_owner_drop_test_gate_registry()
--> &'static Mutex<Option<(std::path::PathBuf, Weak<RocksDbOwnerDropTestGate>)>> {
-    static GATE: OnceLock<Mutex<Option<(std::path::PathBuf, Weak<RocksDbOwnerDropTestGate>)>>> =
-        OnceLock::new();
+type RocksDbOwnerDropGateRegistry =
+    Mutex<Option<(std::path::PathBuf, Weak<RocksDbOwnerDropTestGate>)>>;
+
+#[cfg(test)]
+fn rocks_db_owner_drop_test_gate_registry() -> &'static RocksDbOwnerDropGateRegistry {
+    static GATE: OnceLock<RocksDbOwnerDropGateRegistry> = OnceLock::new();
     GATE.get_or_init(|| Mutex::new(None))
 }
 
@@ -1187,13 +1189,13 @@ mod type_check_state_tests {
     }
 
     /// Forge a raw on-disk value that matches `format_base_value::is_stale`:
-    ///   * `type_byte`  at offset 0      (a valid `DataType` tag, 0..=6)
-    ///   * `count`      at offset 1..9    (meta count; only consulted for
-    ///                        Set/Hash/ZSet/List — kept non-zero so those types
-    ///                        are not short-circuited as stale by `count == 0`)
-    ///   * `etime`      in the final 8 bytes (microseconds since epoch).
-    ///                        `etime == 0` means "permanent" (never stale); any
-    ///                        `etime < now` is stale.
+    ///   * `type_byte` at offset 0 (a valid `DataType` tag, 0..=6)
+    ///   * `count` at offset 1..9 (meta count; only consulted for
+    ///     Set/Hash/ZSet/List — kept non-zero so those types
+    ///     are not short-circuited as stale by `count == 0`)
+    ///   * `etime` in the final 8 bytes (microseconds since epoch).
+    ///     `etime == 0` means "permanent" (never stale); any
+    ///     `etime < now` is stale.
     fn make_value(type_byte: u8, count: u64, etime: u64, total_len: usize) -> Vec<u8> {
         assert!(
             total_len >= 9,

@@ -513,6 +513,7 @@ fn decode_log_key(key: &[u8]) -> Result<u64, StorageError<u64>> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
     use conf::raft_type::{Binlog, BinlogEntry, OperateType};
     use openraft::storage::RaftLogStorageExt;

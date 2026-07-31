@@ -20,6 +20,8 @@
 //! These tests verify the integration of RocksdbLogStore with the Raft system,
 //! including node restart scenarios and data recovery.
 
+#![allow(clippy::unwrap_used)]
+
 use std::sync::Arc;
 use std::time::Duration;
 

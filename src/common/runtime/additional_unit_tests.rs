@@ -372,7 +372,7 @@ mod serialization_tests {
 
     #[test]
     fn test_noop_storage_stats_collector() {
-        let collector = NoopStorageStatsCollector::default();
+        let collector = NoopStorageStatsCollector;
 
         collector.record_read(3, 5);
         collector.record_write(7, 11);

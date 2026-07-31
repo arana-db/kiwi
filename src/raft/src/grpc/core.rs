@@ -188,7 +188,7 @@ impl RaftCoreService for RaftCoreServiceImpl {
         &self,
         request: Request<tonic::Streaming<InstallSnapshotRequest>>,
     ) -> Result<Response<InstallSnapshotResponse>, Status> {
-        // FIXME: 实现快照安装
+        // FIXME(#400): implement snapshot installation
         // 当前故意丢弃所有快照分片，将来实现时必须删除此 workaround
         let mut stream = request.into_inner();
         while let Some(_chunk) = stream.message().await? {

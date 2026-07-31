@@ -1096,7 +1096,7 @@ impl BackgroundTaskManager {
 
                         // Record compaction started
                         if let Some(ref _tracker) = metrics_tracker {
-                            // TODO: Fix type annotation issue
+                            // TODO(#400): re-enable after type annotation fixed
                             // tracker.record_compaction_started().await;
                         }
 
@@ -1112,7 +1112,7 @@ impl BackgroundTaskManager {
 
                             // Record compaction completed
                             if let Some(ref _tracker) = metrics_tracker {
-                                // TODO: Fix type annotation issue
+                                // TODO(#400): re-enable after type annotation fixed
                                 // tracker.record_compaction_completed(0, compaction_duration).await; // TODO: Get actual bytes compacted
                             }
                         }
@@ -1170,7 +1170,7 @@ impl BackgroundTaskManager {
 
                             // Record flush started
                             if let Some(ref _tracker) = metrics_tracker {
-                                // TODO: Fix type annotation issue
+                                // TODO(#400): re-enable after type annotation fixed
                                 // tracker.record_flush_started().await;
                             }
 
@@ -1180,7 +1180,7 @@ impl BackgroundTaskManager {
 
                             // Record flush completed (simulated)
                             if let Some(ref _tracker) = metrics_tracker {
-                                // TODO: Fix type annotation issue
+                                // TODO(#400): re-enable after type annotation fixed
                                 // tracker.record_flush_completed(0, Duration::from_millis(10)).await; // TODO: Get actual flush metrics
                             }
                         }
@@ -1236,7 +1236,7 @@ impl BackgroundTaskManager {
 
                     // Update metrics tracker if available
                     if let Some(ref _tracker) = metrics_tracker {
-                        // TODO: Fix type annotation issue
+                        // TODO(#400): re-enable after type annotation fixed
                         // tracker.update_rocksdb_metrics(
                         //     rocksdb_stats.total_keys,
                         //     rocksdb_stats.total_size_bytes,

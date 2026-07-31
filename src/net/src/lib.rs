@@ -28,7 +28,7 @@ pub mod pool;
 pub mod storage_client;
 pub mod tcp;
 
-// TODO: delete this module
+// TODO(#400): delete this module
 pub mod error;
 pub mod unix;
 

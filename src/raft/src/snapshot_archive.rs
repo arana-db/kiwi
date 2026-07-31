@@ -17,7 +17,7 @@
 
 //! Tar packing/unpacking for Raft snapshot checkpoints.
 //!
-//! TODO: stream snapshot bytes (read/write without holding the full tar in memory) for
+//! TODO(#400): stream snapshot bytes (read/write without holding the full tar in memory) for
 //! build and install paths; align with OpenRaft snapshot APIs when switching off in-memory buffers.
 
 use std::io::{self, Cursor};
@@ -110,6 +110,7 @@ pub fn unpacked_checkpoint_root(unpack_root: &Path) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
     use storage::RaftSnapshotMeta;
 

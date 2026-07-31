@@ -223,6 +223,10 @@ jobs:
           max_attempts: 2
           command: bash -o pipefail -c "make test 2>&1 | tee cargo-test.log"
 
+      - name: Test storage stats with fault injection
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo test -p storage --features test-fault-injection --test storage_stats_test
+
       - name: Test runtime baseline tool
         run: cargo test -p runtime-baseline --all-targets
 
