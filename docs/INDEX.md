@@ -7,11 +7,10 @@ sure where to start, follow the **Newcomer** path below.
 
 | Document | Audience | What it covers |
 |----------|----------|----------------|
-| [`README.md`](../README.md) / [`README_CN.md`](../README_CN.md) | Everyone | Project intro, features, quickstart, toolchain, doc table, implementation status |
+| [`README.md`](../README.md) / [`README_CN.md`](../README_CN.md) | Everyone | Project intro, features, quickstart, toolchain, and documentation entry points |
 | [`CLAUDE.md`](../CLAUDE.md) (a.k.a. `AGENTS.md`) | Contributors / AI agents | Dev commands, crate layout, code style, behavioral guidelines |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contributors | How to contribute |
 | [`CHANGELOG.md`](../CHANGELOG.md) | Everyone | Notable changes (history) |
-| [`code-review-findings.md`](../code-review-findings.md) | Contributors | Dated, authoritative record of known gaps and review findings |
 
 ## Planning & requirements (source of truth for roadmap)
 
@@ -24,7 +23,7 @@ the authoritative tracking surface:
 - `.planning/ROADMAP.md` — milestones (`M0`–`M10`)
 - `.planning/STATE.md` — current state
 - `.planning/KANBAN.md` — work board
-- `.planning/DECISIONS.md` / `OPEN_QUESTIONS.md` / `REFERENCES.md`
+- `.planning/DECISIONS.md` / `.planning/OPEN_QUESTIONS.md` / `.planning/REFERENCES.md`
 
 ## Developer docs
 
@@ -63,14 +62,14 @@ the authoritative tracking surface:
 
 `docs/superpowers/plans/` and `docs/superpowers/specs/` contain **dated design
 records** (filename prefix `YYYY-MM-DD-`). They are historical decision logs, not
-a second roadmap. Each `specs/` entry pairs with a `plans/` entry of the same date
-where one exists. For the current authoritative plan, prefer `.planning/ROADMAP.md`
-and the gate documents above.
+a second roadmap. Follow related specs and plans by topic and by their explicit
+cross-references; dates do not define a one-to-one pairing. For the current
+authoritative plan, prefer `.planning/ROADMAP.md` and the gate documents above.
 
 ## Suggested reading order
 
 - **Newcomer**: `README.md` → `docs/development.md` → `docs/cluster.md` → `docs/key-encoding.md`
-- **Contributor**: `CLAUDE.md` → `docs/development.md` → `code-review-findings.md` → `docs/quality/quality-gates.md`
+- **Contributor**: `CLAUDE.md` → `docs/development.md` → `docs/quality/quality-gates.md`
 - **Architecture / compatibility**: `docs/prd.md` → `docs/compatibility/redis-8.8.1.md` → `docs/architecture/redis-8.8.1-system-boundaries.md`
 - **Stability & quality**: `docs/quality/system-stability-gate.md` → `docs/quality/quality-gates.md` → `docs/performance/storage-runtime-baseline.md`
-- **Design history**: `docs/superpowers/plans/` + `docs/superpowers/specs/` (read by date)
+- **Design history**: `docs/superpowers/plans/` + `docs/superpowers/specs/` (follow by topic and explicit cross-references)

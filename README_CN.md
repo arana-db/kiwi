@@ -60,10 +60,6 @@ Client → TCP accept [网络运行时] → RESP 解析 → 命令查找
 
 README 不再维护第二份容易漂移的路线清单。
 
-## 实现状态
-
-Kiwi 以 Redis 8.8.1 兼容为目标，但兼容目前仍是**进行中的目标**，而非已交付状态。已知的差距与代码审查结论以 [`code-review-findings.md`](code-review-findings.md) 为准。在假定某个 Redis 命令或行为已完整支持之前，请先查阅该文件，并参考上文相关门禁文档确认当前的稳定性门槛。
-
 ## 快速开始
 
 ### 环境要求
@@ -146,8 +142,8 @@ redis-cli -p 7379 get foo         # "bar"
 | [人物角色与用户故事](docs/personas-and-user-stories.md) | 目标用户与使用场景 |
 | [文档索引](docs/INDEX.md) | 整个 `docs/` 树的地图与建议阅读顺序 |
 | [设计计划与规格](docs/superpowers/) | 带日期的设计记录（plans + specs） |
-| `kiwi --sample-config` | 生成默认配置文件 |
-| `kiwi --full-sample-config` | 生成包含所有配置项的完整配置文件 |
+| `kiwi --sample-config > kiwi.conf` | 将默认配置写入 `kiwi.conf` |
+| `kiwi --full-sample-config > kiwi.conf` | 将包含所有配置项的完整配置写入 `kiwi.conf` |
 
 ## 依赖说明
 

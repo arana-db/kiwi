@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Recovery management for degraded storage states
   - Comprehensive health monitoring and statistics
   - Backpressure handling to prevent overload
-- Architecture documentation in `docs/architecture/`
+- [Architecture documentation](docs/architecture/)
 - Runtime configuration options for thread pool sizing
 - Independent health checks for network and storage runtimes
 
@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING CHANGE**: Default port changed from `9221` to `7379` for Redis compatibility
   - The configuration system has been migrated to Redis-style format (similar to `redis.conf`)
-  - Configuration file moved from INI format to Redis-style format; generate it with `kiwi --sample-config` (`kiwi --full-sample-config` for all keys)
+  - Configuration file moved from INI format to Redis-style format; generate it with `kiwi --sample-config > kiwi.conf` (`kiwi --full-sample-config > kiwi.conf` for all keys), then start Kiwi with `kiwi --config kiwi.conf`
   - Default port is now `7379` (a Redis-compatible variant of the standard `6379` port)
 - **BREAKING CHANGE**: Storage initialization now requires `RuntimeManager::initialize_storage_components()`
   - Must be called after `RuntimeManager::start()` and before starting storage server
@@ -50,11 +50,11 @@ If you are upgrading from a previous version that used port `9221`:
    - Old format: `config.ini` with `port=9221`
    - New format: `kiwi.conf` with `port 7379`
 
-4. **Custom port configuration**: If you need to use a different port, generate a config with `kiwi --sample-config` and update the `port` setting in the generated file:
-   ```conf
-   # Accept connections on the specified port, default is 7379.
-   # port 7379
-   port YOUR_CUSTOM_PORT
+4. **Custom port configuration**: If you need to use a different port, redirect the generated configuration to a file, update its `port` setting, and start Kiwi with that file:
+   ```bash
+   kiwi --sample-config > kiwi.conf
+   # Edit kiwi.conf and set: port YOUR_CUSTOM_PORT
+   kiwi --config kiwi.conf
    ```
 
 5. **Docker/Container deployments**: Update any port mappings from `9221` to `7379`
@@ -102,7 +102,7 @@ If you have custom code that integrates with Kiwi:
    - `channel_buffer_size` - Message channel buffer size
    - `request_timeout` - Default request timeout
 
-See `docs/architecture/` for detailed architecture documentation.
+See the [architecture documentation](docs/architecture/) for details.
 
 ### Fixed
 

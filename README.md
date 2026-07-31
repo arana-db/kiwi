@@ -60,10 +60,6 @@ The authoritative north star, requirements, milestones, current state, and Kanba
 
 README checklists are intentionally not used as a second roadmap.
 
-## Implementation Status
-
-Kiwi targets Redis 8.8.1 compatibility, but that compatibility is an **in-progress goal**, not a delivered state. The authoritative, dated record of known gaps and code-review findings is [`code-review-findings.md`](code-review-findings.md). Consult it before assuming a Redis command or behavior is fully supported, and check the relevant gate documents above for the current stability bar.
-
 ## Getting Started
 
 ### Prerequisites
@@ -145,8 +141,8 @@ See [docs/cluster.md](docs/cluster.md) for the manual step-by-step procedure and
 | [Personas and user stories](docs/personas-and-user-stories.md) | Target users and usage scenarios |
 | [Documentation index](docs/INDEX.md) | Map of the whole `docs/` tree and suggested reading order |
 | [Design plans & specs](docs/superpowers/) | Dated design records (plans + specs) |
-| `kiwi --sample-config` | Generate a default config file |
-| `kiwi --full-sample-config` | Generate a config with all available keys |
+| `kiwi --sample-config > kiwi.conf` | Write the default configuration to `kiwi.conf` |
+| `kiwi --full-sample-config > kiwi.conf` | Write all available configuration keys to `kiwi.conf` |
 
 ## Dependencies
 

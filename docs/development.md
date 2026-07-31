@@ -172,20 +172,22 @@ cargo test --package storage      # tests for a specific crate
 cargo test test_redis_mset        # run a single test by name
 ```
 
-Python integration tests require a running Kiwi server and the Python dependencies:
+The Python integration runner starts an isolated Kiwi server on `127.0.0.1:6379`,
+runs the test suite against it, and stops the server afterward:
 
 ```bash
-# Terminal 1: build (release) and start a single-node server on 127.0.0.1:7379
-make standalone
-
-# Terminal 2: install Python test dependencies, then run the integration tests
+# Build the debug binary used by the runner and install the test dependencies
+cargo build --bin kiwi
 make -C tests install-deps
-make -C tests test-python
+
+# Start the isolated server and run the Python integration suite
+./tests/run_python_integration.sh
 ```
 
-`make -C tests install-deps` installs the pinned dependencies from
-`tests/python/requirements.txt`; `make -C tests test-python` runs
-`pytest tests/python/ -v`. See [tests/README.md](../tests/README.md) and
+`make -C tests install-deps` installs the version-constrained dependencies from
+`tests/python/requirements.txt`. The runner sets `KIWI_TEST_REQUIRE_SERVER=1` and
+`KIWI_TEST_ISOLATED_SERVER=1` so tests cannot silently pass by skipping server-
+dependent cases. See [tests/README.md](../tests/README.md) and
 [tests/NEW_TESTS_GUIDE.md](../tests/NEW_TESTS_GUIDE.md) for details.
 
 Storage tests use `tempfile::tempdir()` for isolated RocksDB instances.
