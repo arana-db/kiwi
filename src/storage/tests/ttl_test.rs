@@ -20,7 +20,10 @@
 use std::sync::Arc;
 
 use storage::ZsetScoreMember;
-use storage::{StorageOptions, storage::Storage, unique_test_db_path};
+use storage::{
+    BaseMetaKey, ColumnFamilyIndex, StorageOptions, format_base_meta_value::ParsedBaseMetaValue,
+    storage::Storage, unique_test_db_path,
+};
 
 #[tokio::test]
 async fn test_ttl_basic_operations() {
@@ -333,6 +336,78 @@ async fn test_del_command() {
             .unwrap(),
         1
     );
+
+    storage.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_del_returns_zero_for_stale_string() {
+    let db_path = unique_test_db_path();
+    let mut storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _receiver = storage.open(options, &db_path).unwrap();
+
+    let key = b"stale_del_key";
+    storage.set(key, b"value").unwrap();
+    assert!(storage.pexpire(key, 1).unwrap());
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    assert_eq!(storage.del(&[key.to_vec()]).unwrap(), 0);
+
+    storage.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_del_composite_recreate_hides_old_members() {
+    let db_path = unique_test_db_path();
+    let mut storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _receiver = storage.open(options, &db_path).unwrap();
+
+    let key = b"del_recreate_hash";
+    storage.hset(key, b"old-field", b"old-value").unwrap();
+    assert_eq!(storage.del(&[key.to_vec()]).unwrap(), 1);
+    assert_eq!(storage.exists(&[key.to_vec()]).unwrap(), 0);
+    assert_eq!(storage.key_type(key).unwrap(), "none");
+    assert_eq!(storage.ttl(key).unwrap(), -2);
+    assert!(storage.keys(b"del_recreate_hash").unwrap().is_empty());
+    storage.hset(key, b"new-field", b"new-value").unwrap();
+    assert_eq!(storage.hget(key, b"old-field").unwrap(), None);
+    assert_eq!(
+        storage.hget(key, b"new-field").unwrap(),
+        Some("new-value".to_string())
+    );
+
+    storage.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_del_writes_composite_meta_tombstone_with_new_version() {
+    let db_path = unique_test_db_path();
+    let mut storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _receiver = storage.open(options, &db_path).unwrap();
+
+    let key = b"del_meta_tombstone";
+    storage.hset(key, b"field", b"value").unwrap();
+    let meta_key = BaseMetaKey::new(key).encode().unwrap();
+    let original_version = {
+        let instance = &storage.insts[0];
+        let meta_cf = instance.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+        let db = instance.db().unwrap();
+        let original = db.get_cf(&meta_cf, &meta_key).unwrap().unwrap();
+        ParsedBaseMetaValue::new(&original[..]).unwrap().version()
+    };
+
+    assert_eq!(storage.del(&[key.to_vec()]).unwrap(), 1);
+    {
+        let instance = &storage.insts[0];
+        let meta_cf = instance.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+        let db = instance.db().unwrap();
+        let tombstone = db.get_cf(&meta_cf, &meta_key).unwrap().unwrap();
+        let parsed = ParsedBaseMetaValue::new(&tombstone[..]).unwrap();
+        assert_eq!(parsed.count(), 0);
+        assert!(parsed.version() > original_version);
+    }
 
     storage.shutdown().await;
 }
