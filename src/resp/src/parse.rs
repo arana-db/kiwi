@@ -64,6 +64,9 @@ impl Default for RespParse {
 }
 
 impl RespParse {
+    const MAX_AGGREGATE_LENGTH: i64 = i32::MAX as i64;
+    const MAX_PREALLOCATED_AGGREGATE_LENGTH: usize = 1024;
+
     pub fn new(version: RespVersion) -> Self {
         Self {
             version,
@@ -80,6 +83,24 @@ impl RespParse {
 
     pub fn set_version(&mut self, version: RespVersion) {
         self.version = version;
+    }
+
+    fn aggregate_capacity(
+        input: &[u8],
+        len: i64,
+    ) -> Result<usize, nom::Err<nom::error::Error<&[u8]>>> {
+        if len > Self::MAX_AGGREGATE_LENGTH {
+            return Err(nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Verify,
+            )));
+        }
+
+        usize::try_from(len)
+            .map(|len| len.min(Self::MAX_PREALLOCATED_AGGREGATE_LENGTH))
+            .map_err(|_| {
+                nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
+            })
     }
 
     /// Detect protocol version from the first byte of input
@@ -212,7 +233,7 @@ impl RespParse {
         }
 
         let mut remaining = input;
-        let mut elements = Vec::with_capacity(len as usize);
+        let mut elements = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
 
         for _ in 0..len {
             let (new_remaining, element) = Self::parse_resp_data(remaining)?;
@@ -353,7 +374,7 @@ impl RespParse {
         }
 
         let mut remaining = input;
-        let mut pairs = Vec::with_capacity(len as usize);
+        let mut pairs = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
 
         for _ in 0..len {
             let (new_remaining, key) = Self::parse_resp_data(remaining)?;
@@ -382,7 +403,7 @@ impl RespParse {
         }
 
         let mut remaining = input;
-        let mut elements = Vec::with_capacity(len as usize);
+        let mut elements = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
 
         for _ in 0..len {
             let (new_remaining, element) = Self::parse_resp_data(remaining)?;
@@ -410,7 +431,7 @@ impl RespParse {
         }
 
         let mut remaining = input;
-        let mut elements = Vec::with_capacity(len as usize);
+        let mut elements = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
 
         for _ in 0..len {
             let (new_remaining, element) = Self::parse_resp_data(remaining)?;
@@ -906,6 +927,48 @@ mod tests {
                 RespData::SimpleString(Bytes::from("message")),
             ]))
         );
+    }
+
+    // Regression for #395: untrusted aggregate lengths must not drive allocation size.
+    #[test]
+    fn test_reject_oversized_aggregate_lengths_without_panicking() {
+        for frame in [
+            "*2147483648\r\n",
+            "%2147483648\r\n",
+            "~2147483648\r\n",
+            ">2147483648\r\n",
+            "*9223372036854775807\r\n",
+            "%9223372036854775807\r\n",
+            "~9223372036854775807\r\n",
+            ">9223372036854775807\r\n",
+        ] {
+            let mut parser = RespParse::new(RespVersion::RESP3);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                parser.parse(Bytes::copy_from_slice(frame.as_bytes()))
+            }));
+
+            assert!(
+                matches!(result, Ok(RespParseResult::Error(_))),
+                "expected a parse error for {frame:?}, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_maximum_aggregate_lengths_do_not_preallocate_declared_size() {
+        for frame in [
+            "*2147483647\r\n",
+            "%2147483647\r\n",
+            "~2147483647\r\n",
+            ">2147483647\r\n",
+        ] {
+            let mut parser = RespParse::new(RespVersion::RESP3);
+            assert_eq!(
+                parser.parse(Bytes::copy_from_slice(frame.as_bytes())),
+                RespParseResult::Incomplete,
+                "unexpected parse result for {frame:?}"
+            );
+        }
     }
 
     #[test]
