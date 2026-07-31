@@ -136,6 +136,9 @@ jobs:
 
       - run: make lint
 
+      - name: Lint runtime baseline tool targets
+        run: cargo clippy -p runtime-baseline --all-targets -- -D warnings -D clippy::unwrap_used
+
   build-and-test:
     strategy:
       fail-fast: false
