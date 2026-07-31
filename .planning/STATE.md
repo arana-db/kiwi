@@ -8,15 +8,15 @@
 >
 > 实现基线：`main` at `cbc28958f261ae049d67a8b4a9d904d794b37726`
 >
-> 状态：PR 已创建；独立 review 的嵌套深度缺口已修复，二次 review 无 finding，最终 Head/checks 以 GitHub 实时查询为准
+> 状态：PR 已创建；独立 review 发现合法未完成声明仍会放大分配，零声明预分配修复已通过本地双平台验证，最终 Head/checks 以 GitHub 实时查询为准
 >
-> 当前范围：拒绝超出 Redis 8.8.1 整数边界的 RESP 聚合长度，限制 Array/Map/Set/Push 的初始预分配和递归嵌套深度
+> 当前范围：拒绝超出 Redis 8.8.1 整数边界的 RESP 聚合长度，消除 Array/Map/Set/Push 的声明驱动预分配，并限制递归嵌套深度
 >
 > Requirement 边界：`REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-WORK-003`
 
 ## 当前目标
 
-本 task 修复 Issue #395 B1 中已经由源码确认的未认证 RESP 聚合类型无界预分配问题。客户端声明长度不得直接控制 `Vec` 的初始容量；超出 Redis 8.8.1 `INT_MAX` 边界的声明返回协议错误，合法声明的初始容量最多为 1024，聚合递归最多为 128 层。
+本 task 修复 Issue #395 B1 中已经由源码确认的未认证 RESP 聚合类型无界预分配问题。客户端声明长度不得触发 `Vec` 预分配；超出 Redis 8.8.1 `INT_MAX` 边界的声明返回协议错误，合法聚合容器只随成功解析出的元素增长，聚合递归最多为 128 层。
 
 本 task 不处理实际流入的超大 bulk 或连接累计 buffer 限额，不修改 PR #402 的文档，不处理 Issue #395 的其他条目，也不实现 Redis Oracle provenance 或 Embedded Redis Hot Tier。
 
@@ -40,7 +40,7 @@
 
 - PR `#383` 已于 2026-07-28 合并：final Head `42c16bef899385bd2e1b1e16e2e0202d4a614590`，merge commit `58030e1331655546ea4547a9a94efc493534ef7d`；它只完成 Oracle 方案 A 的规划闭环。
 - PR `#388` 已于 2026-07-30 合并；本 task 是从最新 `main` 创建的独立 implementation task。
-- RESP 聚合长度上限采用 Redis 8.8.1 的 `INT_MAX`，初始预分配上限采用 1024。
+- RESP 聚合长度上限采用 Redis 8.8.1 的 `INT_MAX`；合法声明采用零预分配，容量只随成功解析出的元素增长。
 - `D011`：Redis Oracle required provenance 采用 verifier fresh-checkout independent rebuild 和 exact binary hash equality。
 - `D012`：规划 task 与实施 task 分离；规划批准不授权源码实现，提前产生的实现草稿冻结。
 - Redis 8.8.1 tag `8.8.1` / commit `77b6c308396c9700672390a210143a8496fb4b10` 是唯一兼容和 Oracle 基线。
@@ -107,25 +107,28 @@ D:\test\github\kiwi\.worktrees\redis-8.8.1-stability-foundation\.codex\recovery\
 - Windows 与 WSL `cargo clippy -p resp --all-targets -- -D warnings -D clippy::unwrap_used`：通过。
 - `cargo fmt --all -- --check` 与 `git diff --check`：通过。
 - 首版实现提交：`b10c85cd694032ae86f7a07a02d192142ab32d7f`；PR：`#404`。独立 review 前的远端 Head 为该提交，checks 当时仍在运行。
-- 独立 review 在该 Head 发现：重复最大合法聚合头仍可叠加每层 1024 槽位的预分配并持续增长调用栈；原最大合法长度测试也未直接证明 1024 容量上限。
+- 独立 review 在 `94694d81173ad9443f903bf44881efcbdaae4700` 发现：重复最大合法聚合头仍可叠加每层 1024 槽位的预分配；测试侧分配探针实测单个合法头申请 73,754 字节，128 层未完成头申请 9,440,512 字节，后者每增加 10 个单字节分片会累计申请约 94 MB。
+- 分配 TDD 红灯：四种最大合法声明头的 allocation regression 在首个 Array 头以 73,754 字节失败；128 层 regression 以 9,440,512 字节失败。
+- 分配 TDD 绿灯：四种聚合声明改为 `Vec::new()` 后，同一组 2 个 allocation regression 通过，容量只由成功解析元素的 `push` 增长。
 - 深度 TDD 红灯：旧实现把 129 层完整 Array 嵌套解析为成功结果；exact 测试实际运行 1 个用例并按预期失败。
 - 深度 TDD 绿灯：统一 128 层门禁后，同一 exact 测试实际运行 1 个用例并通过。
-- 最终工作区 Windows 与 WSL `cargo test -p resp`：各 65 个单元测试、20 个集成测试通过；WSL 使用 Rust/Cargo 1.97.1 和任务专属 Linux target。
-- 最终工作区 Windows 与 WSL `cargo clippy -p resp --all-targets -- -D warnings -D clippy::unwrap_used`：通过。
-- 最终工作区 `cargo fmt --all -- --check` 与 `git diff --check`：通过。
-- 二次独立 review 未发现 Critical、Important 或 Minor；确认 128/129 深度边界、四类聚合错误传播和容量 helper 测试与设计一致。
+- 当前工作区 Windows 与 WSL `cargo test -p resp`：各 66 个单元测试、20 个集成测试通过；WSL 使用任务专属 Linux target。
+- 当前工作区 Windows 与 WSL `cargo clippy -p resp --all-targets -- -D warnings -D clippy::unwrap_used`：通过。
+- 当前工作区 `cargo fmt --all -- --check` 与 `git diff --check`：通过。
+- 零声明预分配修复已完成独立规格复审：生产实现无 Critical/Important；测试阈值最初可能放过小容量预分配的 Minor 已改为预留输入 buffer 后严格断言解析阶段零分配，并由同一审查者确认闭环。
 - checks、review threads 和 PR 状态不在本文件中缓存；任何当前结论必须重新查询 GitHub。
 
 PR `#383` 的结果只证明 Oracle 规划闭环，不证明方案 A 已实现；PR `#388` 也不改变该结论。
 
 ## 下一条安全动作
 
-1. 提交并 push PR #404 review 修复后，重新查询最终 Head 的 checks、评论和 review threads；不得把旧 Head 的 CI 结果作为最终状态。
-2. 若最终 Head checks 未完成，只报告 pending，不给可 Merge 结论。
-3. 不 Resolve 或回复 #402/#404 review thread，不 merge PR。
-4. PR `#383` 的规划历史保持不变，旧六文件 Oracle 草稿继续冻结。
-5. 只有用户另开 Oracle provenance implementation task 后，才从包含方案 A 的 clean `main` 创建新 worktree、TaskId 和 recovery checkpoint，并先执行真实 Redis 双 checkout reproducibility 门禁。
-6. Hot Tier 继续 Frozen；Gate PASS 后仍须用户明确批准一个单独的 implementation task。
+1. 提交并 push 零声明预分配修复到 PR #404。
+2. push 后更新失真的 PR 正文，并重新查询最终 Head 的 checks、评论和 review threads；不得把旧 Head 的 CI 结果作为最终状态。
+3. 若最终 Head checks 未完成，只报告 pending，不给可 Merge 结论。
+4. 不 Resolve 或回复 #402/#404 review thread，不 merge PR。
+5. PR `#383` 的规划历史保持不变，旧六文件 Oracle 草稿继续冻结。
+6. 只有用户另开 Oracle provenance implementation task 后，才从包含方案 A 的 clean `main` 创建新 worktree、TaskId 和 recovery checkpoint，并先执行真实 Redis 双 checkout reproducibility 门禁。
+7. Hot Tier 继续 Frozen；Gate PASS 后仍须用户明确批准一个单独的 implementation task。
 
 ## 恢复检查
 

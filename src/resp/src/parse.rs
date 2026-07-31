@@ -65,7 +65,6 @@ impl Default for RespParse {
 
 impl RespParse {
     const MAX_AGGREGATE_LENGTH: i64 = i32::MAX as i64;
-    const MAX_PREALLOCATED_AGGREGATE_LENGTH: usize = 1024;
     const MAX_AGGREGATE_NESTING_DEPTH: usize = 128;
 
     pub fn new(version: RespVersion) -> Self {
@@ -86,10 +85,10 @@ impl RespParse {
         self.version = version;
     }
 
-    fn aggregate_capacity(
+    fn validate_aggregate_length(
         input: &[u8],
         len: i64,
-    ) -> Result<usize, nom::Err<nom::error::Error<&[u8]>>> {
+    ) -> Result<(), nom::Err<nom::error::Error<&[u8]>>> {
         if len > Self::MAX_AGGREGATE_LENGTH {
             return Err(nom::Err::Failure(nom::error::Error::new(
                 input,
@@ -97,11 +96,7 @@ impl RespParse {
             )));
         }
 
-        usize::try_from(len)
-            .map(|len| len.min(Self::MAX_PREALLOCATED_AGGREGATE_LENGTH))
-            .map_err(|_| {
-                nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
-            })
+        Ok(())
     }
 
     fn nested_aggregate_depth(
@@ -247,8 +242,9 @@ impl RespParse {
             return Ok((input, RespData::Array(None)));
         }
 
+        Self::validate_aggregate_length(input, len)?;
         let mut remaining = input;
-        let mut elements = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
+        let mut elements = Vec::new();
 
         for _ in 0..len {
             let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
@@ -388,8 +384,9 @@ impl RespParse {
             return Ok((input, RespData::Map(vec![])));
         }
 
+        Self::validate_aggregate_length(input, len)?;
         let mut remaining = input;
-        let mut pairs = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
+        let mut pairs = Vec::new();
 
         for _ in 0..len {
             let (new_remaining, key) = Self::parse_resp_data(remaining, depth)?;
@@ -417,8 +414,9 @@ impl RespParse {
             return Ok((input, RespData::Set(vec![])));
         }
 
+        Self::validate_aggregate_length(input, len)?;
         let mut remaining = input;
-        let mut elements = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
+        let mut elements = Vec::new();
 
         for _ in 0..len {
             let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
@@ -445,8 +443,9 @@ impl RespParse {
             return Ok((input, RespData::Push(vec![])));
         }
 
+        Self::validate_aggregate_length(input, len)?;
         let mut remaining = input;
-        let mut elements = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
+        let mut elements = Vec::new();
 
         for _ in 0..len {
             let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
@@ -550,10 +549,80 @@ impl Drop for RespParse {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::cell::Cell;
+
     use crate::command::CommandType;
 
     use super::Bytes;
     use super::{Parse, RespData, RespParse, RespParseResult, RespVersion};
+
+    struct MeasuringAllocator;
+
+    // Measurements are thread-local so unrelated parallel tests do not affect the totals.
+    thread_local! {
+        static MEASURE_ALLOCATIONS: Cell<bool> = const { Cell::new(false) };
+        static ALLOCATED_BYTES: Cell<usize> = const { Cell::new(0) };
+    }
+
+    fn record_allocation(size: usize) {
+        if MEASURE_ALLOCATIONS.try_with(Cell::get).unwrap_or(false) {
+            let _ = ALLOCATED_BYTES.try_with(|total| {
+                total.set(total.get().saturating_add(size));
+            });
+        }
+    }
+
+    // SAFETY: Every allocation operation is forwarded to System with the original pointer and
+    // layout; the extra bookkeeping only updates non-allocating thread-local Cell values.
+    unsafe impl GlobalAlloc for MeasuringAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            record_allocation(layout.size());
+            // SAFETY: The caller provides the layout required by GlobalAlloc.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            record_allocation(layout.size());
+            // SAFETY: The caller provides the layout required by GlobalAlloc.
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: The pointer and layout are forwarded unchanged from the caller.
+            unsafe { System.dealloc(ptr, layout) }
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            record_allocation(new_size);
+            // SAFETY: The pointer, layout, and requested size are forwarded unchanged.
+            unsafe { System.realloc(ptr, layout, new_size) }
+        }
+    }
+
+    #[global_allocator]
+    static TEST_ALLOCATOR: MeasuringAllocator = MeasuringAllocator;
+
+    struct AllocationMeasurement;
+
+    impl AllocationMeasurement {
+        fn start() -> Self {
+            ALLOCATED_BYTES.with(|total| total.set(0));
+            MEASURE_ALLOCATIONS.with(|enabled| enabled.set(true));
+            Self
+        }
+
+        fn finish(self) -> usize {
+            MEASURE_ALLOCATIONS.with(|enabled| enabled.set(false));
+            ALLOCATED_BYTES.with(Cell::get)
+        }
+    }
+
+    impl Drop for AllocationMeasurement {
+        fn drop(&mut self) {
+            let _ = MEASURE_ALLOCATIONS.try_with(|enabled| enabled.set(false));
+        }
+    }
 
     #[test]
     fn test_parse_simple_string_ok() {
@@ -987,16 +1056,43 @@ mod tests {
     }
 
     #[test]
-    fn test_aggregate_capacity_is_capped() {
-        for (len, expected) in [
-            (0, 0),
-            (1, 1),
-            (1024, 1024),
-            (1025, 1024),
-            (i32::MAX as i64, 1024),
+    fn test_incomplete_aggregate_headers_do_not_allocate_declared_capacity() {
+        for frame in [
+            b"*2147483647\r\n".as_slice(),
+            b"%2147483647\r\n".as_slice(),
+            b"~2147483647\r\n".as_slice(),
+            b">2147483647\r\n".as_slice(),
         ] {
-            assert_eq!(RespParse::aggregate_capacity(b"", len).unwrap(), expected);
+            let mut parser = RespParse::new(RespVersion::RESP3);
+            parser.buffer.reserve(frame.len());
+            let input = Bytes::from_static(frame);
+            let measurement = AllocationMeasurement::start();
+            let result = parser.parse(input);
+            let allocated = measurement.finish();
+
+            assert_eq!(result, RespParseResult::Incomplete, "{frame:?}");
+            assert_eq!(
+                allocated, 0,
+                "incomplete aggregate header {frame:?} allocated container storage"
+            );
         }
+    }
+
+    #[test]
+    fn test_nested_incomplete_aggregate_headers_have_input_bounded_allocation() {
+        let frame = "*2147483647\r\n".repeat(RespParse::MAX_AGGREGATE_NESTING_DEPTH);
+        let mut parser = RespParse::new(RespVersion::RESP3);
+        parser.buffer.reserve(frame.len());
+        let input = Bytes::copy_from_slice(frame.as_bytes());
+        let measurement = AllocationMeasurement::start();
+        let result = parser.parse(input);
+        let allocated = measurement.finish();
+
+        assert_eq!(result, RespParseResult::Incomplete);
+        assert_eq!(
+            allocated, 0,
+            "nested incomplete headers allocated container storage"
+        );
     }
 
     #[test]

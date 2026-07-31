@@ -4,7 +4,7 @@
 
 **目标：** 阻止未认证客户端通过 RESP 聚合类型声明长度或递归嵌套触发无界初始分配、capacity-overflow panic 或栈耗尽。
 
-**架构：** 在 `resp` crate 内增加统一的聚合容量和嵌套深度校验 helper，按 Redis 8.8.1 的 `INT_MAX` 边界拒绝超限声明，把初始容量限制为 1024，并在第 129 层聚合分配前返回错误。四种聚合解析器共享门禁，网络层继续复用现有协议错误关闭连接路径。
+**架构：** 在 `resp` crate 内增加统一的聚合长度和嵌套深度校验 helper，按 Redis 8.8.1 的 `INT_MAX` 边界拒绝超限声明，聚合容器从空向量开始并只随成功解析元素增长，在第 129 层聚合解析前返回错误。四种聚合解析器共享门禁，网络层继续复用现有协议错误关闭连接路径。
 
 **技术栈：** Rust 2024、`nom` streaming parser、`bytes`、Cargo tests、Clippy
 
@@ -50,7 +50,7 @@ fn test_reject_oversized_aggregate_lengths_without_panicking() {
 
 预期：FAIL；现有实现发生 `capacity overflow`，`catch_unwind` 返回 `Err`，断言失败。
 
-### 任务 2：实现统一的有界初始容量
+### 任务 2：实现统一长度校验和零声明预分配
 
 **文件：**
 - 修改：`src/resp/src/parse.rs` 的常量、helper 和四个聚合解析函数
@@ -59,12 +59,10 @@ fn test_reject_oversized_aggregate_lengths_without_panicking() {
 
 ```rust
 const MAX_AGGREGATE_LENGTH: i64 = i32::MAX as i64;
-const MAX_PREALLOCATED_AGGREGATE_LENGTH: usize = 1024;
-
-fn aggregate_capacity(
+fn validate_aggregate_length(
     input: &[u8],
     len: i64,
-) -> Result<usize, nom::Err<nom::error::Error<&[u8]>>> {
+) -> Result<(), nom::Err<nom::error::Error<&[u8]>>> {
     if len > MAX_AGGREGATE_LENGTH {
         return Err(nom::Err::Failure(nom::error::Error::new(
             input,
@@ -72,20 +70,13 @@ fn aggregate_capacity(
         )));
     }
 
-    usize::try_from(len)
-        .map(|len| len.min(MAX_PREALLOCATED_AGGREGATE_LENGTH))
-        .map_err(|_| {
-            nom::Err::Failure(nom::error::Error::new(
-                input,
-                nom::error::ErrorKind::Verify,
-            ))
-        })
+    Ok(())
 }
 ```
 
 - [x] **步骤 2：在四个调用点使用 helper**
 
-各解析函数完成负数语义处理后调用 `Self::aggregate_capacity(input, len)?`，并把返回值传给 `Vec::with_capacity`。Map 的声明值表示 pair 数，不做乘二预分配。
+各解析函数完成负数语义处理后调用 `Self::validate_aggregate_length(input, len)?`，并使用 `Vec::new()`。Array/Map/Set/Push 的容量只由完整元素的 `push` 增长，不由声明头触发。
 
 - [x] **步骤 3：运行红灯测试并确认转绿**
 
@@ -112,7 +103,7 @@ fn aggregate_capacity(
 
 同一步骤 1 的 exact 命令实际运行 1 个测试并 PASS；另补 128 层成功边界和四种聚合前缀覆盖。
 
-### 任务 4：覆盖容量和长度边界并验证兼容行为
+### 任务 4：覆盖分配和长度边界并验证兼容行为
 
 **文件：**
 - 修改：`src/resp/src/parse.rs` 的 `tests` 模块
@@ -138,7 +129,7 @@ fn test_maximum_aggregate_lengths_do_not_preallocate_declared_size() {
 }
 ```
 
-直接断言 `aggregate_capacity` 对 `0/1/1024/1025/i32::MAX` 的返回值，避免只用 `Incomplete` 间接推断预分配上限。
+使用测试侧线程局部分配计数器直接测量真实解析行为：在计量前构造输入并预留 parser buffer，四种最大合法声明头和 128 层未完成 Array 头在解析阶段都必须为零分配。首版 1024 容量上限在这两个测试中分别实测约 73 KB 和 9.4 MB，并按预期红灯失败。
 
 - [x] **步骤 2：运行 resp crate 完整测试**
 

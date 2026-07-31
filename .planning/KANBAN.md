@@ -14,7 +14,7 @@
 
 | ID | 工作项 | Requirement / Gate 关系 | 当前状态 |
 |---|---|---|---|
-| `RESP-LIMITS-001` | 限制未认证 RESP Array/Map/Set/Push 声明长度、初始预分配和嵌套深度 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-WORK-003` | PR `#404` 已创建；独立 review 缺口已修复，二次 review 无 finding，最终 Head/checks 以 GitHub 为准 |
+| `RESP-LIMITS-001` | 限制未认证 RESP Array/Map/Set/Push 声明长度、消除声明驱动预分配并限制嵌套深度 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-WORK-003` | PR `#404` 已创建；零声明预分配修复已通过 Windows/WSL 验证和独立规格复审，待提交、push 和新 Head CI |
 
 ## Ready for a separate implementation task
 
