@@ -72,7 +72,10 @@ impl AsyncRespParser {
 
         // Parse as many complete commands as possible
         loop {
-            let parse_result = self.parser.parse(self.buffer.split().freeze());
+            let parse_result = crate::network_handle::parse_request(
+                &mut self.parser,
+                self.buffer.split().freeze(),
+            );
 
             match parse_result {
                 RespParseResult::Complete(command_data) => {
@@ -228,6 +231,18 @@ mod tests {
         assert_eq!(parser.version(), RespVersion::RESP2);
         assert!(!parser.is_pipelining());
         assert_eq!(parser.buffered_bytes(), 0);
+    }
+
+    #[test]
+    fn parse_data_discards_underlying_legacy_command_copy() {
+        let mut parser = AsyncRespParser::new(RespVersion::RESP2);
+
+        let commands = parser
+            .parse_data(Bytes::from_static(b"*1\r\n$4\r\nPING\r\n"))
+            .expect("valid command should parse");
+
+        assert_eq!(commands.len(), 1);
+        assert!(parser.parser.next_command().is_none());
     }
 
     #[test]

@@ -100,13 +100,19 @@ impl CommandBatch {
     }
 }
 
+fn bounded_command_channel<T>(capacity: usize) -> (mpsc::Sender<T>, mpsc::Receiver<T>, usize) {
+    let capacity = capacity.max(1);
+    let (sender, receiver) = mpsc::channel(capacity);
+    (sender, receiver, capacity)
+}
+
 /// Pipeline processor for batching and executing commands
 pub struct CommandPipeline {
     config: PipelineConfig,
     storage: Arc<Storage>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
-    command_tx: mpsc::UnboundedSender<PipelineCommand>,
+    command_tx: mpsc::Sender<PipelineCommand>,
     semaphore: Arc<Semaphore>,
     batch_counter: Arc<std::sync::atomic::AtomicU64>,
 }
@@ -118,9 +124,12 @@ impl CommandPipeline {
         cmd_table: Arc<CmdTable>,
         executor: Arc<CmdExecutor>,
     ) -> Self {
-        // TODO: Consider using bounded channel instead of unbounded to properly enforce queue_capacity
-        // Currently using unbounded_channel means the command_queue_size config is not actually enforced
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (command_tx, command_rx, queue_capacity) =
+            bounded_command_channel(config.command_queue_size);
+        let config = PipelineConfig {
+            command_queue_size: queue_capacity,
+            ..config
+        };
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_pipelines));
 
         let pipeline = Self {
@@ -155,8 +164,9 @@ impl CommandPipeline {
         };
 
         // Send command to pipeline
-        self.command_tx
-            .send(command)
+        timeout(Duration::from_secs(30), self.command_tx.send(command))
+            .await
+            .map_err(|_| PipelineError::Timeout)?
             .map_err(|_| PipelineError::ChannelClosed)?;
 
         // Wait for response with timeout
@@ -167,7 +177,7 @@ impl CommandPipeline {
     }
 
     /// Start the background batch processor
-    fn start_batch_processor(&self, mut command_rx: mpsc::UnboundedReceiver<PipelineCommand>) {
+    fn start_batch_processor(&self, mut command_rx: mpsc::Receiver<PipelineCommand>) {
         let config = self.config.clone();
         let storage = self.storage.clone();
         let cmd_table = self.cmd_table.clone();
@@ -368,11 +378,6 @@ impl CommandPipeline {
         PipelineStats {
             available_permits: self.semaphore.available_permits(),
             max_concurrent_pipelines: self.config.max_concurrent_pipelines,
-            // Note: queue_capacity stat is currently misleading because the channel at line 121
-            // is unbounded (mpsc::unbounded_channel). This returns command_queue_size from config,
-            // but the actual channel has no capacity limit.
-            // TODO: Consider using bounded channel (mpsc::channel) and passing config.command_queue_size
-            // as the capacity to make this stat accurate.
             queue_capacity: self.config.command_queue_size,
         }
     }
@@ -427,5 +432,17 @@ mod tests {
 
         sleep(Duration::from_millis(2)).await;
         assert!(batch.is_expired(config.batch_timeout));
+    }
+
+    #[test]
+    fn command_channel_is_bounded_and_normalizes_zero_capacity() {
+        let (sender, _receiver, capacity) = bounded_command_channel::<u8>(0);
+
+        assert_eq!(capacity, 1);
+        assert!(sender.try_send(1).is_ok());
+        assert!(matches!(
+            sender.try_send(2),
+            Err(mpsc::error::TrySendError::Full(2))
+        ));
     }
 }

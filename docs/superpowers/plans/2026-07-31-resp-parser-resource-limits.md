@@ -1,5 +1,8 @@
 # RESP 聚合类型资源限额实现计划
 
+> 最终 PR 范围已扩展，本文件作为聚合预分配与 nesting 阶段计划保留；现行计划见
+> `2026-07-31-bounded-request-processing.md`。
+
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
 **目标：** 阻止未认证客户端通过 RESP 聚合类型声明长度或递归嵌套触发无界初始分配、capacity-overflow panic 或栈耗尽。

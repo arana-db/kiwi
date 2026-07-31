@@ -1,5 +1,8 @@
 # RESP 聚合类型资源限额设计
 
+> 最终 PR 范围已扩展，本文件作为聚合预分配与 nesting 阶段记录保留；现行合同见
+> `2026-07-31-bounded-request-processing-design.md`。
+
 > 状态：已批准
 > 日期：2026-07-31
 > 基线：`main` at `cbc28958f261ae049d67a8b4a9d904d794b37726`

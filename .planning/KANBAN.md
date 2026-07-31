@@ -14,7 +14,7 @@
 
 | ID | 工作项 | Requirement / Gate 关系 | 当前状态 |
 |---|---|---|---|
-| `RESP-LIMITS-001` | 限制未认证 RESP Array/Map/Set/Push 声明长度、初始预分配和嵌套深度 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-WORK-003` | PR `#404` 已创建；独立 review 缺口已修复，二次 review 无 finding，最终 Head/checks 以 GitHub 为准 |
+| `RESP-LIMITS-001` | 有界 RESP 解析、未认证连接 buffer、parser 历史副本和 optional pipeline 背压 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-STABILITY-002`、`REQ-STABILITY-003`、`REQ-WORK-003` | PR `#404` 已创建；本地 Windows/WSL 定向验证完成，待发布并复检最终 Head CI |
 
 ## Ready for a separate implementation task
 

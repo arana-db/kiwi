@@ -24,11 +24,12 @@ use cmd::table::CmdTable;
 use executor::{CmdExecution, CmdExecutor};
 use log::error;
 use resp::encode::RespEncoder;
-use resp::{Parse, RespData, RespEncode, RespParseResult};
+use resp::{RespData, RespEncode, RespParseResult};
 use storage::storage::Storage;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
+use crate::network_handle::parse_client_request;
 use crate::storage_client::StorageClient;
 
 pub async fn process_connection(
@@ -47,8 +48,11 @@ pub async fn process_connection(
                     Ok(n) => {
                         if n == 0 { return Ok(()); }
 
-                        let parse_result =
-                            resp_parser.parse(Bytes::copy_from_slice(&buf[..n]));
+                        let parse_result = parse_client_request(
+                            &mut resp_parser,
+                            client.is_authenticated(),
+                            Bytes::copy_from_slice(&buf[..n]),
+                        )?;
                         match parse_result {
                             RespParseResult::Complete(data) => {
                                 if let RespData::Array(Some(params)) = data {

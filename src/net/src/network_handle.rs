@@ -39,6 +39,44 @@ use crate::executor_ext::CmdExecutorNetworkExt;
 use crate::storage_client::StorageClient;
 use runtime::DualRuntimeError;
 
+pub(crate) fn unauthenticated_buffer_limit_exceeded(
+    is_authenticated: bool,
+    buffered_len: usize,
+    incoming_len: usize,
+) -> bool {
+    !is_authenticated
+        && buffered_len
+            .checked_add(incoming_len)
+            .is_none_or(|len| len > resp::parse::MAX_UNAUTHENTICATED_BUFFER_SIZE)
+}
+
+pub(crate) fn discard_legacy_parsed_command(parser: &mut resp::RespParse) {
+    drop(parser.next_command());
+}
+
+pub(crate) fn parse_request(parser: &mut resp::RespParse, data: Bytes) -> RespParseResult {
+    let result = parser.parse(data);
+    if matches!(result, RespParseResult::Complete(_)) {
+        discard_legacy_parsed_command(parser);
+    }
+    result
+}
+
+pub(crate) fn parse_client_request(
+    parser: &mut resp::RespParse,
+    is_authenticated: bool,
+    data: Bytes,
+) -> std::io::Result<RespParseResult> {
+    if unauthenticated_buffer_limit_exceeded(is_authenticated, parser.buffered_len(), data.len()) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "unauthenticated RESP buffer limit exceeded",
+        ));
+    }
+
+    Ok(parse_request(parser, data))
+}
+
 /// Process a network connection using StorageClient for storage operations
 ///
 /// This function replaces the original process_connection to work with the
@@ -112,13 +150,16 @@ pub async fn process_network_connection_until_cancelled(
                         let mut shutdown_after_current_read = false;
 
                         // Parse RESP data with support for multiple commands
-                        let mut parse_result = resp_parser.parse(Bytes::copy_from_slice(&buf[..n]));
+                        let mut parse_result = parse_client_request(
+                            &mut resp_parser,
+                            client.is_authenticated(),
+                            Bytes::copy_from_slice(&buf[..n]),
+                        )?;
 
                         loop {
                             match parse_result {
                                 RespParseResult::Complete(data) => {
                                     debug!("RESP parsing complete: {:?}", data);
-
                                     if let Some(command) = extract_command_from_data(data) {
                                         pending_commands.push(command);
 
@@ -138,7 +179,11 @@ pub async fn process_network_connection_until_cancelled(
                                     }
 
                                     // Try to parse more commands from the buffer
-                                    parse_result = resp_parser.parse(Bytes::new());
+                                    parse_result = parse_client_request(
+                                        &mut resp_parser,
+                                        client.is_authenticated(),
+                                        Bytes::new(),
+                                    )?;
                                 }
                                 RespParseResult::Error(e) => {
                                     error!("RESP protocol error: {:?}", e);
@@ -692,5 +737,30 @@ mod tests {
     fn test_network_handle_module_exists() {
         // Test that the module compiles and functions are accessible
         // This test ensures the module structure is correct
+    }
+
+    #[test]
+    fn unauthenticated_buffer_limit_checks_boundaries_and_overflow() {
+        let limit = resp::parse::MAX_UNAUTHENTICATED_BUFFER_SIZE;
+
+        assert!(!unauthenticated_buffer_limit_exceeded(false, limit - 1, 1));
+        assert!(unauthenticated_buffer_limit_exceeded(false, limit, 1));
+        assert!(unauthenticated_buffer_limit_exceeded(false, usize::MAX, 1));
+        assert!(!unauthenticated_buffer_limit_exceeded(true, usize::MAX, 1));
+    }
+
+    #[test]
+    fn active_consumer_discards_legacy_parsed_command_copy() {
+        let mut parser = resp::RespParse::new(resp::RespVersion::RESP2);
+
+        assert!(matches!(
+            parse_client_request(
+                &mut parser,
+                false,
+                Bytes::from_static(b"*1\r\n$4\r\nPING\r\n")
+            ),
+            Ok(RespParseResult::Complete(_))
+        ));
+        assert!(parser.next_command().is_none());
     }
 }
