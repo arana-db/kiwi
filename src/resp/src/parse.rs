@@ -34,6 +34,35 @@ use crate::{
     types::{RespData, RespVersion},
 };
 
+pub const MAX_UNAUTHENTICATED_BUFFER_SIZE: usize = 1024 * 1024;
+
+#[derive(Clone, Copy, Debug)]
+struct RespLimits {
+    max_inline_len: usize,
+    max_bulk_len: usize,
+    max_buffer_len: usize,
+    max_aggregate_len: usize,
+    max_nesting_depth: usize,
+    /// Maximum RESP nodes materialized by one decoded frame.
+    max_decoded_nodes: usize,
+    /// Maximum cumulative node visits while an incomplete frame is replayed.
+    max_parse_work: usize,
+}
+
+impl Default for RespLimits {
+    fn default() -> Self {
+        Self {
+            max_inline_len: 64 * 1024,
+            max_bulk_len: 512 * 1024 * 1024,
+            max_buffer_len: 1024 * 1024 * 1024,
+            max_aggregate_len: i32::MAX as usize,
+            max_nesting_depth: 128,
+            max_decoded_nodes: 64 * 1024,
+            max_parse_work: 1_000_000,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum RespParseResult {
     Complete(RespData),
@@ -55,6 +84,8 @@ pub struct RespParse {
     commands: VecDeque<RespResult<RespCommand>>,
     is_pipeline: bool,
     version_detected: bool,
+    limits: RespLimits,
+    parse_work: usize,
 }
 
 impl Default for RespParse {
@@ -64,9 +95,6 @@ impl Default for RespParse {
 }
 
 impl RespParse {
-    const MAX_AGGREGATE_LENGTH: i64 = i32::MAX as i64;
-    const MAX_AGGREGATE_NESTING_DEPTH: usize = 128;
-
     pub fn new(version: RespVersion) -> Self {
         Self {
             version,
@@ -74,7 +102,26 @@ impl RespParse {
             commands: VecDeque::new(),
             is_pipeline: false,
             version_detected: false,
+            limits: RespLimits::default(),
+            parse_work: 0,
         }
+    }
+
+    #[cfg(test)]
+    fn with_limits(version: RespVersion, limits: RespLimits) -> Self {
+        Self {
+            version,
+            buffer: BytesMut::new(),
+            commands: VecDeque::new(),
+            is_pipeline: false,
+            version_detected: false,
+            limits,
+            parse_work: 0,
+        }
+    }
+
+    pub fn buffered_len(&self) -> usize {
+        self.buffer.len()
     }
 
     pub fn version(&self) -> RespVersion {
@@ -83,34 +130,6 @@ impl RespParse {
 
     pub fn set_version(&mut self, version: RespVersion) {
         self.version = version;
-    }
-
-    fn validate_aggregate_length(
-        input: &[u8],
-        len: i64,
-    ) -> Result<(), nom::Err<nom::error::Error<&[u8]>>> {
-        if len > Self::MAX_AGGREGATE_LENGTH {
-            return Err(nom::Err::Failure(nom::error::Error::new(
-                input,
-                nom::error::ErrorKind::Verify,
-            )));
-        }
-
-        Ok(())
-    }
-
-    fn nested_aggregate_depth(
-        input: &[u8],
-        depth: usize,
-    ) -> Result<usize, nom::Err<nom::error::Error<&[u8]>>> {
-        if depth >= Self::MAX_AGGREGATE_NESTING_DEPTH {
-            return Err(nom::Err::Failure(nom::error::Error::new(
-                input,
-                nom::error::ErrorKind::Verify,
-            )));
-        }
-
-        Ok(depth + 1)
     }
 
     /// Detect protocol version from the first byte of input
@@ -133,6 +152,82 @@ impl RespParse {
             self.set_version(detected_version);
         }
         self.version_detected = true;
+    }
+
+    fn resource_limit_error(input: &[u8]) -> nom::Err<nom::error::Error<&[u8]>> {
+        nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::TooLarge,
+        ))
+    }
+
+    fn checked_length(
+        input: &[u8],
+        len: i64,
+        max: usize,
+    ) -> Result<usize, nom::Err<nom::error::Error<&[u8]>>> {
+        let len = usize::try_from(len).map_err(|_| Self::resource_limit_error(input))?;
+        if len > max {
+            return Err(Self::resource_limit_error(input));
+        }
+        Ok(len)
+    }
+
+    fn push_aggregate<'a, T>(
+        elements: &mut Vec<T>,
+        element: T,
+        input: &'a [u8],
+    ) -> Result<(), nom::Err<nom::error::Error<&'a [u8]>>> {
+        if elements.len() == elements.capacity() {
+            elements
+                .try_reserve(1)
+                .map_err(|_| Self::resource_limit_error(input))?;
+        }
+        elements.push(element);
+        Ok(())
+    }
+
+    fn check_aggregate_depth<'a>(
+        input: &'a [u8],
+        depth: usize,
+        limits: &RespLimits,
+    ) -> Result<(), nom::Err<nom::error::Error<&'a [u8]>>> {
+        if depth >= limits.max_nesting_depth {
+            return Err(Self::resource_limit_error(input));
+        }
+        Ok(())
+    }
+
+    fn check_line_length<'a>(
+        input: &'a [u8],
+        limits: &RespLimits,
+    ) -> Result<(), nom::Err<nom::error::Error<&'a [u8]>>> {
+        let line_len = input
+            .iter()
+            .position(|byte| matches!(byte, b'\r' | b'\n'))
+            .unwrap_or(input.len());
+        if line_len > limits.max_inline_len {
+            return Err(Self::resource_limit_error(input));
+        }
+        Ok(())
+    }
+
+    fn charge_parse_node<'a>(
+        input: &'a [u8],
+        limits: &RespLimits,
+        parse_work: &mut usize,
+        decoded_nodes: &mut usize,
+    ) -> Result<(), nom::Err<nom::error::Error<&'a [u8]>>> {
+        *parse_work = parse_work
+            .checked_add(1)
+            .ok_or_else(|| Self::resource_limit_error(input))?;
+        *decoded_nodes = decoded_nodes
+            .checked_add(1)
+            .ok_or_else(|| Self::resource_limit_error(input))?;
+        if *parse_work > limits.max_parse_work || *decoded_nodes > limits.max_decoded_nodes {
+            return Err(Self::resource_limit_error(input));
+        }
+        Ok(())
     }
 
     fn parse_inline(input: &[u8]) -> IResult<&[u8], RespData> {
@@ -202,7 +297,7 @@ impl RespParse {
         Ok((input, RespData::Integer(num)))
     }
 
-    fn parse_bulk_string(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_bulk_string<'a>(input: &'a [u8], limits: &RespLimits) -> IResult<&'a [u8], RespData> {
         let (input, _) = char('$')(input)?;
         let mut map_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -218,7 +313,8 @@ impl RespParse {
             return Ok((input, RespData::BulkString(None)));
         }
 
-        let mut ter_parser = terminated(take(len as usize), line_ending);
+        let len = Self::checked_length(input, len, limits.max_bulk_len)?;
+        let mut ter_parser = terminated(take(len), line_ending);
         let (input, data) = ter_parser.parse(input)?;
         Ok((
             input,
@@ -226,7 +322,14 @@ impl RespParse {
         ))
     }
 
-    fn parse_array(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
+    fn parse_array<'a>(
+        input: &'a [u8],
+        limits: &RespLimits,
+        depth: usize,
+        parse_work: &mut usize,
+        decoded_nodes: &mut usize,
+    ) -> IResult<&'a [u8], RespData> {
+        Self::check_aggregate_depth(input, depth, limits)?;
         let (input, _) = char('*')(input)?;
         let mut mut_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -242,13 +345,14 @@ impl RespParse {
             return Ok((input, RespData::Array(None)));
         }
 
-        Self::validate_aggregate_length(input, len)?;
+        let len = Self::checked_length(input, len, limits.max_aggregate_len)?;
         let mut remaining = input;
         let mut elements = Vec::new();
 
         for _ in 0..len {
-            let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
-            elements.push(element);
+            let (new_remaining, element) =
+                Self::parse_resp_data(remaining, limits, depth + 1, parse_work, decoded_nodes)?;
+            Self::push_aggregate(&mut elements, element, remaining)?;
             remaining = new_remaining;
         }
 
@@ -301,7 +405,7 @@ impl RespParse {
         Ok((input, RespData::BigNumber(Bytes::copy_from_slice(data))))
     }
 
-    fn parse_bulk_error(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_bulk_error<'a>(input: &'a [u8], limits: &RespLimits) -> IResult<&'a [u8], RespData> {
         let (input, _) = char('!')(input)?;
         let mut map_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -317,12 +421,16 @@ impl RespParse {
             return Ok((input, RespData::BulkError(Bytes::new())));
         }
 
-        let mut ter_parser = terminated(take(len as usize), line_ending);
+        let len = Self::checked_length(input, len, limits.max_bulk_len)?;
+        let mut ter_parser = terminated(take(len), line_ending);
         let (input, data) = ter_parser.parse(input)?;
         Ok((input, RespData::BulkError(Bytes::copy_from_slice(data))))
     }
 
-    fn parse_verbatim_string(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_verbatim_string<'a>(
+        input: &'a [u8],
+        limits: &RespLimits,
+    ) -> IResult<&'a [u8], RespData> {
         let (input, _) = char('=')(input)?;
         let mut map_parser = map_res(terminated(recognize(digit1), line_ending), |s: &[u8]| {
             str::from_utf8(s)
@@ -338,7 +446,8 @@ impl RespParse {
             )));
         }
 
-        let mut ter_parser = terminated(take(len as usize), line_ending);
+        let len = Self::checked_length(input, len, limits.max_bulk_len)?;
+        let mut ter_parser = terminated(take(len), line_ending);
         let (input, data) = ter_parser.parse(input)?;
 
         if data.len() < 4 {
@@ -368,7 +477,14 @@ impl RespParse {
         ))
     }
 
-    fn parse_map(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
+    fn parse_map<'a>(
+        input: &'a [u8],
+        limits: &RespLimits,
+        depth: usize,
+        parse_work: &mut usize,
+        decoded_nodes: &mut usize,
+    ) -> IResult<&'a [u8], RespData> {
+        Self::check_aggregate_depth(input, depth, limits)?;
         let (input, _) = char('%')(input)?;
         let mut map_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -384,21 +500,30 @@ impl RespParse {
             return Ok((input, RespData::Map(vec![])));
         }
 
-        Self::validate_aggregate_length(input, len)?;
+        let len = Self::checked_length(input, len, limits.max_aggregate_len)?;
         let mut remaining = input;
         let mut pairs = Vec::new();
 
         for _ in 0..len {
-            let (new_remaining, key) = Self::parse_resp_data(remaining, depth)?;
-            let (new_remaining, value) = Self::parse_resp_data(new_remaining, depth)?;
-            pairs.push((key, value));
+            let (new_remaining, key) =
+                Self::parse_resp_data(remaining, limits, depth + 1, parse_work, decoded_nodes)?;
+            let (new_remaining, value) =
+                Self::parse_resp_data(new_remaining, limits, depth + 1, parse_work, decoded_nodes)?;
+            Self::push_aggregate(&mut pairs, (key, value), remaining)?;
             remaining = new_remaining;
         }
 
         Ok((remaining, RespData::Map(pairs)))
     }
 
-    fn parse_set(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
+    fn parse_set<'a>(
+        input: &'a [u8],
+        limits: &RespLimits,
+        depth: usize,
+        parse_work: &mut usize,
+        decoded_nodes: &mut usize,
+    ) -> IResult<&'a [u8], RespData> {
+        Self::check_aggregate_depth(input, depth, limits)?;
         let (input, _) = char('~')(input)?;
         let mut map_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -414,20 +539,28 @@ impl RespParse {
             return Ok((input, RespData::Set(vec![])));
         }
 
-        Self::validate_aggregate_length(input, len)?;
+        let len = Self::checked_length(input, len, limits.max_aggregate_len)?;
         let mut remaining = input;
         let mut elements = Vec::new();
 
         for _ in 0..len {
-            let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
-            elements.push(element);
+            let (new_remaining, element) =
+                Self::parse_resp_data(remaining, limits, depth + 1, parse_work, decoded_nodes)?;
+            Self::push_aggregate(&mut elements, element, remaining)?;
             remaining = new_remaining;
         }
 
         Ok((remaining, RespData::Set(elements)))
     }
 
-    fn parse_push(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
+    fn parse_push<'a>(
+        input: &'a [u8],
+        limits: &RespLimits,
+        depth: usize,
+        parse_work: &mut usize,
+        decoded_nodes: &mut usize,
+    ) -> IResult<&'a [u8], RespData> {
+        Self::check_aggregate_depth(input, depth, limits)?;
         let (input, _) = char('>')(input)?;
         let mut map_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -443,40 +576,50 @@ impl RespParse {
             return Ok((input, RespData::Push(vec![])));
         }
 
-        Self::validate_aggregate_length(input, len)?;
+        let len = Self::checked_length(input, len, limits.max_aggregate_len)?;
         let mut remaining = input;
         let mut elements = Vec::new();
 
         for _ in 0..len {
-            let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
-            elements.push(element);
+            let (new_remaining, element) =
+                Self::parse_resp_data(remaining, limits, depth + 1, parse_work, decoded_nodes)?;
+            Self::push_aggregate(&mut elements, element, remaining)?;
             remaining = new_remaining;
         }
 
         Ok((remaining, RespData::Push(elements)))
     }
 
-    fn parse_resp_data(input: &[u8], aggregate_depth: usize) -> IResult<&[u8], RespData> {
+    fn parse_resp_data<'a>(
+        input: &'a [u8],
+        limits: &RespLimits,
+        depth: usize,
+        parse_work: &mut usize,
+        decoded_nodes: &mut usize,
+    ) -> IResult<&'a [u8], RespData> {
         if input.is_empty() {
             return Err(nom::Err::Incomplete(nom::Needed::Unknown));
         }
+
+        Self::check_line_length(input, limits)?;
+        Self::charge_parse_node(input, limits, parse_work, decoded_nodes)?;
 
         match input[0] {
             b'+' => Self::parse_simple_string(input),
             b'-' => Self::parse_error(input),
             b':' => Self::parse_integer(input),
-            b'$' => Self::parse_bulk_string(input),
-            b'*' => Self::parse_array(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
+            b'$' => Self::parse_bulk_string(input, limits),
+            b'*' => Self::parse_array(input, limits, depth, parse_work, decoded_nodes),
             // RESP3 types
             b'_' => Self::parse_null(input),
             b'#' => Self::parse_boolean(input),
             b',' => Self::parse_double(input),
             b'(' => Self::parse_big_number(input),
-            b'!' => Self::parse_bulk_error(input),
-            b'=' => Self::parse_verbatim_string(input),
-            b'%' => Self::parse_map(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
-            b'~' => Self::parse_set(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
-            b'>' => Self::parse_push(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
+            b'!' => Self::parse_bulk_error(input, limits),
+            b'=' => Self::parse_verbatim_string(input, limits),
+            b'%' => Self::parse_map(input, limits, depth, parse_work, decoded_nodes),
+            b'~' => Self::parse_set(input, limits, depth, parse_work, decoded_nodes),
+            b'>' => Self::parse_push(input, limits, depth, parse_work, decoded_nodes),
             _ => Self::parse_inline(input),
         }
     }
@@ -488,8 +631,20 @@ impl RespParse {
             return RespParseResult::Incomplete;
         }
 
-        match Self::parse_resp_data(&self.buffer, 0) {
+        let mut parse_work = self.parse_work;
+        let mut decoded_nodes = 0;
+        let result = Self::parse_resp_data(
+            &self.buffer,
+            &self.limits,
+            0,
+            &mut parse_work,
+            &mut decoded_nodes,
+        );
+        self.parse_work = parse_work;
+
+        match result {
             Ok((remaining, resp_data)) => {
+                self.parse_work = 0;
                 let consumed = self.buffer.len() - remaining.len();
                 self.buffer.advance(consumed);
 
@@ -509,7 +664,11 @@ impl RespParse {
             }
             Err(nom::Err::Incomplete(_)) => RespParseResult::Incomplete,
             Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
-                let error_msg = format!("Parse error: {e:?}");
+                let error_msg = if e.code == nom::error::ErrorKind::TooLarge {
+                    "RESP resource limit exceeded".to_string()
+                } else {
+                    format!("Parse error: {e:?}")
+                };
                 RespParseResult::Error(RespError::ParseError(error_msg))
             }
         }
@@ -523,6 +682,17 @@ impl Parse for RespParse {
             self.auto_detect_version(&data);
         }
 
+        let Some(buffered_len) = self.buffer.len().checked_add(data.len()) else {
+            return RespParseResult::Error(RespError::ParseError(
+                "RESP buffer limit exceeded".to_string(),
+            ));
+        };
+        if buffered_len > self.limits.max_buffer_len {
+            return RespParseResult::Error(RespError::ParseError(format!(
+                "RESP buffer limit exceeded: {buffered_len} bytes exceeds {} bytes",
+                self.limits.max_buffer_len
+            )));
+        }
         self.buffer.extend_from_slice(&data);
 
         self.process_buffer()
@@ -537,6 +707,7 @@ impl Parse for RespParse {
         self.commands.clear();
         self.is_pipeline = false;
         self.version_detected = false;
+        self.parse_work = 0;
     }
 }
 
@@ -555,7 +726,221 @@ mod tests {
     use crate::command::CommandType;
 
     use super::Bytes;
-    use super::{Parse, RespData, RespParse, RespParseResult, RespVersion};
+    use super::{
+        MAX_UNAUTHENTICATED_BUFFER_SIZE, Parse, RespData, RespError, RespLimits, RespParse,
+        RespParseResult, RespVersion,
+    };
+
+    fn small_limits() -> RespLimits {
+        RespLimits {
+            max_inline_len: 8,
+            max_bulk_len: 8,
+            max_buffer_len: 32,
+            max_aggregate_len: 3,
+            max_nesting_depth: 2,
+            max_decoded_nodes: 4,
+            max_parse_work: 8,
+        }
+    }
+
+    fn assert_limit_error(result: RespParseResult) {
+        assert!(
+            matches!(result, RespParseResult::Error(RespError::ParseError(ref message)) if message.contains("limit")),
+            "expected a resource limit error, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_default_resource_limits() {
+        let limits = RespLimits::default();
+        assert_eq!(limits.max_inline_len, 64 * 1024);
+        assert_eq!(limits.max_bulk_len, 512 * 1024 * 1024);
+        assert_eq!(limits.max_buffer_len, 1024 * 1024 * 1024);
+        assert_eq!(limits.max_aggregate_len, i32::MAX as usize);
+        assert_eq!(limits.max_nesting_depth, 128);
+        assert_eq!(limits.max_decoded_nodes, 64 * 1024);
+        assert_eq!(limits.max_parse_work, 1_000_000);
+        assert_eq!(MAX_UNAUTHENTICATED_BUFFER_SIZE, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_bulk_lengths_accept_exact_limit_and_reject_larger_headers() {
+        let mut parser = RespParse::with_limits(RespVersion::RESP3, small_limits());
+
+        assert_eq!(
+            parser.parse(Bytes::from("$8\r\n12345678\r\n")),
+            RespParseResult::Complete(RespData::BulkString(Some(Bytes::from("12345678"))))
+        );
+
+        parser.reset();
+        assert_eq!(
+            parser.parse(Bytes::from("!8\r\n12345678\r\n")),
+            RespParseResult::Complete(RespData::BulkError(Bytes::from("12345678")))
+        );
+
+        parser.reset();
+        assert_eq!(
+            parser.parse(Bytes::from("=8\r\ntxt:data\r\n")),
+            RespParseResult::Complete(RespData::VerbatimString {
+                format: Bytes::from("txt"),
+                data: Bytes::from("data"),
+            })
+        );
+
+        for header in ["$9\r\n", "!9\r\n", "=9\r\n"] {
+            parser.reset();
+            assert_limit_error(parser.parse(Bytes::from(header)));
+        }
+    }
+
+    #[test]
+    fn test_aggregate_lengths_accept_exact_limit_and_reject_larger_headers() {
+        let mut parser = RespParse::with_limits(RespVersion::RESP3, small_limits());
+
+        assert_eq!(
+            parser.parse(Bytes::from("*3\r\n:1\r\n:2\r\n:3\r\n")),
+            RespParseResult::Complete(RespData::Array(Some(vec![
+                RespData::Integer(1),
+                RespData::Integer(2),
+                RespData::Integer(3),
+            ])))
+        );
+
+        for header in ["*4\r\n", "%4\r\n", "~4\r\n", ">4\r\n"] {
+            parser.reset();
+            assert_limit_error(parser.parse(Bytes::from(header)));
+        }
+    }
+
+    #[test]
+    fn test_inline_length_accepts_exact_limit_and_rejects_larger_input() {
+        let mut parser = RespParse::with_limits(RespVersion::RESP2, small_limits());
+
+        assert!(matches!(
+            parser.parse(Bytes::from("ping abc\r\n")),
+            RespParseResult::Complete(_)
+        ));
+
+        parser.reset();
+        assert_limit_error(parser.parse(Bytes::from("ping abcd\r\n")));
+    }
+
+    #[test]
+    fn test_all_resp_first_lines_use_the_inline_length_limit() {
+        let oversized_lines = [
+            "+12345678",
+            "-12345678",
+            ":12345678",
+            ",12345678",
+            "(12345678",
+            "$00000000",
+            "*00000000",
+            "!00000000",
+            "=00000000",
+            "%00000000",
+            "~00000000",
+            ">00000000",
+        ];
+
+        for line in oversized_lines {
+            let mut parser = RespParse::with_limits(RespVersion::RESP3, small_limits());
+            assert_limit_error(parser.parse(Bytes::from(line)));
+        }
+    }
+
+    #[test]
+    fn test_decoded_node_budget_counts_aggregate_children_and_map_values() {
+        let mut parser = RespParse::with_limits(RespVersion::RESP3, small_limits());
+
+        assert!(matches!(
+            parser.parse(Bytes::from("*3\r\n:1\r\n:2\r\n:3\r\n")),
+            RespParseResult::Complete(_)
+        ));
+
+        parser.reset();
+        assert_limit_error(parser.parse(Bytes::from("%2\r\n:1\r\n:2\r\n:3\r\n:4\r\n")));
+    }
+
+    #[test]
+    fn test_replayed_incomplete_aggregate_has_a_cumulative_work_budget() {
+        let mut parser = RespParse::with_limits(RespVersion::RESP2, small_limits());
+
+        assert_eq!(
+            parser.parse(Bytes::from("*3\r\n:1\r\n")),
+            RespParseResult::Incomplete
+        );
+        assert_eq!(
+            parser.parse(Bytes::from(":2\r\n")),
+            RespParseResult::Incomplete
+        );
+        assert_limit_error(parser.parse(Bytes::from(":3\r\n")));
+    }
+
+    #[test]
+    fn test_aggregate_nesting_accepts_exact_limit_and_rejects_deeper_input() {
+        let mut parser = RespParse::with_limits(RespVersion::RESP2, small_limits());
+
+        assert!(matches!(
+            parser.parse(Bytes::from("*1\r\n*1\r\n:1\r\n")),
+            RespParseResult::Complete(_)
+        ));
+
+        parser.reset();
+        assert_limit_error(parser.parse(Bytes::from("*1\r\n*1\r\n*1\r\n:1\r\n")));
+    }
+
+    #[test]
+    fn test_chunked_buffer_growth_is_checked_before_append() {
+        let mut limits = small_limits();
+        limits.max_bulk_len = 64;
+        limits.max_buffer_len = 17;
+        let mut parser = RespParse::with_limits(RespVersion::RESP2, limits);
+
+        assert_eq!(
+            parser.parse(Bytes::from("$10\r\n1234567890\r")),
+            RespParseResult::Incomplete
+        );
+        assert_eq!(parser.buffered_len(), 16);
+        assert!(matches!(
+            parser.parse(Bytes::from("\n")),
+            RespParseResult::Complete(_)
+        ));
+        assert_eq!(parser.buffered_len(), 0);
+
+        assert_eq!(
+            parser.parse(Bytes::from("$20\r\n12345678901")),
+            RespParseResult::Incomplete
+        );
+        assert_eq!(parser.buffered_len(), 16);
+
+        assert_limit_error(parser.parse(Bytes::from("23")));
+        assert_eq!(parser.buffered_len(), 16);
+    }
+
+    #[test]
+    fn test_maximum_aggregate_header_does_not_require_payload_allocation() {
+        let mut parser = RespParse::new(RespVersion::RESP2);
+
+        assert_eq!(
+            parser.parse(Bytes::from(format!("*{}\r\n", i32::MAX))),
+            RespParseResult::Incomplete
+        );
+    }
+
+    #[test]
+    fn test_reset_recovers_after_resource_limit_error() {
+        let mut parser = RespParse::with_limits(RespVersion::RESP2, small_limits());
+
+        assert_limit_error(parser.parse(Bytes::from("$9\r\n")));
+        assert_ne!(parser.buffered_len(), 0);
+
+        parser.reset();
+        assert_eq!(parser.buffered_len(), 0);
+        assert!(matches!(
+            parser.parse(Bytes::from("$4\r\nping\r\n")),
+            RespParseResult::Complete(_)
+        ));
+    }
 
     struct MeasuringAllocator;
 
@@ -621,6 +1006,57 @@ mod tests {
     impl Drop for AllocationMeasurement {
         fn drop(&mut self) {
             let _ = MEASURE_ALLOCATIONS.try_with(|enabled| enabled.set(false));
+        }
+    }
+
+    #[test]
+    fn test_partial_aggregate_allocation_is_independent_of_declared_length() {
+        for (aggregate, small_frame, maximum_frame) in [
+            (
+                "Array",
+                b"*2\r\n:1\r\n".as_slice(),
+                b"*2147483647\r\n:1\r\n".as_slice(),
+            ),
+            (
+                "Map",
+                b"%2\r\n:1\r\n:2\r\n".as_slice(),
+                b"%2147483647\r\n:1\r\n:2\r\n".as_slice(),
+            ),
+            (
+                "Set",
+                b"~2\r\n:1\r\n".as_slice(),
+                b"~2147483647\r\n:1\r\n".as_slice(),
+            ),
+            (
+                "Push",
+                b">2\r\n:1\r\n".as_slice(),
+                b">2147483647\r\n:1\r\n".as_slice(),
+            ),
+        ] {
+            let measure_parse_allocation = |frame: &'static [u8]| {
+                let mut parser = RespParse::new(RespVersion::RESP3);
+                parser.buffer.reserve(frame.len());
+                let input = Bytes::from_static(frame);
+
+                let measurement = AllocationMeasurement::start();
+                let result = parser.parse(input);
+                let allocated = measurement.finish();
+
+                assert_eq!(result, RespParseResult::Incomplete, "{aggregate}");
+                allocated
+            };
+
+            let small_allocation = measure_parse_allocation(small_frame);
+            let maximum_allocation = measure_parse_allocation(maximum_frame);
+
+            assert!(
+                small_allocation > 0,
+                "{aggregate} did not parse and retain a complete element"
+            );
+            assert_eq!(
+                maximum_allocation, small_allocation,
+                "{aggregate} allocation depended on its declared length"
+            );
         }
     }
 
@@ -1080,7 +1516,7 @@ mod tests {
 
     #[test]
     fn test_nested_incomplete_aggregate_headers_have_input_bounded_allocation() {
-        let frame = "*2147483647\r\n".repeat(RespParse::MAX_AGGREGATE_NESTING_DEPTH);
+        let frame = "*2147483647\r\n".repeat(RespLimits::default().max_nesting_depth);
         let mut parser = RespParse::new(RespVersion::RESP3);
         parser.buffer.reserve(frame.len());
         let input = Bytes::copy_from_slice(frame.as_bytes());
@@ -1099,7 +1535,7 @@ mod tests {
     fn test_accept_aggregate_nesting_at_limit() {
         let frame = format!(
             "{}:1\r\n",
-            "*1\r\n".repeat(RespParse::MAX_AGGREGATE_NESTING_DEPTH)
+            "*1\r\n".repeat(RespLimits::default().max_nesting_depth)
         );
         let mut parser = RespParse::new(RespVersion::RESP2);
 
@@ -1118,7 +1554,7 @@ mod tests {
             "~2147483647\r\n",
             ">2147483647\r\n",
         ] {
-            let frame = header.repeat(RespParse::MAX_AGGREGATE_NESTING_DEPTH + 1);
+            let frame = header.repeat(RespLimits::default().max_nesting_depth + 1);
             let mut parser = RespParse::new(RespVersion::RESP3);
 
             assert!(

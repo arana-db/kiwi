@@ -102,6 +102,12 @@ impl CommandBatch {
     }
 }
 
+fn bounded_command_channel<T>(capacity: usize) -> (mpsc::Sender<T>, mpsc::Receiver<T>, usize) {
+    let capacity = capacity.max(1);
+    let (sender, receiver) = mpsc::channel(capacity);
+    (sender, receiver, capacity)
+}
+
 /// Pipeline processor for batching and executing commands
 pub struct CommandPipeline {
     config: PipelineConfig,
@@ -122,9 +128,10 @@ impl CommandPipeline {
     ) -> Self {
         // Bounded channel enforces backpressure: when the queue is full,
         // senders await instead of growing the queue unboundedly.
-        // Guard against 0 (rendezvous) to avoid unintentional stalls.
-        config.command_queue_size = config.command_queue_size.max(1);
-        let (command_tx, command_rx) = mpsc::channel(config.command_queue_size);
+        // Guard against 0 to avoid unintentional stalls.
+        let (command_tx, command_rx, queue_capacity) =
+            bounded_command_channel(config.command_queue_size);
+        config.command_queue_size = queue_capacity;
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_pipelines));
 
         let pipeline = Self {
@@ -488,6 +495,73 @@ mod tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn submit_command_uses_single_30_second_deadline_across_admission_and_response() {
+        let client = Arc::new(Client::new(Box::new(TestStream)));
+        let (command_tx, mut command_rx) = mpsc::channel(1);
+        let pipeline = Arc::new(CommandPipeline {
+            config: PipelineConfig {
+                command_queue_size: 1,
+                ..PipelineConfig::default()
+            },
+            storage: Arc::new(Storage::new(1, 0)),
+            cmd_table: Arc::new(CmdTable::new()),
+            executor: Arc::new(CmdExecutor::new(0, 1)),
+            command_tx: command_tx.clone(),
+            semaphore: Arc::new(Semaphore::new(1)),
+            batch_counter: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        });
+
+        let (blocker_response_tx, _blocker_response_rx) = oneshot::channel();
+        command_tx
+            .send(PipelineCommand {
+                data: RespData::Null,
+                client: Arc::clone(&client),
+                received_at: Instant::now(),
+                response_tx: blocker_response_tx,
+            })
+            .await
+            .expect("filler command must fit in the queue");
+
+        let submit_task = tokio::spawn({
+            let pipeline = Arc::clone(&pipeline);
+            let client = Arc::clone(&client);
+            async move { pipeline.submit_command(RespData::Null, client).await }
+        });
+        tokio::task::yield_now().await;
+
+        advance(Duration::from_secs(20)).await;
+        let blocker = command_rx
+            .recv()
+            .await
+            .expect("filler command must remain queued");
+        drop(blocker);
+        tokio::task::yield_now().await;
+
+        let admitted_command = command_rx
+            .recv()
+            .await
+            .expect("submitted command must enter the queue");
+        advance(Duration::from_secs(9)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            !submit_task.is_finished(),
+            "deadline fired before 30 seconds"
+        );
+
+        advance(Duration::from_secs(2)).await;
+        tokio::task::yield_now().await;
+        assert!(
+            submit_task.is_finished(),
+            "admission and response exceeded the shared 30-second deadline"
+        );
+        assert!(matches!(
+            submit_task.await.expect("submission task must not panic"),
+            Err(PipelineError::Timeout)
+        ));
+        drop(admitted_command);
+    }
+
     #[tokio::test]
     async fn zero_command_queue_size_reports_effective_capacity() {
         let config = PipelineConfig {
@@ -528,5 +602,17 @@ mod tests {
 
         sleep(Duration::from_millis(2)).await;
         assert!(batch.is_expired(config.batch_timeout));
+    }
+
+    #[test]
+    fn command_channel_is_bounded_and_normalizes_zero_capacity() {
+        let (sender, _receiver, capacity) = bounded_command_channel::<u8>(0);
+
+        assert_eq!(capacity, 1);
+        assert!(sender.try_send(1).is_ok());
+        assert!(matches!(
+            sender.try_send(2),
+            Err(mpsc::error::TrySendError::Full(2))
+        ));
     }
 }
