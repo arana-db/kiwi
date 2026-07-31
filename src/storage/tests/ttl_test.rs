@@ -381,6 +381,47 @@ async fn test_del_composite_recreate_hides_old_members() {
 }
 
 #[tokio::test]
+async fn test_del_set_recreate_hides_old_members() {
+    let db_path = unique_test_db_path();
+    let mut storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _receiver = storage.open(options, &db_path).unwrap();
+
+    let key = b"del_recreate_set";
+    assert_eq!(storage.sadd(key, &[b"old-member"]).unwrap(), 1);
+    assert_eq!(storage.del(&[key.to_vec()]).unwrap(), 1);
+    assert_eq!(storage.sadd(key, &[b"new-member"]).unwrap(), 1);
+
+    assert_eq!(
+        storage.smembers(key).unwrap(),
+        vec!["new-member".to_string()]
+    );
+    assert!(!storage.sismember(key, b"old-member").unwrap());
+
+    storage.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_del_list_recreate_hides_old_members() {
+    let db_path = unique_test_db_path();
+    let mut storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _receiver = storage.open(options, &db_path).unwrap();
+
+    let key = b"del_recreate_list";
+    assert_eq!(storage.rpush(key, &[b"old-member".to_vec()]).unwrap(), 1);
+    assert_eq!(storage.del(&[key.to_vec()]).unwrap(), 1);
+    assert_eq!(storage.rpush(key, &[b"new-member".to_vec()]).unwrap(), 1);
+
+    assert_eq!(
+        storage.lrange(key, 0, -1).unwrap(),
+        vec![b"new-member".to_vec()]
+    );
+
+    storage.shutdown().await;
+}
+
+#[tokio::test]
 async fn test_del_writes_composite_meta_tombstone_with_new_version() {
     let db_path = unique_test_db_path();
     let mut storage = Storage::new(1, 0);
@@ -406,6 +447,7 @@ async fn test_del_writes_composite_meta_tombstone_with_new_version() {
         let tombstone = db.get_cf(&meta_cf, &meta_key).unwrap().unwrap();
         let parsed = ParsedBaseMetaValue::new(&tombstone[..]).unwrap();
         assert_eq!(parsed.count(), 0);
+        assert_eq!(parsed.etime(), 0);
         assert!(parsed.version() > original_version);
     }
 

@@ -2052,7 +2052,11 @@ impl Redis {
                 let mut batch = self.create_batch()?;
                 batch.delete(ColumnFamilyIndex::MetaCF, &encoded_meta_key)?;
                 batch.commit()?;
-                self.update_specific_key_statistics(DataType::String, &key_str, 1)?;
+                if let Err(error) =
+                    self.update_specific_key_statistics(DataType::String, &key_str, 1)
+                {
+                    log::warn!("failed to update key statistics for {key_str}: {error:?}");
+                }
             }
             DataType::Hash | DataType::Set | DataType::ZSet => {
                 let mut parsed = ParsedBaseMetaValue::new(&value[..])?;
@@ -2071,7 +2075,10 @@ impl Redis {
                     parsed.encoded(),
                 )?;
                 batch.commit()?;
-                self.update_specific_key_statistics(data_type, &key_str, count)?;
+                if let Err(error) = self.update_specific_key_statistics(data_type, &key_str, count)
+                {
+                    log::warn!("failed to update key statistics for {key_str}: {error:?}");
+                }
             }
             DataType::List => {
                 let mut parsed = ParsedListsMetaValue::new(&value[..])?;
@@ -2085,7 +2092,11 @@ impl Redis {
                 let mut batch = self.create_batch()?;
                 batch.put(ColumnFamilyIndex::MetaCF, &encoded_meta_key, parsed.value())?;
                 batch.commit()?;
-                self.update_specific_key_statistics(DataType::List, &key_str, count)?;
+                if let Err(error) =
+                    self.update_specific_key_statistics(DataType::List, &key_str, count)
+                {
+                    log::warn!("failed to update key statistics for {key_str}: {error:?}");
+                }
             }
             _ => return Ok(false),
         }
