@@ -4,11 +4,11 @@
 >
 > 当前 task 类型：implementation
 >
-> 当前 PR：`#404`（`codex/fix-resp-parser-limits`）
+> 当前 PR：`#406`（`codex/fix-resp-aggregate-allocation`）
 >
 > 实现基线：`main` at `cbc28958f261ae049d67a8b4a9d904d794b37726`
 >
-> 状态：PR 已创建；独立 review 发现合法未完成声明仍会放大分配，零声明预分配修复已通过本地双平台验证，最终 Head/checks 以 GitHub 实时查询为准
+> 状态：独立 PR `#406` 已创建；零声明预分配修复已通过本地双平台验证和独立复审，最终 Head/checks 以 GitHub 实时查询为准
 >
 > 当前范围：拒绝超出 Redis 8.8.1 整数边界的 RESP 聚合长度，消除 Array/Map/Set/Push 的声明驱动预分配，并限制递归嵌套深度
 >
@@ -116,16 +116,17 @@ D:\test\github\kiwi\.worktrees\redis-8.8.1-stability-foundation\.codex\recovery\
 - 当前工作区 Windows 与 WSL `cargo clippy -p resp --all-targets -- -D warnings -D clippy::unwrap_used`：通过。
 - 当前工作区 `cargo fmt --all -- --check` 与 `git diff --check`：通过。
 - 零声明预分配修复已完成独立规格复审：生产实现无 Critical/Important；测试阈值最初可能放过小容量预分配的 Minor 已改为预留输入 buffer 后严格断言解析阶段零分配，并由同一审查者确认闭环。
+- 最终实现提交：`e82c4496484ee8d42694d950436b517bfe2669da`。原 PR `#404` 在本轮 push 前被外部更新为宽范围 Head `334a235a95c50ca1cdd71927e459a2c6ac5e5bb0`；未 force-push 覆盖，窄范围修复改由独立 PR `#406` 发布。
 - checks、review threads 和 PR 状态不在本文件中缓存；任何当前结论必须重新查询 GitHub。
 
 PR `#383` 的结果只证明 Oracle 规划闭环，不证明方案 A 已实现；PR `#388` 也不改变该结论。
 
 ## 下一条安全动作
 
-1. 提交并 push 零声明预分配修复到 PR #404。
-2. push 后更新失真的 PR 正文，并重新查询最终 Head 的 checks、评论和 review threads；不得把旧 Head 的 CI 结果作为最终状态。
+1. 提交并 push PR #406 编号和分支状态对账。
+2. push 后重新查询最终 Head 的 checks、评论和 review threads；不得把 #404 或旧 Head 的 CI 结果作为 #406 的最终状态。
 3. 若最终 Head checks 未完成，只报告 pending，不给可 Merge 结论。
-4. 不 Resolve 或回复 #402/#404 review thread，不 merge PR。
+4. 不 Resolve 或回复 #402/#404/#406 review thread，不 merge PR。
 5. PR `#383` 的规划历史保持不变，旧六文件 Oracle 草稿继续冻结。
 6. 只有用户另开 Oracle provenance implementation task 后，才从包含方案 A 的 clean `main` 创建新 worktree、TaskId 和 recovery checkpoint，并先执行真实 Redis 双 checkout reproducibility 门禁。
 7. Hot Tier 继续 Frozen；Gate PASS 后仍须用户明确批准一个单独的 implementation task。
@@ -142,7 +143,7 @@ Get-Content -Raw docs\personas-and-user-stories.md
 if (Test-Path .codex\recovery\ACTIVE.md) { Get-Content -Raw .codex\recovery\ACTIVE.md }
 git status --porcelain=v2 --branch --untracked-files=all
 git diff --cached --name-only
-gh pr list --repo arana-db/kiwi --head codex/fix-resp-parser-limits --json number,state,baseRefName,headRefOid,statusCheckRollup,reviewDecision
+gh pr list --repo arana-db/kiwi --head codex/fix-resp-aggregate-allocation --json number,state,baseRefName,headRefOid,statusCheckRollup,reviewDecision
 ```
 
 如果 branch、HEAD、task type 或 dirty ownership 与 recovery 记录不同，先报告差异，不得自动 checkout、restore、reset、stash、clean 或覆盖文件。

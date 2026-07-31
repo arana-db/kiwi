@@ -4,7 +4,7 @@
 >
 > 当前里程碑：M1 Redis 8.8.1 Cache OFF compatibility foundation
 >
-> 当前 task：`RESP-LIMITS-001` implementation（`codex/fix-resp-parser-limits`）；基线 `main` at `cbc28958f261ae049d67a8b4a9d904d794b37726`
+> 当前 task：`RESP-LIMITS-001` implementation（`codex/fix-resp-aggregate-allocation`）；基线 `main` at `cbc28958f261ae049d67a8b4a9d904d794b37726`
 >
 > 当前运行模式：Cache OFF
 >
@@ -14,7 +14,7 @@
 
 | ID | 工作项 | Requirement / Gate 关系 | 当前状态 |
 |---|---|---|---|
-| `RESP-LIMITS-001` | 限制未认证 RESP Array/Map/Set/Push 声明长度、消除声明驱动预分配并限制嵌套深度 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-WORK-003` | PR `#404` 已创建；零声明预分配修复已通过 Windows/WSL 验证和独立规格复审，待提交、push 和新 Head CI |
+| `RESP-LIMITS-001` | 限制未认证 RESP Array/Map/Set/Push 声明长度、消除声明驱动预分配并限制嵌套深度 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-WORK-003` | 独立 PR `#406` 已创建；与宽范围 PR `#404` 重叠，零声明预分配修复已通过 Windows/WSL 验证和独立复审，待最终状态提交、push 和新 Head CI |
 
 ## Ready for a separate implementation task
 
