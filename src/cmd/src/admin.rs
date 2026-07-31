@@ -26,6 +26,29 @@ use storage::storage::Storage;
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
+/// INFO VECTOR section: the Phase 1 index kind plus the FLAT query counters.
+/// vector_sets / vector_elements are omitted on purpose: counting them needs
+/// a full keyspace scan and INFO must stay O(1).
+fn vector_section(storage: &Storage) -> String {
+    let metrics = storage.vector_metrics();
+    format!(
+        "# Vector\r\n\
+         index-kind:flat\r\n\
+         vector_flat_queries_total:{}\r\n\
+         vector_flat_query_timeouts_total:{}\r\n\
+         vector_flat_query_errors_total:{}\r\n\
+         vector_search_capacity_rejected_total:{}\r\n\
+         vector_flat_query_duration_micros_total:{}\r\n\
+         vector_flat_query_duration_count:{}\r\n",
+        metrics.flat_queries_total,
+        metrics.flat_query_timeouts_total,
+        metrics.flat_query_errors_total,
+        metrics.capacity_rejected_total,
+        metrics.flat_query_duration_micros_total,
+        metrics.flat_query_duration_count,
+    )
+}
+
 /// INFO command - Show server information including cluster status
 #[derive(Clone, Default)]
 pub struct InfoCmd {
@@ -54,7 +77,7 @@ impl Cmd for InfoCmd {
         true
     }
 
-    fn do_cmd(&self, client: &Client, _storage: Arc<Storage>) {
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let section = if client.argv().len() > 1 {
             String::from_utf8_lossy(&client.argv()[1]).to_lowercase()
         } else {
@@ -68,6 +91,9 @@ impl Cmd for InfoCmd {
                 info.push_str("# Cluster\r\n");
                 info.push_str("cluster_enabled:0\r\n");
                 info.push_str("cluster_state:disabled\r\n");
+            }
+            "vector" => {
+                info.push_str(&vector_section(&storage));
             }
             "server" | "default" => {
                 info.push_str("# Server\r\n");
@@ -95,6 +121,8 @@ impl Cmd for InfoCmd {
                     info.push_str("\r\n# Cluster\r\n");
                     info.push_str("cluster_enabled:0\r\n");
                     info.push_str("cluster_state:disabled\r\n");
+                    info.push_str("\r\n");
+                    info.push_str(&vector_section(&storage));
                 }
             }
             _ => {

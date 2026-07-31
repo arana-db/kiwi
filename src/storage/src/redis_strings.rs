@@ -33,6 +33,7 @@ use crate::{
     format_base_meta_value::ParsedBaseMetaValue,
     format_list_meta_value::ParsedListsMetaValue,
     format_strings_value::{ParsedStringsValue, StringValue},
+    format_vector_member_key::VectorMemberDataKey,
     redis_sets::glob_match_bytes,
 };
 
@@ -2020,9 +2021,10 @@ impl Redis {
             let encoded = string_key.encode()?;
 
             // Build correct prefix for data CF scanning:
-            // Data keys format: | reserve1 (8B) | encoded_user_key | version (8B) | data | reserve2 |
+            // Shared data key format: | reserve1 (8B) | encoded_user_key | version (8B) | data | reserve2 |
             // We need prefix: | reserve1 (8B) | encoded_user_key (with \x00\x00 delimiter) |
             // Note: BaseKey.encode() includes reserve2, which would not match data keys.
+            // (VectorDataCF uses the V1 vector codec; its prefix is built per-CF below.)
             let mut data_key_prefix =
                 bytes::BytesMut::with_capacity(PREFIX_RESERVE_LENGTH + key.len() * 2 + 2);
             data_key_prefix.put_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
@@ -2050,14 +2052,21 @@ impl Redis {
             ] {
                 let cf_handle = self.get_cf_handle(cf_index);
                 if let Some(cf) = cf_handle {
+                    // Vector member keys use the V1 vector codec; all other
+                    // data CFs share the reserve1 | encoded_user_key layout.
+                    let prefix = if cf_index == ColumnFamilyIndex::VectorDataCF {
+                        VectorMemberDataKey::encode_key_prefix(key)?
+                    } else {
+                        data_key_prefix.to_vec()
+                    };
                     // Prefix-scan data CF and delete all derived keys
                     let iter = db.iterator_cf(
                         &cf,
-                        rocksdb::IteratorMode::From(&data_key_prefix, rocksdb::Direction::Forward),
+                        rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
                     );
                     for item in iter {
                         let (k, _) = item.context(RocksSnafu)?;
-                        if !k.starts_with(&data_key_prefix) {
+                        if !k.starts_with(&prefix) {
                             break;
                         }
                         keys_to_delete.push((cf_index, k.to_vec()));

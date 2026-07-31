@@ -23,6 +23,7 @@ use validator::Validate;
 use crate::de_func::{parse_bool_from_string, parse_memory, parse_redis_config};
 use crate::error::Error;
 use crate::runtime_config::RuntimeConfig;
+use crate::vector_config::VectorConfig;
 
 /// Compression algorithm for RocksDB column families.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,6 +128,15 @@ pub struct Config {
     /// Dual-runtime configuration.
     #[serde(default)]
     pub runtime: RuntimeConfig,
+
+    /// Vector Set feature configuration.
+    #[serde(default)]
+    pub vector: VectorConfig,
+
+    /// Allow FLUSHDB/FLUSHALL in cluster mode. Defaults to false: both commands
+    /// are deterministically rejected while `raft` is configured.
+    #[serde(default)]
+    pub cluster_flush_enabled: bool,
 }
 
 impl std::fmt::Debug for Config {
@@ -204,6 +214,8 @@ impl std::fmt::Debug for Config {
             )
             .field("raft", &self.raft)
             .field("runtime", &self.runtime)
+            .field("vector", &self.vector)
+            .field("cluster_flush_enabled", &self.cluster_flush_enabled)
             .finish()
     }
 }
@@ -269,6 +281,8 @@ impl Default for Config {
             requirepass: None,
             raft: None,
             runtime: RuntimeConfig::default(),
+            vector: VectorConfig::default(),
+            cluster_flush_enabled: false,
         }
     }
 }
@@ -294,6 +308,7 @@ fn validate_loaded_config(config: &Config) -> Result<(), Error> {
         .validate()
         .map_err(|e| Error::ValidConfigFail { source: e })?;
     config.runtime.validate().map_err(invalid_config)?;
+    config.vector.validate().map_err(invalid_config)?;
     if let Some(raft) = config.raft.as_ref() {
         raft.validate()
             .map_err(|e| Error::ValidConfigFail { source: e })?;
@@ -676,6 +691,50 @@ impl Config {
                 }
                 "runtime-fault-injection-log-events" | "runtime-fault_injection-log_events" => {
                     config.runtime.fault_injection.log_events = parse_bool_value(&key, &value)?;
+                }
+                "vector-enabled" => {
+                    config.vector.enabled = parse_bool_value(&key, &value)?;
+                }
+                "vector-cluster-enabled" => {
+                    config.vector.cluster_enabled = parse_bool_value(&key, &value)?;
+                }
+                "vector-max-dimension" => {
+                    config.vector.max_dimension = value
+                        .parse()
+                        .map_err(|e| invalid_config(format!("Invalid {}: {}", key, e)))?;
+                }
+                "vector-max-k" => {
+                    config.vector.max_k = parse_usize_value(&key, &value)?;
+                }
+                "vector-max-element-bytes" => {
+                    config.vector.max_element_bytes = parse_usize_value(&key, &value)?;
+                }
+                "vector-max-vector-bytes" => {
+                    config.vector.max_vector_bytes = parse_usize_value(&key, &value)?;
+                }
+                "vector-max-concurrent-flat-queries" => {
+                    config.vector.max_concurrent_flat_queries = parse_usize_value(&key, &value)?;
+                }
+                "vector-flat-query-timeout-ms" => {
+                    config.vector.flat_query_timeout_ms = value
+                        .parse()
+                        .map_err(|e| invalid_config(format!("Invalid {}: {}", key, e)))?;
+                }
+                "vector-flat-cancel-check-interval" => {
+                    config.vector.flat_cancel_check_interval = parse_usize_value(&key, &value)?;
+                }
+                "vector-flat-scan-max-entries" => {
+                    config.vector.flat_scan_max_entries = value
+                        .parse()
+                        .map_err(|e| invalid_config(format!("Invalid {}: {}", key, e)))?;
+                }
+                "vector-flat-scan-max-bytes" => {
+                    config.vector.flat_scan_max_bytes = value
+                        .parse()
+                        .map_err(|e| invalid_config(format!("Invalid {}: {}", key, e)))?;
+                }
+                "cluster-flush-enabled" => {
+                    config.cluster_flush_enabled = parse_bool_value(&key, &value)?;
                 }
                 _ => {
                     log::warn!("unknown config key: {}", key);

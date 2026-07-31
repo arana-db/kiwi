@@ -37,8 +37,7 @@ pub const VECTOR_METRIC_COSINE: u8 = 1;
 pub const VECTOR_VALUE_MAGIC: u8 = 0x56;
 pub const VECTOR_VALUE_FORMAT: u8 = 1;
 
-const VECTOR_META_ZERO_RESERVE_LENGTH: usize = 8;
-const VECTOR_VALUE_HEADER_LENGTH: usize = 12;
+const VECTOR_VALUE_HEADER_LENGTH: usize = 16;
 const VECTOR_Q8_PARAMS_LENGTH: usize = 8;
 
 /// Similarity metric used to compare vectors in a vector set.
@@ -98,11 +97,15 @@ impl SimilarityMetric {
 
 // Vector set meta value layout stored in MetaCF:
 //
-// | data_type | count | version | format | quant | metric | flags | dimension | zero_reserve | ctime | etime |
-// |    1B     |  8B   |   8B    |   1B   |   1B  |   1B   |   1B  |    4B     |     8B       |  8B   |  8B   |
+// | data_type | count | version | format | quant | metric | flags | dimension | data_revision | ctime | etime |
+// |    1B     |  8B   |   8B    |   1B   |   1B  |   1B   |   1B  |    4B     |      8B       |  8B   |  8B   |
 //
 // `data_type` is DataType::VectorSet, `quant` is the quantization type (NOQUANT/BIN/Q8),
 // and `metric` is the similarity metric used for VSIM (e.g. cosine).
+// `version` holds the set's generation sequence: the identifier of one
+// lifecycle of the key, assigned by the storage generation generator (or the
+// creating Raft log index in cluster mode). `data_revision` starts at 1 when
+// the set is created and is incremented by every successful VADD/VREM.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VectorMeta {
     count: u64,
@@ -110,28 +113,26 @@ pub struct VectorMeta {
     dimension: u32,
     quantization: QuantizationType,
     metric: SimilarityMetric,
+    data_revision: u64,
     ctime: u64,
     etime: u64,
 }
 
 impl VectorMeta {
-    pub(crate) fn new_after(
+    pub(crate) fn new(
         count: u64,
         dimension: u32,
         quantization: QuantizationType,
-        previous_version: u64,
+        generation: u64,
     ) -> Self {
         let now = Utc::now().timestamp_micros() as u64;
-        let version = match previous_version >= now {
-            true => previous_version + 1,
-            false => now,
-        };
         Self {
             count,
-            version,
+            version: generation,
             dimension,
             quantization,
             metric: SimilarityMetric::Cosine,
+            data_revision: 1,
             ctime: now,
             etime: 0,
         }
@@ -155,7 +156,7 @@ impl VectorMeta {
         output.put_u8(self.metric.to_u8());
         output.put_u8(0);
         output.put_u32_le(self.dimension);
-        output.put_bytes(0, VECTOR_META_ZERO_RESERVE_LENGTH);
+        output.put_u64_le(self.data_revision);
         output.put_u64_le(self.ctime);
         output.put_u64_le(self.etime);
         output
@@ -189,8 +190,7 @@ impl VectorMeta {
         let metric = reader.get_u8();
         let flags = reader.get_u8();
         let dimension = reader.get_u32_le();
-        let zero_reserve = &reader[..VECTOR_META_ZERO_RESERVE_LENGTH];
-        reader.advance(VECTOR_META_ZERO_RESERVE_LENGTH);
+        let data_revision = reader.get_u64_le();
         let ctime = reader.get_u64_le();
         let etime = reader.get_u64_le();
 
@@ -203,9 +203,9 @@ impl VectorMeta {
         let quantization = QuantizationType::from_u8(quant)?;
         let metric = SimilarityMetric::from_u8(metric)?;
         ensure!(
-            flags == 0 && zero_reserve.iter().all(|byte| *byte == 0),
+            flags == 0,
             InvalidFormatSnafu {
-                message: "invalid non-zero vector meta reserve".to_string()
+                message: "invalid non-zero vector meta flags".to_string()
             }
         );
         ensure!(
@@ -221,6 +221,7 @@ impl VectorMeta {
             dimension,
             quantization,
             metric,
+            data_revision,
             ctime,
             etime,
         })
@@ -246,6 +247,14 @@ impl VectorMeta {
         self.dimension
     }
 
+    pub fn data_revision(&self) -> u64 {
+        self.data_revision
+    }
+
+    pub(crate) fn bump_data_revision(&mut self) {
+        self.data_revision = self.data_revision.saturating_add(1);
+    }
+
     pub(crate) fn is_stale(&self) -> bool {
         self.etime != 0 && self.etime < Utc::now().timestamp_micros() as u64
     }
@@ -257,13 +266,14 @@ impl VectorMeta {
 
 // Vector member data value layout stored in VectorDataCF:
 //
-// | magic | format | quant | flags | dimension | original_l2 | [quant_params] | payload |
-// |  1B   |   1B   |  1B   |  1B   |    4B     |     4B      |    0B or 8B    | varies  |
+// | magic | format | quant | flags | dimension | original_l2 | payload_len | [quant_params] | payload |
+// |  1B   |   1B   |  1B   |  1B   |    4B     |     4B      |     4B      |    0B or 8B    | varies  |
 //
 // `magic` is VECTOR_VALUE_MAGIC and `original_l2` preserves the pre-normalization
 // L2 norm so VEMB can reconstruct the original FP32 vector. `flags` is reserved
 // for optional sections (e.g. bit 0 = trailing SETATTR attributes JSON) and
-// must be zero until such a section is implemented. The payload layout
+// must be zero until such a section is implemented. `payload_len` is the byte
+// length of the payload section (excluding `quant_params`). The payload layout
 // depends on `quant`:
 //   NOQUANT: 4B * dimension FP32 components, no quant_params.
 //   BIN:     ceil(dimension / 8) bitmap bytes, no quant_params.
@@ -282,18 +292,26 @@ impl VectorDataValue {
 
     pub(crate) fn encode(&self) -> BytesMut {
         let canonical = &self.canonical;
+        let params_length = match canonical.data() {
+            VectorData::Int8 { .. } => VECTOR_Q8_PARAMS_LENGTH,
+            _ => 0,
+        };
         let payload_length = match canonical.data() {
             VectorData::Fp32(values) => values.len() * size_of::<f32>(),
             VectorData::Binary(bits) => bits.len(),
-            VectorData::Int8 { values, .. } => VECTOR_Q8_PARAMS_LENGTH + values.len(),
+            VectorData::Int8 { values, .. } => values.len(),
         };
-        let mut output = BytesMut::with_capacity(VECTOR_VALUE_HEADER_LENGTH + payload_length);
+        let payload_len = u32::try_from(payload_length)
+            .expect("vector payload length always fits in u32 for a valid canonical vector");
+        let mut output =
+            BytesMut::with_capacity(VECTOR_VALUE_HEADER_LENGTH + params_length + payload_length);
         output.put_u8(VECTOR_VALUE_MAGIC);
         output.put_u8(VECTOR_VALUE_FORMAT);
         output.put_u8(canonical.quantization().to_u8());
         output.put_u8(0); // flags: reserved, no optional sections yet
         output.put_u32_le(canonical.dimension());
         output.put_f32_le(canonical.original_l2());
+        output.put_u32_le(payload_len);
         match canonical.data() {
             VectorData::Fp32(values) => {
                 for component in values {
@@ -333,6 +351,7 @@ impl VectorDataValue {
         let flags = reader.get_u8();
         let dimension = reader.get_u32_le();
         let original_l2 = reader.get_f32_le();
+        let payload_len = reader.get_u32_le() as usize;
 
         ensure!(
             magic == VECTOR_VALUE_MAGIC,
@@ -368,11 +387,12 @@ impl VectorDataValue {
         let dimension = dimension as usize;
         let data = match quantization {
             QuantizationType::None => {
+                let expected_payload = dimension * size_of::<f32>();
                 ensure!(
-                    reader.len() == dimension * size_of::<f32>(),
+                    payload_len == expected_payload && reader.len() == expected_payload,
                     InvalidFormatSnafu {
                         message: format!(
-                            "invalid vector payload length: {} for dimension {}",
+                            "invalid vector payload length: payload_len {payload_len}, actual {} for dimension {}",
                             reader.len(),
                             dimension
                         )
@@ -391,11 +411,12 @@ impl VectorDataValue {
                 VectorData::Fp32(normalized)
             }
             QuantizationType::Binary => {
+                let expected_payload = dimension.div_ceil(8);
                 ensure!(
-                    reader.len() == dimension.div_ceil(8),
+                    payload_len == expected_payload && reader.len() == expected_payload,
                     InvalidFormatSnafu {
                         message: format!(
-                            "invalid binary vector payload length: {} for dimension {}",
+                            "invalid binary vector payload length: payload_len {payload_len}, actual {} for dimension {}",
                             reader.len(),
                             dimension
                         )
@@ -405,10 +426,10 @@ impl VectorDataValue {
             }
             QuantizationType::Int8 => {
                 ensure!(
-                    reader.len() == VECTOR_Q8_PARAMS_LENGTH + dimension,
+                    payload_len == dimension && reader.len() == VECTOR_Q8_PARAMS_LENGTH + dimension,
                     InvalidFormatSnafu {
                         message: format!(
-                            "invalid q8 vector payload length: {} for dimension {}",
+                            "invalid q8 vector payload length: payload_len {payload_len}, actual {} for dimension {}",
                             reader.len(),
                             dimension
                         )
@@ -448,24 +469,9 @@ impl VectorDataValue {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        format_member_data_key::{MemberDataKey, ParsedMemberDataKey},
-        vector::CanonicalVector,
-    };
+    use crate::vector::CanonicalVector;
 
     use super::*;
-
-    #[test]
-    fn member_data_key_round_trips_empty_binary_element() {
-        let encoded = MemberDataKey::new(b"vectors\0key", 42, b"")
-            .encode()
-            .expect("encode member key");
-        let decoded = ParsedMemberDataKey::new(&encoded).expect("decode member key");
-
-        assert_eq!(decoded.key(), b"vectors\0key");
-        assert_eq!(decoded.version(), 42);
-        assert_eq!(decoded.data(), b"");
-    }
 
     #[test]
     fn vector_data_value_round_trips() {
@@ -491,14 +497,15 @@ mod tests {
 
     #[test]
     fn vector_meta_round_trips() {
-        let mut meta = VectorMeta::new_after(2, 2, QuantizationType::None, 0);
-        meta.version = 42;
+        let mut meta = VectorMeta::new(2, 2, QuantizationType::None, 42);
+        meta.bump_data_revision();
         let encoded = meta.encode();
         let decoded = VectorMeta::decode(&encoded).expect("decode vector meta");
 
         assert_eq!(decoded.count(), 2);
         assert_eq!(decoded.version(), 42);
         assert_eq!(decoded.dimension(), 2);
+        assert_eq!(decoded.data_revision(), 2);
         assert!(!decoded.is_stale());
     }
 
@@ -523,11 +530,16 @@ mod tests {
         zero_dimension[4..8].copy_from_slice(&0_u32.to_le_bytes());
         assert!(VectorDataValue::decode(&zero_dimension).is_err());
 
+        // payload_len that disagrees with the actual payload size.
+        let mut bad_payload_len = encoded_value.clone();
+        bad_payload_len[12..16].copy_from_slice(&4_u32.to_le_bytes());
+        assert!(VectorDataValue::decode(&bad_payload_len).is_err());
+
         let mut non_finite_payload = encoded_value;
-        non_finite_payload[12..16].copy_from_slice(&f32::NAN.to_le_bytes());
+        non_finite_payload[16..20].copy_from_slice(&f32::NAN.to_le_bytes());
         assert!(VectorDataValue::decode(&non_finite_payload).is_err());
 
-        let encoded_meta = VectorMeta::new_after(2, 2, QuantizationType::None, 0).encode();
+        let encoded_meta = VectorMeta::new(2, 2, QuantizationType::None, 1).encode();
         assert!(VectorMeta::decode(&encoded_meta[..encoded_meta.len() - 1]).is_err());
 
         let mut bad_meta_format = encoded_meta;
@@ -538,5 +550,96 @@ mod tests {
         bad_metric[17] = VECTOR_META_FORMAT;
         bad_metric[19] = 0xFF;
         assert!(VectorMeta::decode(&bad_metric).is_err());
+    }
+
+    #[test]
+    fn canonical_vector_rejects_infinite_components() {
+        // NaN is covered in vector.rs; the same finiteness check must also
+        // reject both infinities in any component position.
+        assert!(CanonicalVector::from_values(&[f32::INFINITY, 1.0]).is_err());
+        assert!(CanonicalVector::from_values(&[f32::NEG_INFINITY, 1.0]).is_err());
+        assert!(CanonicalVector::from_values(&[1.0, f32::INFINITY]).is_err());
+        assert!(CanonicalVector::from_values(&[1.0, f32::NEG_INFINITY]).is_err());
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&f32::INFINITY.to_le_bytes());
+        blob.extend_from_slice(&1.0_f32.to_le_bytes());
+        assert!(CanonicalVector::from_fp32_le(&blob).is_err());
+    }
+
+    mod props {
+        use proptest::prelude::*;
+
+        use super::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            /// Any combination of valid meta fields must round trip through
+            /// the frozen byte layout unchanged. The encoded bytes are crafted
+            /// directly so count/version/dimension/data_revision and the
+            /// timestamps can take arbitrary values (the struct setters cannot
+            /// reach every field).
+            #[test]
+            fn vector_meta_round_trips_arbitrary_valid_fields(
+                count in any::<u64>(),
+                version in any::<u64>(),
+                dimension in 1u32..=u32::MAX,
+                quantization in prop_oneof![
+                    Just(QuantizationType::None),
+                    Just(QuantizationType::Binary),
+                    Just(QuantizationType::Int8),
+                ],
+                data_revision in any::<u64>(),
+                ctime in any::<u64>(),
+                etime in any::<u64>(),
+            ) {
+                let mut raw = BytesMut::new();
+                raw.put_u8(DataType::VectorSet as u8);
+                raw.put_u64_le(count);
+                raw.put_u64_le(version);
+                raw.put_u8(VECTOR_META_FORMAT);
+                raw.put_u8(quantization.to_u8());
+                raw.put_u8(SimilarityMetric::Cosine.to_u8());
+                raw.put_u8(0); // flags
+                raw.put_u32_le(dimension);
+                raw.put_u64_le(data_revision);
+                raw.put_u64_le(ctime);
+                raw.put_u64_le(etime);
+
+                let decoded = VectorMeta::decode(&raw).expect("decode valid meta");
+                prop_assert_eq!(decoded.count(), count);
+                prop_assert_eq!(decoded.version(), version);
+                prop_assert_eq!(decoded.dimension(), dimension);
+                prop_assert_eq!(decoded.quantization(), quantization);
+                prop_assert_eq!(decoded.metric(), SimilarityMetric::Cosine);
+                prop_assert_eq!(decoded.data_revision(), data_revision);
+                prop_assert_eq!(&decoded.encode()[..], &raw[..]);
+            }
+
+            /// Any finite FP32 vector (dimension 1..=128, positive finite L2
+            /// norm) must survive a NOQUANT encode/decode round trip exactly.
+            #[test]
+            fn vector_data_value_round_trips_finite_fp32(
+                values in prop::collection::vec(-1.0e6f32..1.0e6f32, 1..=128usize),
+            ) {
+                // All-zero vectors are rejected by design; skip those cases.
+                prop_assume!(CanonicalVector::from_values(&values).is_ok());
+                let canonical = CanonicalVector::from_values(&values).expect("valid vector");
+                let encoded = VectorDataValue::from_canonical(&canonical).encode();
+                let decoded = VectorDataValue::decode(&encoded).expect("decode vector value");
+                prop_assert_eq!(decoded.canonical(), &canonical);
+            }
+
+            /// Arbitrary bytes fed to either decoder must only produce Ok or
+            /// Err: never a panic, an out-of-bounds read, or an allocation
+            /// sized by hostile header fields.
+            #[test]
+            fn decoders_never_panic_on_arbitrary_bytes(
+                data in prop::collection::vec(any::<u8>(), 0..=300),
+            ) {
+                let _ = VectorMeta::decode(&data);
+                let _ = VectorDataValue::decode(&data);
+            }
+        }
     }
 }

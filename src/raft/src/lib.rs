@@ -19,6 +19,7 @@
 //!
 //! Re-exports logindex types from storage::logindex to avoid code duplication.
 
+pub mod capabilities;
 pub mod conversion;
 pub mod db_access; // Shim for backward compatibility with tests
 pub mod grpc;

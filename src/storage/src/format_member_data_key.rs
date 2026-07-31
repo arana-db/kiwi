@@ -16,10 +16,11 @@
 // limitations under the License.
 
 use bytes::{BufMut, Bytes, BytesMut};
+use snafu::ensure;
 
 use crate::storage_define::seek_userkey_delim;
 use crate::{
-    error::Result,
+    error::{InvalidFormatSnafu, Result},
     storage_define::{
         ENCODED_KEY_DELIM_SIZE, PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, decode_user_key,
         encode_user_key,
@@ -29,8 +30,7 @@ use crate::{
 // | reserve1 | key | version | data | reserve2 |
 // |    8B    |     |    8B   |      |   16B    |
 //
-// For vector sets, `data` is the element name and the value stored at this key
-// is a VectorDataValue (see format_vector.rs).
+// Vector sets use their own V1 codec (see format_vector_member_key.rs).
 
 #[derive(Debug, Clone)]
 pub struct MemberDataKey {
@@ -101,6 +101,21 @@ impl ParsedMemberDataKey {
     pub fn new(encoded_key: &[u8]) -> Result<Self> {
         let mut key_str = BytesMut::new();
 
+        // minimum: reserve1 + encoded empty key (delim only) + version + reserve2
+        const MIN_LENGTH: usize = PREFIX_RESERVE_LENGTH
+            + ENCODED_KEY_DELIM_SIZE
+            + size_of::<u64>()
+            + SUFFIX_RESERVE_LENGTH;
+        ensure!(
+            encoded_key.len() >= MIN_LENGTH,
+            InvalidFormatSnafu {
+                message: format!(
+                    "member data key too short: {} < {MIN_LENGTH}",
+                    encoded_key.len()
+                )
+            }
+        );
+
         let start_idx = PREFIX_RESERVE_LENGTH;
         let end_idx = encoded_key.len() - SUFFIX_RESERVE_LENGTH;
 
@@ -110,13 +125,24 @@ impl ParsedMemberDataKey {
         reserve1.copy_from_slice(reserve_slice);
 
         // key
-        let key_end_idx = start_idx + seek_userkey_delim(&encoded_key[start_idx..]);
+        let key_end_idx = start_idx + seek_userkey_delim(&encoded_key[start_idx..end_idx]);
         decode_user_key(&encoded_key[start_idx..key_end_idx], &mut key_str)?;
 
         // version
         let version_end_idx = key_end_idx + size_of::<u64>();
+        ensure!(
+            version_end_idx <= end_idx,
+            InvalidFormatSnafu {
+                message: "member data key version field out of bounds".to_string()
+            }
+        );
         let version_slice = &encoded_key[key_end_idx..version_end_idx];
-        let version = u64::from_le_bytes(version_slice.try_into().expect("slice length mismatch"));
+        let version = u64::from_le_bytes(version_slice.try_into().map_err(|_| {
+            InvalidFormatSnafu {
+                message: "member data key version field length mismatch".to_string(),
+            }
+            .build()
+        })?);
 
         // data
         let data_slice = &encoded_key[version_end_idx..end_idx];
@@ -207,6 +233,21 @@ mod tests {
         let data_begin = PREFIX_RESERVE_LENGTH + size_of::<u64>() + key_encoded_len;
         let data_end = encoded.len() - SUFFIX_RESERVE_LENGTH;
         assert_eq!(&encoded[data_begin..data_end], test_data);
+    }
+
+    #[test]
+    fn mv_test_member_data_key_rejects_malformed_keys() {
+        // shorter than reserve1 + delim + version + reserve2
+        let short = vec![0u8; 10];
+        assert!(ParsedMemberDataKey::new(&short).is_err());
+
+        // long enough, but the version field would run into reserve2
+        let mut no_room_for_version = Vec::new();
+        no_room_for_version.extend_from_slice(&[0u8; PREFIX_RESERVE_LENGTH]);
+        no_room_for_version.extend_from_slice(b"\x00\x00"); // empty encoded key
+        no_room_for_version.extend_from_slice(&[0u8; 4]); // only 4 bytes before reserve2
+        no_room_for_version.extend_from_slice(&[0u8; SUFFIX_RESERVE_LENGTH]);
+        assert!(ParsedMemberDataKey::new(&no_room_for_version).is_err());
     }
 
     #[test]

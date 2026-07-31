@@ -32,8 +32,10 @@ use rocksdb::{
 use crate::{
     DataType,
     coding::decode_fixed,
+    format_base_key::BaseMetaKey,
     format_base_meta_value::ParsedBaseMetaValue,
     format_list_meta_value::ParsedListsMetaValue,
+    format_vector_member_key::ParsedVectorMemberDataKey,
     storage_define::{
         ENCODED_KEY_DELIM_SIZE, NEED_TRANSFORM_CHARACTER, PREFIX_RESERVE_LENGTH,
         SUFFIX_RESERVE_LENGTH, VERSION_LENGTH, seek_userkey_delim,
@@ -171,6 +173,7 @@ enum MetaLookup {
 pub struct DataCompactionFilter {
     db: Option<Arc<DB>>,
     data_type: DataType,
+    storage_incarnation: Arc<OnceCell<u64>>,
     cur_key: BytesMut,
     meta_not_found: bool,
     cur_meta_version: u64,
@@ -178,10 +181,15 @@ pub struct DataCompactionFilter {
 }
 
 impl DataCompactionFilter {
-    pub fn new(db: Option<Arc<DB>>, data_type: DataType) -> Self {
+    pub fn new(
+        db: Option<Arc<DB>>,
+        data_type: DataType,
+        storage_incarnation: Arc<OnceCell<u64>>,
+    ) -> Self {
         Self {
             db,
             data_type,
+            storage_incarnation,
             cur_key: BytesMut::new(),
             meta_not_found: false,
             cur_meta_version: 0,
@@ -313,6 +321,50 @@ impl DataCompactionFilter {
             MetaLookup::Valid
         }
     }
+
+    /// Filter a vector set member key (V1 codec, see
+    /// `format_vector_member_key.rs`).
+    ///
+    /// A member is removed when it is provably stale: its meta is gone or
+    /// expired, it was written by a different storage incarnation, or its
+    /// generation sequence differs from the live generation in the meta
+    /// (`meta.version`). Anything that cannot be parsed or proven stale is
+    /// kept.
+    fn filter_vector_member(&mut self, key: &[u8]) -> CompactionDecision {
+        let Ok(parsed) = ParsedVectorMemberDataKey::decode(key) else {
+            return CompactionDecision::Keep;
+        };
+        let Ok(meta_key) = BaseMetaKey::new(parsed.key()).encode() else {
+            return CompactionDecision::Keep;
+        };
+
+        match self.ensure_meta_state(&meta_key) {
+            MetaLookup::Unavailable => CompactionDecision::Keep,
+            MetaLookup::NotFound => CompactionDecision::Remove,
+            MetaLookup::Valid => {
+                let cur_time = Utc::now().timestamp_micros() as u64;
+                if self.cur_meta_etime != 0 && self.cur_meta_etime < cur_time {
+                    return CompactionDecision::Remove;
+                }
+
+                // Members written by another storage (e.g. data written before
+                // the instance identity was rebuilt) are always stale here.
+                let Some(current_incarnation) = self.storage_incarnation.get() else {
+                    return CompactionDecision::Keep;
+                };
+                if parsed.storage_incarnation() != *current_incarnation {
+                    return CompactionDecision::Remove;
+                }
+
+                // The meta version is the live generation sequence.
+                if parsed.generation_sequence() != self.cur_meta_version {
+                    return CompactionDecision::Remove;
+                }
+
+                CompactionDecision::Keep
+            }
+        }
+    }
 }
 
 impl CompactionFilter for DataCompactionFilter {
@@ -323,6 +375,10 @@ impl CompactionFilter for DataCompactionFilter {
     fn filter(&mut self, _level: u32, key: &[u8], _value: &[u8]) -> CompactionDecision {
         #[cfg(test)]
         block_once_for_compaction_filter_test(key);
+
+        if self.data_type == DataType::VectorSet {
+            return self.filter_vector_member(key);
+        }
 
         let Some(meta_key) = Self::build_meta_key(key) else {
             return CompactionDecision::Keep;
@@ -349,11 +405,20 @@ impl CompactionFilter for DataCompactionFilter {
 pub struct DataCompactionFilterFactory {
     db: Arc<OnceCell<Weak<DB>>>,
     data_type: DataType,
+    storage_incarnation: Arc<OnceCell<u64>>,
 }
 
 impl DataCompactionFilterFactory {
-    pub fn new(db: Arc<OnceCell<Weak<DB>>>, data_type: DataType) -> Self {
-        Self { db, data_type }
+    pub fn new(
+        db: Arc<OnceCell<Weak<DB>>>,
+        data_type: DataType,
+        storage_incarnation: Arc<OnceCell<u64>>,
+    ) -> Self {
+        Self {
+            db,
+            data_type,
+            storage_incarnation,
+        }
     }
 }
 
@@ -365,7 +430,7 @@ impl CompactionFilterFactory for DataCompactionFilterFactory {
         _context: rocksdb::compaction_filter_factory::CompactionFilterContext,
     ) -> Self::Filter {
         let db = self.db.get().and_then(Weak::upgrade);
-        DataCompactionFilter::new(db, self.data_type)
+        DataCompactionFilter::new(db, self.data_type, Arc::clone(&self.storage_incarnation))
     }
 
     fn name(&self) -> &std::ffi::CStr {
@@ -380,12 +445,22 @@ mod tests {
     use crate::format_base_key::BaseKey;
     use crate::format_base_meta_value::BaseMetaValue;
     use crate::format_list_meta_value::ListsMetaValue;
+    use crate::format_vector_member_key::VectorMemberDataKey;
     use crate::storage_define::SUFFIX_RESERVE_LENGTH;
     use crate::unique_test_db_path;
     use bytes::BufMut;
     use rocksdb::{
         ColumnFamilyDescriptor, Options, compaction_filter_factory::CompactionFilterContext,
     };
+
+    const TEST_INCARNATION: u64 = 7;
+
+    fn test_incarnation_cell(value: u64) -> Arc<OnceCell<u64>> {
+        let cell = Arc::new(OnceCell::new());
+        cell.set(value)
+            .expect("incarnation cell should be set once");
+        cell
+    }
 
     fn setup_db_for_filter_test(path: &std::path::Path) -> (Arc<OnceCell<Weak<DB>>>, Arc<DB>) {
         let mut db_opts = Options::default();
@@ -419,6 +494,18 @@ mod tests {
         encoded.to_vec()
     }
 
+    /// Helper to create a V1 vector member key for testing purposes.
+    fn encode_vector_member_key(key: &[u8], incarnation: u64, generation: u64) -> Vec<u8> {
+        VectorMemberDataKey {
+            key,
+            storage_incarnation: incarnation,
+            generation_sequence: generation,
+            element: b"member",
+        }
+        .encode_full()
+        .expect("encode vector member key")
+    }
+
     fn put_meta(db: &Arc<DB>, user_key: &[u8], data_type: DataType, version: u64, etime: u64) {
         let meta_key = BaseKey::new(user_key).encode().unwrap();
         match data_type {
@@ -446,7 +533,11 @@ mod tests {
         let path = unique_test_db_path();
         let (db_cell, _db) = setup_db_for_filter_test(&path);
 
-        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::Hash,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,
@@ -473,7 +564,11 @@ mod tests {
                 .expect("DB cell should be set once");
         }
 
-        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::Hash,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,
@@ -497,7 +592,11 @@ mod tests {
         // Allow some time for the snapshot to see the write
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::Hash,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,
@@ -519,7 +618,11 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Set);
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::Set,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,
@@ -541,7 +644,11 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::ZSet);
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::ZSet,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,
@@ -559,21 +666,152 @@ mod tests {
         let path = unique_test_db_path();
         let (db_cell, db) = setup_db_for_filter_test(&path);
 
-        put_meta(&db, b"vector_key", DataType::VectorSet, 1, 0);
+        // Meta version holds the live generation sequence.
+        put_meta(&db, b"vector_key", DataType::VectorSet, 3, 0);
 
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::VectorSet);
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::VectorSet,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,
         };
         let mut filter = factory.create(context);
 
-        let data_key = encode_data_key(b"vector_key", 1);
+        let data_key = encode_vector_member_key(b"vector_key", TEST_INCARNATION, 3);
         let decision = filter.filter(0, &data_key, b"");
 
         assert!(matches!(decision, CompactionDecision::Keep));
+    }
+
+    #[test]
+    fn test_removes_vector_member_on_incarnation_mismatch() {
+        let path = unique_test_db_path();
+        let (db_cell, db) = setup_db_for_filter_test(&path);
+
+        put_meta(&db, b"vector_key", DataType::VectorSet, 3, 0);
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::VectorSet,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        // Written by another storage incarnation: stale even though the
+        // generation matches.
+        let data_key = encode_vector_member_key(b"vector_key", TEST_INCARNATION + 1, 3);
+        let decision = filter.filter(0, &data_key, b"");
+
+        assert!(matches!(decision, CompactionDecision::Remove));
+    }
+
+    #[test]
+    fn test_removes_vector_member_on_generation_mismatch() {
+        let path = unique_test_db_path();
+        let (db_cell, db) = setup_db_for_filter_test(&path);
+
+        put_meta(&db, b"vector_key", DataType::VectorSet, 3, 0);
+
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::VectorSet,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        // Member of a previous lifecycle of the same key.
+        let data_key = encode_vector_member_key(b"vector_key", TEST_INCARNATION, 2);
+        let decision = filter.filter(0, &data_key, b"");
+
+        assert!(matches!(decision, CompactionDecision::Remove));
+    }
+
+    #[test]
+    fn test_keeps_vector_member_when_meta_is_unreadable() {
+        // Without a live DB handle the meta cannot be read, so nothing can be
+        // proven stale.
+        let db_cell: Arc<OnceCell<Weak<DB>>> = Arc::new(OnceCell::new());
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::VectorSet,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        let data_key = encode_vector_member_key(b"vector_key", TEST_INCARNATION, 1);
+        assert!(matches!(
+            filter.filter(0, &data_key, b""),
+            CompactionDecision::Keep
+        ));
+    }
+
+    #[test]
+    fn test_keeps_vector_member_when_key_is_malformed() {
+        let path = unique_test_db_path();
+        let (db_cell, _db) = setup_db_for_filter_test(&path);
+
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::VectorSet,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        // Truncated inside the fixed header: cannot be parsed, must be kept.
+        let mut data_key = encode_vector_member_key(b"vector_key", TEST_INCARNATION, 1);
+        data_key.truncate(10);
+        assert!(matches!(
+            filter.filter(0, &data_key, b""),
+            CompactionDecision::Keep
+        ));
+    }
+
+    #[test]
+    fn test_removes_vector_member_if_meta_is_missing() {
+        let path = unique_test_db_path();
+        let (db_cell, _db) = setup_db_for_filter_test(&path);
+
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::VectorSet,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
+        let context = CompactionFilterContext {
+            is_full_compaction: false,
+            is_manual_compaction: false,
+        };
+        let mut filter = factory.create(context);
+
+        let data_key = encode_vector_member_key(b"vector_key", TEST_INCARNATION, 1);
+        assert!(matches!(
+            filter.filter(0, &data_key, b""),
+            CompactionDecision::Remove
+        ));
     }
 
     #[test]
@@ -585,7 +823,11 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::List);
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::List,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,
@@ -613,7 +855,11 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::Hash,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,
@@ -640,7 +886,11 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::Hash,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,
@@ -663,7 +913,11 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(10));
 
         // Filter is for Hashes
-        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::Hash,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,
@@ -681,7 +935,11 @@ mod tests {
         let path = unique_test_db_path();
         let (db_cell, _) = setup_db_for_filter_test(&path);
 
-        let mut factory = DataCompactionFilterFactory::new(db_cell, DataType::Hash);
+        let mut factory = DataCompactionFilterFactory::new(
+            db_cell,
+            DataType::Hash,
+            test_incarnation_cell(TEST_INCARNATION),
+        );
         let context = CompactionFilterContext {
             is_full_compaction: false,
             is_manual_compaction: false,

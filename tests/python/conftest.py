@@ -42,8 +42,8 @@ def redis_client():
     作用域为 session，所有测试共享一个连接
     """
     client = redis.Redis(
-        host='localhost',
-        port=6379,
+        host=os.getenv("KIWI_HOST", "localhost"),
+        port=int(os.getenv("KIWI_PORT", "7379")),
         decode_responses=True,
         socket_connect_timeout=5,
         socket_timeout=5,
@@ -54,7 +54,10 @@ def redis_client():
         client.ping()
     except redis.RedisError as error:
         client.close()
-        message = "Redis server is not running on localhost:6379"
+        message = (
+            "Redis server is not running on "
+            f"{os.getenv('KIWI_HOST', 'localhost')}:{os.getenv('KIWI_PORT', '7379')}"
+        )
         if _enabled("KIWI_TEST_REQUIRE_SERVER"):
             pytest.fail(f"{message}: {error}", pytrace=False)
         pytest.skip(message)
@@ -117,8 +120,8 @@ def redis_binary_client(redis_client):
     用于测试二进制安全功能
     """
     client = redis.Redis(
-        host='localhost',
-        port=6379,
+        host=os.getenv("KIWI_HOST", "localhost"),
+        port=int(os.getenv("KIWI_PORT", "7379")),
         decode_responses=False,  # 不自动解码
         socket_connect_timeout=5,
         socket_timeout=5,
@@ -128,7 +131,10 @@ def redis_binary_client(redis_client):
         client.ping()
     except redis.RedisError as error:
         client.close()
-        message = "Redis server is not running on localhost:6379"
+        message = (
+            "Redis server is not running on "
+            f"{os.getenv('KIWI_HOST', 'localhost')}:{os.getenv('KIWI_PORT', '7379')}"
+        )
         if _enabled("KIWI_TEST_REQUIRE_SERVER"):
             pytest.fail(f"{message}: {error}", pytrace=False)
         pytest.skip(message)

@@ -1179,12 +1179,10 @@ async fn missing_checkpoint_instance_does_not_pause_or_replace_live_storage() ->
             Box::new(std::io::Cursor::new(snapshot_bytes)),
         )
         .await
-        .expect_err("a checkpoint missing instance 1 must fail during prepare");
+        .expect_err("a checkpoint built for 1 instance must fail schema validation against a 2-instance target");
     assert!(
-        error
-            .to_string()
-            .contains("missing checkpoint instance directory"),
-        "unexpected prepare failure: {error}"
+        error.to_string().contains("db_instance_num"),
+        "unexpected validation failure: {error}"
     );
     assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 0);
     assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 0);

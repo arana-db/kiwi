@@ -95,10 +95,10 @@ import socket
 
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
     sock.settimeout(0.2)
-    raise SystemExit(0 if sock.connect_ex(("127.0.0.1", 6379)) == 0 else 1)
+    raise SystemExit(0 if sock.connect_ex(("127.0.0.1", 7379)) == 0 else 1)
 PY
 then
-  echo "127.0.0.1:6379 is already in use" >&2
+  echo "127.0.0.1:7379 is already in use" >&2
   exit 1
 fi
 
@@ -111,7 +111,7 @@ readonly LOG_DIR="${TEMP_DIR}/logs"
 mkdir -p -- "${DATA_DIR}" "${LOG_DIR}"
 
 cat >"${CONFIG_PATH}" <<EOF
-port 6379
+port 7379
 binding 127.0.0.1
 data-dir ${DATA_DIR}
 log-dir ${LOG_DIR}
@@ -132,7 +132,7 @@ import redis
 
 client = redis.Redis(
     host="127.0.0.1",
-    port=6379,
+    port=7379,
     socket_connect_timeout=0.2,
     socket_timeout=0.2,
 )
@@ -151,13 +151,15 @@ PY
 done
 
 if ((ready == 0)); then
-  echo "Kiwi did not become ready on 127.0.0.1:6379" >&2
+  echo "Kiwi did not become ready on 127.0.0.1:7379" >&2
   exit 1
 fi
 
 set +e
 KIWI_TEST_REQUIRE_SERVER=1 \
   KIWI_TEST_ISOLATED_SERVER=1 \
+  KIWI_HOST=127.0.0.1 \
+  KIWI_PORT=7379 \
   make -C tests test-python
 test_status=$?
 set -e

@@ -20,7 +20,13 @@ extern crate core;
 mod format_base_data_value;
 mod format_member_data_key;
 pub mod format_vector;
+pub mod format_vector_member_key;
+mod storage_manifest;
 pub mod vector;
+pub mod vector_fault;
+mod vector_flat;
+pub mod vector_metrics;
+pub mod vector_mutation;
 
 mod data_compaction_filter;
 mod durable_fs;
@@ -68,8 +74,8 @@ pub mod logindex;
 
 pub use batch::{AppendLogFn, Batch, BinlogBatch, RocksBatch};
 pub use checkpoint::{
-    PreparedCheckpointRestore, RAFT_SNAPSHOT_META_FILE, RaftSnapshotMeta,
-    prepare_checkpoint_restore, restore_checkpoint_layout,
+    CURRENT_SNAPSHOT_VERSION, PreparedCheckpointRestore, RAFT_SNAPSHOT_META_FILE, RaftSnapshotMeta,
+    STORAGE_SCHEMA_VERSION, prepare_checkpoint_restore, restore_checkpoint_layout,
 };
 pub use durable_fs::{sync_directory, sync_parent_directory};
 pub use error::Result;
@@ -78,12 +84,20 @@ pub use format_base_key::BaseMetaKey;
 pub use format_base_value::*;
 pub use format_zset_score_key::{ScoreMember, ZsetScoreMember};
 pub use options::StorageOptions;
-pub use redis::{ColumnFamilyIndex, Redis, TypeCheckState};
+pub use redis::{ColumnFamilyIndex, GenerationProvider, Redis, TypeCheckState};
+pub use redis_vectors::VectorDataSample;
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use storage_impl::BeforeOrAfter;
+pub use storage_manifest::STORAGE_MANIFEST_FILE;
 pub use util::{safe_cleanup_test_db, unique_test_db_path};
 pub use vector::{
-    CanonicalVector, QuantizationType, VectorHit, VectorQuery, VectorSearchEngine,
+    CanonicalVector, QuantizationType, VectorHit, VectorInfo, VectorQuery, VectorSearchEngine,
     VectorSearchMode, VectorSearchOptions,
+};
+pub use vector_fault::VectorFaultHooks;
+pub use vector_flat::{FlatQueryCancel, FlatQueryGate, FlatScanGuard};
+pub use vector_metrics::{VectorMetrics, VectorMetricsSnapshot};
+pub use vector_mutation::{
+    VectorSetApplyError, VectorSetApplyResult, VectorSetBusinessError, VectorSetMutationV1,
 };

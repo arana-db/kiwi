@@ -15,6 +15,7 @@ path = "src/main.rs"
 net.workspace = true
 runtime.workspace = true
 storage.workspace = true
+cmd.workspace = true
 tokio.workspace = true
 env_logger.workspace = true
 log.workspace = true

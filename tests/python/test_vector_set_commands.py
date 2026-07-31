@@ -40,6 +40,7 @@ def vector_client(request):
         prefix + b"errors:bin",
         prefix + b"string",
         prefix + b"malformed",
+        prefix + b"info",
     ]
     client = redis.Redis(
         host=os.getenv("KIWI_HOST", "127.0.0.1"),
@@ -322,3 +323,75 @@ def test_malformed_vectors_and_options(vector_client):
         b"COUNT",
         0,
     )
+
+
+def vinfo_fields(reply, protocol):
+    if protocol == 3:
+        assert type(reply) is dict
+        return reply
+    assert type(reply) is list
+    return dict(zip(reply[::2], reply[1::2]))
+
+
+def test_vinfo_reports_flat_phase1_fields(vector_client):
+    client, protocol, prefix = vector_client
+    key = prefix + b"info"
+
+    # Missing key: null reply in both protocols (RESP2 *-1, RESP3 _).
+    assert client.execute_command(b"VINFO", key) is None
+
+    vadd_values(client, key, [1, 0, 0], b"a")
+    vadd_values(client, key, [0, 1, 0], b"b")
+    info = vinfo_fields(client.execute_command(b"VINFO", key), protocol)
+    assert info[b"quant-type"] == b"fp32"
+    assert info[b"hnsw-m"] == 0
+    assert info[b"vector-dim"] == 3
+    assert info[b"projection-input-dim"] == 0
+    assert info[b"size"] == 2
+    assert info[b"max-level"] == 0
+    assert info[b"attributes-count"] == 0
+    assert info[b"hnsw-max-node-uid"] == 0
+    assert type(info[b"vset-uid"]) is int
+    first_uid = info[b"vset-uid"]
+
+    # Recreating the set allocates a fresh generation sequence.
+    client.delete(key)
+    assert client.execute_command(b"VINFO", key) is None
+    vadd_values(client, key, [1, 0, 0], b"c")
+    info = vinfo_fields(client.execute_command(b"VINFO", key), protocol)
+    assert info[b"size"] == 1
+    assert info[b"vset-uid"] != first_uid
+
+
+def test_vinfo_wrongtype(vector_client):
+    client, _protocol, prefix = vector_client
+    key = prefix + b"string"
+    client.set(key, b"value")
+    assert_response_error(client, "WRONGTYPE", b"VINFO", key)
+
+
+def test_info_vector_section(vector_client):
+    client, _protocol, prefix = vector_client
+    key = prefix + b"info"
+    vadd_values(client, key, [1, 0], b"a")
+    client.execute_command(b"VSIM", key, b"VALUES", 2, 1, 0)
+
+    body = client.execute_command(b"INFO", b"VECTOR").decode()
+    assert body.startswith("# Vector")
+    fields = dict(
+        line.split(":", 1) for line in body.splitlines() if ":" in line
+    )
+    assert fields["index-kind"] == "flat"
+    assert int(fields["vector_flat_queries_total"]) >= 1
+    for name in (
+        "vector_flat_query_timeouts_total",
+        "vector_flat_query_errors_total",
+        "vector_search_capacity_rejected_total",
+        "vector_flat_query_duration_micros_total",
+        "vector_flat_query_duration_count",
+    ):
+        assert int(fields[name]) >= 0
+
+    full = client.execute_command(b"INFO").decode()
+    assert "# Vector" in full
+    assert "index-kind:flat" in full

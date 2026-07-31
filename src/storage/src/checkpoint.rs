@@ -35,7 +35,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(any(test, feature = "test-fault-injection"))]
 use parking_lot::Mutex;
 
+use crate::format_vector::VECTOR_VALUE_FORMAT;
 use crate::logindex::LogIndexAndSequenceCollector;
+use crate::redis::ColumnFamilyIndex;
 use crate::{sync_directory, sync_parent_directory};
 
 /// File name for JSON metadata at the checkpoint root (not OpenRaft's `SnapshotMeta`).
@@ -85,8 +87,23 @@ pub fn fail_next_restore_parent_sync_after_rename(
     RestoreParentSyncFailureGuard { target_db_path }
 }
 
-/// Current snapshot format version
-pub const CURRENT_SNAPSHOT_VERSION: u32 = 1;
+/// Current snapshot format version.
+///
+/// Version 1 was a development-phase format that was never released; only v2
+/// snapshots (which carry the storage schema description) are accepted.
+pub const CURRENT_SNAPSHOT_VERSION: u32 = 2;
+
+/// Version of the storage on-disk schema understood by this binary.
+pub const STORAGE_SCHEMA_VERSION: u32 = 1;
+
+/// Column families every instance of the checkpoint must contain, in
+/// declaration order.
+pub fn expected_column_families() -> Vec<String> {
+    ColumnFamilyIndex::ALL
+        .iter()
+        .map(|cf| cf.name().to_string())
+        .collect()
+}
 
 /// Metadata persisted next to per-instance checkpoint directories.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -97,6 +114,23 @@ pub struct RaftSnapshotMeta {
     pub last_included_index: u64,
     /// Last log term included in the snapshot
     pub last_included_term: u64,
+    /// Storage on-disk schema version understood by the snapshot writer.
+    #[serde(default)]
+    pub storage_schema_version: u32,
+    /// Storage incarnation of each RocksDB instance, ordered by instance id.
+    /// A restored database adopts these via the per-instance manifest files
+    /// carried inside the checkpoint; they are validated for structure only.
+    #[serde(default)]
+    pub storage_incarnations: Vec<u64>,
+    /// Number of RocksDB instances in the checkpoint.
+    #[serde(default)]
+    pub db_instance_num: u32,
+    /// Column families each checkpoint instance must contain, in declaration order.
+    #[serde(default)]
+    pub column_families: Vec<String>,
+    /// Highest vector value format byte the snapshot writer can emit.
+    #[serde(default)]
+    pub vector_value_format_max: u8,
     /// LogIndex collector states, one entry per Storage instance.
     /// Outer index is the instance id; inner Vec holds `"log_index:seqno"` pairs.
     #[serde(default)]
@@ -110,6 +144,11 @@ impl RaftSnapshotMeta {
             version: CURRENT_SNAPSHOT_VERSION,
             last_included_index,
             last_included_term,
+            storage_schema_version: STORAGE_SCHEMA_VERSION,
+            storage_incarnations: Vec::new(),
+            db_instance_num: 0,
+            column_families: expected_column_families(),
+            vector_value_format_max: VECTOR_VALUE_FORMAT,
             logindex_collector_states: Vec::new(),
         }
     }
@@ -121,11 +160,30 @@ impl RaftSnapshotMeta {
         collectors: &[Arc<LogIndexAndSequenceCollector>],
     ) -> Self {
         Self {
-            version: CURRENT_SNAPSHOT_VERSION,
-            last_included_index,
-            last_included_term,
+            db_instance_num: collectors.len() as u32,
             logindex_collector_states: collectors.iter().map(|c| c.export_state()).collect(),
+            ..Self::new(last_included_index, last_included_term)
         }
+    }
+
+    /// Create snapshot meta describing the given live Storage: per-instance
+    /// storage incarnations, the instance count, and the column-family list.
+    pub fn for_storage(
+        last_included_index: u64,
+        last_included_term: u64,
+        collectors: &[Arc<LogIndexAndSequenceCollector>],
+        storage: &crate::storage::Storage,
+    ) -> crate::error::Result<Self> {
+        let storage_incarnations = storage
+            .insts
+            .iter()
+            .map(|inst| inst.storage_incarnation())
+            .collect::<crate::error::Result<Vec<_>>>()?;
+        Ok(Self {
+            storage_incarnations,
+            db_instance_num: storage.db_instance_num as u32,
+            ..Self::with_collector_states(last_included_index, last_included_term, collectors)
+        })
     }
 
     /// Restore collector states for each Storage instance from snapshot metadata.
@@ -193,19 +251,69 @@ impl RaftSnapshotMeta {
         let meta: Self = serde_json::from_slice(&bytes)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        // Validate version: reject old unsupported versions for safety,
-        // but allow higher versions for forward compatibility during rolling upgrades.
-        if meta.version < CURRENT_SNAPSHOT_VERSION {
+        // Only the exact current version is accepted. v1 was a development-phase
+        // format that never shipped, and a higher version comes from a newer
+        // binary whose schema this node cannot safely consume.
+        if meta.version != CURRENT_SNAPSHOT_VERSION {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
-                    "unsupported snapshot version: {}, expected >= {}",
+                    "unsupported snapshot version: {}, expected {}",
                     meta.version, CURRENT_SNAPSHOT_VERSION
                 ),
             ));
         }
 
         Ok(meta)
+    }
+
+    /// Validate the storage schema description against this binary and the
+    /// local configuration. Restore must deterministically reject snapshots it
+    /// cannot consume. The storage incarnations are structural metadata only:
+    /// a restored database adopts the snapshot writer's incarnations via the
+    /// per-instance manifest files, so differing values are never an error.
+    pub fn validate_for_restore(&self, expected_db_instance_num: usize) -> io::Result<()> {
+        let invalid = |message: String| io::Error::new(io::ErrorKind::InvalidData, message);
+
+        if self.version != CURRENT_SNAPSHOT_VERSION {
+            return Err(invalid(format!(
+                "unsupported snapshot version: {}, expected {}",
+                self.version, CURRENT_SNAPSHOT_VERSION
+            )));
+        }
+        if self.storage_schema_version > STORAGE_SCHEMA_VERSION {
+            return Err(invalid(format!(
+                "unsupported storage schema version: {} > {}",
+                self.storage_schema_version, STORAGE_SCHEMA_VERSION
+            )));
+        }
+        if self.db_instance_num as usize != expected_db_instance_num {
+            return Err(invalid(format!(
+                "snapshot db_instance_num {} does not match local configuration {}",
+                self.db_instance_num, expected_db_instance_num
+            )));
+        }
+        if self.storage_incarnations.len() != self.db_instance_num as usize {
+            return Err(invalid(format!(
+                "snapshot carries {} storage incarnations for {} instances",
+                self.storage_incarnations.len(),
+                self.db_instance_num
+            )));
+        }
+        let expected_column_families = expected_column_families();
+        if self.column_families != expected_column_families {
+            return Err(invalid(format!(
+                "snapshot column families {:?} do not match expected {:?}",
+                self.column_families, expected_column_families
+            )));
+        }
+        if self.vector_value_format_max > VECTOR_VALUE_FORMAT {
+            return Err(invalid(format!(
+                "snapshot vector value format {} exceeds supported format {}",
+                self.vector_value_format_max, VECTOR_VALUE_FORMAT
+            )));
+        }
+        Ok(())
     }
 }
 

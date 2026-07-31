@@ -18,10 +18,127 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::Cmd;
+use client::Client;
+use resp::RespData;
+use storage::storage::Storage;
+
 use crate::auth::RequirepassProvider;
+use crate::{Cmd, CmdMeta};
 
 pub type CmdTable = HashMap<String, Arc<dyn Cmd>>;
+
+/// Provider returning whether a gated command family is currently allowed.
+pub type GateFlagProvider = Arc<dyn Fn() -> bool + Send + Sync>;
+
+/// Feature gates consulted when a command table is built. Gates are evaluated
+/// on every command execution, so a table always reflects the injected flags.
+#[derive(Clone)]
+pub struct CommandTableGates {
+    /// Whether the Vector Set commands (VADD/VSIM/...) are enabled.
+    pub vector_enabled: GateFlagProvider,
+    /// Whether Vector Set commands are allowed given the cluster state:
+    /// false in cluster mode until the Raft apply-correctness contract (PR0)
+    /// lands, unless `vector-cluster-enabled` is set.
+    pub vector_cluster_allowed: GateFlagProvider,
+    /// Whether FLUSHDB/FLUSHALL are allowed. Disabled in cluster mode unless
+    /// `cluster-flush-enabled` is set.
+    pub cluster_flush_allowed: GateFlagProvider,
+}
+
+impl Default for CommandTableGates {
+    fn default() -> Self {
+        Self {
+            vector_enabled: Arc::new(|| true),
+            vector_cluster_allowed: Arc::new(|| true),
+            cluster_flush_allowed: Arc::new(|| true),
+        }
+    }
+}
+
+impl CommandTableGates {
+    /// Build gates from static flags (the common case: values come from config).
+    pub fn from_flags(
+        vector_enabled: bool,
+        vector_cluster_allowed: bool,
+        cluster_flush_allowed: bool,
+    ) -> Self {
+        Self {
+            vector_enabled: Arc::new(move || vector_enabled),
+            vector_cluster_allowed: Arc::new(move || vector_cluster_allowed),
+            cluster_flush_allowed: Arc::new(move || cluster_flush_allowed),
+        }
+    }
+}
+
+/// Wraps a command with a deterministic pre-execution gate: when the flag
+/// provider returns false the command replies with `disabled_error` and the
+/// inner command never runs.
+#[derive(Clone)]
+struct GatedCmd {
+    inner: Arc<dyn Cmd>,
+    allowed: GateFlagProvider,
+    disabled_error: String,
+}
+
+impl Cmd for GatedCmd {
+    fn meta(&self) -> &CmdMeta {
+        self.inner.meta()
+    }
+
+    fn do_initial(&self, client: &Client) -> bool {
+        if !(self.allowed)() {
+            client.set_reply(RespData::Error(self.disabled_error.clone().into()));
+            return false;
+        }
+        self.inner.do_initial(client)
+    }
+
+    fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
+        self.inner.do_cmd(client, storage);
+    }
+
+    fn clone_box(&self) -> Box<dyn Cmd> {
+        Box::new(self.clone())
+    }
+}
+
+/// Register `cmds` wrapped in a gate that replies `disabled_error` when
+/// `allowed` evaluates to false.
+fn register_gated_cmds(
+    cmd_table: &mut CmdTable,
+    cmds: Vec<Arc<dyn Cmd>>,
+    allowed: &GateFlagProvider,
+    disabled_error: impl Fn(&CmdMeta) -> String,
+) {
+    for cmd in cmds {
+        let meta = cmd.meta().clone();
+        let gated = GatedCmd {
+            inner: cmd,
+            allowed: Arc::clone(allowed),
+            disabled_error: disabled_error(&meta),
+        };
+        cmd_table.insert(meta.name, Arc::new(gated));
+    }
+}
+
+/// Wrap each command in a gate without registering it, so another gate can be
+/// layered on top before insertion into the table.
+fn wrap_gated_cmds(
+    cmds: Vec<Arc<dyn Cmd>>,
+    allowed: &GateFlagProvider,
+    disabled_error: impl Fn(&CmdMeta) -> String,
+) -> Vec<Arc<dyn Cmd>> {
+    cmds.into_iter()
+        .map(|cmd| {
+            let meta = cmd.meta().clone();
+            Arc::new(GatedCmd {
+                inner: cmd,
+                allowed: Arc::clone(allowed),
+                disabled_error: disabled_error(&meta),
+            }) as Arc<dyn Cmd>
+        })
+        .collect()
+}
 
 #[macro_export]
 macro_rules! register_cmd {
@@ -51,6 +168,13 @@ macro_rules! register_group_cmd {
 }
 
 pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTable {
+    create_command_table_with_gates(requirepass_provider, CommandTableGates::default())
+}
+
+pub fn create_command_table_with_gates(
+    requirepass_provider: RequirepassProvider,
+    gates: CommandTableGates,
+) -> CmdTable {
     let mut cmd_table: CmdTable = HashMap::new();
 
     register_cmd!(
@@ -92,8 +216,6 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         crate::type_cmd::TypeCmd,
         crate::keys::KeysCmd,
         crate::randomkey::RandomkeyCmd,
-        crate::flushdb::FlushdbCmd,
-        crate::flushall::FlushallCmd,
         // Hash commands
         crate::hset::HSetCmd,
         crate::hget::HGetCmd,
@@ -165,17 +287,50 @@ pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTab
         crate::zscan::ZscanCmd,
         crate::zscore::ZscoreCmd,
         crate::zunionstore::ZunionstoreCmd,
-        // Vector Set commands
-        crate::vector::VAddCmd,
-        crate::vector::VSimCmd,
-        crate::vector::VRemCmd,
-        crate::vector::VCardCmd,
-        crate::vector::VDimCmd,
-        crate::vector::VEmbCmd,
-        crate::vector::VIsMemberCmd,
         // connection commands
         crate::ping::PingCmd,
     );
+
+    // FLUSHDB/FLUSHALL are gated: rejected in cluster mode unless
+    // `cluster-flush-enabled` restores the legacy behavior.
+    let flush_cmds: Vec<Arc<dyn Cmd>> = vec![
+        Arc::new(crate::flushdb::FlushdbCmd::new()),
+        Arc::new(crate::flushall::FlushallCmd::new()),
+    ];
+    register_gated_cmds(
+        &mut cmd_table,
+        flush_cmds,
+        &gates.cluster_flush_allowed,
+        |meta| {
+            format!(
+                "ERR {} is not supported in cluster mode yet",
+                meta.name.to_uppercase()
+            )
+        },
+    );
+
+    // Vector Set commands are gated behind `vector-enabled`, and additionally
+    // rejected in cluster mode until the Raft apply-correctness contract
+    // (PR0) lands: physical binlog replay cannot re-encode member keys with
+    // the local storage incarnation, so cluster vector writes would be
+    // unreadable after a leader failover. `vector-cluster-enabled` restores
+    // the pre-gate behavior for development.
+    let vector_cmds: Vec<Arc<dyn Cmd>> = vec![
+        Arc::new(crate::vector::VAddCmd::new()),
+        Arc::new(crate::vector::VSimCmd::new()),
+        Arc::new(crate::vector::VRemCmd::new()),
+        Arc::new(crate::vector::VCardCmd::new()),
+        Arc::new(crate::vector::VDimCmd::new()),
+        Arc::new(crate::vector::VEmbCmd::new()),
+        Arc::new(crate::vector::VInfoCmd::new()),
+        Arc::new(crate::vector::VIsMemberCmd::new()),
+    ];
+    let vector_cmds = wrap_gated_cmds(vector_cmds, &gates.vector_cluster_allowed, |_| {
+        "ERR vector commands are not supported in cluster mode yet".to_string()
+    });
+    register_gated_cmds(&mut cmd_table, vector_cmds, &gates.vector_enabled, |_| {
+        "ERR vector support is disabled (vector-enabled=false)".to_string()
+    });
 
     // AuthCmd and HelloCmd require the requirepass provider for authentication.
     {
@@ -206,7 +361,9 @@ mod tests {
     use resp::RespData;
     use storage::storage::Storage;
 
-    use super::create_command_table;
+    use super::{
+        CmdTable, CommandTableGates, create_command_table, create_command_table_with_gates,
+    };
 
     struct TestStream;
 
@@ -218,6 +375,22 @@ mod tests {
 
         async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
             Ok(0)
+        }
+    }
+
+    fn run_command(table: &CmdTable, name: &str, argv: &[Vec<u8>]) -> RespData {
+        let command = table.get(name).expect("command should be registered");
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(name.as_bytes());
+        client.set_argv(argv);
+        command.execute(&client, Arc::new(Storage::new(1, 0)));
+        client.take_reply()
+    }
+
+    fn error_text(reply: &RespData) -> String {
+        match reply {
+            RespData::Error(e) => String::from_utf8_lossy(e).into_owned(),
+            other => panic!("expected error reply, got {other:?}"),
         }
     }
 
@@ -269,9 +442,189 @@ mod tests {
     #[test]
     fn vector_commands_are_registered() {
         let table = create_command_table(Arc::new(|| None));
-        for name in ["vadd", "vsim", "vrem", "vcard", "vdim", "vemb", "vismember"] {
+        for name in [
+            "vadd",
+            "vsim",
+            "vrem",
+            "vcard",
+            "vdim",
+            "vemb",
+            "vinfo",
+            "vismember",
+        ] {
             assert!(table.contains_key(name), "{name} should be registered");
         }
+    }
+
+    #[test]
+    fn vector_commands_are_rejected_when_disabled() {
+        let table = create_command_table_with_gates(
+            Arc::new(|| None),
+            CommandTableGates::from_flags(false, true, true),
+        );
+        let argvs: [(&str, Vec<Vec<u8>>); 8] = [
+            (
+                "vadd",
+                vec![
+                    b"vadd".to_vec(),
+                    b"k".to_vec(),
+                    b"FP32".to_vec(),
+                    vec![0; 4],
+                    b"e".to_vec(),
+                ],
+            ),
+            (
+                "vsim",
+                vec![
+                    b"vsim".to_vec(),
+                    b"k".to_vec(),
+                    b"FP32".to_vec(),
+                    vec![0; 4],
+                ],
+            ),
+            ("vrem", vec![b"vrem".to_vec(), b"k".to_vec(), b"e".to_vec()]),
+            ("vcard", vec![b"vcard".to_vec(), b"k".to_vec()]),
+            ("vdim", vec![b"vdim".to_vec(), b"k".to_vec()]),
+            ("vemb", vec![b"vemb".to_vec(), b"k".to_vec(), b"e".to_vec()]),
+            ("vinfo", vec![b"vinfo".to_vec(), b"k".to_vec()]),
+            (
+                "vismember",
+                vec![b"vismember".to_vec(), b"k".to_vec(), b"e".to_vec()],
+            ),
+        ];
+        for (name, argv) in argvs {
+            let reply = run_command(&table, name, &argv);
+            assert_eq!(
+                error_text(&reply),
+                "ERR vector support is disabled (vector-enabled=false)",
+                "{name} should be rejected when vector-enabled=false"
+            );
+        }
+    }
+
+    #[test]
+    fn vector_commands_pass_gate_when_enabled() {
+        let table = create_command_table_with_gates(
+            Arc::new(|| None),
+            CommandTableGates::from_flags(true, true, true),
+        );
+        // Malformed vector spec: parsing fails before storage is touched, so
+        // reaching this error proves the command passed the gate.
+        let reply = run_command(
+            &table,
+            "vadd",
+            &[
+                b"vadd".to_vec(),
+                b"k".to_vec(),
+                b"VALUES".to_vec(),
+                b"2".to_vec(),
+                b"1.0".to_vec(),
+                b"e".to_vec(),
+                b"NOQUANT".to_vec(),
+            ],
+        );
+        assert_eq!(error_text(&reply), "ERR invalid vector specification");
+    }
+
+    #[test]
+    fn vector_commands_are_rejected_when_cluster_gate_disallows() {
+        let table = create_command_table_with_gates(
+            Arc::new(|| None),
+            CommandTableGates::from_flags(true, false, true),
+        );
+        let reply = run_command(&table, "vcard", &[b"vcard".to_vec(), b"k".to_vec()]);
+        assert_eq!(
+            error_text(&reply),
+            "ERR vector commands are not supported in cluster mode yet"
+        );
+        let reply = run_command(
+            &table,
+            "vadd",
+            &[
+                b"vadd".to_vec(),
+                b"k".to_vec(),
+                b"VALUES".to_vec(),
+                b"1".to_vec(),
+                b"1.0".to_vec(),
+                b"e".to_vec(),
+                b"NOQUANT".to_vec(),
+            ],
+        );
+        assert_eq!(
+            error_text(&reply),
+            "ERR vector commands are not supported in cluster mode yet"
+        );
+    }
+
+    #[test]
+    fn info_vector_section_reports_flat_index_and_metrics() {
+        let table = create_command_table(Arc::new(|| None));
+
+        let reply = run_command(&table, "info", &[b"info".to_vec(), b"vector".to_vec()]);
+        let RespData::BulkString(Some(body)) = reply else {
+            panic!("INFO VECTOR must return a bulk string");
+        };
+        let body = String::from_utf8(body.to_vec()).expect("utf8 info");
+        assert!(body.starts_with("# Vector\r\n"));
+        assert!(body.contains("index-kind:flat\r\n"));
+        assert!(body.contains("vector_flat_queries_total:0\r\n"));
+        assert!(body.contains("vector_flat_query_timeouts_total:0\r\n"));
+        assert!(body.contains("vector_flat_query_errors_total:0\r\n"));
+        assert!(body.contains("vector_search_capacity_rejected_total:0\r\n"));
+        assert!(body.contains("vector_flat_query_duration_micros_total:0\r\n"));
+        assert!(body.contains("vector_flat_query_duration_count:0\r\n"));
+
+        let reply = run_command(&table, "info", &[b"info".to_vec()]);
+        let RespData::BulkString(Some(body)) = reply else {
+            panic!("INFO must return a bulk string");
+        };
+        let body = String::from_utf8(body.to_vec()).expect("utf8 info");
+        assert!(
+            body.contains("# Vector\r\n"),
+            "full INFO must include the Vector section"
+        );
+    }
+
+    #[test]
+    fn flush_commands_are_rejected_when_cluster_gate_disallows() {
+        let table = create_command_table_with_gates(
+            Arc::new(|| None),
+            CommandTableGates::from_flags(true, true, false),
+        );
+        let reply = run_command(&table, "flushdb", &[b"flushdb".to_vec()]);
+        assert_eq!(
+            error_text(&reply),
+            "ERR FLUSHDB is not supported in cluster mode yet"
+        );
+        let reply = run_command(&table, "flushall", &[b"flushall".to_vec()]);
+        assert_eq!(
+            error_text(&reply),
+            "ERR FLUSHALL is not supported in cluster mode yet"
+        );
+    }
+
+    #[test]
+    fn flush_commands_execute_when_gate_allows() {
+        let table = create_command_table_with_gates(
+            Arc::new(|| None),
+            CommandTableGates::from_flags(true, true, true),
+        );
+        let reply = run_command(&table, "flushdb", &[b"flushdb".to_vec()]);
+        assert!(
+            matches!(reply, RespData::SimpleString(ref s) if s.as_ref() == b"OK"),
+            "flushdb should run when the gate allows it, got {reply:?}"
+        );
+    }
+
+    #[test]
+    fn flush_commands_execute_with_default_gates() {
+        // Default gates model standalone mode: nothing is blocked.
+        let table = create_command_table(Arc::new(|| None));
+        let reply = run_command(&table, "flushdb", &[b"flushdb".to_vec()]);
+        assert!(
+            matches!(reply, RespData::SimpleString(ref s) if s.as_ref() == b"OK"),
+            "standalone flushdb should be unaffected, got {reply:?}"
+        );
     }
 
     #[test]

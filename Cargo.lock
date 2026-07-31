@@ -2512,6 +2512,7 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "cmd",
  "conf",
  "env_logger",
  "log",
@@ -2621,6 +2622,7 @@ dependencies = [
  "num_cpus",
  "once_cell",
  "parking_lot",
+ "proptest",
  "rand 0.8.6",
  "rust-rocksdb",
  "serde",

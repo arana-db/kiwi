@@ -19,6 +19,7 @@ pub mod de_func;
 pub mod error;
 pub mod raft_type;
 pub mod runtime_config;
+pub mod vector_config;
 
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
@@ -117,6 +118,8 @@ mod tests {
             requirepass: None,
             raft: None,
             runtime: runtime_config::RuntimeConfig::default(),
+            vector: vector_config::VectorConfig::default(),
+            cluster_flush_enabled: false,
         };
         assert!(invalid_config.validate().is_err());
 
@@ -347,5 +350,80 @@ mod tests {
             loaded.is_err(),
             "raft-node-id 0 should be rejected by validation"
         );
+    }
+
+    #[test]
+    fn test_vector_config_defaults() {
+        use std::io::Write;
+
+        let mut config_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config_file, "port 7379").unwrap();
+
+        let loaded = Config::load(config_file.path().to_str().unwrap()).unwrap();
+        assert!(loaded.vector.enabled);
+        assert_eq!(4096, loaded.vector.max_dimension);
+        assert_eq!(1000, loaded.vector.max_k);
+        assert_eq!(1048576, loaded.vector.max_element_bytes);
+        assert_eq!(16777216, loaded.vector.max_vector_bytes);
+        assert_eq!(4, loaded.vector.max_concurrent_flat_queries);
+        assert_eq!(5000, loaded.vector.flat_query_timeout_ms);
+        assert_eq!(256, loaded.vector.flat_cancel_check_interval);
+        assert_eq!(1000000, loaded.vector.flat_scan_max_entries);
+        assert_eq!(1073741824, loaded.vector.flat_scan_max_bytes);
+        assert!(!loaded.cluster_flush_enabled);
+    }
+
+    #[test]
+    fn test_vector_config_parsing() {
+        use std::io::Write;
+
+        let mut config_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config_file, "port 7379").unwrap();
+        writeln!(config_file, "vector-enabled no").unwrap();
+        writeln!(config_file, "vector-max-dimension 1024").unwrap();
+        writeln!(config_file, "vector-max-k 100").unwrap();
+        writeln!(config_file, "vector-max-element-bytes 4096").unwrap();
+        writeln!(config_file, "vector-max-vector-bytes 65536").unwrap();
+        writeln!(config_file, "vector-max-concurrent-flat-queries 8").unwrap();
+        writeln!(config_file, "vector-flat-query-timeout-ms 1000").unwrap();
+        writeln!(config_file, "vector-flat-cancel-check-interval 64").unwrap();
+        writeln!(config_file, "vector-flat-scan-max-entries 500").unwrap();
+        writeln!(config_file, "vector-flat-scan-max-bytes 1048576").unwrap();
+        writeln!(config_file, "cluster-flush-enabled yes").unwrap();
+
+        let loaded = Config::load(config_file.path().to_str().unwrap()).unwrap();
+        assert!(!loaded.vector.enabled);
+        assert_eq!(1024, loaded.vector.max_dimension);
+        assert_eq!(100, loaded.vector.max_k);
+        assert_eq!(4096, loaded.vector.max_element_bytes);
+        assert_eq!(65536, loaded.vector.max_vector_bytes);
+        assert_eq!(8, loaded.vector.max_concurrent_flat_queries);
+        assert_eq!(1000, loaded.vector.flat_query_timeout_ms);
+        assert_eq!(64, loaded.vector.flat_cancel_check_interval);
+        assert_eq!(500, loaded.vector.flat_scan_max_entries);
+        assert_eq!(1048576, loaded.vector.flat_scan_max_bytes);
+        assert!(loaded.cluster_flush_enabled);
+    }
+
+    #[test]
+    fn test_vector_config_validation_is_applied() {
+        use std::io::Write;
+
+        let mut config_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config_file, "port 7379").unwrap();
+        writeln!(config_file, "vector-max-dimension 70000").unwrap();
+
+        let loaded = Config::load(config_file.path().to_str().unwrap());
+        assert!(
+            loaded.is_err(),
+            "vector validation should reject max_dimension above the hard limit"
+        );
+
+        let mut config_file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(config_file, "port 7379").unwrap();
+        writeln!(config_file, "vector-max-k 0").unwrap();
+
+        let loaded = Config::load(config_file.path().to_str().unwrap());
+        assert!(loaded.is_err(), "vector validation should reject max_k 0");
     }
 }

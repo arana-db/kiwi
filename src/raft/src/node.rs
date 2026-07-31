@@ -99,6 +99,24 @@ impl crate::leader_gate::LeaderGate for RaftApp {
     fn leader_resp_addr(&self) -> Option<String> {
         self.get_leader().map(|(_, node)| node.resp_addr)
     }
+
+    fn ensure_linearizable_read(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+        Box::pin(async move {
+            // openraft's `ensure_linearizable` confirms leadership with a
+            // quorum and then blocks until the state machine has applied up
+            // to the read log id (`wait().applied_index_at_least` on the
+            // raft-core metrics, which advance only after
+            // `KiwiStateMachine::apply` has written the entries to RocksDB
+            // and returned), so no extra applied-watch is needed here.
+            self.raft
+                .ensure_linearizable()
+                .await
+                .map(|_| ())
+                .map_err(|e| format!("linearizable read failed: {e}"))
+        })
+    }
 }
 
 pub struct RaftConfig {

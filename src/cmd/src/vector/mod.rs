@@ -90,6 +90,10 @@ pub(crate) enum MissingError {
 pub(crate) fn storage_error_reply(error: Error, missing: MissingError) -> RespData {
     match &error {
         Error::RedisErr { message, .. } => error_reply(message.clone()),
+        // FLAT governance failures carry a client-ready "ERR ..." display.
+        Error::VectorFlatQueryTimeout { .. }
+        | Error::VectorFlatQueryCancelled { .. }
+        | Error::VectorFlatScanBudgetExceeded { .. } => error_reply(error.to_string()),
         Error::InvalidArgument { message, .. } if message.contains("dimension mismatch") => {
             error_reply(ERR_VECTOR_DIMENSION)
         }
@@ -152,6 +156,7 @@ pub mod vadd;
 pub mod vcard;
 pub mod vdim;
 pub mod vemb;
+pub mod vinfo;
 pub mod vismember;
 pub mod vrem;
 pub mod vsim;
@@ -160,6 +165,7 @@ pub use vadd::VAddCmd;
 pub use vcard::VCardCmd;
 pub use vdim::VDimCmd;
 pub use vemb::VEmbCmd;
+pub use vinfo::VInfoCmd;
 pub use vismember::VIsMemberCmd;
 pub use vrem::VRemCmd;
 pub use vsim::VSimCmd;
@@ -178,6 +184,7 @@ mod tests {
         assert_eq!(VCardCmd::new().meta().arity, 2);
         assert_eq!(VDimCmd::new().meta().arity, 2);
         assert_eq!(VEmbCmd::new().meta().arity, -3);
+        assert_eq!(VInfoCmd::new().meta().arity, 2);
         assert_eq!(VIsMemberCmd::new().meta().arity, 3);
     }
 }

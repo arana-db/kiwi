@@ -34,6 +34,12 @@ use storage::storage::Storage;
 
 use crate::network_execution::NetworkCmdExecution;
 
+/// RESP vector read commands that require a leader-linearizable read in
+/// cluster mode. Phase 1 serves them only on the leader: followers redirect
+/// exactly like writes, and the leader passes a linearizable-read barrier
+/// before dispatch.
+const VECTOR_READ_COMMANDS: &[&str] = &["vsim", "vcard", "vdim", "vemb", "vismember", "vinfo"];
+
 /// Extension trait for CmdExecutor to support network operations
 pub trait CmdExecutorNetworkExt {
     /// Execute a network command using StorageClient for dual runtime architecture
@@ -66,15 +72,27 @@ impl CmdExecutorNetworkExt for CmdExecutor {
                 && exec.cmd.has_flag(CmdFlags::WRITE)
                 && !gate.is_leader()
             {
-                // Simplified redirect: Kiwi returns "MOVED <addr>" (no hash slot,
-                // unlike Redis Cluster's "MOVED <slot> <ip:port>"). Clients are
-                // expected to reconnect to the returned leader address directly.
-                let reply = match gate.leader_resp_addr() {
-                    Some(addr) => format!("MOVED {addr}"),
-                    None => "ERR not leader".to_string(),
-                };
-                exec.client.set_reply(RespData::Error(reply.into()));
+                exec.client
+                    .set_reply(RespData::Error(not_leader_reply(gate.as_ref()).into()));
                 return Ok(());
+            }
+
+            // Cluster-mode vector reads are leader-linearizable: followers
+            // redirect like writes, and the leader must pass the read barrier
+            // before the command is dispatched to storage.
+            if let Some(gate) = exec.leader_gate.as_ref()
+                && VECTOR_READ_COMMANDS.contains(&cmd_name.as_str())
+            {
+                if !gate.is_leader() {
+                    exec.client
+                        .set_reply(RespData::Error(not_leader_reply(gate.as_ref()).into()));
+                    return Ok(());
+                }
+                if let Err(message) = gate.ensure_linearizable_read().await {
+                    exec.client
+                        .set_reply(RespData::Error(format!("ERR {message}").into()));
+                    return Ok(());
+                }
             }
 
             // Execute do_initial if needed
@@ -134,6 +152,18 @@ async fn execute_generic_command(exec: &NetworkCmdExecution) -> Result<(), DualR
     }
 
     Ok(())
+}
+
+/// Build the redirect reply for a command that must run on the leader.
+///
+/// Simplified redirect: Kiwi returns "MOVED <addr>" (no hash slot, unlike
+/// Redis Cluster's "MOVED <slot> <ip:port>"). Clients are expected to
+/// reconnect to the returned leader address directly.
+fn not_leader_reply(gate: &dyn raft::leader_gate::LeaderGate) -> String {
+    match gate.leader_resp_addr() {
+        Some(addr) => format!("MOVED {addr}"),
+        None => "ERR not leader".to_string(),
+    }
 }
 
 /// Format storage error for RESP response

@@ -51,6 +51,14 @@ use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
 use crate::storage_define::TYPE_LENGTH;
+use crate::storage_manifest::StorageManifest;
+
+/// Injection point for vector set generation sequences.
+///
+/// Standalone mode leaves this unset and falls back to the persistent
+/// manifest generator. Cluster mode installs a provider returning the Raft
+/// log index that created the key (wired up by the raft layer later).
+pub type GenerationProvider = Arc<dyn Fn() -> Result<u64> + Send + Sync>;
 
 // Import logindex types for use in Storage
 
@@ -70,6 +78,17 @@ impl ColumnFamilyIndex {
     /// Update this constant when adding new column families.
     /// This constant is used by batch.rs for validation.
     pub const COUNT: usize = 7;
+
+    /// All column families in declaration order (by discriminant).
+    pub const ALL: [ColumnFamilyIndex; Self::COUNT] = [
+        ColumnFamilyIndex::MetaCF,
+        ColumnFamilyIndex::HashesDataCF,
+        ColumnFamilyIndex::SetsDataCF,
+        ColumnFamilyIndex::ListsDataCF,
+        ColumnFamilyIndex::ZsetsDataCF,
+        ColumnFamilyIndex::ZsetsScoreCF,
+        ColumnFamilyIndex::VectorDataCF,
+    ];
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -284,6 +303,24 @@ pub struct Redis {
 
     // For cluster mode: when set, create_batch returns a BinlogBatch.
     pub append_log_fn: OnceLock<crate::batch::AppendLogFn>,
+
+    // Per-instance storage identity (incarnation) and the standalone-mode
+    // generation sequence generator, loaded in open().
+    pub(crate) manifest: Option<StorageManifest>,
+
+    // Cluster-mode injection point for vector generation sequences.
+    pub generation_provider: OnceLock<GenerationProvider>,
+
+    // Concurrency gate for FLAT vector queries, sized from
+    // `StorageOptions.vector.max_concurrent_flat_queries`.
+    pub flat_query_gate: crate::vector_flat::FlatQueryGate,
+
+    // Counters for FLAT vector query execution, surfaced via INFO VECTOR.
+    pub vector_metrics: crate::vector_metrics::VectorMetrics,
+
+    // Fault injection hooks for the vector set storage path; armed by
+    // tests only, all flags off in production.
+    pub vector_fault_hooks: crate::vector_fault::VectorFaultHooks,
 }
 
 impl Redis {
@@ -300,6 +337,9 @@ impl Redis {
         let statistics_store: Cache<String, KeyStatistics> =
             CacheBuilder::new(storage.statistics_max_size).build();
 
+        let flat_query_gate =
+            crate::vector_flat::FlatQueryGate::new(storage.vector.max_concurrent_flat_queries);
+
         Self {
             index,
             is_starting: AtomicBool::new(true),
@@ -312,6 +352,9 @@ impl Redis {
             write_options: WriteOptions::default(),
             read_options: ReadOptions::default(),
             compact_options,
+            flat_query_gate,
+            vector_metrics: crate::vector_metrics::VectorMetrics::default(),
+            vector_fault_hooks: crate::vector_fault::VectorFaultHooks::default(),
 
             statistics_store: Arc::new(statistics_store),
             scan_cursors_store: Mutex::new(CacheBuilder::new(5000).build()),
@@ -325,6 +368,8 @@ impl Redis {
             logindex_cf_tracker: None,
 
             append_log_fn: OnceLock::new(),
+            manifest: None,
+            generation_provider: OnceLock::new(),
         }
     }
 
@@ -341,6 +386,12 @@ impl Redis {
         // OnceCell shared with the event listener so callbacks (which fire on RocksDB
         // background threads after open) can reach the live DB handle.
         let db_once_cell: Arc<OnceCell<Weak<DB>>> = Arc::new(OnceCell::new());
+
+        // Shared with the data compaction filters so the VectorSet branch can
+        // compare member-key incarnations against this instance's identity.
+        // Populated once the storage manifest is loaded below; filters treat
+        // an unset cell as "cannot prove stale" and keep the data.
+        let incarnation_cell: Arc<OnceCell<u64>> = Arc::new(OnceCell::new());
 
         // Snapshot trigger: emitted by the LogIndex purger every N flushes to suggest
         // that the Raft layer build a snapshot. Wiring this into Raft requires a
@@ -411,6 +462,7 @@ impl Redis {
                     *use_bloom,
                     *block_size,
                     Some(&db_once_cell),
+                    &incarnation_cell,
                     &collector,
                 )
             })
@@ -440,6 +492,23 @@ impl Redis {
         self.logindex_cf_tracker = Some(cf_tracker);
         self.db = Some(db);
 
+        // Load (or create) the per-instance storage manifest. A manifest that
+        // is missing while the database holds data means the data predates
+        // the incarnation mechanism; refuse to open rather than reinterpret.
+        let has_entries = self.handles.iter().any(|name| {
+            let Some(db) = self.db.as_ref() else {
+                return false;
+            };
+            db.cf_handle(name).is_some_and(|cf| {
+                db.iterator_cf(&cf, rocksdb::IteratorMode::Start)
+                    .next()
+                    .is_some()
+            })
+        });
+        let manifest = StorageManifest::open(Path::new(db_path), has_entries)?;
+        let _ = incarnation_cell.set(manifest.storage_incarnation());
+        self.manifest = Some(manifest);
+
         Ok(())
     }
 
@@ -450,6 +519,7 @@ impl Redis {
         use_bloom_filter: bool,
         block_size: Option<usize>,
         db_once_cell: Option<&Arc<OnceCell<Weak<DB>>>>,
+        incarnation_cell: &Arc<OnceCell<u64>>,
         collector: &Arc<LogIndexAndSequenceCollector>,
     ) -> ColumnFamilyDescriptor {
         let mut cf_opts = storage_options.options.clone();
@@ -507,7 +577,11 @@ impl Redis {
             .find(|cf| cf.name() == cf_name)
             .and_then(|cf| cf.data_type())
         {
-            let factory = DataCompactionFilterFactory::new(Arc::clone(db_once_cell), data_type);
+            let factory = DataCompactionFilterFactory::new(
+                Arc::clone(db_once_cell),
+                data_type,
+                Arc::clone(incarnation_cell),
+            );
             cf_opts.set_compaction_filter_factory(factory);
         }
 
@@ -530,7 +604,14 @@ impl Redis {
             message: "Database is not initialized".to_string(),
         })?;
         let checkpoint = rocksdb::checkpoint::Checkpoint::new(db.as_ref()).context(RocksSnafu)?;
-        checkpoint.create_checkpoint(path).context(RocksSnafu)
+        checkpoint.create_checkpoint(path).context(RocksSnafu)?;
+        // RocksDB checkpoints only cover database files; copy the storage
+        // manifest alongside so a restored snapshot keeps the storage
+        // incarnation and generation sequence that wrote the data.
+        if let Some(manifest) = self.manifest.as_ref() {
+            manifest.copy_to(path)?;
+        }
+        Ok(())
     }
 
     /// Compact database range
@@ -584,6 +665,39 @@ impl Redis {
     /// Idempotent: subsequent calls are ignored (OnceLock semantics).
     pub fn set_append_log_fn(&self, f: crate::batch::AppendLogFn) {
         let _ = self.append_log_fn.set(f);
+    }
+
+    /// The stable identity of this storage instance, embedded in every vector
+    /// member key written by it.
+    pub fn storage_incarnation(&self) -> Result<u64> {
+        self.manifest
+            .as_ref()
+            .map(StorageManifest::storage_incarnation)
+            .context(OptionNoneSnafu {
+                message: "storage manifest is not initialized".to_string(),
+            })
+    }
+
+    /// Allocate the generation sequence for a newly created vector set.
+    ///
+    /// Uses the injected provider when present (cluster mode: the creating
+    /// Raft log index), otherwise the persistent manifest generator.
+    pub(crate) fn allocate_vector_generation(&self) -> Result<u64> {
+        if let Some(provider) = self.generation_provider.get() {
+            return provider();
+        }
+        self.manifest
+            .as_ref()
+            .context(OptionNoneSnafu {
+                message: "storage manifest is not initialized".to_string(),
+            })?
+            .allocate_generation()
+    }
+
+    /// Inject the cluster-mode generation provider. Idempotent: subsequent
+    /// calls are ignored (OnceLock semantics).
+    pub fn set_generation_provider(&self, provider: GenerationProvider) {
+        let _ = self.generation_provider.set(provider);
     }
 
     /// Create a new batch for atomic write operations.

@@ -45,6 +45,7 @@ use snafu::ResultExt;
 
 use crate::ColumnFamilyIndex;
 use crate::error::{BatchSnafu, InvalidFormatSnafu, Result, RocksSnafu};
+use crate::format_vector_member_key::ParsedVectorMemberDataKey;
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage_define::{PREFIX_RESERVE_LENGTH, decode_user_key, seek_userkey_delim};
 use bytes::BytesMut;
@@ -254,6 +255,13 @@ impl BinlogBatch {
                 message: format!("Invalid column family index: {cf_idx}"),
             }
             .fail();
+        }
+
+        // Vector member keys use the V1 vector codec, not the shared
+        // MemberDataKey layout.
+        if cf_idx == ColumnFamilyIndex::VectorDataCF as u32 {
+            let parsed = ParsedVectorMemberDataKey::decode(encoded_key)?;
+            return Ok(parsed.key().to_vec());
         }
 
         if encoded_key.len() <= PREFIX_RESERVE_LENGTH {

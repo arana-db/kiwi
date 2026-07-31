@@ -802,6 +802,21 @@ impl Storage {
         self.insts[instance_id].vismember(key, element)
     }
 
+    pub fn vinfo(&self, key: &[u8]) -> Result<Option<crate::VectorInfo>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].vinfo(key)
+    }
+
+    /// Aggregated FLAT vector query counters across all instances.
+    pub fn vector_metrics(&self) -> crate::vector_metrics::VectorMetricsSnapshot {
+        let mut total = crate::vector_metrics::VectorMetricsSnapshot::default();
+        for inst in &self.insts {
+            total.add(&inst.vector_metrics.snapshot());
+        }
+        total
+    }
+
     // Sets Commands Implementation
 
     // Add the specified members to the set stored at key. Specified members that

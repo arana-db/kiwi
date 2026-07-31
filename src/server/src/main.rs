@@ -38,6 +38,21 @@ struct PausePermitWrapper {
     _permit: RuntimeStorageAccessPermit,
 }
 
+/// Build the command-table feature gates from the loaded configuration:
+/// vector commands follow `vector-enabled`, are additionally rejected in
+/// cluster mode unless `vector-cluster-enabled` is set, and FLUSHDB/FLUSHALL
+/// are only allowed outside cluster mode unless `cluster-flush-enabled` is set.
+fn command_table_gates(config: &Config) -> cmd::table::CommandTableGates {
+    let vector_enabled = config.vector.enabled;
+    let vector_cluster_allowed = config.raft.is_none() || config.vector.cluster_enabled;
+    let cluster_flush_allowed = config.raft.is_none() || config.cluster_flush_enabled;
+    cmd::table::CommandTableGates::from_flags(
+        vector_enabled,
+        vector_cluster_allowed,
+        cluster_flush_allowed,
+    )
+}
+
 impl StorageAccessPermit for PausePermitWrapper {}
 
 impl PauseController for PauseControllerWrapper {
@@ -166,6 +181,7 @@ fn main() -> std::io::Result<()> {
 
         let storage_for_server = storage.clone();
         let requirepass_for_storage_server = config.requirepass.clone();
+        let gates_for_storage_server = command_table_gates(&config);
         storage_handle.spawn(async move {
             info!("Initializing storage server...");
             match initialize_storage_server(
@@ -173,6 +189,7 @@ fn main() -> std::io::Result<()> {
                 storage_for_server,
                 pause_controller,
                 requirepass_for_storage_server,
+                gates_for_storage_server,
             )
             .await
             {
@@ -295,12 +312,16 @@ async fn initialize_storage_server(
     global_storage: GlobalStorage,
     pause_controller: StorageServerPauseController,
     requirepass: Option<String>,
+    gates: cmd::table::CommandTableGates,
 ) -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
 
     // Initialize the storage-runtime command table with the same password
     // provider used by the network runtime, so AUTH behaves consistently.
-    runtime::initialize_storage_command_table(Arc::new(move || requirepass.clone()));
+    runtime::initialize_storage_command_table_with_gates(
+        Arc::new(move || requirepass.clone()),
+        gates,
+    );
 
     let storage_server =
         StorageServer::with_pause_controller(global_storage, request_receiver, pause_controller);
@@ -449,6 +470,7 @@ async fn start_server(
         runtime_manager,
         config.requirepass.clone(),
         leader_gate,
+        command_table_gates(config),
     ) {
         Some(server) => {
             tokio::spawn(async move {

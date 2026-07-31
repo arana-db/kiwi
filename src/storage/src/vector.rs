@@ -356,6 +356,15 @@ pub struct VectorHit {
     pub score: f64,
 }
 
+/// Per-set metadata reported by VINFO. Phase 1 only exposes what the stored
+/// `VectorMeta` can answer in O(1); FLAT sentinels live in the command layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VectorInfo {
+    pub dimension: u32,
+    pub size: u64,
+    pub generation: u64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct ScoredCandidate {
     element: Vec<u8>,

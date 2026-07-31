@@ -25,6 +25,21 @@ pub trait LeaderGate: Send + Sync {
 
     /// Current leader's RESP address for client redirect, if known.
     fn leader_resp_addr(&self) -> Option<String>;
+
+    /// Linearizable-read barrier for cluster-mode reads served by the leader.
+    ///
+    /// Resolves once this node has confirmed its leadership with a quorum and
+    /// its state machine has applied every entry up to the read index, so a
+    /// subsequent local read is linearizable. The error string is a
+    /// client-readable message (without the `ERR ` prefix).
+    ///
+    /// The default is a no-op so standalone deployments and test gates need
+    /// no Raft machinery.
+    fn ensure_linearizable_read(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 #[allow(clippy::unwrap_used)]

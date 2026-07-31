@@ -24,7 +24,7 @@ use std::time::Instant;
 
 use client::{Client, StreamTrait};
 use cmd::auth::RequirepassProvider;
-use cmd::table::{CmdTable, create_command_table};
+use cmd::table::{CmdTable, CommandTableGates, create_command_table_with_gates};
 use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
 
@@ -169,7 +169,18 @@ impl Drop for StorageAccessPermit {
 /// used by the network runtime, so AUTH validates against the configured
 /// `requirepass` regardless of which runtime executes the command.
 pub fn initialize_storage_command_table(requirepass_provider: RequirepassProvider) {
-    let _ = STORAGE_COMMAND_TABLE.get_or_init(|| create_command_table(requirepass_provider));
+    initialize_storage_command_table_with_gates(requirepass_provider, CommandTableGates::default());
+}
+
+/// Same as [`initialize_storage_command_table`], additionally applying feature
+/// gates (vector commands, cluster FLUSHDB/FLUSHALL) consistent with the
+/// network-runtime command table.
+pub fn initialize_storage_command_table_with_gates(
+    requirepass_provider: RequirepassProvider,
+    gates: CommandTableGates,
+) {
+    let _ = STORAGE_COMMAND_TABLE
+        .get_or_init(|| create_command_table_with_gates(requirepass_provider, gates));
 }
 
 struct RuntimeCommandStream;

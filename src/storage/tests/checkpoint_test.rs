@@ -156,10 +156,10 @@ fn test_snapshot_meta_version() {
     let meta = RaftSnapshotMeta::new(100, 5);
 
     let json = serde_json::to_string(&meta).unwrap();
-    assert!(json.contains("\"version\":1"));
+    assert!(json.contains("\"version\":2"));
 
     let deserialized: RaftSnapshotMeta = serde_json::from_str(&json).unwrap();
-    assert_eq!(deserialized.version, 1);
+    assert_eq!(deserialized.version, 2);
     assert_eq!(deserialized.last_included_index, 100);
     assert_eq!(deserialized.last_included_term, 5);
 }
@@ -191,13 +191,14 @@ fn test_snapshot_meta_rejects_unsupported_version() {
 }
 
 #[test]
-fn test_snapshot_meta_accepts_future_version() {
+fn test_snapshot_meta_rejects_future_version() {
     use std::fs;
 
     let tmp_dir = tempfile::tempdir().unwrap();
     let meta_path = tmp_dir.path().join("__raft_snapshot_meta");
 
-    // Write a future version (9999) to test forward compatibility for rolling upgrades
+    // A higher version comes from a newer binary whose schema this node
+    // cannot safely consume; it must be rejected deterministically.
     let json = r#"{
         "version": 9999,
         "last_included_index": 42,
@@ -206,9 +207,41 @@ fn test_snapshot_meta_accepts_future_version() {
     fs::write(&meta_path, json).unwrap();
 
     let result = RaftSnapshotMeta::read_from_dir(tmp_dir.path());
+    assert!(result.is_err(), "Higher versions must be rejected");
     assert!(
-        result.is_ok(),
-        "Higher versions should be accepted for forward compatibility during rolling upgrades"
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported snapshot version"),
+        "Error should mention unsupported version"
+    );
+}
+
+#[test]
+fn test_snapshot_meta_rejects_v1() {
+    use std::fs;
+
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let meta_path = tmp_dir.path().join("__raft_snapshot_meta");
+
+    // v1 was a development-phase format that never shipped; it lacks the
+    // storage schema description and is rejected outright.
+    let json = r#"{
+        "version": 1,
+        "last_included_index": 42,
+        "last_included_term": 7,
+        "logindex_collector_states": []
+    }"#;
+    fs::write(&meta_path, json).unwrap();
+
+    let result = RaftSnapshotMeta::read_from_dir(tmp_dir.path());
+    assert!(result.is_err(), "v1 snapshot meta must be rejected");
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported snapshot version"),
+        "Error should mention unsupported version"
     );
 }
 
@@ -216,9 +249,7 @@ fn test_snapshot_meta_accepts_future_version() {
 fn test_snapshot_meta_max_version() {
     let meta = RaftSnapshotMeta {
         version: u32::MAX,
-        last_included_index: 42,
-        last_included_term: 7,
-        logindex_collector_states: Vec::new(),
+        ..RaftSnapshotMeta::new(42, 7)
     };
 
     let json = serde_json::to_string(&meta).unwrap();
@@ -230,13 +261,11 @@ fn test_snapshot_meta_max_version() {
 #[test]
 fn test_raft_snapshot_meta_with_collector_states() {
     let meta = RaftSnapshotMeta {
-        version: 1,
-        last_included_index: 300,
-        last_included_term: 1,
         logindex_collector_states: vec![
             vec!["100:1000".to_string(), "200:2000".to_string()],
             vec!["150:1500".to_string()],
         ],
+        ..RaftSnapshotMeta::new(300, 1)
     };
 
     let json = serde_json::to_string_pretty(&meta).unwrap();
@@ -254,7 +283,7 @@ fn test_raft_snapshot_meta_with_collector_states() {
 #[test]
 fn test_raft_snapshot_meta_defaults_empty_states() {
     let json = r#"{
-        "version": 1,
+        "version": 2,
         "last_included_index": 100,
         "last_included_term": 5
     }"#;
@@ -299,4 +328,105 @@ fn test_collector_states_roundtrip() {
     assert_eq!(new_inst0.find_applied_log_index(2500), 200);
     assert_eq!(new_inst0.find_applied_log_index(3000), 300);
     assert_eq!(new_inst1.find_applied_log_index(1500), 150);
+}
+
+/// v2 meta built from a live Storage round trips through the checkpoint
+/// directory and passes restore validation against the same instance count.
+#[tokio::test]
+async fn test_v2_meta_for_storage_roundtrip_and_validate() {
+    let db_path = unique_test_db_path();
+    let cp_root = unique_test_db_path();
+
+    let mut storage = Storage::new(2, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _rx = storage.open(options, &db_path).unwrap();
+
+    let collectors: Vec<_> = (0..storage.db_instance_num)
+        .filter_map(|i| storage.get_logindex_collector(i))
+        .collect();
+    let meta = RaftSnapshotMeta::for_storage(42, 7, &collectors, &storage).unwrap();
+
+    assert_eq!(meta.version, 2);
+    assert_eq!(meta.db_instance_num, 2);
+    assert_eq!(meta.storage_incarnations.len(), 2);
+    for (i, inst) in storage.insts.iter().enumerate() {
+        assert_eq!(
+            meta.storage_incarnations[i],
+            inst.storage_incarnation().unwrap()
+        );
+    }
+    assert_eq!(
+        meta.column_families,
+        storage::checkpoint::expected_column_families()
+    );
+    assert_eq!(
+        meta.vector_value_format_max,
+        storage::format_vector::VECTOR_VALUE_FORMAT
+    );
+
+    storage.create_checkpoint(&cp_root, &meta).unwrap();
+    let read_back = RaftSnapshotMeta::read_from_dir(&cp_root).unwrap();
+    assert_eq!(read_back, meta);
+    read_back.validate_for_restore(2).unwrap();
+}
+
+#[test]
+fn test_validate_for_restore_rejects_bad_schema() {
+    use storage::format_vector::VECTOR_VALUE_FORMAT;
+
+    let valid = || RaftSnapshotMeta {
+        db_instance_num: 2,
+        storage_incarnations: vec![11, 22],
+        ..RaftSnapshotMeta::new(42, 7)
+    };
+
+    // Instance count does not match local configuration.
+    let err = valid().validate_for_restore(3).unwrap_err();
+    assert!(
+        err.to_string().contains("db_instance_num"),
+        "unexpected error: {err}"
+    );
+
+    // Incarnation list length must match the instance count. Values
+    // themselves are never compared: the restore adopts the snapshot's
+    // incarnations via the per-instance manifest files.
+    let mut meta = valid();
+    meta.storage_incarnations = vec![11];
+    let err = meta.validate_for_restore(2).unwrap_err();
+    assert!(
+        err.to_string().contains("storage incarnations"),
+        "unexpected error: {err}"
+    );
+
+    // Differing incarnation values are accepted.
+    let mut meta = valid();
+    meta.storage_incarnations = vec![999, 888];
+    meta.validate_for_restore(2).unwrap();
+
+    // Missing / mismatched column families.
+    let mut meta = valid();
+    meta.column_families.pop();
+    let err = meta.validate_for_restore(2).unwrap_err();
+    assert!(
+        err.to_string().contains("column families"),
+        "unexpected error: {err}"
+    );
+
+    // Unknown (newer) vector value format.
+    let mut meta = valid();
+    meta.vector_value_format_max = VECTOR_VALUE_FORMAT + 1;
+    let err = meta.validate_for_restore(2).unwrap_err();
+    assert!(
+        err.to_string().contains("vector value format"),
+        "unexpected error: {err}"
+    );
+
+    // Unknown (newer) storage schema version.
+    let mut meta = valid();
+    meta.storage_schema_version = storage::STORAGE_SCHEMA_VERSION + 1;
+    let err = meta.validate_for_restore(2).unwrap_err();
+    assert!(
+        err.to_string().contains("storage schema version"),
+        "unexpected error: {err}"
+    );
 }

@@ -26,6 +26,7 @@ MSET 命令测试
     python tests/python/test_mset.py  # 直接运行
 """
 
+import os
 import sys
 
 import pytest
@@ -246,12 +247,16 @@ def run_standalone_tests():
     
     try:
         # 连接测试
-        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r = redis.Redis(
+            host=os.getenv("KIWI_HOST", "localhost"),
+            port=int(os.getenv("KIWI_PORT", "7379")),
+            decode_responses=True,
+        )
         r.ping()
         print("✓ 成功连接到 Redis 服务器\n")
     except redis.ConnectionError:
         print("✗ 无法连接到 Redis 服务器")
-        print("请确保服务器正在运行在 localhost:6379")
+        print("请确保服务器正在运行在 localhost:7379（可用 KIWI_HOST/KIWI_PORT 覆盖）")
         sys.exit(1)
     
     test_count = 0
@@ -302,7 +307,11 @@ def run_standalone_tests():
 def test_basic():
     """独立测试函数 - 基本功能"""
     try:
-        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r = redis.Redis(
+            host=os.getenv("KIWI_HOST", "localhost"),
+            port=int(os.getenv("KIWI_PORT", "7379")),
+            decode_responses=True,
+        )
         r.ping()
         cleanup_keys(r, ['test_kiwi_mset_key1', 'test_kiwi_mset_key2'])
         
@@ -318,7 +327,11 @@ def test_basic():
 def test_with_mget():
     """独立测试函数 - 与 MGET 配合"""
     try:
-        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r = redis.Redis(
+            host=os.getenv("KIWI_HOST", "localhost"),
+            port=int(os.getenv("KIWI_PORT", "7379")),
+            decode_responses=True,
+        )
         r.ping()
         cleanup_keys(r, ['test_kiwi_mset_mget1', 'test_kiwi_mset_mget2'])
         
@@ -334,7 +347,11 @@ def test_with_mget():
 def test_overwrite():
     """独立测试函数 - 覆盖测试"""
     try:
-        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r = redis.Redis(
+            host=os.getenv("KIWI_HOST", "localhost"),
+            port=int(os.getenv("KIWI_PORT", "7379")),
+            decode_responses=True,
+        )
         r.ping()
         cleanup_keys(r, ['test_kiwi_mset_over'])
         
@@ -350,7 +367,11 @@ def test_overwrite():
 def test_single_pair():
     """独立测试函数 - 单个键值对"""
     try:
-        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r = redis.Redis(
+            host=os.getenv("KIWI_HOST", "localhost"),
+            port=int(os.getenv("KIWI_PORT", "7379")),
+            decode_responses=True,
+        )
         r.ping()
         cleanup_keys(r, ['test_kiwi_mset_single'])
         
@@ -365,7 +386,11 @@ def test_single_pair():
 def test_large_batch():
     """独立测试函数 - 大批量操作"""
     try:
-        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r = redis.Redis(
+            host=os.getenv("KIWI_HOST", "localhost"),
+            port=int(os.getenv("KIWI_PORT", "7379")),
+            decode_responses=True,
+        )
         r.ping()
         
         # 清理可能存在的键
@@ -385,7 +410,11 @@ def test_large_batch():
 def test_batch_round_trip():
     """独立测试函数 - 批量往返测试"""
     try:
-        r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+        r = redis.Redis(
+            host=os.getenv("KIWI_HOST", "localhost"),
+            port=int(os.getenv("KIWI_PORT", "7379")),
+            decode_responses=True,
+        )
         r.ping()
         cleanup_keys(r, ['test_kiwi_mset_a1', 'test_kiwi_mset_a2'])
         
