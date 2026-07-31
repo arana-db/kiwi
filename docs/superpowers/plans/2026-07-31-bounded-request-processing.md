@@ -60,4 +60,4 @@
 - [x] Run the targeted RESP and network tests under WSL/Linux with an independent target directory.
 - [x] Run `git diff --check` and verify only planned files changed.
 - [x] Complete specification compliance review, then code-quality review, and resolve every important finding.
-- [ ] Fast-forward the existing PR #404 head `codex/fix-resp-parser-limits` with the consolidated fix; do not merge it.
+- [x] Fast-forward the existing PR #404 head `codex/fix-resp-parser-limits` with the consolidated fix; do not merge it.

@@ -14,7 +14,7 @@
 
 | ID | 工作项 | Requirement / Gate 关系 | 当前状态 |
 |---|---|---|---|
-| `RESP-LIMITS-001` | 有界 RESP 解析、未认证连接 buffer、parser 历史副本和 optional pipeline 背压 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-STABILITY-002`、`REQ-STABILITY-003`、`REQ-WORK-003` | PR `#404` 已创建；本地 Windows/WSL 定向验证完成，待发布并复检最终 Head CI |
+| `RESP-LIMITS-001` | 有界 RESP 解析、未认证连接 buffer、parser 历史副本和 optional pipeline 背压 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-STABILITY-002`、`REQ-STABILITY-003`、`REQ-WORK-003` | 实现提交 `b2601883e315746f038620055bc04223d2df30cf` 已 fast-forward 发布到 PR `#404`；待复检最终 Head CI |
 
 ## Ready for a separate implementation task
 

@@ -8,7 +8,7 @@
 >
 > 实现基线：`main` at `cbc28958f261ae049d67a8b4a9d904d794b37726`
 >
-> 状态：PR 已创建；嵌套深度及广义资源边界缺口已在本地修复并验证，待发布后复检最终 Head/checks
+> 状态：consolidation 实现提交 `b2601883e315746f038620055bc04223d2df30cf` 已 fast-forward 发布到 PR `#404`，待复检最终 Head/checks
 >
 > 当前范围：限制 RESP 首行、payload、buffer、递归、解码节点和重复解析工作；限制未认证连接 buffer；清理 parser 历史副本；为 optional pipeline 建立真实背压
 >
@@ -122,13 +122,14 @@ D:\test\github\kiwi\.worktrees\redis-8.8.1-stability-foundation\.codex\recovery\
 - 最终 consolidation worktree Windows `cargo test -p net --lib --all-features --locked`：32/32 通过；严格 resp/net Clippy 以 `-D warnings -D clippy::unwrap_used` 通过。
 - WSL/Linux RESP 结果同为 71 + 20 + doc tests；新增未认证超限 TCP 与既有 protocol-error 控制用例均为 1/1 通过。
 - Windows workspace 已运行；到达的 unit suites 全部通过，19 个 TCP 用例统一复现仓库基线 `server did not become connectable`，不作为本分支回归。
+- consolidation 实现提交 `b2601883e315746f038620055bc04223d2df30cf` 已通过普通 fast-forward 从 `94694d81173ad9443f903bf44881efcbdaae4700` 发布到 PR `#404` head 分支；未使用 force push。
 - checks、review threads 和 PR 状态不在本文件中缓存；任何当前结论必须重新查询 GitHub。
 
 PR `#383` 的结果只证明 Oracle 规划闭环，不证明方案 A 已实现；PR `#388` 也不改变该结论。
 
 ## 下一条安全动作
 
-1. 提交并 fast-forward push PR #404 的 consolidation 修复后，重新查询最终 Head 的 checks、评论和 review threads；不得把旧 Head 的 CI 结果作为最终状态。
+1. 提交并 fast-forward push 本次 planning 状态更新后，重新查询 PR #404 最终 Head 的 checks、评论和 review threads；不得把旧 Head 的 CI 结果作为最终状态。
 2. 若最终 Head checks 未完成，只报告 pending，不给可 Merge 结论。
 3. 不 Resolve 或回复 #402/#404 review thread，不 merge PR。
 4. PR `#383` 的规划历史保持不变，旧六文件 Oracle 草稿继续冻结。
