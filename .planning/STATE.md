@@ -4,19 +4,19 @@
 >
 > 当前 task 类型：implementation
 >
-> 当前 PR：待创建（`codex/fix-resp-parser-limits`）
+> 当前 PR：`#404`（`codex/fix-resp-parser-limits`）
 >
 > 实现基线：`main` at `cbc28958f261ae049d67a8b4a9d904d794b37726`
 >
-> 状态：设计已批准，独立 worktree 与恢复 checkpoint 已建立；正在执行 parser TDD
+> 状态：PR 已创建；独立 review 的嵌套深度缺口已修复，二次 review 无 finding，最终 Head/checks 以 GitHub 实时查询为准
 >
-> 当前范围：拒绝超出 Redis 8.8.1 整数边界的 RESP 聚合长度，并限制 Array/Map/Set/Push 的初始预分配
+> 当前范围：拒绝超出 Redis 8.8.1 整数边界的 RESP 聚合长度，限制 Array/Map/Set/Push 的初始预分配和递归嵌套深度
 >
 > Requirement 边界：`REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-WORK-003`
 
 ## 当前目标
 
-本 task 修复 Issue #395 B1 中已经由源码确认的未认证 RESP 聚合类型无界预分配问题。客户端声明长度不得直接控制 `Vec` 的初始容量；超出 Redis 8.8.1 `INT_MAX` 边界的声明返回协议错误，合法声明的初始容量最多为 1024。
+本 task 修复 Issue #395 B1 中已经由源码确认的未认证 RESP 聚合类型无界预分配问题。客户端声明长度不得直接控制 `Vec` 的初始容量；超出 Redis 8.8.1 `INT_MAX` 边界的声明返回协议错误，合法声明的初始容量最多为 1024，聚合递归最多为 128 层。
 
 本 task 不处理实际流入的超大 bulk 或连接累计 buffer 限额，不修改 PR #402 的文档，不处理 Issue #395 的其他条目，也不实现 Redis Oracle provenance 或 Embedded Redis Hot Tier。
 
@@ -102,22 +102,30 @@ D:\test\github\kiwi\.worktrees\redis-8.8.1-stability-foundation\.codex\recovery\
 - PR `#388` 已于 2026-07-30 合并，final Head `1ee8c916a55d03d02a250ed95af83712fa14a742`。
 - 本 task 已确认 `RespParse` 在认证前可达；Array/Map/Set/Push 均把未受信任的 `i64` 长度直接传给 `Vec::with_capacity`。
 - Redis 8.8.1 exact tag 的 multibulk parser 拒绝大于 `INT_MAX` 的声明值，并把初始 argv 分配限制为 1024。
-- `wsl.exe --cd /mnt/d/test/github/review/kiwi-pr-388/source -- bash scripts/tests/test-dev-sccache-env.sh`：7 个 Windows/Unix/compiler 场景全部 PASS。
-- WSL Python/PyYAML 解析 `.github/workflows/ci.yml`：8 个 job 可解析，手写 `actions/cache` 的 `target` owner 为 0，compiler regression probe 恰有 1 个 CI step。
-- 文档一致性探针：59 个使用中的 `REQ-*`、4 个 `D*` 均能在权威文件解析，Markdown 表格结构通过。
-- `git diff --check`：通过；暂存区为空。当前环境没有 `shellcheck` 和 `actionlint`，未执行这两项。
+- TDD 红灯：原实现解析 `i64::MAX` 聚合头时发生 `capacity overflow`，回归断言失败。
+- 首版 Windows/WSL `cargo test -p resp`：62 个单元测试、20 个集成测试通过。
+- Windows 与 WSL `cargo clippy -p resp --all-targets -- -D warnings -D clippy::unwrap_used`：通过。
+- `cargo fmt --all -- --check` 与 `git diff --check`：通过。
+- 首版实现提交：`b10c85cd694032ae86f7a07a02d192142ab32d7f`；PR：`#404`。独立 review 前的远端 Head 为该提交，checks 当时仍在运行。
+- 独立 review 在该 Head 发现：重复最大合法聚合头仍可叠加每层 1024 槽位的预分配并持续增长调用栈；原最大合法长度测试也未直接证明 1024 容量上限。
+- 深度 TDD 红灯：旧实现把 129 层完整 Array 嵌套解析为成功结果；exact 测试实际运行 1 个用例并按预期失败。
+- 深度 TDD 绿灯：统一 128 层门禁后，同一 exact 测试实际运行 1 个用例并通过。
+- 最终工作区 Windows 与 WSL `cargo test -p resp`：各 65 个单元测试、20 个集成测试通过；WSL 使用 Rust/Cargo 1.97.1 和任务专属 Linux target。
+- 最终工作区 Windows 与 WSL `cargo clippy -p resp --all-targets -- -D warnings -D clippy::unwrap_used`：通过。
+- 最终工作区 `cargo fmt --all -- --check` 与 `git diff --check`：通过。
+- 二次独立 review 未发现 Critical、Important 或 Minor；确认 128/129 深度边界、四类聚合错误传播和容量 helper 测试与设计一致。
 - checks、review threads 和 PR 状态不在本文件中缓存；任何当前结论必须重新查询 GitHub。
 
 PR `#383` 的结果只证明 Oracle 规划闭环，不证明方案 A 已实现；PR `#388` 也不改变该结论。
 
 ## 下一条安全动作
 
-1. 先运行超限 frame 回归并保留预期红灯，再实现统一容量 helper。
-2. 运行 `cargo test -p resp`、目标 Clippy、`cargo fmt --check` 和 `git diff --check`。
-3. 本轮 push 和创建独立 PR 已获得授权；发布后重新查询新 Head 的 checks。不得把未完成的 CI 表述为通过。
-3. PR `#383` 的规划历史保持不变，旧六文件 Oracle 草稿继续冻结。
-4. 只有用户另开 Oracle provenance implementation task 后，才从包含方案 A 的 clean `main` 创建新 worktree、TaskId 和 recovery checkpoint，并先执行真实 Redis 双 checkout reproducibility 门禁。
-5. Hot Tier 继续 Frozen；Gate PASS 后仍须用户明确批准一个单独的 implementation task。
+1. 提交并 push PR #404 review 修复后，重新查询最终 Head 的 checks、评论和 review threads；不得把旧 Head 的 CI 结果作为最终状态。
+2. 若最终 Head checks 未完成，只报告 pending，不给可 Merge 结论。
+3. 不 Resolve 或回复 #402/#404 review thread，不 merge PR。
+4. PR `#383` 的规划历史保持不变，旧六文件 Oracle 草稿继续冻结。
+5. 只有用户另开 Oracle provenance implementation task 后，才从包含方案 A 的 clean `main` 创建新 worktree、TaskId 和 recovery checkpoint，并先执行真实 Redis 双 checkout reproducibility 门禁。
+6. Hot Tier 继续 Frozen；Gate PASS 后仍须用户明确批准一个单独的 implementation task。
 
 ## 恢复检查
 

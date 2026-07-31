@@ -66,6 +66,7 @@ impl Default for RespParse {
 impl RespParse {
     const MAX_AGGREGATE_LENGTH: i64 = i32::MAX as i64;
     const MAX_PREALLOCATED_AGGREGATE_LENGTH: usize = 1024;
+    const MAX_AGGREGATE_NESTING_DEPTH: usize = 128;
 
     pub fn new(version: RespVersion) -> Self {
         Self {
@@ -101,6 +102,20 @@ impl RespParse {
             .map_err(|_| {
                 nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
             })
+    }
+
+    fn nested_aggregate_depth(
+        input: &[u8],
+        depth: usize,
+    ) -> Result<usize, nom::Err<nom::error::Error<&[u8]>>> {
+        if depth >= Self::MAX_AGGREGATE_NESTING_DEPTH {
+            return Err(nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Verify,
+            )));
+        }
+
+        Ok(depth + 1)
     }
 
     /// Detect protocol version from the first byte of input
@@ -216,7 +231,7 @@ impl RespParse {
         ))
     }
 
-    fn parse_array(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_array(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
         let (input, _) = char('*')(input)?;
         let mut mut_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -236,7 +251,7 @@ impl RespParse {
         let mut elements = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
 
         for _ in 0..len {
-            let (new_remaining, element) = Self::parse_resp_data(remaining)?;
+            let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
             elements.push(element);
             remaining = new_remaining;
         }
@@ -357,7 +372,7 @@ impl RespParse {
         ))
     }
 
-    fn parse_map(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_map(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
         let (input, _) = char('%')(input)?;
         let mut map_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -377,8 +392,8 @@ impl RespParse {
         let mut pairs = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
 
         for _ in 0..len {
-            let (new_remaining, key) = Self::parse_resp_data(remaining)?;
-            let (new_remaining, value) = Self::parse_resp_data(new_remaining)?;
+            let (new_remaining, key) = Self::parse_resp_data(remaining, depth)?;
+            let (new_remaining, value) = Self::parse_resp_data(new_remaining, depth)?;
             pairs.push((key, value));
             remaining = new_remaining;
         }
@@ -386,7 +401,7 @@ impl RespParse {
         Ok((remaining, RespData::Map(pairs)))
     }
 
-    fn parse_set(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_set(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
         let (input, _) = char('~')(input)?;
         let mut map_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -406,7 +421,7 @@ impl RespParse {
         let mut elements = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
 
         for _ in 0..len {
-            let (new_remaining, element) = Self::parse_resp_data(remaining)?;
+            let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
             elements.push(element);
             remaining = new_remaining;
         }
@@ -414,7 +429,7 @@ impl RespParse {
         Ok((remaining, RespData::Set(elements)))
     }
 
-    fn parse_push(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_push(input: &[u8], depth: usize) -> IResult<&[u8], RespData> {
         let (input, _) = char('>')(input)?;
         let mut map_parser = map_res(
             terminated(recognize((opt(char('-')), digit1)), line_ending),
@@ -434,7 +449,7 @@ impl RespParse {
         let mut elements = Vec::with_capacity(Self::aggregate_capacity(input, len)?);
 
         for _ in 0..len {
-            let (new_remaining, element) = Self::parse_resp_data(remaining)?;
+            let (new_remaining, element) = Self::parse_resp_data(remaining, depth)?;
             elements.push(element);
             remaining = new_remaining;
         }
@@ -442,7 +457,7 @@ impl RespParse {
         Ok((remaining, RespData::Push(elements)))
     }
 
-    fn parse_resp_data(input: &[u8]) -> IResult<&[u8], RespData> {
+    fn parse_resp_data(input: &[u8], aggregate_depth: usize) -> IResult<&[u8], RespData> {
         if input.is_empty() {
             return Err(nom::Err::Incomplete(nom::Needed::Unknown));
         }
@@ -452,7 +467,7 @@ impl RespParse {
             b'-' => Self::parse_error(input),
             b':' => Self::parse_integer(input),
             b'$' => Self::parse_bulk_string(input),
-            b'*' => Self::parse_array(input),
+            b'*' => Self::parse_array(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
             // RESP3 types
             b'_' => Self::parse_null(input),
             b'#' => Self::parse_boolean(input),
@@ -460,9 +475,9 @@ impl RespParse {
             b'(' => Self::parse_big_number(input),
             b'!' => Self::parse_bulk_error(input),
             b'=' => Self::parse_verbatim_string(input),
-            b'%' => Self::parse_map(input),
-            b'~' => Self::parse_set(input),
-            b'>' => Self::parse_push(input),
+            b'%' => Self::parse_map(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
+            b'~' => Self::parse_set(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
+            b'>' => Self::parse_push(input, Self::nested_aggregate_depth(input, aggregate_depth)?),
             _ => Self::parse_inline(input),
         }
     }
@@ -474,7 +489,7 @@ impl RespParse {
             return RespParseResult::Incomplete;
         }
 
-        match Self::parse_resp_data(&self.buffer) {
+        match Self::parse_resp_data(&self.buffer, 0) {
             Ok((remaining, resp_data)) => {
                 let consumed = self.buffer.len() - remaining.len();
                 self.buffer.advance(consumed);
@@ -967,6 +982,55 @@ mod tests {
                 parser.parse(Bytes::copy_from_slice(frame.as_bytes())),
                 RespParseResult::Incomplete,
                 "unexpected parse result for {frame:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_aggregate_capacity_is_capped() {
+        for (len, expected) in [
+            (0, 0),
+            (1, 1),
+            (1024, 1024),
+            (1025, 1024),
+            (i32::MAX as i64, 1024),
+        ] {
+            assert_eq!(RespParse::aggregate_capacity(b"", len).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn test_accept_aggregate_nesting_at_limit() {
+        let frame = format!(
+            "{}:1\r\n",
+            "*1\r\n".repeat(RespParse::MAX_AGGREGATE_NESTING_DEPTH)
+        );
+        let mut parser = RespParse::new(RespVersion::RESP2);
+
+        assert!(matches!(
+            parser.parse(Bytes::copy_from_slice(frame.as_bytes())),
+            RespParseResult::Complete(_)
+        ));
+    }
+
+    // Regression for #395: nested aggregate headers must not grow parser resources without bound.
+    #[test]
+    fn test_reject_aggregate_nesting_beyond_limit() {
+        for header in [
+            "*2147483647\r\n",
+            "%2147483647\r\n",
+            "~2147483647\r\n",
+            ">2147483647\r\n",
+        ] {
+            let frame = header.repeat(RespParse::MAX_AGGREGATE_NESTING_DEPTH + 1);
+            let mut parser = RespParse::new(RespVersion::RESP3);
+
+            assert!(
+                matches!(
+                    parser.parse(Bytes::copy_from_slice(frame.as_bytes())),
+                    RespParseResult::Error(_)
+                ),
+                "aggregate nesting beyond the parser limit must be rejected for {header:?}"
             );
         }
     }

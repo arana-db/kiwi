@@ -14,7 +14,7 @@
 
 | ID | 工作项 | Requirement / Gate 关系 | 当前状态 |
 |---|---|---|---|
-| `RESP-LIMITS-001` | 限制未认证 RESP Array/Map/Set/Push 声明长度和初始预分配 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-WORK-003` | 设计已批准；独立 worktree 与 recovery checkpoint 已建立；正在执行 parser TDD |
+| `RESP-LIMITS-001` | 限制未认证 RESP Array/Map/Set/Push 声明长度、初始预分配和嵌套深度 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-WORK-003` | PR `#404` 已创建；独立 review 缺口已修复，二次 review 无 finding，最终 Head/checks 以 GitHub 为准 |
 
 ## Ready for a separate implementation task
 
