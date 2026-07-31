@@ -41,20 +41,8 @@ pub fn murmur3_32<T: AsRef<[u8]>>(data: T, seed: u32) -> u32 {
 
     if !remainder.is_empty() {
         let mut k1 = 0;
-        match remainder.len() & 3 {
-            3 => {
-                k1 ^= (remainder[2] as u32) << 16;
-                k1 ^= (remainder[1] as u32) << 8;
-                k1 ^= remainder[0] as u32;
-            }
-            2 => {
-                k1 ^= (remainder[1] as u32) << 8;
-                k1 ^= remainder[0] as u32;
-            }
-            1 => {
-                k1 ^= remainder[0] as u32;
-            }
-            _ => unreachable!("remainder length is 0..=3, guaranteed by murmur3 finalization"),
+        for (index, byte) in remainder.iter().enumerate() {
+            k1 ^= u32::from(*byte) << (index * 8);
         }
 
         k1 = k1.wrapping_mul(c1);
@@ -76,6 +64,8 @@ pub fn murmur3_32<T: AsRef<[u8]>>(data: T, seed: u32) -> u32 {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
+    use std::io::Cursor;
+
     use super::*;
 
     #[test]
@@ -106,6 +96,16 @@ mod tests {
             murmur3_32("The quick brown fox jumps over the lazy dog.", 0x2a),
             0xc02d1434
         );
+    }
+
+    #[test]
+    fn test_all_remainder_lengths_match_reference() {
+        for len in 0..=7 {
+            let data: Vec<u8> = (0..len as u8).collect();
+            let expected = murmur3::murmur3_32(&mut Cursor::new(&data), 0x2a)
+                .expect("reference Murmur3 implementation must read from memory");
+            assert_eq!(murmur3_32(&data, 0x2a), expected, "len={len}");
+        }
     }
 
     #[test]

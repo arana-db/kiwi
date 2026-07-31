@@ -83,6 +83,7 @@ impl CmdExecutor {
     }
 
     pub async fn execute(&self, exec: CmdExecution) {
+        let client = Arc::clone(&exec.client);
         let (done_tx, done_rx) = oneshot::channel();
         let work = CmdExecutionWork {
             exec,
@@ -108,11 +109,15 @@ impl CmdExecutor {
                 work.exec
                     .client
                     .set_reply(RespData::Error("ERR executor unavailable".into()));
+                return;
             }
         }
 
         // TODO(#400): add a timeout for waiting
-        let _ = done_rx.await;
+        if let Err(err) = done_rx.await {
+            error!("executor worker exited before completing work: {err}");
+            client.set_reply(RespData::Error("ERR executor unavailable".into()));
+        }
     }
 
     pub async fn close(&mut self) {
@@ -363,6 +368,66 @@ mod tests {
         assert!(executed.load(Ordering::SeqCst));
 
         // Test graceful shutdown
+        executor.close().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn accepted_work_reports_unavailable_when_worker_exits() {
+        let storage = Arc::new(Storage::new(1, 0));
+        let exclusive = storage.acquire_exclusive_command_access().await;
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let attempt_notify = Arc::new(tokio::sync::Notify::new());
+        let executed = Arc::new(AtomicUsize::new(0));
+        let command = Arc::new(WaitingSharedCmd::new(
+            Arc::clone(&attempts),
+            Arc::clone(&attempt_notify),
+            Arc::clone(&executed),
+        ));
+        let client = Arc::new(Client::new(Box::new(TestStream::new())));
+        client.set_cmd_name(b"waiting-shared");
+        client.set_argv(&[b"waiting-shared".to_vec()]);
+        let executor = Arc::new(CmdExecutor::new(1, 1));
+
+        let executor_for_task = Arc::clone(&executor);
+        let client_for_task = Arc::clone(&client);
+        let storage_for_task = Arc::clone(&storage);
+        let execute_task = tokio::spawn(async move {
+            executor_for_task
+                .execute(CmdExecution {
+                    cmd: command,
+                    client: client_for_task,
+                    storage: storage_for_task,
+                })
+                .await;
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), attempt_notify.notified())
+            .await
+            .expect("worker must dequeue accepted work");
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+
+        executor.workers[0].abort();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !executor.workers[0].is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("aborted worker must finish");
+        tokio::time::timeout(Duration::from_secs(1), execute_task)
+            .await
+            .expect("execute must observe the cancelled completion channel")
+            .expect("execute task must not panic");
+
+        assert_eq!(executed.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            client.take_reply(),
+            RespData::Error("ERR executor unavailable".into())
+        );
+
+        drop(exclusive);
+        let mut executor = Arc::try_unwrap(executor)
+            .unwrap_or_else(|_| panic!("test must release all executor references"));
         executor.close().await;
     }
 

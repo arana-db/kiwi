@@ -331,3 +331,39 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
         Err(rpc_failed_network_error(&self.target, last_error))
     }
 }
+
+#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+mod tests {
+    use openraft::Vote;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn invalid_raft_endpoint_returns_network_error_without_panicking() {
+        let invalid_target = "not a valid raft address";
+        let mut factory = KiwiNetworkFactory::with_config(ConnectionConfig {
+            max_retries: 0,
+            ..Default::default()
+        });
+        let node = KiwiNode {
+            raft_addr: invalid_target.to_string(),
+            resp_addr: String::new(),
+        };
+
+        let mut network = factory.new_client(2, &node).await;
+        let error = network
+            .vote(
+                VoteRequest::new(Vote::new(1, 1), None),
+                RPCOption::new(Duration::from_millis(50)),
+            )
+            .await
+            .expect_err("invalid endpoint must fail as a network error");
+
+        assert!(matches!(error, RPCErr::Network(_)));
+        assert!(
+            error.to_string().contains(invalid_target),
+            "network error must identify the configured target: {error}"
+        );
+    }
+}

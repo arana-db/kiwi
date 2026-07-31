@@ -1016,6 +1016,45 @@ mod tests {
     }
 
     #[test]
+    fn attempt_state_decodes_every_valid_discriminant() {
+        let states = [
+            AttemptState::Offered,
+            AttemptState::ChannelQueued,
+            AttemptState::BatchQueued,
+            AttemptState::WaitingGate,
+            AttemptState::Running,
+            AttemptState::ExecutionFinished,
+            AttemptState::ShutdownRejectedAfterAccept,
+            AttemptState::Abandoned,
+        ];
+
+        for state in states {
+            assert_eq!(AttemptState::from_u8(state as u8), Some(state));
+        }
+    }
+
+    #[test]
+    fn attempt_state_rejects_unknown_discriminant() {
+        assert_eq!(AttemptState::from_u8(8), None);
+        assert_eq!(AttemptState::from_u8(u8::MAX), None);
+    }
+
+    #[test]
+    fn attempt_state_accessor_falls_back_to_abandoned_for_unknown_raw_state() {
+        let observer = Arc::new(RecordingObserver::default());
+        let attempt = attempt(observer);
+
+        attempt.inner.state.store(u8::MAX, Ordering::Release);
+        assert_eq!(attempt.state(), AttemptState::Abandoned);
+
+        // Restore a valid pre-accept state so Drop follows the ordinary path.
+        attempt
+            .inner
+            .state
+            .store(AttemptState::Offered as u8, Ordering::Release);
+    }
+
+    #[test]
     fn legal_transitions_record_previous_and_next_state() {
         let observer = Arc::new(RecordingObserver::default());
         let attempt = attempt(observer.clone());

@@ -16,7 +16,7 @@
 ```text
 license header / third-party license check
 cargo fmt --check
-cargo clippy --all-features --workspace -- -D warnings -D clippy::unwrap_used
+cargo clippy --all-features --workspace --all-targets -- -D warnings -D clippy::unwrap_used
 targeted unit tests
 affected compatibility manifest tests
 Cache OFF compatibility and recovery evidence

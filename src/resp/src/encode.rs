@@ -459,6 +459,31 @@ mod tests {
     }
 
     #[test]
+    fn invalid_resp_data_verbatim_format_falls_back_to_txt() {
+        let mut encoder = RespEncoder::new(RespVersion::RESP3);
+        encoder.encode_resp_data(&RespData::VerbatimString {
+            format: Bytes::from("html"),
+            data: Bytes::from("payload"),
+        });
+
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("=11\r\ntxt:payload\r\n")
+        );
+    }
+
+    #[test]
+    fn invalid_convenience_verbatim_format_falls_back_to_txt() {
+        let mut encoder = RespEncoder::new(RespVersion::RESP3);
+        encoder.append_verbatim_string("html", b"payload");
+
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("=11\r\ntxt:payload\r\n")
+        );
+    }
+
+    #[test]
     fn test_encode_resp3_map() {
         let mut encoder = RespEncoder::new(RespVersion::RESP3);
         encoder.encode_resp_data(&RespData::Map(vec![

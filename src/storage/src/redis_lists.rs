@@ -1116,7 +1116,7 @@ impl Redis {
                     return OptionNoneSnafu {
                         message: "Destination list creation should always succeed".to_string(),
                     }
-                    .fail()
+                    .fail();
                 }
             }
 
@@ -1158,7 +1158,7 @@ impl Redis {
                 return OptionNoneSnafu {
                     message: "Destination list creation should always succeed".to_string(),
                 }
-                .fail()
+                .fail();
             }
         }
 
