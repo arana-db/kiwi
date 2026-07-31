@@ -1,10 +1,10 @@
 # Kiwi Kanban
 
-> 更新日期：2026-07-30
+> 更新日期：2026-07-31
 >
 > 当前里程碑：M1 Redis 8.8.1 Cache OFF compatibility foundation
 >
-> 当前 task：PR `#388` implementation（`feat/rocksdb-build-accel-and-prd`）；已验证远端 Base `0f8d96238860a5c29a5582e461e4cdeb974431b3`、Head `b47cb1eebe098e2d4d2d784020dc283a8d026d28`
+> 当前 task：`RESP-LIMITS-001` implementation（`codex/fix-resp-parser-limits`）；基线 `main` at `cbc28958f261ae049d67a8b4a9d904d794b37726`
 >
 > 当前运行模式：Cache OFF
 >
@@ -14,7 +14,7 @@
 
 | ID | 工作项 | Requirement / Gate 关系 | 当前状态 |
 |---|---|---|---|
-| `PR388-001` | C/C++ sccache 构建接入、跨平台回归探针、PRD/用户故事及 review 一致性修复 | `REQ-STABILITY-003`、`REQ-WORK-001`、`REQ-WORK-003`、`REQ-WORK-005`；跨平台构建修复只维护 G6 CI 的可执行性与证据条件，不构成 Gate 通过证据 | 本地针对性验证通过并形成提交；远端发布状态和新 Head CI 结果以 PR/checks/threads 实时查询为准 |
+| `RESP-LIMITS-001` | 限制未认证 RESP Array/Map/Set/Push 声明长度和初始预分配 | `REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-WORK-003` | 设计已批准；独立 worktree 与 recovery checkpoint 已建立；正在执行 parser TDD |
 
 ## Ready for a separate implementation task
 
@@ -37,6 +37,7 @@
 | ID | 工作项 | Evidence | 状态 |
 |---|---|---|---|
 | `M1-001-T1` | Redis 8.8.1 exact compatibility manifest | PR `#372`；final Head `6a692bc195f96327296296977a100af301deaf01`；merge commit `9e91707d774ad367d682e23677dcef79ecb14338` | 已合并到 `main` |
+| `PR388-001` | C/C++ sccache 构建接入、跨平台回归探针、PRD/用户故事及 review 一致性修复 | PR `#388`；final Head `1ee8c916a55d03d02a250ed95af83712fa14a742`；2026-07-30 merged | 已合并到 `main` |
 
 ## Frozen unaccepted drafts
 
@@ -89,7 +90,7 @@
 
 ## WIP 与授权规则
 
-- 同一时间只允许一个 implementation card 处于 In Progress；当前为 `PR388-001`，planning/docs task 不得隐式持有 implementation card。
+- 同一时间只允许一个 implementation card 处于 In Progress；当前为 `RESP-LIMITS-001`，planning/docs task 不得隐式持有 implementation card。
 - 规划批准不授权修改 source、tests、build scripts 或 CI，也不授权 stage/commit/push 实现文件。
 - 从 planning 转 implementation 必须创建新 Codex task、TaskId、worktree、dirty allowlist 和 recovery checkpoint；不能只把 recovery mode 从 `planning` 改成 `implementation`。
 - 冻结草稿不得覆盖、续写、清理或回退；后续实施只读参考并重新审计。

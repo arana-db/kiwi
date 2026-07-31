@@ -1,45 +1,46 @@
 # Kiwi 当前状态
 
-> 更新时间：2026-07-30
+> 更新时间：2026-07-31
 >
 > 当前 task 类型：implementation
 >
-> 当前 PR：`#388`（`feat/rocksdb-build-accel-and-prd`）
+> 当前 PR：待创建（`codex/fix-resp-parser-limits`）
 >
-> 已验证远端快照：Base `main` at `0f8d96238860a5c29a5582e461e4cdeb974431b3`；Head `b47cb1eebe098e2d4d2d784020dc283a8d026d28`
+> 实现基线：`main` at `cbc28958f261ae049d67a8b4a9d904d794b37726`
 >
-> 状态：PR `#388` 在 2026-07-30 复检时为 OPEN；本轮 review fix 已形成提交，发布状态、checks 和 review threads 必须实时查询
+> 状态：设计已批准，独立 worktree 与恢复 checkpoint 已建立；正在执行 parser TDD
 >
-> 当前范围：修复 C/C++ sccache 的 Windows 编译器回归和重复 `target` 缓存，补充自动回归探针，并统一版本化 PRD、用户故事与项目状态
+> 当前范围：拒绝超出 Redis 8.8.1 整数边界的 RESP 聚合长度，并限制 Array/Map/Set/Push 的初始预分配
 >
-> Requirement 边界：`REQ-STABILITY-003`、`REQ-WORK-001`、`REQ-WORK-003`、`REQ-WORK-005`；跨平台构建修复只维护 G6 CI 的可执行性与证据条件，不构成任何稳定性 Gate 已通过的证据
+> Requirement 边界：`REQ-COMPAT-002`、`REQ-COMPAT-006`、`REQ-WORK-003`
 
 ## 当前目标
 
-PR `#388` 是与 PR `#383` 规划任务分离的 implementation task。其既有范围是在 CI 与 `scripts/dev.sh` 中为 RocksDB C/C++ 编译接入 sccache，并新增由权威规划文档综合出的 PRD 与用户故事。本轮 review fix 处理 Windows compiler wrapper 回归、重复缓存、自动回归探针、文档 Requirement 映射、Hot Tier 授权边界和当前项目状态问题。
+本 task 修复 Issue #395 B1 中已经由源码确认的未认证 RESP 聚合类型无界预分配问题。客户端声明长度不得直接控制 `Vec` 的初始容量；超出 Redis 8.8.1 `INT_MAX` 边界的声明返回协议错误，合法声明的初始容量最多为 1024。
 
-本 task 不实现 Redis Oracle provenance，不接受旧六文件 Oracle 草稿，也不启动 Embedded Redis Hot Tier。PR `#388` 的合并、CI 通过或 M7 Ready 均不能替代 Oracle implementation task 或 Hot Tier implementation task 的单独授权。
+本 task 不处理实际流入的超大 bulk 或连接累计 buffer 限额，不修改 PR #402 的文档，不处理 Issue #395 的其他条目，也不实现 Redis Oracle provenance 或 Embedded Redis Hot Tier。
 
 ## 当前授权边界
 
 允许：
 
-- 在本轮 review fix 中修改 `.github/workflows/ci.yml`、`scripts/dev.sh`、`scripts/tests/test-dev-sccache-env.sh`、`docs/prd.md`、`docs/personas-and-user-stories.md`、`.planning/STATE.md` 和 `.planning/KANBAN.md`。
-- 执行 Markdown、链接、Requirement/Decision ID、一致性和 Git diff 等只读检查。
-- 记录已经发生并可验证的 PR/Base/Head 历史；瞬时 checks、threads 和 dirty ownership 继续实时查询。
+- 修改 `src/resp/src/parse.rs`、本 task 的设计/计划、`.planning/STATE.md` 和 `.planning/KANBAN.md`。
+- 运行 resp crate 单测、Clippy、格式检查、Git diff 检查及与 changed surface 对应的验证。
+- commit、push 并创建以 `main` 为 base 的独立 PR；发布后实时查询 checks 和 review threads。
 
 禁止：
 
-- 修改 Cargo、生产源码、Oracle provenance 实现、Hot Tier 实现或其他未授权路径。
+- 修改 Cargo、网络/认证逻辑、其他生产源码、PR #402 文档、Oracle provenance 或 Hot Tier 实现。
 - 在旧 `redis-8.8.1-stability-foundation` worktree 继续、暂存、提交、push、清理或回退六文件实现草稿。
 - 把旧草稿的绿色测试、审查或真实构建准备表述为方案 A 已实现。
 - 扩大到 Embedded Redis Hot Tier、Redis fork、动态库、loader、Cache ON 或组合发行实现。
-- 在未获授权时 commit、push、merge、rebase、Resolve 或回复 GitHub review thread。
+- merge、rebase、Resolve 或回复 GitHub review thread。
 
 ## 已确认决定
 
 - PR `#383` 已于 2026-07-28 合并：final Head `42c16bef899385bd2e1b1e16e2e0202d4a614590`，merge commit `58030e1331655546ea4547a9a94efc493534ef7d`；它只完成 Oracle 方案 A 的规划闭环。
-- PR `#388` 是独立 implementation task，不得继承或隐式扩大 PR `#383` 的 Oracle 实施授权。
+- PR `#388` 已于 2026-07-30 合并；本 task 是从最新 `main` 创建的独立 implementation task。
+- RESP 聚合长度上限采用 Redis 8.8.1 的 `INT_MAX`，初始预分配上限采用 1024。
 - `D011`：Redis Oracle required provenance 采用 verifier fresh-checkout independent rebuild 和 exact binary hash equality。
 - `D012`：规划 task 与实施 task 分离；规划批准不授权源码实现，提前产生的实现草稿冻结。
 - Redis 8.8.1 tag `8.8.1` / commit `77b6c308396c9700672390a210143a8496fb4b10` 是唯一兼容和 Oracle 基线。
@@ -60,11 +61,11 @@ PR `#388` 是与 PR `#383` 规划任务分离的 implementation task。其既有
 - 规划状态：方案 A 的 15 路径 planning-only Diff 已由 PR `#383` 合并；final Head `42c16bef899385bd2e1b1e16e2e0202d4a614590`，merge commit `58030e1331655546ea4547a9a94efc493534ef7d`。
 - 实施状态：未在已接受边界中开始。
 - 实施入口：`docs/superpowers/plans/2026-07-28-redis-8.8.1-trusted-oracle-provenance.md`。
-- 启动条件：另开专用于 Oracle provenance 的 implementation task，从包含本规划的 clean commit 创建新 worktree，保存新 TaskId 和 recovery checkpoint；当前 PR `#388` 不满足或替代该条件。
+- 启动条件：另开专用于 Oracle provenance 的 implementation task，从包含本规划的 clean commit 创建新 worktree，保存新 TaskId 和 recovery checkpoint；当前 RESP parser task 不满足或替代该条件。
 
 ## 冻结实现草稿
 
-相关但不属于当前 PR `#388` dirty ownership：
+相关但不属于当前 RESP parser task dirty ownership：
 
 ```text
 Worktree:
@@ -98,7 +99,9 @@ D:\test\github\kiwi\.worktrees\redis-8.8.1-stability-foundation\.codex\recovery\
 - PR `#372` 的合并状态、final Head 和 `main` merge commit 已实时确认。
 - PR `#383` 已合并；其规划提交只涉及 15 个 planning/docs 路径，并从 Task 1 合并后的 `main` 重放，未带入 Cargo、脚本、CI 或实现路径。
 - 旧六文件草稿 worktree 已只读核对，并继续冻结。
-- PR `#388` 的远端审查快照为 Base `0f8d96238860a5c29a5582e461e4cdeb974431b3`、Head `b47cb1eebe098e2d4d2d784020dc283a8d026d28`；本轮 review fix 已形成提交，当前发布状态须通过 GitHub 实时查询。
+- PR `#388` 已于 2026-07-30 合并，final Head `1ee8c916a55d03d02a250ed95af83712fa14a742`。
+- 本 task 已确认 `RespParse` 在认证前可达；Array/Map/Set/Push 均把未受信任的 `i64` 长度直接传给 `Vec::with_capacity`。
+- Redis 8.8.1 exact tag 的 multibulk parser 拒绝大于 `INT_MAX` 的声明值，并把初始 argv 分配限制为 1024。
 - `wsl.exe --cd /mnt/d/test/github/review/kiwi-pr-388/source -- bash scripts/tests/test-dev-sccache-env.sh`：7 个 Windows/Unix/compiler 场景全部 PASS。
 - WSL Python/PyYAML 解析 `.github/workflows/ci.yml`：8 个 job 可解析，手写 `actions/cache` 的 `target` owner 为 0，compiler regression probe 恰有 1 个 CI step。
 - 文档一致性探针：59 个使用中的 `REQ-*`、4 个 `D*` 均能在权威文件解析，Markdown 表格结构通过。
@@ -109,8 +112,9 @@ PR `#383` 的结果只证明 Oracle 规划闭环，不证明方案 A 已实现�
 
 ## 下一条安全动作
 
-1. 对本轮七个 task-owned 路径执行 shell 回归、workflow YAML、Markdown、引用、Requirement/Decision ID、Git diff 和路径边界检查。
-2. 本轮 push 已获得单独授权；发布后重新查询新 Head 的 checks。Resolve 或回复 review thread 仍须对应的单独授权，不得把已发布提交表述为 CI 已验证内容。
+1. 先运行超限 frame 回归并保留预期红灯，再实现统一容量 helper。
+2. 运行 `cargo test -p resp`、目标 Clippy、`cargo fmt --check` 和 `git diff --check`。
+3. 本轮 push 和创建独立 PR 已获得授权；发布后重新查询新 Head 的 checks。不得把未完成的 CI 表述为通过。
 3. PR `#383` 的规划历史保持不变，旧六文件 Oracle 草稿继续冻结。
 4. 只有用户另开 Oracle provenance implementation task 后，才从包含方案 A 的 clean `main` 创建新 worktree、TaskId 和 recovery checkpoint，并先执行真实 Redis 双 checkout reproducibility 门禁。
 5. Hot Tier 继续 Frozen；Gate PASS 后仍须用户明确批准一个单独的 implementation task。
@@ -127,7 +131,7 @@ Get-Content -Raw docs\personas-and-user-stories.md
 if (Test-Path .codex\recovery\ACTIVE.md) { Get-Content -Raw .codex\recovery\ACTIVE.md }
 git status --porcelain=v2 --branch --untracked-files=all
 git diff --cached --name-only
-gh pr view 388 -R arana-db/kiwi --json state,baseRefOid,headRefOid,statusCheckRollup,reviewDecision
+gh pr list --repo arana-db/kiwi --head codex/fix-resp-parser-limits --json number,state,baseRefName,headRefOid,statusCheckRollup,reviewDecision
 ```
 
 如果 branch、HEAD、task type 或 dirty ownership 与 recovery 记录不同，先报告差异，不得自动 checkout、restore、reset、stash、clean 或覆盖文件。
