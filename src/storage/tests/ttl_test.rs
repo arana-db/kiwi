@@ -22,7 +22,7 @@ use std::sync::Arc;
 use storage::ZsetScoreMember;
 use storage::{
     BaseMetaKey, ColumnFamilyIndex, StorageOptions, format_base_meta_value::ParsedBaseMetaValue,
-    storage::Storage, unique_test_db_path,
+    format_list_meta_value::ParsedListsMetaValue, storage::Storage, unique_test_db_path,
 };
 
 #[tokio::test]
@@ -357,6 +357,58 @@ async fn test_del_returns_zero_for_stale_string() {
 }
 
 #[tokio::test]
+async fn test_del_returns_zero_for_expired_composites_without_rewriting_metadata() {
+    let db_path = unique_test_db_path();
+    let mut storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _receiver = storage.open(options, &db_path).unwrap();
+
+    let hash_key = b"stale_del_hash";
+    storage.hset(hash_key, b"field", b"value").unwrap();
+    assert!(storage.pexpire(hash_key, 1).unwrap());
+    let hash_meta_key = BaseMetaKey::new(hash_key).encode().unwrap();
+    let (hash_version, hash_etime) = {
+        let instance = &storage.insts[0];
+        let meta_cf = instance.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+        let db = instance.db().unwrap();
+        let value = db.get_cf(&meta_cf, &hash_meta_key).unwrap().unwrap();
+        let parsed = ParsedBaseMetaValue::new(&value[..]).unwrap();
+        (parsed.version(), parsed.etime())
+    };
+
+    let list_key = b"stale_del_list";
+    storage.rpush(list_key, &[b"value".to_vec()]).unwrap();
+    assert!(storage.pexpire(list_key, 1).unwrap());
+    let list_meta_key = BaseMetaKey::new(list_key).encode().unwrap();
+    let (list_version, list_etime) = {
+        let instance = &storage.insts[0];
+        let meta_cf = instance.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+        let db = instance.db().unwrap();
+        let value = db.get_cf(&meta_cf, &list_meta_key).unwrap().unwrap();
+        let parsed = ParsedListsMetaValue::new(&value[..]).unwrap();
+        (parsed.version(), parsed.etime())
+    };
+
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    assert_eq!(storage.del(&[hash_key.to_vec()]).unwrap(), 0);
+    assert_eq!(storage.del(&[list_key.to_vec()]).unwrap(), 0);
+
+    {
+        let instance = &storage.insts[0];
+        let meta_cf = instance.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+        let db = instance.db().unwrap();
+        let hash_value = db.get_cf(&meta_cf, &hash_meta_key).unwrap().unwrap();
+        let hash = ParsedBaseMetaValue::new(&hash_value[..]).unwrap();
+        assert_eq!((hash.version(), hash.etime()), (hash_version, hash_etime));
+        let list_value = db.get_cf(&meta_cf, &list_meta_key).unwrap().unwrap();
+        let list = ParsedListsMetaValue::new(&list_value[..]).unwrap();
+        assert_eq!((list.version(), list.etime()), (list_version, list_etime));
+    }
+
+    storage.shutdown().await;
+}
+
+#[tokio::test]
 async fn test_del_composite_recreate_hides_old_members() {
     let db_path = unique_test_db_path();
     let mut storage = Storage::new(1, 0);
@@ -391,6 +443,7 @@ async fn test_del_set_recreate_hides_old_members() {
     assert_eq!(storage.sadd(key, &[b"old-member"]).unwrap(), 1);
     assert_eq!(storage.del(&[key.to_vec()]).unwrap(), 1);
     assert_eq!(storage.sadd(key, &[b"new-member"]).unwrap(), 1);
+    assert_eq!(storage.ttl(key).unwrap(), -1);
 
     assert_eq!(
         storage.smembers(key).unwrap(),
@@ -412,6 +465,7 @@ async fn test_del_list_recreate_hides_old_members() {
     assert_eq!(storage.rpush(key, &[b"old-member".to_vec()]).unwrap(), 1);
     assert_eq!(storage.del(&[key.to_vec()]).unwrap(), 1);
     assert_eq!(storage.rpush(key, &[b"new-member".to_vec()]).unwrap(), 1);
+    assert_eq!(storage.ttl(key).unwrap(), -1);
 
     assert_eq!(
         storage.lrange(key, 0, -1).unwrap(),

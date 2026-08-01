@@ -384,6 +384,8 @@ impl Storage {
         end: &str,
         sync: bool,
     ) -> Result<()> {
+        Self::validate_compact_range_arguments(dtype, start, end)?;
+
         if sync {
             log::info!("Executing compact range synchronously: start={start}, end={end}",);
             self.do_compact_range(dtype, start, end)?;
@@ -405,10 +407,21 @@ impl Storage {
     fn do_compact_range(&self, dtype: DataType, start: &str, end: &str) -> Result<()> {
         log::info!("do_compact_range {dtype:?} {start} {end}");
 
-        let begin = (!start.is_empty()).then_some(start.as_bytes());
-        let end = (!end.is_empty()).then_some(end.as_bytes());
+        Self::validate_compact_range_arguments(dtype, start, end)?;
+
         for instance in &self.insts {
-            instance.compact_range(begin, end)?;
+            instance.compact_range(None, None)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_compact_range_arguments(dtype: DataType, start: &str, end: &str) -> Result<()> {
+        if dtype != DataType::All || !start.is_empty() || !end.is_empty() {
+            return Err(Error::InvalidArgument {
+                message: "compact range supports only type=all with empty bounds".to_string(),
+                location: snafu::location!(),
+            });
         }
 
         Ok(())
@@ -978,6 +991,7 @@ mod append_log_fn_tests {
 #[cfg(test)]
 mod command_access_gate_tests {
     use super::Storage;
+    use crate::DataType;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, oneshot};
@@ -988,6 +1002,38 @@ mod command_access_gate_tests {
 
         assert_send::<OwnedRwLockReadGuard<()>>();
         assert_send::<OwnedRwLockWriteGuard<()>>();
+    }
+
+    #[test]
+    fn compact_range_rejects_unencoded_type_or_bounds() {
+        let storage = Storage::new(1, 0);
+
+        assert!(storage.do_compact_range(DataType::Hash, "", "").is_err());
+        assert!(
+            storage
+                .do_compact_range(DataType::All, "start", "")
+                .is_err()
+        );
+        assert!(storage.do_compact_range(DataType::All, "", "end").is_err());
+        assert!(storage.do_compact_range(DataType::All, "", "").is_ok());
+    }
+
+    #[tokio::test]
+    async fn public_compact_range_rejects_invalid_arguments_before_sync_or_async_dispatch() {
+        let storage = Storage::new(1, 0);
+
+        assert!(
+            storage
+                .compact_range(DataType::Hash, "", "", true)
+                .await
+                .is_err()
+        );
+        assert!(
+            storage
+                .compact_range(DataType::All, "start", "", false)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

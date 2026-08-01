@@ -102,10 +102,9 @@ impl CompactionFilterTestGate {
     }
 
     fn record_removed_key(&self, key: &[u8]) {
-        let mut state = self
-            .state
-            .lock()
-            .expect("compaction filter test gate mutex should not be poisoned");
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
         state.removed_keys.push(key.to_vec());
         self.changed.notify_all();
     }
@@ -115,10 +114,9 @@ impl CompactionFilterTestGate {
             return;
         }
 
-        let mut state = self
-            .state
-            .lock()
-            .expect("compaction filter test gate mutex should not be poisoned");
+        let Ok(mut state) = self.state.lock() else {
+            return;
+        };
         if state.entered {
             return;
         }
@@ -126,10 +124,10 @@ impl CompactionFilterTestGate {
         state.entered = true;
         self.changed.notify_all();
         while !state.released {
-            state = self
-                .changed
-                .wait(state)
-                .expect("compaction filter test gate wait should succeed");
+            let Ok(next_state) = self.changed.wait(state) else {
+                return;
+            };
+            state = next_state;
         }
     }
 }
@@ -141,6 +139,12 @@ fn compaction_filter_test_gate() -> &'static Mutex<Option<Weak<CompactionFilterT
 }
 
 #[cfg(test)]
+pub(crate) fn compaction_filter_test_serial_mutex() -> &'static Mutex<()> {
+    static MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+    MUTEX.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(test)]
 pub(crate) struct CompactionFilterTestGateGuard {
     gate: Arc<CompactionFilterTestGate>,
 }
@@ -149,9 +153,9 @@ pub(crate) struct CompactionFilterTestGateGuard {
 impl Drop for CompactionFilterTestGateGuard {
     fn drop(&mut self) {
         self.gate.release();
-        *compaction_filter_test_gate()
-            .lock()
-            .expect("compaction filter test gate registry should not be poisoned") = None;
+        if let Ok(mut installed) = compaction_filter_test_gate().lock() {
+            *installed = None;
+        }
     }
 }
 
@@ -161,7 +165,7 @@ pub(crate) fn install_compaction_filter_test_gate(
 ) -> CompactionFilterTestGateGuard {
     let mut installed = compaction_filter_test_gate()
         .lock()
-        .expect("compaction filter test gate registry should not be poisoned");
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     assert!(
         installed.is_none(),
         "only one compaction test gate may be installed"
@@ -173,11 +177,10 @@ pub(crate) fn install_compaction_filter_test_gate(
 
 #[cfg(test)]
 fn block_once_for_compaction_filter_test(key: &[u8]) {
-    let gate = compaction_filter_test_gate()
-        .lock()
-        .expect("compaction filter test gate registry should not be poisoned")
-        .as_ref()
-        .and_then(Weak::upgrade);
+    let Ok(installed) = compaction_filter_test_gate().lock() else {
+        return;
+    };
+    let gate = installed.as_ref().and_then(Weak::upgrade);
     if let Some(gate) = gate {
         gate.enter_and_wait(key);
     }
@@ -185,11 +188,10 @@ fn block_once_for_compaction_filter_test(key: &[u8]) {
 
 #[cfg(test)]
 fn record_compaction_filter_remove(key: &[u8]) {
-    let gate = compaction_filter_test_gate()
-        .lock()
-        .expect("compaction filter test gate registry should not be poisoned")
-        .as_ref()
-        .and_then(Weak::upgrade);
+    let Ok(installed) = compaction_filter_test_gate().lock() else {
+        return;
+    };
+    let gate = installed.as_ref().and_then(Weak::upgrade);
     if let Some(gate) = gate {
         gate.record_removed_key(key);
     }
@@ -366,12 +368,12 @@ impl CompactionFilter for DataCompactionFilter {
             MetaLookup::Valid => {
                 let cur_time = Utc::now().timestamp_micros() as u64;
                 if self.cur_meta_etime != 0 && self.cur_meta_etime < cur_time {
-                    return CompactionDecision::Remove;
-                }
-
-                match Self::extract_data_version(key) {
-                    Some(ver) if self.cur_meta_version > ver => CompactionDecision::Remove,
-                    _ => CompactionDecision::Keep,
+                    CompactionDecision::Remove
+                } else {
+                    match Self::extract_data_version(key) {
+                        Some(ver) if self.cur_meta_version > ver => CompactionDecision::Remove,
+                        _ => CompactionDecision::Keep,
+                    }
                 }
             }
         };
@@ -617,6 +619,9 @@ mod tests {
 
     #[test]
     fn test_removes_data_if_meta_is_expired() {
+        let _serial = compaction_filter_test_serial_mutex()
+            .lock()
+            .expect("compaction filter gate tests must run serially");
         let path = unique_test_db_path();
         let (db_cell, db) = setup_db_for_filter_test(&path);
 
@@ -639,8 +644,15 @@ mod tests {
 
         let data_key = encode_data_key(b"mykey", 1);
 
+        let gate = CompactionFilterTestGate::new(b"mykey");
+        let _gate_guard = install_compaction_filter_test_gate(Arc::clone(&gate));
+
         let decision = filter.filter(0, &data_key, b"");
         assert!(matches!(decision, CompactionDecision::Remove));
+        assert_eq!(
+            gate.wait_until_removed(std::time::Duration::from_secs(1)),
+            vec![data_key]
+        );
     }
 
     #[test]

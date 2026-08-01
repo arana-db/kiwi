@@ -202,10 +202,12 @@ impl RocksDbOwnerDropTestGate {
 }
 
 #[cfg(test)]
-fn rocks_db_owner_drop_test_gate_registry()
--> &'static Mutex<Option<(std::path::PathBuf, Weak<RocksDbOwnerDropTestGate>)>> {
-    static GATE: OnceLock<Mutex<Option<(std::path::PathBuf, Weak<RocksDbOwnerDropTestGate>)>>> =
-        OnceLock::new();
+type RocksDbOwnerDropGateRegistry =
+    Mutex<Option<(std::path::PathBuf, Weak<RocksDbOwnerDropTestGate>)>>;
+
+#[cfg(test)]
+fn rocks_db_owner_drop_test_gate_registry() -> &'static RocksDbOwnerDropGateRegistry {
+    static GATE: OnceLock<RocksDbOwnerDropGateRegistry> = OnceLock::new();
     GATE.get_or_init(|| Mutex::new(None))
 }
 
@@ -1008,19 +1010,23 @@ macro_rules! get_db_and_cfs {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod lifecycle_tests {
-    use std::sync::{Arc, mpsc};
+    use std::sync::{Arc, Mutex, OnceLock, mpsc};
     use std::thread;
     use std::time::Duration;
 
     use super::{
         ColumnFamilyIndex, Redis, RocksDbOwnerDropTestGate, install_rocks_db_owner_drop_test_gate,
     };
+    use crate::ScoreMember;
     use crate::data_compaction_filter::{
-        CompactionFilterTestGate, install_compaction_filter_test_gate,
+        CompactionFilterTestGate, compaction_filter_test_serial_mutex,
+        install_compaction_filter_test_gate,
     };
     use crate::format_base_key::BaseMetaKey;
-    use crate::format_base_meta_value::ParsedSetsMetaValue;
+    use crate::format_base_meta_value::{ParsedBaseMetaValue, ParsedSetsMetaValue};
+    use crate::storage_define::SUFFIX_RESERVE_LENGTH;
     use crate::{BgTaskHandler, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
     use kstd::lock_mgr::LockMgr;
     use rocksdb::IteratorMode;
@@ -1047,8 +1053,27 @@ mod lifecycle_tests {
         redis
     }
 
+    fn lifecycle_test_mutex() -> &'static Mutex<()> {
+        static MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+        MUTEX.get_or_init(|| Mutex::new(()))
+    }
+
+    fn compaction_filter_key_prefix(key: &[u8]) -> Vec<u8> {
+        let mut prefix = BaseMetaKey::new(key)
+            .encode()
+            .expect("test key prefix should encode");
+        prefix.truncate(prefix.len() - SUFFIX_RESERVE_LENGTH);
+        prefix.to_vec()
+    }
+
     #[test]
     fn del_compaction_removes_old_generation_and_preserves_recreated_set() {
+        let _lifecycle_test_guard = lifecycle_test_mutex()
+            .lock()
+            .expect("lifecycle compaction tests must run serially");
+        let _compaction_filter_test_guard = compaction_filter_test_serial_mutex()
+            .lock()
+            .expect("compaction filter gate tests must run serially");
         let path = unique_test_db_path();
         safe_cleanup_test_db(&path);
 
@@ -1094,7 +1119,7 @@ mod lifecycle_tests {
         assert_eq!(parsed_tombstone.etime(), 0);
         assert!(parsed_tombstone.version() > original_version);
 
-        let gate = CompactionFilterTestGate::new(&[]);
+        let gate = CompactionFilterTestGate::new(&compaction_filter_key_prefix(key));
         let _gate_guard = install_compaction_filter_test_gate(Arc::clone(&gate));
         let compactor = Arc::clone(&redis);
         let compaction_thread = thread::spawn(move || {
@@ -1136,7 +1161,138 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn del_compaction_removes_old_generation_and_preserves_recreated_zset() {
+        let _lifecycle_test_guard = lifecycle_test_mutex()
+            .lock()
+            .expect("lifecycle compaction tests must run serially");
+        let _compaction_filter_test_guard = compaction_filter_test_serial_mutex()
+            .lock()
+            .expect("compaction filter gate tests must run serially");
+        let path = unique_test_db_path();
+        safe_cleanup_test_db(&path);
+
+        let mut storage_options = StorageOptions::default();
+        storage_options.options.set_disable_auto_compactions(true);
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let mut redis = Redis::new(
+            Arc::new(storage_options),
+            0,
+            Arc::new(bg_task_handler),
+            Arc::new(kstd::lock_mgr::LockMgr::new(64)),
+        );
+        redis
+            .open(path.to_str().expect("test DB path should be valid UTF-8"))
+            .expect("compaction test Redis should open");
+        let redis = Arc::new(redis);
+
+        let key = b"del_compaction_zset";
+        let old_members = [
+            ScoreMember::new(1.0, b"old-member-1".to_vec()),
+            ScoreMember::new(2.0, b"old-member-2".to_vec()),
+        ];
+        let mut added = 0;
+        redis
+            .zadd(key, &old_members, &mut added)
+            .expect("initial zset write should succeed");
+        assert_eq!(added, 2);
+
+        let db = redis.db().expect("Redis should own RocksDB");
+        db.flush().expect("initial data should be flushed");
+        let meta_key = BaseMetaKey::new(key).encode().unwrap();
+        let meta_cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+        let original_meta = db.get_cf(&meta_cf, &meta_key).unwrap().unwrap();
+        let original_version = ParsedBaseMetaValue::new(&original_meta[..])
+            .unwrap()
+            .version();
+        let data_cf = redis.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF).unwrap();
+        let score_cf = redis
+            .get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF)
+            .unwrap();
+        let old_data_keys: Vec<Vec<u8>> = db
+            .iterator_cf(&data_cf, IteratorMode::Start)
+            .map(|entry| entry.unwrap().0.to_vec())
+            .collect();
+        let old_score_keys: Vec<Vec<u8>> = db
+            .iterator_cf(&score_cf, IteratorMode::Start)
+            .map(|entry| entry.unwrap().0.to_vec())
+            .collect();
+        assert_eq!(old_data_keys.len(), old_members.len());
+        assert_eq!(old_score_keys.len(), old_members.len());
+
+        assert!(redis.del_key(key).unwrap());
+        db.flush().expect("tombstone should be flushed");
+        let tombstone = db.get_cf(&meta_cf, &meta_key).unwrap().unwrap();
+        let parsed_tombstone = ParsedBaseMetaValue::new(&tombstone[..]).unwrap();
+        assert_eq!(parsed_tombstone.count(), 0);
+        assert_eq!(parsed_tombstone.etime(), 0);
+        assert!(parsed_tombstone.version() > original_version);
+
+        let gate = CompactionFilterTestGate::new(&compaction_filter_key_prefix(key));
+        let _gate_guard = install_compaction_filter_test_gate(Arc::clone(&gate));
+        let compactor = Arc::clone(&redis);
+        let compaction_thread = thread::spawn(move || {
+            compactor
+                .compact_range(None, None)
+                .expect("manual compaction should succeed");
+        });
+        assert!(gate.wait_until_entered(Duration::from_secs(10)));
+        gate.release();
+        compaction_thread.join().unwrap();
+
+        let removed_keys = gate.wait_until_removed(Duration::from_secs(10));
+        assert!(old_data_keys.iter().all(|key| removed_keys.contains(key)));
+        assert!(old_score_keys.iter().all(|key| removed_keys.contains(key)));
+        let remaining_data_keys: Vec<Vec<u8>> = db
+            .iterator_cf(&data_cf, IteratorMode::Start)
+            .map(|entry| entry.unwrap().0.to_vec())
+            .collect();
+        let remaining_score_keys: Vec<Vec<u8>> = db
+            .iterator_cf(&score_cf, IteratorMode::Start)
+            .map(|entry| entry.unwrap().0.to_vec())
+            .collect();
+        assert!(
+            old_data_keys
+                .iter()
+                .all(|key| !remaining_data_keys.contains(key))
+        );
+        assert!(
+            old_score_keys
+                .iter()
+                .all(|key| !remaining_score_keys.contains(key))
+        );
+
+        let new_members = [ScoreMember::new(3.5, b"new-member".to_vec())];
+        let mut recreated_added = 0;
+        redis
+            .zadd(key, &new_members, &mut recreated_added)
+            .expect("recreated zset write should succeed");
+        assert_eq!(recreated_added, 1);
+        let mut score = None;
+        redis
+            .zscore(key, b"new-member", &mut score)
+            .expect("zscore should read recreated member");
+        assert_eq!(score, Some(b"3.5".to_vec()));
+        let mut range = Vec::new();
+        redis
+            .zrange(key, 0, -1, true, &mut range)
+            .expect("zrange should read recreated member");
+        assert_eq!(range, vec![b"new-member".to_vec(), b"3.5".to_vec()]);
+
+        drop(score_cf);
+        drop(data_cf);
+        drop(meta_cf);
+        drop(redis);
+        safe_cleanup_test_db(&path);
+    }
+
+    #[test]
     fn dropping_last_owner_waits_for_active_compaction_filter_before_reopen() {
+        let _lifecycle_test_guard = lifecycle_test_mutex()
+            .lock()
+            .expect("lifecycle compaction tests must run serially");
+        let _compaction_filter_test_guard = compaction_filter_test_serial_mutex()
+            .lock()
+            .expect("compaction filter gate tests must run serially");
         let path = unique_test_db_path();
         safe_cleanup_test_db(&path);
 
@@ -1279,13 +1435,10 @@ mod type_check_state_tests {
     }
 
     /// Forge a raw on-disk value that matches `format_base_value::is_stale`:
-    ///   * `type_byte`  at offset 0      (a valid `DataType` tag, 0..=6)
-    ///   * `count`      at offset 1..9    (meta count; only consulted for
-    ///                        Set/Hash/ZSet/List — kept non-zero so those types
-    ///                        are not short-circuited as stale by `count == 0`)
-    ///   * `etime`      in the final 8 bytes (microseconds since epoch).
-    ///                        `etime == 0` means "permanent" (never stale); any
-    ///                        `etime < now` is stale.
+    ///   * `type_byte` at offset 0 (a valid `DataType` tag, 0..=6)
+    ///   * `count` at offset 1..9 (meta count; kept non-zero for composite types)
+    ///   * `etime` in the final 8 bytes (microseconds since epoch); zero means
+    ///     permanent and a value less than now is stale.
     fn make_value(type_byte: u8, count: u64, etime: u64, total_len: usize) -> Vec<u8> {
         assert!(
             total_len >= 9,
