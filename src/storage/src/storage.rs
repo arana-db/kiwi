@@ -415,6 +415,8 @@ impl Storage {
         start: &str,
         end: &str,
     ) -> Result<()> {
+        Self::validate_compact_range_arguments(dtype, start, end)?;
+
         let insts = self.insts.clone();
         let start = start.to_string();
         let end = end.to_string();
