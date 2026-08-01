@@ -1010,6 +1010,7 @@ macro_rules! get_db_and_cfs {
 #[cfg(test)]
 mod lifecycle_tests {
     use std::sync::{Arc, mpsc};
+    use std::thread;
     use std::time::Duration;
 
     use super::{
@@ -1018,8 +1019,11 @@ mod lifecycle_tests {
     use crate::data_compaction_filter::{
         CompactionFilterTestGate, install_compaction_filter_test_gate,
     };
+    use crate::format_base_key::BaseMetaKey;
+    use crate::format_base_meta_value::ParsedSetsMetaValue;
     use crate::{BgTaskHandler, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
     use kstd::lock_mgr::LockMgr;
+    use rocksdb::IteratorMode;
 
     fn open_compaction_test_redis(path: &std::path::Path) -> Redis {
         let mut storage_options = StorageOptions::default();
@@ -1041,6 +1045,94 @@ mod lifecycle_tests {
             .open(path.to_str().expect("test DB path should be valid UTF-8"))
             .expect("compaction test Redis should open");
         redis
+    }
+
+    #[test]
+    fn del_compaction_removes_old_generation_and_preserves_recreated_set() {
+        let path = unique_test_db_path();
+        safe_cleanup_test_db(&path);
+
+        let mut storage_options = StorageOptions::default();
+        storage_options.options.set_disable_auto_compactions(true);
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let mut redis = Redis::new(
+            Arc::new(storage_options),
+            0,
+            Arc::new(bg_task_handler),
+            Arc::new(kstd::lock_mgr::LockMgr::new(64)),
+        );
+        redis
+            .open(path.to_str().expect("test DB path should be valid UTF-8"))
+            .expect("compaction test Redis should open");
+        let redis = Arc::new(redis);
+
+        let key = b"del_compaction_set";
+        redis
+            .sadd(key, &[b"old-member"])
+            .expect("initial set write should succeed");
+        let db = redis.db().expect("Redis should own RocksDB");
+        db.flush().expect("initial data should be flushed");
+
+        let meta_key = BaseMetaKey::new(key).encode().unwrap();
+        let meta_cf = redis.get_cf_handle(ColumnFamilyIndex::MetaCF).unwrap();
+        let original_meta = db.get_cf(&meta_cf, &meta_key).unwrap().unwrap();
+        let original_version = ParsedSetsMetaValue::new(&original_meta[..])
+            .unwrap()
+            .version();
+        let data_cf = redis.get_cf_handle(ColumnFamilyIndex::SetsDataCF).unwrap();
+        let old_data_keys: Vec<Vec<u8>> = db
+            .iterator_cf(&data_cf, IteratorMode::Start)
+            .map(|entry| entry.unwrap().0.to_vec())
+            .collect();
+        assert_eq!(old_data_keys.len(), 1);
+
+        assert!(redis.del_key(key).unwrap());
+        db.flush().expect("tombstone should be flushed");
+        let tombstone = db.get_cf(&meta_cf, &meta_key).unwrap().unwrap();
+        let parsed_tombstone = ParsedSetsMetaValue::new(&tombstone[..]).unwrap();
+        assert_eq!(parsed_tombstone.count(), 0);
+        assert_eq!(parsed_tombstone.etime(), 0);
+        assert!(parsed_tombstone.version() > original_version);
+
+        let gate = CompactionFilterTestGate::new(&[]);
+        let _gate_guard = install_compaction_filter_test_gate(Arc::clone(&gate));
+        let compactor = Arc::clone(&redis);
+        let compaction_thread = thread::spawn(move || {
+            compactor
+                .compact_range(None, None)
+                .expect("manual compaction should succeed");
+        });
+        assert!(gate.wait_until_entered(Duration::from_secs(10)));
+        gate.release();
+        compaction_thread.join().unwrap();
+
+        let removed_keys = gate.wait_until_removed(Duration::from_secs(10));
+        assert!(
+            old_data_keys
+                .iter()
+                .any(|old_key| removed_keys.contains(old_key)),
+            "DataCompactionFilter did not remove the old generation key"
+        );
+        let remaining_data_keys: Vec<Vec<u8>> = db
+            .iterator_cf(&data_cf, IteratorMode::Start)
+            .map(|entry| entry.unwrap().0.to_vec())
+            .collect();
+        assert!(
+            old_data_keys
+                .iter()
+                .all(|old_key| !remaining_data_keys.contains(old_key)),
+            "old generation key survived compaction"
+        );
+
+        redis
+            .sadd(key, &[b"new-member"])
+            .expect("recreated set write should succeed");
+        assert_eq!(redis.smembers(key).unwrap(), vec!["new-member".to_string()]);
+
+        drop(data_cf);
+        drop(meta_cf);
+        drop(redis);
+        safe_cleanup_test_db(&path);
     }
 
     #[test]

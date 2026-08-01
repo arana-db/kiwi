@@ -402,8 +402,15 @@ impl Storage {
         Ok(())
     }
 
-    fn do_compact_range(&self, _dtype: DataType, _start: &str, _end: &str) -> Result<()> {
-        log::info!("do_compact_range {_dtype:?} {_start} {_end}");
+    fn do_compact_range(&self, dtype: DataType, start: &str, end: &str) -> Result<()> {
+        log::info!("do_compact_range {dtype:?} {start} {end}");
+
+        let begin = (!start.is_empty()).then_some(start.as_bytes());
+        let end = (!end.is_empty()).then_some(end.as_bytes());
+        for instance in &self.insts {
+            instance.compact_range(begin, end)?;
+        }
+
         Ok(())
     }
 

@@ -48,6 +48,7 @@ const DATA_FILTER_FACTORY_NAME: &std::ffi::CStr = c"DataCompactionFilterFactory"
 struct CompactionFilterTestState {
     entered: bool,
     released: bool,
+    removed_keys: Vec<Vec<u8>>,
 }
 
 #[cfg(test)]
@@ -85,6 +86,27 @@ impl CompactionFilterTestGate {
             .lock()
             .expect("compaction filter test gate mutex should not be poisoned");
         state.released = true;
+        self.changed.notify_all();
+    }
+
+    pub(crate) fn wait_until_removed(&self, timeout: std::time::Duration) -> Vec<Vec<u8>> {
+        let state = self
+            .state
+            .lock()
+            .expect("compaction filter test gate mutex should not be poisoned");
+        let (state, _) = self
+            .changed
+            .wait_timeout_while(state, timeout, |state| state.removed_keys.is_empty())
+            .expect("compaction filter test gate wait should succeed");
+        state.removed_keys.clone()
+    }
+
+    fn record_removed_key(&self, key: &[u8]) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("compaction filter test gate mutex should not be poisoned");
+        state.removed_keys.push(key.to_vec());
         self.changed.notify_all();
     }
 
@@ -158,6 +180,18 @@ fn block_once_for_compaction_filter_test(key: &[u8]) {
         .and_then(Weak::upgrade);
     if let Some(gate) = gate {
         gate.enter_and_wait(key);
+    }
+}
+
+#[cfg(test)]
+fn record_compaction_filter_remove(key: &[u8]) {
+    let gate = compaction_filter_test_gate()
+        .lock()
+        .expect("compaction filter test gate registry should not be poisoned")
+        .as_ref()
+        .and_then(Weak::upgrade);
+    if let Some(gate) = gate {
+        gate.record_removed_key(key);
     }
 }
 
@@ -326,7 +360,7 @@ impl CompactionFilter for DataCompactionFilter {
             return CompactionDecision::Keep;
         };
 
-        match self.ensure_meta_state(&meta_key) {
+        let decision = match self.ensure_meta_state(&meta_key) {
             MetaLookup::Unavailable => CompactionDecision::Keep,
             MetaLookup::NotFound => CompactionDecision::Remove,
             MetaLookup::Valid => {
@@ -340,7 +374,14 @@ impl CompactionFilter for DataCompactionFilter {
                     _ => CompactionDecision::Keep,
                 }
             }
+        };
+
+        #[cfg(test)]
+        if let CompactionDecision::Remove = &decision {
+            record_compaction_filter_remove(key);
         }
+
+        decision
     }
 }
 
