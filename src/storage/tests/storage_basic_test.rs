@@ -19,8 +19,9 @@
 
 use std::sync::Arc;
 
+use rocksdb::IteratorMode;
 use storage::storage::Storage;
-use storage::{BgTask, BgTaskHandler, DataType, StorageOptions};
+use storage::{BgTask, BgTaskHandler, ColumnFamilyIndex, DataType, StorageOptions};
 
 // This test ensures:
 // - All tasks are sent successfully (no panic)
@@ -67,6 +68,62 @@ async fn test_bg_task_worker_concurrent() {
 
     handler.send(BgTask::Shutdown).await.unwrap();
     worker_handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_storage_compact_range_executes_manual_compaction() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut storage_options = StorageOptions::default();
+    storage_options.options.set_disable_auto_compactions(true);
+
+    let mut storage = Storage::new(1, 0);
+    let _receiver = storage
+        .open(Arc::new(storage_options), temp_dir.path())
+        .unwrap();
+
+    storage.sadd(b"compact_range_key", &[b"member"]).unwrap();
+    storage.insts[0].db().unwrap().flush().unwrap();
+
+    let old_data_keys: Vec<Vec<u8>> = {
+        let data_cf = storage.insts[0]
+            .get_cf_handle(ColumnFamilyIndex::SetsDataCF)
+            .unwrap();
+        storage.insts[0]
+            .db()
+            .unwrap()
+            .iterator_cf(&data_cf, IteratorMode::Start)
+            .map(|entry| entry.unwrap().0.to_vec())
+            .collect()
+    };
+    assert_eq!(old_data_keys.len(), 1);
+
+    storage.del(&[b"compact_range_key".to_vec()]).unwrap();
+    storage.insts[0].db().unwrap().flush().unwrap();
+
+    storage
+        .compact_range(DataType::All, "", "", true)
+        .await
+        .unwrap();
+
+    let remaining_data_keys: Vec<Vec<u8>> = {
+        let data_cf = storage.insts[0]
+            .get_cf_handle(ColumnFamilyIndex::SetsDataCF)
+            .unwrap();
+        storage.insts[0]
+            .db()
+            .unwrap()
+            .iterator_cf(&data_cf, IteratorMode::Start)
+            .map(|entry| entry.unwrap().0.to_vec())
+            .collect()
+    };
+    assert!(
+        old_data_keys
+            .iter()
+            .all(|old_key| !remaining_data_keys.contains(old_key)),
+        "stale set data key survived compaction"
+    );
+
+    storage.shutdown().await;
 }
 
 /// Test get_global_smallest_flushed_log_index returns minimum across all instances

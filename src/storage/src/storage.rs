@@ -318,7 +318,7 @@ impl Storage {
                 BgTask::CleanAll { dtype } => {
                     log::info!("BgTaskWorker received CleanAll {dtype:?}");
                     storage.set_current_task_type(TaskType::CleanAll);
-                    let ret = storage.do_compact_range(dtype, "", "");
+                    let ret = storage.do_compact_range_blocking(dtype, "", "").await;
                     storage.set_ignore_tasks(false);
                     storage.clear_current_task_type();
                     if let Err(e) = ret {
@@ -332,7 +332,7 @@ impl Storage {
                     }
                     log::info!("BgTaskWorker received CompactRange {dtype:?} {start} {end}");
                     storage.set_current_task_type(TaskType::CompactRange);
-                    if let Err(e) = storage.do_compact_range(dtype, &start, &end) {
+                    if let Err(e) = storage.do_compact_range_blocking(dtype, &start, &end).await {
                         log::error!("BgTaskWorker CompactRange failed: {e:?}");
                     }
                     storage.clear_current_task_type();
@@ -361,7 +361,8 @@ impl Storage {
     pub async fn compact_all(&self, sync: bool) -> Result<()> {
         if sync {
             log::info!("Executing compact ALL synchronously");
-            self.do_compact_range(DataType::All, "", "")?;
+            self.do_compact_range_blocking(DataType::All, "", "")
+                .await?;
         } else {
             log::info!("Adding compact ALL to background queue, setting ignore flag");
             self.set_ignore_tasks(true);
@@ -384,9 +385,11 @@ impl Storage {
         end: &str,
         sync: bool,
     ) -> Result<()> {
+        Self::validate_compact_range_arguments(dtype, start, end)?;
+
         if sync {
             log::info!("Executing compact range synchronously: start={start}, end={end}",);
-            self.do_compact_range(dtype, start, end)?;
+            self.do_compact_range_blocking(dtype, start, end).await?;
         } else {
             log::info!("Adding compact range to background queue: start={start}, end={end}",);
             if let Some(handler) = &self.bg_task_handler {
@@ -402,8 +405,57 @@ impl Storage {
         Ok(())
     }
 
-    fn do_compact_range(&self, _dtype: DataType, _start: &str, _end: &str) -> Result<()> {
-        log::info!("do_compact_range {_dtype:?} {_start} {_end}");
+    fn do_compact_range(&self, dtype: DataType, start: &str, end: &str) -> Result<()> {
+        Self::do_compact_range_for_instances(&self.insts, dtype, start, end)
+    }
+
+    async fn do_compact_range_blocking(
+        &self,
+        dtype: DataType,
+        start: &str,
+        end: &str,
+    ) -> Result<()> {
+        Self::validate_compact_range_arguments(dtype, start, end)?;
+
+        let insts = self.insts.clone();
+        let start = start.to_string();
+        let end = end.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            Self::do_compact_range_for_instances(&insts, dtype, &start, &end)
+        })
+        .await
+        .map_err(|error| Error::Compaction {
+            message: format!("compaction blocking task failed: {error}"),
+            location: snafu::location!(),
+        })?
+    }
+
+    fn do_compact_range_for_instances(
+        insts: &[Arc<Redis>],
+        dtype: DataType,
+        start: &str,
+        end: &str,
+    ) -> Result<()> {
+        log::info!("do_compact_range {dtype:?} {start} {end}");
+
+        Self::validate_compact_range_arguments(dtype, start, end)?;
+
+        for instance in insts {
+            instance.compact_range(None, None)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_compact_range_arguments(dtype: DataType, start: &str, end: &str) -> Result<()> {
+        if dtype != DataType::All || !start.is_empty() || !end.is_empty() {
+            return Err(Error::InvalidArgument {
+                message: "compact range supports only type=all with empty bounds".to_string(),
+                location: snafu::location!(),
+            });
+        }
+
         Ok(())
     }
 
@@ -971,6 +1023,7 @@ mod append_log_fn_tests {
 #[cfg(test)]
 mod command_access_gate_tests {
     use super::Storage;
+    use crate::DataType;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, oneshot};
@@ -981,6 +1034,38 @@ mod command_access_gate_tests {
 
         assert_send::<OwnedRwLockReadGuard<()>>();
         assert_send::<OwnedRwLockWriteGuard<()>>();
+    }
+
+    #[test]
+    fn compact_range_rejects_unencoded_type_or_bounds() {
+        let storage = Storage::new(1, 0);
+
+        assert!(storage.do_compact_range(DataType::Hash, "", "").is_err());
+        assert!(
+            storage
+                .do_compact_range(DataType::All, "start", "")
+                .is_err()
+        );
+        assert!(storage.do_compact_range(DataType::All, "", "end").is_err());
+        assert!(storage.do_compact_range(DataType::All, "", "").is_ok());
+    }
+
+    #[tokio::test]
+    async fn public_compact_range_rejects_invalid_arguments_before_sync_or_async_dispatch() {
+        let storage = Storage::new(1, 0);
+
+        assert!(
+            storage
+                .compact_range(DataType::Hash, "", "", true)
+                .await
+                .is_err()
+        );
+        assert!(
+            storage
+                .compact_range(DataType::All, "start", "", false)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
