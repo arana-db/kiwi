@@ -471,6 +471,47 @@ async fn network_server_protocol_error_only_closes_the_bad_connection() {
 }
 
 #[tokio::test]
+async fn network_server_rejects_oversized_unauthenticated_request() {
+    let server = TestServer::start(Some("secret".to_string())).await;
+    let mut oversized = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect oversized unauthenticated client");
+
+    oversized
+        .write_all(b"$2097152\r\n")
+        .await
+        .expect("write incomplete bulk header");
+    // The server may close as soon as this write crosses the pre-auth limit.
+    let _ = oversized
+        .write_all(&vec![
+            b'a';
+            resp::parse::MAX_UNAUTHENTICATED_BUFFER_SIZE + 4096
+        ])
+        .await;
+
+    let mut byte = [0u8; 1];
+    match tokio::time::timeout(Duration::from_secs(1), oversized.read(&mut byte)).await {
+        Ok(Ok(0)) | Ok(Err(_)) => {}
+        Ok(Ok(_)) => panic!("oversized unauthenticated connection unexpectedly received data"),
+        Err(_) => panic!("oversized unauthenticated connection was not closed"),
+    }
+
+    let mut healthy = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect healthy client after oversized request");
+    assert_eq!(
+        send_command(&mut healthy, &["AUTH", "secret"]).await,
+        RespData::SimpleString(Bytes::from_static(b"OK"))
+    );
+    assert_eq!(
+        send_command(&mut healthy, &["PING"]).await,
+        RespData::SimpleString(Bytes::from_static(b"PONG"))
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
 async fn network_server_continues_after_connection_task_panic() {
     let message_channel = Arc::new(runtime::MessageChannel::new(16));
     let runtime_storage_client = Arc::new(runtime::StorageClient::new(

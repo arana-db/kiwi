@@ -165,13 +165,20 @@ impl RaftNetworkFactory<KiwiTypeConfig> for KiwiNetworkFactory {
         let addr = node.raft_addr.clone();
 
         // 使用配置创建 endpoint
-        let endpoint = tonic::transport::Endpoint::from_shared(format!("http://{}", addr))
-            .unwrap_or_else(|e| {
-                panic!(
-                    "invalid raft address '{}': failed to parse as gRPC endpoint: {}",
-                    addr, e
-                )
-            });
+        let endpoint = match tonic::transport::Endpoint::from_shared(format!("http://{}", addr)) {
+            Ok(ep) => ep,
+            Err(e) => {
+                log::error!(
+                    "invalid raft address '{}': failed to parse as gRPC endpoint: {}; \
+                     using fallback endpoint that will fail on connect",
+                    addr,
+                    e
+                );
+                // Fallback: a syntactically valid URL that will fail on connect,
+                // surfacing the error as an RPC failure rather than panicking.
+                tonic::transport::Endpoint::from_static("http://0.0.0.0:0")
+            }
+        };
 
         let endpoint = endpoint
             .connect_timeout(self.config.connect_timeout)
@@ -322,5 +329,41 @@ impl RaftNetwork<KiwiTypeConfig> for KiwiNetwork {
 
         // 所有重试都失败
         Err(rpc_failed_network_error(&self.target, last_error))
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+mod tests {
+    use openraft::Vote;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn invalid_raft_endpoint_returns_network_error_without_panicking() {
+        let invalid_target = "not a valid raft address";
+        let mut factory = KiwiNetworkFactory::with_config(ConnectionConfig {
+            max_retries: 0,
+            ..Default::default()
+        });
+        let node = KiwiNode {
+            raft_addr: invalid_target.to_string(),
+            resp_addr: String::new(),
+        };
+
+        let mut network = factory.new_client(2, &node).await;
+        let error = network
+            .vote(
+                VoteRequest::new(Vote::new(1, 1), None),
+                RPCOption::new(Duration::from_millis(50)),
+            )
+            .await
+            .expect_err("invalid endpoint must fail as a network error");
+
+        assert!(matches!(error, RPCErr::Network(_)));
+        assert!(
+            error.to_string().contains(invalid_target),
+            "network error must identify the configured target: {error}"
+        );
     }
 }

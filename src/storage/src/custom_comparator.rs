@@ -466,7 +466,7 @@ mod tests {
     #[test]
     fn test_zsets_score_key_compare_sorting_order() {
         // 模拟多个 score 的排序
-        let mut keys = vec![
+        let mut keys = [
             ZSetsScoreKey::new(b"zset", 1, 3.0, b"c").encode().unwrap(),
             ZSetsScoreKey::new(b"zset", 1, 1.0, b"a").encode().unwrap(),
             ZSetsScoreKey::new(b"zset", 1, 2.0, b"b").encode().unwrap(),

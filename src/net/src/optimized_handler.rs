@@ -23,7 +23,7 @@ use cmd::table::CmdTable;
 use executor::CmdExecutor;
 use log::{error, warn};
 use resp::encode::RespEncoder;
-use resp::{Parse, RespData, RespEncode, RespParseResult, RespVersion};
+use resp::{RespData, RespEncode, RespParseResult, RespVersion};
 use storage::storage::Storage;
 use tokio::select;
 
@@ -175,7 +175,21 @@ impl OptimizedConnectionHandler {
                             }
 
                             // Process data with pipeline
-                            match resp_parser.parse(Bytes::copy_from_slice(&read_buffer.buffer[..n])) {
+                            let parse_result = crate::network_handle::parse_client_request(
+                                &mut resp_parser,
+                                client.is_authenticated(),
+                                Bytes::copy_from_slice(&read_buffer.buffer[..n]),
+                            );
+                            let parse_result = match parse_result {
+                                Ok(result) => result,
+                                Err(error) => {
+                                    if self.config.enable_buffer_pooling {
+                                        self.buffer_manager.return_buffer(read_buffer).await;
+                                    }
+                                    return Err(error);
+                                }
+                            };
+                            match parse_result {
                                 RespParseResult::Complete(data) => {
                                     // Submit to pipeline for processing
                                     let pipeline_result =
@@ -201,7 +215,13 @@ impl OptimizedConnectionHandler {
                                             let error_response = RespData::Error(format!("ERR {}", e).into());
                                             let mut encoder = RespEncoder::new(RespVersion::RESP2);
                                             encoder.encode_resp_data(&error_response);
-                                            let _ = client.write(encoder.get_response().as_ref()).await;
+                                            if let Err(write_err) = client.write(encoder.get_response().as_ref()).await {
+                                                warn!("failed to write error response to client: {write_err}; closing connection");
+                                                if self.config.enable_buffer_pooling {
+                                                    self.buffer_manager.return_buffer(read_buffer).await;
+                                                }
+                                                return Ok(());
+                                            }
                                         }
                                     }
                                 }
@@ -261,8 +281,20 @@ impl OptimizedConnectionHandler {
                                 return Ok(());
                             }
 
-                            let parse_result = resp_parser
-                                .parse(Bytes::copy_from_slice(&read_buffer.buffer[..n]));
+                            let parse_result = crate::network_handle::parse_client_request(
+                                &mut resp_parser,
+                                client.is_authenticated(),
+                                Bytes::copy_from_slice(&read_buffer.buffer[..n]),
+                            );
+                            let parse_result = match parse_result {
+                                Ok(result) => result,
+                                Err(error) => {
+                                    if self.config.enable_buffer_pooling {
+                                        self.buffer_manager.return_buffer(read_buffer).await;
+                                    }
+                                    return Err(error);
+                                }
+                            };
                             match parse_result {
                                 RespParseResult::Complete(data) => {
                                     if let RespData::Array(Some(params)) = data {

@@ -78,12 +78,18 @@ the project in addition to `protoc`. See the platform-specific commands in the
 # Install rustup; rust-toolchain.toml selects Rust 1.97.1 stable in this repo
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# protobuf compiler (macOS)
-brew install protobuf
+# macOS: Xcode CLT + protobuf compiler + CMake (required to build RocksDB from source)
+xcode-select --install
+brew install protobuf cmake
 
-# protobuf compiler (Linux)
-apt install protobuf-compiler
+# Debian/Ubuntu Linux: native C/C++ toolchain + protobuf compiler
+sudo apt install clang cmake libclang-dev llvm-dev pkg-config protobuf-compiler
 ```
+
+On Windows, use the same official Protobuf 27.1 release as CI. Download and
+extract `protoc-27.1-win64.zip`, add its `bin` directory to `PATH`, and run
+`protoc --version`. See the [development guide](docs/development.md#prerequisites)
+for the PowerShell commands.
 
 Dated nightly toolchains are reserved for specialized checks such as
 Sanitizers. They do not define the normal development or release baseline.
@@ -130,8 +136,13 @@ See [docs/cluster.md](docs/cluster.md) for the manual step-by-step procedure and
 | [System stability gate](docs/quality/system-stability-gate.md) | Required evidence before deferred hot-tier work can be reconsidered |
 | [Deferred native ABI contract](docs/architecture/redis-hot-tier-native-abi.md) | Future interface design; not an implementation authorization |
 | [Combined distribution licensing](docs/architecture/combined-distribution-licensing.md) | Future Redis-derived library and source-distribution obligations |
-| `kiwi --sample-config` | Generate a default config file |
-| `kiwi --full-sample-config` | Generate a config with all available keys |
+| [Product requirements (PRD)](docs/prd.md) | Goals, scope, and Redis 8.8.1 compatibility target |
+| [Engineering quality gates](docs/quality/quality-gates.md) | Code, test, and release quality gates |
+| [Personas and user stories](docs/personas-and-user-stories.md) | Target users and usage scenarios |
+| [Documentation index](docs/INDEX.md) | Map of the whole `docs/` tree and suggested reading order |
+| [Design plans & specs](docs/superpowers/) | Dated design records (plans + specs) |
+| `kiwi --sample-config > kiwi.conf` | Write the default configuration to `kiwi.conf` |
+| `kiwi --full-sample-config > kiwi.conf` | Write all available configuration keys to `kiwi.conf` |
 
 ## Dependencies
 

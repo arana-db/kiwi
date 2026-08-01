@@ -398,6 +398,7 @@ impl TryInto<AppendEntriesResponse<u64>> for &proto::AppendEntriesResponse {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
 
     #[test]
