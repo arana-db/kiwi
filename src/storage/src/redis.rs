@@ -474,10 +474,21 @@ impl Redis {
             table_opts.set_block_size(size);
         }
 
-        // Set block cache
-        if !storage_options.share_block_cache && storage_options.block_cache_size > 0 {
-            let cache = rocksdb::Cache::new_lru_cache(storage_options.block_cache_size);
-            table_opts.set_block_cache(&cache);
+        // Set block cache.
+        //
+        // When sharing is enabled, a single cache is built once in
+        // `StorageOptions::from_config` and shared by every `Redis` instance
+        // through the shared `Arc<StorageOptions>`. Otherwise each instance
+        // builds its own independent cache when `block_cache_size > 0`.
+        match &storage_options.block_cache {
+            Some(shared) => {
+                table_opts.set_block_cache(shared);
+            }
+            None if !storage_options.share_block_cache && storage_options.block_cache_size > 0 => {
+                let cache = rocksdb::Cache::new_lru_cache(storage_options.block_cache_size);
+                table_opts.set_block_cache(&cache);
+            }
+            _ => {}
         }
 
         // Set table properties collector factory for LogIndex tracking

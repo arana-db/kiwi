@@ -17,7 +17,9 @@
 
 //! Storage engine options and configurations
 
-use rocksdb::{BlockBasedOptions, Options};
+use std::sync::Arc;
+
+use rocksdb::{BlockBasedOptions, Cache, Options};
 
 use crate::error::{OptionNotDynamicallyModifiableSnafu, Result};
 
@@ -58,6 +60,10 @@ pub struct StorageOptions {
     pub block_cache_size: usize,
     /// Whether to share block cache across column families
     pub share_block_cache: bool,
+    /// Shared block cache built once in `from_config` and reused by every
+    /// `Redis` instance through the shared `Arc<StorageOptions>`.
+    /// `None` means no shared cache; each instance falls back to its own.
+    pub block_cache: Option<Arc<Cache>>,
     /// Maximum size for statistics
     pub statistics_max_size: usize,
     /// Threshold for small value compaction
@@ -92,6 +98,7 @@ impl Default for StorageOptions {
             table_options: BlockBasedOptions::default(),
             block_cache_size: 8 << 30, // 8GB
             share_block_cache: true,
+            block_cache: None,
             statistics_max_size: 0,
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
@@ -113,9 +120,20 @@ impl StorageOptions {
     /// Build StorageOptions from a loaded [`conf::config::Config`].
     pub fn from_config(config: &conf::config::Config) -> Self {
         let rocksdb_opts = config.get_rocksdb_options();
+        // Build the shared block cache once when sharing is enabled and a
+        // memory budget is configured. Every `Redis` instance receives the
+        // same `Arc<StorageOptions>` and therefore reuses this single cache.
+        let block_cache = if config.share_block_cache && config.memory > 0 {
+            Some(Arc::new(rocksdb::Cache::new_lru_cache(
+                config.memory as usize,
+            )))
+        } else {
+            None
+        };
         Self {
             options: rocksdb_opts,
             block_cache_size: config.memory as usize,
+            block_cache,
             small_compaction_threshold: config.small_compaction_threshold,
             small_compaction_duration_threshold: config.small_compaction_duration_threshold,
             db_instance_num: config.db_instance_num,

@@ -90,6 +90,10 @@ pub struct Config {
     #[validate(range(min = 1024, max = 65535))]
     pub port: u16,
     pub memory: u64,
+    /// When enabled, all RocksDB column families share a single block cache
+    /// built once in `StorageOptions::from_config`. When disabled, each
+    /// database instance builds its own independent block cache.
+    pub share_block_cache: bool,
     pub small_compaction_threshold: usize,
     pub small_compaction_duration_threshold: usize,
     pub rocksdb_max_subcompactions: u32,
@@ -134,6 +138,7 @@ impl std::fmt::Debug for Config {
         f.debug_struct("Config")
             .field("port", &self.port)
             .field("memory", &self.memory)
+            .field("share_block_cache", &self.share_block_cache)
             .field(
                 "small_compaction_threshold",
                 &self.small_compaction_threshold,
@@ -242,6 +247,7 @@ impl Default for Config {
             port: DEFAULT_PORT,
             timeout: 50,
             memory: 1024 * 1024 * 1024, // 1GB
+            share_block_cache: true,
             log_dir: "./kiwi_data/logs".to_string(),
             data_dir: "./kiwi_data/db".to_string(),
             redis_compatible_mode: false,
@@ -368,6 +374,15 @@ impl Config {
                 "memory" => {
                     config.memory =
                         parse_memory(&value).map_err(|e| Error::MemoryParse { source: e })?;
+                }
+                "share-block-cache" => {
+                    config.share_block_cache =
+                        parse_bool_from_string(&value).map_err(|e| Error::InvalidConfig {
+                            source: serde_ini::de::Error::Custom(format!(
+                                "Invalid share-block-cache: {}",
+                                e
+                            )),
+                        })?;
                 }
                 "small-compaction-threshold" => {
                     config.small_compaction_threshold =
@@ -815,5 +830,53 @@ impl Config {
 
     pub fn get_rocksdb_block_based_table_options(&self) -> rocksdb::BlockBasedOptions {
         rocksdb::BlockBasedOptions::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn default_share_block_cache_is_enabled() {
+        let config = Config::default();
+        assert!(config.share_block_cache);
+    }
+
+    /// Write `content` to a uniquely-named temp file and load it as a [`Config`].
+    /// The unique name avoids collisions when tests run in parallel.
+    fn load_from_str(content: &str) -> Result<Config, Error> {
+        let n = TEMP_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let filename = format!("kiwi_test_sbc_{}_{}.conf", std::process::id(), n);
+        let path = std::env::temp_dir().join(filename);
+        let mut f = std::fs::File::create(&path).unwrap();
+        writeln!(f, "{}", content).unwrap();
+        drop(f);
+        let result = Config::load(path.to_str().unwrap());
+        let _ = std::fs::remove_file(&path);
+        result
+    }
+
+    #[test]
+    fn parse_share_block_cache_yes() {
+        let config = load_from_str("share-block-cache yes").unwrap();
+        assert!(config.share_block_cache);
+    }
+
+    #[test]
+    fn parse_share_block_cache_no() {
+        let config = load_from_str("share-block-cache no").unwrap();
+        assert!(!config.share_block_cache);
+    }
+
+    #[test]
+    fn parse_share_block_cache_invalid() {
+        assert!(load_from_str("share-block-cache maybe").is_err());
     }
 }
