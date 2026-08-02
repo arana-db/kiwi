@@ -18,8 +18,8 @@ current_work_package: WP0
 current_work_package_status: in-progress
 current_plan: .planning/SDD.md#wp0
 current_issue: 413
-current_pr: null
-next_safe_action: validate-commit-push-and-open-WP0-pr
+current_pr: 414
+next_safe_action: push-pr-link-and-wait-for-final-head-checks
 ---
 
 # Kiwi 架构设计与 SDD 开发计划
@@ -883,6 +883,8 @@ Primary Issue handling：
 - Issue #413 只覆盖单一 SDD 控制面、事实基线与交付追踪，不吸收 WP1-WP7 的运行时实施。
 - 只有完整满足本工作包退出门禁的 PR 才能使用 `Fixes #413`；部分交付使用 `Refs #413`。
 
+Implementation PR：[#414](https://github.com/arana-db/kiwi/pull/414)。
+
 Requirement：
 
 - REQ-WORK-001 至 REQ-WORK-007。
@@ -1555,12 +1557,12 @@ docs/sdd/WP-N/
 | Status | in-progress |
 | Current plan | [.planning/SDD.md 的 WP0 章节](#wp0) |
 | Current Issue | [#413](https://github.com/arana-db/kiwi/issues/413) |
-| Current PR | 无 |
+| Current PR | [#414](https://github.com/arana-db/kiwi/pull/414) |
 | Required mode | Cache OFF |
 | M7/M8 | frozen |
-| Next safe action | 完成门禁、提交、push 并创建关联 #413 的 WP0 PR |
+| Next safe action | push PR 链接回写，确认 final Head 后等待 required checks 与 review |
 
-当前规划工作位于隔离分支 codex/kiwi-sdd-architecture。Issue #413 已创建；本轮已授权完成文档提交、push 和关联 PR，未授权 merge，也未授权进入 WP1-WP7 的源码实现。
+当前规划工作位于隔离分支 codex/kiwi-sdd-architecture，Issue #413 与 PR #414 已建立追踪。本轮已授权完成文档提交、push 和关联 PR，未授权 merge，也未授权进入 WP1-WP7 的源码实现。
 
 ## 18. 决策门禁
 
