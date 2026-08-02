@@ -29,7 +29,8 @@ use once_cell::sync::OnceCell;
 use foyer::{Cache, CacheBuilder};
 use kstd::lock_mgr::LockMgr;
 use rocksdb::{
-    BlockBasedOptions, ColumnFamilyDescriptor, CompactOptions, DB, ReadOptions, WriteOptions,
+    BlockBasedOptions, Cache as BlockCache, ColumnFamilyDescriptor, CompactOptions, DB,
+    ReadOptions, WriteOptions,
 };
 use snafu::{OptionExt, ResultExt};
 
@@ -260,6 +261,8 @@ pub struct Redis {
     pub read_options: ReadOptions,
     pub compact_options: CompactOptions,
     pub(crate) db: Option<RocksDbOwner>,
+    /// The block cache selected once for this Redis instance and reused by all CFs.
+    block_cache: Option<Arc<BlockCache>>,
 
     // For background task
     pub storage: Arc<StorageOptions>,
@@ -296,6 +299,16 @@ impl Redis {
         compact_options.set_change_level(true);
         compact_options.set_exclusive_manual_compaction(false);
 
+        let block_cache = if storage.share_block_cache {
+            storage.block_cache.as_ref().map(Arc::clone)
+        } else if storage.block_cache_size > 0 {
+            Some(Arc::new(BlockCache::new_lru_cache(
+                storage.block_cache_size,
+            )))
+        } else {
+            None
+        };
+
         let statistics_store: Cache<String, KeyStatistics> =
             CacheBuilder::new(storage.statistics_max_size).build();
 
@@ -311,6 +324,7 @@ impl Redis {
             write_options: WriteOptions::default(),
             read_options: ReadOptions::default(),
             compact_options,
+            block_cache,
 
             statistics_store: Arc::new(statistics_store),
             scan_cursors_store: Mutex::new(CacheBuilder::new(5000).build()),
@@ -408,6 +422,7 @@ impl Redis {
                     name,
                     *use_bloom,
                     *block_size,
+                    self.block_cache.as_deref(),
                     Some(&db_once_cell),
                     &collector,
                 )
@@ -447,6 +462,7 @@ impl Redis {
         cf_name: &str,
         use_bloom_filter: bool,
         block_size: Option<usize>,
+        block_cache: Option<&BlockCache>,
         db_once_cell: Option<&Arc<OnceCell<Weak<DB>>>>,
         collector: &Arc<LogIndexAndSequenceCollector>,
     ) -> ColumnFamilyDescriptor {
@@ -476,10 +492,15 @@ impl Redis {
             table_opts.set_block_size(size);
         }
 
-        // Set block cache
-        if !storage_options.share_block_cache && storage_options.block_cache_size > 0 {
-            let cache = rocksdb::Cache::new_lru_cache(storage_options.block_cache_size);
-            table_opts.set_block_cache(&cache);
+        // Set block cache.
+        //
+        // `Redis::new` selects this handle once per instance. Every CF opened by
+        // this Redis receives that same handle, while separate Redis instances
+        // receive distinct handles when sharing is disabled.
+        if let Some(block_cache) = block_cache {
+            table_opts.set_block_cache(block_cache);
+        } else if storage_options.block_cache_size == 0 {
+            table_opts.disable_cache();
         }
 
         // Set table properties collector factory for LogIndex tracking
@@ -1542,5 +1563,108 @@ mod type_check_state_tests {
             .check_type_state(&value, DataType::Set)
             .expect("check_type_state must not error for a live value");
         assert_eq!(state, TypeCheckState::Match);
+    }
+}
+
+#[cfg(test)]
+mod block_cache_tests {
+    use std::sync::Arc;
+
+    use kstd::lock_mgr::LockMgr;
+
+    use super::Redis;
+    use crate::{BgTaskHandler, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+
+    fn new_redis(options: Arc<StorageOptions>, index: i32) -> Redis {
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        Redis::new(
+            options,
+            index,
+            Arc::new(bg_task_handler),
+            Arc::new(LockMgr::new(64)),
+        )
+    }
+
+    #[test]
+    fn disabled_sharing_creates_one_distinct_cache_per_redis_instance() {
+        let options = Arc::new(StorageOptions {
+            block_cache_size: 4 * 1024 * 1024,
+            share_block_cache: false,
+            block_cache: None,
+            ..StorageOptions::default()
+        });
+
+        let first = new_redis(Arc::clone(&options), 0);
+        let second = new_redis(options, 1);
+        let first_cache = first
+            .block_cache
+            .as_ref()
+            .expect("the first Redis instance should own a block cache");
+        let second_cache = second
+            .block_cache
+            .as_ref()
+            .expect("the second Redis instance should own a block cache");
+
+        assert!(
+            !Arc::ptr_eq(first_cache, second_cache),
+            "different Redis instances must not share their per-instance caches"
+        );
+    }
+
+    #[test]
+    fn default_options_share_one_cache_across_redis_instances() {
+        let options = Arc::new(StorageOptions::default());
+        let shared_cache = options
+            .block_cache
+            .as_ref()
+            .expect("default options should configure a shared block cache")
+            .clone();
+
+        let first = new_redis(Arc::clone(&options), 0);
+        let second = new_redis(options, 1);
+        let first_cache = first
+            .block_cache
+            .as_ref()
+            .expect("the first Redis instance should use the shared block cache");
+        let second_cache = second
+            .block_cache
+            .as_ref()
+            .expect("the second Redis instance should use the shared block cache");
+
+        assert!(Arc::ptr_eq(first_cache, &shared_cache));
+        assert!(Arc::ptr_eq(second_cache, &shared_cache));
+    }
+
+    #[test]
+    fn zero_block_cache_size_disables_rocksdb_internal_cache_for_every_cf() {
+        let path = unique_test_db_path();
+        safe_cleanup_test_db(&path);
+        let options = Arc::new(StorageOptions {
+            block_cache_size: 0,
+            share_block_cache: true,
+            block_cache: None,
+            ..StorageOptions::default()
+        });
+        let mut redis = new_redis(options, 0);
+        redis
+            .open(path.to_str().expect("test DB path should be valid UTF-8"))
+            .expect("Redis should open with block cache disabled");
+        let db = redis.db.as_ref().expect("Redis should own RocksDB");
+
+        for cf_name in &redis.handles {
+            let cf = db
+                .cf_handle(cf_name)
+                .expect("every configured CF should be open");
+            let capacity = db
+                .property_int_value_cf(&cf, "rocksdb.block-cache-capacity")
+                .expect("block cache capacity property should be readable");
+            assert_eq!(
+                capacity, None,
+                "{cf_name} must not receive RocksDB's implicit internal block cache"
+            );
+        }
+
+        drop(redis);
+        safe_cleanup_test_db(&path);
     }
 }
