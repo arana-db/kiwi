@@ -653,16 +653,25 @@ async fn test_expired_vectorset_reads_as_missing() {
 }
 
 #[test]
-fn test_del_removes_vector_meta_and_members() {
+fn test_del_tombstones_vector_meta_and_defers_member_cleanup() {
     with_redis(|redis| {
         let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
         redis.vadd(b"vectors", b"a", &vector).expect("insert a");
         redis.vadd(b"vectors", b"b", &vector).expect("insert b");
         assert_eq!(count_cf_entries(redis, ColumnFamilyIndex::VectorDataCF), 2);
+        let previous_version = read_stored_vector_meta(redis, b"vectors").version();
 
         assert!(redis.del_key(b"vectors").expect("delete vector set"));
         assert_eq!(redis.vcard(b"vectors").expect("missing card"), 0);
-        assert_eq!(count_cf_entries(redis, ColumnFamilyIndex::VectorDataCF), 0);
+        let tombstone = read_stored_vector_meta(redis, b"vectors");
+        assert_eq!(tombstone.count(), 0);
+        assert_eq!(tombstone.etime(), 0);
+        assert!(tombstone.version() > previous_version);
+        assert_eq!(
+            count_cf_entries(redis, ColumnFamilyIndex::VectorDataCF),
+            2,
+            "DEL should leave vector members for compaction"
+        );
     });
 }
 

@@ -33,7 +33,6 @@ use crate::{
     format_base_meta_value::ParsedBaseMetaValue,
     format_list_meta_value::ParsedListsMetaValue,
     format_strings_value::{ParsedStringsValue, StringValue},
-    format_vector_member_key::VectorMemberDataKey,
     redis_sets::glob_match_bytes,
 };
 
@@ -2059,7 +2058,7 @@ impl Redis {
                     log::warn!("failed to update key statistics for {key_str}: {error:?}");
                 }
             }
-            DataType::Hash | DataType::Set | DataType::ZSet => {
+            DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                 let mut parsed = ParsedBaseMetaValue::new(&value[..])?;
                 if !parsed.is_valid() {
                     return Ok(false);
@@ -2077,39 +2076,6 @@ impl Redis {
                 )?;
                 batch.commit()?;
                 if let Err(error) = self.update_specific_key_statistics(data_type, &key_str, count)
-                {
-                    log::warn!("failed to update key statistics for {key_str}: {error:?}");
-                }
-            }
-            DataType::VectorSet => {
-                let parsed = ParsedBaseMetaValue::new(&value[..])?;
-                if !parsed.is_valid() {
-                    return Ok(false);
-                }
-                let count = parsed.count();
-                let prefix = VectorMemberDataKey::encode_key_prefix(key)?;
-                let Some(vector_cf) = self.get_cf_handle(ColumnFamilyIndex::VectorDataCF) else {
-                    return Ok(false);
-                };
-                let mut keys_to_delete = Vec::new();
-                for item in db.iterator_cf(
-                    &vector_cf,
-                    rocksdb::IteratorMode::From(&prefix, rocksdb::Direction::Forward),
-                ) {
-                    let (member_key, _) = item.context(RocksSnafu)?;
-                    if !member_key.starts_with(&prefix) {
-                        break;
-                    }
-                    keys_to_delete.push(member_key.to_vec());
-                }
-                let mut batch = self.create_batch()?;
-                batch.delete(ColumnFamilyIndex::MetaCF, &encoded_meta_key)?;
-                for member_key in keys_to_delete {
-                    batch.delete(ColumnFamilyIndex::VectorDataCF, &member_key)?;
-                }
-                batch.commit()?;
-                if let Err(error) =
-                    self.update_specific_key_statistics(DataType::VectorSet, &key_str, count)
                 {
                     log::warn!("failed to update key statistics for {key_str}: {error:?}");
                 }
