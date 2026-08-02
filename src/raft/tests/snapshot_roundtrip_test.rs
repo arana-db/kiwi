@@ -693,7 +693,13 @@ async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
     close_storage(source_storage, "source storage").await?;
 
     let mut target_storage = Storage::new(1, 0);
-    let options = Arc::new(StorageOptions::default());
+    let configured_cache = Arc::new(rocksdb::Cache::new_lru_cache(4 * 1024 * 1024));
+    let options = Arc::new(StorageOptions {
+        block_cache_size: 4 * 1024 * 1024,
+        share_block_cache: true,
+        block_cache: Some(Arc::clone(&configured_cache)),
+        ..StorageOptions::default()
+    });
     let _target_rx = target_storage.open(options, &restore_db_path)?;
     target_storage.set(b"stale_key", b"stale_value")?;
 
@@ -730,6 +736,20 @@ async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
     let restored = target_swap.load_full();
     assert_eq!(restored.get(b"snapshot_key")?, "snapshot_value");
     assert!(restored.get(b"stale_key").is_err());
+    let restored_options = &restored.insts[0].storage;
+    assert!(restored_options.share_block_cache);
+    assert_eq!(restored_options.block_cache_size, 4 * 1024 * 1024);
+    assert!(
+        restored_options.block_cache.is_some(),
+        "snapshot install should preserve the configured shared block cache"
+    );
+    assert!(Arc::ptr_eq(
+        restored_options
+            .block_cache
+            .as_ref()
+            .expect("restored cache should exist"),
+        &configured_cache
+    ));
 
     drop(target_sm);
     drop(target_swap);

@@ -60,9 +60,10 @@ pub struct StorageOptions {
     pub block_cache_size: usize,
     /// Whether to share block cache across column families
     pub share_block_cache: bool,
-    /// Shared block cache built once in `from_config` and reused by every
-    /// `Redis` instance through the shared `Arc<StorageOptions>`.
-    /// `None` means no shared cache; each instance falls back to its own.
+    /// Shared block cache created by the default/configuration path and reused
+    /// by every `Redis` instance through the shared `Arc<StorageOptions>`.
+    /// `None` means no explicit shared cache. When sharing is disabled,
+    /// each `Redis` instance builds one cache from `block_cache_size`.
     pub block_cache: Option<Arc<Cache>>,
     /// Maximum size for statistics
     pub statistics_max_size: usize,
@@ -84,6 +85,7 @@ pub struct StorageOptions {
 
 impl Default for StorageOptions {
     fn default() -> Self {
+        let block_cache_size = 8 << 30; // 8GB
         let mut options = Options::default();
         options.create_if_missing(true);
         options.create_missing_column_families(true);
@@ -96,9 +98,9 @@ impl Default for StorageOptions {
         Self {
             options,
             table_options: BlockBasedOptions::default(),
-            block_cache_size: 8 << 30, // 8GB
+            block_cache_size,
             share_block_cache: true,
-            block_cache: None,
+            block_cache: Some(Arc::new(Cache::new_lru_cache(block_cache_size))),
             statistics_max_size: 0,
             small_compaction_threshold: 5000,
             small_compaction_duration_threshold: 10000,
@@ -133,6 +135,7 @@ impl StorageOptions {
         Self {
             options: rocksdb_opts,
             block_cache_size: config.memory as usize,
+            share_block_cache: config.share_block_cache,
             block_cache,
             small_compaction_threshold: config.small_compaction_threshold,
             small_compaction_duration_threshold: config.small_compaction_duration_threshold,
@@ -144,13 +147,23 @@ impl StorageOptions {
     /// Set block cache size
     pub fn set_block_cache_size(&mut self, size: usize) -> &mut Self {
         self.block_cache_size = size;
+        self.rebuild_shared_block_cache();
         self
     }
 
     /// Set whether to share block cache
     pub fn set_share_block_cache(&mut self, share: bool) -> &mut Self {
         self.share_block_cache = share;
+        self.rebuild_shared_block_cache();
         self
+    }
+
+    fn rebuild_shared_block_cache(&mut self) {
+        self.block_cache = if self.share_block_cache && self.block_cache_size > 0 {
+            Some(Arc::new(Cache::new_lru_cache(self.block_cache_size)))
+        } else {
+            None
+        };
     }
 
     /// Set statistics maximum size
@@ -231,4 +244,51 @@ impl StorageOptions {
 pub enum OptionType {
     DB,
     ColumnFamily,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StorageOptions;
+
+    #[test]
+    fn from_config_preserves_disabled_share_block_cache() {
+        let config = conf::config::Config {
+            share_block_cache: false,
+            memory: 64 * 1024 * 1024,
+            ..conf::config::Config::default()
+        };
+
+        let options = StorageOptions::from_config(&config);
+
+        assert!(!options.share_block_cache);
+        assert!(options.block_cache.is_none());
+        assert_eq!(options.block_cache_size, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn block_cache_setters_keep_the_derived_cache_consistent() {
+        let config = conf::config::Config {
+            memory: 4 * 1024 * 1024,
+            ..conf::config::Config::default()
+        };
+        let mut options = StorageOptions::from_config(&config);
+        let original_cache = options
+            .block_cache
+            .as_ref()
+            .expect("sharing should create a block cache")
+            .clone();
+
+        options.set_block_cache_size(8 * 1024 * 1024);
+        let resized_cache = options
+            .block_cache
+            .as_ref()
+            .expect("resizing a shared cache should rebuild it");
+        assert!(!std::sync::Arc::ptr_eq(&original_cache, resized_cache));
+
+        options.set_share_block_cache(false);
+        assert!(options.block_cache.is_none());
+
+        options.set_share_block_cache(true);
+        assert!(options.block_cache.is_some());
+    }
 }

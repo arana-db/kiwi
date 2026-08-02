@@ -146,6 +146,13 @@ impl Storage {
         }
     }
 
+    /// Return the immutable options shared by every opened Redis instance.
+    pub fn storage_options(&self) -> Option<Arc<StorageOptions>> {
+        self.insts
+            .first()
+            .map(|instance| Arc::clone(&instance.storage))
+    }
+
     /// Wait for shared top-level command access without blocking a runtime worker.
     ///
     /// The owned guard is `Send`, so a dispatcher may keep it while command
