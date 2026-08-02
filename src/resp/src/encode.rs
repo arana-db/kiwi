@@ -100,6 +100,13 @@ impl RespEncoder {
         matches!(self.version, RespVersion::RESP3)
     }
 
+    pub fn append_verbatim_string<F>(&mut self, format: F, data: &[u8]) -> &mut Self
+    where
+        F: AsRef<[u8]>,
+    {
+        <Self as RespEncode>::append_verbatim_string(self, format.as_ref(), data)
+    }
+
     fn append_crlf(&mut self) -> &mut Self {
         self.buffer.extend_from_slice(CRLF.as_bytes());
         self
@@ -271,16 +278,17 @@ impl RespEncode for RespEncoder {
 
     fn append_verbatim_string(&mut self, format: &[u8], data: &[u8]) -> &mut Self {
         if self.is_resp3() {
-            if format.len() != 3 {
-                panic!(
-                    "RESP3 VerbatimString format must be exactly 3 bytes, got {}",
-                    format.len()
-                );
-            }
-            let total_len = format.len() + 1 + data.len(); // format + ':' + data
+            let fmt: [u8; 3] = if format.len() == 3 {
+                let mut f = [0u8; 3];
+                f.copy_from_slice(format);
+                f
+            } else {
+                *b"txt"
+            };
+            let total_len = fmt.len() + 1 + data.len(); // format + ':' + data
             let _ = write!(self.buffer, "={total_len}");
             self.append_crlf();
-            self.buffer.extend_from_slice(format);
+            self.buffer.extend_from_slice(&fmt);
             self.buffer.extend_from_slice(b":");
             self.buffer.extend_from_slice(data);
             self.append_crlf()
@@ -451,6 +459,31 @@ mod tests {
         assert_eq!(
             encoder.get_response(),
             Bytes::from("=15\r\ntxt:Some string\r\n")
+        );
+    }
+
+    #[test]
+    fn invalid_resp_data_verbatim_format_falls_back_to_txt() {
+        let mut encoder = RespEncoder::new(RespVersion::RESP3);
+        encoder.encode_resp_data(&RespData::VerbatimString {
+            format: Bytes::from("html"),
+            data: Bytes::from("payload"),
+        });
+
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("=11\r\ntxt:payload\r\n")
+        );
+    }
+
+    #[test]
+    fn invalid_convenience_verbatim_format_falls_back_to_txt() {
+        let mut encoder = RespEncoder::new(RespVersion::RESP3);
+        encoder.append_verbatim_string("html", b"payload");
+
+        assert_eq!(
+            encoder.get_response(),
+            Bytes::from("=11\r\ntxt:payload\r\n")
         );
     }
 

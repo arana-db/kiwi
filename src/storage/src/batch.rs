@@ -306,6 +306,11 @@ impl BinlogBatch {
     }
 
     pub(crate) fn infer_user_key(cf_idx: u32, encoded_key: &[u8]) -> Result<Vec<u8>> {
+        if cf_idx == ColumnFamilyIndex::VectorDataCF as u32 {
+            let parsed = ParsedVectorMemberDataKey::decode(encoded_key)?;
+            return Ok(parsed.key().to_vec());
+        }
+
         let tail_length = match cf_idx {
             value if value == ColumnFamilyIndex::MetaCF as u32 => SUFFIX_RESERVE_LENGTH,
             value
@@ -328,13 +333,6 @@ impl BinlogBatch {
                 .fail();
             }
         };
-
-        // Vector member keys use the V1 vector codec, not the shared
-        // MemberDataKey layout.
-        if cf_idx == ColumnFamilyIndex::VectorDataCF as u32 {
-            let parsed = ParsedVectorMemberDataKey::decode(encoded_key)?;
-            return Ok(parsed.key().to_vec());
-        }
 
         if encoded_key.len() < PREFIX_RESERVE_LENGTH + 2 + tail_length {
             return InvalidFormatSnafu {
@@ -479,7 +477,7 @@ impl Batch for BinlogBatch {
 
         let slot_idx = Self::infer_slot_idx(&self.entries)?;
         let binlog = Binlog {
-            db_id: 0, // TODO: thread real db_id from Redis/Storage in a later task
+            db_id: 0, // TODO(#400): thread real db_id from Redis/Storage in a later task
             slot_idx,
             entries: self.entries,
         };

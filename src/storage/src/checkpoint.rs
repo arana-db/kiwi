@@ -570,7 +570,12 @@ fn remove_target_with_retry(target_db_path: &Path) -> io::Result<()> {
         }
     }
 
-    unreachable!("target removal loop always returns")
+    // Every match arm in the loop body returns, so this line is unreachable
+    // in practice. Return an error as a safe fallback rather than panicking.
+    Err(io::Error::other(format!(
+        "target removal loop exhausted for {}",
+        target_db_path.display()
+    )))
 }
 
 /// Copy checkpoint layout from `checkpoint_root` into `target_db_path` (`0/`, `1/`, …).

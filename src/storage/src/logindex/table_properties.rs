@@ -170,6 +170,7 @@ pub fn get_largest_log_index_from_collection(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
     use super::*;
     use rocksdb::{DB, Options};
     use tempfile::TempDir;

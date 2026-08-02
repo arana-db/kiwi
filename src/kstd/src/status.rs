@@ -23,7 +23,7 @@ pub struct Status {
     message: String,
 }
 
-/// TODO: remove allow dead code.
+/// TODO(#400): remove allow dead code.
 #[allow(dead_code)]
 #[derive(Debug, PartialEq)]
 pub enum Code {
@@ -32,7 +32,7 @@ pub enum Code {
     Busy,
 }
 
-/// TODO: remove allow dead code.
+/// TODO(#400): remove allow dead code.
 #[allow(dead_code)]
 impl Status {
     // Create a success status.
