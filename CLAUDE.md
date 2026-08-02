@@ -85,12 +85,16 @@ Workspace members under `src/`:
 
 ```text
 Client → TCP accept [network runtime] → RESP parse → command lookup
-  → CmdExecutor [network runtime] → Cmd.execute() → StorageClient
-    → async message channel →
-  → StorageServer [storage runtime] → RocksDB
+  → connection-local execution or executor_ext admission/dispatch
+  → StorageClient → bounded async message channel
+  → StorageServer [storage runtime] → Cmd.execute() → Storage/RocksDB
     ← oneshot response ←
   → RESP encode [network runtime] → write back to client
 ```
+
+`CmdExecutor` is not the active production request queue on this path. Network
+code performs the initial command admission, while `StorageServer` reconstructs
+the execution context and invokes `Cmd::execute` on the storage runtime.
 
 ### Adding a Redis Command
 
@@ -113,7 +117,10 @@ Steps to add a command:
 - `Storage` holds multiple `Redis` instances (default 3), distributed by a `SlotIndexer` hash.
 - Each `Redis` instance is a RocksDB database with column families: `MetaCF` (metadata & strings), `HashesDataCF`, `SetsDataCF`, `ListsDataCF`, `ZsetsDataCF`, and `ZsetsScoreCF`.
 - `LockMgr` provides sharded key-level locking.
-- TTL and expiration are managed by `ExpirationManager`.
+- The persisted `etime` in RocksDB metadata is the expiration authority; reads
+  and compaction filters use it to reject stale data. `ExpirationManager` is a
+  non-authoritative in-memory scheduling index, and its current
+  `CompactSpecificKey` path does not yet perform physical cleanup.
 
 ### Raft Cluster Mode
 
@@ -186,8 +193,8 @@ For multi-step tasks, state a brief plan:
 
 Before modifying files in every new session:
 
-1. Read this file, `CONTRIBUTING.md`, `.planning/PROJECT.md`, `.planning/STATE.md`, and `.planning/KANBAN.md` completely.
-2. Read the current plan linked by `.planning/STATE.md`.
+1. Read this file, `CONTRIBUTING.md`, and `.planning/SDD.md` completely.
+2. Read the current work package, requirements, decisions, Issue, spec, plan, and verification evidence linked by `.planning/SDD.md`.
 3. Read `.codex/recovery/ACTIVE.md` if it exists.
 4. Run `git status --porcelain=v2 --branch --untracked-files=all`.
 5. Compare branch, HEAD, and dirty ownership with the recovery record.

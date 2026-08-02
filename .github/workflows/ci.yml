@@ -33,6 +33,21 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
+  planning-docs:
+    name: planning SDD validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate failure paths
+        run: python3 scripts/validate_sdd.py --self-test
+
+      - name: Validate SDD control plane
+        run: python3 scripts/validate_sdd.py
+
   license-check:
     name: license header check
     runs-on: ubuntu-latest

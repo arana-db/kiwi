@@ -95,7 +95,8 @@ Client write
 ```text
 Client linearizable read
   → Redis 8.8.1 validation
-  → Leader / ReadIndex / approved lease gate
+  → current Leader + OpenRaft ensure_linearizable/ReadIndex
+    or an approved and safety-proven lease read protocol
   → StorageClient / async channel / StorageServer
   → Storage / RocksDB authoritative read
   → reply

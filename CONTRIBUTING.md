@@ -73,4 +73,11 @@ By contributing, you agree that your contributions will be licensed under the Ap
 - Do not vendor or copy RedisRaft source or tests into Kiwi. RedisRaft is used as a clean-room public behavior reference.
 - redis-rs is permitted only in compatibility tooling or development/test dependencies. Production server crates must not depend on it.
 
-Every implementation PR must reference the relevant `REQ-*` entries in `.planning/REQUIREMENTS.md`. When a work item is completed, update `.planning/STATE.md` and `.planning/KANBAN.md` with the exact validation command and result.
+Every implementation PR must reference the work package in `.planning/SDD.md`,
+one primary GitHub Issue, and the relevant `REQ-*` entries in
+`.planning/REQUIREMENTS.md`. Use `Fixes #N` or `Closes #N` only when the PR
+completely satisfies that Issue; partial work must use `Refs #N` or
+`Related #N`.
+After merge, verify the exact `main` commit and write the PR, merge SHA,
+commands, environment, results, and remaining risks back to `.planning/SDD.md`
+before moving the work package from `implemented` to `verified` or `accepted`.
