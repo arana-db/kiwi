@@ -227,4 +227,11 @@ mod tests {
 
         assert_eq!(client.name().as_slice(), b"my-client");
     }
+
+    #[test]
+    fn default_requirepass_provider_has_nonzero_trait_object_data_size() {
+        let cmd = HelloCmd::default();
+
+        assert_ne!(std::mem::size_of_val(cmd.requirepass_provider.as_ref()), 0);
+    }
 }
