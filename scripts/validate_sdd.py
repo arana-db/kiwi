@@ -218,10 +218,13 @@ def scoped_decision_references(sdd: str, errors: list[str]) -> set[str]:
 
 
 def validate_registries(root: Path, sdd: str, errors: list[str]) -> tuple[int, int]:
-    requirements = strip_markdown_noncontract(
-        read_text(root / ".planning/REQUIREMENTS.md")
-    )
-    decisions = strip_markdown_noncontract(read_text(root / ".planning/DECISIONS.md"))
+    requirements_path = root / ".planning/REQUIREMENTS.md"
+    decisions_path = root / ".planning/DECISIONS.md"
+    if not requirements_path.is_file() or not decisions_path.is_file():
+        return 0, 0
+
+    requirements = strip_markdown_noncontract(read_text(requirements_path))
+    decisions = strip_markdown_noncontract(read_text(decisions_path))
 
     requirement_definitions = REQ_DEFINITION.findall(requirements)
     decision_definitions = DECISION_DEFINITION.findall(decisions)
@@ -533,9 +536,17 @@ def validate_artifacts(
             )
 
 
-def validate_markdown(root: Path, errors: list[str]) -> None:
-    markdown_paths = [root / path for path in EXPECTED_WP0_ARTIFACTS if path.endswith(".md")]
-    for path in markdown_paths:
+def validate_markdown(
+    root: Path,
+    errors: list[str],
+    relative_paths: tuple[str, ...] | None = None,
+) -> None:
+    if relative_paths is None:
+        relative_paths = tuple(
+            path for path in EXPECTED_WP0_ARTIFACTS if path.endswith(".md")
+        )
+    for relative_path in relative_paths:
+        path = root / relative_path
         if not path.is_file():
             continue
         text = read_text(path)
@@ -569,7 +580,10 @@ def validate_governance_terms(root: Path, errors: list[str]) -> None:
         if not path.is_file():
             continue
         text = read_text(path)
-        if "Part of" in text:
+        if re.search(
+            r"(?mi)\bPart of\b\s*:?\s*(?:\[#\d+\]\(|#\d+|https://github\.com/)",
+            text,
+        ):
             errors.append(f"deprecated partial-Issue keyword remains in {relative}")
 
     milestone_pattern = re.compile(
@@ -598,6 +612,7 @@ def validate(
     *,
     check_git_diff: bool = True,
     check_markdown: bool = True,
+    markdown_paths: tuple[str, ...] | None = None,
 ) -> tuple[list[str], dict[str, object]]:
     errors: list[str] = []
     sdd_path = root / ".planning/SDD.md"
@@ -616,7 +631,7 @@ def validate(
     invariant_count = validate_invariants(sdd, errors)
     validate_artifacts(root, sdd, fields, errors, check_git_diff)
     if check_markdown:
-        validate_markdown(root, errors)
+        validate_markdown(root, errors, markdown_paths)
     validate_governance_terms(root, errors)
     summary: dict[str, object] = {
         "authority": fields.get("authority"),
@@ -644,12 +659,24 @@ def copy_contract(root: Path, destination: Path) -> None:
         shutil.copy2(source, target)
 
 
-def expect_failure(root: Path, mutation, expected_fragment: str) -> None:
+def expect_failure(
+    root: Path,
+    mutation,
+    expected_fragment: str,
+    *,
+    check_markdown: bool = False,
+    markdown_paths: tuple[str, ...] | None = None,
+) -> None:
     with tempfile.TemporaryDirectory(prefix="kiwi-sdd-test-") as temporary:
         candidate = Path(temporary)
         copy_contract(root, candidate)
         mutation(candidate)
-        errors, _ = validate(candidate, check_git_diff=False, check_markdown=False)
+        errors, _ = validate(
+            candidate,
+            check_git_diff=False,
+            check_markdown=check_markdown,
+            markdown_paths=markdown_paths,
+        )
         if not any(expected_fragment in error for error in errors):
             raise AssertionError(
                 f"mutation did not fail for {expected_fragment!r}; errors={errors}"
@@ -660,6 +687,16 @@ def run_self_tests(root: Path) -> None:
     errors, _ = validate(root)
     if errors:
         raise AssertionError(f"baseline contract must pass before mutations: {errors}")
+
+    for relative in (
+        ".planning/REQUIREMENTS.md",
+        ".planning/DECISIONS.md",
+    ):
+        expect_failure(
+            root,
+            lambda candidate, path=relative: (candidate / path).unlink(),
+            f"missing WP0 artifact: {relative}",
+        )
 
     expect_failure(
         root,
@@ -683,6 +720,43 @@ def run_self_tests(root: Path) -> None:
         path.write_text(text + f"\n{line}\n", encoding="utf-8")
 
     expect_failure(root, duplicate_requirement, "duplicate requirement definitions")
+
+    def add_deprecated_issue_keyword(candidate: Path) -> None:
+        path = candidate / "docs/prd.md"
+        path.write_text(
+            read_text(path) + "\nPart of: #413\n",
+            encoding="utf-8",
+        )
+
+    expect_failure(
+        root,
+        add_deprecated_issue_keyword,
+        "deprecated partial-Issue keyword remains",
+    )
+
+    with tempfile.TemporaryDirectory(prefix="kiwi-sdd-prose-") as temporary:
+        candidate = Path(temporary)
+        copy_contract(root, candidate)
+        path = candidate / "docs/prd.md"
+        path.write_text(
+            read_text(path) + "\nPart of the request path remains synchronous.\n",
+            encoding="utf-8",
+        )
+        prose_errors, _ = validate(
+            candidate,
+            check_git_diff=False,
+            check_markdown=False,
+        )
+        deprecated_errors = [
+            error
+            for error in prose_errors
+            if "deprecated partial-Issue keyword" in error
+        ]
+        if deprecated_errors:
+            raise AssertionError(
+                "ordinary prose must not be treated as an Issue relationship: "
+                f"{deprecated_errors}"
+            )
 
     def indent_requirement_definition(candidate: Path) -> None:
         path = candidate / ".planning/REQUIREMENTS.md"
@@ -787,13 +861,45 @@ def run_self_tests(root: Path) -> None:
 
     expect_failure(root, remove_scoped_artifact, "WP0 SDD scope differs")
 
+    def add_broken_relative_link(candidate: Path) -> None:
+        path = candidate / ".planning/KANBAN.md"
+        path.write_text(
+            read_text(path) + "\n[broken](missing-contract.md)\n",
+            encoding="utf-8",
+        )
+
+    expect_failure(
+        root,
+        add_broken_relative_link,
+        "broken relative link in .planning/KANBAN.md",
+        check_markdown=True,
+        markdown_paths=(".planning/KANBAN.md",),
+    )
+
+    def add_unpaired_fence(candidate: Path) -> None:
+        path = candidate / ".planning/KANBAN.md"
+        path.write_text(read_text(path) + "\n```text\n", encoding="utf-8")
+
+    expect_failure(
+        root,
+        add_unpaired_fence,
+        "unpaired ``` fence in .planning/KANBAN.md",
+        check_markdown=True,
+        markdown_paths=(".planning/KANBAN.md",),
+    )
+
     def break_baseline(candidate: Path) -> None:
         path = candidate / ".planning/SDD.md"
-        text = read_text(path).replace(
-            "baseline_ref: 0c4795ec716299598686fc7c5e0fac03a30e044d",
+        text, replacements = re.subn(
+            r"(?m)^baseline_ref: [0-9a-f]{40}$",
             "baseline_ref: deadbeef",
-            1,
+            read_text(path),
+            count=1,
         )
+        if replacements != 1:
+            raise AssertionError(
+                "baseline mutation requires exactly one full baseline_ref SHA"
+            )
         path.write_text(text, encoding="utf-8")
 
     expect_failure(root, break_baseline, "baseline_ref must be a full")
@@ -874,7 +980,10 @@ def run_self_tests(root: Path) -> None:
         if lifecycle_errors:
             raise AssertionError(f"implemented lifecycle state must remain valid: {lifecycle_errors}")
 
-    print("SDD validator self-tests passed (20 failure-path mutations, 1 lifecycle transition)")
+    print(
+        "SDD validator self-tests passed "
+        "(25 failure-path mutations, 1 lifecycle transition, 1 prose guard)"
+    )
 
 
 def main() -> int:
