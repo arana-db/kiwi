@@ -27,30 +27,30 @@ use crate::{Cmd, CmdMeta};
 
 pub type CmdTable = HashMap<String, Arc<dyn Cmd>>;
 
-/// Provider returning whether a gated command family is currently allowed.
-pub type GateFlagProvider = Arc<dyn Fn() -> bool + Send + Sync>;
-
-/// Feature gates consulted when a command table is built. Gates are evaluated
-/// on every command execution, so a table always reflects the injected flags.
-#[derive(Clone)]
+/// Feature gates captured when a command table is built.
+///
+/// The values come from startup configuration and do not change while a
+/// command table is alive, so storing them by value avoids an unnecessary
+/// callback/Arc allocation for every gate.
+#[derive(Clone, Copy)]
 pub struct CommandTableGates {
     /// Whether the Vector Set commands (VADD/VSIM/...) are enabled.
-    pub vector_enabled: GateFlagProvider,
+    pub vector_enabled: bool,
     /// Whether Vector Set commands are allowed given the cluster state:
     /// false in cluster mode until the Raft apply-correctness contract (PR0)
     /// lands.
-    pub vector_cluster_allowed: GateFlagProvider,
+    pub vector_cluster_allowed: bool,
     /// Whether FLUSHDB/FLUSHALL are allowed. Disabled in cluster mode unless
     /// `cluster-flush-enabled` is set.
-    pub cluster_flush_allowed: GateFlagProvider,
+    pub cluster_flush_allowed: bool,
 }
 
 impl Default for CommandTableGates {
     fn default() -> Self {
         Self {
-            vector_enabled: Arc::new(|| true),
-            vector_cluster_allowed: Arc::new(|| true),
-            cluster_flush_allowed: Arc::new(|| true),
+            vector_enabled: true,
+            vector_cluster_allowed: true,
+            cluster_flush_allowed: true,
         }
     }
 }
@@ -63,9 +63,9 @@ impl CommandTableGates {
         cluster_flush_allowed: bool,
     ) -> Self {
         Self {
-            vector_enabled: Arc::new(move || vector_enabled),
-            vector_cluster_allowed: Arc::new(move || vector_cluster_allowed),
-            cluster_flush_allowed: Arc::new(move || cluster_flush_allowed),
+            vector_enabled,
+            vector_cluster_allowed,
+            cluster_flush_allowed,
         }
     }
 }
@@ -76,7 +76,7 @@ impl CommandTableGates {
 #[derive(Clone)]
 struct GatedCmd {
     inner: Arc<dyn Cmd>,
-    allowed: GateFlagProvider,
+    allowed: bool,
     disabled_error: String,
 }
 
@@ -86,7 +86,7 @@ impl Cmd for GatedCmd {
     }
 
     fn do_initial(&self, client: &Client) -> bool {
-        if !(self.allowed)() {
+        if !self.allowed {
             client.set_reply(RespData::Error(self.disabled_error.clone().into()));
             return false;
         }
@@ -107,14 +107,14 @@ impl Cmd for GatedCmd {
 fn register_gated_cmds(
     cmd_table: &mut CmdTable,
     cmds: Vec<Arc<dyn Cmd>>,
-    allowed: &GateFlagProvider,
+    allowed: bool,
     disabled_error: impl Fn(&CmdMeta) -> String,
 ) {
     for cmd in cmds {
         let meta = cmd.meta().clone();
         let gated = GatedCmd {
             inner: cmd,
-            allowed: Arc::clone(allowed),
+            allowed,
             disabled_error: disabled_error(&meta),
         };
         cmd_table.insert(meta.name, Arc::new(gated));
@@ -125,7 +125,7 @@ fn register_gated_cmds(
 /// layered on top before insertion into the table.
 fn wrap_gated_cmds(
     cmds: Vec<Arc<dyn Cmd>>,
-    allowed: &GateFlagProvider,
+    allowed: bool,
     disabled_error: impl Fn(&CmdMeta) -> String,
 ) -> Vec<Arc<dyn Cmd>> {
     cmds.into_iter()
@@ -133,7 +133,7 @@ fn wrap_gated_cmds(
             let meta = cmd.meta().clone();
             Arc::new(GatedCmd {
                 inner: cmd,
-                allowed: Arc::clone(allowed),
+                allowed,
                 disabled_error: disabled_error(&meta),
             }) as Arc<dyn Cmd>
         })
@@ -304,7 +304,7 @@ pub fn create_command_table_with_gates(
     register_gated_cmds(
         &mut cmd_table,
         flush_cmds,
-        &gates.cluster_flush_allowed,
+        gates.cluster_flush_allowed,
         |meta| {
             format!(
                 "ERR {} is not supported in cluster mode yet",
@@ -329,10 +329,10 @@ pub fn create_command_table_with_gates(
         Arc::new(crate::vector::VInfoCmd::new()),
         Arc::new(crate::vector::VIsMemberCmd::new()),
     ];
-    let vector_cmds = wrap_gated_cmds(vector_cmds, &gates.vector_cluster_allowed, |_| {
+    let vector_cmds = wrap_gated_cmds(vector_cmds, gates.vector_cluster_allowed, |_| {
         "ERR vector commands are not supported in cluster mode yet".to_string()
     });
-    register_gated_cmds(&mut cmd_table, vector_cmds, &gates.vector_enabled, |_| {
+    register_gated_cmds(&mut cmd_table, vector_cmds, gates.vector_enabled, |_| {
         "ERR vector support is disabled (vector-enabled=false)".to_string()
     });
 
