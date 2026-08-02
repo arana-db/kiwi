@@ -175,7 +175,7 @@ M7 到 M10 进入长期架构，但不进入当前实现：
 
 | 分类 | 数量 | 处理 |
 |---|---:|---|
-| 当前主路线 | 22 | 映射到 M0-M6 工作包 |
+| 当前主路线 | 22 | 映射到 M0-M6 当前主路线的 WP0-WP7 工作包 |
 | 需要源码复核、重新定界或产品决定 | 25 | 先审计或决策，不直接实施 |
 | 已过期、被替代或与当前方向冲突 | 16 | 不进入当前实现，后续单独治理 |
 
@@ -319,7 +319,7 @@ flowchart LR
 ### 4.4 当前 Raft 与 Snapshot 事实
 
 - 生产节点使用独立 RocksDB Raft log store。
-- durable mutation 成功后才推进 last_applied。
+- RocksDB batch write 返回成功后才推进进程内 last_applied；该写入是否满足最终批准的 durability profile 尚未完成证明。
 - Raft log、vote 和 committed state 使用普通 RocksDB write/put 后即确认完成，尚缺显式 stable-storage 语义证明。
 - Snapshot install 已有 staged restore、pause、install marker、RocksDB reopen 和切换骨架。
 - Snapshot archive 当前完整驻留内存。
@@ -461,7 +461,7 @@ Cluster：
 
 - 当前目标是生产级单 Raft Group；
 - 所有 client mutation 经过 OpenRaft；
-- linearizable read 经过 Leader、ReadIndex 或批准的 Lease；
+- linearizable read 由当前 Leader 提供，并经过 OpenRaft `ensure_linearizable`/ReadIndex，或经过批准且证明安全的 Lease read protocol；
 - Raft log store 与业务 RocksDB 生命周期分别管理，但由统一 supervisor 排序；
 - snapshot、membership、leader transfer 和 reopen 进入 required gate。
 
@@ -469,26 +469,32 @@ Standalone 和 Cluster 不能形成两套 Redis 可观察语义、磁盘格式�
 
 ## 6. 架构不变量
 
-1. 所有架构和验收结论绑定 exact Git SHA。
-2. RocksDB 保存完整、权威、可恢复的业务状态。
-3. standalone mutation 直接写 RocksDB；cluster client mutation 必须先经 Raft；Raft apply 不得再次提交 Raft。
-4. mutation 持久化成功后才能推进 last_applied。
-5. Raft vote、log 和 committed state 只能在满足 OpenRaft 持久化合同后确认完成。
-6. Linearizable Read 必须经过 Leader、ReadIndex 或批准的 Lease 门禁。
-7. 所有跨 Runtime 或跨长期任务队列必须有界。
-8. 一个请求只使用一个 absolute deadline，排队和执行共享预算。
-9. 所有长期任务必须有 owner、cancellation token、JoinHandle 和确定性 join。
-10. shutdown 必须先停止 admission，再 drain 依赖，最后关闭 RocksDB。
-11. persisted etime 是 TTL 权威；内存索引只能是可丢失优化。
-12. 所有 CF 消费者由同一可验证 manifest 闭合。
-13. 未知 disk、snapshot、comparator 或 manifest 版本默认 fail closed。
-14. Snapshot build、install、普通 apply、reopen 和 shutdown 必须由同一 gate 建立顺序。
-15. 旧 Storage、Redis、DB、CF、iterator 或 snapshot handle 不得跨 reopen/swap 继续使用。
-16. 每个 Binlog 必须有明确 db、instance、slot/group 和 generation 语义。
-17. Redis 兼容结论必须来自固定 Oracle、raw response 和最终状态的可复现实验。
-18. 非幂等写结果未知时标记 SUBMIT_UNKNOWN，不盲目重试。
-19. INFO 和 metrics 只消费真实 provider，不维护硬编码影子状态。
-20. M6 前 Embedded Redis Hot Tier 保持 frozen。
+下表定义目标架构不变量，不把目标能力写成当前事实。`Current` 记录本 PR
+绑定 baseline_ref 的源码状态；`Gap`、`Work Package` 和 `Acceptance` 给出从
+当前状态闭合到 Target 的责任和可重复证据。
+
+| ID | Target invariant | Current | Gap | Work Package | Acceptance |
+|---|---|---|---|---|---|
+| `INV-01` | 所有架构和验收结论绑定 exact Git SHA。 | 本 SDD 和源码证据索引已绑定 baseline_ref。 | 后续实现、PR 和 exact-main 证据仍需逐次绑定最终 SHA。 | WP0-WP7 | 每个工作包记录 Base、Head、merge SHA 和 exact-main 验证 SHA。 |
+| `INV-02` | RocksDB 保存完整、权威、可恢复的业务状态。 | RocksDB 是当前业务数据权威。 | CF/格式 manifest、真实 close/reopen 和故障恢复证据未闭合。 | WP2、WP4、WP5、WP7 | manifest、durable apply、重启、损坏和 snapshot 恢复门禁全部通过。 |
+| `INV-03` | standalone mutation 直接写 RocksDB；cluster client mutation 必须先经 Raft；Raft apply 不得再次提交 Raft。 | standalone 与 cluster 路由已经分离，apply 有独立入口。 | cluster 全命令覆盖和反向绕过证明不足。 | WP4、WP6 | 路由矩阵和回归测试证明所有 mutation 只有一条合法路径。 |
+| `INV-04` | mutation 持久化成功后才能推进 last_applied。 | 当前只能证明 RocksDB batch write 返回成功后才推进进程内 last_applied。 | 原子性、批准的 durability profile、I/O failure 和崩溃窗口证据不足。 | WP4 | fault injection 证明 Durable 前不会推进 last_applied。 |
+| `INV-05` | Raft vote、log 和 committed state 只能在满足 OpenRaft 持久化合同后确认完成。 | 当前实现使用普通 RocksDB write/put 持久化 vote、log 和状态。 | sync 语义和 callback 完成点缺少完整故障证明。 | WP4 | OpenRaft storage suite、fsync profile 和故障矩阵通过。 |
+| `INV-06` | Linearizable Read 必须由当前 Leader 提供，并经过 OpenRaft `ensure_linearizable`/ReadIndex，或经过批准且证明安全的 Lease read protocol；单纯 leader 身份检查不构成读屏障。 | network leader gate 只拦截非 leader write，read 没有 ReadIndex/Lease barrier。 | follower、leader transfer、partition 和 term 变化下可能读取 stale state。 | WP4、WP7 | 读屏障测试和线性一致性 history 通过。 |
+| `INV-07` | 所有跨 Runtime 或跨长期任务队列必须有界。 | MessageChannel 有界；Storage→Raft 仍使用 unbounded channel。 | 需要统一容量、过载语义和指标。 | WP3 | 队列容量、queue-full 响应、压力和内存上界门禁通过。 |
+| `INV-08` | 一个请求只使用一个 absolute deadline，排队和执行共享预算。 | pipeline 只有局部共享 timeout，其他阶段各自计时。 | admission、排队、Raft、apply 和响应尚未共享同一预算。 | WP3、WP4 | deadline 传播测试证明各阶段只消费剩余预算。 |
+| `INV-09` | 所有长期任务必须有 owner、cancellation token、JoinHandle 和确定性 join。 | 多个长期任务仍由裸 `tokio::spawn` 启动。 | owner、取消和 join 责任未统一。 | WP3 | lifecycle registry 和退出测试证明无 detached task。 |
+| `INV-10` | shutdown 必须先停止 admission，再 drain 依赖，最后关闭 RocksDB。 | 当前 manager 先停止 storage，再停止 network。 | 关闭顺序与依赖方向相反。 | WP3 | 并发 shutdown 测试证明 admission→drain→RocksDB 顺序。 |
+| `INV-11` | persisted etime 是 TTL 权威；内存索引只能是可丢失优化。 | etime 已持久化，expiration manager 是辅助索引。 | restart、compaction、generation 和 stale-index 证据不足。 | WP5 | 删除内存索引后重建、重启和 TTL differential 通过。 |
+| `INV-12` | 所有 CF 消费者由同一可验证 manifest 闭合。 | CF 列表分散在创建、扫描、TTL、compaction 和 snapshot 路径。 | 没有单一 manifest 和消费者闭包检查。 | WP2 | manifest consumer-closure checker 和新增 CF 变异测试通过。 |
+| `INV-13` | 未知 disk、snapshot、comparator 或 manifest 版本默认 fail closed。 | snapshot install marker 对未知 marker version fail closed，但 snapshot metadata 接受未来版本。 | 版本策略不一致。 | WP2、WP5 | 所有未知/未来版本负向测试一致拒绝。 |
+| `INV-14` | Snapshot build、install、普通 apply、reopen 和 shutdown 必须由同一 gate 建立顺序。 | 各路径有局部锁和 staged install。 | 缺少覆盖全部状态转换的统一 gate。 | WP3、WP5 | 并发 build/install/apply/reopen/shutdown 矩阵无竞态和旧状态可见。 |
+| `INV-15` | 旧 Storage、Redis、DB、CF、iterator 或 snapshot handle 不得跨 reopen/swap 继续使用。 | reopen 和 install 会替换部分顶层对象。 | 跨层缓存 handle 的失效证明不足。 | WP2、WP5 | generation/handle 负向测试证明旧对象全部拒绝使用。 |
+| `INV-16` | 每个 Binlog 必须有明确 db、instance、slot/group 和 generation 语义。 | db_id 固定为 0，slot 从 key 推导，instance 由本机 topology 推导，缺少 group/generation。 | replay、迁移和 stale generation 语义未定义。 | WP2、WP4、WP5 | 编码 round-trip、cluster replay 和 generation rejection 通过。 |
+| `INV-17` | Redis 兼容结论必须来自固定 Oracle、raw response 和最终状态的可复现实验。 | 已固定 Redis 8.8.1 tag/commit 和 provenance 合同。 | manifest、raw-frame differential 和独立重建尚未全部完成。 | WP1、WP6、WP7 | exact Oracle 重建 hash equality 与兼容矩阵通过。 |
+| `INV-18` | 非幂等写结果未知时标记 SUBMIT_UNKNOWN，不盲目重试。 | 当前没有端到端 typed SUBMIT_UNKNOWN，相关失败压成通用错误。 | 断线、超时和提交后响应丢失仍可能混同普通失败。 | WP4、WP7 | fault history 区分 safe failure、success 和 SUBMIT_UNKNOWN。 |
+| `INV-19` | INFO 和 metrics 只消费真实 provider，不维护硬编码影子状态。 | INFO 仍包含硬编码版本、平台、PID、端口和 uptime。 | runtime、storage 和 Raft provider 未闭合。 | WP7 | provider contract 测试和真实进程 INFO/metrics 对账通过。 |
+| `INV-20` | M6 前 Embedded Redis Hot Tier 保持 frozen。 | D009 和当前 scope 已冻结 M7/M8 热层实施，生产路径中不存在 Hot Tier。 | 无实现 Gap；必须持续防止实现 PR 隐式解除冻结。 | WP7 | M6 gate、用户批准和新 Decision 同时存在后才可解除。 |
 
 ## 7. 关键状态机
 
@@ -803,7 +809,7 @@ flowchart LR
 
 M1 和 M2 可在边界清晰的独立工作包中有限并行。M4、M5 只以 Cache OFF 为 required 模式。M7-M8 在 M6 PASS 和用户重新批准前保持 frozen。M10 需要单 Group 容量和故障域证据。
 
-## 12. M0-M6 可执行工作包
+## 12. WP0-WP7 可执行工作包
 
 ### 12.1 工作包依赖
 
@@ -874,14 +880,24 @@ Acceptance criteria；缺少任一字段时，工作包不得进入 ready。
 - README.md；
 - docs/INDEX.md；
 - docs/prd.md；
+- docs/architecture/redis-8.8.1-system-boundaries.md；
 - docs/quality/quality-gates.md；
+- docs/quality/system-stability-gate.md；
+- .planning/DECISIONS.md；
+- .planning/OPEN_QUESTIONS.md；
+- .planning/REQUIREMENTS.md；
+- docs/personas-and-user-stories.md；
+- scripts/validate_sdd.py；
+- .github/workflows/ci.yml；
 - .github/pull_request_template.md。
 
 Primary Issue handling：
 
 - Primary Issue：[#413](https://github.com/arana-db/kiwi/issues/413)。
 - Issue #413 只覆盖单一 SDD 控制面、事实基线与交付追踪，不吸收 WP1-WP7 的运行时实施。
-- 只有完整满足本工作包退出门禁的 PR 才能使用 `Fixes #413`；部分交付使用 `Refs #413`。
+- 只有完整满足本工作包退出门禁的 PR 才能使用 `Fixes #413` 或 `Closes #413`；部分交付使用 `Refs #413` 或 `Related #413`。
+
+Parent / Related：N/A。
 
 Implementation PR：[#414](https://github.com/arana-db/kiwi/pull/414)。
 
@@ -904,16 +920,18 @@ Requirement：
 
 退出门禁：
 
-- 唯一入口无重复状态。
-- 所有链接和 REQ/Decision 引用通过。
-- PR 模板强制工作包、Issue 和 REQ。
+- front matter 是唯一机器可解析的当前状态；工作包块和状态表必须与其一致。
+- 所有链接和 REQ/Decision 定义、范围及引用全集闭包通过。
+- PR 模板要求工作包、Issue 和 REQ，并由评审门禁确认没有保留占位符。
 - 原草稿被吸收或删除。
 
 验证门禁：
 
 - `git diff --check` 和 committed-diff whitespace check；
-- changed Markdown 相对链接、占位词、围栏配对扫描；
-- 63 个 REQ 和 18 个 Decision 定义/引用闭包；
+- `python scripts/validate_sdd.py --self-test` 的失败路径变异测试；
+- `python scripts/validate_sdd.py` 的 Markdown 链接、占位词、围栏和状态断言；
+- 63 个 REQ 和 18 个 Decision 的唯一注册、范围展开和引用全集闭包；
+- WP0、primary Issue #413、PR #414 和 20 个预期产物的一致性断言；
 - live Issue #413、开放 Issue 数量、关键 PR 状态和远端 main 复核；
 - 独立只读审查不得留下 Critical 或 Important finding。
 
@@ -1145,6 +1163,7 @@ Requirement：
 - persisted applied metadata；
 - per-log marker 或等价 typed outcome；
 - 所有 cluster RESP write 经过 proposal；
+- cluster linearizable read 由当前 Leader 提供，并经过 OpenRaft `ensure_linearizable`/ReadIndex，或经过批准且证明安全的 Lease read protocol；
 - apply 时重验 slot、instance、generation；
 - SUBMIT_UNKNOWN。
 
@@ -1152,7 +1171,12 @@ Requirement：
 
 - src/raft/src/log_store_rocksdb.rs；
 - src/raft/src/state_machine.rs；
+- src/raft/src/leader_gate.rs；
+- src/raft/src/node.rs；
 - src/server/src/main.rs；
+- src/net/src/executor_ext.rs；
+- src/net/tests/storage_command_e2e_tests.rs；
+- src/net/tests/network_integration_tests.rs；
 - src/storage/src/batch.rs；
 - storage/Raft fault tests。
 
@@ -1167,11 +1191,14 @@ Requirement：
 - callback 与 WAL/sync 语义有明确证明。
 - process crash 和 power-loss 模型分开。
 - vote、append、truncate、purge、committed 和 reopen 单调性有故障测试。
+- follower、leader transfer、partition 和 term 变化下的 read 不得绕过一致性门禁。
 
 验证门禁：
 
 - storage/Raft 定向测试、fault injection 和真实 RocksDB reopen；
 - vote/log/committed callback 的 WAL/sync 证据与 OpenRaft 合同对账；
+- 真实 RESP read 入口及只读命令分类全部经过同一读屏障；
+- `ensure_linearizable`/ReadIndex 或批准的 Lease protocol 在 leader transfer、partition、term 变化、commit/apply lag 和 stale follower 场景的回归；
 - process kill 与 power-loss 模型分别生成 exact-ref evidence；
 - 每个实施 PR 使用精确 child 或新建精确 Issue 作为 Primary，#332 只作为 Parent/Epic。
 
@@ -1405,13 +1432,13 @@ Primary issue: Fixes #342
 部分实现：
 
 ~~~markdown
-Primary issue: Fixes #334
-Parent or Epic: Part of #332
+Primary issue: Refs #334
+Parent or Epic: Related #332
 Related issues: Refs #335, Refs #336, Refs #337
 Design context: Discussion #330
 ~~~
 
-禁止对部分修复、Epic 或仍有 required 残留的 Issue 使用 Fixes/Closes。
+禁止对部分修复、Epic 或仍有 required 残留的 Issue 使用 Fixes/Closes；这些关系使用 Refs/Related。
 
 ### 13.4 PR 必填字段
 
@@ -1583,6 +1610,31 @@ docs/sdd/WP-N/
 | D017 | 当前不支持真正 Multi-Key |
 | D018 | 兼容性与故障验证使用分层门禁 |
 
+以下已批准 Decision 属于治理、测试来源或 M7-M10 冻结范围，同样受本 SDD
+追踪，但不授权 WP0-WP7 增加对应生产能力：
+
+| Decision | 映射 |
+|---|---|
+| D002 | M7-M10 组合发行许可证义务，frozen |
+| D003 | M7-M10 热层术语，frozen |
+| D006 | WP7 测试模型来源 |
+| D007 | WP1/WP6 客户端测试边界 |
+| D008 | WP0 工作恢复状态 |
+| D010 | M7-M10 热层接口合同，frozen |
+
+Deferred Requirement：
+
+- `REQ-HOT-001` 至 `REQ-HOT-012`；
+- `REQ-LICENSE-001` 至 `REQ-LICENSE-008`；
+- `REQ-OBS-003`；
+- `REQ-RAFT-003`；
+- `REQ-RAFT-004`。
+
+WP0-WP7 的 Requirement 字段覆盖当前 M0-M6 实施范围；以上范围映射到
+M7-M10 或 frozen/deferred 合同，不构成当前实现授权。验证器只从各 WP 的
+Requirement 字段和本 Deferred Requirement 字段计算全集，不接受注释或无关
+段落中的偶然 ID 命中。
+
 以下普通决定由工作包设计自行作出：
 
 - 文件和模块内部拆分；
@@ -1640,17 +1692,13 @@ docs/superpowers/specs 和 docs/superpowers/plans 是历史材料。新文档不
 
 ~~~powershell
 git diff --check
-rg -n "TO[D]O|TB[D]|待[定]|以后[补]|类似上[文]" .planning/SDD.md
-rg -o "REQ-[A-Z]+-[0-9]{3}" .planning/SDD.md | Sort-Object -Unique
-rg -o "D[0-9]{3}" .planning/SDD.md | Sort-Object -Unique
-rg -n "STATE.md|KANBAN.md|ROADMAP.md" CLAUDE.md CONTRIBUTING.md README.md docs .planning .github
+python scripts/validate_sdd.py --self-test
+python scripts/validate_sdd.py
 ~~~
 
 验证者还必须：
 
-- 对比 SDD 中出现的 REQ 与 REQUIREMENTS.md；
-- 对比 Decision 与 DECISIONS.md；
-- 检查 Markdown 相对链接；
+- 保存验证器的确定性摘要，确认 REQ、Decision、当前状态和预期产物计数；
 - 重新查询 main、Issue、Discussion 和 PR；
 - 确认本文件是唯一项目状态入口；
 - 确认没有把目标能力写成当前能力。

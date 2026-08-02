@@ -56,7 +56,7 @@
 ## Raft
 
 - `REQ-RAFT-001` {priority: P0}：写成功回复必须发生在 quorum commit、本地 apply 和所选 durability profile 满足之后。
-- `REQ-RAFT-002` {priority: P0}：Linearizable Read 即使经过未来热层也必须通过 Leader/ReadIndex/Lease 门禁。
+- `REQ-RAFT-002` {priority: P0}：Linearizable Read 即使经过未来热层，也必须由当前 Leader 提供，并经过 OpenRaft `ensure_linearizable`/ReadIndex 屏障，或经过批准且证明安全的 Lease read protocol；单纯 leader 身份检查不构成读屏障。
 - `REQ-RAFT-003` {priority: P0}：实现并冻结 `kiwi_redisraft_public_v1`，公开清单内行为 100% 通过。
 - `REQ-RAFT-004` {priority: P0}：RedisRaft 内部 `RAFT.AE`、`RAFT.REQUESTVOTE`、`RAFT.SNAPSHOT` 等不是公共兼容要求。
 - `REQ-RAFT-005` {priority: P1}：成员变更、Leader Transfer、Snapshot、日志回滚和真正 close/reopen 必须进入 required CI 或分层门禁。
@@ -92,4 +92,4 @@
 - `REQ-WORK-004` {priority: P0}：branch、HEAD 或 dirty 漂移时，新会话必须停止写操作并报告差异。
 - `REQ-WORK-005` {priority: P0}：规划 task 和实施 task 必须使用不同的任务边界。规划 task 只能写长期事实、设计、计划和恢复记录；批准规划不授权继续源码实现。提前产生的实现草稿必须冻结，后续实施必须在新的隔离工作树和 recovery checkpoint 中重新开始或逐项审计后复用。
 - `REQ-WORK-006` {priority: P0}：`.planning/SDD.md` 是项目唯一权威入口；路线、工作包、当前状态、当前计划、Issue/PR 追踪和验证门禁不得在其他文件维护独立副本。
-- `REQ-WORK-007` {priority: P0}：每个实施 PR 必须关联一个 SDD 工作包、一个 primary GitHub Issue 和适用的 `REQ-*`。只有完整满足 Issue 全部 required acceptance criteria 时才能使用 `Fixes` 或 `Closes`；部分实现必须使用 `Part of` 或 `Refs`。
+- `REQ-WORK-007` {priority: P0}：每个实施 PR 必须关联一个 SDD 工作包、一个 primary GitHub Issue 和适用的 `REQ-*`。只有完整满足 Issue 全部 required acceptance criteria 时才能使用 `Fixes` 或 `Closes`；部分实现必须使用 `Refs` 或 `Related`。

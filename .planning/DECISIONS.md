@@ -103,7 +103,7 @@
 
 - 日期：2026-08-02
 - 状态：accepted
-- 决定：.planning/SDD.md 是项目唯一权威入口，统一维护当前架构、M0-M10 路线、M0-M6 工作包、当前状态、Issue/PR 追踪和验证门禁。
+- 决定：.planning/SDD.md 是项目唯一权威入口，统一维护当前架构、M0-M10 路线、M0-M6 当前可执行里程碑范围、WP0-WP7 工作包、当前状态、Issue/PR 追踪和验证门禁。
 - 后果：STATE.md、KANBAN.md 和 ROADMAP.md 只保留兼容迁移指针，不维护独立状态。PROJECT、REQUIREMENTS、DECISIONS、OPEN_QUESTIONS 和 REFERENCES 作为 SDD 下属注册表。
 - 理由：此前同一状态分散在多份文件中，PR 合并后容易产生状态、优先级和当前计划漂移。
 
@@ -112,7 +112,7 @@
 - 日期：2026-08-02
 - 状态：accepted
 - 决定：每个实施 PR 必须声明一个 SDD 工作包、一个 primary GitHub Issue 和适用的 REQ-*。
-- 关闭语义：只有完整满足 Issue 全部 required acceptance criteria 时使用 Fixes/Closes；部分实现使用 Part of/Refs。
+- 关闭语义：只有完整满足 Issue 全部 required acceptance criteria 时使用 Fixes/Closes；部分实现使用 Refs/Related。
 - 后果：没有精确 Issue 的工作包不能进入 ready；宽泛 Epic 必须拆 child Issue；Discussion 只能作为设计来源。
 
 ## D015：保持 network/storage 数据面隔离并建立统一生命周期

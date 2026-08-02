@@ -76,7 +76,7 @@ Kiwi 是一个以 **Redis 8.8.1 exact tag 可观察语义兼容**为目标的生
 - `REQ-WORK-004`：branch/HEAD/dirty 漂移时新会话停止写操作并报告差异。
 - `REQ-WORK-005`：规划 task 与实施 task 使用不同任务边界；提前产生的实现草稿必须冻结（D012）。
 - `REQ-WORK-006`：SDD.md 是路线、工作包、当前状态、Issue/PR 追踪和门禁的唯一权威入口。
-- `REQ-WORK-007`：每个实施 PR 必须关联工作包、primary Issue 和 REQ；部分实现不得使用 Fixes/Closes。
+- `REQ-WORK-007`：每个实施 PR 必须关联工作包、primary Issue 和 REQ；完整交付使用 Fixes/Closes，部分实现使用 Refs/Related。
 
 ### 当前兼容、存储、Raft、可观测性与性能
 
@@ -94,7 +94,7 @@ Kiwi 是一个以 **Redis 8.8.1 exact tag 可观察语义兼容**为目标的生
 - `REQ-STORAGE-005`：Kiwi key/value encoding 须 binary-safe/round-trip/order-preserving/prefix-safe/canonical/stable（`format_base_key.rs`、`format_*`、`custom_comparator.rs`）。
 - `REQ-STORAGE-006`：派生状态/索引/未来热层须能从 RocksDB 权威数据删除后重建，不能成为成功回复/恢复唯一依据。
 - `REQ-RAFT-001`：写成功回复须发生在 quorum commit + 本地 apply + 所选 durability profile 满足之后。
-- `REQ-RAFT-002`：Linearizable Read 即使经未来热层也须通过 Leader/ReadIndex/Lease 门禁。
+- `REQ-RAFT-002`：Linearizable Read 即使经未来热层，也必须由当前 Leader 提供，并经过 OpenRaft `ensure_linearizable`/ReadIndex 屏障，或经过批准且证明安全的 Lease read protocol；单纯 leader 身份检查不构成读屏障。
 - `REQ-RAFT-003`：实现并冻结 `kiwi_redisraft_public_v1`，公开清单内行为 100% 通过。
 - `REQ-RAFT-004`：RedisRaft 内部 `RAFT.AE`/`RAFT.REQUESTVOTE`/`RAFT.SNAPSHOT` 不是公共兼容要求。
 - `REQ-RAFT-005`：成员变更、Leader Transfer、Snapshot、日志回滚、真实 close/reopen 须进 required CI/分层门禁。

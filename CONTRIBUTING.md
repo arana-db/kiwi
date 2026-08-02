@@ -75,8 +75,9 @@ By contributing, you agree that your contributions will be licensed under the Ap
 
 Every implementation PR must reference the work package in `.planning/SDD.md`,
 one primary GitHub Issue, and the relevant `REQ-*` entries in
-`.planning/REQUIREMENTS.md`. Use `Fixes #N` only when the PR completely
-satisfies that Issue; partial work must use `Part of #N` or `Refs #N`.
+`.planning/REQUIREMENTS.md`. Use `Fixes #N` or `Closes #N` only when the PR
+completely satisfies that Issue; partial work must use `Refs #N` or
+`Related #N`.
 After merge, verify the exact `main` commit and write the PR, merge SHA,
 commands, environment, results, and remaining risks back to `.planning/SDD.md`
 before moving the work package from `implemented` to `verified` or `accepted`.

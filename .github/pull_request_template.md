@@ -2,17 +2,17 @@
 
 - Work package: WP-N
 - SDD baseline: commit SHA
-- Primary issue: Fixes #N / Part of #N
-- Parent or Epic: Part of #N / N/A
-- Related issues: Refs #N / N/A
+- Primary issue: Fixes #N / Closes #N / Refs #N / Related #N
+- Parent or Epic: Refs #N / Related #N / N/A
+- Related issues: Refs #N / Related #N / N/A
 - Design context: Discussion #N / N/A
 - Requirements:
   - REQ-DOMAIN-NNN
 - Decisions:
   - DNNN / N/A
 
-Use Fixes #N only when this PR completely satisfies every required acceptance
-criterion of that Issue. Partial work must use Part of #N or Refs #N.
+Use Fixes #N or Closes #N only when this PR completely satisfies every required
+acceptance criterion of that Issue. Partial work must use Refs #N or Related #N.
 
 ## Description
 
@@ -43,7 +43,9 @@ criterion of that Issue. Partial work must use Part of #N or Refs #N.
 - Commands:
 - Results:
 - Uncovered risks:
-- Exact-main post-merge verification required: yes
+- [ ] After merge, record the PR number, merge SHA, exact main commit, commands,
+      environment, result, and residual risk in `.planning/SDD.md` before marking
+      the work package `verified` or `accepted`.
 
 ## Checklist
 

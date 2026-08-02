@@ -15,7 +15,8 @@ sure where to start, follow the **Newcomer** path below.
 ## Planning and requirements
 
 The sole authoritative project entry is `.planning/SDD.md`. It owns the current
-architecture, `M0`–`M10` roadmap, `M0`–`M6` executable work packages,
+architecture, `M0`–`M10` roadmap, `M0`–`M6` current executable milestone scope,
+`WP0`–`WP7` work packages,
 current state, GitHub traceability, and verification gates.
 
 Its subordinate registries are:
