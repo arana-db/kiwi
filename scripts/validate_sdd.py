@@ -397,6 +397,34 @@ def validate_current_state(sdd: str, fields: dict[str, str], errors: list[str]) 
                 "passed WP0 exact-main verification requires a GitHub Actions run"
             )
 
+    wp0_block = blocks.get("WP0", "")
+    evidence_projection = (
+        (
+            "- PR 固定区间：",
+            f"- PR 固定区间：{fields.get('wp0_pr_base_ref', '')}.."
+            f"{fields.get('wp0_pr_head_ref', '')}；",
+        ),
+        (
+            "- merge 固定区间：",
+            f"- merge 固定区间：{fields.get('wp0_merge_parent_ref', '')}.."
+            f"{fields.get('wp0_merge_ref', '')}；",
+        ),
+        (
+            "- WP0 exact-main verification：",
+            f"- WP0 exact-main verification：status={verification_status}，"
+            f"ref={verification_ref}，run={verification_run}。",
+        ),
+    )
+    wp0_lines = wp0_block.splitlines()
+    for prefix, expected_line in evidence_projection:
+        matching_lines = [line for line in wp0_lines if line.startswith(prefix)]
+        if matching_lines != [expected_line]:
+            errors.append(
+                "WP0 evidence projection must contain exactly one line matching "
+                f"immutable front matter: expected={expected_line!r}, "
+                f"found={matching_lines}"
+            )
+
     if statuses.get("WP0") in {"verified", "accepted", "released"}:
         if verification_status != "passed":
             errors.append(
@@ -407,6 +435,7 @@ def validate_current_state(sdd: str, fields: dict[str, str], errors: list[str]) 
     table_expectations = {
         "Current work package": current_work_package,
         "Status": current_status,
+        "WP0 exact-main verification": verification_status,
     }
     for label, expected in table_expectations.items():
         matches = re.findall(rf"(?m)^\| {re.escape(label)} \| (.*?) \|$", sdd)
@@ -620,7 +649,14 @@ def validate_wp0_git_evidence(
 
     merge_parent_ref = fields.get("wp0_merge_parent_ref", "")
     merge_ref = fields.get("wp0_merge_ref", "")
-    if pr_base_check.returncode == 0:
+    merge_parent_check = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "-e", f"{merge_parent_ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if pr_base_check.returncode == 0 and merge_parent_check.returncode == 0:
         merge_ancestry = subprocess.run(
             [
                 "git",
@@ -663,6 +699,62 @@ def validate_wp0_git_evidence(
             "WP0 squash-merge evidence must bind the merge commit and its parent exactly: "
             f"expected={expected_lineage}, found={actual_lineage}"
         )
+
+    if fields.get("wp0_exact_main_verification_status") == "passed":
+        verification_ref = fields.get("wp0_exact_main_verification_ref", "")
+        verification_ref_check = subprocess.run(
+            ["git", "-C", str(root), "cat-file", "-e", f"{verification_ref}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if verification_ref_check.returncode != 0:
+            errors.append(
+                "passed WP0 exact-main verification ref is not available as a Git "
+                f"commit: {verification_ref}"
+            )
+        else:
+            verification_ancestry = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "merge-base",
+                    "--is-ancestor",
+                    merge_ref,
+                    verification_ref,
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
+            if verification_ancestry.returncode != 0:
+                errors.append(
+                    "passed WP0 exact-main verification ref must descend from the "
+                    "recorded WP0 merge commit"
+                )
+            baseline_ancestry = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "merge-base",
+                    "--is-ancestor",
+                    verification_ref,
+                    fields.get("baseline_ref", ""),
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                check=False,
+            )
+            if baseline_ancestry.returncode != 0:
+                errors.append(
+                    "passed WP0 exact-main verification ref must belong to the "
+                    "recorded baseline main history"
+                )
 
     subject = subprocess.run(
         ["git", "-C", str(root), "show", "-s", "--format=%s", merge_ref],
@@ -950,6 +1042,30 @@ def run_self_tests(root: Path) -> None:
             f"{wrong_base_errors}"
         )
 
+    wrong_verification_fields = dict(fields)
+    wrong_verification_fields.update(
+        {
+            "wp0_exact_main_verification_status": "passed",
+            "wp0_exact_main_verification_ref": fields["wp0_pr_base_ref"],
+            "wp0_exact_main_verification_run": "1",
+        }
+    )
+    wrong_verification_errors: list[str] = []
+    validate_wp0_git_evidence(
+        root,
+        wrong_verification_fields,
+        set(EXPECTED_WP0_ARTIFACTS),
+        wrong_verification_errors,
+    )
+    if not any(
+        "verification ref must descend" in error
+        for error in wrong_verification_errors
+    ):
+        raise AssertionError(
+            "unrelated exact-main verification ref must fail ancestry validation: "
+            f"{wrong_verification_errors}"
+        )
+
     for relative in (
         ".planning/REQUIREMENTS.md",
         ".planning/DECISIONS.md",
@@ -1188,10 +1304,17 @@ def run_self_tests(root: Path) -> None:
 
     def break_wp0_pr_number(candidate: Path) -> None:
         path = candidate / ".planning/SDD.md"
-        path.write_text(
-            read_text(path).replace("wp0_pr_number: 414", "wp0_pr_number: 999", 1),
-            encoding="utf-8",
+        text, replacements = re.subn(
+            r"(?m)^wp0_pr_number: [1-9][0-9]*$",
+            "wp0_pr_number: 999",
+            read_text(path),
+            count=1,
         )
+        if replacements != 1:
+            raise AssertionError(
+                "WP0 PR mutation requires exactly one wp0_pr_number field"
+            )
+        path.write_text(text, encoding="utf-8")
 
     expect_failure(
         root,
@@ -1274,10 +1397,50 @@ def run_self_tests(root: Path) -> None:
         "WP0 status verified requires passed exact-main verification evidence",
     )
 
+    def drift_wp0_evidence_projection(candidate: Path) -> None:
+        path = candidate / ".planning/SDD.md"
+        text = read_text(path).replace(
+            "- WP0 exact-main verification：status=pending，ref=none，run=none。",
+            "- WP0 exact-main verification：status=passed，ref=none，run=none。",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+    expect_failure(
+        root,
+        drift_wp0_evidence_projection,
+        "WP0 evidence projection must contain exactly one line",
+    )
+
+    def duplicate_wp0_evidence_projection(candidate: Path) -> None:
+        path = candidate / ".planning/SDD.md"
+        conflict = (
+            "- PR 固定区间："
+            "1111111111111111111111111111111111111111.."
+            "2222222222222222222222222222222222222222；"
+        )
+        text, replacements = re.subn(
+            r"(?m)^- PR 固定区间：.+；$",
+            lambda match: f"{match.group(0)}\n{conflict}",
+            read_text(path),
+            count=1,
+        )
+        if replacements != 1:
+            raise AssertionError(
+                "duplicate projection mutation requires exactly one PR range"
+            )
+        path.write_text(text, encoding="utf-8")
+
+    expect_failure(
+        root,
+        duplicate_wp0_evidence_projection,
+        "WP0 evidence projection must contain exactly one line",
+    )
+
     print(
         "SDD validator self-tests passed "
-        "(28 failure-path mutations, 1 prose guard, "
-        "4 fixed-ref/concurrent-merge regressions)"
+        "(30 failure-path mutations, 1 prose guard, "
+        "5 fixed-ref/concurrent-merge regressions)"
     )
 
 

@@ -197,7 +197,7 @@ Issue 数量和分类会变化，工作包只依赖明确列出的 Issue，不�
 |---|---|---|
 | Compaction | [#88](https://github.com/arana-db/kiwi/issues/88) | WP5 物理清理 |
 | Compaction filter | [#138](https://github.com/arana-db/kiwi/issues/138) | WP5 filter 安装与生命周期 |
-| Block cache | [#143](https://github.com/arana-db/kiwi/issues/143) | 支持轨道，等待 PR #412 |
+| Block cache | [#143](https://github.com/arana-db/kiwi/issues/143) | 支持轨道，PR #412 已合并，Issue 已关闭，待能力证据评估 |
 | Error model | [#315](https://github.com/arana-db/kiwi/issues/315) | WP6 |
 | Test strategy | [#325](https://github.com/arana-db/kiwi/issues/325) | WP1/WP6/WP7 |
 | Raft apply Epic | [#332](https://github.com/arana-db/kiwi/issues/332) | WP4 Epic |
@@ -919,7 +919,7 @@ Post-merge validation repair：[#416](https://github.com/arana-db/kiwi/issues/41
 - merge 固定区间：cbcbadc27068634d851ab0ed63989d2214ab2408..9820162ebdf2d26aa6349e704efe8737b2e73e4a；
 - PR #414 于 2026-08-02T12:17:13Z 合并，Issue #413 随后关闭；
 - main push CI run 30747510551 / job 91495496924 失败，原因是旧 baseline_ref 把先合并的 PR #412 的 7 个源码路径计入 WP0，而不是 WP0 产物本身失败。
-- WP0 exact-main 成功验证仍为 pending，尚无可写入的成功 ref 或 Actions run。
+- WP0 exact-main verification：status=pending，ref=none，run=none。
 
 Requirement：
 
