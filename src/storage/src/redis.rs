@@ -1029,109 +1029,7 @@ macro_rules! get_db_and_cfs {
 }
 
 #[cfg(test)]
-mod block_cache_tests {
-    use std::sync::Arc;
-
-    use kstd::lock_mgr::LockMgr;
-
-    use super::Redis;
-    use crate::{BgTaskHandler, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
-
-    fn new_redis(options: Arc<StorageOptions>, index: i32) -> Redis {
-        let (bg_task_handler, _) = BgTaskHandler::new();
-        Redis::new(
-            options,
-            index,
-            Arc::new(bg_task_handler),
-            Arc::new(LockMgr::new(64)),
-        )
-    }
-
-    #[test]
-    fn disabled_sharing_creates_one_distinct_cache_per_redis_instance() {
-        let options = Arc::new(StorageOptions {
-            block_cache_size: 4 * 1024 * 1024,
-            share_block_cache: false,
-            block_cache: None,
-            ..StorageOptions::default()
-        });
-
-        let first = new_redis(Arc::clone(&options), 0);
-        let second = new_redis(options, 1);
-        let first_cache = first
-            .block_cache
-            .as_ref()
-            .expect("the first Redis instance should own a block cache");
-        let second_cache = second
-            .block_cache
-            .as_ref()
-            .expect("the second Redis instance should own a block cache");
-
-        assert!(
-            !Arc::ptr_eq(first_cache, second_cache),
-            "different Redis instances must not share their per-instance caches"
-        );
-    }
-
-    #[test]
-    fn default_options_share_one_cache_across_redis_instances() {
-        let options = Arc::new(StorageOptions::default());
-        let shared_cache = options
-            .block_cache
-            .as_ref()
-            .expect("default options should configure a shared block cache")
-            .clone();
-
-        let first = new_redis(Arc::clone(&options), 0);
-        let second = new_redis(options, 1);
-        let first_cache = first
-            .block_cache
-            .as_ref()
-            .expect("the first Redis instance should use the shared block cache");
-        let second_cache = second
-            .block_cache
-            .as_ref()
-            .expect("the second Redis instance should use the shared block cache");
-
-        assert!(Arc::ptr_eq(first_cache, &shared_cache));
-        assert!(Arc::ptr_eq(second_cache, &shared_cache));
-    }
-
-    #[test]
-    fn zero_block_cache_size_disables_rocksdb_internal_cache_for_every_cf() {
-        let path = unique_test_db_path();
-        safe_cleanup_test_db(&path);
-        let options = Arc::new(StorageOptions {
-            block_cache_size: 0,
-            share_block_cache: true,
-            block_cache: None,
-            ..StorageOptions::default()
-        });
-        let mut redis = new_redis(options, 0);
-        redis
-            .open(path.to_str().expect("test DB path should be valid UTF-8"))
-            .expect("Redis should open with block cache disabled");
-        let db = redis.db.as_ref().expect("Redis should own RocksDB");
-
-        for cf_name in &redis.handles {
-            let cf = db
-                .cf_handle(cf_name)
-                .expect("every configured CF should be open");
-            let capacity = db
-                .property_int_value_cf(&cf, "rocksdb.block-cache-capacity")
-                .expect("block cache capacity property should be readable");
-            assert_eq!(
-                capacity, None,
-                "{cf_name} must not receive RocksDB's implicit internal block cache"
-            );
-        }
-
-        drop(redis);
-        safe_cleanup_test_db(&path);
-    }
-}
-
-#[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod lifecycle_tests {
     use std::sync::{Arc, mpsc};
     use std::time::Duration;
@@ -1418,5 +1316,108 @@ mod type_check_state_tests {
             .check_type_state(&value, DataType::Set)
             .expect("check_type_state must not error for a live value");
         assert_eq!(state, TypeCheckState::Match);
+    }
+}
+
+#[cfg(test)]
+mod block_cache_tests {
+    use std::sync::Arc;
+
+    use kstd::lock_mgr::LockMgr;
+
+    use super::Redis;
+    use crate::{BgTaskHandler, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+
+    fn new_redis(options: Arc<StorageOptions>, index: i32) -> Redis {
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        Redis::new(
+            options,
+            index,
+            Arc::new(bg_task_handler),
+            Arc::new(LockMgr::new(64)),
+        )
+    }
+
+    #[test]
+    fn disabled_sharing_creates_one_distinct_cache_per_redis_instance() {
+        let options = Arc::new(StorageOptions {
+            block_cache_size: 4 * 1024 * 1024,
+            share_block_cache: false,
+            block_cache: None,
+            ..StorageOptions::default()
+        });
+
+        let first = new_redis(Arc::clone(&options), 0);
+        let second = new_redis(options, 1);
+        let first_cache = first
+            .block_cache
+            .as_ref()
+            .expect("the first Redis instance should own a block cache");
+        let second_cache = second
+            .block_cache
+            .as_ref()
+            .expect("the second Redis instance should own a block cache");
+
+        assert!(
+            !Arc::ptr_eq(first_cache, second_cache),
+            "different Redis instances must not share their per-instance caches"
+        );
+    }
+
+    #[test]
+    fn default_options_share_one_cache_across_redis_instances() {
+        let options = Arc::new(StorageOptions::default());
+        let shared_cache = options
+            .block_cache
+            .as_ref()
+            .expect("default options should configure a shared block cache")
+            .clone();
+
+        let first = new_redis(Arc::clone(&options), 0);
+        let second = new_redis(options, 1);
+        let first_cache = first
+            .block_cache
+            .as_ref()
+            .expect("the first Redis instance should use the shared block cache");
+        let second_cache = second
+            .block_cache
+            .as_ref()
+            .expect("the second Redis instance should use the shared block cache");
+
+        assert!(Arc::ptr_eq(first_cache, &shared_cache));
+        assert!(Arc::ptr_eq(second_cache, &shared_cache));
+    }
+
+    #[test]
+    fn zero_block_cache_size_disables_rocksdb_internal_cache_for_every_cf() {
+        let path = unique_test_db_path();
+        safe_cleanup_test_db(&path);
+        let options = Arc::new(StorageOptions {
+            block_cache_size: 0,
+            share_block_cache: true,
+            block_cache: None,
+            ..StorageOptions::default()
+        });
+        let mut redis = new_redis(options, 0);
+        redis
+            .open(path.to_str().expect("test DB path should be valid UTF-8"))
+            .expect("Redis should open with block cache disabled");
+        let db = redis.db.as_ref().expect("Redis should own RocksDB");
+
+        for cf_name in &redis.handles {
+            let cf = db
+                .cf_handle(cf_name)
+                .expect("every configured CF should be open");
+            let capacity = db
+                .property_int_value_cf(&cf, "rocksdb.block-cache-capacity")
+                .expect("block cache capacity property should be readable");
+            assert_eq!(
+                capacity, None,
+                "{cf_name} must not receive RocksDB's implicit internal block cache"
+            );
+        }
+
+        drop(redis);
+        safe_cleanup_test_db(&path);
     }
 }
