@@ -123,12 +123,26 @@ impl StorageManifest {
     /// the snapshot carries the storage identity with the data).
     pub(crate) fn copy_to(&self, dir: &Path) -> Result<()> {
         let target = dir.join(STORAGE_MANIFEST_FILE);
-        fs::copy(&self.path, &target).context(IoSnafu)?;
-        fs::File::open(&target)
-            .context(IoSnafu)?
-            .sync_all()
-            .context(IoSnafu)?;
-        Ok(())
+        let mut last_error = None;
+        for attempt in 0..5 {
+            match (|| -> std::io::Result<()> {
+                fs::copy(&self.path, &target)?;
+                fs::File::open(&target)?.sync_all()?;
+                Ok(())
+            })() {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    last_error = Some(error);
+                    if attempt < 4 {
+                        // Windows can briefly retain a handle while RocksDB
+                        // finishes materializing the checkpoint files.
+                        let _ = fs::remove_file(&target);
+                        std::thread::sleep(std::time::Duration::from_millis(100 * (attempt + 1)));
+                    }
+                }
+            }
+        }
+        Err(last_error.expect("manifest copy must record its final I/O error")).context(IoSnafu)
     }
 
     fn read(path: &Path) -> Result<Self> {

@@ -871,6 +871,8 @@ mod snapshot_gate_tests {
 
     use super::*;
 
+    const SNAPSHOT_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
     #[derive(Default)]
     struct CountingPauseController {
         paused: AtomicBool,
@@ -958,12 +960,9 @@ mod snapshot_gate_tests {
             let result = builder.build_snapshot().await;
             (builder, result)
         });
-        tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            hook.checkpoint_completed.notified(),
-        )
-        .await
-        .expect("snapshot build should reach the post-checkpoint barrier");
+        tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, hook.checkpoint_completed.notified())
+            .await
+            .expect("snapshot build should reach the post-checkpoint barrier");
         assert!(
             !build.is_finished(),
             "snapshot build should remain blocked before archive and persistence"
@@ -973,16 +972,13 @@ mod snapshot_gate_tests {
             log_id: LogId::new(LeaderId::new(1, 1), 1),
             payload: EntryPayload::Blank,
         };
-        tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            state_machine.apply([blank]),
-        )
-        .await
-        .expect("apply should proceed after checkpoint while builder remains alive")
-        .expect("blank entry should apply");
+        tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, state_machine.apply([blank]))
+            .await
+            .expect("apply should proceed after checkpoint while builder remains alive")
+            .expect("blank entry should apply");
 
         hook.continue_build.notify_one();
-        let (builder, snapshot) = tokio::time::timeout(std::time::Duration::from_secs(1), build)
+        let (builder, snapshot) = tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, build)
             .await
             .expect("snapshot build should resume after the test barrier")
             .expect("snapshot build task should not panic");
@@ -1040,13 +1036,10 @@ mod snapshot_gate_tests {
             log_id: LogId::new(LeaderId::new(1, 1), 1),
             payload: EntryPayload::Blank,
         };
-        tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            state_machine.apply([blank]),
-        )
-        .await
-        .expect("apply should proceed after checkpoint failure while builder remains alive")
-        .expect("blank entry should apply");
+        tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, state_machine.apply([blank]))
+            .await
+            .expect("apply should proceed after checkpoint failure while builder remains alive")
+            .expect("blank entry should apply");
 
         drop(builder);
         drop(state_machine);
@@ -1107,7 +1100,7 @@ mod snapshot_gate_tests {
                 )
                 .await
         });
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, async {
             while controller.pause_count.load(Ordering::SeqCst) == 0 {
                 tokio::task::yield_now().await;
             }
@@ -1133,12 +1126,9 @@ mod snapshot_gate_tests {
                 .expect("live storage should remain readable"),
             "live-value"
         );
-        let permit = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            Arc::clone(&controller).enter(),
-        )
-        .await
-        .expect("storage access should resume after cancelling install");
+        let permit = tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, Arc::clone(&controller).enter())
+            .await
+            .expect("storage access should resume after cancelling install");
         drop(permit);
 
         drop(storage_swap);
