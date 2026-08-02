@@ -34,6 +34,14 @@ use crate::storage_scan::{SCAN_CURSOR_STATE_CAPACITY, ScanCursorState};
 use crate::{ColumnFamilyIndex, Redis, StorageOptions, data_type_to_tag};
 use conf::raft_type::{Binlog, OperateType};
 
+fn default_cache_weighter<K, V>(_: &K, _: &V) -> usize {
+    1
+}
+
+fn default_cache_filter<K, V>(_: &K, _: &V) -> bool {
+    true
+}
+
 pub enum TaskType {
     None = 0,
     CleanAll = 1,
@@ -132,8 +140,28 @@ impl Storage {
             is_opened: AtomicBool::new(false),
             lock_mgr: Arc::new(LockMgr::new(1000)),
             command_access_gate: Arc::new(RwLock::new(())),
-            cursors_store: Arc::new(CacheBuilder::new(1000).build()),
-            scan_cursor_states: Arc::new(CacheBuilder::new(SCAN_CURSOR_STATE_CAPACITY).build()),
+            cursors_store: Arc::new(
+                CacheBuilder::new(1000)
+                    .with_weighter(
+                        default_cache_weighter::<String, String> as fn(&String, &String) -> usize,
+                    )
+                    .with_filter(
+                        default_cache_filter::<String, String> as fn(&String, &String) -> bool,
+                    )
+                    .build(),
+            ),
+            scan_cursor_states: Arc::new(
+                CacheBuilder::new(SCAN_CURSOR_STATE_CAPACITY)
+                    .with_weighter(
+                        default_cache_weighter::<u64, ScanCursorState>
+                            as fn(&u64, &ScanCursorState) -> usize,
+                    )
+                    .with_filter(
+                        default_cache_filter::<u64, ScanCursorState>
+                            as fn(&u64, &ScanCursorState) -> bool,
+                    )
+                    .build(),
+            ),
             db_instance_num,
             db_id,
             bg_task_handler: None,
