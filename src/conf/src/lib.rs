@@ -93,6 +93,7 @@ mod tests {
             port: 999,
             timeout: 100,
             redis_compatible_mode: false,
+            share_block_cache: true,
             log_dir: "".to_string(),
             data_dir: "./kiwi_data/db".to_string(),
             memory: 1024,

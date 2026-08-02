@@ -41,24 +41,24 @@ src/kstd/      → Utilities: LockMgr (sharded key-level locking)
 
 ```text
 Client → TCP accept [network runtime] → RESP parse → Command lookup
-  → CmdExecutor [network runtime] → Cmd.execute() calls StorageClient
-    → MessageChannel →
-  → StorageServer [storage runtime] → RocksDB
+  → connection-local execution or executor_ext admission/dispatch
+  → StorageClient → bounded MessageChannel
+  → StorageServer [storage runtime] → Cmd.execute() → Storage/RocksDB
     ← oneshot response ←
   → RESP encode [network runtime] → write back to client
 ```
 
-## Roadmap
+`CmdExecutor` is not the active production request queue on this path.
 
-The authoritative north star, requirements, milestones, current state, and Kanban are maintained in:
+## Architecture and roadmap
 
-- [Project constitution](.planning/PROJECT.md)
-- [Requirements](.planning/REQUIREMENTS.md)
-- [Roadmap](.planning/ROADMAP.md)
-- [Current state](.planning/STATE.md)
-- [Kanban](.planning/KANBAN.md)
+The sole authoritative project entry is:
 
-README checklists are intentionally not used as a second roadmap.
+- [Architecture and SDD plan](.planning/SDD.md)
+
+It links the approved requirements, decisions, work packages, current state,
+GitHub Issues, implementation plans, and verification evidence. README
+checklists are intentionally not used as a second roadmap.
 
 ## Getting Started
 

@@ -102,7 +102,7 @@ Gate Review 必须绑定：
 
 - [ ] `kiwi_redisraft_public_v1` 机器可读清单冻结，公开行为测试 100% 通过。
 - [ ] 写成功回复发生在 quorum commit、本地 apply 和批准 durability profile 满足之后。
-- [ ] Linearizable Read 通过 Leader/ReadIndex/Lease 合同，不存在绕行路径。
+- [ ] Linearizable Read 由当前 Leader 提供，并经过 OpenRaft `ensure_linearizable`/ReadIndex，或经过批准且证明安全的 Lease read protocol；单纯 leader 身份检查不构成读屏障，且不存在绕行路径。
 - [ ] Membership change、Leader transfer、Snapshot、日志回滚和重启有端到端测试。
 - [ ] deterministic simulator 检查 Election Safety、Log Matching 和 State Machine Safety。
 - [ ] 固定 seed 回归可以稳定重放；nightly random seed 失败会保存 seed、日志和 history。

@@ -9,7 +9,7 @@
 3. 实现、测试、文档和兼容 manifest 一致。
 4. 运行适当层级的验证并保存命令、环境和结果。
 5. 没有隐藏的 required test skip。
-6. `.planning/STATE.md`、`.planning/KANBAN.md` 和本机 ACTIVE checkpoint 已更新。
+6. `.planning/SDD.md` 和本机 ACTIVE checkpoint 已更新，且工作包状态包含 exact-ref 验证证据。
 
 ## 2. 每个 PR 的快速门禁
 

@@ -605,6 +605,12 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             file_meta.last_included_term
         );
 
+        let options = current_storage.storage_options().unwrap_or_else(|| {
+            log::warn!(
+                "snapshot install found unopened Storage without configured options; using defaults"
+            );
+            Arc::new(StorageOptions::default())
+        });
         let prepared = prepare_checkpoint_restore(&checkpoint_root, &self.db_path, db_instance_num)
             .map_err(io_err_to_raft)?;
 
@@ -662,7 +668,6 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             .map_err(|error| post_marker_error("committing the staged checkpoint", &error))?;
 
         let mut new_storage = Storage::new(db_instance_num, db_id);
-        let options = Arc::new(StorageOptions::default());
         new_storage
             .open(options, &self.db_path)
             .map_err(|error| post_marker_error("opening the restored storage", &error))?;

@@ -1,9 +1,9 @@
 # Kiwi 产品需求文档（PRD）
 
-> 综合来源：`.planning/PROJECT.md`（项目宪法）、`.planning/REQUIREMENTS.md`（可验收需求 v2）、`.planning/ROADMAP.md`（唯一路线图）、`.planning/DECISIONS.md`（已批准决定）、`.planning/STATE.md` 与 `.planning/KANBAN.md`（执行状态）。
+> 唯一权威入口：`.planning/SDD.md`。本 PRD 消费其中的产品范围、Requirement 和阶段边界，不维护第二套路线或执行状态。
 > 稳定性门禁 G1–G7 引用：`docs/quality/system-stability-gate.md`。
-> 文档性质：版本化的长期产品目标与验收合同；PR、Head、checks、dirty ownership 和任务授权等瞬时状态只由 `.planning/STATE.md`、`.planning/KANBAN.md`、本地 recovery 记录和 GitHub 实时状态维护。
-> 对齐日期：2026-07-30。
+> 文档性质：产品视图；Requirement priority 只以 `.planning/REQUIREMENTS.md` 为准，当前状态只以 `.planning/SDD.md`、本地 recovery 和 GitHub 实时状态为准。
+> 对齐日期：2026-08-02。
 
 ---
 
@@ -39,34 +39,35 @@ Kiwi 是一个以 **Redis 8.8.1 exact tag 可观察语义兼容**为目标的生
 
 ## 2. 用户画像与场景（反推）
 
-> ⚠️ 本节为**反推**：`.planning/` 文档是工程与审计视角，未显式定义终端用户。**以下画像从 REQUIREMENTS / ROADMAP / STATE 中可验证的工程事实反推得出**，非用户调研结论。详细用户故事与 REQ 映射见 `docs/personas-and-user-stories.md`。
+> ⚠️ 本节为**反推**：`.planning/` 文档是工程与审计视角，未显式定义终端用户。**以下画像从 SDD 和 REQUIREMENTS 中可验证的工程事实反推得出**，非用户调研结论。详细用户故事与 REQ 映射见 `docs/personas-and-user-stories.md`。
 
 | 反推画像 | 反推依据（来源） |
 |---|---|
-| 平台 / SRE 工程师 | 可观测（REQ-OBS-001/002）、运维演练（G7, ROADMAP M9）、稳定门禁（REQ-STABILITY-001~006） |
+| 平台 / SRE 工程师 | 可观测（REQ-OBS-001/002）、运维演练（G7, SDD M9）、稳定门禁（REQ-STABILITY-001~006） |
 | Redis 迁移用户 | RESP2/3 原始 frame differential（REQ-COMPAT-002）、兼容矩阵与已知差异（REQ-COMPAT-003）、Pipeline/连接行为回归（REQ-COMPAT-006） |
 | 存储 / 内核开发者 | RocksDB 权威（REQ-STORAGE-001~006）、encoding 规范（REQ-STORAGE-005）、format version（REQ-STORAGE-003） |
 | QA / 稳定性工程师 | Oracle provenance（REQ-COMPAT-008~010）、Jepsen/Elle（REQ-RAFT-007）、确定性 simulator（REQ-RAFT-006） |
 
 ---
 
-## 3. 需求池（REQ-\* 分级）
+## 3. Requirement 产品视图
 
-**分级依据（可辩护）**
+本节按产品用途聚合 Requirement，便于阅读，不重新定义优先级。
+每条 Requirement 的 P0/P1/P2 只以 `.planning/REQUIREMENTS.md` 为准。
 
-- **P0 = 稳定性门禁与当前里程碑阻塞项**：进入 M7 前的硬门禁（REQ-STABILITY-\*）、M1-001-T2 的 Oracle provenance 信任根（REQ-COMPAT-008/009/010）、以及门禁证据可复现的前提（REQ-WORK-\*）。这些不满足则 M7 保持冻结（ROADMAP M6/M7）。
-- **P1 = 核心兼容、存储、一致性与可观测/性能**：当前 Cache OFF 产品主线的必修项，纳入 M1–M6 验收（REQ-COMPAT-001~007、REQ-STORAGE-\*、REQ-RAFT-\*、REQ-OBS-001/002、REQ-PERF-\*、REQ-LICENSE-001）。
-- **P2 = 未来热层与组合发行**：生产实现与发行接入当前冻结；M7 前允许且必须完成适用的来源、许可证、ABI、安全加载和验收合同设计（REQ-HOT-\*、REQ-LICENSE-002~008、REQ-OBS-003）。
+- 稳定性和工作连续性：进入 M7 前的硬门禁、Oracle provenance 信任根和可恢复工作状态。
+- 兼容、存储、Raft、可观测性和性能：当前 Cache OFF 主线 M1–M6 的实现与验证合同。
+- Hot Tier 和组合发行：长期 M7–M9 合同，当前保持 Frozen。
 
-### P0（门禁 / 当前阻塞）
+### 稳定性、Oracle provenance 与工作连续性
 
 - `REQ-STABILITY-001`：启动热层生产实现前须门禁明确通过，且用户须明确批准一个单独的 implementation task。
 - `REQ-STABILITY-002`：门禁至少覆盖 Redis 8.8.1 differential、RocksDB close/reopen、Raft commit/apply/durability、Snapshot、成员变更、进程级故障注入、资源边界、可观测性。
 - `REQ-STABILITY-003`：门禁证据须绑定 branch/HEAD/平台/工具链/命令/结果/未覆盖风险；仅单测不算稳定。
 - `REQ-STABILITY-004`：门禁未过期间只允许设计热层合同，禁止新增 Redis-derived 生产依赖/loader/数据路径/默认配置。
-- `REQ-STABILITY-005`：任何解除冻结决定须追加到 DECISIONS.md 并同步 Roadmap/State/Kanban，不得由 PR 隐式解除。
+- `REQ-STABILITY-005`：任何解除冻结决定须追加到 DECISIONS.md 并同步 SDD.md，不得由 PR 隐式解除。
 - `REQ-STABILITY-006`：门禁通过只允许提交新规划与授权请求；即使用户同意 M7 转为 Ready，fork/loader/发行/热层实现仍只能在单独获批的 implementation task 中执行。
-- `REQ-COMPAT-008`：Oracle provenance 须 primary build 与 verifier 独立重建 binary SHA-256 完全一致，正式证据只来自独立重建产物（M1-001 Task 2 核心，见 STATE.md“Oracle provenance 历史状态”）。
+- `REQ-COMPAT-008`：Oracle provenance 须 primary build 与 verifier 独立重建 binary SHA-256 完全一致，正式证据只来自独立重建产物。
 - `REQ-COMPAT-009`：Oracle controller bootstrap/Git/CC/Make 须来自声明 Linux 信任边界，记录路径/版本/SHA-256/identity，路径替换风险下经 held FD 执行。
 - `REQ-COMPAT-010`：provenance 须在所有步骤成功后原子发布；不支持平台显式 FAIL 或带原因静态忽略，不得 early-return 假 PASS。
 - `REQ-WORK-001`：长期事实写入 `.planning/`，不只在会话记忆。
@@ -74,8 +75,10 @@ Kiwi 是一个以 **Redis 8.8.1 exact tag 可观察语义兼容**为目标的生
 - `REQ-WORK-003`：恢复状态须记录 branch/HEAD/授权/dirty 归属/证据/剩余工作/下一条安全动作。
 - `REQ-WORK-004`：branch/HEAD/dirty 漂移时新会话停止写操作并报告差异。
 - `REQ-WORK-005`：规划 task 与实施 task 使用不同任务边界；提前产生的实现草稿必须冻结（D012）。
+- `REQ-WORK-006`：SDD.md 是路线、工作包、当前状态、Issue/PR 追踪和门禁的唯一权威入口。
+- `REQ-WORK-007`：每个实施 PR 必须关联工作包、primary Issue 和 REQ；完整交付使用 Fixes/Closes，部分实现使用 Refs/Related。
 
-### P1（核心兼容 / 存储 / 一致性 / 可观测 / 性能）
+### 当前兼容、存储、Raft、可观测性与性能
 
 - `REQ-COMPAT-001`：普通 Redis 行为以 Redis 8.8.1 exact commit 为唯一 Oracle。
 - `REQ-COMPAT-002`：RESP2 与 RESP3 原始 frame 须做 differential，不依赖 typed conversion。
@@ -91,7 +94,7 @@ Kiwi 是一个以 **Redis 8.8.1 exact tag 可观察语义兼容**为目标的生
 - `REQ-STORAGE-005`：Kiwi key/value encoding 须 binary-safe/round-trip/order-preserving/prefix-safe/canonical/stable（`format_base_key.rs`、`format_*`、`custom_comparator.rs`）。
 - `REQ-STORAGE-006`：派生状态/索引/未来热层须能从 RocksDB 权威数据删除后重建，不能成为成功回复/恢复唯一依据。
 - `REQ-RAFT-001`：写成功回复须发生在 quorum commit + 本地 apply + 所选 durability profile 满足之后。
-- `REQ-RAFT-002`：Linearizable Read 即使经未来热层也须通过 Leader/ReadIndex/Lease 门禁。
+- `REQ-RAFT-002`：Linearizable Read 即使经未来热层，也必须由当前 Leader 提供，并经过 OpenRaft `ensure_linearizable`/ReadIndex 屏障，或经过批准且证明安全的 Lease read protocol；单纯 leader 身份检查不构成读屏障。
 - `REQ-RAFT-003`：实现并冻结 `kiwi_redisraft_public_v1`，公开清单内行为 100% 通过。
 - `REQ-RAFT-004`：RedisRaft 内部 `RAFT.AE`/`RAFT.REQUESTVOTE`/`RAFT.SNAPSHOT` 不是公共兼容要求。
 - `REQ-RAFT-005`：成员变更、Leader Transfer、Snapshot、日志回滚、真实 close/reopen 须进 required CI/分层门禁。
@@ -105,7 +108,7 @@ Kiwi 是一个以 **Redis 8.8.1 exact tag 可观察语义兼容**为目标的生
 - `REQ-PERF-003`：平均吞吐提升不能掩盖尾延迟/内存失控/语义变化/恢复退化。
 - `REQ-LICENSE-001`：Kiwi 自有、可独立识别源码保持 Apache-2.0，保留文件级版权与 SPDX 声明。
 
-### P2（未来热层 / 组合发行 —— 冻结中，仅合同/设计）
+### Future Hot Tier 与组合发行（Frozen，仅合同/设计）
 
 - `REQ-HOT-001` ~ `REQ-HOT-012`：热层全部 12 条验收合同（RocksDB 权威、arana-db/redis 来源、不进 Raft/Snapshot/Backup、可观察结果不变、update-or-invalidate、异步 fill 校验、TTL 绝对毫秒、Cache ON/OFF 同测、首期仅 String、版本化 C ABI、安全加载校验、专项审计）。详见 REQUIREMENTS.md L38–L53。
 - `REQ-LICENSE-002`：未来 Redis-derived native library 须源自 Redis 8.8.1 exact commit 并明确选 `AGPL-3.0-only`。
@@ -136,12 +139,12 @@ Kiwi 是一个以 **Redis 8.8.1 exact tag 可观察语义兼容**为目标的生
 
 ### 含（当前产品主线，Cache OFF）
 
-> 本节定义当前主线的目标与验收范围，不表示各项已经实现或通过门禁；实际进度只以 `.planning/STATE.md`、`.planning/KANBAN.md` 和可重复验证证据为准。
+> 本节定义当前主线的目标与验收范围，不表示各项已经实现或通过门禁；实际进度只以 `.planning/SDD.md` 和可重复验证证据为准。
 
 - Redis 8.8.1 可观察语义兼容（Oracle 验证，不依赖热层）。
 - RocksDB 全量权威存储与真实恢复。
-- OpenRaft 单 Raft Group 强一致、高可用、成员变更、Snapshot（PROJECT.md L47–L59；ROADMAP 依赖顺序 L19–L31）。
-- 系统稳定性门禁 G1–G7（ROADMAP M6）。
+- OpenRaft 单 Raft Group 强一致、高可用、成员变更、Snapshot（PROJECT.md 和 SDD M4）。
+- 系统稳定性门禁 G1–G7（SDD M6）。
 
 ### 不含（当前非目标，来源 PROJECT.md L108–L116）
 
@@ -153,10 +156,10 @@ Kiwi 是一个以 **Redis 8.8.1 exact tag 可观察语义兼容**为目标的生
 - 将 RedisRaft 内部 RPC 命令暴露为 Kiwi 公共接口。
 - 把历史 `pikiwidb/rediscache` 代码未经来源和许可证审计直接复制到 Kiwi。
 
-### 延期（冻结，来源 PROJECT.md L62–L82；ROADMAP M7 L158–L160）
+### 延期（冻结，来源 PROJECT.md 和 SDD M7）
 
 - 内嵌 Redis 8.8.1 原生内存热数据层（Embedded Redis Hot Tier）：仅冻结来源/许可证/ABI/正确性/发行接口合同，**不进入生产实现**；须 M6 通过且用户重新明确批准一个单独的 implementation task 后才解冻（REQ-STABILITY-001/005/006；D009）。
-- Multi-Raft 与远期容量（ROADMAP M10，启动条件见 L222）。
+- Multi-Raft 与远期容量（SDD M10）。
 
 ---
 
@@ -178,30 +181,26 @@ Kiwi 是一个以 **Redis 8.8.1 exact tag 可观察语义兼容**为目标的生
 
 ### 6.2 REQ 证据规则（来源 REQUIREMENTS.md L5）
 
-- 每个实现工作项**必须引用至少一个 `REQ-*`**。
+- 每个实现工作项**必须引用一个 SDD 工作包、一个 primary GitHub Issue 和至少一个 `REQ-*`**。
 - 每个 `REQ-*` **必须有可重复证据**（可重复、可重放、可审计）。
 - Gate Review 时：P0/P1 必须为零；required compatibility difference 必须为零；required test 不接受永久 skip；临时豁免须写明范围/依据/owner/Issue/到期条件/移除验证，且**不得覆盖数据损坏、线性一致性、安全或不可恢复风险**（system-stability-gate.md L188–L196）。
 
 ---
 
-## 7. 路线图（M0–M10 摘要，来源 ROADMAP.md）
+## 7. 交付路线
 
-| 里程碑 | 目标（摘要） | 关键退出门禁 |
-|---|---|---|
-| **M0** | 项目宪法、许可证与恢复机制（`.planning/*`、recovery 脚本）。 | 权威文档一致；热层“只设计禁实现”边界可恢复；恢复脚本 append-only 不改性 Git（L36–L56）。 |
-| **M1** | Redis 8.8.1 Cache OFF 兼容 Oracle（含 trusted provenance）。 | Oracle provenance 不可由 metadata+binary 拼接；双构建 hash 一致；正式证据来自 verifier rebuild；基础命令可重复 transcript（L58–L74）。 |
-| **M2** | RocksDB 权威状态与恢复正确性。 | Cache OFF 满足 Profile；崩溃恢复/格式兼容/故障注入证明 RocksDB 可独立恢复（L76–L90）。 |
-| **M3** | Redis 8.8.1 Cache OFF 核心语义闭环（String/Hash/List/Set/ZSet/Bitmap/HLL/Geo/Streams/Transaction/Lua/Pub-Sub/ACL/RESP3）。 | required profile 全绿；保留差异经显式批准，无未启用热层掩盖的正确性缺口（L92–L105）。 |
-| **M4** | 生产级单 Raft Group（`kiwi_redisraft_public_v1`、Linearizable Read、Membership、Snapshot）。 | 公开 Profile 100% 通过；3/5 节点正常/成员变更/恢复可重复；Cache OFF 无一致性绕行（L107–L122）。 |
-| **M5** | 分布式故障与一致性证明（partition/kill/disk fault/Jepsen/SUBMIT_UNKNOWN）。 | Election/Log Matching/State Machine Safety/线性一致/durability 均有机器可检查证据（L124–L139）。 |
-| **M6** | 系统稳定门禁（G1–G7）。 | 所有 P0/P1 清零；保留差异/豁免有 owner/期限/退出条件；Gate Review 绑定 exact commit（L141–L156）。 |
-| **[用户重新明确批准]** | 将 M7 转为 Ready，并批准一个范围明确、与规划 task 分离的 implementation task。 | Gate PASS 或 Ready 状态均不自动授权生产实现（REQ-STABILITY-006）。 |
-| **M7** | Embedded Redis Hot Tier 资格验证与实现（**延期且冻结**）。 | 仅在单独 implementation task 获批后执行；关闭/删除热层不影响正确性，热层失败不返回旧值，组合发行 Corresponding Source 检查通过（L158–L187）。 |
-| **M8** | Cache ON 正确性、故障与性能证明。 | Cache ON 与 Cache OFF 可观察结果一致；故障只降级性能；收益可重复且尾延迟/内存/恢复/写放大不越预算（L189–L202）。 |
-| **M9** | 生产发行门禁（CI/SBOM/回滚/运维手册）。 | 同版本可空环境部署/验证/备份/恢复/升级/回滚；发行包/源码/运行时身份完全对应（L204–L218）。 |
-| **M10** | Multi-Raft 与远期容量（启动条件：单 Group 门禁完成且有瓶颈证据）。 | 候选：Redis Cluster slot、Meta Group、S3 Snapshot、冷对象归档（L220–L232）。 |
+PRD 只定义产品范围，不维护第二份里程碑、退出门禁或依赖图。项目级
+M0-M10 状态、工作包顺序和验收合同以
+[`.planning/SDD.md`](../.planning/SDD.md) 为唯一来源。
 
-> 依赖顺序：M1/M2 可有限并行；M3 依赖二者；M4/M5 须 Cache OFF 为唯一 required 模式；M7 在 M6 通过且用户批准单独 implementation task 前保持冻结；M10 不得在单 Group 稳定性与故障证明完成前启动主线（ROADMAP L34）。
+当前产品交付边界只有三条：
+
+- M0-M6 是 Cache OFF 的当前可执行主线；
+- M7-M8 Embedded Redis Hot Tier 保持 frozen，M6 PASS 也不会自动授权实现；
+- M9-M10 只有在前置稳定性、发行和单 Raft Group 瓶颈证据满足后才能进入规划。
+
+任何 PR、Issue、README 或 PRD 更新都不得复制并独立维护 SDD 中的逐里程碑
+目标、gate、依赖或实时状态。
 
 ---
 
@@ -209,14 +208,14 @@ Kiwi 是一个以 **Redis 8.8.1 exact tag 可观察语义兼容**为目标的生
 
 > 以下条目区分仍待决定的产品问题与已经确认的历史状态；PRD 不缓存 checks、review threads 或 dirty ownership 等瞬时执行状态。
 
-1. **Hot Tier 批准状态**：M7 仍冻结。M6（G1–G7）通过只允许提出授权请求；用户必须在看到 Gate Review 后明确批准一个单独的 implementation task（PROJECT.md L13；ROADMAP M7 L160；REQ-STABILITY-001/005/006）。当前无批准记录。
+1. **Hot Tier 批准状态**：M7 仍冻结。M6（G1–G7）通过只允许提出授权请求；用户必须在看到 Gate Review 后明确批准一个单独的 implementation task（PROJECT.md、SDD M7、REQ-STABILITY-001/005/006）。当前无批准记录。
 2. **PR `#383` 历史状态**：规划 PR `codex/redis-8.8.1-oracle-provenance-plan` 已于 2026-07-28 合并，final Head `42c16bef899385bd2e1b1e16e2e0202d4a614590`，merge commit `58030e1331655546ea4547a9a94efc493534ef7d`；它只固化 planning/docs，不带入实现。
-3. **provenance 实现进度**：方案 A（D011）已批准，但实现**未在接受边界内开始**（STATE.md Oracle provenance 历史状态）。PR `#383` 只完成规划闭环，不代表方案 A 已实现。
+3. **provenance 实现进度**：方案 A（D011）已批准，但实现**未在接受边界内开始**（SDD WP1）。PR `#383` 只完成规划闭环，不代表方案 A 已实现。
 4. **`arana-db/redis` 下游 baseline**：下游 exact commit、patch 清单、构建配置、产物 hash 尚未建立，当前不是 Kiwi 构建输入（PROJECT.md L28、L34）。
 5. **组合发行开源许可证专项复核**：首次公开发布含 Redis-derived native library 的组合发行前必须完成，当前未执行（REQ-LICENSE-008；D002）。
 6. **Oracle 草稿接受边界**：PR `#383` 未接受旧六文件实现草稿；后续独立 Oracle implementation task 只能将其作为只读参考，并须逐项对照 D011、REQ-COMPAT-008~010 重新审计。精确 worktree、dirty ownership 和 recovery checkpoint 不在 PRD 中缓存。
-7. **Multi-Raft 启动条件**：单 Group 兼容/持久化/一致性/故障/稳定门禁未完成，且无 Leader 吞吐/容量/隔离/故障域瓶颈证据 → M10 不启动（ROADMAP M10 L222）。
-8. **当前运行模式**：Cache OFF 为当前唯一 required 模式（ROADMAP L7；REQ-PERF-001）。Cache ON 测试与对比基线只能在 M7 条件满足且单独 implementation task 获批后引入。
+7. **Multi-Raft 启动条件**：单 Group 兼容/持久化/一致性/故障/稳定门禁未完成，且无 Leader 吞吐/容量/隔离/故障域瓶颈证据 → M10 不启动（SDD M10）。
+8. **当前运行模式**：Cache OFF 为当前唯一 required 模式（SDD、REQ-PERF-001）。Cache ON 测试与对比基线只能在 M7 条件满足且单独 implementation task 获批后引入。
 
 ---
 
