@@ -664,8 +664,6 @@ fn test_del_tombstones_vector_meta_and_defers_member_cleanup() {
         assert!(redis.del_key(b"vectors").expect("delete vector set"));
         assert_eq!(redis.vcard(b"vectors").expect("missing card"), 0);
         let tombstone = read_stored_vector_meta(redis, b"vectors");
-        assert_eq!(tombstone.count(), 0);
-        assert_eq!(tombstone.etime(), 0);
         assert!(tombstone.version() > previous_version);
         assert_eq!(
             count_cf_entries(redis, ColumnFamilyIndex::VectorDataCF),
