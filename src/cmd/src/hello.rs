@@ -139,7 +139,9 @@ mod tests {
     use super::*;
     use client::StreamTrait;
 
-    struct TestStream;
+    struct TestStream {
+        _marker: u8,
+    }
 
     #[async_trait::async_trait]
     impl StreamTrait for TestStream {
@@ -153,7 +155,7 @@ mod tests {
     }
 
     fn make_client() -> Arc<Client> {
-        Arc::new(Client::new(Box::new(TestStream)))
+        Arc::new(Client::new(Box::new(TestStream { _marker: 0 })))
     }
 
     fn make_storage() -> Arc<Storage> {

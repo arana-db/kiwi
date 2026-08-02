@@ -61,14 +61,6 @@ use crate::storage_manifest::StorageManifest;
 /// log index that created the key (wired up by the raft layer later).
 pub type GenerationProvider = Arc<dyn Fn() -> Result<u64> + Send + Sync>;
 
-fn default_cache_weighter<K, V>(_: &K, _: &V) -> usize {
-    1
-}
-
-fn default_cache_filter<K, V>(_: &K, _: &V) -> bool {
-    true
-}
-
 // Import logindex types for use in Storage
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,16 +350,7 @@ impl Redis {
         };
 
         let statistics_store: Cache<String, KeyStatistics> =
-            CacheBuilder::new(storage.statistics_max_size)
-                .with_weighter(
-                    default_cache_weighter::<String, KeyStatistics>
-                        as fn(&String, &KeyStatistics) -> usize,
-                )
-                .with_filter(
-                    default_cache_filter::<String, KeyStatistics>
-                        as fn(&String, &KeyStatistics) -> bool,
-                )
-                .build();
+            CacheBuilder::new(storage.statistics_max_size).build();
 
         let flat_query_gate =
             crate::vector_flat::FlatQueryGate::new(storage.vector.max_concurrent_flat_queries);
@@ -390,25 +373,8 @@ impl Redis {
             vector_fault_hooks: crate::vector_fault::VectorFaultHooks::default(),
 
             statistics_store: Arc::new(statistics_store),
-            scan_cursors_store: Mutex::new(
-                CacheBuilder::new(5000)
-                    .with_weighter(
-                        default_cache_weighter::<Vec<u8>, Vec<u8>>
-                            as fn(&Vec<u8>, &Vec<u8>) -> usize,
-                    )
-                    .with_filter(
-                        default_cache_filter::<Vec<u8>, Vec<u8>> as fn(&Vec<u8>, &Vec<u8>) -> bool,
-                    )
-                    .build(),
-            ),
-            spop_counts_store: Mutex::new(
-                CacheBuilder::new(1000)
-                    .with_weighter(
-                        default_cache_weighter::<String, u64> as fn(&String, &u64) -> usize,
-                    )
-                    .with_filter(default_cache_filter::<String, u64> as fn(&String, &u64) -> bool)
-                    .build(),
-            ),
+            scan_cursors_store: Mutex::new(CacheBuilder::new(5000).build()),
+            spop_counts_store: Mutex::new(CacheBuilder::new(1000).build()),
 
             small_compaction_threshold: std::sync::atomic::AtomicU64::new(5000),
             small_compaction_duration_threshold: std::sync::atomic::AtomicU64::new(10000),

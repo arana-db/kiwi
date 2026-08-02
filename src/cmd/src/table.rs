@@ -379,7 +379,9 @@ mod tests {
         assert!(!table.contains_key("touch"));
     }
 
-    struct TestStream;
+    struct TestStream {
+        _marker: u8,
+    }
 
     #[async_trait::async_trait]
     impl StreamTrait for TestStream {
@@ -399,7 +401,7 @@ mod tests {
 
     fn run_command(table: &CmdTable, name: &str, argv: &[Vec<u8>]) -> RespData {
         let command = table.get(name).expect("command should be registered");
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(name.as_bytes());
         client.set_argv(argv);
         command.execute(&client, Arc::new(Storage::new(1, 0)));
@@ -417,7 +419,7 @@ mod tests {
     fn hello_command_returns_resp3_handshake() {
         let table = create_command_table(no_requirepass_provider());
         let command = table.get("hello").expect("HELLO should be registered");
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(b"hello");
         client.set_argv(&[b"hello".to_vec(), b"3".to_vec()]);
 
@@ -663,7 +665,7 @@ mod tests {
     fn hello_bare_with_requirepass_returns_noauth() {
         let table = create_command_table(test_requirepass_provider(Some("secret")));
         let command = table.get("hello").expect("HELLO should be registered");
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(b"hello");
         client.set_argv(&[b"hello".to_vec(), b"3".to_vec()]);
 
@@ -682,7 +684,7 @@ mod tests {
     fn hello_setname_sets_client_name() {
         let table = create_command_table(no_requirepass_provider());
         let command = table.get("hello").expect("HELLO should be registered");
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(b"hello");
         client.set_argv(&[
             b"hello".to_vec(),
@@ -704,7 +706,7 @@ mod tests {
     fn hello_auth_with_correct_password_authenticates() {
         let table = create_command_table(test_requirepass_provider(Some("secret")));
         let command = table.get("hello").expect("HELLO should be registered");
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(b"hello");
         client.set_argv(&[
             b"hello".to_vec(),
@@ -729,7 +731,7 @@ mod tests {
     fn hello_auth_with_wrong_password_returns_wrongpass() {
         let table = create_command_table(test_requirepass_provider(Some("secret")));
         let command = table.get("hello").expect("HELLO should be registered");
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(b"hello");
         client.set_argv(&[
             b"hello".to_vec(),
@@ -754,7 +756,7 @@ mod tests {
     fn hello_auth_without_requirepass_returns_error() {
         let table = create_command_table(no_requirepass_provider());
         let command = table.get("hello").expect("HELLO should be registered");
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(b"hello");
         client.set_argv(&[
             b"hello".to_vec(),

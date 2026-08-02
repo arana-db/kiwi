@@ -74,7 +74,9 @@ mod tests {
     use crate::auth::no_requirepass_provider;
     use crate::table::create_command_table;
 
-    struct TestStream;
+    struct TestStream {
+        _marker: u8,
+    }
 
     #[async_trait::async_trait]
     impl StreamTrait for TestStream {
@@ -135,7 +137,7 @@ mod tests {
             .unwrap();
         storage.set(b"key", b"Hello World").unwrap();
         let storage = Arc::new(storage);
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(b"substr");
         client.set_argv(&[
             b"substr".to_vec(),
@@ -172,7 +174,7 @@ mod tests {
             .unwrap();
         storage.hset(b"hash", b"field", b"value").unwrap();
         let storage = Arc::new(storage);
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(b"substr");
         client.set_argv(&[
             b"substr".to_vec(),
@@ -206,7 +208,7 @@ mod tests {
             .unwrap();
         storage.set(b"binary", b"\xff\x00").unwrap();
         let storage = Arc::new(storage);
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
 
         for (key, expected) in [
             (
@@ -235,7 +237,7 @@ mod tests {
 
     #[test]
     fn substr_rejects_out_of_range_integer_arguments_before_storage_access() {
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(b"substr");
         client.set_argv(&[
             b"substr".to_vec(),

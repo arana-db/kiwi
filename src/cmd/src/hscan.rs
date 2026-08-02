@@ -112,7 +112,9 @@ mod tests {
 
     use super::*;
 
-    struct TestStream;
+    struct TestStream {
+        _marker: u8,
+    }
 
     #[async_trait::async_trait]
     impl StreamTrait for TestStream {
@@ -175,7 +177,7 @@ mod tests {
             .unwrap();
         storage.hset(b"binary_hash", b"\xff", b"\xfe").unwrap();
         let storage = Arc::new(storage);
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_argv(&[
             b"hscan".to_vec(),
             b"binary_hash".to_vec(),
@@ -211,7 +213,7 @@ mod tests {
             .unwrap();
         storage.hset(b"empty_field_hash", b"", b"value").unwrap();
         let storage = Arc::new(storage);
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_argv(&[
             b"hscan".to_vec(),
             b"empty_field_hash".to_vec(),
