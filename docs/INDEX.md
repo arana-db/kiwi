@@ -12,18 +12,22 @@ sure where to start, follow the **Newcomer** path below.
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contributors | How to contribute |
 | [`CHANGELOG.md`](../CHANGELOG.md) | Everyone | Notable changes (history) |
 
-## Planning & requirements (source of truth for roadmap)
+## Planning and requirements
 
-The `.planning/` directory holds the north star, requirements, milestones, current
-state, and Kanban. These files are referenced from the README and the PRD and are
-the authoritative tracking surface:
+The sole authoritative project entry is `.planning/SDD.md`. It owns the current
+architecture, `M0`–`M10` roadmap, `M0`–`M6` executable work packages,
+current state, GitHub traceability, and verification gates.
+
+Its subordinate registries are:
 
 - `.planning/PROJECT.md` — constitution / north star
-- `.planning/REQUIREMENTS.md` — acceptance requirements (`REQ-*`)
-- `.planning/ROADMAP.md` — milestones (`M0`–`M10`)
-- `.planning/STATE.md` — current state
-- `.planning/KANBAN.md` — work board
-- `.planning/DECISIONS.md` / `.planning/OPEN_QUESTIONS.md` / `.planning/REFERENCES.md`
+- `.planning/REQUIREMENTS.md` — acceptance requirement registry (`REQ-*`)
+- `.planning/DECISIONS.md` — approved decision registry
+- `.planning/OPEN_QUESTIONS.md` — unresolved high-impact questions
+- `.planning/REFERENCES.md` — exact upstream and license references
+
+`.planning/STATE.md`, `.planning/KANBAN.md`, and `.planning/ROADMAP.md` are
+compatibility pointers and must not maintain independent project state.
 
 ## Developer docs
 
@@ -64,12 +68,12 @@ the authoritative tracking surface:
 records** (filename prefix `YYYY-MM-DD-`). They are historical decision logs, not
 a second roadmap. Follow related specs and plans by topic and by their explicit
 cross-references; dates do not define a one-to-one pairing. For the current
-authoritative plan, prefer `.planning/ROADMAP.md` and the gate documents above.
+authoritative architecture, state, and plan, use `.planning/SDD.md`.
 
 ## Suggested reading order
 
 - **Newcomer**: `README.md` → `docs/development.md` → `docs/cluster.md` → `docs/key-encoding.md`
-- **Contributor**: `CLAUDE.md` → `docs/development.md` → `docs/quality/quality-gates.md`
+- **Contributor**: `CLAUDE.md` → `.planning/SDD.md` → `docs/development.md` → `docs/quality/quality-gates.md`
 - **Architecture / compatibility**: `docs/prd.md` → `docs/compatibility/redis-8.8.1.md` → `docs/architecture/redis-8.8.1-system-boundaries.md`
 - **Stability & quality**: `docs/quality/system-stability-gate.md` → `docs/quality/quality-gates.md` → `docs/performance/storage-runtime-baseline.md`
 - **Design history**: `docs/superpowers/plans/` + `docs/superpowers/specs/` (follow by topic and explicit cross-references)

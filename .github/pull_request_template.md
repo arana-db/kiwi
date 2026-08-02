@@ -1,30 +1,64 @@
-### Description
-Fixes # (issue)
+## SDD Traceability
 
-<!-- Please describe your changes in detail -->
+- Work package: WP-N
+- SDD baseline: commit SHA
+- Primary issue: Fixes #N / Part of #N
+- Parent or Epic: Part of #N / N/A
+- Related issues: Refs #N / N/A
+- Design context: Discussion #N / N/A
+- Requirements:
+  - REQ-DOMAIN-NNN
+- Decisions:
+  - DNNN / N/A
 
-### Type of Change
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+Use Fixes #N only when this PR completely satisfies every required acceptance
+criterion of that Issue. Partial work must use Part of #N or Refs #N.
+
+## Description
+
+<!-- Describe the problem, design, implementation, and intentionally excluded scope. -->
+
+## Type of Change
+
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Breaking change
 - [ ] Documentation update
 - [ ] Performance improvement
 - [ ] Code refactoring
+- [ ] Test or verification infrastructure
 
-### Checklist
-- [ ] I confirm the target branch is `main` (or appropriate feature branch)
-- [ ] My code follows the project's Rust coding style and conventions
-- [ ] Code has passed local testing (`make test`)
-- [ ] Code has passed clippy checks (`make lint`)
-- [ ] Code is properly formatted (`make fmt`)
-- [ ] I have added tests that prove my fix is effective or that my feature works
-- [ ] All new and existing tests pass
-- [ ] I have updated the documentation (if applicable)
-- [ ] My changes generate no new warnings or errors
-- [ ] I have checked for potential security issues
+## Scope Completion
 
-### Testing
-<!-- Describe the tests you ran to verify your changes -->
+- [ ] This PR has one primary work-package objective.
+- [ ] The primary Issue still matches the current source and PR scope.
+- [ ] Fixes is used only for a completely satisfied Issue.
+- [ ] Deferred acceptance items are represented by separate open Issues.
+- [ ] Required tests and documentation are included.
+- [ ] Frozen work such as Embedded Redis Hot Tier is not implemented.
 
-### Additional Context
-<!-- Add any other context about the PR here -->
+## Verification
+
+- Environment:
+- Commands:
+- Results:
+- Uncovered risks:
+- Exact-main post-merge verification required: yes
+
+## Checklist
+
+- [ ] Target branch is main or the approved feature branch.
+- [ ] Code follows the Rust style and project conventions.
+- [ ] Formatting checks pass.
+- [ ] Clippy checks pass.
+- [ ] Targeted tests prove the changed success, failure, and boundary paths.
+- [ ] Required existing tests pass.
+- [ ] Public behavior changes include Redis 8.8.1 Oracle evidence.
+- [ ] Storage/Raft changes include required Linux/WSL and fault evidence.
+- [ ] Documentation and compatibility manifests are updated.
+- [ ] No required test is silently skipped.
+- [ ] Security, sensitive logging, and third-party license impact were checked.
+
+## Additional Context
+
+<!-- Add migration, rollback, compatibility, follow-up, or review context. -->

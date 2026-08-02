@@ -2,7 +2,7 @@
 
 > 基线：Redis 8.8.1
 > 状态：已批准需求集 v2
-> 规则：每个实现工作项必须引用至少一个 `REQ-*`，每个 `REQ-*` 必须有可重复证据。
+> 规则：每个实现工作项必须引用一个 SDD 工作包、一个 primary GitHub Issue 和至少一个 `REQ-*`；每个 `REQ-*` 必须有可重复证据。
 > 优先级：每条 `REQ-*` 末尾的 `{priority: P0|P1|P2}` 含义 —— P0=当前产品核心/不可协商；P1=质量与可观测深度；P2=未来派生/延期热层（冻结中，未授权实现）。
 
 ## Redis 兼容
@@ -33,7 +33,7 @@
 - `REQ-STABILITY-002` {priority: P0}：稳定性门禁至少覆盖 Redis 8.8.1 differential、RocksDB 真正 close/reopen、Raft commit/apply/durability、Snapshot、成员变更、进程级故障注入、资源边界和可观测性。
 - `REQ-STABILITY-003` {priority: P1}：门禁证据必须绑定 branch、HEAD、平台、工具链、命令、测试结果和未覆盖风险；只通过单元测试不得视为系统稳定。
 - `REQ-STABILITY-004` {priority: P0}：门禁未通过期间，只允许维护未来热层的架构、许可证、ABI 和验收合同；禁止新增 Redis-derived 生产依赖、动态库 loader、热层数据路径或默认配置。
-- `REQ-STABILITY-005` {priority: P0}：任何解除冻结的决定必须追加到 `.planning/DECISIONS.md`，并同步更新 Roadmap、State 和 Kanban；不得由实现 PR 隐式解除。
+- `REQ-STABILITY-005` {priority: P0}：任何解除冻结的决定必须追加到 `.planning/DECISIONS.md`，并同步更新 `.planning/SDD.md`；不得由实现 PR 隐式解除。
 - `REQ-STABILITY-006` {priority: P0}：稳定性门禁通过只允许提交新的热层规划与授权请求，不自动授权 Redis fork 改造、动态库构建、loader、发行接入或热层生产实现。
 
 ## 未来内嵌 Redis 8.8.1 原生内存热数据层合同
@@ -91,3 +91,5 @@
 - `REQ-WORK-003` {priority: P0}：恢复状态必须记录 branch、HEAD、授权、dirty 归属、证据、剩余工作和下一条安全动作。
 - `REQ-WORK-004` {priority: P0}：branch、HEAD 或 dirty 漂移时，新会话必须停止写操作并报告差异。
 - `REQ-WORK-005` {priority: P0}：规划 task 和实施 task 必须使用不同的任务边界。规划 task 只能写长期事实、设计、计划和恢复记录；批准规划不授权继续源码实现。提前产生的实现草稿必须冻结，后续实施必须在新的隔离工作树和 recovery checkpoint 中重新开始或逐项审计后复用。
+- `REQ-WORK-006` {priority: P0}：`.planning/SDD.md` 是项目唯一权威入口；路线、工作包、当前状态、当前计划、Issue/PR 追踪和验证门禁不得在其他文件维护独立副本。
+- `REQ-WORK-007` {priority: P0}：每个实施 PR 必须关联一个 SDD 工作包、一个 primary GitHub Issue 和适用的 `REQ-*`。只有完整满足 Issue 全部 required acceptance criteria 时才能使用 `Fixes` 或 `Closes`；部分实现必须使用 `Part of` 或 `Refs`。

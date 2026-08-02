@@ -98,3 +98,50 @@
 - 当前应用：Redis 8.8.1 Oracle provenance 的六文件实现草稿保持未暂存、未提交、未 push，并在原 recovery worktree 冻结。本 task 只发布方案 A 的项目真相、设计和后续实施计划。
 - 后续要求：实施必须另开 task，在新的隔离 worktree 保存独立 recovery checkpoint；可只读参考冻结草稿，但必须逐项对照 `D011` 和 `REQ-COMPAT-008` 至 `REQ-COMPAT-010` 重新审计，不能把既有绿测当作接受证据。
 - 理由：Kiwi 底层兼容、存储和 Raft 工作并行且依赖严格。混合规划和实现会隐式改变任务优先级、污染 dirty ownership，并让未批准代码反向定义架构。
+
+## D013：使用单一 SDD 权威入口
+
+- 日期：2026-08-02
+- 状态：accepted
+- 决定：.planning/SDD.md 是项目唯一权威入口，统一维护当前架构、M0-M10 路线、M0-M6 工作包、当前状态、Issue/PR 追踪和验证门禁。
+- 后果：STATE.md、KANBAN.md 和 ROADMAP.md 只保留兼容迁移指针，不维护独立状态。PROJECT、REQUIREMENTS、DECISIONS、OPEN_QUESTIONS 和 REFERENCES 作为 SDD 下属注册表。
+- 理由：此前同一状态分散在多份文件中，PR 合并后容易产生状态、优先级和当前计划漂移。
+
+## D014：实施 PR 强制关联工作包、Issue 和 Requirement
+
+- 日期：2026-08-02
+- 状态：accepted
+- 决定：每个实施 PR 必须声明一个 SDD 工作包、一个 primary GitHub Issue 和适用的 REQ-*。
+- 关闭语义：只有完整满足 Issue 全部 required acceptance criteria 时使用 Fixes/Closes；部分实现使用 Part of/Refs。
+- 后果：没有精确 Issue 的工作包不能进入 ready；宽泛 Epic 必须拆 child Issue；Discussion 只能作为设计来源。
+
+## D015：保持 network/storage 数据面隔离并建立统一生命周期
+
+- 日期：2026-08-02
+- 状态：accepted
+- 当前事实：进程有 bootstrap、network、storage 三个 Tokio Runtime；双 Runtime 只描述请求数据面。
+- 决定：保留 network/storage 数据面隔离，不增加第四 Runtime；通过统一 supervisor、有界队列、absolute deadline、cancel 和 JoinHandle 建立确定性生命周期。
+- 退出顺序：停止 admission，drain network、storage 和 Raft，结束后台任务，关闭 RocksDB，最后停止 Runtime。
+
+## D016：未知持久化版本默认 fail closed
+
+- 日期：2026-08-02
+- 状态：accepted
+- 决定：未知 disk format、CF schema、comparator、StorageManifest 或 Snapshot metadata 版本默认拒绝启动或安装。
+- 例外：只有显式列入兼容范围并有真实 upgrade/rollback 与 reopen 证据的版本可以接受。
+- 理由：旧二进制无法推断未来版本对 CF、encoding、comparator、topology 或恢复语义的改变。
+
+## D017：当前不支持真正 Multi-Key
+
+- 日期：2026-08-02
+- 状态：accepted
+- 决定：当前真正 Multi-Key 命令在 storage 和 Raft 前统一拒绝；本阶段不实现跨 Slot 原子性、2PC、跨实例快照或分布式锁协议。
+- 重新立项条件：明确 slot map、原子 batch、锁或事务协议、故障恢复和 Redis 8.8.1 可观察语义。
+- 来源：Discussion #346。
+
+## D018：兼容性与故障验证使用分层门禁
+
+- 日期：2026-08-02
+- 状态：accepted
+- 决定：PR fast gate 运行受影响的 raw RESP、单元、集成和静态门禁；nightly/full gate 运行 TCL、完整 differential、fuzz、deterministic Raft 和故障矩阵；M6/release gate 运行 fresh rebuild、真实 upgrade/rollback、close/reopen 和 3/5 节点历史验证。
+- 后果：绿色 PR fast gate 不能被解释为系统稳定或生产级一致性已经证明。
