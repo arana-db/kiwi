@@ -70,9 +70,9 @@ impl CommandTableGates {
     }
 }
 
-/// Wraps a command with a deterministic pre-execution gate: when the flag
-/// provider returns false the command replies with `disabled_error` and the
-/// inner command never runs.
+/// Wraps a command with a deterministic pre-execution gate: when `allowed` is
+/// false the command replies with `disabled_error` and the inner command never
+/// runs.
 #[derive(Clone)]
 struct GatedCmd {
     inner: Arc<dyn Cmd>,
@@ -512,6 +512,19 @@ mod tests {
                 "{name} should be rejected when vector-enabled=false"
             );
         }
+    }
+
+    #[test]
+    fn vector_feature_gate_precedes_cluster_gate() {
+        let table = create_command_table_with_gates(
+            Arc::new(|| None),
+            CommandTableGates::from_flags(false, false, true),
+        );
+        let reply = run_command(&table, "vcard", &[b"vcard".to_vec(), b"k".to_vec()]);
+        assert_eq!(
+            error_text(&reply),
+            "ERR vector support is disabled (vector-enabled=false)"
+        );
     }
 
     #[test]
