@@ -74,6 +74,21 @@ CURRENT_FIELDS = (
     "current_pr",
 )
 
+WP0_EVIDENCE_FIELDS = (
+    "wp0_pr_base_ref",
+    "wp0_pr_head_ref",
+    "wp0_merge_parent_ref",
+    "wp0_merge_ref",
+)
+
+WP0_IDENTITY_FIELDS = ("wp0_pr_number",)
+
+WP0_VERIFICATION_FIELDS = (
+    "wp0_exact_main_verification_ref",
+    "wp0_exact_main_verification_run",
+    "wp0_exact_main_verification_status",
+)
+
 ALLOWED_WP_STATUSES = {
     "proposed",
     "accepted-design",
@@ -154,7 +169,13 @@ def parse_front_matter(sdd: str, errors: list[str]) -> dict[str, str]:
         errors.append(f"duplicate front matter fields: {duplicates}")
 
     fields = dict(pairs)
-    for field in CURRENT_FIELDS:
+    required_fields = (
+        CURRENT_FIELDS
+        + WP0_EVIDENCE_FIELDS
+        + WP0_IDENTITY_FIELDS
+        + WP0_VERIFICATION_FIELDS
+    )
+    for field in required_fields:
         if keys.count(field) != 1:
             errors.append(f"front matter field {field} must occur exactly once")
     return fields
@@ -344,6 +365,45 @@ def validate_current_state(sdd: str, fields: dict[str, str], errors: list[str]) 
     if pr_matches != [fields.get("current_pr")]:
         errors.append("current WP implementation PR must occur once and match front matter")
 
+    wp0_pr_number = fields.get("wp0_pr_number", "")
+    if not re.fullmatch(r"[1-9][0-9]*", wp0_pr_number):
+        errors.append("wp0_pr_number must be a positive decimal GitHub PR number")
+    wp0_pr_matches = re.findall(
+        r"(?m)^Implementation PR：\[#(?P<pr>\d+)\]\(https://github\.com/arana-db/kiwi/pull/(?P=pr)\)。$",
+        blocks.get("WP0", ""),
+    )
+    if wp0_pr_matches != [wp0_pr_number]:
+        errors.append("WP0 implementation PR must match immutable wp0_pr_number")
+
+    verification_ref = fields.get("wp0_exact_main_verification_ref", "")
+    verification_run = fields.get("wp0_exact_main_verification_run", "")
+    verification_status = fields.get("wp0_exact_main_verification_status", "")
+    if verification_status not in {"pending", "passed"}:
+        errors.append(
+            "wp0_exact_main_verification_status must be pending or passed"
+        )
+    if verification_status == "pending":
+        if verification_ref != "none" or verification_run != "none":
+            errors.append(
+                "pending WP0 exact-main verification must not claim a ref or run"
+            )
+    elif verification_status == "passed":
+        if not re.fullmatch(r"[0-9a-f]{40}", verification_ref):
+            errors.append(
+                "passed WP0 exact-main verification requires a full Git SHA"
+            )
+        if not re.fullmatch(r"[1-9][0-9]*", verification_run):
+            errors.append(
+                "passed WP0 exact-main verification requires a GitHub Actions run"
+            )
+
+    if statuses.get("WP0") in {"verified", "accepted", "released"}:
+        if verification_status != "passed":
+            errors.append(
+                f"WP0 status {statuses.get('WP0')} requires passed exact-main "
+                "verification evidence"
+            )
+
     table_expectations = {
         "Current work package": current_work_package,
         "Status": current_status,
@@ -388,6 +448,11 @@ def validate_current_state(sdd: str, fields: dict[str, str], errors: list[str]) 
     baseline_branch = fields.get("baseline_branch", "")
     if not re.fullmatch(r"[0-9a-f]{40}", baseline_ref):
         errors.append("baseline_ref must be a full 40-character lowercase Git SHA")
+    for field in WP0_EVIDENCE_FIELDS:
+        if not re.fullmatch(r"[0-9a-f]{40}", fields.get(field, "")):
+            errors.append(
+                f"{field} must be a full 40-character lowercase Git SHA"
+            )
     baseline_matches = re.findall(r"(?m)^\| Baseline \| ([^|]+) \|$", sdd)
     if baseline_matches != [f"{baseline_branch}@{baseline_ref}"]:
         errors.append("current-state table Baseline must match front matter")
@@ -433,34 +498,39 @@ def validate_invariants(sdd: str, errors: list[str]) -> int:
     return len(ids)
 
 
-def git_changed_paths(root: Path, baseline_ref: str, errors: list[str]) -> set[str]:
-    object_check = subprocess.run(
-        ["git", "-C", str(root), "cat-file", "-e", f"{baseline_ref}^{{commit}}"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    if object_check.returncode != 0:
-        errors.append(f"baseline_ref is not available as a Git commit: {baseline_ref}")
+def git_changed_paths_between(
+    root: Path,
+    base_ref: str,
+    head_ref: str,
+    label: str,
+    errors: list[str],
+) -> set[str]:
+    unavailable: list[str] = []
+    for role, ref in (("base", base_ref), ("head", head_ref)):
+        object_check = subprocess.run(
+            ["git", "-C", str(root), "cat-file", "-e", f"{ref}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if object_check.returncode != 0:
+            unavailable.append(f"{role}={ref}")
+    if unavailable:
+        errors.append(
+            f"{label} references are not available as Git commits: {unavailable}"
+        )
         return set()
 
     diff = subprocess.run(
-        ["git", "-C", str(root), "diff", "--name-only", baseline_ref, "--"],
+        ["git", "-C", str(root), "diff", "--name-only", base_ref, head_ref, "--"],
         capture_output=True,
         text=True,
         encoding="utf-8",
         check=False,
     )
     whitespace = subprocess.run(
-        ["git", "-C", str(root), "diff", "--check", baseline_ref, "--"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    untracked = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
+        ["git", "-C", str(root), "diff", "--check", base_ref, head_ref, "--"],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -468,15 +538,145 @@ def git_changed_paths(root: Path, baseline_ref: str, errors: list[str]) -> set[s
     )
     if whitespace.returncode != 0:
         details = (whitespace.stdout + whitespace.stderr).strip()
-        errors.append(f"WP0 committed/working diff has whitespace errors: {details}")
-    if diff.returncode != 0 or untracked.returncode != 0:
-        errors.append("unable to compute WP0 changed paths from baseline_ref")
+        errors.append(f"{label} diff has whitespace errors: {details}")
+    if diff.returncode != 0:
+        errors.append(f"unable to compute {label} changed paths")
         return set()
     return {
         path.strip().replace("\\", "/")
-        for path in (diff.stdout + "\n" + untracked.stdout).splitlines()
+        for path in diff.stdout.splitlines()
         if path.strip()
     }
+
+
+def validate_expected_git_diff(
+    root: Path,
+    base_ref: str,
+    head_ref: str,
+    label: str,
+    expected: set[str],
+    errors: list[str],
+) -> None:
+    changed = git_changed_paths_between(root, base_ref, head_ref, label, errors)
+    if changed != expected:
+        errors.append(
+            f"{label} changed paths differ from the expected artifact registry: "
+            f"missing={sorted(expected - changed)}, "
+            f"unexpected={sorted(changed - expected)}"
+        )
+
+
+def validate_wp0_git_evidence(
+    root: Path,
+    fields: dict[str, str],
+    expected: set[str],
+    errors: list[str],
+) -> None:
+    pr_base_ref = fields.get("wp0_pr_base_ref", "")
+    pr_head_ref = fields.get("wp0_pr_head_ref", "")
+    pr_base_check = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "-e", f"{pr_base_ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if pr_base_check.returncode != 0:
+        errors.append(f"WP0 PR base ref is not available as a Git commit: {pr_base_ref}")
+
+    pr_head_check = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "-e", f"{pr_head_ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if pr_base_check.returncode == 0 and pr_head_check.returncode == 0:
+        pr_ancestry = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "merge-base",
+                "--is-ancestor",
+                pr_base_ref,
+                pr_head_ref,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if pr_ancestry.returncode != 0:
+            errors.append("WP0 PR base ref must be an ancestor of the PR head ref")
+        validate_expected_git_diff(
+            root,
+            pr_base_ref,
+            pr_head_ref,
+            "WP0 PR base-to-head",
+            expected,
+            errors,
+        )
+
+    merge_parent_ref = fields.get("wp0_merge_parent_ref", "")
+    merge_ref = fields.get("wp0_merge_ref", "")
+    if pr_base_check.returncode == 0:
+        merge_ancestry = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "merge-base",
+                "--is-ancestor",
+                pr_base_ref,
+                merge_parent_ref,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if merge_ancestry.returncode != 0:
+            errors.append(
+                "WP0 PR base ref must be an ancestor of the squash-merge parent"
+            )
+    validate_expected_git_diff(
+        root,
+        merge_parent_ref,
+        merge_ref,
+        "WP0 merge-parent-to-merge",
+        expected,
+        errors,
+    )
+
+    parents = subprocess.run(
+        ["git", "-C", str(root), "rev-list", "--parents", "-n", "1", merge_ref],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    expected_lineage = [merge_ref, merge_parent_ref]
+    actual_lineage = parents.stdout.strip().split()
+    if parents.returncode != 0 or actual_lineage != expected_lineage:
+        errors.append(
+            "WP0 squash-merge evidence must bind the merge commit and its parent exactly: "
+            f"expected={expected_lineage}, found={actual_lineage}"
+        )
+
+    subject = subprocess.run(
+        ["git", "-C", str(root), "show", "-s", "--format=%s", merge_ref],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    expected_pr_marker = f"(#{fields.get('wp0_pr_number', '')})"
+    if subject.returncode != 0 or expected_pr_marker not in subject.stdout.strip():
+        errors.append(
+            "WP0 merge commit subject must identify the implementation PR: "
+            f"expected marker={expected_pr_marker}, found={subject.stdout.strip()!r}"
+        )
 
 
 def validate_artifacts(
@@ -527,13 +727,8 @@ def validate_artifacts(
         if len(text.splitlines()) > 20:
             errors.append(f"legacy pointer must not maintain an independent state copy: {relative}")
 
-    if check_git_diff and fields.get("current_work_package") == "WP0":
-        changed = git_changed_paths(root, fields.get("baseline_ref", ""), errors)
-        if changed != expected:
-            errors.append(
-                "WP0 changed paths differ from the expected artifact registry: "
-                f"missing={sorted(expected - changed)}, unexpected={sorted(changed - expected)}"
-            )
+    if check_git_diff:
+        validate_wp0_git_evidence(root, fields, expected, errors)
 
 
 def validate_markdown(
@@ -687,6 +882,73 @@ def run_self_tests(root: Path) -> None:
     errors, _ = validate(root)
     if errors:
         raise AssertionError(f"baseline contract must pass before mutations: {errors}")
+
+    field_errors: list[str] = []
+    fields = parse_front_matter(read_text(root / ".planning/SDD.md"), field_errors)
+    if field_errors:
+        raise AssertionError(f"baseline front matter must parse: {field_errors}")
+    stale_errors: list[str] = []
+    validate_expected_git_diff(
+        root,
+        fields["wp0_pr_base_ref"],
+        fields["wp0_merge_ref"],
+        "stale-baseline regression",
+        set(EXPECTED_WP0_ARTIFACTS),
+        stale_errors,
+    )
+    if not any(
+        "unexpected=" in error and "src/storage/src/storage.rs" in error
+        for error in stale_errors
+    ):
+        raise AssertionError(
+            "stale-baseline regression must expose the concurrently merged source paths: "
+            f"{stale_errors}"
+        )
+
+    wrong_parent_fields = dict(fields)
+    wrong_parent_fields["wp0_merge_parent_ref"] = fields["wp0_pr_base_ref"]
+    wrong_parent_errors: list[str] = []
+    validate_wp0_git_evidence(
+        root,
+        wrong_parent_fields,
+        set(EXPECTED_WP0_ARTIFACTS),
+        wrong_parent_errors,
+    )
+    if not any("squash-merge evidence" in error for error in wrong_parent_errors):
+        raise AssertionError(
+            "wrong merge parent must fail the immutable lineage check: "
+            f"{wrong_parent_errors}"
+        )
+
+    wrong_merge_fields = dict(fields)
+    wrong_merge_fields["wp0_merge_ref"] = fields["wp0_merge_parent_ref"]
+    wrong_merge_errors: list[str] = []
+    validate_wp0_git_evidence(
+        root,
+        wrong_merge_fields,
+        set(EXPECTED_WP0_ARTIFACTS),
+        wrong_merge_errors,
+    )
+    if not any("squash-merge evidence" in error for error in wrong_merge_errors):
+        raise AssertionError(
+            "wrong merge ref must fail the immutable lineage check: "
+            f"{wrong_merge_errors}"
+        )
+
+    wrong_base_fields = dict(fields)
+    wrong_base_fields["wp0_pr_base_ref"] = "0" * 40
+    wrong_base_errors: list[str] = []
+    validate_wp0_git_evidence(
+        root,
+        wrong_base_fields,
+        set(EXPECTED_WP0_ARTIFACTS),
+        wrong_base_errors,
+    )
+    if not any("PR base ref is not available" in error for error in wrong_base_errors):
+        raise AssertionError(
+            "wrong PR base ref must fail even when the PR head object is unavailable: "
+            f"{wrong_base_errors}"
+        )
 
     for relative in (
         ".planning/REQUIREMENTS.md",
@@ -904,6 +1166,39 @@ def run_self_tests(root: Path) -> None:
 
     expect_failure(root, break_baseline, "baseline_ref must be a full")
 
+    def break_wp0_evidence_ref(candidate: Path) -> None:
+        path = candidate / ".planning/SDD.md"
+        text, replacements = re.subn(
+            r"(?m)^wp0_pr_head_ref: [0-9a-f]{40}$",
+            "wp0_pr_head_ref: deadbeef",
+            read_text(path),
+            count=1,
+        )
+        if replacements != 1:
+            raise AssertionError(
+                "WP0 evidence mutation requires exactly one full wp0_pr_head_ref SHA"
+            )
+        path.write_text(text, encoding="utf-8")
+
+    expect_failure(
+        root,
+        break_wp0_evidence_ref,
+        "wp0_pr_head_ref must be a full",
+    )
+
+    def break_wp0_pr_number(candidate: Path) -> None:
+        path = candidate / ".planning/SDD.md"
+        path.write_text(
+            read_text(path).replace("wp0_pr_number: 414", "wp0_pr_number: 999", 1),
+            encoding="utf-8",
+        )
+
+    expect_failure(
+        root,
+        break_wp0_pr_number,
+        "WP0 implementation PR must match immutable wp0_pr_number",
+    )
+
     def break_current_anchor(candidate: Path) -> None:
         path = candidate / ".planning/SDD.md"
         text = read_text(path).replace('<a id="wp0"></a>', '<a id="wp-zero"></a>', 1)
@@ -963,26 +1258,26 @@ def run_self_tests(root: Path) -> None:
 
     expect_failure(root, remove_live_gate, "WP0 verification gate contract drifted")
 
-    with tempfile.TemporaryDirectory(prefix="kiwi-sdd-lifecycle-") as temporary:
-        candidate = Path(temporary)
-        copy_contract(root, candidate)
+    def promote_wp0_without_exact_main_evidence(candidate: Path) -> None:
         path = candidate / ".planning/SDD.md"
         text = read_text(path)
-        text = text.replace("current_work_package_status: in-progress", "current_work_package_status: implemented", 1)
+        text = text.replace("current_work_package_status: implemented", "current_work_package_status: verified", 1)
         wp0 = text.index("### WP0：")
         prefix, suffix = text[:wp0], text[wp0:]
-        suffix = suffix.replace("状态：in-progress。", "状态：implemented。", 1)
-        suffix = suffix.replace("| Status | in-progress |", "| Status | implemented |", 1)
+        suffix = suffix.replace("状态：implemented。", "状态：verified。", 1)
+        suffix = suffix.replace("| Status | implemented |", "| Status | verified |", 1)
         path.write_text(prefix + suffix, encoding="utf-8")
-        lifecycle_errors, _ = validate(
-            candidate, check_git_diff=False, check_markdown=False
-        )
-        if lifecycle_errors:
-            raise AssertionError(f"implemented lifecycle state must remain valid: {lifecycle_errors}")
+
+    expect_failure(
+        root,
+        promote_wp0_without_exact_main_evidence,
+        "WP0 status verified requires passed exact-main verification evidence",
+    )
 
     print(
         "SDD validator self-tests passed "
-        "(25 failure-path mutations, 1 lifecycle transition, 1 prose guard)"
+        "(28 failure-path mutations, 1 prose guard, "
+        "4 fixed-ref/concurrent-merge regressions)"
     )
 
 
