@@ -71,6 +71,7 @@ mod tests {
     use storage::{StorageOptions, safe_cleanup_test_db, unique_test_db_path};
 
     use super::*;
+    use crate::auth::no_requirepass_provider;
     use crate::table::create_command_table;
 
     struct TestStream;
@@ -143,7 +144,7 @@ mod tests {
             b"-100".to_vec(),
         ]);
 
-        let command_table = create_command_table(Arc::new(|| None));
+        let command_table = create_command_table(no_requirepass_provider());
         command_table
             .get("substr")
             .expect("SUBSTR should be publicly registered")

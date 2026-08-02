@@ -23,6 +23,7 @@ use resp::{CommandType, HelloAuthResult, RespCommand, RespData, RespError};
 use storage::storage::Storage;
 use subtle::ConstantTimeEq;
 
+use crate::auth::no_requirepass_provider;
 use crate::{
     AclCategory, Cmd, CmdFlags, CmdMeta, RequirepassProvider, impl_cmd_clone_box, impl_cmd_meta,
 };
@@ -43,7 +44,7 @@ impl Default for HelloCmd {
                 acl_category: AclCategory::CONNECTION | AclCategory::FAST,
                 ..Default::default()
             },
-            requirepass_provider: Arc::new(|| None),
+            requirepass_provider: no_requirepass_provider(),
         }
     }
 }

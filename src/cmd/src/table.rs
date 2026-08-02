@@ -365,13 +365,15 @@ mod tests {
     use resp::RespData;
     use storage::storage::Storage;
 
+    use crate::auth::{RequirepassProvider, no_requirepass_provider};
+
     use super::{
         CmdTable, CommandTableGates, create_command_table, create_command_table_with_gates,
     };
 
     #[test]
     fn registers_substr_but_not_touch_until_access_metadata_exists() {
-        let table = create_command_table(Arc::new(|| None));
+        let table = create_command_table(no_requirepass_provider());
 
         assert!(table.contains_key("substr"));
         assert!(!table.contains_key("touch"));
@@ -388,6 +390,11 @@ mod tests {
         async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
             Ok(0)
         }
+    }
+
+    fn test_requirepass_provider(password: Option<&str>) -> RequirepassProvider {
+        let password = password.map(str::to_owned);
+        Arc::new(move || password.clone())
     }
 
     fn run_command(table: &CmdTable, name: &str, argv: &[Vec<u8>]) -> RespData {
@@ -408,7 +415,7 @@ mod tests {
 
     #[test]
     fn hello_command_returns_resp3_handshake() {
-        let table = create_command_table(Arc::new(|| None));
+        let table = create_command_table(no_requirepass_provider());
         let command = table.get("hello").expect("HELLO should be registered");
         let client = Client::new(Box::new(TestStream));
         client.set_cmd_name(b"hello");
@@ -453,7 +460,7 @@ mod tests {
 
     #[test]
     fn vector_commands_are_registered() {
-        let table = create_command_table(Arc::new(|| None));
+        let table = create_command_table(no_requirepass_provider());
         for name in [
             "vadd",
             "vsim",
@@ -471,7 +478,7 @@ mod tests {
     #[test]
     fn vector_commands_are_rejected_when_disabled() {
         let table = create_command_table_with_gates(
-            Arc::new(|| None),
+            no_requirepass_provider(),
             CommandTableGates::from_flags(false, true, true),
         );
         let argvs: [(&str, Vec<Vec<u8>>); 8] = [
@@ -517,7 +524,7 @@ mod tests {
     #[test]
     fn vector_feature_gate_precedes_cluster_gate() {
         let table = create_command_table_with_gates(
-            Arc::new(|| None),
+            no_requirepass_provider(),
             CommandTableGates::from_flags(false, false, true),
         );
         let reply = run_command(&table, "vcard", &[b"vcard".to_vec(), b"k".to_vec()]);
@@ -530,7 +537,7 @@ mod tests {
     #[test]
     fn vector_commands_pass_gate_when_enabled() {
         let table = create_command_table_with_gates(
-            Arc::new(|| None),
+            no_requirepass_provider(),
             CommandTableGates::from_flags(true, true, true),
         );
         // Malformed vector spec: parsing fails before storage is touched, so
@@ -554,7 +561,7 @@ mod tests {
     #[test]
     fn vector_commands_are_rejected_when_cluster_gate_disallows() {
         let table = create_command_table_with_gates(
-            Arc::new(|| None),
+            no_requirepass_provider(),
             CommandTableGates::from_flags(true, false, true),
         );
         let reply = run_command(&table, "vcard", &[b"vcard".to_vec(), b"k".to_vec()]);
@@ -583,7 +590,7 @@ mod tests {
 
     #[test]
     fn info_vector_section_reports_flat_index_and_metrics() {
-        let table = create_command_table(Arc::new(|| None));
+        let table = create_command_table(no_requirepass_provider());
 
         let reply = run_command(&table, "info", &[b"info".to_vec(), b"vector".to_vec()]);
         let RespData::BulkString(Some(body)) = reply else {
@@ -613,7 +620,7 @@ mod tests {
     #[test]
     fn flush_commands_are_rejected_when_cluster_gate_disallows() {
         let table = create_command_table_with_gates(
-            Arc::new(|| None),
+            no_requirepass_provider(),
             CommandTableGates::from_flags(true, true, false),
         );
         let reply = run_command(&table, "flushdb", &[b"flushdb".to_vec()]);
@@ -631,7 +638,7 @@ mod tests {
     #[test]
     fn flush_commands_execute_when_gate_allows() {
         let table = create_command_table_with_gates(
-            Arc::new(|| None),
+            no_requirepass_provider(),
             CommandTableGates::from_flags(true, true, true),
         );
         let reply = run_command(&table, "flushdb", &[b"flushdb".to_vec()]);
@@ -644,7 +651,7 @@ mod tests {
     #[test]
     fn flush_commands_execute_with_default_gates() {
         // Default gates model standalone mode: nothing is blocked.
-        let table = create_command_table(Arc::new(|| None));
+        let table = create_command_table(no_requirepass_provider());
         let reply = run_command(&table, "flushdb", &[b"flushdb".to_vec()]);
         assert!(
             matches!(reply, RespData::SimpleString(ref s) if s.as_ref() == b"OK"),
@@ -654,7 +661,7 @@ mod tests {
 
     #[test]
     fn hello_bare_with_requirepass_returns_noauth() {
-        let table = create_command_table(Arc::new(|| Some("secret".to_string())));
+        let table = create_command_table(test_requirepass_provider(Some("secret")));
         let command = table.get("hello").expect("HELLO should be registered");
         let client = Client::new(Box::new(TestStream));
         client.set_cmd_name(b"hello");
@@ -673,7 +680,7 @@ mod tests {
 
     #[test]
     fn hello_setname_sets_client_name() {
-        let table = create_command_table(Arc::new(|| None));
+        let table = create_command_table(no_requirepass_provider());
         let command = table.get("hello").expect("HELLO should be registered");
         let client = Client::new(Box::new(TestStream));
         client.set_cmd_name(b"hello");
@@ -695,7 +702,7 @@ mod tests {
 
     #[test]
     fn hello_auth_with_correct_password_authenticates() {
-        let table = create_command_table(Arc::new(|| Some("secret".to_string())));
+        let table = create_command_table(test_requirepass_provider(Some("secret")));
         let command = table.get("hello").expect("HELLO should be registered");
         let client = Client::new(Box::new(TestStream));
         client.set_cmd_name(b"hello");
@@ -720,7 +727,7 @@ mod tests {
 
     #[test]
     fn hello_auth_with_wrong_password_returns_wrongpass() {
-        let table = create_command_table(Arc::new(|| Some("secret".to_string())));
+        let table = create_command_table(test_requirepass_provider(Some("secret")));
         let command = table.get("hello").expect("HELLO should be registered");
         let client = Client::new(Box::new(TestStream));
         client.set_cmd_name(b"hello");
@@ -745,7 +752,7 @@ mod tests {
 
     #[test]
     fn hello_auth_without_requirepass_returns_error() {
-        let table = create_command_table(Arc::new(|| None));
+        let table = create_command_table(no_requirepass_provider());
         let command = table.get("hello").expect("HELLO should be registered");
         let client = Client::new(Box::new(TestStream));
         client.set_cmd_name(b"hello");
