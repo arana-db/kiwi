@@ -2318,7 +2318,7 @@ impl Redis {
                 DataType::String => ParsedStringsValue::new(&value_bytes[..])
                     .map(|parsed| !parsed.is_stale())
                     .unwrap_or(false),
-                DataType::Hash | DataType::Set | DataType::ZSet => {
+                DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                     crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
                         .map(|meta| !meta.is_stale() && meta.count() > 0)
                         .unwrap_or(false)

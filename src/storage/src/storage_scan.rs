@@ -81,6 +81,7 @@ fn parse_scan_type(name: &[u8]) -> DataType {
         b"set" => DataType::Set,
         b"list" => DataType::List,
         b"zset" => DataType::ZSet,
+        b"vectorset" => DataType::VectorSet,
         _ => DataType::None,
     }
 }

@@ -446,6 +446,27 @@ impl Redis {
         let mut db_opts = self.storage.options.clone();
         db_opts.add_event_listener(purger);
 
+        // A legacy database has no vector column family. Refuse to open a
+        // database that already has that column family but lost its manifest
+        // before RocksDB can create or mutate any descriptors.
+        let manifest_path = Path::new(db_path).join(crate::storage_manifest::STORAGE_MANIFEST_FILE);
+        if !manifest_path.exists()
+            && DB::list_cf(&db_opts, db_path).is_ok_and(|column_families| {
+                column_families
+                    .iter()
+                    .any(|name| name == ColumnFamilyIndex::VectorDataCF.name())
+            })
+        {
+            return Err(InvalidFormatSnafu {
+                message: format!(
+                    "storage manifest {} is missing but the database has a vector column family; \
+                     refusing to reinterpret existing vector data",
+                    manifest_path.display()
+                ),
+            }
+            .build());
+        }
+
         const CF_CONFIGS: &[(&str, bool, Option<usize>)] = &[
             ("default", true, None),                   // meta & string: bloom filter
             ("hash_data_cf", true, None),              // hash: bloom filter
@@ -497,17 +518,15 @@ impl Redis {
         // Load (or create) the per-instance storage manifest. A manifest that
         // is missing while the database holds data means the data predates
         // the incarnation mechanism; refuse to open rather than reinterpret.
-        let has_entries = self.handles.iter().any(|name| {
-            let Some(db) = self.db.as_ref() else {
-                return false;
-            };
-            db.cf_handle(name).is_some_and(|cf| {
-                db.iterator_cf(&cf, rocksdb::IteratorMode::Start)
-                    .next()
-                    .is_some()
-            })
+        let vector_data_has_entries = self.db.as_ref().is_some_and(|db| {
+            db.cf_handle(ColumnFamilyIndex::VectorDataCF.name())
+                .is_some_and(|cf| {
+                    db.iterator_cf(&cf, rocksdb::IteratorMode::Start)
+                        .next()
+                        .is_some()
+                })
         });
-        let manifest = StorageManifest::open(Path::new(db_path), has_entries)?;
+        let manifest = StorageManifest::open(Path::new(db_path), vector_data_has_entries)?;
         let _ = incarnation_cell.set(manifest.storage_incarnation());
         self.manifest = Some(manifest);
 

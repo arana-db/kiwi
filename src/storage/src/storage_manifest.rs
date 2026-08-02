@@ -66,21 +66,23 @@ pub(crate) struct StorageManifest {
 }
 
 impl StorageManifest {
-    /// Load the manifest for the instance stored in `db_dir`, creating one
-    /// when the database is empty. `db_has_entries` must report whether any
-    /// column family of the already-open database contains at least one key.
-    pub(crate) fn open(db_dir: &Path, db_has_entries: bool) -> Result<Self> {
+    /// Load the manifest for the instance stored in `db_dir`.
+    ///
+    /// Databases created before the manifest existed can be bootstrapped when
+    /// they contain only legacy data. Existing vector member data is rejected
+    /// without a manifest because its incarnation cannot be reconstructed.
+    pub(crate) fn open(db_dir: &Path, vector_data_has_entries: bool) -> Result<Self> {
         let path = db_dir.join(STORAGE_MANIFEST_FILE);
         if path.exists() {
             return Self::read(&path);
         }
 
         ensure!(
-            !db_has_entries,
+            !vector_data_has_entries,
             InvalidFormatSnafu {
                 message: format!(
-                    "storage manifest {} is missing but the database is not empty; \
-                     refusing to reinterpret existing data",
+                    "storage manifest {} is missing but vector data is present; \
+                     refusing to reinterpret existing vector members",
                     path.display()
                 )
             }
@@ -206,7 +208,7 @@ mod tests {
         assert_ne!(incarnation, 0);
         assert!(dir.path().join(STORAGE_MANIFEST_FILE).exists());
 
-        let reopened = StorageManifest::open(dir.path(), true).expect("reopen manifest");
+        let reopened = StorageManifest::open(dir.path(), false).expect("reopen manifest");
         assert_eq!(reopened.storage_incarnation(), incarnation);
     }
 
@@ -229,7 +231,13 @@ mod tests {
     }
 
     #[test]
-    fn missing_manifest_on_non_empty_db_is_rejected() {
+    fn missing_manifest_on_legacy_non_vector_db_is_bootstrapped() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        StorageManifest::open(dir.path(), false).expect("legacy manifest bootstrap");
+    }
+
+    #[test]
+    fn missing_manifest_on_non_empty_vector_db_is_rejected() {
         let dir = tempfile::tempdir().expect("temp dir");
         assert!(StorageManifest::open(dir.path(), true).is_err());
     }

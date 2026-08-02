@@ -17,7 +17,7 @@
 
 #![allow(clippy::unwrap_used)]
 
-use std::{path::PathBuf, sync::Arc, sync::Mutex, time::Duration, time::Instant};
+use std::{path::Path, sync::Arc, sync::Mutex, time::Duration, time::Instant};
 
 use conf::vector_config::VectorConfig;
 use kstd::lock_mgr::LockMgr;
@@ -30,7 +30,7 @@ use storage::{
 };
 use storage::{slot_indexer::key_to_slot_id, storage::Storage};
 
-fn open_redis_with_options(path: &PathBuf, storage_options: Arc<StorageOptions>) -> Redis {
+fn open_redis_with_options(path: &Path, storage_options: Arc<StorageOptions>) -> Redis {
     let (bg_task_handler, _) = BgTaskHandler::new();
     let lock_mgr = Arc::new(LockMgr::new(1000));
     let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
@@ -40,7 +40,7 @@ fn open_redis_with_options(path: &PathBuf, storage_options: Arc<StorageOptions>)
     redis
 }
 
-fn open_redis(path: &PathBuf) -> Redis {
+fn open_redis(path: &Path) -> Redis {
     open_redis_with_options(path, Arc::new(StorageOptions::default()))
 }
 
@@ -60,8 +60,10 @@ fn with_redis_vector_config(edit: impl FnOnce(&mut VectorConfig), test: impl FnO
     safe_cleanup_test_db(&path);
     let mut vector = VectorConfig::default();
     edit(&mut vector);
-    let mut storage_options = StorageOptions::default();
-    storage_options.vector = vector;
+    let storage_options = StorageOptions {
+        vector,
+        ..Default::default()
+    };
     let redis = open_redis_with_options(&path, Arc::new(storage_options));
 
     test(&redis);
@@ -89,7 +91,9 @@ fn count_cf_entries(redis: &Redis, cf_index: ColumnFamilyIndex) -> usize {
     let db = redis.db().expect("db is initialized");
     let cf = redis.get_cf_handle(cf_index).expect("column family exists");
     db.iterator_cf(&cf, IteratorMode::Start)
-        .map(|entry| entry.expect("read column family entry"))
+        .inspect(|entry| {
+            entry.as_ref().expect("read column family entry");
+        })
         .count()
 }
 
@@ -260,7 +264,9 @@ fn test_vector_meta_and_member_are_committed_together() {
         );
         assert_eq!(
             db.iterator_cf_opt(&vector_cf, vector_options, IteratorMode::Start)
-                .map(|entry| entry.expect("read vector entry"))
+                .inspect(|entry| {
+                    entry.as_ref().expect("read vector entry");
+                })
                 .count(),
             1
         );
@@ -497,7 +503,7 @@ fn test_vadd_rebuilds_expired_vectorset_with_new_generation() {
         let meta_key = BaseMetaKey::new(key).encode().expect("meta key");
         let mut meta = previous_meta;
         meta.set_etime(1);
-        db.put_cf(&meta_cf, &meta_key, &meta.encode())
+        db.put_cf(&meta_cf, &meta_key, meta.encode())
             .expect("store expired vector meta");
 
         assert_eq!(redis.vcard(key).expect("expired card"), 0);

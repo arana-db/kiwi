@@ -39,12 +39,13 @@ struct PausePermitWrapper {
 }
 
 /// Build the command-table feature gates from the loaded configuration:
-/// vector commands follow `vector-enabled`, are additionally rejected in
-/// cluster mode unless `vector-cluster-enabled` is set, and FLUSHDB/FLUSHALL
-/// are only allowed outside cluster mode unless `cluster-flush-enabled` is set.
+/// vector commands follow `vector-enabled` and remain rejected in cluster
+/// mode until their Raft apply/replay correctness contract is complete.
+/// FLUSHDB/FLUSHALL are only allowed outside cluster mode unless
+/// `cluster-flush-enabled` is set.
 fn command_table_gates(config: &Config) -> cmd::table::CommandTableGates {
     let vector_enabled = config.vector.enabled;
-    let vector_cluster_allowed = config.raft.is_none() || config.vector.cluster_enabled;
+    let vector_cluster_allowed = config.raft.is_none();
     let cluster_flush_allowed = config.raft.is_none() || config.cluster_flush_enabled;
     cmd::table::CommandTableGates::from_flags(
         vector_enabled,

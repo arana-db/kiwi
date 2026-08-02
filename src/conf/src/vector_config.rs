@@ -118,16 +118,32 @@ mod tests {
 
     #[test]
     fn max_dimension_bounds_are_enforced() {
-        let mut config = VectorConfig::default();
+        assert!(
+            VectorConfig {
+                max_dimension: 0,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
 
-        config.max_dimension = 0;
-        assert!(config.validate().is_err());
+        assert!(
+            VectorConfig {
+                max_dimension: MAX_VECTOR_DIMENSION + 1,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
 
-        config.max_dimension = MAX_VECTOR_DIMENSION + 1;
-        assert!(config.validate().is_err());
-
-        config.max_dimension = MAX_VECTOR_DIMENSION;
-        assert!(config.validate().is_ok());
+        assert!(
+            VectorConfig {
+                max_dimension: MAX_VECTOR_DIMENSION,
+                ..Default::default()
+            }
+            .validate()
+            .is_ok()
+        );
     }
 
     #[test]

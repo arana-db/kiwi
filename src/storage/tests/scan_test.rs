@@ -21,7 +21,7 @@
 mod scan_test {
     use std::{collections::HashSet, sync::Arc};
 
-    use storage::{StorageOptions, ZsetScoreMember, storage::Storage};
+    use storage::{CanonicalVector, StorageOptions, ZsetScoreMember, storage::Storage};
 
     fn open_storage(instances: usize) -> (Storage, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -145,6 +145,17 @@ mod scan_test {
         assert_eq!(
             as_set(scan_all(&storage, 2, Some(b"list"), b"*")),
             HashSet::from([b"a_list".to_vec()])
+        );
+        storage
+            .vadd(
+                b"a_vectorset",
+                b"member",
+                &CanonicalVector::from_values(&[1.0, 0.0]).unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            as_set(scan_all(&storage, 2, Some(b"VeCtOrSeT"), b"*")),
+            HashSet::from([b"a_vectorset".to_vec()])
         );
         // An unknown type matches nothing but still terminates.
         assert!(scan_all(&storage, 2, Some(b"stream"), b"*").is_empty());

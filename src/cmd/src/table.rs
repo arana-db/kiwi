@@ -38,7 +38,7 @@ pub struct CommandTableGates {
     pub vector_enabled: GateFlagProvider,
     /// Whether Vector Set commands are allowed given the cluster state:
     /// false in cluster mode until the Raft apply-correctness contract (PR0)
-    /// lands, unless `vector-cluster-enabled` is set.
+    /// lands.
     pub vector_cluster_allowed: GateFlagProvider,
     /// Whether FLUSHDB/FLUSHALL are allowed. Disabled in cluster mode unless
     /// `cluster-flush-enabled` is set.
