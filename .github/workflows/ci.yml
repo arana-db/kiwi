@@ -348,18 +348,35 @@ jobs:
             "$ASAN_SYMBOLIZER_PATH" --version || true
           fi
           if [[ "${{ matrix.sanitizer }}" == "leak" ]]; then
-            # Run the full leak-sanitizer scope after the symbolized diagnostic
-            # experiments; this is the final validation for the PR.
-            cargo +${SANITIZER_TOOLCHAIN} test -Z build-std --target x86_64-unknown-linux-gnu \
-              --workspace --exclude storage \
-              -- --skip cursor_snapshot_roundtrip \
-              --skip install_snapshot_with_existing_data \
-              --skip install_snapshot_rearms_append_log_hook \
-              --skip test_snapshot_with_logindex_state \
-              --skip test_on_binlog_write_updates_collector \
-              --skip test_collector_state_export_restore \
-              --skip storage_command_e2e_ \
-              2>&1 | tee sanitizer.log
+            # Repeat the unchanged full-workspace command to distinguish a
+            # stable leak from process-teardown variance. Keep the first Cargo
+            # failure status while allowing all three symbolized runs to finish.
+            : > sanitizer.log
+            first_failure_status=0
+            for attempt in 1 2 3; do
+              echo "::group::LSan full workspace attempt ${attempt}/3"
+              set +e
+              cargo +${SANITIZER_TOOLCHAIN} test -Z build-std --target x86_64-unknown-linux-gnu \
+                --workspace --exclude storage \
+                -- --skip cursor_snapshot_roundtrip \
+                --skip install_snapshot_with_existing_data \
+                --skip install_snapshot_rearms_append_log_hook \
+                --skip test_snapshot_with_logindex_state \
+                --skip test_on_binlog_write_updates_collector \
+                --skip test_collector_state_export_restore \
+                --skip storage_command_e2e_ \
+                2>&1 | tee -a sanitizer.log
+              attempt_status=${PIPESTATUS[0]}
+              set -e
+              echo "LSan full workspace attempt ${attempt}/3 exit status: ${attempt_status}" | tee -a sanitizer.log
+              echo "::endgroup::"
+              if [[ $attempt_status -ne 0 && $first_failure_status -eq 0 ]]; then
+                first_failure_status=$attempt_status
+              fi
+            done
+            if [[ $first_failure_status -ne 0 ]]; then
+              exit "$first_failure_status"
+            fi
             cargo +${SANITIZER_TOOLCHAIN} test -Z build-std --target x86_64-unknown-linux-gnu \
               -p storage --lib 2>&1 | tee -a sanitizer.log
           elif [[ "${{ matrix.sanitizer }}" == "thread" ]]; then
