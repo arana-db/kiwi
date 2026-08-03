@@ -310,7 +310,7 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ env.SANITIZER_TOOLCHAIN }}
-          components: rust-src
+          components: rust-src, llvm-tools-preview
 
       - name: Install protoc
         run: |
@@ -339,6 +339,11 @@ jobs:
             export ASAN_SYMBOLIZER_PATH="$rust_llvm_symbolizer"
           elif command -v llvm-symbolizer >/dev/null 2>&1; then
             export ASAN_SYMBOLIZER_PATH="$(command -v llvm-symbolizer)"
+          fi
+          if [[ -n "${ASAN_SYMBOLIZER_PATH:-}" ]]; then
+            export LSAN_OPTIONS="${LSAN_OPTIONS}:external_symbolizer_path=${ASAN_SYMBOLIZER_PATH}:symbolize=1:malloc_context_size=50"
+            echo "Using sanitizer symbolizer: $ASAN_SYMBOLIZER_PATH"
+            "$ASAN_SYMBOLIZER_PATH" --version || true
           fi
           if [[ "${{ matrix.sanitizer }}" == "leak" || "${{ matrix.sanitizer }}" == "thread" ]]; then
             # RocksDB/libstdc++ trigger sanitizer reports and timing instability
