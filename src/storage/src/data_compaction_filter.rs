@@ -919,9 +919,13 @@ mod tests {
 
         let decision = filter.filter(0, &data_key, b"");
         assert!(matches!(decision, CompactionDecision::Remove));
-        assert_eq!(
-            gate.wait_until_removed(std::time::Duration::from_secs(1)),
-            vec![data_key]
+        // The gate is process-global and sibling tests produce Remove decisions
+        // for the identical key bytes, so assert membership rather than exact
+        // contents (same convention as the redis.rs lifecycle tests).
+        let removed_keys = gate.wait_until_removed(std::time::Duration::from_secs(1));
+        assert!(
+            removed_keys.contains(&data_key),
+            "expired data key should be recorded as removed, got {removed_keys:?}"
         );
     }
 
