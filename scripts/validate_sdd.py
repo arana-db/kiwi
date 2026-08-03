@@ -138,7 +138,7 @@ EXPECTED_WP0_VERIFICATION_LINES = (
     "- `git diff --check` 和 committed-diff whitespace check；",
     "- `python scripts/validate_sdd.py --self-test` 的失败路径变异测试；",
     "- `python scripts/validate_sdd.py` 的 Markdown 链接、占位词、围栏和状态断言；",
-    "- WP0 exact-main 状态提升时，在线核验 recorded GitHub Actions run 与 ci workflow、main push、精确 SHA 和 success 结论一致；",
+    "- WP0 exact-main 状态提升时，baseline_ref 必须推进到 verification ref 或其后的 main 提交，并在线核验 recorded GitHub Actions run 与 ci workflow、main push、精确 SHA 和 success 结论一致；",
     f"- {EXPECTED_REQUIREMENT_COUNT} 个 REQ 和 {EXPECTED_DECISION_COUNT} 个 Decision 的唯一注册、范围展开和引用全集闭包；",
     f"- WP0、primary Issue #413、PR #414 和 {len(EXPECTED_WP0_ARTIFACTS)} 个预期产物的一致性断言；",
     "- live Issue #413、开放 Issue 数量、关键 PR 状态和远端 main 复核；",
@@ -867,8 +867,8 @@ def validate_wp0_git_evidence(
             )
             if baseline_ancestry.returncode != 0:
                 errors.append(
-                    "passed WP0 exact-main verification ref must belong to the "
-                    "recorded baseline main history"
+                    "passed WP0 exact-main verification requires baseline_ref to advance "
+                    "to the verification ref or a later main commit"
                 )
 
     subject = subprocess.run(
@@ -1294,6 +1294,52 @@ def run_self_tests(root: Path) -> None:
         raise AssertionError(
             "the merge commit itself must not satisfy exact-main verification: "
             f"{equal_verification_errors}"
+        )
+
+    current_head = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout.strip()
+    unadvanced_baseline_fields = dict(fields)
+    unadvanced_baseline_fields.update(
+        {
+            "wp0_exact_main_verification_status": "passed",
+            "wp0_exact_main_verification_ref": current_head,
+            "wp0_exact_main_verification_run": "1",
+        }
+    )
+    unadvanced_baseline_errors: list[str] = []
+    validate_wp0_git_evidence(
+        root,
+        unadvanced_baseline_fields,
+        set(EXPECTED_WP0_ARTIFACTS),
+        unadvanced_baseline_errors,
+    )
+    if not any(
+        "requires baseline_ref to advance" in error
+        for error in unadvanced_baseline_errors
+    ):
+        raise AssertionError(
+            "passed exact-main promotion must explain the required baseline advance: "
+            f"{unadvanced_baseline_errors}"
+        )
+
+    advanced_baseline_fields = dict(unadvanced_baseline_fields)
+    advanced_baseline_fields["baseline_ref"] = current_head
+    advanced_baseline_errors: list[str] = []
+    validate_wp0_git_evidence(
+        root,
+        advanced_baseline_fields,
+        set(EXPECTED_WP0_ARTIFACTS),
+        advanced_baseline_errors,
+    )
+    if advanced_baseline_errors:
+        raise AssertionError(
+            "passed exact-main promotion must be reachable after baseline_ref advances: "
+            f"{advanced_baseline_errors}"
         )
 
     valid_run: dict[str, object] = {
@@ -1793,7 +1839,7 @@ def run_self_tests(root: Path) -> None:
     print(
         "SDD validator self-tests passed "
         "(30 failure-path mutations, 1 prose guard, "
-        "immutable Git/live-run/state regressions)"
+        "immutable Git/live-run/state regressions, 1 reachable promotion path)"
     )
 
 

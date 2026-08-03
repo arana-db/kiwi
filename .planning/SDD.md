@@ -920,6 +920,7 @@ Post-merge validation repair：[#416](https://github.com/arana-db/kiwi/issues/41
 - PR #414 于 2026-08-02T12:17:13Z 合并，Issue #413 随后关闭；
 - main push CI run 30747510551 / job 91495496924 失败，原因是旧 baseline_ref 把先合并的 PR #412 的 7 个源码路径计入 WP0，而不是 WP0 产物本身失败。
 - WP0 exact-main verification：status=pending，ref=none，run=none。
+- 状态提升为 passed/verified 时，必须同时将 baseline_ref 推进到 verification ref 或其后的 main 提交；保留旧 merge ref 会使验收证据不属于已记录的 baseline main 历史。
 
 Requirement：
 
@@ -950,7 +951,7 @@ Requirement：
 - `git diff --check` 和 committed-diff whitespace check；
 - `python scripts/validate_sdd.py --self-test` 的失败路径变异测试；
 - `python scripts/validate_sdd.py` 的 Markdown 链接、占位词、围栏和状态断言；
-- WP0 exact-main 状态提升时，在线核验 recorded GitHub Actions run 与 ci workflow、main push、精确 SHA 和 success 结论一致；
+- WP0 exact-main 状态提升时，baseline_ref 必须推进到 verification ref 或其后的 main 提交，并在线核验 recorded GitHub Actions run 与 ci workflow、main push、精确 SHA 和 success 结论一致；
 - 63 个 REQ 和 18 个 Decision 的唯一注册、范围展开和引用全集闭包；
 - WP0、primary Issue #413、PR #414 和 20 个预期产物的一致性断言；
 - live Issue #413、开放 Issue 数量、关键 PR 状态和远端 main 复核；
