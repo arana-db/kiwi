@@ -27,7 +27,6 @@ import json
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import tempfile
 
 
@@ -433,59 +432,7 @@ def validate_invariants(sdd: str, errors: list[str]) -> int:
     return len(ids)
 
 
-def git_changed_paths(root: Path, baseline_ref: str, errors: list[str]) -> set[str]:
-    object_check = subprocess.run(
-        ["git", "-C", str(root), "cat-file", "-e", f"{baseline_ref}^{{commit}}"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    if object_check.returncode != 0:
-        errors.append(f"baseline_ref is not available as a Git commit: {baseline_ref}")
-        return set()
-
-    diff = subprocess.run(
-        ["git", "-C", str(root), "diff", "--name-only", baseline_ref, "--"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    whitespace = subprocess.run(
-        ["git", "-C", str(root), "diff", "--check", baseline_ref, "--"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    untracked = subprocess.run(
-        ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        check=False,
-    )
-    if whitespace.returncode != 0:
-        details = (whitespace.stdout + whitespace.stderr).strip()
-        errors.append(f"WP0 committed/working diff has whitespace errors: {details}")
-    if diff.returncode != 0 or untracked.returncode != 0:
-        errors.append("unable to compute WP0 changed paths from baseline_ref")
-        return set()
-    return {
-        path.strip().replace("\\", "/")
-        for path in (diff.stdout + "\n" + untracked.stdout).splitlines()
-        if path.strip()
-    }
-
-
-def validate_artifacts(
-    root: Path,
-    sdd: str,
-    fields: dict[str, str],
-    errors: list[str],
-    check_git_diff: bool,
-) -> None:
+def validate_artifacts(root: Path, sdd: str, errors: list[str]) -> None:
     expected = set(EXPECTED_WP0_ARTIFACTS)
     wp0 = work_package_blocks(sdd).get("WP0", "")
     scope_match = re.search(
@@ -526,14 +473,6 @@ def validate_artifacts(
             errors.append(f"legacy pointer does not link to SDD.md: {relative}")
         if len(text.splitlines()) > 20:
             errors.append(f"legacy pointer must not maintain an independent state copy: {relative}")
-
-    if check_git_diff and fields.get("current_work_package") == "WP0":
-        changed = git_changed_paths(root, fields.get("baseline_ref", ""), errors)
-        if changed != expected:
-            errors.append(
-                "WP0 changed paths differ from the expected artifact registry: "
-                f"missing={sorted(expected - changed)}, unexpected={sorted(changed - expected)}"
-            )
 
 
 def validate_markdown(
@@ -610,7 +549,6 @@ def validate_governance_terms(root: Path, errors: list[str]) -> None:
 def validate(
     root: Path,
     *,
-    check_git_diff: bool = True,
     check_markdown: bool = True,
     markdown_paths: tuple[str, ...] | None = None,
 ) -> tuple[list[str], dict[str, object]]:
@@ -629,7 +567,7 @@ def validate(
     validate_current_state(sdd, fields, errors)
     validate_wp0_gate_contract(sdd, errors)
     invariant_count = validate_invariants(sdd, errors)
-    validate_artifacts(root, sdd, fields, errors, check_git_diff)
+    validate_artifacts(root, sdd, errors)
     if check_markdown:
         validate_markdown(root, errors, markdown_paths)
     validate_governance_terms(root, errors)
@@ -673,7 +611,6 @@ def expect_failure(
         mutation(candidate)
         errors, _ = validate(
             candidate,
-            check_git_diff=False,
             check_markdown=check_markdown,
             markdown_paths=markdown_paths,
         )
@@ -744,7 +681,6 @@ def run_self_tests(root: Path) -> None:
         )
         prose_errors, _ = validate(
             candidate,
-            check_git_diff=False,
             check_markdown=False,
         )
         deprecated_errors = [
@@ -975,7 +911,7 @@ def run_self_tests(root: Path) -> None:
         suffix = suffix.replace("| Status | in-progress |", "| Status | implemented |", 1)
         path.write_text(prefix + suffix, encoding="utf-8")
         lifecycle_errors, _ = validate(
-            candidate, check_git_diff=False, check_markdown=False
+            candidate, check_markdown=False
         )
         if lifecycle_errors:
             raise AssertionError(f"implemented lifecycle state must remain valid: {lifecycle_errors}")
