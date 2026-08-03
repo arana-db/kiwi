@@ -348,11 +348,11 @@ jobs:
             "$ASAN_SYMBOLIZER_PATH" --version || true
           fi
           if [[ "${{ matrix.sanitizer }}" == "leak" ]]; then
-            # The full workspace run already established that the remaining
-            # report is emitted by the cmd test binary. Keep this diagnostic
-            # invocation focused so symbolized LSan feedback is fast.
+            # The standalone cmd binary is clean. Include raft's test graph in
+            # this smaller diagnostic to reproduce the workspace feature
+            # unification without running every workspace test binary.
             cargo +${SANITIZER_TOOLCHAIN} test -Z build-std --target x86_64-unknown-linux-gnu \
-              -p cmd --lib 2>&1 | tee sanitizer.log
+              -p cmd -p raft --lib 2>&1 | tee sanitizer.log
           elif [[ "${{ matrix.sanitizer }}" == "thread" ]]; then
             # RocksDB/libstdc++ trigger sanitizer reports and timing instability
             # in storage integration test binaries. The net crate's end-to-end
