@@ -321,6 +321,10 @@ jobs:
         env:
           RUSTFLAGS: "-Z sanitizer=${{ matrix.sanitizer }}"
           RUSTDOCFLAGS: "-Z sanitizer=${{ matrix.sanitizer }}"
+          # Keep source locations in sanitizer backtraces. The repository-wide
+          # default is optimized for normal CI logs, but an unsymbolized LSan
+          # report cannot identify the leaking test/helper.
+          CARGO_PROFILE_DEV_DEBUG: 2
           # AddressSanitizer enables leak detection by default. Leak checks run in
           # the dedicated leak sanitizer job, where third-party suppressions are
           # applied explicitly.
@@ -329,6 +333,13 @@ jobs:
           TSAN_OPTIONS: "suppressions=${{ github.workspace }}/.github/tsan.supp"
         run: |
           set -o pipefail
+          sanitizer_sysroot="$(rustc +${SANITIZER_TOOLCHAIN} --print sysroot)"
+          rust_llvm_symbolizer="$sanitizer_sysroot/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-symbolizer"
+          if [[ -x "$rust_llvm_symbolizer" ]]; then
+            export ASAN_SYMBOLIZER_PATH="$rust_llvm_symbolizer"
+          elif command -v llvm-symbolizer >/dev/null 2>&1; then
+            export ASAN_SYMBOLIZER_PATH="$(command -v llvm-symbolizer)"
+          fi
           if [[ "${{ matrix.sanitizer }}" == "leak" || "${{ matrix.sanitizer }}" == "thread" ]]; then
             # RocksDB/libstdc++ trigger sanitizer reports and timing instability
             # in storage integration test binaries. The net crate's end-to-end
