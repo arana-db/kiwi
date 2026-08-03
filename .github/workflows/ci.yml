@@ -348,11 +348,20 @@ jobs:
             "$ASAN_SYMBOLIZER_PATH" --version || true
           fi
           if [[ "${{ matrix.sanitizer }}" == "leak" ]]; then
-            # The standalone cmd binary is clean. Include raft's test graph in
-            # this smaller diagnostic to reproduce the workspace feature
-            # unification without running every workspace test binary.
+            # Run the full leak-sanitizer scope after the symbolized diagnostic
+            # experiments; this is the final validation for the PR.
             cargo +${SANITIZER_TOOLCHAIN} test -Z build-std --target x86_64-unknown-linux-gnu \
-              -p cmd -p raft --lib 2>&1 | tee sanitizer.log
+              --workspace --exclude storage \
+              -- --skip cursor_snapshot_roundtrip \
+              --skip install_snapshot_with_existing_data \
+              --skip install_snapshot_rearms_append_log_hook \
+              --skip test_snapshot_with_logindex_state \
+              --skip test_on_binlog_write_updates_collector \
+              --skip test_collector_state_export_restore \
+              --skip storage_command_e2e_ \
+              2>&1 | tee sanitizer.log
+            cargo +${SANITIZER_TOOLCHAIN} test -Z build-std --target x86_64-unknown-linux-gnu \
+              -p storage --lib 2>&1 | tee -a sanitizer.log
           elif [[ "${{ matrix.sanitizer }}" == "thread" ]]; then
             # RocksDB/libstdc++ trigger sanitizer reports and timing instability
             # in storage integration test binaries. The net crate's end-to-end
