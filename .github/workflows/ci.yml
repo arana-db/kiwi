@@ -310,12 +310,14 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ env.SANITIZER_TOOLCHAIN }}
-          components: rust-src, llvm-tools-preview
+          components: |
+            rust-src
+            llvm-tools-preview
 
       - name: Install protoc
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+          sudo apt-get install -y protobuf-compiler llvm
 
       - name: Run tests with ${{ matrix.sanitizer }} sanitizer
         env:
@@ -334,8 +336,8 @@ jobs:
         run: |
           set -o pipefail
           sanitizer_sysroot="$(rustc +${SANITIZER_TOOLCHAIN} --print sysroot)"
-          rust_llvm_symbolizer="$sanitizer_sysroot/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-symbolizer"
-          if [[ -x "$rust_llvm_symbolizer" ]]; then
+          rust_llvm_symbolizer="$(find "$sanitizer_sysroot" -type f -name llvm-symbolizer -perm -111 -print -quit 2>/dev/null || true)"
+          if [[ -n "$rust_llvm_symbolizer" ]]; then
             export ASAN_SYMBOLIZER_PATH="$rust_llvm_symbolizer"
           elif command -v llvm-symbolizer >/dev/null 2>&1; then
             export ASAN_SYMBOLIZER_PATH="$(command -v llvm-symbolizer)"
