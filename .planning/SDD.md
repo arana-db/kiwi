@@ -950,6 +950,7 @@ Requirement：
 - `git diff --check` 和 committed-diff whitespace check；
 - `python scripts/validate_sdd.py --self-test` 的失败路径变异测试；
 - `python scripts/validate_sdd.py` 的 Markdown 链接、占位词、围栏和状态断言；
+- WP0 exact-main 状态提升时，在线核验 recorded GitHub Actions run 与 ci workflow、main push、精确 SHA 和 success 结论一致；
 - 63 个 REQ 和 18 个 Decision 的唯一注册、范围展开和引用全集闭包；
 - WP0、primary Issue #413、PR #414 和 20 个预期产物的一致性断言；
 - live Issue #413、开放 Issue 数量、关键 PR 状态和远端 main 复核；
