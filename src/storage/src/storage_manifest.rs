@@ -36,7 +36,7 @@
 //! mechanism (or the file was lost); opening then fails instead of silently
 //! reinterpreting existing data.
 
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -127,7 +127,9 @@ impl StorageManifest {
         for attempt in 0..5 {
             match (|| -> std::io::Result<()> {
                 fs::copy(&self.path, &target)?;
-                fs::File::open(&target)?.sync_all()?;
+                // Sync via a write handle: FlushFileBuffers on Windows
+                // requires GENERIC_WRITE, so a read-only File::open fails.
+                OpenOptions::new().write(true).open(&target)?.sync_all()?;
                 Ok(())
             })() {
                 Ok(()) => return Ok(()),
