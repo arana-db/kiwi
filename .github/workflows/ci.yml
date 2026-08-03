@@ -326,7 +326,7 @@ jobs:
           # Keep source locations in sanitizer backtraces. The repository-wide
           # default is optimized for normal CI logs, but an unsymbolized LSan
           # report cannot identify the leaking test/helper.
-          CARGO_PROFILE_DEV_DEBUG: 2
+          CARGO_PROFILE_DEV_DEBUG: 0
           # AddressSanitizer enables leak detection by default. Leak checks run in
           # the dedicated leak sanitizer job, where third-party suppressions are
           # applied explicitly.
