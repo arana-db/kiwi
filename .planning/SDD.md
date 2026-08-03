@@ -3,23 +3,31 @@ document: kiwi-sdd
 title: Kiwi 架构设计与 SDD 开发计划
 status: accepted-design
 authority: sole-project-entry
-version: 1
+version: 2
 updated_at: 2026-08-02
 baseline_repository: arana-db/kiwi
 baseline_branch: main
-baseline_ref: 0c4795ec716299598686fc7c5e0fac03a30e044d
-github_snapshot_at: 2026-08-02T07:43:23Z
+baseline_ref: 9820162ebdf2d26aa6349e704efe8737b2e73e4a
+wp0_pr_number: 414
+wp0_pr_base_ref: 0c4795ec716299598686fc7c5e0fac03a30e044d
+wp0_pr_head_ref: e2bfc7deb481590a757f0034874b7f21a4a31aa2
+wp0_merge_parent_ref: cbcbadc27068634d851ab0ed63989d2214ab2408
+wp0_merge_ref: 9820162ebdf2d26aa6349e704efe8737b2e73e4a
+wp0_exact_main_verification_ref: none
+wp0_exact_main_verification_run: none
+wp0_exact_main_verification_status: pending
+github_snapshot_at: 2026-08-02T12:57:50Z
 redis_oracle_tag: 8.8.1
 redis_oracle_ref: 77b6c308396c9700672390a210143a8496fb4b10
 required_runtime_mode: cache-off
 executable_scope: M0-M6
 long_term_scope: M0-M10
 current_work_package: WP0
-current_work_package_status: in-progress
+current_work_package_status: implemented
 current_plan: .planning/SDD.md#wp0
 current_issue: 413
 current_pr: 414
-next_safe_action: push-pr-link-and-wait-for-final-head-checks
+next_safe_action: repair-post-merge-validation-under-416-then-verify-wp0
 ---
 
 # Kiwi 架构设计与 SDD 开发计划
@@ -154,18 +162,20 @@ M7 到 M10 进入长期架构，但不进入当前实现：
 | D | Discussion、RFC、Proposal | 设计输入，必须显式采纳 |
 | E | 历史计划、旧周报、过期 Issue、草稿 | 背景，不形成当前任务 |
 
-### 3.2 2026-08-02T07:43:23Z 实时快照
+### 3.2 2026-08-02T12:57:50Z 实时快照
 
 - Repository：arana-db/kiwi。
 - Default branch：main。
-- main：0c4795ec716299598686fc7c5e0fac03a30e044d。
-- Open Issues：63，其中 #413 是本轮创建的 WP0 Primary Issue。
+- main：9820162ebdf2d26aa6349e704efe8737b2e73e4a。
+- Open Issues：63；#415 是 WP1 Oracle provenance 实施 Issue，#416 是 WP0 合并后验证修复 Issue。
 - Discussions：17，其中 1 个关闭，没有 accepted answer。
 - PR #409：MERGED，对应 merge commit 0c4795ec716299598686fc7c5e0fac03a30e044d。
 - Issue #407：CLOSED，关闭时间 2026-08-02T04:44:40Z。
-- PR #412：OPEN，Head 2d5680b5245478637bea31a39e83e7e0be488bca，MERGEABLE/CLEAN，快照时可见检查成功；未合并前 #143 仍视为未完成。
-- PR #356：OPEN，Head f3af349247d02f70ef3adbdd2abd9c03ceb3b870，MERGEABLE/UNSTABLE，macOS Clippy 失败且其余多项检查仍在运行；VectorSet 不进入当前主线。
-- PR #261：OPEN，CONFLICTING/DIRTY，属于长期滞留 PR。
+- PR #412：MERGED，Head 9d1f83360eb52ed23b48b2e5cb1159c93e26e7af，merge commit cbcbadc27068634d851ab0ed63989d2214ab2408；Issue #143 已关闭。
+- PR #414：MERGED，base 0c4795ec716299598686fc7c5e0fac03a30e044d，Head e2bfc7deb481590a757f0034874b7f21a4a31aa2，merge commit 9820162ebdf2d26aa6349e704efe8737b2e73e4a；Issue #413 已关闭。
+- main@9820162ebdf2d26aa6349e704efe8737b2e73e4a 的 push CI run 30747510551 已完成但失败；唯一失败项是 planning SDD validation，其使用旧 baseline 累计了先合并的 PR #412 路径。
+- PR #356：OPEN，Head f1f8d7539812efd4c6c5e99d540744976d4f6261，CONFLICTING/DIRTY，Windows build 和 LeakSanitizer 检查失败；VectorSet 不进入当前主线。
+- PR #261：OPEN，Head fb092812234a54ad3757d35a62ad033136e422c7，GitHub 当前返回 mergeable/mergeStateStatus UNKNOWN，属于长期滞留 PR。
 
 该快照只用于编制本版本。开始任一工作包、创建 PR、复审或验收前必须重新查询实时状态。
 
@@ -187,7 +197,7 @@ Issue 数量和分类会变化，工作包只依赖明确列出的 Issue，不�
 |---|---|---|
 | Compaction | [#88](https://github.com/arana-db/kiwi/issues/88) | WP5 物理清理 |
 | Compaction filter | [#138](https://github.com/arana-db/kiwi/issues/138) | WP5 filter 安装与生命周期 |
-| Block cache | [#143](https://github.com/arana-db/kiwi/issues/143) | 支持轨道，等待 PR #412 |
+| Block cache | [#143](https://github.com/arana-db/kiwi/issues/143) | 支持轨道，PR #412 已合并，Issue 已关闭，待能力证据评估 |
 | Error model | [#315](https://github.com/arana-db/kiwi/issues/315) | WP6 |
 | Test strategy | [#325](https://github.com/arana-db/kiwi/issues/325) | WP1/WP6/WP7 |
 | Raft apply Epic | [#332](https://github.com/arana-db/kiwi/issues/332) | WP4 Epic |
@@ -859,7 +869,7 @@ Acceptance criteria；缺少任一字段时，工作包不得进入 ready。
 
 ### WP0：单一 SDD 控制面与事实对账
 
-状态：in-progress。
+状态：implemented。
 
 目标：
 
@@ -901,14 +911,25 @@ Parent / Related：N/A。
 
 Implementation PR：[#414](https://github.com/arana-db/kiwi/pull/414)。
 
+Post-merge validation repair：[#416](https://github.com/arana-db/kiwi/issues/416)。
+
+合并证据：
+
+- PR 固定区间：0c4795ec716299598686fc7c5e0fac03a30e044d..e2bfc7deb481590a757f0034874b7f21a4a31aa2；
+- merge 固定区间：cbcbadc27068634d851ab0ed63989d2214ab2408..9820162ebdf2d26aa6349e704efe8737b2e73e4a；
+- PR #414 于 2026-08-02T12:17:13Z 合并，Issue #413 随后关闭；
+- main push CI run 30747510551 / job 91495496924 失败，原因是旧 baseline_ref 把先合并的 PR #412 的 7 个源码路径计入 WP0，而不是 WP0 产物本身失败。
+- WP0 exact-main verification：status=pending，ref=none，run=none。
+- 状态提升为 passed/verified 时，必须同时将 baseline_ref 推进到 verification ref 或其后的 main 提交；保留旧 merge ref 会使验收证据不属于已记录的 baseline main 历史。
+
 Requirement：
 
 - REQ-WORK-001 至 REQ-WORK-007。
 
 依赖：
 
-- main@0c4795ec716299598686fc7c5e0fac03a30e044d 的源码事实基线；
-- 2026-08-02T07:43:23Z 的 GitHub 快照；
+- PR base main@0c4795ec716299598686fc7c5e0fac03a30e044d 的源码事实基线；
+- 2026-08-02T12:57:50Z 的 GitHub 快照；
 - 无前置工作包；本节按 planning-only bootstrap 例外同时作为 WP0 plan。
 
 非目标：
@@ -916,7 +937,7 @@ Requirement：
 - 不修改 Runtime、Storage、Raft、协议、构建或测试行为；
 - 不实现 WP1-WP7；
 - 不实现未来的自动 PR traceability checker；
-- 不 merge 本 PR，也不以 WP0 自动授权后续源码工作。
+- 不以 PR #414 已合并或 Issue #413 已关闭自动授权后续源码工作；只有合并后 exact-main 验证通过才能继续进入 verified/accepted。
 
 退出门禁：
 
@@ -930,6 +951,7 @@ Requirement：
 - `git diff --check` 和 committed-diff whitespace check；
 - `python scripts/validate_sdd.py --self-test` 的失败路径变异测试；
 - `python scripts/validate_sdd.py` 的 Markdown 链接、占位词、围栏和状态断言；
+- WP0 exact-main 状态提升时，baseline_ref 必须推进到 verification ref 或其后的 main 提交，并在线核验 recorded GitHub Actions run 与 ci workflow、main push、精确 SHA 和 success 结论一致；
 - 63 个 REQ 和 18 个 Decision 的唯一注册、范围展开和引用全集闭包；
 - WP0、primary Issue #413、PR #414 和 20 个预期产物的一致性断言；
 - live Issue #413、开放 Issue 数量、关键 PR 状态和远端 main 复核；
@@ -944,6 +966,7 @@ Primary Issue：#325。
 Related：
 
 - #315；
+- #415（M1-001-T2 Oracle provenance）；
 - OQ-3；
 - OQ-10。
 
@@ -1386,7 +1409,7 @@ Requirement：
 #### Block Cache
 
 - Issue #143。
-- PR #412 仍 OPEN；合并前不得标记完成。
+- PR #412 已于 2026-08-02 合并为 cbcbadc27068634d851ab0ed63989d2214ab2408，Issue #143 已关闭；其能力仍按共享预算、全实例/全 CF、table options、指标和基准证据评估。
 - 只允许在共享预算、全实例/全 CF、table options、指标和基准均闭合后 accepted。
 
 #### Build Performance
@@ -1578,18 +1601,19 @@ docs/sdd/WP-N/
 
 | 字段 | 当前值 |
 |---|---|
-| Baseline | main@0c4795ec716299598686fc7c5e0fac03a30e044d |
+| Baseline | main@9820162ebdf2d26aa6349e704efe8737b2e73e4a |
 | Current milestone | M0 |
 | Current work package | WP0 |
-| Status | in-progress |
+| Status | implemented |
 | Current plan | [.planning/SDD.md 的 WP0 章节](#wp0) |
 | Current Issue | [#413](https://github.com/arana-db/kiwi/issues/413) |
 | Current PR | [#414](https://github.com/arana-db/kiwi/pull/414) |
+| WP0 exact-main verification | pending |
 | Required mode | Cache OFF |
 | M7/M8 | frozen |
-| Next safe action | push PR 链接回写，确认 final Head 后等待 required checks 与 review |
+| Next safe action | 完成 #416 的固定提交区间验证修复；合并后在 exact main 重跑门禁，WP0 进入 verified/accepted 后才恢复 #415 |
 
-当前规划工作位于隔离分支 codex/kiwi-sdd-architecture，Issue #413 与 PR #414 已建立追踪。本轮已授权完成文档提交、push 和关联 PR，未授权 merge，也未授权进入 WP1-WP7 的源码实现。
+PR #414 已合并且 Issue #413 已关闭，但 main push CI 的 planning SDD validation 因并发合并后的漂移 baseline 失败。WP0 因此只能标记为 implemented，不能标记为 verified 或 accepted。Issue #416 负责修复固定提交区间验证；在其合并并于 exact main 复验前，不进入 #415 或 WP1-WP7 的源码实现。
 
 ## 18. 决策门禁
 
