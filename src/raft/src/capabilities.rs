@@ -48,7 +48,7 @@ pub const REQUIRED_VECTOR_SET_CAPABILITIES: [&str; 3] = [
 
 /// Capabilities supported by this binary.
 pub fn node_capabilities() -> Vec<String> {
-    REQUIRED_VECTOR_SET_CAPABILITIES
+    [CAP_VECTOR_SET_STORAGE_V1, CAP_SNAPSHOT_SCHEMA_V2]
         .iter()
         .map(|capability| capability.to_string())
         .collect()
@@ -162,17 +162,33 @@ mod tests {
     }
 
     #[test]
-    fn node_capabilities_cover_all_required() {
+    fn node_capabilities_do_not_advertise_unimplemented_raft_mutations() {
         let capabilities = node_capabilities();
-        assert!(missing_capabilities(&capabilities).is_empty());
-        for required in REQUIRED_VECTOR_SET_CAPABILITIES {
-            assert!(capabilities.contains(&required.to_string()));
-        }
+        assert!(capabilities.contains(&CAP_VECTOR_SET_STORAGE_V1.to_string()));
+        assert!(capabilities.contains(&CAP_SNAPSHOT_SCHEMA_V2.to_string()));
+        assert!(!capabilities.contains(&CAP_VECTOR_SET_RAFT_MUTATION_V1.to_string()));
+        assert_eq!(
+            missing_capabilities(&capabilities),
+            vec![CAP_VECTOR_SET_RAFT_MUTATION_V1]
+        );
+    }
+
+    #[test]
+    fn summarize_rejects_cluster_of_current_binaries() {
+        let members = vec![MemberCapabilities {
+            addr: "127.0.0.1:7401".to_string(),
+            capabilities: node_capabilities(),
+        }];
+        let error = summarize_capabilities(&members).unwrap_err();
+        assert!(error.failures[0].contains(CAP_VECTOR_SET_RAFT_MUTATION_V1));
     }
 
     #[test]
     fn summarize_accepts_full_cluster() {
-        let all: Vec<String> = node_capabilities();
+        let all = REQUIRED_VECTOR_SET_CAPABILITIES
+            .iter()
+            .map(|capability| capability.to_string())
+            .collect::<Vec<_>>();
         let members = vec![
             MemberCapabilities {
                 addr: "127.0.0.1:7401".to_string(),
@@ -189,10 +205,7 @@ mod tests {
     #[test]
     fn summarize_rejects_member_missing_capability() {
         let members = vec![
-            MemberCapabilities {
-                addr: "127.0.0.1:7401".to_string(),
-                capabilities: node_capabilities(),
-            },
+            member("127.0.0.1:7401", &REQUIRED_VECTOR_SET_CAPABILITIES),
             member(
                 "127.0.0.1:7402",
                 &[CAP_VECTOR_SET_STORAGE_V1, CAP_VECTOR_SET_RAFT_MUTATION_V1],

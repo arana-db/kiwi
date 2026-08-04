@@ -145,6 +145,19 @@ impl TestServer {
         requirepass: Option<String>,
         leader_gate: Option<Arc<dyn LeaderGate>>,
     ) -> Self {
+        Self::start_with_leader_gate_and_gates(
+            requirepass,
+            leader_gate,
+            cmd::table::CommandTableGates::default(),
+        )
+        .await
+    }
+
+    async fn start_with_leader_gate_and_gates(
+        requirepass: Option<String>,
+        leader_gate: Option<Arc<dyn LeaderGate>>,
+        gates: cmd::table::CommandTableGates,
+    ) -> Self {
         let db_path = unique_test_db_path();
         safe_cleanup_test_db(&db_path);
 
@@ -181,9 +194,10 @@ impl TestServer {
         // Network-side client, command table, and executor.
         let net_storage_client = Arc::new(StorageClient::new(runtime_storage_client.clone()));
         let requirepass_for_provider = requirepass.clone();
-        let cmd_table = Arc::new(cmd::table::create_command_table(Arc::new(move || {
-            requirepass_for_provider.clone()
-        })));
+        let cmd_table = Arc::new(cmd::table::create_command_table_with_gates(
+            Arc::new(move || requirepass_for_provider.clone()),
+            gates,
+        ));
         let executor = Arc::new(executor::CmdExecutorBuilder::new().build());
 
         // Bind the network server to an ephemeral port before spawning it.
@@ -1386,6 +1400,56 @@ async fn storage_command_e2e_rank_nulls_follow_negotiated_wire_protocol() {
             send_command_and_read_line(&mut stream, &[command, "missing-zset", "member"]).await;
         assert_eq!(reply, Bytes::from_static(b"_\r\n"), "{command}");
     }
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_disabled_cluster_vectors_reject_before_routing() {
+    let gates = cmd::table::CommandTableGates::from_flags(true, false, true);
+    let server =
+        TestServer::start_with_leader_gate_and_gates(None, Some(Arc::new(FollowerGate)), gates)
+            .await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+    let expected = RespData::Error(Bytes::from_static(
+        b"ERR vector commands are not supported in cluster mode yet",
+    ));
+
+    for args in [
+        &[
+            "VADD", "vectors", "VALUES", "2", "1", "0", "member", "NOQUANT",
+        ][..],
+        &["VREM", "vectors", "member"][..],
+        &["VSIM", "vectors", "VALUES", "2", "1", "0"][..],
+    ] {
+        let reply = send_command(&mut stream, args).await;
+        assert_eq!(reply, expected, "disabled vector command {args:?}");
+    }
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_disabled_cluster_vector_skips_read_barrier() {
+    let gate = LeaderBarrierGate {
+        barrier_result: Err("injected barrier failure".to_string()),
+    };
+    let gates = cmd::table::CommandTableGates::from_flags(true, false, true);
+    let server =
+        TestServer::start_with_leader_gate_and_gates(None, Some(Arc::new(gate)), gates).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    let reply = send_command(&mut stream, &["VSIM", "vectors", "VALUES", "2", "1", "0"]).await;
+    assert_eq!(
+        reply,
+        RespData::Error(Bytes::from_static(
+            b"ERR vector commands are not supported in cluster mode yet",
+        ))
+    );
 
     server.shutdown().await;
 }

@@ -25,10 +25,6 @@ pub const MAX_VECTOR_DIMENSION: u32 = 65536;
 pub struct VectorConfig {
     /// Whether vector commands are enabled at all
     pub enabled: bool,
-    /// Allow vector commands in cluster mode. Defaults to false: vector
-    /// commands are deterministically rejected while `raft` is configured,
-    /// until the Raft apply-correctness contract (PR0) lands.
-    pub cluster_enabled: bool,
     /// Maximum accepted vector dimension
     pub max_dimension: u32,
     /// Maximum number of neighbors a query may request
@@ -53,7 +49,6 @@ impl Default for VectorConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            cluster_enabled: false,
             max_dimension: 4096,
             max_k: 1000,
             max_element_bytes: 1048576,

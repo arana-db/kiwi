@@ -711,7 +711,10 @@ impl Config {
                     config.vector.enabled = parse_bool_value(&key, &value)?;
                 }
                 "vector-cluster-enabled" => {
-                    config.vector.cluster_enabled = parse_bool_value(&key, &value)?;
+                    return Err(invalid_config(
+                        "vector-cluster-enabled is not supported: vector commands are disabled in cluster mode"
+                            .to_string(),
+                    ));
                 }
                 "vector-max-dimension" => {
                     config.vector.max_dimension = value

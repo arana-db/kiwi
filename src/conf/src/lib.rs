@@ -314,6 +314,31 @@ mod tests {
     }
 
     #[test]
+    fn test_vector_cluster_enabled_config_is_rejected() {
+        use std::io::Write;
+
+        let mut config_file =
+            tempfile::NamedTempFile::new().expect("test should create temporary config");
+        writeln!(config_file, "vector-cluster-enabled true")
+            .expect("test should write unsupported config key");
+
+        let error = Config::load(
+            config_file
+                .path()
+                .to_str()
+                .expect("temporary config path should be UTF-8"),
+        )
+        .expect_err("unsupported vector cluster configuration must be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("vector-cluster-enabled is not supported"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
     fn test_full_sample_config_uses_persistent_raft_log_store() {
         let sample = Config::full_sample_config();
 

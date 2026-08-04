@@ -193,6 +193,11 @@ pub trait Cmd: Send + Sync {
 
     fn do_initial(&self, client: &Client) -> bool;
 
+    /// Reject commands that must not reach cluster routing or read barriers.
+    fn check_pre_route(&self, _client: &Client) -> bool {
+        true
+    }
+
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>);
 
     fn clone_box(&self) -> Box<dyn Cmd>;

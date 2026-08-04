@@ -77,6 +77,7 @@ impl CommandTableGates {
 struct GatedCmd {
     inner: Arc<dyn Cmd>,
     allowed: bool,
+    reject_before_routing: bool,
     disabled_error: String,
 }
 
@@ -85,8 +86,16 @@ impl Cmd for GatedCmd {
         self.inner.meta()
     }
 
+    fn check_pre_route(&self, client: &Client) -> bool {
+        if self.reject_before_routing && !self.allowed {
+            client.set_reply(RespData::Error(self.disabled_error.clone().into()));
+            return false;
+        }
+        self.inner.check_pre_route(client)
+    }
+
     fn do_initial(&self, client: &Client) -> bool {
-        if !self.allowed {
+        if !self.reject_before_routing && !self.allowed {
             client.set_reply(RespData::Error(self.disabled_error.clone().into()));
             return false;
         }
@@ -108,6 +117,7 @@ fn register_gated_cmds(
     cmd_table: &mut CmdTable,
     cmds: Vec<Arc<dyn Cmd>>,
     allowed: bool,
+    reject_before_routing: bool,
     disabled_error: impl Fn(&CmdMeta) -> String,
 ) {
     for cmd in cmds {
@@ -115,6 +125,7 @@ fn register_gated_cmds(
         let gated = GatedCmd {
             inner: cmd,
             allowed,
+            reject_before_routing,
             disabled_error: disabled_error(&meta),
         };
         cmd_table.insert(meta.name, Arc::new(gated));
@@ -126,6 +137,7 @@ fn register_gated_cmds(
 fn wrap_gated_cmds(
     cmds: Vec<Arc<dyn Cmd>>,
     allowed: bool,
+    reject_before_routing: bool,
     disabled_error: impl Fn(&CmdMeta) -> String,
 ) -> Vec<Arc<dyn Cmd>> {
     cmds.into_iter()
@@ -134,6 +146,7 @@ fn wrap_gated_cmds(
             Arc::new(GatedCmd {
                 inner: cmd,
                 allowed,
+                reject_before_routing,
                 disabled_error: disabled_error(&meta),
             }) as Arc<dyn Cmd>
         })
@@ -305,6 +318,7 @@ pub fn create_command_table_with_gates(
         &mut cmd_table,
         flush_cmds,
         gates.cluster_flush_allowed,
+        false,
         |meta| {
             format!(
                 "ERR {} is not supported in cluster mode yet",
@@ -314,11 +328,10 @@ pub fn create_command_table_with_gates(
     );
 
     // Vector Set commands are gated behind `vector-enabled`, and additionally
-    // rejected in cluster mode until the Raft apply-correctness contract
-    // (PR0) lands: physical binlog replay cannot re-encode member keys with
-    // the local storage incarnation, so cluster vector writes would be
-    // unreadable after a leader failover. `vector-cluster-enabled` restores
-    // the pre-gate behavior for development.
+    // rejected before cluster routing until the Raft apply-correctness contract
+    // lands: physical binlog replay cannot re-encode member keys with the local
+    // storage incarnation, so cluster vector writes would be unreadable after a
+    // leader failover.
     let vector_cmds: Vec<Arc<dyn Cmd>> = vec![
         Arc::new(crate::vector::VAddCmd::new()),
         Arc::new(crate::vector::VSimCmd::new()),
@@ -329,12 +342,16 @@ pub fn create_command_table_with_gates(
         Arc::new(crate::vector::VInfoCmd::new()),
         Arc::new(crate::vector::VIsMemberCmd::new()),
     ];
-    let vector_cmds = wrap_gated_cmds(vector_cmds, gates.vector_cluster_allowed, |_| {
+    let vector_cmds = wrap_gated_cmds(vector_cmds, gates.vector_cluster_allowed, true, |_| {
         "ERR vector commands are not supported in cluster mode yet".to_string()
     });
-    register_gated_cmds(&mut cmd_table, vector_cmds, gates.vector_enabled, |_| {
-        "ERR vector support is disabled (vector-enabled=false)".to_string()
-    });
+    register_gated_cmds(
+        &mut cmd_table,
+        vector_cmds,
+        gates.vector_enabled,
+        false,
+        |_| "ERR vector support is disabled (vector-enabled=false)".to_string(),
+    );
 
     // AuthCmd and HelloCmd require the requirepass provider for authentication.
     {
@@ -358,7 +375,7 @@ pub fn create_command_table_with_gates(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
 
     use bytes::Bytes;
     use client::{Client, StreamTrait};
@@ -399,12 +416,26 @@ mod tests {
         Arc::new(move || password.clone())
     }
 
+    fn test_storage() -> Arc<Storage> {
+        static STORAGE: OnceLock<Arc<Storage>> = OnceLock::new();
+        Arc::clone(STORAGE.get_or_init(|| Arc::new(Storage::new(1, 0))))
+    }
+
     fn run_command(table: &CmdTable, name: &str, argv: &[Vec<u8>]) -> RespData {
         let command = table.get(name).expect("command should be registered");
         let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(name.as_bytes());
         client.set_argv(argv);
-        command.execute(&client, Arc::new(Storage::new(1, 0)));
+        command.execute(&client, test_storage());
+        client.take_reply()
+    }
+
+    fn run_pre_route_check(table: &CmdTable, name: &str, argv: &[Vec<u8>]) -> RespData {
+        let command = table.get(name).expect("command should be registered");
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
+        client.set_cmd_name(name.as_bytes());
+        client.set_argv(argv);
+        assert!(!command.check_pre_route(&client));
         client.take_reply()
     }
 
@@ -423,7 +454,7 @@ mod tests {
         client.set_cmd_name(b"hello");
         client.set_argv(&[b"hello".to_vec(), b"3".to_vec()]);
 
-        command.execute(&client, Arc::new(Storage::new(1, 0)));
+        command.execute(&client, test_storage());
 
         assert_eq!(
             client.take_reply(),
@@ -566,12 +597,12 @@ mod tests {
             no_requirepass_provider(),
             CommandTableGates::from_flags(true, false, true),
         );
-        let reply = run_command(&table, "vcard", &[b"vcard".to_vec(), b"k".to_vec()]);
+        let reply = run_pre_route_check(&table, "vcard", &[b"vcard".to_vec(), b"k".to_vec()]);
         assert_eq!(
             error_text(&reply),
             "ERR vector commands are not supported in cluster mode yet"
         );
-        let reply = run_command(
+        let reply = run_pre_route_check(
             &table,
             "vadd",
             &[
@@ -669,7 +700,7 @@ mod tests {
         client.set_cmd_name(b"hello");
         client.set_argv(&[b"hello".to_vec(), b"3".to_vec()]);
 
-        command.execute(&client, Arc::new(Storage::new(1, 0)));
+        command.execute(&client, test_storage());
 
         assert!(!client.is_authenticated());
         let reply = client.take_reply();
@@ -693,7 +724,7 @@ mod tests {
             b"my-client".to_vec(),
         ]);
 
-        command.execute(&client, Arc::new(Storage::new(1, 0)));
+        command.execute(&client, test_storage());
 
         assert_eq!(
             client.name().as_ref(),
@@ -716,7 +747,7 @@ mod tests {
             b"secret".to_vec(),
         ]);
 
-        command.execute(&client, Arc::new(Storage::new(1, 0)));
+        command.execute(&client, test_storage());
 
         assert!(client.is_authenticated());
         let reply = client.take_reply();
@@ -741,7 +772,7 @@ mod tests {
             b"wrong".to_vec(),
         ]);
 
-        command.execute(&client, Arc::new(Storage::new(1, 0)));
+        command.execute(&client, test_storage());
 
         assert!(!client.is_authenticated());
         let reply = client.take_reply();
@@ -766,7 +797,7 @@ mod tests {
             b"anything".to_vec(),
         ]);
 
-        command.execute(&client, Arc::new(Storage::new(1, 0)));
+        command.execute(&client, test_storage());
 
         assert!(!client.is_authenticated());
         let reply = client.take_reply();

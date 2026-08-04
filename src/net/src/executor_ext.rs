@@ -66,6 +66,11 @@ impl CmdExecutorNetworkExt for CmdExecutor {
                 return Ok(());
             }
 
+            if !exec.cmd.check_pre_route(&exec.client) {
+                debug!("Command pre-route check failed for: {}", cmd_name);
+                return Ok(());
+            }
+
             // Cluster-mode leader gate: reject writes on non-leaders before any
             // command-specific setup runs.
             if let Some(gate) = exec.leader_gate.as_ref()
