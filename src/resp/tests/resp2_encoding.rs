@@ -57,9 +57,14 @@ static ALLOCATOR: CountingAllocator = CountingAllocator;
 fn count_allocations(f: impl FnOnce()) -> usize {
     ALLOCATION_COUNT.store(0, Ordering::Relaxed);
     COUNT_ALLOCATIONS.store(true, Ordering::Relaxed);
-    f();
+    // Ensure the global counting flag is always reset, even if the measured
+    // closure panics, so it cannot leak into later tests in the binary.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     COUNT_ALLOCATIONS.store(false, Ordering::Relaxed);
-    ALLOCATION_COUNT.load(Ordering::Relaxed)
+    match result {
+        Ok(()) => ALLOCATION_COUNT.load(Ordering::Relaxed),
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
 }
 
 #[test]

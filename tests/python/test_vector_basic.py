@@ -15,12 +15,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#!/usr/bin/env python3
 """向量索引基础功能验证脚本。
 
 运行前请确保 Kiwi 服务已启动（默认端口 7379）。
 """
-
 import redis
 import struct
 
