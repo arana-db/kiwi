@@ -21,12 +21,17 @@ use std::{path::Path, sync::Arc, sync::Mutex, time::Duration, time::Instant};
 
 use conf::vector_config::VectorConfig;
 use kstd::lock_mgr::LockMgr;
-use rocksdb::{IteratorMode, ReadOptions};
+use rocksdb::{DB, IteratorMode, ReadOptions};
+#[cfg(feature = "test-fault-injection")]
+use storage::fail_next_storage_manifest_persist;
 use storage::{
     BaseMetaKey, BgTaskHandler, CanonicalVector, ColumnFamilyIndex, FlatQueryCancel, Redis,
     STORAGE_MANIFEST_FILE, StorageOptions, VectorQuery, VectorSearchMode, VectorSearchOptions,
     VectorSetApplyError, VectorSetApplyResult, VectorSetBusinessError, VectorSetMutationV1,
-    error::Error, format_vector::VectorMeta, safe_cleanup_test_db, unique_test_db_path,
+    error::Error,
+    format_vector::VectorMeta,
+    format_vector_member_key::{ParsedVectorMemberDataKey, VectorMemberDataKey},
+    safe_cleanup_test_db, unique_test_db_path,
 };
 use storage::{slot_indexer::key_to_slot_id, storage::Storage};
 
@@ -42,6 +47,36 @@ fn open_redis_with_options(path: &Path, storage_options: Arc<StorageOptions>) ->
 
 fn open_redis(path: &Path) -> Redis {
     open_redis_with_options(path, Arc::new(StorageOptions::default()))
+}
+
+fn new_redis() -> Redis {
+    let (bg_task_handler, _) = BgTaskHandler::new();
+    Redis::new(
+        Arc::new(StorageOptions::default()),
+        1,
+        Arc::new(bg_task_handler),
+        Arc::new(LockMgr::new(1000)),
+    )
+}
+
+fn create_legacy_db_with_string(path: &Path) {
+    {
+        let redis = open_redis(path);
+        redis
+            .set(b"legacy-key", b"legacy-value")
+            .expect("set legacy value");
+        redis
+            .db()
+            .expect("db is initialized")
+            .drop_cf(ColumnFamilyIndex::VectorDataCF.name())
+            .expect("drop vector column family for legacy fixture");
+    }
+
+    std::fs::remove_file(path.join(STORAGE_MANIFEST_FILE)).expect("remove manifest");
+}
+
+fn listed_column_families(path: &Path) -> Vec<String> {
+    DB::list_cf(&StorageOptions::default().options, path).expect("list column families")
 }
 
 fn with_redis(test: impl FnOnce(&Redis)) {
@@ -591,6 +626,83 @@ fn test_generation_is_not_reused_across_restart() {
 }
 
 #[test]
+fn test_legacy_db_migration_preserves_data() {
+    let path = unique_test_db_path();
+    safe_cleanup_test_db(&path);
+    create_legacy_db_with_string(&path);
+
+    assert!(!path.join(STORAGE_MANIFEST_FILE).exists());
+    assert!(
+        !listed_column_families(&path)
+            .iter()
+            .any(|name| name == ColumnFamilyIndex::VectorDataCF.name())
+    );
+
+    {
+        let redis = open_redis(&path);
+        assert_eq!(
+            redis.get(b"legacy-key").expect("read migrated value"),
+            "legacy-value"
+        );
+        assert!(path.join(STORAGE_MANIFEST_FILE).exists());
+    }
+
+    let reopened = open_redis(&path);
+    assert_eq!(
+        reopened.get(b"legacy-key").expect("read legacy value"),
+        "legacy-value"
+    );
+    drop(reopened);
+    safe_cleanup_test_db(&path);
+}
+
+#[cfg(feature = "test-fault-injection")]
+#[test]
+fn test_manifest_persist_failure_leaves_legacy_schema_and_retry_succeeds() {
+    let path = unique_test_db_path();
+    safe_cleanup_test_db(&path);
+    create_legacy_db_with_string(&path);
+
+    let _failure = fail_next_storage_manifest_persist(&path);
+    let mut failed_open = new_redis();
+    assert!(
+        failed_open
+            .open(path.to_str().expect("test path must be UTF-8"))
+            .is_err(),
+        "injected manifest persistence failure must abort open"
+    );
+    assert!(
+        failed_open.db().is_none(),
+        "failed open must not publish Redis state"
+    );
+    assert!(!path.join(STORAGE_MANIFEST_FILE).exists());
+    let temp_manifest = path.join(STORAGE_MANIFEST_FILE).with_extension("tmp");
+    assert!(
+        temp_manifest.exists(),
+        "pre-rename failure must leave the retryable temporary manifest"
+    );
+    assert!(
+        !listed_column_families(&path)
+            .iter()
+            .any(|name| name == ColumnFamilyIndex::VectorDataCF.name()),
+        "failed manifest persistence must not create the vector column family"
+    );
+
+    let retried = open_redis(&path);
+    assert!(path.join(STORAGE_MANIFEST_FILE).exists());
+    assert!(
+        !temp_manifest.exists(),
+        "successful retry must consume the temporary manifest path"
+    );
+    assert_eq!(
+        retried.get(b"legacy-key").expect("read legacy value"),
+        "legacy-value"
+    );
+    drop(retried);
+    safe_cleanup_test_db(&path);
+}
+
+#[test]
 fn test_open_refuses_non_empty_db_without_manifest() {
     let path = unique_test_db_path();
     safe_cleanup_test_db(&path);
@@ -612,6 +724,57 @@ fn test_open_refuses_non_empty_db_without_manifest() {
         result.is_err(),
         "opening a non-empty database without a manifest must fail"
     );
+
+    drop(redis);
+    safe_cleanup_test_db(&path);
+}
+
+#[test]
+fn test_open_refuses_empty_vector_cf_without_manifest() {
+    let path = unique_test_db_path();
+    safe_cleanup_test_db(&path);
+
+    drop(open_redis(&path));
+    std::fs::remove_file(path.join(STORAGE_MANIFEST_FILE)).expect("remove manifest");
+
+    let mut redis = new_redis();
+    let result = redis.open(path.to_str().expect("test path must be UTF-8"));
+    assert!(
+        result.is_err(),
+        "opening any vector column family without a manifest must fail"
+    );
+    assert!(
+        redis.db().is_none(),
+        "failed open must not publish Redis state"
+    );
+
+    drop(redis);
+    safe_cleanup_test_db(&path);
+}
+
+#[test]
+fn test_open_refuses_unclassifiable_non_empty_path_without_mutation() {
+    let path = unique_test_db_path();
+    safe_cleanup_test_db(&path);
+    std::fs::create_dir_all(&path).expect("create test directory");
+    let marker = path.join("unrecognized-file");
+    std::fs::write(&marker, b"keep me").expect("write marker");
+
+    let mut redis = new_redis();
+    let result = redis.open(path.to_str().expect("test path must be UTF-8"));
+    assert!(
+        result.is_err(),
+        "unclassifiable non-empty path must be rejected"
+    );
+    assert!(
+        redis.db().is_none(),
+        "failed open must not publish Redis state"
+    );
+    assert!(
+        !path.join(STORAGE_MANIFEST_FILE).exists(),
+        "rejected path must not gain a storage manifest"
+    );
+    assert_eq!(std::fs::read(&marker).expect("read marker"), b"keep me");
 
     drop(redis);
     safe_cleanup_test_db(&path);
@@ -1562,6 +1725,49 @@ fn vector_data_sample_validation_passes_on_healthy_data() {
         let empty = redis.validate_vector_data_sample(0).expect("empty sample");
         assert_eq!(empty.members, 0);
         assert_eq!(empty.metas, 0);
+    });
+}
+
+#[test]
+fn vector_data_sample_validation_rejects_wrong_storage_incarnation() {
+    with_redis(|redis| {
+        let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
+        redis.vadd(b"vs", b"e1", &vector).expect("vadd e1");
+
+        let db = redis.db().expect("db");
+        let vector_cf = redis
+            .get_cf_handle(ColumnFamilyIndex::VectorDataCF)
+            .expect("vector cf");
+        let (member_key, member_value) = db
+            .iterator_cf(&vector_cf, IteratorMode::Start)
+            .next()
+            .expect("one member entry")
+            .expect("member entry");
+        let parsed = ParsedVectorMemberDataKey::decode(&member_key).expect("member key");
+        let wrong_incarnation = parsed
+            .storage_incarnation()
+            .checked_add(1)
+            .expect("nonzero");
+        let wrong_key = VectorMemberDataKey {
+            key: parsed.key(),
+            storage_incarnation: wrong_incarnation,
+            generation_sequence: parsed.generation_sequence(),
+            element: parsed.element(),
+        }
+        .encode_full()
+        .expect("wrong-incarnation member key");
+        db.delete_cf(&vector_cf, &member_key)
+            .expect("delete original member");
+        db.put_cf(&vector_cf, wrong_key, member_value)
+            .expect("write wrong-incarnation member");
+
+        let error = redis
+            .validate_vector_data_sample(16)
+            .expect_err("wrong storage incarnation must fail validation");
+        assert!(
+            error.to_string().contains("storage incarnation"),
+            "unexpected validation failure: {error}"
+        );
     });
 }
 

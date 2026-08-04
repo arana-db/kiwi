@@ -24,22 +24,31 @@
 //! MetaCF scans, compaction filters, or FLUSHDB, and so it can be carried
 //! into Raft snapshot checkpoints with a simple copy.
 //!
-//! - `storage_incarnation` is generated once when an empty database directory
-//!   is first opened and never changes afterwards. It distinguishes data
+//! - `storage_incarnation` is generated once before RocksDB first creates the
+//!   vector column family and never changes afterwards. It distinguishes data
 //!   written by different storages (or by a rebuilt data directory) inside
 //!   vector member keys.
 //! - `next_generation` backs the monotonic generation sequence generator. The
 //!   incremented value is persisted *before* a generation is handed out, so a
 //!   restarted instance never reuses an allocated generation.
 //!
-//! A missing manifest on a non-empty database means the data predates this
-//! mechanism (or the file was lost); opening then fails instead of silently
-//! reinterpreting existing data.
+//! A missing manifest is bootstrapped only for a classified legacy RocksDB
+//! without a vector column family, or for a fresh path. Existing vector column
+//! families and unclassifiable non-empty paths fail closed instead of being
+//! silently reinterpreted or mutated.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::collections::HashSet;
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::sync::LazyLock;
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+use parking_lot::Mutex as ParkingMutex;
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -51,6 +60,42 @@ use crate::error::{InvalidFormatSnafu, IoSnafu, Result};
 pub const STORAGE_MANIFEST_FILE: &str = "__kiwi_storage_manifest";
 const STORAGE_MANIFEST_VERSION: u32 = 1;
 const FIRST_GENERATION: u64 = 1;
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+static STORAGE_MANIFEST_PERSIST_FAILURES: LazyLock<ParkingMutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| ParkingMutex::new(HashSet::new()));
+
+/// Removes an unconsumed manifest persist failpoint when a test exits early.
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+pub struct StorageManifestPersistFailureGuard {
+    db_path: PathBuf,
+}
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+impl Drop for StorageManifestPersistFailureGuard {
+    fn drop(&mut self) {
+        STORAGE_MANIFEST_PERSIST_FAILURES
+            .lock()
+            .remove(&self.db_path);
+    }
+}
+
+/// Inject exactly one failure before a storage manifest is atomically renamed.
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+#[must_use]
+pub fn fail_next_storage_manifest_persist(db_path: &Path) -> StorageManifestPersistFailureGuard {
+    let db_path = db_path.to_path_buf();
+    assert!(
+        STORAGE_MANIFEST_PERSIST_FAILURES
+            .lock()
+            .insert(db_path.clone()),
+        "storage manifest persist failure already registered for {}",
+        db_path.display()
+    );
+    StorageManifestPersistFailureGuard { db_path }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ManifestFile {
@@ -69,8 +114,9 @@ impl StorageManifest {
     /// Load the manifest for the instance stored in `db_dir`.
     ///
     /// Databases created before the manifest existed can be bootstrapped when
-    /// they contain only legacy data. Existing vector member data is rejected
-    /// without a manifest because its incarnation cannot be reconstructed.
+    /// they have no vector column family. Callers must reject an existing vector
+    /// column family before passing `false`; `true` is retained for direct
+    /// validation and rejects creation because its incarnation is unknown.
     pub(crate) fn open(db_dir: &Path, vector_data_has_entries: bool) -> Result<Self> {
         let path = db_dir.join(STORAGE_MANIFEST_FILE);
         if path.exists() {
@@ -100,6 +146,11 @@ impl StorageManifest {
 
     pub(crate) fn storage_incarnation(&self) -> u64 {
         self.storage_incarnation
+    }
+
+    /// Read and validate the manifest in `db_dir` without creating one.
+    pub(crate) fn load_storage_incarnation(db_dir: &Path) -> Result<u64> {
+        Self::read(&db_dir.join(STORAGE_MANIFEST_FILE)).map(|manifest| manifest.storage_incarnation)
     }
 
     /// Allocate the next generation sequence. The incremented counter is
@@ -203,6 +254,16 @@ impl StorageManifest {
             let mut temp = fs::File::create(&temp_path).context(IoSnafu)?;
             temp.write_all(&json).context(IoSnafu)?;
             temp.sync_all().context(IoSnafu)?;
+        }
+        #[cfg(any(test, feature = "test-fault-injection"))]
+        if STORAGE_MANIFEST_PERSIST_FAILURES
+            .lock()
+            .remove(self.path.parent().expect("manifest path has a parent"))
+        {
+            return Err(std::io::Error::other(
+                "injected storage manifest persist failure",
+            ))
+            .context(IoSnafu);
         }
         fs::rename(&temp_path, &self.path).context(IoSnafu)?;
         sync_parent_directory(&self.path).context(IoSnafu)?;

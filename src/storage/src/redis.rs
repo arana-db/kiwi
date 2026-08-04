@@ -41,7 +41,7 @@ use crate::custom_comparator::{
 use crate::data_compaction_filter::DataCompactionFilterFactory;
 use crate::error::Error::RedisErr;
 use crate::error::InvalidFormatSnafu;
-use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
+use crate::error::{IoSnafu, OptionNoneSnafu, Result, RocksSnafu};
 use crate::format_base_value::{DATA_TYPE_TAG, DataType};
 use crate::logindex::{
     FlushTrigger, LogIndexAndSequenceCollector, LogIndexAndSequenceCollectorPurger,
@@ -463,23 +463,51 @@ impl Redis {
         // A legacy database has no vector column family. Refuse to open a
         // database that already has that column family but lost its manifest
         // before RocksDB can create or mutate any descriptors.
-        let manifest_path = Path::new(db_path).join(crate::storage_manifest::STORAGE_MANIFEST_FILE);
-        if !manifest_path.exists()
-            && DB::list_cf(&db_opts, db_path).is_ok_and(|column_families| {
-                column_families
-                    .iter()
-                    .any(|name| name == ColumnFamilyIndex::VectorDataCF.name())
-            })
-        {
-            return Err(InvalidFormatSnafu {
-                message: format!(
-                    "storage manifest {} is missing but the database has a vector column family; \
-                     refusing to reinterpret existing vector data",
-                    manifest_path.display()
-                ),
+        let db_directory = Path::new(db_path);
+        let manifest_path = db_directory.join(crate::storage_manifest::STORAGE_MANIFEST_FILE);
+        let current_path = db_directory.join("CURRENT");
+        if !manifest_path.exists() && current_path.exists() {
+            let column_families = DB::list_cf(&db_opts, db_path).context(RocksSnafu)?;
+            if column_families
+                .iter()
+                .any(|name| name == ColumnFamilyIndex::VectorDataCF.name())
+            {
+                return Err(InvalidFormatSnafu {
+                    message: format!(
+                        "storage manifest {} is missing but the database has a vector column family; \
+                         refusing to reinterpret existing vector data",
+                        manifest_path.display()
+                    ),
+                }
+                .build());
             }
-            .build());
+        } else if !manifest_path.exists() && db_directory.exists() {
+            let temp_manifest_path = manifest_path.with_extension("tmp");
+            let entries = std::fs::read_dir(db_directory).context(IoSnafu)?;
+            let mut has_unrecognized_entry = false;
+            for entry in entries {
+                if entry.context(IoSnafu)?.path() != temp_manifest_path {
+                    has_unrecognized_entry = true;
+                    break;
+                }
+            }
+            if has_unrecognized_entry {
+                return Err(InvalidFormatSnafu {
+                    message: format!(
+                        "storage path {} is non-empty but has neither a storage manifest nor a \
+                         RocksDB CURRENT file; refusing to initialize it",
+                        db_directory.display()
+                    ),
+                }
+                .build());
+            }
         }
+
+        // Persist the incarnation before opening descriptors: RocksDB may create
+        // the vector column family as part of a successful legacy migration.
+        std::fs::create_dir_all(db_directory).context(IoSnafu)?;
+        let manifest = StorageManifest::open(db_directory, false)?;
+        let _ = incarnation_cell.set(manifest.storage_incarnation());
 
         const CF_CONFIGS: &[(&str, bool, Option<usize>)] = &[
             ("default", true, None),                   // meta & string: bloom filter
@@ -511,12 +539,11 @@ impl Redis {
         );
         let _ = db_once_cell.set(db.downgrade());
 
-        self.handles = CF_CONFIGS
+        let handles = CF_CONFIGS
             .iter()
             .filter(|(name, _, _)| db.cf_handle(name).is_some())
             .map(|(name, _, _)| name.to_string())
             .collect();
-        self.is_starting.store(false, Ordering::SeqCst);
 
         // Initialize cf_tracker from SST properties
         let rocksdb = db.as_ref();
@@ -525,25 +552,13 @@ impl Redis {
             log::warn!("Failed to initialize cf_tracker from SST properties: {}", e);
         }
 
-        // Store collector and tracker
+        // Publish the fully initialized state only after all fallible setup.
+        self.handles = handles;
         self.logindex_collector = Some(collector);
         self.logindex_cf_tracker = Some(cf_tracker);
         self.db = Some(db);
-
-        // Load (or create) the per-instance storage manifest. A manifest that
-        // is missing while the database holds data means the data predates
-        // the incarnation mechanism; refuse to open rather than reinterpret.
-        let vector_data_has_entries = self.db.as_ref().is_some_and(|db| {
-            db.cf_handle(ColumnFamilyIndex::VectorDataCF.name())
-                .is_some_and(|cf| {
-                    db.iterator_cf(&cf, rocksdb::IteratorMode::Start)
-                        .next()
-                        .is_some()
-                })
-        });
-        let manifest = StorageManifest::open(Path::new(db_path), vector_data_has_entries)?;
-        let _ = incarnation_cell.set(manifest.storage_incarnation());
         self.manifest = Some(manifest);
+        self.is_starting.store(false, Ordering::SeqCst);
 
         Ok(())
     }

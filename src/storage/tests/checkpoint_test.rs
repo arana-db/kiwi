@@ -368,6 +368,29 @@ async fn test_v2_meta_for_storage_roundtrip_and_validate() {
     let read_back = RaftSnapshotMeta::read_from_dir(&cp_root).unwrap();
     assert_eq!(read_back, meta);
     read_back.validate_for_restore(2).unwrap();
+
+    let restore_path = unique_test_db_path();
+    let prepared = prepare_checkpoint_restore(&cp_root, &restore_path, 2).unwrap();
+    prepared
+        .validate_storage_incarnations(&read_back.storage_incarnations)
+        .unwrap();
+
+    let mut mismatched = read_back.storage_incarnations.clone();
+    mismatched[1] = mismatched[1].wrapping_add(1).max(1);
+    let err = prepared
+        .validate_storage_incarnations(&mismatched)
+        .unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("storage incarnation mismatch for instance 1"),
+        "unexpected error: {err}"
+    );
+
+    assert!(!restore_path.exists());
+    drop(prepared);
+    let _ = std::fs::remove_dir_all(db_path);
+    let _ = std::fs::remove_dir_all(cp_root);
+    let _ = std::fs::remove_dir_all(restore_path);
 }
 
 #[test]
@@ -387,9 +410,8 @@ fn test_validate_for_restore_rejects_bad_schema() {
         "unexpected error: {err}"
     );
 
-    // Incarnation list length must match the instance count. Values
-    // themselves are never compared: the restore adopts the snapshot's
-    // incarnations via the per-instance manifest files.
+    // Metadata-level validation checks the incarnation list shape. Exact
+    // values are paired with staged manifests before the restore commits.
     let mut meta = valid();
     meta.storage_incarnations = vec![11];
     let err = meta.validate_for_restore(2).unwrap_err();

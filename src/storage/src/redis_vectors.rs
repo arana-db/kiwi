@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 
 use kstd::lock_mgr::ScopeRecordLock;
 use rocksdb::{IteratorMode, ReadOptions};
-use snafu::{OptionExt, ResultExt};
+use snafu::{OptionExt, ResultExt, ensure};
 
 use crate::{
     CanonicalVector, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckState, VectorHit,
@@ -656,13 +656,24 @@ impl Redis {
                 message: "MetaCF is not initialized".to_string(),
             })?;
 
+        let storage_incarnation = self.storage_incarnation()?;
         let mut sample = VectorDataSample::default();
         for entry in db
             .iterator_cf(&vector_cf, IteratorMode::Start)
             .take(sample_size)
         {
             let (encoded_key, encoded_value) = entry.context(RocksSnafu)?;
-            ParsedVectorMemberDataKey::decode(&encoded_key)?;
+            let member_key = ParsedVectorMemberDataKey::decode(&encoded_key)?;
+            ensure!(
+                member_key.storage_incarnation() == storage_incarnation,
+                InvalidFormatSnafu {
+                    message: format!(
+                        "vector member storage incarnation {} does not match manifest {}",
+                        member_key.storage_incarnation(),
+                        storage_incarnation
+                    )
+                }
+            );
             VectorDataValue::decode(&encoded_value)?;
             sample.members += 1;
         }

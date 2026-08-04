@@ -26,6 +26,7 @@ use std::task::Poll;
 use arc_swap::ArcSwap;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
+use raft::snapshot_archive::{pack_dir_to_vec, unpack_tar_to_dir, unpacked_checkpoint_root};
 use raft::state_machine::{
     KiwiStateMachine, PauseController, StorageAccessPermit, preflight_snapshot_install,
     snapshot_install_marker_path,
@@ -1140,6 +1141,96 @@ async fn install_snapshot_resumes_after_pre_restore_failure() -> anyhow::Result<
     safe_cleanup_test_db(&restore_db_path);
     safe_cleanup_test_db(&snap_root);
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn snapshot_incarnation_mismatch_does_not_pause_or_replace_live_storage() -> anyhow::Result<()>
+{
+    let src_db_path = unique_test_db_path();
+    let restore_db_path = unique_test_db_path();
+    let source_work_dir = unique_test_db_path();
+    let target_work_dir = unique_test_db_path();
+    let rewrite_dir = unique_test_db_path();
+    std::fs::create_dir_all(&source_work_dir)?;
+    std::fs::create_dir_all(&target_work_dir)?;
+
+    let source_storage = {
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _rx = storage.open(options, &src_db_path)?;
+        Arc::new(storage)
+    };
+    source_storage.set(b"snapshot_key", b"snapshot_value")?;
+    let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
+    let mut source_sm = KiwiStateMachine::new(
+        1,
+        source_swap.clone(),
+        src_db_path.clone(),
+        source_work_dir.clone(),
+        noop_pause_controller(),
+        None,
+    );
+    let mut builder = source_sm.get_snapshot_builder().await;
+    let snapshot = builder.build_snapshot().await?;
+    let snapshot_meta = snapshot.meta.clone();
+    let snapshot_bytes = snapshot.snapshot.into_inner();
+    drop(builder);
+    drop(source_sm);
+    drop(source_swap);
+    close_storage(source_storage, "source storage").await?;
+
+    unpack_tar_to_dir(&snapshot_bytes, &rewrite_dir)?;
+    let checkpoint_root = unpacked_checkpoint_root(&rewrite_dir);
+    let mut file_meta = storage::RaftSnapshotMeta::read_from_dir(&checkpoint_root)?;
+    file_meta.storage_incarnations[0] = file_meta.storage_incarnations[0]
+        .checked_add(1)
+        .expect("test incarnation must not overflow");
+    file_meta.write_to_dir(&checkpoint_root)?;
+    let mismatched_snapshot_bytes = pack_dir_to_vec(&checkpoint_root)?;
+
+    let mut target_storage = Storage::new(1, 0);
+    let options = Arc::new(StorageOptions::default());
+    let _target_rx = target_storage.open(options, &restore_db_path)?;
+    target_storage.set(b"stale_key", b"stale_value")?;
+    let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
+    let pause_controller = Arc::new(TestPauseController::default());
+    let mut target_sm = KiwiStateMachine::new(
+        2,
+        target_swap.clone(),
+        restore_db_path.clone(),
+        target_work_dir.clone(),
+        pause_controller.clone(),
+        None,
+    );
+
+    let error = target_sm
+        .install_snapshot(
+            &snapshot_meta,
+            Box::new(std::io::Cursor::new(mismatched_snapshot_bytes)),
+        )
+        .await
+        .expect_err("metadata/package incarnation mismatch must fail before restore");
+    assert!(
+        error.to_string().contains("incarnation"),
+        "unexpected validation failure: {error}"
+    );
+    assert_eq!(pause_controller.pause_count.load(Ordering::SeqCst), 0);
+    assert_eq!(pause_controller.resume_count.load(Ordering::SeqCst), 0);
+    assert!(!snapshot_install_marker_path(&restore_db_path)?.exists());
+    let unchanged = target_swap.load_full();
+    assert_eq!(unchanged.get(b"stale_key")?, "stale_value");
+
+    drop(target_sm);
+    drop(target_swap);
+    close_storage(unchanged, "unchanged target storage").await?;
+    drop(pause_controller);
+    drop(_target_rx);
+    safe_cleanup_test_db(&src_db_path);
+    safe_cleanup_test_db(&restore_db_path);
+    safe_cleanup_test_db(&source_work_dir);
+    safe_cleanup_test_db(&target_work_dir);
+    safe_cleanup_test_db(&rewrite_dir);
     Ok(())
 }
 

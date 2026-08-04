@@ -94,6 +94,8 @@ pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use storage_impl::BeforeOrAfter;
 pub use storage_manifest::STORAGE_MANIFEST_FILE;
+#[cfg(any(test, feature = "test-fault-injection"))]
+pub use storage_manifest::fail_next_storage_manifest_persist;
 pub use util::{safe_cleanup_test_db, unique_test_db_path};
 pub use vector::{
     CanonicalVector, QuantizationType, VectorHit, VectorInfo, VectorQuery, VectorSearchEngine,

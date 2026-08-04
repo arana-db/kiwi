@@ -38,6 +38,7 @@ use parking_lot::Mutex;
 use crate::format_vector::VECTOR_VALUE_FORMAT;
 use crate::logindex::LogIndexAndSequenceCollector;
 use crate::redis::ColumnFamilyIndex;
+use crate::storage_manifest::StorageManifest;
 use crate::{sync_directory, sync_parent_directory};
 
 /// File name for JSON metadata at the checkpoint root (not OpenRaft's `SnapshotMeta`).
@@ -118,8 +119,8 @@ pub struct RaftSnapshotMeta {
     #[serde(default)]
     pub storage_schema_version: u32,
     /// Storage incarnation of each RocksDB instance, ordered by instance id.
-    /// A restored database adopts these via the per-instance manifest files
-    /// carried inside the checkpoint; they are validated for structure only.
+    /// Restore validates these values against the per-instance manifest files
+    /// carried inside the checkpoint before replacing live storage.
     #[serde(default)]
     pub storage_incarnations: Vec<u64>,
     /// Number of RocksDB instances in the checkpoint.
@@ -269,9 +270,8 @@ impl RaftSnapshotMeta {
 
     /// Validate the storage schema description against this binary and the
     /// local configuration. Restore must deterministically reject snapshots it
-    /// cannot consume. The storage incarnations are structural metadata only:
-    /// a restored database adopts the snapshot writer's incarnations via the
-    /// per-instance manifest files, so differing values are never an error.
+    /// cannot consume. This validates incarnation count and shape; the staged
+    /// checkpoint is paired with the exact manifest values before commit.
     pub fn validate_for_restore(&self, expected_db_instance_num: usize) -> io::Result<()> {
         let invalid = |message: String| io::Error::new(io::ErrorKind::InvalidData, message);
 
@@ -357,10 +357,52 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
 pub struct PreparedCheckpointRestore {
     temp_dir: PathBuf,
     target_db_path: PathBuf,
+    db_instance_num: usize,
     committed: bool,
 }
 
 impl PreparedCheckpointRestore {
+    /// Return the root of the fully copied, not-yet-committed checkpoint.
+    pub fn staged_path(&self) -> &Path {
+        &self.temp_dir
+    }
+
+    /// Pair snapshot metadata incarnations with the staged per-instance manifests.
+    pub fn validate_storage_incarnations(&self, expected: &[u64]) -> io::Result<()> {
+        if expected.len() != self.db_instance_num {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "snapshot carries {} storage incarnations for {} staged instances",
+                    expected.len(),
+                    self.db_instance_num
+                ),
+            ));
+        }
+        for (instance, expected_incarnation) in expected.iter().copied().enumerate() {
+            let instance_dir = self.temp_dir.join(instance.to_string());
+            let manifest_incarnation = StorageManifest::load_storage_incarnation(&instance_dir)
+                .map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "invalid storage manifest for snapshot instance {instance} at {}: {error}",
+                            instance_dir.display()
+                        ),
+                    )
+                })?;
+            if manifest_incarnation != expected_incarnation {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "snapshot storage incarnation mismatch for instance {instance}: metadata {expected_incarnation}, manifest {manifest_incarnation}"
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Replace the target database directory with the staged checkpoint layout.
     ///
     /// This is the destructive phase of checkpoint restoration. On Windows, removing the old
@@ -432,6 +474,7 @@ pub fn prepare_checkpoint_restore(
     let prepared = PreparedCheckpointRestore {
         temp_dir,
         target_db_path: target_db_path.to_path_buf(),
+        db_instance_num,
         committed: false,
     };
 

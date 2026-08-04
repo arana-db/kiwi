@@ -613,6 +613,23 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         });
         let prepared = prepare_checkpoint_restore(&checkpoint_root, &self.db_path, db_instance_num)
             .map_err(io_err_to_raft)?;
+        prepared
+            .validate_storage_incarnations(&file_meta.storage_incarnations)
+            .map_err(io_err_to_raft)?;
+
+        // Open and sample the disposable staged copy before pausing live
+        // storage. All RocksDB handles must be released before rename.
+        let mut staged_storage = Storage::new(db_instance_num, db_id);
+        let staged_rx = staged_storage
+            .open(Arc::clone(&options), prepared.staged_path())
+            .map_err(storage_err_to_raft)?;
+        staged_storage
+            .validate_vector_data_sample(RESTORED_VECTOR_SAMPLE_SIZE)
+            .map_err(storage_err_to_raft)?;
+        staged_storage.shutdown().await;
+        staged_storage.close();
+        drop(staged_rx);
+        drop(staged_storage);
 
         let _snapshot_publication = Arc::clone(&self.snapshot_publication_gate)
             .lock_owned()
@@ -671,11 +688,6 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         new_storage
             .open(options, &self.db_path)
             .map_err(|error| post_marker_error("opening the restored storage", &error))?;
-        // Sample-decode restored vector data; a corrupt sample rejects the
-        // install before the restored storage starts serving traffic.
-        new_storage
-            .validate_vector_data_sample(RESTORED_VECTOR_SAMPLE_SIZE)
-            .map_err(|error| post_marker_error("sampling restored vector data", &error))?;
         self.rearm_append_log_fn(&new_storage);
 
         self.storage_swap.swap(Arc::new(new_storage));
