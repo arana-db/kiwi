@@ -311,6 +311,10 @@ def test_malformed_vectors_and_options(vector_client):
         b"member",
         b"NOQUANT",
     )
+    # Missing-key VSIM with a malformed vector returns an empty Array (Redis
+    # resolves the missing key before validating the query/options), so test
+    # the malformed-options path against a populated key instead.
+    vadd_values(client, key, [1, 0], b"member")
     assert_response_error(
         client,
         "invalid vector specification",
