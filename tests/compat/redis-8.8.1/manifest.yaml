@@ -73,3 +73,115 @@ commands:
     tests: [final-state]
     known_differences: []
     owner: cmd-keyspace
+  - command: VADD
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [wire-differential, final-state]
+    known_differences: []
+    owner: cmd-vector
+  - command: VCARD
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [wire-differential, final-state]
+    known_differences: []
+    owner: cmd-vector
+  - command: VDIM
+    classification: known_difference
+    modes:
+      standalone_cache_off: known_difference
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [final-state]
+    known_differences:
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "Kiwi Phase 1 returns an error for VDIM on a missing key, while Redis 8.8.1 returns 0"
+        remove_when: Kiwi VDIM returns 0 on a missing key and wire differential passes
+    owner: cmd-vector
+  - command: VEMB
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [wire-differential, final-state]
+    known_differences: []
+    owner: cmd-vector
+  - command: VINFO
+    classification: known_difference
+    modes:
+      standalone_cache_off: known_difference
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [wire-differential, final-state]
+    known_differences:
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "VINFO field values differ: Redis 8.8.1 reports real HNSW internals (hnsw-m, max-level, vset-uid) while Kiwi Phase 1 reports FLAT sentinels with different semantics; only field-name set and value types match"
+        remove_when: Kiwi VINFO reports HNSW-equivalent field values and values match on wire differential
+    owner: cmd-vector
+  - command: VISMEMBER
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [wire-differential, final-state]
+    known_differences: []
+    owner: cmd-vector
+  - command: VREM
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [wire-differential, final-state]
+    known_differences: []
+    owner: cmd-vector
+  - command: VSIM
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [wire-differential, final-state]
+    known_differences: []
+    owner: cmd-vector

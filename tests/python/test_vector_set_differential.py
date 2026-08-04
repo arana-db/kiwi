@@ -44,6 +44,7 @@ KIWI_HOST = os.getenv("KIWI_HOST", "127.0.0.1")
 KIWI_PORT = int(os.getenv("KIWI_PORT", "7379"))
 REDIS8_HOST = os.getenv("VECTOR_REDIS_HOST", "127.0.0.1")
 REDIS8_PORT = int(os.getenv("VECTOR_REDIS_PORT", "6380"))
+KIWI_COMPAT_REQUIRE_ORACLE = os.getenv("KIWI_COMPAT_REQUIRE_ORACLE") == "1"
 
 SCORE_TOLERANCE = 1e-6
 
@@ -62,12 +63,24 @@ def _server_reachable(host, port):
 
 
 if not _server_reachable(KIWI_HOST, KIWI_PORT):
+    if KIWI_COMPAT_REQUIRE_ORACLE:
+        raise RuntimeError(
+            "KIWI_COMPAT_REQUIRE_ORACLE=1 but Kiwi reference server is not "
+            f"reachable at {KIWI_HOST}:{KIWI_PORT}; vector set differential "
+            "cannot run and must not be silently skipped"
+        )
     pytest.skip(
         f"Kiwi server not reachable at {KIWI_HOST}:{KIWI_PORT}; "
         "skipping vector set differential tests",
         allow_module_level=True,
     )
 if not _server_reachable(REDIS8_HOST, REDIS8_PORT):
+    if KIWI_COMPAT_REQUIRE_ORACLE:
+        raise RuntimeError(
+            "KIWI_COMPAT_REQUIRE_ORACLE=1 but Redis 8.8.1 reference server is "
+            f"not reachable at {REDIS8_HOST}:{REDIS8_PORT}; vector set "
+            "differential cannot run and must not be silently skipped"
+        )
     pytest.skip(
         f"Redis 8 reference server not reachable at {REDIS8_HOST}:{REDIS8_PORT}; "
         "skipping vector set differential tests",
