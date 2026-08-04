@@ -1230,7 +1230,20 @@ fn test_vsim_cancel_mid_scan_aborts_and_releases_resources() {
                         &token,
                     )
                 });
-                std::thread::sleep(Duration::from_millis(20));
+                // Wait until the scan is demonstrably in flight (it holds one
+                // of the four FLAT gate permits for the whole scan body),
+                // instead of sleeping a fixed duration. This removes the race
+                // where a fast runner finishes the exhaustive scan before the
+                // cancellation is issued, and a slow runner cancels before the
+                // query has started.
+                let wait_deadline = Instant::now() + Duration::from_secs(30);
+                while redis.flat_query_gate.available_permits() == 4 {
+                    std::thread::sleep(Duration::from_millis(1));
+                    assert!(
+                        Instant::now() < wait_deadline,
+                        "flat query scan never started"
+                    );
+                }
                 cancel.cancel();
                 query.join().expect("query thread")
             });
