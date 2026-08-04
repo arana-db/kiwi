@@ -118,9 +118,9 @@ impl VectorSetMutationV1 {
             }
         );
         ensure!(
-            original_l2.is_finite() && original_l2 > 0.0,
+            original_l2.is_finite() && original_l2 >= 0.0,
             InvalidFormatSnafu {
-                message: "vector mutation L2 norm must be finite and positive".to_string()
+                message: "vector mutation L2 norm must be finite and nonnegative".to_string()
             }
         );
         let expected_len = dimension as usize * size_of::<f32>();
@@ -142,6 +142,12 @@ impl VectorSetMutationV1 {
             components.iter().all(|component| component.is_finite()),
             InvalidFormatSnafu {
                 message: "vector mutation components must be finite".to_string()
+            }
+        );
+        ensure!(
+            original_l2 != 0.0 || components.iter().all(|component| *component == 0.0),
+            InvalidFormatSnafu {
+                message: "zero-L2 vector mutation components must all be zero".to_string()
             }
         );
         Ok(CanonicalVector::from_parts(
@@ -413,6 +419,23 @@ mod tests {
         let restored = vector.restore();
         assert!((restored[0] - 3.0).abs() < 1e-6);
         assert!((restored[1] - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn zero_add_mutation_round_trips() {
+        let vector = CanonicalVector::from_values(&[0.0, 0.0]).expect("zero vector");
+        let mutation =
+            VectorSetMutationV1::add_from_canonical(b"zero", &vector).expect("zero mutation");
+        let decoded =
+            VectorSetMutationV1::decode(&mutation.encode()).expect("decode zero mutation");
+
+        assert_eq!(decoded, mutation);
+        let restored = decoded
+            .canonical_vector()
+            .expect("canonical vector")
+            .expect("add carries a vector")
+            .restore();
+        assert_eq!(restored, vec![0.0, 0.0]);
     }
 
     #[test]

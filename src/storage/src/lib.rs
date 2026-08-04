@@ -98,8 +98,8 @@ pub use storage_manifest::STORAGE_MANIFEST_FILE;
 pub use storage_manifest::fail_next_storage_manifest_persist;
 pub use util::{safe_cleanup_test_db, unique_test_db_path};
 pub use vector::{
-    CanonicalVector, QuantizationType, VectorHit, VectorInfo, VectorQuery, VectorSearchEngine,
-    VectorSearchMode, VectorSearchOptions,
+    CanonicalVector, PreparedVectorQuery, QuantizationType, VectorHit, VectorInfo, VectorQuery,
+    VectorSearchEngine, VectorSearchMode, VectorSearchOptions,
 };
 pub use vector_fault::VectorFaultHooks;
 pub use vector_flat::{FlatQueryCancel, FlatQueryGate, FlatScanGuard};

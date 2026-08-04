@@ -24,8 +24,8 @@ use storage::{CanonicalVector, QuantizationType, storage::Storage};
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
 use super::{
-    ERR_INVALID_VECTOR, MissingError, ParseResult, error_reply, parse_direct_vector,
-    storage_error_reply,
+    ERR_INVALID_VECTOR, ERR_VECTOR_ELEMENT_LIMIT, MissingError, ParseResult, VectorParseLimits,
+    error_reply, parse_direct_vector, parse_positive_usize, storage_error_reply,
 };
 
 const ERR_VADD_REDUCE: &str = "ERR VADD option REDUCE is not supported yet";
@@ -52,7 +52,7 @@ struct ParsedVAdd {
     element: Vec<u8>,
 }
 
-fn parse_vadd(argv: &[Vec<u8>]) -> ParseResult<ParsedVAdd> {
+fn parse_vadd_with_limits(argv: &[Vec<u8>], limits: VectorParseLimits) -> ParseResult<ParsedVAdd> {
     // REDUCE must precede the vector spec; reject it explicitly until
     // random-projection support lands.
     if argv
@@ -61,8 +61,12 @@ fn parse_vadd(argv: &[Vec<u8>]) -> ParseResult<ParsedVAdd> {
     {
         return Err(ERR_VADD_REDUCE);
     }
-    let (vector, element_index) = parse_direct_vector(argv, 2)?;
-    let element = argv.get(element_index).cloned().ok_or(ERR_INVALID_VECTOR)?;
+    let (vector, element_index) = parse_direct_vector(argv, 2, limits)?;
+    let element = argv.get(element_index).ok_or(ERR_INVALID_VECTOR)?;
+    if element.len() > limits.max_element_bytes {
+        return Err(ERR_VECTOR_ELEMENT_LIMIT);
+    }
+    let element = element.clone();
 
     let mut quantization = None;
     for option in &argv[element_index + 1..] {
@@ -97,6 +101,11 @@ fn parse_vadd(argv: &[Vec<u8>]) -> ParseResult<ParsedVAdd> {
     Ok(ParsedVAdd { vector, element })
 }
 
+#[cfg(test)]
+fn parse_vadd(argv: &[Vec<u8>]) -> ParseResult<ParsedVAdd> {
+    parse_vadd_with_limits(argv, VectorParseLimits::default())
+}
+
 impl Cmd for VAddCmd {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
@@ -106,8 +115,28 @@ impl Cmd for VAddCmd {
     }
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
-        let parsed = match parse_vadd(&client.argv()) {
+        let argv = client.argv();
+        let limits = storage
+            .storage_options()
+            .map(|options| VectorParseLimits::from(&options.vector))
+            .unwrap_or_default();
+        let parsed = match parse_vadd_with_limits(&argv, limits) {
             Ok(parsed) => parsed,
+            Err(ERR_INVALID_VECTOR)
+                if argv.get(2).is_some_and(|kind| {
+                    (kind.eq_ignore_ascii_case(b"FP32") && argv.len() == 4)
+                        || (kind.eq_ignore_ascii_case(b"VALUES")
+                            && argv
+                                .get(3)
+                                .and_then(|raw| parse_positive_usize(raw))
+                                .is_some_and(|dimension| argv.len() == dimension + 4))
+                }) =>
+            {
+                client.set_reply(error_reply(
+                    "ERR wrong number of arguments for 'vadd' command",
+                ));
+                return;
+            }
             Err(message) => {
                 client.set_reply(error_reply(message));
                 return;
@@ -124,7 +153,51 @@ impl Cmd for VAddCmd {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
+    use client::StreamTrait;
+    use storage::{StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+
     use super::*;
+
+    /// A single `(configure, argv, expected_error)` case for the parser limits
+    /// test. Factored into a type alias to keep the tuple short.
+    type LimitCase = (
+        Box<dyn FnOnce(&mut conf::vector_config::VectorConfig)>,
+        Vec<Vec<u8>>,
+        &'static str,
+    );
+
+    struct TestStream;
+
+    #[async_trait::async_trait]
+    impl StreamTrait for TestStream {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+
+        async fn write(&mut self, _data: &[u8]) -> Result<usize, std::io::Error> {
+            Ok(0)
+        }
+    }
+
+    fn open_storage_with_limits(
+        configure: impl FnOnce(&mut conf::vector_config::VectorConfig),
+    ) -> (std::path::PathBuf, Arc<Storage>) {
+        let db_path = unique_test_db_path();
+        safe_cleanup_test_db(&db_path);
+        let mut options = StorageOptions::default();
+        configure(&mut options.vector);
+        let mut storage = Storage::new(1, 0);
+        let _bg_task_rx = storage
+            .open(Arc::new(options), &db_path)
+            .expect("open storage");
+        (db_path, Arc::new(storage))
+    }
+
+    fn run_vadd(client: &Client, storage: &Arc<Storage>, argv: &[Vec<u8>]) -> RespData {
+        client.set_argv(argv);
+        VAddCmd::new().execute(client, Arc::clone(storage));
+        client.take_reply()
+    }
 
     fn fp32(values: &[f32]) -> Vec<u8> {
         values
@@ -261,5 +334,108 @@ mod tests {
         let mut trailing = base;
         trailing.extend([b"NOQUANT".to_vec(), b"extra".to_vec()]);
         assert_eq!(parse_vadd(&trailing).unwrap_err(), ERR_INVALID_VECTOR);
+    }
+
+    #[tokio::test]
+    async fn parser_enforces_configured_vector_limits() {
+        let client = Client::new(Box::new(TestStream));
+        let cases: Vec<LimitCase> = vec![
+            (
+                Box::new(|vector| vector.max_dimension = 1),
+                vec![
+                    b"vadd".to_vec(),
+                    b"key".to_vec(),
+                    b"VALUES".to_vec(),
+                    b"2".to_vec(),
+                    b"not-a-float".to_vec(),
+                    b"also-invalid".to_vec(),
+                    b"element".to_vec(),
+                    b"NOQUANT".to_vec(),
+                ],
+                "ERR vector dimension exceeds max_dimension",
+            ),
+            (
+                Box::new(|vector| vector.max_vector_bytes = 4),
+                vec![
+                    b"vadd".to_vec(),
+                    b"key".to_vec(),
+                    b"FP32".to_vec(),
+                    fp32(&[0.0, 0.0]),
+                    b"element".to_vec(),
+                    b"NOQUANT".to_vec(),
+                ],
+                "ERR vector exceeds max_vector_bytes",
+            ),
+            (
+                Box::new(|vector| vector.max_dimension = 1),
+                vec![
+                    b"vadd".to_vec(),
+                    b"key".to_vec(),
+                    b"FP32".to_vec(),
+                    fp32(&[0.0, 0.0]),
+                    b"element".to_vec(),
+                    b"NOQUANT".to_vec(),
+                ],
+                "ERR vector dimension exceeds max_dimension",
+            ),
+            (
+                Box::new(|vector| vector.max_element_bytes = 3),
+                vec![
+                    b"vadd".to_vec(),
+                    b"key".to_vec(),
+                    b"VALUES".to_vec(),
+                    b"1".to_vec(),
+                    b"0".to_vec(),
+                    b"abcd".to_vec(),
+                    b"NOQUANT".to_vec(),
+                ],
+                "ERR vector element exceeds max_element_bytes",
+            ),
+        ];
+
+        for (configure, argv, expected) in cases {
+            let (db_path, storage) = open_storage_with_limits(configure);
+            assert_eq!(
+                run_vadd(&client, &storage, &argv),
+                RespData::Error(expected.into())
+            );
+            drop(storage);
+            safe_cleanup_test_db(&db_path);
+        }
+    }
+
+    #[test]
+    fn complete_vector_without_element_returns_wrong_arity() {
+        let client = Client::new(Box::new(TestStream));
+        client.set_argv(&[
+            b"vadd".to_vec(),
+            b"key".to_vec(),
+            b"VALUES".to_vec(),
+            b"1".to_vec(),
+            b"1".to_vec(),
+        ]);
+
+        VAddCmd::new().execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert_eq!(
+            client.take_reply(),
+            RespData::Error("ERR wrong number of arguments for 'vadd' command".into())
+        );
+    }
+
+    #[test]
+    fn incomplete_vector_keeps_typed_invalid_vector_error() {
+        let client = Client::new(Box::new(TestStream));
+        client.set_argv(&[
+            b"vadd".to_vec(),
+            b"key".to_vec(),
+            b"VALUES".to_vec(),
+            b"2".to_vec(),
+            b"1".to_vec(),
+        ]);
+
+        VAddCmd::new().execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert_eq!(client.take_reply(), error_reply(ERR_INVALID_VECTOR));
     }
 }

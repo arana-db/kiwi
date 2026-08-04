@@ -378,9 +378,9 @@ impl VectorDataValue {
             }
         );
         ensure!(
-            original_l2.is_finite() && original_l2 > 0.0,
+            original_l2.is_finite() && original_l2 >= 0.0,
             InvalidFormatSnafu {
-                message: "vector value L2 norm must be finite and positive".to_string()
+                message: "vector value L2 norm must be finite and nonnegative".to_string()
             }
         );
 
@@ -406,6 +406,12 @@ impl VectorDataValue {
                     normalized.iter().all(|component| component.is_finite()),
                     InvalidFormatSnafu {
                         message: "vector payload components must be finite".to_string()
+                    }
+                );
+                ensure!(
+                    original_l2 != 0.0 || normalized.iter().all(|component| *component == 0.0),
+                    InvalidFormatSnafu {
+                        message: "zero-L2 vector payload components must all be zero".to_string()
                     }
                 );
                 VectorData::Fp32(normalized)
@@ -482,6 +488,17 @@ mod tests {
         assert_eq!(decoded.dimension(), 2);
         assert!((decoded.canonical().original_l2() - 5.0).abs() < 1e-6);
         assert_eq!(decoded.canonical(), &canonical);
+    }
+
+    #[test]
+    fn zero_vector_data_value_round_trips() {
+        let canonical = CanonicalVector::from_values(&[0.0, 0.0]).expect("zero vector");
+        let encoded = VectorDataValue::from_canonical(&canonical).encode();
+        let decoded = VectorDataValue::decode(&encoded).expect("decode zero vector value");
+
+        assert_eq!(decoded.dimension(), 2);
+        assert_eq!(decoded.canonical().original_l2(), 0.0);
+        assert_eq!(decoded.canonical().restore(), vec![0.0, 0.0]);
     }
 
     #[test]
@@ -622,7 +639,7 @@ mod tests {
             fn vector_data_value_round_trips_finite_fp32(
                 values in prop::collection::vec(-1.0e6f32..1.0e6f32, 1..=128usize),
             ) {
-                // All-zero vectors are rejected by design; skip those cases.
+                // Non-finite vectors are rejected by design; skip those cases.
                 prop_assume!(CanonicalVector::from_values(&values).is_ok());
                 let canonical = CanonicalVector::from_values(&values).expect("valid vector");
                 let encoded = VectorDataValue::from_canonical(&canonical).encode();

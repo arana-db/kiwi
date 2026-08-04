@@ -74,7 +74,7 @@ impl CanonicalVector {
     }
 
     /// Create a CanonicalVector from FP32 values.
-    /// Validates that all values are finite and non-zero norm.
+    /// Validates that all values are finite and the norm is representable.
     pub fn from_values(values: &[f32]) -> Result<Self> {
         ensure!(
             !values.is_empty(),
@@ -100,11 +100,20 @@ impl CanonicalVector {
             .map(|value| f64::from(*value) * f64::from(*value))
             .sum::<f64>();
         ensure!(
-            norm_squared.is_finite() && norm_squared > 0.0,
+            norm_squared.is_finite(),
             InvalidArgumentSnafu {
-                message: "vector L2 norm must be finite and greater than zero".to_string()
+                message: "vector L2 norm must be finite".to_string()
             }
         );
+
+        if norm_squared == 0.0 {
+            return Ok(Self {
+                dimension: values.len() as u32,
+                original_l2: 0.0,
+                quantization: QuantizationType::None,
+                data: VectorData::Fp32(vec![0.0; values.len()]),
+            });
+        }
 
         let norm = norm_squared.sqrt();
         let original_l2 = norm as f32;
@@ -356,6 +365,12 @@ pub struct VectorHit {
     pub score: f64,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedVectorQuery {
+    pub dimension: u32,
+    pub element_query: Option<CanonicalVector>,
+}
+
 /// Per-set metadata reported by VINFO. Phase 1 only exposes what the stored
 /// `VectorMeta` can answer in O(1); FLAT sentinels live in the command layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -469,9 +484,31 @@ mod tests {
     }
 
     #[test]
+    fn canonical_vector_accepts_zero_values_and_scores_neutrally() {
+        let zero = CanonicalVector::from_values(&[0.0, 0.0]).expect("zero vector");
+        let nonzero = CanonicalVector::from_values(&[1.0, 0.0]).expect("nonzero vector");
+
+        assert_eq!(zero.original_l2(), 0.0);
+        assert_eq!(zero.as_fp32().expect("fp32 payload"), &[0.0, 0.0]);
+        assert_eq!(zero.restore(), vec![0.0, 0.0]);
+        assert_eq!(zero.score(&nonzero).expect("cosine score"), 0.5);
+    }
+
+    #[test]
+    fn canonical_vector_accepts_zero_fp32() {
+        let raw = [0.0_f32, 0.0_f32]
+            .into_iter()
+            .flat_map(f32::to_le_bytes)
+            .collect::<Vec<_>>();
+        let zero = CanonicalVector::from_fp32_le(&raw).expect("zero FP32 vector");
+
+        assert_eq!(zero.original_l2(), 0.0);
+        assert_eq!(zero.restore(), vec![0.0, 0.0]);
+    }
+
+    #[test]
     fn canonical_vector_rejects_invalid_inputs() {
         assert!(CanonicalVector::from_values(&[]).is_err());
-        assert!(CanonicalVector::from_values(&[0.0, 0.0]).is_err());
         assert!(CanonicalVector::from_values(&[f32::NAN]).is_err());
         assert!(CanonicalVector::from_fp32_le(&[0, 1, 2]).is_err());
     }

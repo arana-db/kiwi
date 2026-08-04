@@ -231,6 +231,31 @@ fn test_vcard_vdim_vemb_and_vismember_missing_semantics() {
 }
 
 #[test]
+fn test_zero_vector_persists_restores_and_scores_neutrally() {
+    with_redis(|redis| {
+        let zero = CanonicalVector::from_values(&[0.0, 0.0]).expect("zero vector");
+        let x = CanonicalVector::from_values(&[1.0, 0.0]).expect("x vector");
+
+        assert!(redis.vadd(b"zeros", b"zero", &zero).expect("insert zero"));
+        assert!(redis.vadd(b"zeros", b"x", &x).expect("insert x"));
+        assert_eq!(
+            redis.vemb(b"zeros", b"zero").expect("zero embedding"),
+            Some(vec![0.0, 0.0])
+        );
+
+        let hits = redis
+            .vsim(
+                b"zeros",
+                VectorQuery::Vector(zero),
+                search_options(2, VectorSearchMode::Approximate),
+            )
+            .expect("zero search");
+        assert_eq!(hits.len(), 2);
+        assert!(hits.iter().all(|hit| hit.score == 0.5));
+    });
+}
+
+#[test]
 fn test_vrem_deletes_last_member_and_meta() {
     with_redis(|redis| {
         let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("valid vector");

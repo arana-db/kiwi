@@ -22,8 +22,9 @@ use rocksdb::{IteratorMode, ReadOptions};
 use snafu::{OptionExt, ResultExt, ensure};
 
 use crate::{
-    CanonicalVector, ColumnFamilyIndex, DataType, Redis, Result, TypeCheckState, VectorHit,
-    VectorQuery, VectorSearchEngine, VectorSearchMode, VectorSearchOptions,
+    CanonicalVector, ColumnFamilyIndex, DataType, PreparedVectorQuery, Redis, Result,
+    TypeCheckState, VectorHit, VectorQuery, VectorSearchEngine, VectorSearchMode,
+    VectorSearchOptions,
     error::{
         BatchSnafu, InvalidArgumentSnafu, InvalidFormatSnafu, KeyNotFoundSnafu, OptionNoneSnafu,
         RedisErrSnafu, RocksSnafu, SystemSnafu, VectorFlatQueryTimeoutSnafu,
@@ -373,6 +374,54 @@ impl Redis {
             dimension: meta.dimension(),
             size: meta.count(),
             generation: meta.version(),
+        }))
+    }
+
+    pub fn prepare_vsim(
+        &self,
+        key: &[u8],
+        element: Option<&[u8]>,
+    ) -> Result<Option<PreparedVectorQuery>> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        let vector_cf = self
+            .get_cf_handle(ColumnFamilyIndex::VectorDataCF)
+            .context(OptionNoneSnafu {
+                message: "VectorDataCF is not initialized".to_string(),
+            })?;
+        let snapshot = db.snapshot();
+        let mut read_options = ReadOptions::default();
+        read_options.set_snapshot(&snapshot);
+        let Some(meta) = self.read_vector_meta_opt(key, Some(&read_options))? else {
+            return Ok(None);
+        };
+        let element_query = if let Some(element) = element {
+            let member_key = self.vector_member_key(key, meta.version(), element)?;
+            let value_raw = db
+                .get_cf_opt(&vector_cf, &member_key, &read_options)
+                .context(RocksSnafu)?
+                .context(KeyNotFoundSnafu {
+                    key: String::from_utf8_lossy(element).to_string(),
+                })?;
+            let value = VectorDataValue::decode(&value_raw)?;
+            ensure!(
+                value.dimension() == meta.dimension(),
+                InvalidFormatSnafu {
+                    message: format!(
+                        "vector member dimension {} does not match meta dimension {}",
+                        value.dimension(),
+                        meta.dimension()
+                    )
+                }
+            );
+            Some(value.canonical().clone())
+        } else {
+            None
+        };
+        Ok(Some(PreparedVectorQuery {
+            dimension: meta.dimension(),
+            element_query,
         }))
     }
 

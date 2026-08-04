@@ -19,7 +19,7 @@ use crate::error::{Error, InvalidArgumentSnafu, Result};
 use crate::format_zset_score_key::ZsetScoreMember;
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage::Storage;
-use crate::{CanonicalVector, VectorHit, VectorQuery, VectorSearchOptions};
+use crate::{CanonicalVector, PreparedVectorQuery, VectorHit, VectorQuery, VectorSearchOptions};
 
 use client::storage_stats::try_collector;
 
@@ -899,6 +899,16 @@ impl Storage {
         let slot_id = key_to_slot_id(key);
         let instance_id = self.slot_indexer.get_instance_id(slot_id);
         self.insts[instance_id].vadd(key, element, vector)
+    }
+
+    pub fn prepare_vsim(
+        &self,
+        key: &[u8],
+        element: Option<&[u8]>,
+    ) -> Result<Option<PreparedVectorQuery>> {
+        let slot_id = key_to_slot_id(key);
+        let instance_id = self.slot_indexer.get_instance_id(slot_id);
+        self.insts[instance_id].prepare_vsim(key, element)
     }
 
     pub fn vsim(

@@ -32,14 +32,51 @@ fn parse_positive_usize(raw: &[u8]) -> Option<usize> {
     (value > 0).then_some(value)
 }
 
+const ERR_VECTOR_DIMENSION_LIMIT: &str = "ERR vector dimension exceeds max_dimension";
+const ERR_VECTOR_ELEMENT_LIMIT: &str = "ERR vector element exceeds max_element_bytes";
+const ERR_VECTOR_BYTES_LIMIT: &str = "ERR vector exceeds max_vector_bytes";
+
+#[derive(Clone, Copy)]
+struct VectorParseLimits {
+    max_dimension: usize,
+    max_element_bytes: usize,
+    max_vector_bytes: usize,
+}
+
+impl Default for VectorParseLimits {
+    fn default() -> Self {
+        Self::from(&conf::vector_config::VectorConfig::default())
+    }
+}
+
+impl From<&conf::vector_config::VectorConfig> for VectorParseLimits {
+    fn from(config: &conf::vector_config::VectorConfig) -> Self {
+        Self {
+            max_dimension: config.max_dimension as usize,
+            max_element_bytes: config.max_element_bytes,
+            max_vector_bytes: config.max_vector_bytes,
+        }
+    }
+}
+
 fn parse_vector_values(
     argv: &[Vec<u8>],
     dimension_index: usize,
+    limits: VectorParseLimits,
 ) -> ParseResult<(CanonicalVector, usize)> {
     let dimension = argv
         .get(dimension_index)
         .and_then(|raw| parse_positive_usize(raw))
         .ok_or(ERR_INVALID_VECTOR)?;
+    if dimension > limits.max_dimension {
+        return Err(ERR_VECTOR_DIMENSION_LIMIT);
+    }
+    let vector_bytes = dimension
+        .checked_mul(std::mem::size_of::<f32>())
+        .ok_or(ERR_VECTOR_BYTES_LIMIT)?;
+    if vector_bytes > limits.max_vector_bytes {
+        return Err(ERR_VECTOR_BYTES_LIMIT);
+    }
     let values_start = dimension_index + 1;
     let values_end = values_start
         .checked_add(dimension)
@@ -64,14 +101,24 @@ fn parse_vector_values(
 fn parse_direct_vector(
     argv: &[Vec<u8>],
     kind_index: usize,
+    limits: VectorParseLimits,
 ) -> ParseResult<(CanonicalVector, usize)> {
     let kind = argv.get(kind_index).ok_or(ERR_INVALID_VECTOR)?;
     if kind.eq_ignore_ascii_case(b"FP32") {
         let raw = argv.get(kind_index + 1).ok_or(ERR_INVALID_VECTOR)?;
+        if raw.len() > limits.max_vector_bytes {
+            return Err(ERR_VECTOR_BYTES_LIMIT);
+        }
+        if raw.len() % std::mem::size_of::<f32>() != 0 {
+            return Err(ERR_INVALID_VECTOR);
+        }
+        if raw.len() / std::mem::size_of::<f32>() > limits.max_dimension {
+            return Err(ERR_VECTOR_DIMENSION_LIMIT);
+        }
         let vector = CanonicalVector::from_fp32_le(raw).map_err(|_| ERR_INVALID_VECTOR)?;
         Ok((vector, kind_index + 2))
     } else if kind.eq_ignore_ascii_case(b"VALUES") {
-        parse_vector_values(argv, kind_index + 1)
+        parse_vector_values(argv, kind_index + 1, limits)
     } else {
         Err(ERR_INVALID_VECTOR)
     }
