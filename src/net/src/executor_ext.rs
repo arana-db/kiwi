@@ -34,10 +34,13 @@ use storage::storage::Storage;
 
 use crate::network_execution::NetworkCmdExecution;
 
-/// RESP vector read commands that require a leader-linearizable read in
-/// cluster mode. Phase 1 serves them only on the leader: followers redirect
-/// exactly like writes, and the leader passes a linearizable-read barrier
-/// before dispatch.
+/// RESP vector read commands whose future cluster path requires a
+/// leader-linearizable read. The command-table cluster-vector gate runs
+/// before this point; while that gate is closed this branch is unreachable.
+/// The gate is feature admission only and does not provide linearizability.
+/// If a future membership/feature-enable epoch opens it, the leader check and
+/// `ensure_linearizable_read()` below become routing and linear-read
+/// prerequisites.
 const VECTOR_READ_COMMANDS: &[&str] = &["vsim", "vcard", "vdim", "vemb", "vismember", "vinfo"];
 
 /// Extension trait for CmdExecutor to support network operations
@@ -82,9 +85,11 @@ impl CmdExecutorNetworkExt for CmdExecutor {
                 return Ok(());
             }
 
-            // Cluster-mode vector reads are leader-linearizable: followers
-            // redirect like writes, and the leader must pass the read barrier
-            // before the command is dispatched to storage.
+            // The command-table cluster-vector gate is checked before this
+            // network execution path, so this is unreachable while VectorSet
+            // cluster support is disabled. Once a future feature-enable epoch
+            // opens that gate, the leader check and linearizable read below
+            // are required before dispatching to storage.
             if let Some(gate) = exec.leader_gate.as_ref()
                 && VECTOR_READ_COMMANDS.contains(&cmd_name.as_str())
             {

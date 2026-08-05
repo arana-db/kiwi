@@ -84,9 +84,18 @@ pub fn missing_capabilities(capabilities: &[String]) -> Vec<&'static str> {
         .collect()
 }
 
-/// Summarize already-fetched member capabilities: ok only when every member
-/// advertises every required capability.
+/// Summarize already-fetched voting-member capabilities: ok only when at
+/// least one voter and every listed voter advertise every required capability.
+///
+/// This is intentionally reserved for a future voter-membership and
+/// feature-enable epoch closure; current cluster startup and member join do
+/// not call it because this binary does not advertise Raft vector mutations.
 pub fn summarize_capabilities(members: &[MemberCapabilities]) -> Result<(), CapabilityCheckError> {
+    if members.is_empty() {
+        return Err(CapabilityCheckError {
+            failures: vec!["no voting members were provided".to_string()],
+        });
+    }
     let failures: Vec<String> = members
         .iter()
         .filter_map(|member| {
@@ -181,6 +190,17 @@ mod tests {
         }];
         let error = summarize_capabilities(&members).unwrap_err();
         assert!(error.failures[0].contains(CAP_VECTOR_SET_RAFT_MUTATION_V1));
+    }
+
+    #[test]
+    fn summarize_rejects_an_empty_member_set() {
+        let error = summarize_capabilities(&[]).unwrap_err();
+        assert!(
+            error
+                .failures
+                .iter()
+                .any(|failure| failure.contains("no voting members"))
+        );
     }
 
     #[test]

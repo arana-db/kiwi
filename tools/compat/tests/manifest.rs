@@ -326,7 +326,7 @@ fn loads_governance_when_only_a_mode_has_a_known_difference() {
 fn rejects_known_difference_metadata_without_a_matching_classification() {
     let yaml = VALID_MANIFEST.replace(
         "known_differences: []",
-        "known_differences:\n      - owner: cmd-string\n        issue: https://github.com/arana-db/kiwi/issues/999\n        reason: Redis behavior is not implemented yet\n        remove_when: wire differential and final-state evidence pass",
+        "known_differences:\n      - owner: cmd-string\n        issue: https://github.com/arana-db/kiwi/issues/999\n        reason: Redis behavior is not implemented yet\n        remove_when: wire differential and final-state evidence pass\n        introduced: 2026-08-05\n        affected: standalone_cache_off; resp2/resp3\n        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10",
     );
     assert_error_contains(&yaml, "known_differences");
 }
@@ -351,6 +351,15 @@ fn loads_governed_known_difference_metadata() {
         differences[0].remove_when(),
         "wire differential and final-state evidence pass"
     );
+    assert_eq!(differences[0].introduced(), "2026-08-05");
+    assert_eq!(
+        differences[0].affected(),
+        "standalone_cache_off; resp2/resp3"
+    );
+    assert_eq!(
+        differences[0].last_verified_ref(),
+        "redis-source:77b6c308396c9700672390a210143a8496fb4b10"
+    );
 }
 
 #[test]
@@ -372,10 +381,50 @@ fn rejects_blank_known_difference_governance_fields() {
             "        remove_when: wire differential and final-state evidence pass",
             "        remove_when: '   '",
         ),
+        (
+            "introduced",
+            "        introduced: 2026-08-05",
+            "        introduced: '   '",
+        ),
+        (
+            "affected",
+            "        affected: standalone_cache_off; resp2/resp3",
+            "        affected: '   '",
+        ),
+        (
+            "last_verified_ref",
+            "        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10",
+            "        last_verified_ref: '   '",
+        ),
     ] {
         let yaml = governed_known_difference_manifest().replace(original, replacement);
         assert_error_contains(&yaml, field);
     }
+}
+
+#[test]
+fn rejects_known_difference_governance_fields_when_missing() {
+    for (field, line) in [
+        ("introduced", "        introduced: 2026-08-05\n"),
+        (
+            "affected",
+            "        affected: standalone_cache_off; resp2/resp3\n",
+        ),
+        (
+            "last_verified_ref",
+            "        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10\n",
+        ),
+    ] {
+        let yaml = governed_known_difference_manifest().replace(line, "");
+        assert_error_contains(&yaml, field);
+    }
+}
+
+#[test]
+fn rejects_a_known_difference_with_an_invalid_introduced_date() {
+    let yaml = governed_known_difference_manifest()
+        .replace("introduced: 2026-08-05", "introduced: 2026-02-30");
+    assert_error_contains(&yaml, "introduced");
 }
 
 #[test]
@@ -482,6 +531,110 @@ fn loads_the_repository_redis_8_8_1_manifest() {
     }
 }
 
+#[test]
+fn repository_vector_contract_is_explicitly_governed_while_frozen() {
+    let manifest = parse_valid(include_str!(
+        "../../../tests/compat/redis-8.8.1/manifest.yaml"
+    ));
+    let vector_commands = manifest
+        .commands()
+        .iter()
+        .filter(|command| command.command().starts_with('V'))
+        .collect::<Vec<_>>();
+
+    for command in &vector_commands {
+        assert!(
+            !command.tests().contains(&TestEvidence::WireDifferential),
+            "{} must not claim wire-differential evidence while VectorSet is frozen",
+            command.command()
+        );
+    }
+
+    for name in ["VADD", "VEMB", "VSIM"] {
+        let command = vector_commands
+            .iter()
+            .find(|command| command.command() == name)
+            .unwrap_or_else(|| panic!("{name} must be registered"));
+        assert_eq!(command.classification(), Classification::KnownDifference);
+        assert_eq!(
+            command.modes().get(&Mode::StandaloneCacheOff),
+            Some(&Classification::KnownDifference)
+        );
+        assert!(command.tests().contains(&TestEvidence::FinalState));
+        assert!(command.known_differences().iter().all(|difference| {
+            !difference.owner().is_empty()
+                && !difference.issue().is_empty()
+                && !difference.reason().is_empty()
+                && !difference.remove_when().is_empty()
+                && !difference.introduced().is_empty()
+                && !difference.affected().is_empty()
+                && !difference.last_verified_ref().is_empty()
+        }));
+    }
+
+    let command = |name| {
+        vector_commands
+            .iter()
+            .find(|command| command.command() == name)
+            .unwrap_or_else(|| panic!("{name} must be registered"))
+    };
+    for term in [
+        "omitted", "default", "Q8", "explicit", "BIN", "REDUCE", "CAS", "EF", "SETATTR", "M",
+    ] {
+        assert!(
+            command("VADD")
+                .known_differences()
+                .iter()
+                .any(|difference| {
+                    format!("{} {}", difference.reason(), difference.remove_when()).contains(term)
+                }),
+            "VADD governance must mention {term}"
+        );
+    }
+    assert!(
+        command("VEMB")
+            .known_differences()
+            .iter()
+            .any(|difference| {
+                let declared = format!("{} {}", difference.reason(), difference.remove_when())
+                    .to_ascii_lowercase();
+                ["f32", "precision", "large dynamic ranges"]
+                    .iter()
+                    .all(|term| declared.contains(term))
+            }),
+        "VEMB governance must describe the f32 precision risk"
+    );
+    assert!(
+        command("VEMB")
+            .known_differences()
+            .iter()
+            .any(|difference| difference.reason().contains("RAW")),
+        "VEMB governance must mention RAW"
+    );
+    for term in [
+        "WITHATTRIBS",
+        "EPSILON",
+        "EF",
+        "FILTER",
+        "FILTER-EF",
+        "NOTHREAD",
+        "max_k",
+        "entry",
+        "byte",
+        "deadline",
+    ] {
+        assert!(
+            command("VSIM")
+                .known_differences()
+                .iter()
+                .any(|difference| {
+                    difference.reason().contains(term) || difference.remove_when().contains(term)
+                }),
+            "VSIM governance must mention {term}"
+        );
+    }
+}
+
 fn parse_valid(yaml: &str) -> CompatibilityManifest {
     match CompatibilityManifest::from_yaml(yaml) {
         Ok(manifest) => manifest,
@@ -516,6 +669,6 @@ fn governed_known_difference_manifest() -> String {
         )
         .replace(
             "known_differences: []",
-            "known_differences:\n      - owner: cmd-string\n        issue: https://github.com/arana-db/kiwi/issues/999\n        reason: Redis behavior is not implemented yet\n        remove_when: wire differential and final-state evidence pass",
+            "known_differences:\n      - owner: cmd-string\n        issue: https://github.com/arana-db/kiwi/issues/999\n        reason: Redis behavior is not implemented yet\n        remove_when: wire differential and final-state evidence pass\n        introduced: 2026-08-05\n        affected: standalone_cache_off; resp2/resp3\n        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10",
         )
 }

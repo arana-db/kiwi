@@ -15,7 +15,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Vector command error precedence and zero-vector integration coverage."""
+"""Kiwi Vector command behavior coverage pending Redis 8.8.1 Oracle evidence.
+
+These assertions describe current Kiwi behavior. Redis 8.8.1 error-precedence
+priority remains subject to the separately gated differential Oracle suite.
+"""
 
 import struct
 
@@ -29,7 +33,7 @@ def _error(client, *args):
     return str(caught.value)
 
 
-def test_vsim_missing_key_precedes_vector_and_options(redis_binary_client):
+def test_kiwi_current_vsim_missing_key_precedes_vector_and_options(redis_binary_client):
     client = redis_binary_client
     client.delete(b"test_vector_missing")
 
@@ -47,7 +51,7 @@ def test_vsim_missing_key_precedes_vector_and_options(redis_binary_client):
     ) == []
 
 
-def test_vsim_wrongtype_and_missing_ele_precede_options(redis_binary_client):
+def test_kiwi_current_vsim_wrongtype_and_missing_ele_precede_options(redis_binary_client):
     client = redis_binary_client
     key = b"test_vector_precedence"
     client.set(key, b"string")
@@ -60,7 +64,7 @@ def test_vsim_wrongtype_and_missing_ele_precede_options(redis_binary_client):
     ).lower()
 
 
-def test_resp3_missing_key_withscores_is_array(redis_binary_client):
+def test_kiwi_current_resp3_missing_key_withscores_is_array(redis_binary_client):
     client = redis_binary_client
     client.execute_command(b"HELLO", b"3")
     client.delete(b"test_vector_missing_scores")
@@ -84,7 +88,7 @@ def test_resp3_missing_key_withscores_is_array(redis_binary_client):
         (b"FP32", (struct.pack("<ff", 0.0, 0.0),)),
     ],
 )
-def test_zero_vectors_round_trip_and_score_neutrally(redis_binary_client, kind, payload):
+def test_kiwi_current_zero_vectors_round_trip_and_score_neutrally(redis_binary_client, kind, payload):
     client = redis_binary_client
     key = b"test_vector_zero_" + kind.lower()
     client.delete(key)
@@ -99,7 +103,7 @@ def test_zero_vectors_round_trip_and_score_neutrally(redis_binary_client, kind, 
     assert hits == {b"x": 0.5, b"zero": 0.5}
 
 
-def test_vadd_complete_vector_without_element_is_wrong_arity(redis_binary_client):
+def test_kiwi_current_vadd_complete_vector_without_element_is_wrong_arity(redis_binary_client):
     message = _error(
         redis_binary_client,
         b"VADD",
@@ -111,7 +115,7 @@ def test_vadd_complete_vector_without_element_is_wrong_arity(redis_binary_client
     assert "wrong number of arguments" in message.lower()
 
 
-def test_vadd_incomplete_vector_remains_typed_invalid_vector(redis_binary_client):
+def test_kiwi_current_vadd_incomplete_vector_remains_typed_invalid_vector(redis_binary_client):
     message = _error(
         redis_binary_client,
         b"VADD",

@@ -15,7 +15,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Differential tests comparing Kiwi vector sets against Redis 8.
+"""WP1 trusted-Oracle opt-in differential tests for Kiwi Vector Sets.
 
 Every test issues the same commands to a Kiwi server (KIWI_HOST/KIWI_PORT,
 default 127.0.0.1:7379) and to a Redis 8 reference server
@@ -30,7 +30,8 @@ Out of scope on purpose:
   reports real HNSW internals while Kiwi Phase 1 reports FLAT sentinels with
   a different meaning; only the field-name set and value types are compared.
 
-All datasets use a fixed seed so runs are reproducible.
+Both configured endpoints are mandatory: unavailable endpoints fail closed rather
+than producing a skipped test result. All datasets use a fixed seed.
 """
 
 import os
@@ -44,8 +45,6 @@ KIWI_HOST = os.getenv("KIWI_HOST", "127.0.0.1")
 KIWI_PORT = int(os.getenv("KIWI_PORT", "7379"))
 REDIS8_HOST = os.getenv("VECTOR_REDIS_HOST", "127.0.0.1")
 REDIS8_PORT = int(os.getenv("VECTOR_REDIS_PORT", "6380"))
-KIWI_COMPAT_REQUIRE_ORACLE = os.getenv("KIWI_COMPAT_REQUIRE_ORACLE") == "1"
-
 SCORE_TOLERANCE = 1e-6
 
 
@@ -63,28 +62,14 @@ def _server_reachable(host, port):
 
 
 if not _server_reachable(KIWI_HOST, KIWI_PORT):
-    if KIWI_COMPAT_REQUIRE_ORACLE:
-        raise RuntimeError(
-            "KIWI_COMPAT_REQUIRE_ORACLE=1 but Kiwi reference server is not "
-            f"reachable at {KIWI_HOST}:{KIWI_PORT}; vector set differential "
-            "cannot run and must not be silently skipped"
-        )
-    pytest.skip(
-        f"Kiwi server not reachable at {KIWI_HOST}:{KIWI_PORT}; "
-        "skipping vector set differential tests",
-        allow_module_level=True,
+    raise RuntimeError(
+        "WP1 trusted Oracle differential requires Kiwi at "
+        f"{KIWI_HOST}:{KIWI_PORT}; endpoint is unreachable"
     )
 if not _server_reachable(REDIS8_HOST, REDIS8_PORT):
-    if KIWI_COMPAT_REQUIRE_ORACLE:
-        raise RuntimeError(
-            "KIWI_COMPAT_REQUIRE_ORACLE=1 but Redis 8.8.1 reference server is "
-            f"not reachable at {REDIS8_HOST}:{REDIS8_PORT}; vector set "
-            "differential cannot run and must not be silently skipped"
-        )
-    pytest.skip(
-        f"Redis 8 reference server not reachable at {REDIS8_HOST}:{REDIS8_PORT}; "
-        "skipping vector set differential tests",
-        allow_module_level=True,
+    raise RuntimeError(
+        "WP1 trusted Oracle differential requires Redis 8.8.1 at "
+        f"{REDIS8_HOST}:{REDIS8_PORT}; endpoint is unreachable"
     )
 
 
@@ -155,6 +140,23 @@ def assert_same_reply(kiwi, reference, *command):
         f"{command!r}: kiwi={kiwi_reply!r} != redis={redis_reply!r}"
     )
     return kiwi_reply
+
+
+def command_outcome(client, *command):
+    """Return a reply or Redis error so differential cases can compare both."""
+    try:
+        return ("reply", client.execute_command(*command))
+    except redis.ResponseError as error:
+        return ("error", str(error))
+
+
+def assert_same_outcome(kiwi, reference, *command):
+    kiwi_outcome = command_outcome(kiwi, *command)
+    redis_outcome = command_outcome(reference, *command)
+    assert kiwi_outcome == redis_outcome, (
+        f"{command!r}: kiwi={kiwi_outcome!r} != redis={redis_outcome!r}"
+    )
+    return kiwi_outcome
 
 
 def normalized_vemb(reply):
@@ -327,6 +329,20 @@ def test_missing_key_semantics_match(backends):
     # VDIM on a missing key is deliberately not compared: Kiwi Phase 1 returns
     # an error while Redis 8 returns 0; this known divergence is covered by
     # the Kiwi-side contract tests.
+
+
+def test_vsim_missing_key_precedes_malformed_and_option_validation(backends):
+    kiwi, reference, _protocol, prefix = backends
+    missing_key = prefix + b"missing"
+    malformed_and_option_variants = [
+        (b"FP32", b"bad"),
+        (b"FP32", b"bad", b"COUNT", b"0"),
+        (b"FP32", b"bad", b"UNKNOWN"),
+        (b"FP32", b"bad", b"COUNT", b"0", b"COUNT", b"0"),
+    ]
+
+    for args in malformed_and_option_variants:
+        assert_same_outcome(kiwi, reference, b"VSIM", missing_key, *args)
 
 
 def test_vinfo_field_names_and_types_match(backends):

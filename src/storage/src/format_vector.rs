@@ -491,6 +491,23 @@ mod tests {
     }
 
     #[test]
+    fn v1_noquant_restore_of_large_equal_components_is_finite_but_inexact() {
+        let original = [1_000_000.0, 1_000_000.0];
+        let canonical = CanonicalVector::from_values(&original).expect("valid vector");
+        let encoded = VectorDataValue::from_canonical(&canonical).encode();
+        let decoded = VectorDataValue::decode(&encoded).expect("decode vector value");
+        let restored = decoded.canonical().restore();
+
+        assert!(restored.iter().all(|component| component.is_finite()));
+        assert!(
+            restored
+                .iter()
+                .zip(original)
+                .any(|(component, original)| *component != f64::from(original))
+        );
+    }
+
+    #[test]
     fn zero_vector_data_value_round_trips() {
         let canonical = CanonicalVector::from_values(&[0.0, 0.0]).expect("zero vector");
         let encoded = VectorDataValue::from_canonical(&canonical).encode();
