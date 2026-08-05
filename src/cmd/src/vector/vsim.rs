@@ -66,33 +66,20 @@ fn parse_vsim_options(
     let mut count = 10;
     let mut mode = VectorSearchMode::Approximate;
     let mut with_scores = false;
-    let mut count_seen = false;
-    let mut truth_seen = false;
 
     while option_index < argv.len() {
         let option = &argv[option_index];
         if option.eq_ignore_ascii_case(b"WITHSCORES") {
-            if with_scores {
-                return Err(ERR_INVALID_VECTOR);
-            }
             with_scores = true;
             option_index += 1;
         } else if option.eq_ignore_ascii_case(b"COUNT") {
-            if count_seen {
-                return Err(ERR_INVALID_VECTOR);
-            }
             count = argv
                 .get(option_index + 1)
                 .and_then(|raw| parse_positive_usize(raw))
                 .ok_or(ERR_INVALID_VECTOR)?;
-            count_seen = true;
             option_index += 2;
         } else if option.eq_ignore_ascii_case(b"TRUTH") {
-            if truth_seen {
-                return Err(ERR_INVALID_VECTOR);
-            }
             mode = VectorSearchMode::Truth;
-            truth_seen = true;
             option_index += 1;
         } else {
             return Err(ERR_INVALID_VECTOR);
@@ -278,6 +265,25 @@ mod tests {
         .expect("VALUES VSIM");
         assert!(matches!(values.query, VectorQuery::Vector(_)));
         assert_eq!(values.options.count, 1);
+
+        let repeated_options = parse_vsim(&[
+            b"vsim".to_vec(),
+            b"key".to_vec(),
+            b"ELE".to_vec(),
+            b"element".to_vec(),
+            b"WITHSCORES".to_vec(),
+            b"WITHSCORES".to_vec(),
+            b"TRUTH".to_vec(),
+            b"TRUTH".to_vec(),
+            b"COUNT".to_vec(),
+            b"3".to_vec(),
+            b"COUNT".to_vec(),
+            b"1".to_vec(),
+        ])
+        .expect("repeated VSIM options");
+        assert!(repeated_options.with_scores);
+        assert_eq!(repeated_options.options.mode, VectorSearchMode::Truth);
+        assert_eq!(repeated_options.options.count, 1);
     }
 
     #[test]
@@ -318,32 +324,6 @@ mod tests {
                 b"member".to_vec(),
                 b"COUNT".to_vec(),
                 b"invalid".to_vec(),
-            ],
-            vec![
-                b"vsim".to_vec(),
-                b"key".to_vec(),
-                b"ELE".to_vec(),
-                b"member".to_vec(),
-                b"COUNT".to_vec(),
-                b"1".to_vec(),
-                b"COUNT".to_vec(),
-                b"2".to_vec(),
-            ],
-            vec![
-                b"vsim".to_vec(),
-                b"key".to_vec(),
-                b"ELE".to_vec(),
-                b"member".to_vec(),
-                b"WITHSCORES".to_vec(),
-                b"WITHSCORES".to_vec(),
-            ],
-            vec![
-                b"vsim".to_vec(),
-                b"key".to_vec(),
-                b"ELE".to_vec(),
-                b"member".to_vec(),
-                b"TRUTH".to_vec(),
-                b"TRUTH".to_vec(),
             ],
             vec![
                 b"vsim".to_vec(),

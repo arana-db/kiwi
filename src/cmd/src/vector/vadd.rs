@@ -71,11 +71,7 @@ fn parse_vadd_with_limits(argv: &[Vec<u8>], limits: VectorParseLimits) -> ParseR
     let mut quantization = None;
     for option in &argv[element_index + 1..] {
         if option.eq_ignore_ascii_case(b"NOQUANT") {
-            if quantization.is_some() {
-                return Err(ERR_INVALID_VECTOR);
-            } else {
-                quantization = Some(QuantizationType::None);
-            }
+            quantization = Some(QuantizationType::None);
         } else if option.eq_ignore_ascii_case(b"Q8") {
             return Err(ERR_VADD_Q8);
         } else if option.eq_ignore_ascii_case(b"BIN") {
@@ -235,6 +231,22 @@ mod tests {
         .expect("VALUES VADD");
         assert_eq!(parsed.vector.dimension(), 2);
         assert_eq!(parsed.element, b"element");
+
+        let repeated_noquant = parse_vadd(&[
+            b"vadd".to_vec(),
+            b"key".to_vec(),
+            b"VALUES".to_vec(),
+            b"1".to_vec(),
+            b"1".to_vec(),
+            b"element".to_vec(),
+            b"NOQUANT".to_vec(),
+            b"NOQUANT".to_vec(),
+        ])
+        .expect("repeated NOQUANT VADD");
+        assert_eq!(
+            repeated_noquant.vector.quantization(),
+            QuantizationType::None
+        );
 
         // Phase 1 requires explicit NOQUANT and does not support Q8/BIN yet.
         let base = vec![

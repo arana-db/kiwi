@@ -107,9 +107,9 @@ commands:
     known_differences: []
     owner: cmd-vector
   - command: VDIM
-    classification: known_difference
+    classification: required
     modes:
-      standalone_cache_off: known_difference
+      standalone_cache_off: required
       raft_single_group_cache_off: deferred
     protocols: [resp2, resp3]
     arguments: exact
@@ -117,14 +117,7 @@ commands:
     errors: exact-prefix
     ttl_semantics: applicable
     tests: [final-state]
-    known_differences:
-      - owner: cmd-vector
-        issue: https://github.com/arana-db/kiwi/issues/418
-        reason: "Kiwi Phase 1 returns an error for VDIM on a missing key, while Redis 8.8.1 returns 0"
-        remove_when: Kiwi VDIM returns 0 on a missing key and wire differential passes
-        introduced: 2026-08-04
-        affected: standalone_cache_off; resp2/resp3
-        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
+    known_differences: []
     owner: cmd-vector
   - command: VEMB
     classification: known_difference

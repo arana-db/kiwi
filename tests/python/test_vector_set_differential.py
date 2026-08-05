@@ -205,6 +205,7 @@ def assert_same_vsim(kiwi, reference, protocol, query_args, *options):
         assert len(kiwi_hits) == len(redis_hits)
         for (_, kiwi_score), (_, redis_score) in zip(kiwi_hits, redis_hits):
             assert kiwi_score == pytest.approx(redis_score, abs=SCORE_TOLERANCE)
+    return kiwi_hits
 
 
 def vinfo_as_dict(reply, protocol):
@@ -236,6 +237,40 @@ def test_vadd_vcard_vdim_vismember_match(backends):
                       4, *updated, b"alpha", b"NOQUANT")
     assert_same_reply(kiwi, reference, b"VCARD", main_key)
     assert_same_vemb(kiwi, reference, main_key, b"alpha")
+
+
+def test_repeated_vadd_and_vsim_options_match(backends):
+    kiwi, reference, protocol, prefix = backends
+    main_key = prefix + b"main"
+
+    for element, vector in MAIN_MEMBERS[:2]:
+        assert_same_reply(
+            kiwi,
+            reference,
+            b"VADD",
+            main_key,
+            b"VALUES",
+            len(vector),
+            *vector,
+            element,
+            b"NOQUANT",
+            b"NOQUANT",
+        )
+    hits = assert_same_vsim(
+        kiwi,
+        reference,
+        protocol,
+        (main_key, b"VALUES", 4, *MAIN_QUERY),
+        b"WITHSCORES",
+        b"WITHSCORES",
+        b"TRUTH",
+        b"TRUTH",
+        b"COUNT",
+        16,
+        b"COUNT",
+        1,
+    )
+    assert len(hits) == 1
 
 
 def test_vemb_matches_for_every_member(backends):
@@ -326,9 +361,7 @@ def test_missing_key_semantics_match(backends):
         kiwi, reference, b"VSIM", missing_key, b"VALUES", 4, *MAIN_QUERY, b"TRUTH"
     )
     assert_same_vemb(kiwi, reference, missing_key, b"member")
-    # VDIM on a missing key is deliberately not compared: Kiwi Phase 1 returns
-    # an error while Redis 8 returns 0; this known divergence is covered by
-    # the Kiwi-side contract tests.
+    assert_same_outcome(kiwi, reference, b"VDIM", missing_key)
 
 
 def test_vsim_missing_key_precedes_malformed_and_option_validation(backends):
