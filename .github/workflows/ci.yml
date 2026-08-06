@@ -36,6 +36,11 @@ jobs:
   planning-docs:
     name: planning SDD validation
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:

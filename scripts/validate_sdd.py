@@ -1017,6 +1017,33 @@ def validate_governance_terms(root: Path, errors: list[str]) -> None:
         errors.append(f"SDD contains unresolved placeholders: {placeholders}")
 
 
+def validate_planning_ci_github_access(root: Path, errors: list[str]) -> None:
+    workflow_path = root / ".github/workflows/ci.yml"
+    if not workflow_path.is_file():
+        errors.append("missing .github/workflows/ci.yml")
+        return
+    workflow = read_text(workflow_path)
+    match = re.search(
+        r"(?ms)^  planning-docs:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        workflow,
+    )
+    if match is None:
+        errors.append("ci workflow must define the planning-docs job")
+        return
+    job = match.group(0)
+    if not re.search(r"(?m)^      actions: read$", job):
+        errors.append("planning SDD validation job must grant actions: read")
+    if not re.search(r"(?m)^      contents: read$", job):
+        errors.append("planning SDD validation job must grant contents: read")
+    if not re.search(
+        r"(?m)^      GITHUB_TOKEN: \$\{\{ github\.token \}\}$",
+        job,
+    ):
+        errors.append(
+            "planning SDD validation job must expose github.token as GITHUB_TOKEN"
+        )
+
+
 def validate(
     root: Path,
     *,
@@ -1047,6 +1074,7 @@ def validate(
     if check_markdown:
         validate_markdown(root, errors, markdown_paths)
     validate_governance_terms(root, errors)
+    validate_planning_ci_github_access(root, errors)
     summary: dict[str, object] = {
         "authority": fields.get("authority"),
         "baseline_ref": fields.get("baseline_ref"),
@@ -1629,6 +1657,33 @@ def run_self_tests(root: Path) -> None:
         path.write_text(text[:wp2] + suffix, encoding="utf-8")
 
     expect_failure(root, remove_wp_field, "WP2 must contain exactly one Requirement field")
+
+    def remove_planning_actions_permission(candidate: Path) -> None:
+        path = candidate / ".github/workflows/ci.yml"
+        text = read_text(path).replace("      actions: read\n", "", 1)
+        path.write_text(text, encoding="utf-8")
+
+    expect_failure(
+        root,
+        remove_planning_actions_permission,
+        "planning SDD validation job must grant actions: read",
+    )
+
+    def remove_planning_github_token(candidate: Path) -> None:
+        path = candidate / ".github/workflows/ci.yml"
+        text = read_text(path).replace(
+            "      GITHUB_TOKEN: ${{ github.token }}\n",
+            "",
+            1,
+        )
+        path.write_text(text, encoding="utf-8")
+
+    expect_failure(
+        root,
+        remove_planning_github_token,
+        "planning SDD validation job must expose github.token as GITHUB_TOKEN",
+    )
+
     expect_failure(
         root,
         lambda candidate: (candidate / ".planning/KANBAN.md").unlink(),
@@ -1874,7 +1929,7 @@ def run_self_tests(root: Path) -> None:
 
     print(
         "SDD validator self-tests passed "
-        "(30 failure-path mutations, 1 prose guard, "
+        "(32 failure-path mutations, 1 prose guard, "
         "immutable Git/live-run/state regressions, 1 reachable promotion path)"
     )
 
