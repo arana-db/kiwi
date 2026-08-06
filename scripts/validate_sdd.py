@@ -46,6 +46,10 @@ WP_HEADING = re.compile(r"(?m)^### (WP\d+)[：:]")
 MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 SDD_PLACEHOLDER = re.compile(r"TO[D]O|TB[D]|待[定]|以后[补]|类似上[文]")
 
+WORK_PACKAGE_IDS = tuple(f"WP{number}" for number in range(9))
+WORK_PACKAGE_RANGE_TEXT = "WP0-WP8"
+WORK_PACKAGE_RANGE_MARKDOWN = "`WP0`–`WP8`"
+
 EXPECTED_WP0_ARTIFACTS = (
     ".github/pull_request_template.md",
     ".github/workflows/ci.yml",
@@ -124,8 +128,8 @@ ALLOWED_WP_STATUSES = {
     "abandoned",
 }
 
-EXPECTED_REQUIREMENT_COUNT = 63
-EXPECTED_DECISION_COUNT = 18
+EXPECTED_REQUIREMENT_COUNT = 68
+EXPECTED_DECISION_COUNT = 19
 
 EXPECTED_WP0_EXIT_LINES = (
     "- front matter 是唯一机器可解析的当前状态；工作包块和状态表必须与其一致。",
@@ -231,7 +235,7 @@ def scoped_requirement_text(sdd: str, errors: list[str]) -> str:
         )
 
     deferred = re.search(
-        r"(?ms)^Deferred Requirement：\s*\n(.*?)(?=^WP0-WP7 的 Requirement 字段)",
+        rf"(?ms)^Deferred Requirement：\s*\n(.*?)(?=^{re.escape(WORK_PACKAGE_RANGE_TEXT)} 的 Requirement 字段)",
         sdd,
     )
     if not deferred:
@@ -405,10 +409,11 @@ def validate_current_state(sdd: str, fields: dict[str, str], errors: list[str]) 
     if duplicate_work_packages:
         errors.append(f"duplicate work package headings: {duplicate_work_packages}")
     blocks = work_package_blocks(sdd)
-    expected_work_packages = {f"WP{number}" for number in range(8)}
+    expected_work_packages = set(WORK_PACKAGE_IDS)
     if set(blocks) != expected_work_packages:
         errors.append(
-            f"work package headings must be WP0-WP7 exactly, found {sorted(blocks)}"
+            "work package headings must be "
+            f"{WORK_PACKAGE_RANGE_TEXT} exactly, found {sorted(blocks)}"
         )
 
     statuses: dict[str, str] = {}
@@ -1000,7 +1005,10 @@ def validate_governance_terms(root: Path, errors: list[str]) -> None:
         text = read_text(path)
         for match in milestone_pattern.finditer(text):
             sentence = match.group(0)
-            if "WP0-WP7" not in sentence and "`WP0`–`WP7`" not in sentence:
+            if (
+                WORK_PACKAGE_RANGE_TEXT not in sentence
+                and WORK_PACKAGE_RANGE_MARKDOWN not in sentence
+            ):
                 errors.append(f"milestone/work-package conflation in {relative}: {sentence}")
 
     sdd = read_text(root / ".planning/SDD.md")
@@ -1306,6 +1314,7 @@ def run_self_tests(root: Path) -> None:
     unadvanced_baseline_fields = dict(fields)
     unadvanced_baseline_fields.update(
         {
+            "baseline_ref": fields["wp0_merge_ref"],
             "wp0_exact_main_verification_status": "passed",
             "wp0_exact_main_verification_ref": current_head,
             "wp0_exact_main_verification_run": "1",
@@ -1585,6 +1594,33 @@ def run_self_tests(root: Path) -> None:
 
     expect_failure(root, duplicate_wp0, "duplicate work package headings")
 
+    def remove_wp8(candidate: Path) -> None:
+        path = candidate / ".planning/SDD.md"
+        text = read_text(path)
+        wp8 = text.index("### WP8：")
+        support_tracks = text.index("### 支持轨道", wp8)
+        path.write_text(text[:wp8] + text[support_tracks:], encoding="utf-8")
+
+    expect_failure(
+        root,
+        remove_wp8,
+        "work package headings must be WP0-WP8 exactly",
+    )
+
+    def add_wp9(candidate: Path) -> None:
+        path = candidate / ".planning/SDD.md"
+        text = read_text(path)
+        path.write_text(
+            text + "\n### WP9：out-of-range work package\n\n状态：proposed。\n",
+            encoding="utf-8",
+        )
+
+    expect_failure(
+        root,
+        add_wp9,
+        "work package headings must be WP0-WP8 exactly",
+    )
+
     def remove_wp_field(candidate: Path) -> None:
         path = candidate / ".planning/SDD.md"
         text = read_text(path)
@@ -1748,8 +1784,8 @@ def run_self_tests(root: Path) -> None:
         path = candidate / ".planning/SDD.md"
         text = read_text(path)
         text = text.replace(
-            "- 63 个 REQ 和 18 个 Decision 的唯一注册、范围展开和引用全集闭包；",
-            "- 64 个 REQ 和 19 个 Decision 的唯一注册、范围展开和引用全集闭包；",
+            "- 68 个 REQ 和 19 个 Decision 的唯一注册、范围展开和引用全集闭包；",
+            "- 69 个 REQ 和 20 个 Decision 的唯一注册、范围展开和引用全集闭包；",
             1,
         )
         path.write_text(text, encoding="utf-8")

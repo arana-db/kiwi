@@ -27,6 +27,14 @@
 - `REQ-STORAGE-005` {priority: P0}：Kiwi RocksDB key/value encoding 必须 binary-safe、round-trip、order-preserving、prefix-safe、canonical 和 stable；合同覆盖 `format_base_key.rs`、适用的 `format_*` 编码以及 `custom_comparator.rs`。
 - `REQ-STORAGE-006` {priority: P0}：任何派生状态、索引或未来热层都必须能从 RocksDB 权威数据删除后重建，不能成为成功回复或恢复的唯一依据。
 
+## VectorSet 已合并能力闭环
+
+- `REQ-VECTOR-001` {priority: P0}：VectorSet 的 persisted storage incarnation、generation、DEL/VREM-last、TTL、同名重建、compaction 和真正 close/reopen 必须在所有 read、scan、recreate 和 cleanup 路径保持旧代不可见；meta、member 和 manifest 身份不一致时必须 fail closed。
+- `REQ-VECTOR-002` {priority: P0}：VectorSet logical mutation、binlog、Raft apply、snapshot/replay 和 Cluster profile 必须有可重复合同；未实现 replicated support 时，Leader/Follower 必须在 redirect、read barrier、Raft append 和 storage work 之前以相同稳定错误拒绝。VSIM 的 query vector、meta 和 member scan 必须对应同一个合法串行时刻。
+- `REQ-VECTOR-003` {priority: P0}：VectorSet public behavior 必须以 Trusted Redis 8.8.1 exact commit `77b6c308396c9700672390a210143a8496fb4b10` 执行 raw RESP2/RESP3 differential；error precedence、reply container、known difference、operational-limit difference 和 skip 都必须登记且有解除条件。Oracle、Kiwi endpoint、依赖、平台或测试收集缺失不得以 skip 计为 required gate 成功。
+- `REQ-VECTOR-004` {priority: P0}：Vector CF、Root/Instance StorageManifest 和 snapshot schema migration 必须在 checkpoint、CF 创建、manifest 持久化、目录切换、reopen 和进程重启的每个故障窗口继续、回滚或 fail closed；必须用真实非空 Base 目录和真实 Base v1 snapshot 验证 Head upgrade/retry、受控 Base rollback 和未知未来格式拒绝。
+- `REQ-VECTOR-005` {priority: P0}：所有 Vector payload 必须在跨 runtime 深拷贝、StorageCommand 构造和入队前完成有溢出保护的 bounded admission；advisory ignore 必须随实际 target/all-features reachability 自动失效；Trusted differential 和三节点 Cluster gate 必须在 Linux CI 中非零执行，zero collected、skip、xfail、identity mismatch 或 cleanup failure 均失败。
+
 ## 系统稳定性门禁
 
 - `REQ-STABILITY-001` {priority: P0}：启动未来 Embedded Redis Hot Tier 生产实现前，必须由系统稳定性门禁明确给出通过结论并由用户批准解除冻结。
