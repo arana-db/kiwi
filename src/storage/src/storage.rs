@@ -508,6 +508,22 @@ impl Storage {
         Ok(())
     }
 
+    /// Sample-decode vector set metas and member entries on every instance to
+    /// verify the codec can parse the data (used to validate restored
+    /// snapshot data before it serves traffic).
+    pub fn validate_vector_data_sample(
+        &self,
+        sample_size: usize,
+    ) -> Result<crate::VectorDataSample> {
+        let mut total = crate::VectorDataSample::default();
+        for inst in &self.insts {
+            let sample = inst.validate_vector_data_sample(sample_size)?;
+            total.metas += sample.metas;
+            total.members += sample.members;
+        }
+        Ok(total)
+    }
+
     pub fn load_cursor_start_key(&self, dtype: DataType, cursor: i64) -> Result<(char, String)> {
         let index_key = format!("{}{}", data_type_to_tag(dtype), cursor);
         match self.cursors_store.get(&index_key) {
@@ -622,6 +638,7 @@ impl Storage {
                 3 => ColumnFamilyIndex::ListsDataCF,
                 4 => ColumnFamilyIndex::ZsetsDataCF,
                 5 => ColumnFamilyIndex::ZsetsScoreCF,
+                6 => ColumnFamilyIndex::VectorDataCF,
                 _ => {
                     return Err(crate::error::Error::RedisErr {
                         message: format!("Invalid column family index: {}", entry.cf_idx),

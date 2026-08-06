@@ -110,7 +110,9 @@ mod tests {
 
     use super::*;
 
-    struct TestStream;
+    struct TestStream {
+        _marker: u8,
+    }
 
     #[async_trait::async_trait]
     impl StreamTrait for TestStream {
@@ -173,7 +175,7 @@ mod tests {
             .unwrap();
         storage.sadd(b"binary_set", &[b"\xff"]).unwrap();
         let storage = Arc::new(storage);
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_argv(&[
             b"sscan".to_vec(),
             b"binary_set".to_vec(),
@@ -206,7 +208,7 @@ mod tests {
             .unwrap();
         storage.sadd(b"empty_member_set", &[b""]).unwrap();
         let storage = Arc::new(storage);
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_argv(&[
             b"sscan".to_vec(),
             b"empty_member_set".to_vec(),

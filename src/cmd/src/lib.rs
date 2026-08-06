@@ -93,6 +93,7 @@ pub mod sunionstore;
 pub mod table;
 pub mod ttl;
 pub mod type_cmd;
+pub mod vector;
 pub mod zadd;
 pub mod zcard;
 pub mod zcount;
@@ -191,6 +192,11 @@ pub trait Cmd: Send + Sync {
     fn meta(&self) -> &CmdMeta;
 
     fn do_initial(&self, client: &Client) -> bool;
+
+    /// Reject commands that must not reach cluster routing or read barriers.
+    fn check_pre_route(&self, _client: &Client) -> bool {
+        true
+    }
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>);
 

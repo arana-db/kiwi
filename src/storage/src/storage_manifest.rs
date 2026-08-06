@@ -1,0 +1,328 @@
+// Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+//
+// Licensed to the Apache Software Foundation (ASF) under one or more
+// contributor license agreements.  See the NOTICE file distributed with
+// this work for additional information regarding copyright ownership.
+// The ASF licenses this file to You under the Apache License, Version 2.0
+// (the "License"); you may not use this file except in compliance with
+// the License.  You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Per-instance storage manifest: the durable home of `storage_incarnation`
+//! and the standalone-mode generation sequence generator.
+//!
+//! Each `Redis` (RocksDB) instance owns one manifest file living next to the
+//! database files in the instance's data directory. A plain file (rather than
+//! a reserved MetaCF key) is used so the manifest never interferes with
+//! MetaCF scans, compaction filters, or FLUSHDB, and so it can be carried
+//! into Raft snapshot checkpoints with a simple copy.
+//!
+//! - `storage_incarnation` is generated once before RocksDB first creates the
+//!   vector column family and never changes afterwards. It distinguishes data
+//!   written by different storages (or by a rebuilt data directory) inside
+//!   vector member keys.
+//! - `next_generation` backs the monotonic generation sequence generator. The
+//!   incremented value is persisted *before* a generation is handed out, so a
+//!   restarted instance never reuses an allocated generation.
+//!
+//! A missing manifest is bootstrapped only for a classified legacy RocksDB
+//! without a vector column family, or for a fresh path. Existing vector column
+//! families and unclassifiable non-empty paths fail closed instead of being
+//! silently reinterpreted or mutated.
+
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::collections::HashSet;
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::sync::LazyLock;
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+use parking_lot::Mutex as ParkingMutex;
+
+use rand::Rng;
+use serde::{Deserialize, Serialize};
+use snafu::{OptionExt, ResultExt, ensure};
+
+use crate::durable_fs::sync_parent_directory;
+use crate::error::{InvalidFormatSnafu, IoSnafu, Result};
+
+pub const STORAGE_MANIFEST_FILE: &str = "__kiwi_storage_manifest";
+const STORAGE_MANIFEST_VERSION: u32 = 1;
+const FIRST_GENERATION: u64 = 1;
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+static STORAGE_MANIFEST_PERSIST_FAILURES: LazyLock<ParkingMutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| ParkingMutex::new(HashSet::new()));
+
+/// Removes an unconsumed manifest persist failpoint when a test exits early.
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+pub struct StorageManifestPersistFailureGuard {
+    db_path: PathBuf,
+}
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+impl Drop for StorageManifestPersistFailureGuard {
+    fn drop(&mut self) {
+        STORAGE_MANIFEST_PERSIST_FAILURES
+            .lock()
+            .remove(&self.db_path);
+    }
+}
+
+/// Inject exactly one failure before a storage manifest is atomically renamed.
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+#[must_use]
+pub fn fail_next_storage_manifest_persist(db_path: &Path) -> StorageManifestPersistFailureGuard {
+    let db_path = db_path.to_path_buf();
+    assert!(
+        STORAGE_MANIFEST_PERSIST_FAILURES
+            .lock()
+            .insert(db_path.clone()),
+        "storage manifest persist failure already registered for {}",
+        db_path.display()
+    );
+    StorageManifestPersistFailureGuard { db_path }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ManifestFile {
+    version: u32,
+    storage_incarnation: u64,
+    next_generation: u64,
+}
+
+pub(crate) struct StorageManifest {
+    path: PathBuf,
+    storage_incarnation: u64,
+    next_generation: Mutex<u64>,
+}
+
+impl StorageManifest {
+    /// Load the manifest for the instance stored in `db_dir`.
+    ///
+    /// Databases created before the manifest existed can be bootstrapped when
+    /// they have no vector column family. Callers must reject an existing vector
+    /// column family before passing `false`; `true` is retained for direct
+    /// validation and rejects creation because its incarnation is unknown.
+    pub(crate) fn open(db_dir: &Path, vector_data_has_entries: bool) -> Result<Self> {
+        let path = db_dir.join(STORAGE_MANIFEST_FILE);
+        if path.exists() {
+            return Self::read(&path);
+        }
+
+        ensure!(
+            !vector_data_has_entries,
+            InvalidFormatSnafu {
+                message: format!(
+                    "storage manifest {} is missing but vector data is present; \
+                     refusing to reinterpret existing vector members",
+                    path.display()
+                )
+            }
+        );
+
+        let storage_incarnation = rand::thread_rng().r#gen::<u64>().max(1);
+        let manifest = Self {
+            path,
+            storage_incarnation,
+            next_generation: Mutex::new(FIRST_GENERATION),
+        };
+        manifest.persist(FIRST_GENERATION)?;
+        Ok(manifest)
+    }
+
+    pub(crate) fn storage_incarnation(&self) -> u64 {
+        self.storage_incarnation
+    }
+
+    /// Read and validate the manifest in `db_dir` without creating one.
+    pub(crate) fn load_storage_incarnation(db_dir: &Path) -> Result<u64> {
+        Self::read(&db_dir.join(STORAGE_MANIFEST_FILE)).map(|manifest| manifest.storage_incarnation)
+    }
+
+    /// Allocate the next generation sequence. The incremented counter is
+    /// persisted before the generation is returned, so allocations survive
+    /// restarts and are never reused.
+    pub(crate) fn allocate_generation(&self) -> Result<u64> {
+        let mut next_generation = self
+            .next_generation
+            .lock()
+            .expect("storage manifest mutex should not be poisoned");
+        let generation = *next_generation;
+        let successor = generation.checked_add(1).context(InvalidFormatSnafu {
+            message: "generation sequence exhausted".to_string(),
+        })?;
+        self.persist(successor)?;
+        *next_generation = successor;
+        Ok(generation)
+    }
+
+    /// Copy the manifest file into `dir` (used when exporting a checkpoint so
+    /// the snapshot carries the storage identity with the data).
+    pub(crate) fn copy_to(&self, dir: &Path) -> Result<()> {
+        let target = dir.join(STORAGE_MANIFEST_FILE);
+        let mut last_error = None;
+        for attempt in 0..5 {
+            match (|| -> std::io::Result<()> {
+                fs::copy(&self.path, &target)?;
+                // Sync via a write handle: FlushFileBuffers on Windows
+                // requires GENERIC_WRITE, so a read-only File::open fails.
+                OpenOptions::new().write(true).open(&target)?.sync_all()?;
+                Ok(())
+            })() {
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    last_error = Some(error);
+                    if attempt < 4 {
+                        // Windows can briefly retain a handle while RocksDB
+                        // finishes materializing the checkpoint files.
+                        let _ = fs::remove_file(&target);
+                        std::thread::sleep(std::time::Duration::from_millis(100 * (attempt + 1)));
+                    }
+                }
+            }
+        }
+        Err(last_error.expect("manifest copy must record its final I/O error")).context(IoSnafu)
+    }
+
+    fn read(path: &Path) -> Result<Self> {
+        let bytes = fs::read(path).context(IoSnafu)?;
+        let file: ManifestFile = serde_json::from_slice(&bytes).map_err(|error| {
+            InvalidFormatSnafu {
+                message: format!("invalid storage manifest {}: {error}", path.display()),
+            }
+            .build()
+        })?;
+        ensure!(
+            file.version == STORAGE_MANIFEST_VERSION,
+            InvalidFormatSnafu {
+                message: format!(
+                    "unsupported storage manifest version {} in {}",
+                    file.version,
+                    path.display()
+                )
+            }
+        );
+        ensure!(
+            file.storage_incarnation != 0 && file.next_generation >= FIRST_GENERATION,
+            InvalidFormatSnafu {
+                message: format!(
+                    "corrupt storage manifest {}: incarnation {}, next generation {}",
+                    path.display(),
+                    file.storage_incarnation,
+                    file.next_generation
+                )
+            }
+        );
+        Ok(Self {
+            path: path.to_path_buf(),
+            storage_incarnation: file.storage_incarnation,
+            next_generation: Mutex::new(file.next_generation),
+        })
+    }
+
+    /// Atomically persist `next_generation` via write-temp-sync-rename, then
+    /// sync the directory so the rename reaches stable storage.
+    fn persist(&self, next_generation: u64) -> Result<()> {
+        let file = ManifestFile {
+            version: STORAGE_MANIFEST_VERSION,
+            storage_incarnation: self.storage_incarnation,
+            next_generation,
+        };
+        let json = serde_json::to_vec(&file).map_err(|error| {
+            InvalidFormatSnafu {
+                message: format!("failed to serialize storage manifest: {error}"),
+            }
+            .build()
+        })?;
+
+        let temp_path = self.path.with_extension("tmp");
+        {
+            let mut temp = fs::File::create(&temp_path).context(IoSnafu)?;
+            temp.write_all(&json).context(IoSnafu)?;
+            temp.sync_all().context(IoSnafu)?;
+        }
+        #[cfg(any(test, feature = "test-fault-injection"))]
+        if STORAGE_MANIFEST_PERSIST_FAILURES
+            .lock()
+            .remove(self.path.parent().expect("manifest path has a parent"))
+        {
+            return Err(std::io::Error::other(
+                "injected storage manifest persist failure",
+            ))
+            .context(IoSnafu);
+        }
+        fs::rename(&temp_path, &self.path).context(IoSnafu)?;
+        sync_parent_directory(&self.path).context(IoSnafu)?;
+        Ok(())
+    }
+}
+
+#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manifest_is_created_for_empty_db_and_survives_reopen() {
+        let dir = tempfile::tempdir().expect("temp dir");
+
+        let created = StorageManifest::open(dir.path(), false).expect("create manifest");
+        let incarnation = created.storage_incarnation();
+        assert_ne!(incarnation, 0);
+        assert!(dir.path().join(STORAGE_MANIFEST_FILE).exists());
+
+        let reopened = StorageManifest::open(dir.path(), false).expect("reopen manifest");
+        assert_eq!(reopened.storage_incarnation(), incarnation);
+    }
+
+    #[test]
+    fn allocations_are_monotonic_and_persisted() {
+        let dir = tempfile::tempdir().expect("temp dir");
+
+        let manifest = StorageManifest::open(dir.path(), false).expect("create manifest");
+        let first = manifest.allocate_generation().expect("allocate first");
+        let second = manifest.allocate_generation().expect("allocate second");
+        assert_eq!(first, FIRST_GENERATION);
+        assert_eq!(second, FIRST_GENERATION + 1);
+
+        // A reopen must never reuse an allocated generation.
+        let reopened = StorageManifest::open(dir.path(), false).expect("reopen manifest");
+        let third = reopened
+            .allocate_generation()
+            .expect("allocate after reopen");
+        assert!(third > second);
+    }
+
+    #[test]
+    fn missing_manifest_on_legacy_non_vector_db_is_bootstrapped() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        StorageManifest::open(dir.path(), false).expect("legacy manifest bootstrap");
+    }
+
+    #[test]
+    fn missing_manifest_on_non_empty_vector_db_is_rejected() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        assert!(StorageManifest::open(dir.path(), true).is_err());
+    }
+
+    #[test]
+    fn corrupt_manifest_is_rejected() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::write(dir.path().join(STORAGE_MANIFEST_FILE), b"not json").expect("write");
+        assert!(StorageManifest::open(dir.path(), false).is_err());
+    }
+}

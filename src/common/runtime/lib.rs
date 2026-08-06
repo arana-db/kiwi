@@ -70,6 +70,7 @@ pub use storage_server::{
     BackgroundTaskConfig, BackgroundTaskManager, BackgroundTaskStats, BatchConfig, BatchProcessor,
     BatchStats, RocksDbStats, StorageAccessGate, StorageAccessPermit, StorageServer,
     StorageServerConfig, StorageServerPauseController, initialize_storage_command_table,
+    initialize_storage_command_table_with_gates,
 };
 
 #[cfg(feature = "runtime-baseline")]

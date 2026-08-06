@@ -73,3 +73,149 @@ commands:
     tests: [final-state]
     known_differences: []
     owner: cmd-keyspace
+  - command: VADD
+    classification: known_difference
+    modes:
+      standalone_cache_off: known_difference
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [final-state]
+    known_differences:
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "Kiwi lacks omitted/default Q8, explicit Q8, BIN, REDUCE, CAS, EF, SETATTR, and M parameters supported by Redis 8.8.1"
+        remove_when: Kiwi implements omitted/default Q8, explicit Q8, BIN, REDUCE, CAS, EF, SETATTR, and M with trusted wire evidence
+        introduced: 2026-08-05
+        affected: standalone_cache_off; resp2/resp3
+        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
+    owner: cmd-vector
+  - command: VCARD
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [final-state]
+    known_differences: []
+    owner: cmd-vector
+  - command: VDIM
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [final-state]
+    known_differences: []
+    owner: cmd-vector
+  - command: VEMB
+    classification: known_difference
+    modes:
+      standalone_cache_off: known_difference
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [final-state]
+    known_differences:
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "Kiwi restores normalized FP32 using an f32 original_l2, which risks precision loss for large dynamic ranges"
+        remove_when: Kiwi preserves Redis 8.8.1 VEMB reconstruction semantics across large dynamic ranges with wire-differential evidence
+        introduced: 2026-08-05
+        affected: standalone_cache_off; resp2/resp3
+        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "Kiwi does not support VEMB RAW; Redis 8.8.1 runtime behavior remains pending trusted Oracle evidence"
+        remove_when: Kiwi implements VEMB RAW with trusted wire evidence
+        introduced: 2026-08-05
+        affected: standalone_cache_off; resp2/resp3
+        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
+    owner: cmd-vector
+  - command: VINFO
+    classification: known_difference
+    modes:
+      standalone_cache_off: known_difference
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [final-state]
+    known_differences:
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "VINFO field values differ: Redis 8.8.1 reports real HNSW internals (hnsw-m, max-level, vset-uid) while Kiwi Phase 1 reports FLAT sentinels with different semantics; only field-name set and value types match"
+        remove_when: Kiwi VINFO reports HNSW-equivalent field values and values match on wire differential
+        introduced: 2026-08-04
+        affected: standalone_cache_off; resp2/resp3
+        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
+    owner: cmd-vector
+  - command: VISMEMBER
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [final-state]
+    known_differences: []
+    owner: cmd-vector
+  - command: VREM
+    classification: required
+    modes:
+      standalone_cache_off: required
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [final-state]
+    known_differences: []
+    owner: cmd-vector
+  - command: VSIM
+    classification: known_difference
+    modes:
+      standalone_cache_off: known_difference
+      raft_single_group_cache_off: deferred
+    protocols: [resp2, resp3]
+    arguments: exact
+    reply_schema: exact
+    errors: exact-prefix
+    ttl_semantics: applicable
+    tests: [final-state]
+    known_differences:
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "Kiwi FLAT search has max_k, entry, byte, and deadline resource errors that differ from Redis 8.8.1 HNSW behavior"
+        remove_when: Kiwi matches Redis 8.8.1 HNSW resource behavior with wire-differential evidence
+        introduced: 2026-08-05
+        affected: standalone_cache_off; resp2/resp3
+        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "Kiwi does not support Redis 8.8.1 VSIM WITHATTRIBS, EPSILON, EF, FILTER, FILTER-EF, or NOTHREAD"
+        remove_when: Kiwi implements VSIM WITHATTRIBS, EPSILON, EF, FILTER, FILTER-EF, and NOTHREAD with trusted wire evidence
+        introduced: 2026-08-05
+        affected: standalone_cache_off; resp2/resp3
+        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
+    owner: cmd-vector

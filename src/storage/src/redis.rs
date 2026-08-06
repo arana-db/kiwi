@@ -41,7 +41,7 @@ use crate::custom_comparator::{
 use crate::data_compaction_filter::DataCompactionFilterFactory;
 use crate::error::Error::RedisErr;
 use crate::error::InvalidFormatSnafu;
-use crate::error::{OptionNoneSnafu, Result, RocksSnafu};
+use crate::error::{IoSnafu, OptionNoneSnafu, Result, RocksSnafu};
 use crate::format_base_value::{DATA_TYPE_TAG, DataType};
 use crate::logindex::{
     FlushTrigger, LogIndexAndSequenceCollector, LogIndexAndSequenceCollectorPurger,
@@ -52,6 +52,14 @@ use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
 use crate::storage_define::TYPE_LENGTH;
+use crate::storage_manifest::StorageManifest;
+
+/// Injection point for vector set generation sequences.
+///
+/// Standalone mode leaves this unset and falls back to the persistent
+/// manifest generator. Cluster mode installs a provider returning the Raft
+/// log index that created the key (wired up by the raft layer later).
+pub type GenerationProvider = Arc<dyn Fn() -> Result<u64> + Send + Sync>;
 
 // Import logindex types for use in Storage
 
@@ -63,13 +71,25 @@ pub enum ColumnFamilyIndex {
     ListsDataCF = 3,  // list data
     ZsetsDataCF = 4,  // zset data
     ZsetsScoreCF = 5, // zset score
+    VectorDataCF = 6, // vector set data
 }
 
 impl ColumnFamilyIndex {
     /// Total number of column families.
     /// Update this constant when adding new column families.
     /// This constant is used by batch.rs for validation.
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 7;
+
+    /// All column families in declaration order (by discriminant).
+    pub const ALL: [ColumnFamilyIndex; Self::COUNT] = [
+        ColumnFamilyIndex::MetaCF,
+        ColumnFamilyIndex::HashesDataCF,
+        ColumnFamilyIndex::SetsDataCF,
+        ColumnFamilyIndex::ListsDataCF,
+        ColumnFamilyIndex::ZsetsDataCF,
+        ColumnFamilyIndex::ZsetsScoreCF,
+        ColumnFamilyIndex::VectorDataCF,
+    ];
 
     pub fn name(&self) -> &'static str {
         match self {
@@ -79,6 +99,7 @@ impl ColumnFamilyIndex {
             ColumnFamilyIndex::ListsDataCF => "list_data_cf",
             ColumnFamilyIndex::ZsetsDataCF => "zset_data_cf",
             ColumnFamilyIndex::ZsetsScoreCF => "zset_score_cf",
+            ColumnFamilyIndex::VectorDataCF => "vector_data_cf",
         }
     }
 
@@ -90,6 +111,7 @@ impl ColumnFamilyIndex {
             ColumnFamilyIndex::ZsetsDataCF | ColumnFamilyIndex::ZsetsScoreCF => {
                 Some(DataType::ZSet)
             }
+            ColumnFamilyIndex::VectorDataCF => Some(DataType::VectorSet),
             ColumnFamilyIndex::MetaCF => None,
         }
     }
@@ -286,6 +308,24 @@ pub struct Redis {
 
     // For cluster mode: when set, create_batch returns a BinlogBatch.
     pub append_log_fn: OnceLock<crate::batch::AppendLogFn>,
+
+    // Per-instance storage identity (incarnation) and the standalone-mode
+    // generation sequence generator, loaded in open().
+    pub(crate) manifest: Option<StorageManifest>,
+
+    // Cluster-mode injection point for vector generation sequences.
+    pub generation_provider: OnceLock<GenerationProvider>,
+
+    // Concurrency gate for FLAT vector queries, sized from
+    // `StorageOptions.vector.max_concurrent_flat_queries`.
+    pub flat_query_gate: crate::vector_flat::FlatQueryGate,
+
+    // Counters for FLAT vector query execution, surfaced via INFO VECTOR.
+    pub vector_metrics: crate::vector_metrics::VectorMetrics,
+
+    // Fault injection hooks for the vector set storage path; armed by
+    // tests only, all flags off in production.
+    pub vector_fault_hooks: crate::vector_fault::VectorFaultHooks,
 }
 
 impl Redis {
@@ -312,6 +352,9 @@ impl Redis {
         let statistics_store: Cache<String, KeyStatistics> =
             CacheBuilder::new(storage.statistics_max_size).build();
 
+        let flat_query_gate =
+            crate::vector_flat::FlatQueryGate::new(storage.vector.max_concurrent_flat_queries);
+
         Self {
             index,
             is_starting: AtomicBool::new(true),
@@ -325,6 +368,9 @@ impl Redis {
             read_options: ReadOptions::default(),
             compact_options,
             block_cache,
+            flat_query_gate,
+            vector_metrics: crate::vector_metrics::VectorMetrics::default(),
+            vector_fault_hooks: crate::vector_fault::VectorFaultHooks::default(),
 
             statistics_store: Arc::new(statistics_store),
             scan_cursors_store: Mutex::new(CacheBuilder::new(5000).build()),
@@ -338,6 +384,8 @@ impl Redis {
             logindex_cf_tracker: None,
 
             append_log_fn: OnceLock::new(),
+            manifest: None,
+            generation_provider: OnceLock::new(),
         }
     }
 
@@ -354,6 +402,12 @@ impl Redis {
         // OnceCell shared with the event listener so callbacks (which fire on RocksDB
         // background threads after open) can reach the live DB handle.
         let db_once_cell: Arc<OnceCell<Weak<DB>>> = Arc::new(OnceCell::new());
+
+        // Shared with the data compaction filters so the VectorSet branch can
+        // compare member-key incarnations against this instance's identity.
+        // Populated once the storage manifest is loaded below; filters treat
+        // an unset cell as "cannot prove stale" and keep the data.
+        let incarnation_cell: Arc<OnceCell<u64>> = Arc::new(OnceCell::new());
 
         // Snapshot trigger: emitted by the LogIndex purger every N flushes to suggest
         // that the Raft layer build a snapshot. Wiring this into Raft requires a
@@ -406,6 +460,55 @@ impl Redis {
         let mut db_opts = self.storage.options.clone();
         db_opts.add_event_listener(purger);
 
+        // A legacy database has no vector column family. Refuse to open a
+        // database that already has that column family but lost its manifest
+        // before RocksDB can create or mutate any descriptors.
+        let db_directory = Path::new(db_path);
+        let manifest_path = db_directory.join(crate::storage_manifest::STORAGE_MANIFEST_FILE);
+        let current_path = db_directory.join("CURRENT");
+        if !manifest_path.exists() && current_path.exists() {
+            let column_families = DB::list_cf(&db_opts, db_path).context(RocksSnafu)?;
+            if column_families
+                .iter()
+                .any(|name| name == ColumnFamilyIndex::VectorDataCF.name())
+            {
+                return Err(InvalidFormatSnafu {
+                    message: format!(
+                        "storage manifest {} is missing but the database has a vector column family; \
+                         refusing to reinterpret existing vector data",
+                        manifest_path.display()
+                    ),
+                }
+                .build());
+            }
+        } else if !manifest_path.exists() && db_directory.exists() {
+            let temp_manifest_path = manifest_path.with_extension("tmp");
+            let entries = std::fs::read_dir(db_directory).context(IoSnafu)?;
+            let mut has_unrecognized_entry = false;
+            for entry in entries {
+                if entry.context(IoSnafu)?.path() != temp_manifest_path {
+                    has_unrecognized_entry = true;
+                    break;
+                }
+            }
+            if has_unrecognized_entry {
+                return Err(InvalidFormatSnafu {
+                    message: format!(
+                        "storage path {} is non-empty but has neither a storage manifest nor a \
+                         RocksDB CURRENT file; refusing to initialize it",
+                        db_directory.display()
+                    ),
+                }
+                .build());
+            }
+        }
+
+        // Persist the incarnation before opening descriptors: RocksDB may create
+        // the vector column family as part of a successful legacy migration.
+        std::fs::create_dir_all(db_directory).context(IoSnafu)?;
+        let manifest = StorageManifest::open(db_directory, false)?;
+        let _ = incarnation_cell.set(manifest.storage_incarnation());
+
         const CF_CONFIGS: &[(&str, bool, Option<usize>)] = &[
             ("default", true, None),                   // meta & string: bloom filter
             ("hash_data_cf", true, None),              // hash: bloom filter
@@ -413,6 +516,7 @@ impl Redis {
             ("list_data_cf", true, None),              // list: bloom filter
             ("zset_data_cf", false, Some(16 * 1024)),  // zset data: 16KB block size
             ("zset_score_cf", false, Some(16 * 1024)), // zset score: 16KB block size
+            ("vector_data_cf", true, None),            // vector set: bloom filter
         ];
         let column_families: Vec<ColumnFamilyDescriptor> = CF_CONFIGS
             .iter()
@@ -424,6 +528,7 @@ impl Redis {
                     *block_size,
                     self.block_cache.as_deref(),
                     Some(&db_once_cell),
+                    &incarnation_cell,
                     &collector,
                 )
             })
@@ -434,12 +539,11 @@ impl Redis {
         );
         let _ = db_once_cell.set(db.downgrade());
 
-        self.handles = CF_CONFIGS
+        let handles = CF_CONFIGS
             .iter()
             .filter(|(name, _, _)| db.cf_handle(name).is_some())
             .map(|(name, _, _)| name.to_string())
             .collect();
-        self.is_starting.store(false, Ordering::SeqCst);
 
         // Initialize cf_tracker from SST properties
         let rocksdb = db.as_ref();
@@ -448,10 +552,13 @@ impl Redis {
             log::warn!("Failed to initialize cf_tracker from SST properties: {}", e);
         }
 
-        // Store collector and tracker
+        // Publish the fully initialized state only after all fallible setup.
+        self.handles = handles;
         self.logindex_collector = Some(collector);
         self.logindex_cf_tracker = Some(cf_tracker);
         self.db = Some(db);
+        self.manifest = Some(manifest);
+        self.is_starting.store(false, Ordering::SeqCst);
 
         Ok(())
     }
@@ -464,6 +571,7 @@ impl Redis {
         block_size: Option<usize>,
         block_cache: Option<&BlockCache>,
         db_once_cell: Option<&Arc<OnceCell<Weak<DB>>>>,
+        incarnation_cell: &Arc<OnceCell<u64>>,
         collector: &Arc<LogIndexAndSequenceCollector>,
     ) -> ColumnFamilyDescriptor {
         let mut cf_opts = storage_options.options.clone();
@@ -520,12 +628,17 @@ impl Redis {
                 ColumnFamilyIndex::ListsDataCF,
                 ColumnFamilyIndex::ZsetsDataCF,
                 ColumnFamilyIndex::ZsetsScoreCF,
+                ColumnFamilyIndex::VectorDataCF,
             ]
             .iter()
             .find(|cf| cf.name() == cf_name)
             .and_then(|cf| cf.data_type())
         {
-            let factory = DataCompactionFilterFactory::new(Arc::clone(db_once_cell), data_type);
+            let factory = DataCompactionFilterFactory::new(
+                Arc::clone(db_once_cell),
+                data_type,
+                Arc::clone(incarnation_cell),
+            );
             cf_opts.set_compaction_filter_factory(factory);
         }
 
@@ -548,7 +661,14 @@ impl Redis {
             message: "Database is not initialized".to_string(),
         })?;
         let checkpoint = rocksdb::checkpoint::Checkpoint::new(db.as_ref()).context(RocksSnafu)?;
-        checkpoint.create_checkpoint(path).context(RocksSnafu)
+        checkpoint.create_checkpoint(path).context(RocksSnafu)?;
+        // RocksDB checkpoints only cover database files; copy the storage
+        // manifest alongside so a restored snapshot keeps the storage
+        // incarnation and generation sequence that wrote the data.
+        if let Some(manifest) = self.manifest.as_ref() {
+            manifest.copy_to(path)?;
+        }
+        Ok(())
     }
 
     /// Compact database range
@@ -604,6 +724,39 @@ impl Redis {
         let _ = self.append_log_fn.set(f);
     }
 
+    /// The stable identity of this storage instance, embedded in every vector
+    /// member key written by it.
+    pub fn storage_incarnation(&self) -> Result<u64> {
+        self.manifest
+            .as_ref()
+            .map(StorageManifest::storage_incarnation)
+            .context(OptionNoneSnafu {
+                message: "storage manifest is not initialized".to_string(),
+            })
+    }
+
+    /// Allocate the generation sequence for a newly created vector set.
+    ///
+    /// Uses the injected provider when present (cluster mode: the creating
+    /// Raft log index), otherwise the persistent manifest generator.
+    pub(crate) fn allocate_vector_generation(&self) -> Result<u64> {
+        if let Some(provider) = self.generation_provider.get() {
+            return provider();
+        }
+        self.manifest
+            .as_ref()
+            .context(OptionNoneSnafu {
+                message: "storage manifest is not initialized".to_string(),
+            })?
+            .allocate_generation()
+    }
+
+    /// Inject the cluster-mode generation provider. Idempotent: subsequent
+    /// calls are ignored (OnceLock semantics).
+    pub fn set_generation_provider(&self, provider: GenerationProvider) {
+        let _ = self.generation_provider.set(provider);
+    }
+
     /// Create a new batch for atomic write operations.
     ///
     /// This method creates a batch appropriate for the current deployment mode:
@@ -643,6 +796,7 @@ impl Redis {
             self.get_cf_handle(ColumnFamilyIndex::ListsDataCF),
             self.get_cf_handle(ColumnFamilyIndex::ZsetsDataCF),
             self.get_cf_handle(ColumnFamilyIndex::ZsetsScoreCF),
+            self.get_cf_handle(ColumnFamilyIndex::VectorDataCF),
         ];
 
         Ok(Box::new(crate::batch::RocksBatch::new(
@@ -932,7 +1086,7 @@ impl Redis {
                 }
                 Ok(etime < now)
             }
-            DataType::Hash | DataType::Set | DataType::ZSet => {
+            DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                 // | type(1B) | count(8B) | version(8B) | reserve(16B) | ctime(8B) | etime(8B) |
                 let count_offset = TYPE_LENGTH;
                 let count_bytes = &val_raw[count_offset..count_offset + 8];

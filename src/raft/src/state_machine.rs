@@ -73,6 +73,10 @@ const CURRENT_SNAPSHOT_DATA: &str = "current_snapshot.tar";
 const CURRENT_SNAPSHOT_META: &str = "current_snapshot_meta.json";
 const SNAPSHOT_INSTALL_MARKER_VERSION: u32 = 1;
 const SNAPSHOT_INSTALL_MARKER_SUFFIX: &str = ".snapshot-install-in-progress.json";
+
+/// Number of vector metas / member entries decoded per instance when
+/// validating restored snapshot data (sampling, not a full scan).
+const RESTORED_VECTOR_SAMPLE_SIZE: usize = 64;
 const SNAPSHOT_INSTALL_CLEANUP_SUFFIX: &str = ".cleanup-pending";
 
 #[cfg(test)]
@@ -581,18 +585,26 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             ));
         }
 
+        // Loading the current Storage here is safe: schema validation and
+        // prepare only read and copy checkpoint input, and the owner remains
+        // live until the durable marker has been written after pause/drain.
+        let current_storage = self.storage_swap.load_full();
+        let db_instance_num = current_storage.db_instance_num;
+        let db_id = current_storage.db_id;
+
+        // Deterministically reject snapshots whose storage schema this binary
+        // cannot consume (version, instance count, column families, vector
+        // value format), before touching live storage.
+        file_meta
+            .validate_for_restore(db_instance_num)
+            .map_err(io_err_to_raft)?;
+
         log::info!(
             "Snapshot metadata validated: index={}, term={}",
             file_meta.last_included_index,
             file_meta.last_included_term
         );
 
-        // Loading the current Storage here is safe: prepare only reads and copies
-        // checkpoint input, and the owner remains live until the durable marker
-        // has been written after pause/drain.
-        let current_storage = self.storage_swap.load_full();
-        let db_instance_num = current_storage.db_instance_num;
-        let db_id = current_storage.db_id;
         let options = current_storage.storage_options().unwrap_or_else(|| {
             log::warn!(
                 "snapshot install found unopened Storage without configured options; using defaults"
@@ -601,6 +613,23 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         });
         let prepared = prepare_checkpoint_restore(&checkpoint_root, &self.db_path, db_instance_num)
             .map_err(io_err_to_raft)?;
+        prepared
+            .validate_storage_incarnations(&file_meta.storage_incarnations)
+            .map_err(io_err_to_raft)?;
+
+        // Open and sample the disposable staged copy before pausing live
+        // storage. All RocksDB handles must be released before rename.
+        let mut staged_storage = Storage::new(db_instance_num, db_id);
+        let staged_rx = staged_storage
+            .open(Arc::clone(&options), prepared.staged_path())
+            .map_err(storage_err_to_raft)?;
+        staged_storage
+            .validate_vector_data_sample(RESTORED_VECTOR_SAMPLE_SIZE)
+            .map_err(storage_err_to_raft)?;
+        staged_storage.shutdown().await;
+        staged_storage.close();
+        drop(staged_rx);
+        drop(staged_storage);
 
         let _snapshot_publication = Arc::clone(&self.snapshot_publication_gate)
             .lock_owned()
@@ -777,7 +806,8 @@ impl KiwiSnapshotBuilder {
         let collectors: Vec<_> = (0..self.storage.db_instance_num)
             .filter_map(|i| self.storage.get_logindex_collector(i))
             .collect();
-        let raft_meta = RaftSnapshotMeta::with_collector_states(last_idx, last_term, &collectors);
+        let raft_meta =
+            RaftSnapshotMeta::for_storage(last_idx, last_term, &collectors, &self.storage)?;
         self.storage.create_checkpoint(dir, &raft_meta)?;
 
         drop(snapshot_state_guard);
@@ -857,6 +887,8 @@ mod snapshot_gate_tests {
     use storage::{safe_cleanup_test_db, unique_test_db_path};
 
     use super::*;
+
+    const SNAPSHOT_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
     #[derive(Default)]
     struct CountingPauseController {
@@ -945,12 +977,9 @@ mod snapshot_gate_tests {
             let result = builder.build_snapshot().await;
             (builder, result)
         });
-        tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            hook.checkpoint_completed.notified(),
-        )
-        .await
-        .expect("snapshot build should reach the post-checkpoint barrier");
+        tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, hook.checkpoint_completed.notified())
+            .await
+            .expect("snapshot build should reach the post-checkpoint barrier");
         assert!(
             !build.is_finished(),
             "snapshot build should remain blocked before archive and persistence"
@@ -960,16 +989,13 @@ mod snapshot_gate_tests {
             log_id: LogId::new(LeaderId::new(1, 1), 1),
             payload: EntryPayload::Blank,
         };
-        tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            state_machine.apply([blank]),
-        )
-        .await
-        .expect("apply should proceed after checkpoint while builder remains alive")
-        .expect("blank entry should apply");
+        tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, state_machine.apply([blank]))
+            .await
+            .expect("apply should proceed after checkpoint while builder remains alive")
+            .expect("blank entry should apply");
 
         hook.continue_build.notify_one();
-        let (builder, snapshot) = tokio::time::timeout(std::time::Duration::from_secs(1), build)
+        let (builder, snapshot) = tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, build)
             .await
             .expect("snapshot build should resume after the test barrier")
             .expect("snapshot build task should not panic");
@@ -1027,13 +1053,10 @@ mod snapshot_gate_tests {
             log_id: LogId::new(LeaderId::new(1, 1), 1),
             payload: EntryPayload::Blank,
         };
-        tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            state_machine.apply([blank]),
-        )
-        .await
-        .expect("apply should proceed after checkpoint failure while builder remains alive")
-        .expect("blank entry should apply");
+        tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, state_machine.apply([blank]))
+            .await
+            .expect("apply should proceed after checkpoint failure while builder remains alive")
+            .expect("blank entry should apply");
 
         drop(builder);
         drop(state_machine);
@@ -1094,7 +1117,7 @@ mod snapshot_gate_tests {
                 )
                 .await
         });
-        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, async {
             while controller.pause_count.load(Ordering::SeqCst) == 0 {
                 tokio::task::yield_now().await;
             }
@@ -1120,12 +1143,9 @@ mod snapshot_gate_tests {
                 .expect("live storage should remain readable"),
             "live-value"
         );
-        let permit = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            Arc::clone(&controller).enter(),
-        )
-        .await
-        .expect("storage access should resume after cancelling install");
+        let permit = tokio::time::timeout(SNAPSHOT_TEST_TIMEOUT, Arc::clone(&controller).enter())
+            .await
+            .expect("storage access should resume after cancelling install");
         drop(permit);
 
         drop(storage_swap);

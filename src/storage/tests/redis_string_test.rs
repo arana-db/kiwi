@@ -23,9 +23,9 @@ mod redis_string_test {
 
     use kstd::lock_mgr::LockMgr;
     use storage::{
-        BaseMetaKey, BgTaskHandler, ColumnFamilyIndex, DataType, Redis, StorageOptions,
-        ZsetScoreMember, format_base_meta_value::BaseMetaValue, safe_cleanup_test_db,
-        slot_indexer::key_to_slot_id, storage::Storage, unique_test_db_path,
+        BaseMetaKey, BgTaskHandler, CanonicalVector, ColumnFamilyIndex, DataType, Redis,
+        StorageOptions, ZsetScoreMember, format_base_meta_value::BaseMetaValue,
+        safe_cleanup_test_db, slot_indexer::key_to_slot_id, storage::Storage, unique_test_db_path,
     };
 
     fn cleanup_redis(redis: Redis, test_db_path: &Path) {
@@ -1280,6 +1280,29 @@ mod redis_string_test {
             random.as_deref(),
             Some("only_list_key"),
             "random_key must return the only live list key"
+        );
+
+        cleanup_redis(redis, &test_db_path);
+    }
+
+    #[test]
+    fn test_random_key_returns_vectorset_key() {
+        let test_db_path = unique_test_db_path();
+        safe_cleanup_test_db(&test_db_path);
+
+        let storage_options = Arc::new(StorageOptions::default());
+        let (bg_task_handler, _) = BgTaskHandler::new();
+        let lock_mgr = Arc::new(LockMgr::new(1000));
+        let mut redis = Redis::new(storage_options, 1, Arc::new(bg_task_handler), lock_mgr);
+        redis.open(test_db_path.to_str().unwrap()).unwrap();
+
+        let vectorset_key = b"only_vectorset_key";
+        let vector = CanonicalVector::from_values(&[1.0, 0.0]).unwrap();
+        redis.vadd(vectorset_key, b"member", &vector).unwrap();
+
+        assert_eq!(
+            redis.random_key().unwrap().as_deref(),
+            Some("only_vectorset_key")
         );
 
         cleanup_redis(redis, &test_db_path);

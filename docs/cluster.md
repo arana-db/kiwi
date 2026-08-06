@@ -60,6 +60,8 @@ Raft 日志始终持久化到 RocksDB。节点重启时会从 `raft-data-dir` �
 
 升级说明：曾启用 `raft-use-memory-log-store` 的节点不能保留原 node ID 和主数据原地升级。内存日志模式没有持久化 vote、membership、committed position 和日志尾部，无法从主数据安全恢复完整的 Raft 状态。只要 `raft-data-dir` 中仍存在旧 `raft_logs` 目录，节点就会拒绝启动，即使同时存在 `raft_logs_rocksdb` 状态，因为无法证明两者属于同一段完整 Raft 历史。请为该节点使用新的 node ID 和干净的 `data-dir`/`raft-data-dir`，再从健康 leader 重新加入集群。这个保守门禁也会阻止仅留下空旧目录的节点；确认不需要旧数据后，应按同样流程清理并重新入群，而不是删除单个标记目录后复用原 node ID。
 
+快照格式 v1 是未发布的开发期格式，当前 v2 节点会明确拒绝它，不支持 v1→v2 滚动兼容。仍保留 v1 快照或由 v1 状态压缩过日志的节点必须停机后使用新的 node ID 和干净的 `data-dir`/`raft-data-dir`，再从健康的 v2 leader 重建并重新入群。
+
 ### 2. 启动节点
 
 ```bash

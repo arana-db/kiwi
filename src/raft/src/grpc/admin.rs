@@ -26,8 +26,8 @@ use std::sync::Arc;
 // 导入 proto 生成的类型
 use crate::raft_proto::{
     AddLearnerRequest, AddLearnerResponse, ChangeMembershipRequest, ChangeMembershipResponse,
-    InitializeRequest, InitializeResponse, RemoveNodeRequest, RemoveNodeResponse,
-    Response as ProtoResponse,
+    GetNodeCapabilitiesRequest, GetNodeCapabilitiesResponse, InitializeRequest, InitializeResponse,
+    RemoveNodeRequest, RemoveNodeResponse, Response as ProtoResponse,
     raft_admin_service_server::{RaftAdminService, RaftAdminServiceServer},
 };
 use tonic::{Request, Response as TonicResponse, Status};
@@ -207,6 +207,18 @@ impl RaftAdminService for RaftAdminServiceImpl {
                 }))
             }
         }
+    }
+
+    /// 查询本节点的 capability 清单（滚动升级通告）
+    async fn get_node_capabilities(
+        &self,
+        _request: Request<GetNodeCapabilitiesRequest>,
+    ) -> Result<TonicResponse<GetNodeCapabilitiesResponse>, Status> {
+        Ok(TonicResponse::new(GetNodeCapabilitiesResponse {
+            response: Some(ok_response()),
+            node_id: self.app.node_id,
+            capabilities: crate::capabilities::node_capabilities(),
+        }))
     }
 
     /// 移除节点

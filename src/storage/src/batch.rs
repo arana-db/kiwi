@@ -55,6 +55,7 @@ use parking_lot::Mutex;
 
 use crate::ColumnFamilyIndex;
 use crate::error::{BatchSnafu, InvalidFormatSnafu, Result, RocksSnafu};
+use crate::format_vector_member_key::ParsedVectorMemberDataKey;
 use crate::slot_indexer::key_to_slot_id;
 use crate::storage_define::{
     PREFIX_RESERVE_LENGTH, SUFFIX_RESERVE_LENGTH, VERSION_LENGTH, decode_user_key,
@@ -201,6 +202,7 @@ fn cf_index_to_usize(cf_idx: ColumnFamilyIndex) -> usize {
         ColumnFamilyIndex::ListsDataCF => 3,
         ColumnFamilyIndex::ZsetsDataCF => 4,
         ColumnFamilyIndex::ZsetsScoreCF => 5,
+        ColumnFamilyIndex::VectorDataCF => 6,
     }
 }
 
@@ -304,6 +306,11 @@ impl BinlogBatch {
     }
 
     pub(crate) fn infer_user_key(cf_idx: u32, encoded_key: &[u8]) -> Result<Vec<u8>> {
+        if cf_idx == ColumnFamilyIndex::VectorDataCF as u32 {
+            let parsed = ParsedVectorMemberDataKey::decode(encoded_key)?;
+            return Ok(parsed.key().to_vec());
+        }
+
         let tail_length = match cf_idx {
             value if value == ColumnFamilyIndex::MetaCF as u32 => SUFFIX_RESERVE_LENGTH,
             value

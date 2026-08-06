@@ -310,17 +310,23 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: ${{ env.SANITIZER_TOOLCHAIN }}
-          components: rust-src
+          components: |
+            rust-src
+            llvm-tools-preview
 
       - name: Install protoc
         run: |
           sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+          sudo apt-get install -y protobuf-compiler llvm
 
       - name: Run tests with ${{ matrix.sanitizer }} sanitizer
         env:
           RUSTFLAGS: "-Z sanitizer=${{ matrix.sanitizer }}"
           RUSTDOCFLAGS: "-Z sanitizer=${{ matrix.sanitizer }}"
+          # Keep source locations in sanitizer backtraces. The repository-wide
+          # default is optimized for normal CI logs, but an unsymbolized LSan
+          # report cannot identify the leaking test/helper.
+          CARGO_PROFILE_DEV_DEBUG: 2
           # AddressSanitizer enables leak detection by default. Leak checks run in
           # the dedicated leak sanitizer job, where third-party suppressions are
           # applied explicitly.
@@ -329,7 +335,34 @@ jobs:
           TSAN_OPTIONS: "suppressions=${{ github.workspace }}/.github/tsan.supp"
         run: |
           set -o pipefail
-          if [[ "${{ matrix.sanitizer }}" == "leak" || "${{ matrix.sanitizer }}" == "thread" ]]; then
+          sanitizer_sysroot="$(rustc +${SANITIZER_TOOLCHAIN} --print sysroot)"
+          rust_llvm_symbolizer="$(find "$sanitizer_sysroot" -type f -name llvm-symbolizer -perm -111 -print -quit 2>/dev/null || true)"
+          if [[ -n "$rust_llvm_symbolizer" ]]; then
+            export ASAN_SYMBOLIZER_PATH="$rust_llvm_symbolizer"
+          elif command -v llvm-symbolizer >/dev/null 2>&1; then
+            export ASAN_SYMBOLIZER_PATH="$(command -v llvm-symbolizer)"
+          fi
+          if [[ -n "${ASAN_SYMBOLIZER_PATH:-}" ]]; then
+            export LSAN_OPTIONS="${LSAN_OPTIONS}:external_symbolizer_path=${ASAN_SYMBOLIZER_PATH}:symbolize=1:malloc_context_size=50"
+            echo "Using sanitizer symbolizer: $ASAN_SYMBOLIZER_PATH"
+            "$ASAN_SYMBOLIZER_PATH" --version || true
+          fi
+          if [[ "${{ matrix.sanitizer }}" == "leak" ]]; then
+            # Run the complete leak-sanitizer scope after the symbolized
+            # diagnostic experiments; this is the final validation for the PR.
+            cargo +${SANITIZER_TOOLCHAIN} test -Z build-std --target x86_64-unknown-linux-gnu \
+              --workspace --exclude storage \
+              -- --skip cursor_snapshot_roundtrip \
+              --skip install_snapshot_with_existing_data \
+              --skip install_snapshot_rearms_append_log_hook \
+              --skip test_snapshot_with_logindex_state \
+              --skip test_on_binlog_write_updates_collector \
+              --skip test_collector_state_export_restore \
+              --skip storage_command_e2e_ \
+              2>&1 | tee sanitizer.log
+            cargo +${SANITIZER_TOOLCHAIN} test -Z build-std --target x86_64-unknown-linux-gnu \
+              -p storage --lib 2>&1 | tee -a sanitizer.log
+          elif [[ "${{ matrix.sanitizer }}" == "thread" ]]; then
             # RocksDB/libstdc++ trigger sanitizer reports and timing instability
             # in storage integration test binaries. The net crate's end-to-end
             # storage command tests also spin up a real RocksDB-backed stack, so

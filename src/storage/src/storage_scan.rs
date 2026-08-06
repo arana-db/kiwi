@@ -81,6 +81,7 @@ fn parse_scan_type(name: &[u8]) -> DataType {
         b"set" => DataType::Set,
         b"list" => DataType::List,
         b"zset" => DataType::ZSet,
+        b"vectorset" => DataType::VectorSet,
         _ => DataType::None,
     }
 }
@@ -136,7 +137,7 @@ impl Redis {
                     let meta = ParsedListsMetaValue::new(&value_bytes[..])?;
                     !meta.is_stale() && meta.count() > 0
                 }
-                DataType::Hash | DataType::Set | DataType::ZSet => {
+                DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                     let meta = ParsedBaseMetaValue::new(&value_bytes[..])?;
                     !meta.is_stale() && meta.count() > 0
                 }

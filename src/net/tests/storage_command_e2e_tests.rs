@@ -28,16 +28,18 @@
 //! -> StorageServer::execute_storage_command
 //! ```
 
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
 use client::Client;
 use cmd::{AclCategory, Cmd, CmdFlags, CmdMeta};
-use net::network_server::NetworkServer;
-use net::storage_client::StorageClient;
+use net::{network_server::NetworkServer, storage_client::StorageClient};
+use raft::leader_gate::LeaderGate;
 use resp::{
     Parse, RespData, RespEncode, RespParse, RespParseResult, RespVersion, encode::RespEncoder,
 };
@@ -98,10 +100,64 @@ struct TestServer {
     network_task: Option<JoinHandle<Result<(), String>>>,
 }
 
+struct FollowerGate;
+
+impl LeaderGate for FollowerGate {
+    fn is_leader(&self) -> bool {
+        false
+    }
+
+    fn leader_resp_addr(&self) -> Option<String> {
+        Some("127.0.0.1:7380".to_string())
+    }
+}
+
+/// Leader gate with a controllable linearizable-read barrier outcome.
+struct LeaderBarrierGate {
+    barrier_result: Result<(), String>,
+}
+
+impl LeaderGate for LeaderBarrierGate {
+    fn is_leader(&self) -> bool {
+        true
+    }
+
+    fn leader_resp_addr(&self) -> Option<String> {
+        None
+    }
+
+    fn ensure_linearizable_read(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + '_>> {
+        let result = self.barrier_result.clone();
+        Box::pin(async move { result })
+    }
+}
+
 impl TestServer {
     /// Start the network and storage runtimes, open a real storage DB, and bind
     /// a `NetworkServer` to an ephemeral port.
     async fn start(requirepass: Option<String>) -> Self {
+        Self::start_with_leader_gate(requirepass, None).await
+    }
+
+    async fn start_with_leader_gate(
+        requirepass: Option<String>,
+        leader_gate: Option<Arc<dyn LeaderGate>>,
+    ) -> Self {
+        Self::start_with_leader_gate_and_gates(
+            requirepass,
+            leader_gate,
+            cmd::table::CommandTableGates::default(),
+        )
+        .await
+    }
+
+    async fn start_with_leader_gate_and_gates(
+        requirepass: Option<String>,
+        leader_gate: Option<Arc<dyn LeaderGate>>,
+        gates: cmd::table::CommandTableGates,
+    ) -> Self {
         let db_path = unique_test_db_path();
         safe_cleanup_test_db(&db_path);
 
@@ -138,9 +194,10 @@ impl TestServer {
         // Network-side client, command table, and executor.
         let net_storage_client = Arc::new(StorageClient::new(runtime_storage_client.clone()));
         let requirepass_for_provider = requirepass.clone();
-        let cmd_table = Arc::new(cmd::table::create_command_table(Arc::new(move || {
-            requirepass_for_provider.clone()
-        })));
+        let cmd_table = Arc::new(cmd::table::create_command_table_with_gates(
+            Arc::new(move || requirepass_for_provider.clone()),
+            gates,
+        ));
         let executor = Arc::new(executor::CmdExecutorBuilder::new().build());
 
         // Bind the network server to an ephemeral port before spawning it.
@@ -151,7 +208,7 @@ impl TestServer {
                 cmd_table,
                 executor,
                 requirepass,
-                None,
+                leader_gate,
             )
             .expect("network server"),
         );
@@ -1070,6 +1127,170 @@ async fn storage_command_e2e_generic_storage_commands_use_storage_path() {
     server.shutdown().await;
 }
 
+#[tokio::test]
+async fn storage_command_e2e_vector_write_commands_redirect_on_follower() {
+    let server = TestServer::start_with_leader_gate(None, Some(Arc::new(FollowerGate))).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+    let expected = RespData::Error(Bytes::from_static(b"MOVED 127.0.0.1:7380"));
+
+    let reply = send_command(
+        &mut stream,
+        &["VADD", "vectors", "VALUES", "2", "1", "member"],
+    )
+    .await;
+    assert_eq!(reply, expected);
+
+    let reply = send_command(&mut stream, &["VREM", "vectors", "member"]).await;
+    assert_eq!(reply, expected);
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_vector_membership_replies_follow_negotiated_protocol() {
+    let server = TestServer::start(None).await;
+
+    let mut resp2_stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect RESP2 client");
+    assert_eq!(
+        send_command(
+            &mut resp2_stream,
+            &[
+                "VADD",
+                "resp2-vectors",
+                "VALUES",
+                "2",
+                "1",
+                "0",
+                "member",
+                "NOQUANT"
+            ],
+        )
+        .await,
+        RespData::Integer(1)
+    );
+    assert_eq!(
+        send_command(
+            &mut resp2_stream,
+            &[
+                "VADD",
+                "resp2-vectors",
+                "VALUES",
+                "2",
+                "1",
+                "0",
+                "member",
+                "NOQUANT"
+            ]
+        )
+        .await,
+        RespData::Integer(0)
+    );
+    assert_eq!(
+        send_command(&mut resp2_stream, &["VISMEMBER", "resp2-vectors", "member"]).await,
+        RespData::Integer(1)
+    );
+    assert_eq!(
+        send_command(&mut resp2_stream, &["VREM", "resp2-vectors", "member"]).await,
+        RespData::Integer(1)
+    );
+    assert_eq!(
+        send_command(&mut resp2_stream, &["VREM", "resp2-vectors", "member"]).await,
+        RespData::Integer(0)
+    );
+    assert_eq!(
+        send_command(&mut resp2_stream, &["VISMEMBER", "resp2-vectors", "member"]).await,
+        RespData::Integer(0)
+    );
+
+    let mut resp3_stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect RESP3 client");
+    let reply =
+        send_command_with_version(&mut resp3_stream, &["HELLO", "3"], RespVersion::RESP3).await;
+    assert!(
+        matches!(reply, RespData::Map(_)),
+        "expected RESP3 HELLO map, got {reply:?}"
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &[
+                "VADD",
+                "resp3-vectors",
+                "VALUES",
+                "2",
+                "1",
+                "0",
+                "member",
+                "NOQUANT"
+            ],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(true)
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &[
+                "VADD",
+                "resp3-vectors",
+                "VALUES",
+                "2",
+                "1",
+                "0",
+                "member",
+                "NOQUANT"
+            ],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(false)
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &["VISMEMBER", "resp3-vectors", "member"],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(true)
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &["VREM", "resp3-vectors", "member"],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(true)
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &["VREM", "resp3-vectors", "member"],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(false)
+    );
+    assert_eq!(
+        send_command_with_version(
+            &mut resp3_stream,
+            &["VISMEMBER", "resp3-vectors", "member"],
+            RespVersion::RESP3
+        )
+        .await,
+        RespData::Boolean(false)
+    );
+
+    server.shutdown().await;
+}
+
 // Regression for issue #349: GET/MGET must return stored bytes unchanged over RESP.
 #[tokio::test]
 async fn storage_command_e2e_get_and_mget_preserve_binary_values() {
@@ -1179,6 +1400,148 @@ async fn storage_command_e2e_rank_nulls_follow_negotiated_wire_protocol() {
             send_command_and_read_line(&mut stream, &[command, "missing-zset", "member"]).await;
         assert_eq!(reply, Bytes::from_static(b"_\r\n"), "{command}");
     }
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_disabled_cluster_vectors_reject_before_routing() {
+    let gates = cmd::table::CommandTableGates::from_flags(true, false, true);
+    let server =
+        TestServer::start_with_leader_gate_and_gates(None, Some(Arc::new(FollowerGate)), gates)
+            .await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+    let expected = RespData::Error(Bytes::from_static(
+        b"ERR vector commands are not supported in cluster mode yet",
+    ));
+
+    for args in [
+        &[
+            "VADD", "vectors", "VALUES", "2", "1", "0", "member", "NOQUANT",
+        ][..],
+        &["VREM", "vectors", "member"][..],
+        &["VSIM", "vectors", "VALUES", "2", "1", "0"][..],
+    ] {
+        let reply = send_command(&mut stream, args).await;
+        assert_eq!(reply, expected, "disabled vector command {args:?}");
+    }
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_disabled_cluster_vector_skips_read_barrier() {
+    let gate = LeaderBarrierGate {
+        barrier_result: Err("injected barrier failure".to_string()),
+    };
+    let gates = cmd::table::CommandTableGates::from_flags(true, false, true);
+    let server =
+        TestServer::start_with_leader_gate_and_gates(None, Some(Arc::new(gate)), gates).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    let reply = send_command(&mut stream, &["VSIM", "vectors", "VALUES", "2", "1", "0"]).await;
+    assert_eq!(
+        reply,
+        RespData::Error(Bytes::from_static(
+            b"ERR vector commands are not supported in cluster mode yet",
+        ))
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_vector_read_commands_redirect_on_follower() {
+    let server = TestServer::start_with_leader_gate(None, Some(Arc::new(FollowerGate))).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+    let expected = RespData::Error(Bytes::from_static(b"MOVED 127.0.0.1:7380"));
+
+    for args in [
+        &["VCARD", "vectors"][..],
+        &["VDIM", "vectors"][..],
+        &["VEMB", "vectors", "member"][..],
+        &["VISMEMBER", "vectors", "member"][..],
+        &["VINFO", "vectors"][..],
+        &["VSIM", "vectors", "VALUES", "2", "1", "0"][..],
+    ] {
+        let reply = send_command(&mut stream, args).await;
+        assert_eq!(reply, expected, "vector read {args:?} must redirect");
+    }
+
+    // Non-vector reads are unaffected by the leader gate.
+    let reply = send_command(&mut stream, &["GET", "missing"]).await;
+    assert!(
+        !matches!(reply, RespData::Error(_)),
+        "GET must not be gated, got {reply:?}"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_vector_read_barrier_failure_returns_err() {
+    let gate = LeaderBarrierGate {
+        barrier_result: Err("injected barrier failure".to_string()),
+    };
+    let server = TestServer::start_with_leader_gate(None, Some(Arc::new(gate))).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    let reply = send_command(&mut stream, &["VCARD", "vectors"]).await;
+    assert_eq!(
+        reply,
+        RespData::Error(Bytes::from_static(b"ERR injected barrier failure"))
+    );
+
+    // Non-vector reads skip the barrier entirely.
+    let reply = send_command(&mut stream, &["GET", "missing"]).await;
+    assert!(
+        !matches!(reply, RespData::Error(_)),
+        "GET must not hit the barrier, got {reply:?}"
+    );
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_vector_read_barrier_success_dispatches() {
+    let gate = LeaderBarrierGate {
+        barrier_result: Ok(()),
+    };
+    let server = TestServer::start_with_leader_gate(None, Some(Arc::new(gate))).await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+
+    assert_eq!(
+        send_command(&mut stream, &["VCARD", "vectors"]).await,
+        RespData::Integer(0)
+    );
+    assert_eq!(
+        send_command(
+            &mut stream,
+            &[
+                "VADD", "vectors", "VALUES", "2", "1", "0", "member", "NOQUANT"
+            ],
+        )
+        .await,
+        RespData::Integer(1)
+    );
+    assert_eq!(
+        send_command(&mut stream, &["VCARD", "vectors"]).await,
+        RespData::Integer(1)
+    );
+    assert_eq!(
+        send_command(&mut stream, &["VISMEMBER", "vectors", "member"]).await,
+        RespData::Integer(1)
+    );
 
     server.shutdown().await;
 }

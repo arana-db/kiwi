@@ -39,7 +39,7 @@ use async_trait::async_trait;
 use crate::network_server::NetworkServer;
 use crate::storage_client::StorageClient;
 use crate::tcp::TcpServer;
-use cmd::table::create_command_table;
+use cmd::table::{CommandTableGates, create_command_table_with_gates};
 use executor::CmdExecutorBuilder;
 use runtime::RuntimeManager;
 use std::sync::Arc;
@@ -58,10 +58,17 @@ impl ServerFactory {
         runtime_manager: &RuntimeManager,
         requirepass: Option<String>,
         leader_gate: Option<Arc<dyn raft::leader_gate::LeaderGate>>,
+        gates: CommandTableGates,
     ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
             "tcp" => {
-                match Self::create_network_server(addr, runtime_manager, requirepass, leader_gate) {
+                match Self::create_network_server(
+                    addr,
+                    runtime_manager,
+                    requirepass,
+                    leader_gate,
+                    gates,
+                ) {
                     Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
                     Err(e) => {
                         log::error!("Failed to create NetworkServer: {}", e);
@@ -117,6 +124,7 @@ impl ServerFactory {
         runtime_manager: &RuntimeManager,
         requirepass: Option<String>,
         leader_gate: Option<Arc<dyn raft::leader_gate::LeaderGate>>,
+        gates: CommandTableGates,
     ) -> Result<NetworkServer, Box<dyn std::error::Error>> {
         // Get the storage client from RuntimeManager
         let runtime_storage_client = runtime_manager.storage_client().map_err(|e| {
@@ -131,9 +139,10 @@ impl ServerFactory {
 
         // Create command table with requirepass provider
         let requirepass_for_provider = requirepass.clone();
-        let cmd_table = Arc::new(create_command_table(Arc::new(move || {
-            requirepass_for_provider.clone()
-        })));
+        let cmd_table = Arc::new(create_command_table_with_gates(
+            Arc::new(move || requirepass_for_provider.clone()),
+            gates,
+        ));
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
         NetworkServer::new(

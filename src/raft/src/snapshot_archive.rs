@@ -132,7 +132,7 @@ mod tests {
         let root = unpacked_checkpoint_root(&unpack);
         assert!(root.join("0").join("marker").exists());
         let m = RaftSnapshotMeta::read_from_dir(&root).unwrap();
-        assert_eq!(m.version, 1);
+        assert_eq!(m.version, storage::CURRENT_SNAPSHOT_VERSION);
         assert_eq!(m.last_included_index, 7);
         assert_eq!(m.last_included_term, 3);
     }

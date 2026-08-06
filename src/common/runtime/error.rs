@@ -182,6 +182,11 @@ impl DualRuntimeError {
             StorageError::Unknown { .. } => false,
             StorageError::OptionNone { .. } => false,
             StorageError::RedisErr { .. } => true, // Redis protocol errors are typically recoverable
+            // FLAT query governance: timeouts are transient (retry may
+            // succeed), cancellation and budget exhaustion are deterministic.
+            StorageError::VectorFlatQueryTimeout { .. } => true,
+            StorageError::VectorFlatQueryCancelled { .. } => false,
+            StorageError::VectorFlatScanBudgetExceeded { .. } => false,
             StorageError::LogIndex { message, .. } => {
                 let msg = message.to_lowercase();
                 // Structural/programming errors are not retryable

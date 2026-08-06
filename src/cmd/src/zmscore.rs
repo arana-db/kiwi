@@ -107,7 +107,9 @@ mod tests {
 
     use super::*;
 
-    struct TestStream;
+    struct TestStream {
+        _marker: u8,
+    }
 
     #[async_trait::async_trait]
     impl StreamTrait for TestStream {
@@ -205,14 +207,14 @@ mod tests {
             b"first".to_vec(),
         ];
 
-        let resp2_client = Client::new(Box::new(TestStream));
+        let resp2_client = Client::new(Box::new(TestStream { _marker: 0 }));
         let resp2_reply = run_zmscore(&resp2_client, &storage, &members);
         assert_eq!(
             encode(&resp2_reply, RespVersion::RESP2),
             b"*4\r\n$3\r\n1.5\r\n$-1\r\n$5\r\n-2.25\r\n$3\r\n1.5\r\n"
         );
 
-        let resp3_client = Client::new(Box::new(TestStream));
+        let resp3_client = Client::new(Box::new(TestStream { _marker: 0 }));
         resp3_client.set_argv(&[b"hello".to_vec(), b"3".to_vec()]);
         crate::hello::HelloCmd::default().do_cmd(&resp3_client, Arc::clone(&storage));
         let _hello_reply = resp3_client.take_reply();
@@ -229,7 +231,7 @@ mod tests {
     #[tokio::test]
     async fn zmscore_returns_exact_wrongtype_error_and_expired_key_nils() {
         let (db_path, storage) = open_storage();
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         storage.set(b"zmscore-key", b"not-a-zset").unwrap();
 
         let wrongtype = run_zmscore(&client, &storage, &[b"member".to_vec()]);

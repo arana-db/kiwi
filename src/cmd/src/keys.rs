@@ -89,7 +89,9 @@ mod tests {
     use super::KeysCmd;
     use crate::Cmd;
 
-    struct TestStream;
+    struct TestStream {
+        _marker: u8,
+    }
 
     #[async_trait::async_trait]
     impl StreamTrait for TestStream {
@@ -142,7 +144,7 @@ mod tests {
         storage.set(&invalid_key_a, b"invalid-a").unwrap();
         storage.set(&invalid_key_b, b"invalid-b").unwrap();
         let storage = Arc::new(storage);
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         let command = KeysCmd::new();
 
         client.set_argv(&[b"keys".to_vec(), b"?".to_vec()]);
@@ -173,7 +175,7 @@ mod tests {
         storage.set(b"", b"empty-key").unwrap();
         storage.set(b"literal", b"literal-key").unwrap();
         let storage = Arc::new(storage);
-        let client = Client::new(Box::new(TestStream));
+        let client = Client::new(Box::new(TestStream { _marker: 0 }));
         let command = KeysCmd::new();
 
         assert_eq!(

@@ -23,6 +23,7 @@ use resp::{CommandType, HelloAuthResult, RespCommand, RespData, RespError};
 use storage::storage::Storage;
 use subtle::ConstantTimeEq;
 
+use crate::auth::no_requirepass_provider;
 use crate::{
     AclCategory, Cmd, CmdFlags, CmdMeta, RequirepassProvider, impl_cmd_clone_box, impl_cmd_meta,
 };
@@ -43,7 +44,7 @@ impl Default for HelloCmd {
                 acl_category: AclCategory::CONNECTION | AclCategory::FAST,
                 ..Default::default()
             },
-            requirepass_provider: Arc::new(|| None),
+            requirepass_provider: no_requirepass_provider(),
         }
     }
 }
@@ -138,7 +139,9 @@ mod tests {
     use super::*;
     use client::StreamTrait;
 
-    struct TestStream;
+    struct TestStream {
+        _marker: u8,
+    }
 
     #[async_trait::async_trait]
     impl StreamTrait for TestStream {
@@ -152,7 +155,7 @@ mod tests {
     }
 
     fn make_client() -> Arc<Client> {
-        Arc::new(Client::new(Box::new(TestStream)))
+        Arc::new(Client::new(Box::new(TestStream { _marker: 0 })))
     }
 
     fn make_storage() -> Arc<Storage> {
@@ -225,5 +228,12 @@ mod tests {
         cmd.do_cmd(&client, make_storage());
 
         assert_eq!(client.name().as_slice(), b"my-client");
+    }
+
+    #[test]
+    fn default_requirepass_provider_has_nonzero_trait_object_data_size() {
+        let cmd = HelloCmd::default();
+
+        assert_ne!(std::mem::size_of_val(cmd.requirepass_provider.as_ref()), 0);
     }
 }

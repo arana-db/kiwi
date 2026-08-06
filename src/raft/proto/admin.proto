@@ -39,6 +39,9 @@ service RaftAdminService {
 
     // 移除节点
     rpc RemoveNode (RemoveNodeRequest) returns (RemoveNodeResponse);
+
+    // 查询节点 capability 清单（滚动升级通告）
+    rpc GetNodeCapabilities (GetNodeCapabilitiesRequest) returns (GetNodeCapabilitiesResponse);
 }
 
 // Initialize - 初始化集群
@@ -78,4 +81,14 @@ message RemoveNodeRequest {
 
 message RemoveNodeResponse {
     Response response = 1;
+}
+
+// GetNodeCapabilities - 查询本节点支持的 capability 清单
+message GetNodeCapabilitiesRequest {
+}
+
+message GetNodeCapabilitiesResponse {
+    Response response = 1;
+    uint64 node_id = 2;
+    repeated string capabilities = 3;
 }

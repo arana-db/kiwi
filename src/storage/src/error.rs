@@ -147,6 +147,26 @@ pub enum Error {
         location: Location,
     },
 
+    // FLAT vector query governance failures; kept as distinct variants so
+    // metrics can tell timeout / cancellation / budget exhaustion apart.
+    #[snafu(display("ERR vector flat query timeout"))]
+    VectorFlatQueryTimeout {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("ERR vector flat query cancelled"))]
+    VectorFlatQueryCancelled {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("ERR vector flat query scan budget exceeded"))]
+    VectorFlatScanBudgetExceeded {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("LogIndex error: {}", message))]
     LogIndex {
         message: String,

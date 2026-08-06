@@ -118,6 +118,9 @@ impl CompatibilityManifest {
                     ("issue", difference.issue.as_str()),
                     ("reason", difference.reason.as_str()),
                     ("remove_when", difference.remove_when.as_str()),
+                    ("introduced", difference.introduced.as_str()),
+                    ("affected", difference.affected.as_str()),
+                    ("last_verified_ref", difference.last_verified_ref.as_str()),
                 ] {
                     if value.trim().is_empty() {
                         return Err(ManifestError::EmptyKnownDifferenceField {
@@ -126,6 +129,12 @@ impl CompatibilityManifest {
                             field,
                         });
                     }
+                }
+                if !is_iso_date(&difference.introduced) {
+                    return Err(ManifestError::InvalidKnownDifferenceIntroduced {
+                        index,
+                        difference_index,
+                    });
                 }
             }
             if raw_command.owner.trim().is_empty() {
@@ -309,6 +318,9 @@ pub struct KnownDifference {
     issue: String,
     reason: String,
     remove_when: String,
+    introduced: String,
+    affected: String,
+    last_verified_ref: String,
 }
 
 impl KnownDifference {
@@ -326,6 +338,18 @@ impl KnownDifference {
 
     pub fn remove_when(&self) -> &str {
         &self.remove_when
+    }
+
+    pub fn introduced(&self) -> &str {
+        &self.introduced
+    }
+
+    pub fn affected(&self) -> &str {
+        &self.affected
+    }
+
+    pub fn last_verified_ref(&self) -> &str {
+        &self.last_verified_ref
     }
 }
 
@@ -573,6 +597,9 @@ struct RawKnownDifference {
     issue: String,
     reason: String,
     remove_when: String,
+    introduced: String,
+    affected: String,
+    last_verified_ref: String,
 }
 
 impl From<RawKnownDifference> for KnownDifference {
@@ -582,7 +609,39 @@ impl From<RawKnownDifference> for KnownDifference {
             issue: raw.issue,
             reason: raw.reason,
             remove_when: raw.remove_when,
+            introduced: raw.introduced,
+            affected: raw.affected,
+            last_verified_ref: raw.last_verified_ref,
         }
+    }
+}
+
+fn is_iso_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return false;
+    }
+    if !bytes
+        .iter()
+        .enumerate()
+        .all(|(index, byte)| matches!(index, 4 | 7) || byte.is_ascii_digit())
+    {
+        return false;
+    }
+    let year = value[0..4].parse::<u16>().ok();
+    let month = value[5..7].parse::<u8>().ok();
+    let day = value[8..10].parse::<u8>().ok();
+    match (year, month, day) {
+        (Some(year), Some(month), Some(day)) if (1..=12).contains(&month) => {
+            let max_day = match month {
+                2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+                2 => 28,
+                4 | 6 | 9 | 11 => 30,
+                _ => 31,
+            };
+            (1..=max_day).contains(&day)
+        }
+        _ => false,
     }
 }
 
@@ -626,6 +685,13 @@ pub enum ManifestError {
         index: usize,
         difference_index: usize,
         field: &'static str,
+    },
+    #[error(
+        "commands[{index}].known_differences[{difference_index}].introduced must be an ISO date"
+    )]
+    InvalidKnownDifferenceIntroduced {
+        index: usize,
+        difference_index: usize,
     },
     #[error("commands[{index}].owner must not be empty")]
     EmptyOwner { index: usize },

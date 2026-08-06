@@ -106,7 +106,7 @@ impl Redis {
                 batch.put(ColumnFamilyIndex::MetaCF, &base_meta_key, parsed.value())?;
                 batch.commit()?;
             }
-            DataType::Hash | DataType::Set | DataType::ZSet => {
+            DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                 let mut parsed =
                     crate::format_base_meta_value::ParsedBaseMetaValue::new(&value[..])?;
                 parsed.set_etime(etime);
@@ -1998,7 +1998,7 @@ impl Redis {
         } else {
             match DataType::try_from(value[0])? {
                 DataType::String => !ParsedStringsValue::new(&value[..])?.is_stale(),
-                DataType::Hash | DataType::Set | DataType::ZSet => {
+                DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                     ParsedBaseMetaValue::new(&value[..])?.is_valid()
                 }
                 DataType::List => ParsedListsMetaValue::new(&value[..])?.is_valid(),
@@ -2058,7 +2058,7 @@ impl Redis {
                     log::warn!("failed to update key statistics for {key_str}: {error:?}");
                 }
             }
-            DataType::Hash | DataType::Set | DataType::ZSet => {
+            DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                 let mut parsed = ParsedBaseMetaValue::new(&value[..])?;
                 if !parsed.is_valid() {
                     return Ok(false);
@@ -2134,7 +2134,7 @@ impl Redis {
                     let meta = ParsedListsMetaValue::new(&value_bytes[..])?;
                     !meta.is_stale() && meta.count() > 0
                 }
-                DataType::Hash | DataType::Set | DataType::ZSet => {
+                DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                     let meta = ParsedBaseMetaValue::new(&value_bytes[..])?;
                     !meta.is_stale() && meta.count() > 0
                 }
@@ -2173,6 +2173,7 @@ impl Redis {
             ColumnFamilyIndex::ListsDataCF,
             ColumnFamilyIndex::ZsetsDataCF,
             ColumnFamilyIndex::ZsetsScoreCF,
+            ColumnFamilyIndex::VectorDataCF,
         ];
 
         for cf_index in all_cf_indexes {
@@ -2283,7 +2284,7 @@ impl Redis {
                 DataType::String => ParsedStringsValue::new(&value_bytes[..])
                     .map(|parsed| !parsed.is_stale())
                     .unwrap_or(false),
-                DataType::Hash | DataType::Set | DataType::ZSet => {
+                DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                     crate::format_base_meta_value::ParsedBaseMetaValue::new(&value_bytes[..])
                         .map(|meta| !meta.is_stale() && meta.count() > 0)
                         .unwrap_or(false)

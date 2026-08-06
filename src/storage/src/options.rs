@@ -81,6 +81,8 @@ pub struct StorageOptions {
     pub max_gap: i64,
     /// Memory manager size
     pub mem_manager_size: usize,
+    /// Vector Set feature configuration
+    pub vector: conf::vector_config::VectorConfig,
 }
 
 impl Default for StorageOptions {
@@ -109,6 +111,7 @@ impl Default for StorageOptions {
             raft_timeout_s: u32::MAX,
             max_gap: 1000,
             mem_manager_size: 100_000_000,
+            vector: conf::vector_config::VectorConfig::default(),
         }
     }
 }
@@ -140,6 +143,7 @@ impl StorageOptions {
             small_compaction_threshold: config.small_compaction_threshold,
             small_compaction_duration_threshold: config.small_compaction_duration_threshold,
             db_instance_num: config.db_instance_num,
+            vector: config.vector.clone(),
             ..Self::default()
         }
     }

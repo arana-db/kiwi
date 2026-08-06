@@ -27,6 +27,14 @@ use crate::{impl_cmd_clone_box, impl_cmd_meta};
 
 pub type RequirepassProvider = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 
+fn no_requirepass() -> Option<String> {
+    None
+}
+
+pub(crate) fn no_requirepass_provider() -> RequirepassProvider {
+    Arc::new(no_requirepass as fn() -> Option<String>)
+}
+
 #[derive(Clone)]
 pub struct AuthCmd {
     meta: CmdMeta,
@@ -43,7 +51,7 @@ impl Default for AuthCmd {
                 acl_category: AclCategory::CONNECTION,
                 ..Default::default()
             },
-            requirepass_provider: Arc::new(|| None),
+            requirepass_provider: no_requirepass_provider(),
         }
     }
 }
@@ -118,7 +126,9 @@ mod tests {
     use client::StreamTrait;
     use storage::storage::Storage;
 
-    struct TestStream;
+    struct TestStream {
+        _marker: u8,
+    }
 
     #[async_trait::async_trait]
     impl StreamTrait for TestStream {
@@ -133,7 +143,7 @@ mod tests {
 
     fn make_client() -> Arc<Client> {
         // `Client::new` is fail-closed: a freshly built client is unauthenticated.
-        Arc::new(Client::new(Box::new(TestStream)))
+        Arc::new(Client::new(Box::new(TestStream { _marker: 0 })))
     }
 
     fn make_storage() -> Arc<Storage> {
@@ -222,5 +232,12 @@ mod tests {
         // unauthenticated client could never call it.
         let cmd = AuthCmd::default();
         assert!(cmd.has_flag(CmdFlags::NO_AUTH));
+    }
+
+    #[test]
+    fn default_requirepass_provider_has_nonzero_trait_object_data_size() {
+        let cmd = AuthCmd::default();
+
+        assert_ne!(std::mem::size_of_val(cmd.requirepass_provider.as_ref()), 0);
     }
 }
