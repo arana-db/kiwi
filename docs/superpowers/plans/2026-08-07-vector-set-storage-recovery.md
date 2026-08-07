@@ -2,7 +2,7 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development 逐任务执行，每个生产修改前使用 superpowers:test-driven-development，每个提交前使用 superpowers:verification-before-completion。步骤使用复选框（`- [ ]`）语法跟踪进度。
 
-**目标：** 建立可中断恢复的六 CF→七 CF 升级和 Base rollback，支持已知 Base v1 / Head v2 snapshot，把 snapshot install 改为可继续/可回退的 marker 状态机，用全量 Vector meta/member 校验取代 64 条抽样，并使 VSIM 结果对应一个 key-scoped 合法串行时刻。
+**目标：** 建立可中断恢复的 Base 六 CF→七 CF 升级、已合并 Vector-v1 七 CF manifest v1→v2 升级及对应 source rollback，支持已知 Base v1 / Head v2 snapshot，把 snapshot install 改为可继续/可回退的 marker 状态机，用全量 Vector meta/member 校验取代 64 条抽样，并使 VSIM 结果对应一个 key-scoped 合法串行时刻。
 
 **架构：** Root manifest 是 topology、CF schema、migration 和 rollback 的唯一权威；instance manifest 只保存 instance identity、root digest、incarnation 和 generation allocator。Live open 不再自动创建 CF；只有已分类的 sibling shadow 迁移路径可以创建 `VectorDataCF`。Snapshot 在 stage 中先分类、迁移、全量验证和 close/reopen，再进入 pause/install。
 
@@ -18,6 +18,7 @@
 - 目录 identity 是 `root_manifest_id + migration_transaction_id + instance_id + manifest_digest`，不依赖 filesystem inode/file ID。
 - canonical CF registry 是唯一来源，固定 stable ID 0..6、name、role、comparator、key codec、value codec 和 snapshot read/write version。
 - Base compatibility ref 固定为 `688d905fec31b54aec76f36676f55efd8b5cfa17`；Head 验收使用当前聚合 PR exact Head。
+- 已合并 Vector-v1 compatibility ref 固定为 `733888fc90ad8ef039947e87b08d7500a405954a`；它产生七 CF、每实例 manifest v1、无 Root manifest 的已知 source profile。
 - `data_revision` 在 restore 校验中只验证格式、非零和操作后单调性；不从未携带 revision 的 member record 伪造可重算合同。
 - `RollbackWindowClosed` 在 server 开放 network admission 之前持久化；进入该 phase 后禁止自动恢复 Base backup。
 - `RaftMetadataPersisted` 必须在 current snapshot metadata/data 与 applied/membership durable state 持久化并 reopen 复验后才写入 marker。
@@ -33,6 +34,7 @@
 - Modify: `src/storage/src/redis.rs`
 - Modify: `src/storage/src/storage.rs`
 - Modify: `src/storage/src/checkpoint.rs`
+- Modify: `src/storage/src/batch.rs`
 - Modify: `src/storage/src/logindex/types.rs`
 - Modify: `src/storage/src/redis_strings.rs`
 - Modify: `src/storage/src/lib.rs`
@@ -55,6 +57,8 @@
   - `storage_open_rejects_instance_count_or_slot_mapping_mismatch`
   - `canonical_cf_registry_matches_every_column_family_index_variant`
   - `raft_logindex_flush_and_checkpoint_consumers_match_canonical_registry`
+  - `column_family_handle_and_binlog_wire_indices_use_registry_stable_ids`
+  - `on_binlog_write_rejects_noncanonical_binlogs_before_commit`
 
   ```powershell
   cargo test -p storage --test storage_manifest_v2_test -- --nocapture
@@ -67,7 +71,7 @@
   - 在 workspace 和 storage crate 增加 `sha2 = "0.10"`，用 `format!("{byte:02x}")` 生成 lowercase hex，不增加第二个 hex crate。
   - `storage_schema.rs` 定义 `ColumnFamilySpec`、`ColumnFamilyRole`、`ComparatorId`、`CANONICAL_COLUMN_FAMILIES`。
   - `storage_manifest.rs` 定义 `RootStorageManifestV2`、`InstanceStorageManifestV2`、`MigrationTransaction`、`MigrationPhase`、`ManifestDigest`，保留 instance generation allocator。
-  - `Redis::open`、`create_cf_options`、checkpoint、logindex、flush、Raft CF export 全部消费 registry，删除重复 CF 数组和数字 match。
+  - `Redis::open`、`create_cf_options`、checkpoint、batch handle、binlog validate/apply、logindex、flush、Raft CF export 全部消费 registry，删除重复 CF 数组和独立 wire ID 数字 match。
   - `Storage::open` 在创建 Redis handle 或后台任务前验证 root/instance pairing。
 
 - [ ] **步骤 3：回归与变异检查**
@@ -81,7 +85,7 @@
 
   删除 registry 中 `VectorDataCF`、调换 stable ID 或替换 root digest 时对应测试必须失败。
 
-## Task 2：六 CF→七 CF staged migration、retry 与 Base rollback
+## Task 2：Base 六 CF 与 Vector-v1 七 CF staged migration、retry 与 source rollback
 
 **Requirement：** `REQ-STORAGE-003`、`REQ-STORAGE-005`、`REQ-VECTOR-001`
 
@@ -96,6 +100,7 @@
 - Create: `src/storage/tests/storage_migration_test.rs`
 - Create: `src/storage/tests/support/mod.rs`
 - Create: `src/storage/tests/support/legacy_storage.rs`
+- Create: `src/storage/tests/support/vector_v1_storage.rs`
 - Modify: `src/storage/tests/redis_vector_test.rs`
 
 - [ ] **步骤 1：对每个 durable phase 写入失败测试**
@@ -103,8 +108,9 @@
   新增：
 
   - `legacy_six_cf_storage_migrates_all_instances_and_reopens`
-  - `unknown_cf_or_partial_manifest_fails_before_shadow_creation`
-  - `migration_retries_after_legacy_detected`
+  - `vector_v1_seven_cf_storage_preserves_vector_data_incarnation_and_generation`
+  - `unknown_cf_partial_manifest_or_mixed_v1_v2_fails_before_shadow_creation`
+  - `migration_retries_after_source_detected_for_each_registered_profile`
   - `migration_retries_after_shadow_prepared`
   - `migration_retries_after_each_instance_copied`
   - `migration_retries_after_vector_cf_created_before_instance_manifest`
@@ -123,16 +129,16 @@
   cargo test -p storage --features test-fault-injection --test storage_migration_test -- --nocapture
   ```
 
-  每个测试同时断言 journal phase、source/shadow/backup basename、root/instance digest、实际 CF 集合和 String/Hash/ZSet/TTL 用户数据。
+  每个测试同时断言 source profile、journal phase、source/shadow/backup basename、root/instance digest、实际 CF 集合和 String/Hash/ZSet/TTL 用户数据。`VectorSetV1SevenCf` profile 还必须断言 Vector meta/member、`storage_incarnation` 和 `next_generation` 保持不变。
 
 - [ ] **步骤 2：实现 migration 状态机**
 
-  `storage_migration.rs` 定义 `StorageMigration`、`MigrationLayout`、`MigrationFaultPoint`、`classify_storage_root`、`prepare_or_resume_migration`、`verify_shadow_instances`、`promote_shadow_instances`、`recover_or_rollback_before_admission`、`close_rollback_window`。
+  `storage_migration.rs` 定义 `MigrationSourceProfile::{BaseV1SixCf, VectorSetV1SevenCf}`、`StorageMigration`、`MigrationLayout`、`MigrationFaultPoint`、`classify_storage_root`、`prepare_or_resume_migration`、`verify_shadow_instances`、`promote_shadow_instances`、`recover_or_rollback_before_admission`、`close_rollback_window`。Root journal 必须持久化 source profile，使后续 phase 和 rollback 不依赖目录猜测。
 
   Durable phase 必须与设计一致：
 
   ```text
-  LegacyDetected
+  SourceDetected
   -> ShadowPrepared
   -> InstanceCopied(i)
   -> InstanceUpgraded(i)
@@ -145,10 +151,10 @@
   -> RollbackWindowClosed
   ```
 
-  `InstanceCopied(i)` 和 `InstanceUpgraded(i)` 测试至少使用两个 instance，逐个参数化注入失败，证明恢复不会跳过前一 instance 或重复发布后一 instance。`Committed` 后、`RollbackWindowClosed` 前崩溃必须仍能识别无客户端新写入的 backup 是可验证回退点。
+  两个 source profile 都必须执行完整 phase 矩阵。`InstanceCopied(i)` 和 `InstanceUpgraded(i)` 测试至少使用两个 instance，逐个参数化注入失败，证明恢复不会跳过前一 instance 或重复发布后一 instance。`Committed` 后、`RollbackWindowClosed` 前崩溃必须仍能识别无客户端新写入的 backup 是可验证回退点，并使用与 source profile 对应的 exact old binary reopen/read。
 
   - `StorageOptions::default` 关闭 `create_missing_column_families`。
-  - `Redis` 提供按已分类 CF 严格 reopen 的 helper，只有 shadow migration 创建 `VectorDataCF`。
+  - `Redis` 提供按已分类 CF 严格 reopen 的 helper；只有 `BaseV1SixCf` shadow migration 创建 `VectorDataCF`，`VectorSetV1SevenCf` 必须复制并验证已有 Vector CF，保留 v1 manifest 中的 incarnation/generation，再写绑定 Root digest 的 Instance v2。
   - 切换使用 source→backup、shadow→source，每个 rename 和 phase 文件都执行可用的 file/directory sync。
   - server 只在 storage 完成 reopen 和验证后调用 `close_rollback_window`，随后才开放 network admission。
 
@@ -157,6 +163,7 @@
   ```powershell
   cargo test -p storage --features test-fault-injection --test storage_migration_test -- --nocapture
   cargo test -p storage --features test-fault-injection --test redis_vector_test legacy -- --nocapture
+  cargo test -p storage --features test-fault-injection --test redis_vector_test vector_v1_manifest -- --nocapture
   cargo test -p storage --features test-fault-injection --test redis_vector_test manifest -- --nocapture
   cargo test -p server -- --nocapture
   ```
@@ -400,9 +407,12 @@
   runner 逐项输出且 fail closed：
 
   - `base_688d905f_creates_real_six_cf_nonempty_storage`
+  - `vector_v1_733888fc_creates_real_seven_cf_manifest_v1_storage`
   - `head_upgrades_and_reopens_real_base_storage`
-  - `head_retries_every_migration_phase`
+  - `head_upgrades_and_reopens_real_vector_v1_storage`
+  - `head_retries_every_migration_phase_for_both_source_profiles`
   - `base_reopens_verified_pre_admission_rollback`
+  - `vector_v1_reopens_verified_pre_admission_rollback`
   - `head_rejects_base_rollback_after_rollback_window_closed`
   - `base_v1_snapshot_restores_on_head`
   - `v1_snapshot_with_unknown_or_vector_schema_is_rejected`
@@ -412,16 +422,17 @@
 
 - [ ] **步骤 2：实现 exact-ref 矩阵**
 
-  - 在 Linux 临时目录创建 exact Base worktree/build，不写入当前实现 worktree。
+  - 在 Linux 临时目录分别创建 exact Base 与 exact Vector-v1 worktree/build，不写入当前实现 worktree。
   - Base 写入 String、Hash、ZSet、TTL 并生成 v1 snapshot。
-  - Head 对复制出的目录逐 phase 注入失败，每次检查目录、journal、CF、manifest 和用户数据。
-  - 受控 rollback 后必须使用 Base binary 真实 reopen/read，不使用 Head parser 推断 Base 可读。
+  - Vector-v1 写入 String、Hash、ZSet、TTL、Vector meta/member，并记录每实例 v1 manifest 的 incarnation/generation。
+  - Head 对两种 source profile 的复制目录逐 phase 注入失败，每次检查目录、journal、CF、manifest 和用户数据。
+  - 受控 rollback 后必须分别使用 Base binary 或 Vector-v1 binary 真实 reopen/read，不使用 Head parser 推断旧格式可读。
   - cleanup 移除临时 worktree、build 输出和 server 进程，并在退出前检查无遗留。
 
 - [ ] **步骤 3：Linux 验收**
 
   ```powershell
-  wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && ./scripts/test-vector-storage-compat.sh --base-ref 688d905fec31b54aec76f36676f55efd8b5cfa17 --head-ref "$(git rev-parse HEAD)"'
+  wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && ./scripts/test-vector-storage-compat.sh --base-ref 688d905fec31b54aec76f36676f55efd8b5cfa17 --vector-v1-ref 733888fc90ad8ef039947e87b08d7500a405954a --head-ref "$(git rev-parse HEAD)"'
   ```
 
 ## 工作流最终门禁

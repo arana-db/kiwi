@@ -50,31 +50,25 @@ pub type Result<T, E = LogIndexError> = std::result::Result<T, E>;
 /// This module provides centralized CF name definitions to avoid
 /// inconsistencies across db_access.rs, event_listener.rs, and cf_tracker.rs.
 pub mod cf_metadata {
+    use crate::storage_schema::{CANONICAL_COLUMN_FAMILIES, CANONICAL_COLUMN_FAMILY_NAMES};
+
     /// Number of column families
-    pub const COLUMN_FAMILY_COUNT: usize = 7;
+    pub const COLUMN_FAMILY_COUNT: usize = CANONICAL_COLUMN_FAMILIES.len();
 
     /// CF names as byte slices (for comparison with rocksdb CF handles)
     /// Note: Using &[u8] instead of &[u8; N] to allow variable-length names
     pub const CF_NAMES: &[&[u8]] = &[
-        b"default",
-        b"hash_data_cf",
-        b"set_data_cf",
-        b"list_data_cf",
-        b"zset_data_cf",
-        b"zset_score_cf",
-        b"vector_data_cf",
+        CANONICAL_COLUMN_FAMILIES[0].name.as_bytes(),
+        CANONICAL_COLUMN_FAMILIES[1].name.as_bytes(),
+        CANONICAL_COLUMN_FAMILIES[2].name.as_bytes(),
+        CANONICAL_COLUMN_FAMILIES[3].name.as_bytes(),
+        CANONICAL_COLUMN_FAMILIES[4].name.as_bytes(),
+        CANONICAL_COLUMN_FAMILIES[5].name.as_bytes(),
+        CANONICAL_COLUMN_FAMILIES[6].name.as_bytes(),
     ];
 
     /// CF names as &str (for convenience in some contexts)
-    pub const CF_NAMES_STR: &[&str] = &[
-        "default",
-        "hash_data_cf",
-        "set_data_cf",
-        "list_data_cf",
-        "zset_data_cf",
-        "zset_score_cf",
-        "vector_data_cf",
-    ];
+    pub const CF_NAMES_STR: &[&str] = &CANONICAL_COLUMN_FAMILY_NAMES;
 
     // Compile-time guards: ensure arrays match COLUMN_FAMILY_COUNT.
     const _: () = assert!(CF_NAMES.len() == COLUMN_FAMILY_COUNT);

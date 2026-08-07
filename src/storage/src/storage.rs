@@ -30,6 +30,7 @@ use crate::expiration_manager::ExpirationManager;
 use crate::format_base_value::DataType;
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
+use crate::storage_manifest::{load_or_create_root_manifest, validate_existing_instance_manifests};
 use crate::storage_scan::{SCAN_CURSOR_STATE_CAPACITY, ScanCursorState};
 use crate::{ColumnFamilyIndex, Redis, StorageOptions, data_type_to_tag};
 use conf::raft_type::{Binlog, OperateType};
@@ -195,20 +196,18 @@ impl Storage {
         options: Arc<StorageOptions>,
         db_path: impl AsRef<Path>,
     ) -> Result<mpsc::Receiver<BgTask>> {
+        let db_path = db_path.as_ref();
+        let root_load = load_or_create_root_manifest(db_path, self.db_instance_num)?;
+        validate_existing_instance_manifests(
+            db_path,
+            &root_load.manifest,
+            root_load.created_this_call,
+        )?;
+        let root_manifest = root_load.manifest;
+
         let (handler, receiver) = BgTaskHandler::new();
         let handler_arc = Arc::new(handler);
-        self.bg_task_handler = Some(Arc::clone(&handler_arc));
-
-        // Initialize expiration manager
-        let expiration_manager = Arc::new(ExpirationManager::new(Arc::clone(&handler_arc)));
-        let cleanup_task = expiration_manager.start_cleanup_task();
-        self.expiration_manager = Some(expiration_manager);
-        self.expiration_cleanup_task = Some(cleanup_task);
-
-        let db_path = db_path.as_ref();
-        let handler_for_redis = Arc::clone(&handler_arc);
-        self.scan_cursor_states.clear();
-        self.insts.clear();
+        let mut opened_instances = Vec::with_capacity(self.db_instance_num);
         for i in 0..self.db_instance_num {
             let sub_path = db_path.join(i.to_string());
             let sub_path_str = match sub_path.to_str() {
@@ -223,18 +222,30 @@ impl Storage {
             let mut inst = Redis::new(
                 options.clone(),
                 i as i32,
-                Arc::clone(&handler_for_redis),
+                Arc::clone(&handler_arc),
                 Arc::clone(&self.lock_mgr),
             );
-            if let Err(e) = inst.open(sub_path_str) {
+            if let Err(e) = inst.open_bound(
+                sub_path_str,
+                i as u32,
+                &root_manifest,
+                root_load.created_this_call,
+            ) {
                 log::error!("open RocksDB{i} failed: {e:?}");
-                self.insts.clear();
-                self.is_opened.store(false, Ordering::SeqCst);
                 return Err(e);
             }
             log::info!("open RocksDB{i} success!");
-            self.insts.push(Arc::new(inst));
+            opened_instances.push(Arc::new(inst));
         }
+
+        let expiration_manager = Arc::new(ExpirationManager::new(Arc::clone(&handler_arc)));
+        let cleanup_task = expiration_manager.start_cleanup_task();
+
+        self.scan_cursor_states.clear();
+        self.insts = opened_instances;
+        self.bg_task_handler = Some(handler_arc);
+        self.expiration_manager = Some(expiration_manager);
+        self.expiration_cleanup_task = Some(cleanup_task);
         self.is_opened.store(true, Ordering::SeqCst);
 
         Ok(receiver)
@@ -631,21 +642,12 @@ impl Storage {
         let mut batch = instance.create_rocks_batch()?;
 
         for entry in &binlog.entries {
-            let cf_idx = match entry.cf_idx {
-                0 => ColumnFamilyIndex::MetaCF,
-                1 => ColumnFamilyIndex::HashesDataCF,
-                2 => ColumnFamilyIndex::SetsDataCF,
-                3 => ColumnFamilyIndex::ListsDataCF,
-                4 => ColumnFamilyIndex::ZsetsDataCF,
-                5 => ColumnFamilyIndex::ZsetsScoreCF,
-                6 => ColumnFamilyIndex::VectorDataCF,
-                _ => {
-                    return Err(crate::error::Error::RedisErr {
-                        message: format!("Invalid column family index: {}", entry.cf_idx),
-                        location: snafu::location!(),
-                    });
+            let cf_idx = ColumnFamilyIndex::try_from(entry.cf_idx).map_err(|()| {
+                crate::error::Error::RedisErr {
+                    message: format!("Invalid column family index: {}", entry.cf_idx),
+                    location: snafu::location!(),
                 }
-            };
+            })?;
 
             match entry.op_type {
                 OperateType::Put => {
@@ -772,7 +774,11 @@ mod append_log_fn_tests {
     use super::*;
     use crate::batch::AppendLogFn;
     use crate::format_base_key::BaseMetaKey;
+    use crate::format_lists_data_key::ListsDataKey;
+    use crate::format_member_data_key::MemberDataKey;
     use crate::format_strings_value::StringValue;
+    use crate::format_vector_member_key::VectorMemberDataKey;
+    use crate::format_zset_score_key::ZSetsScoreKey;
     use crate::slot_indexer::key_to_slot_id;
     use conf::raft_type::{Binlog, BinlogEntry, BinlogResponse, OperateType};
     use std::sync::Arc;
@@ -795,7 +801,7 @@ mod append_log_fn_tests {
             db_id,
             slot_idx: key_to_slot_id(key) as u32,
             entries: vec![BinlogEntry {
-                cf_idx: ColumnFamilyIndex::MetaCF as u32,
+                cf_idx: ColumnFamilyIndex::MetaCF.stable_id(),
                 op_type: OperateType::Put,
                 key: BaseMetaKey::new(key)
                     .encode()
@@ -803,6 +809,68 @@ mod append_log_fn_tests {
                     .to_vec(),
                 value: Some(StringValue::new(value.to_vec()).encode().to_vec()),
             }],
+        }
+    }
+
+    fn canonical_cf_mapping_binlog(key: &[u8]) -> Binlog {
+        let put = |cf_idx: ColumnFamilyIndex, key: Vec<u8>| BinlogEntry {
+            cf_idx: cf_idx.stable_id(),
+            op_type: OperateType::Put,
+            key,
+            value: Some(b"value".to_vec()),
+        };
+        Binlog {
+            db_id: 0,
+            slot_idx: key_to_slot_id(key) as u32,
+            entries: vec![
+                put(
+                    ColumnFamilyIndex::MetaCF,
+                    BaseMetaKey::new(key).encode().unwrap().to_vec(),
+                ),
+                put(
+                    ColumnFamilyIndex::HashesDataCF,
+                    MemberDataKey::new(key, 1, b"hash")
+                        .encode()
+                        .unwrap()
+                        .to_vec(),
+                ),
+                put(
+                    ColumnFamilyIndex::SetsDataCF,
+                    MemberDataKey::new(key, 1, b"set")
+                        .encode()
+                        .unwrap()
+                        .to_vec(),
+                ),
+                put(
+                    ColumnFamilyIndex::ListsDataCF,
+                    ListsDataKey::new(key, 1, 1).encode().unwrap().clone(),
+                ),
+                put(
+                    ColumnFamilyIndex::ZsetsDataCF,
+                    MemberDataKey::new(key, 1, b"zset")
+                        .encode()
+                        .unwrap()
+                        .to_vec(),
+                ),
+                put(
+                    ColumnFamilyIndex::ZsetsScoreCF,
+                    ZSetsScoreKey::new(key, 1, 1.0, b"member")
+                        .encode()
+                        .unwrap()
+                        .to_vec(),
+                ),
+                put(
+                    ColumnFamilyIndex::VectorDataCF,
+                    VectorMemberDataKey {
+                        key,
+                        storage_incarnation: 1,
+                        generation_sequence: 1,
+                        element: b"vector",
+                    }
+                    .encode_full()
+                    .unwrap(),
+                ),
+            ],
         }
     }
 
@@ -879,6 +947,10 @@ mod append_log_fn_tests {
             storage.on_binlog_write(&malformed_key, 8).is_err(),
             "column-family key layout must be validated"
         );
+
+        storage
+            .on_binlog_write(&canonical_cf_mapping_binlog(b"all-cfs"), 9)
+            .expect("Raft apply must accept every canonical registry wire ID");
 
         storage.shutdown().await;
         storage.close();

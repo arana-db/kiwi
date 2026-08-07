@@ -37,9 +37,8 @@ use parking_lot::Mutex;
 
 use crate::format_vector::VECTOR_VALUE_FORMAT;
 use crate::logindex::LogIndexAndSequenceCollector;
-use crate::redis::ColumnFamilyIndex;
 use crate::storage_manifest::StorageManifest;
-use crate::{sync_directory, sync_parent_directory};
+use crate::{canonical_column_family_names, sync_directory, sync_parent_directory};
 
 /// File name for JSON metadata at the checkpoint root (not OpenRaft's `SnapshotMeta`).
 pub const RAFT_SNAPSHOT_META_FILE: &str = "__raft_snapshot_meta";
@@ -100,9 +99,9 @@ pub const STORAGE_SCHEMA_VERSION: u32 = 1;
 /// Column families every instance of the checkpoint must contain, in
 /// declaration order.
 pub fn expected_column_families() -> Vec<String> {
-    ColumnFamilyIndex::ALL
-        .iter()
-        .map(|cf| cf.name().to_string())
+    canonical_column_family_names()
+        .into_iter()
+        .map(str::to_string)
         .collect()
 }
 

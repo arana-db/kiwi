@@ -27,7 +27,7 @@
 
 | 工作流 | 详细计划 | 负责的主要合同 |
 |---|---|---|
-| Storage / Snapshot / VSIM | [2026-08-07-vector-set-storage-recovery.md](2026-08-07-vector-set-storage-recovery.md) | Root/Instance Manifest v2、六 CF→七 CF staged migration、Base rollback、v1/v2 snapshot、install marker 恢复、全量 Vector 一致性、VSIM 单一串行视图 |
+| Storage / Snapshot / VSIM | [2026-08-07-vector-set-storage-recovery.md](2026-08-07-vector-set-storage-recovery.md) | Root/Instance Manifest v2、Base 六 CF 与已合并 Vector-v1 七 CF staged migration、对应 source rollback、v1/v2 snapshot、install marker 恢复、全量 Vector 一致性、VSIM 单一串行视图 |
 | Runtime / Protocol | [2026-08-07-vector-set-runtime-protocol.md](2026-08-07-vector-set-runtime-protocol.md) | `Bytes` 无拷贝 admission、Config 真实传递、gate 顺序、VADD 类型化错误、RESP2/RESP3 独立 raw 客户端 |
 | Trusted Oracle / CI / Security | [2026-08-07-vector-set-trusted-oracle-ci.md](2026-08-07-vector-set-trusted-oracle-ci.md) | Oracle v3 schema、受控双构建、artifact equality、runtime lease、cleanup-before-publish、required differential/cluster jobs、capability 收敛、rkyv sentinel |
 

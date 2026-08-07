@@ -27,7 +27,7 @@ current_work_package_status: in-progress
 current_plan: docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md
 current_issue: 421
 current_pr: 422
-next_safe_action: execute-wp8-storage-manifest-v2-red-test
+next_safe_action: execute-wp8-storage-migration-red-tests
 ---
 
 # Kiwi 架构设计与 SDD 开发计划
@@ -1462,7 +1462,7 @@ Requirement：
 
 主要范围：
 
-- Root/Instance StorageManifest v2、真实六 CF → 七 CF staged migration、故障恢复和受控 Base rollback；
+- Root/Instance StorageManifest v2、真实 Base 六 CF → 七 CF staged migration、已合并 Vector-v1 七 CF manifest v1 → v2 staged migration、故障恢复和与 source profile 对应的受控 rollback；
 - Base v1/Head v2 snapshot 兼容、SnapshotInstallMarker 状态机、全量 Vector meta/member/incarnation 校验；
 - VSIM key-scoped session、单一串行时刻和确定性并发 barrier；
 - network runtime 深拷贝前的无分配 Vector admission，以及 VADD 类型化错误优先级；
@@ -1706,9 +1706,9 @@ docs/sdd/WP-N/
 | WP0 exact-main verification | passed |
 | Required mode | Cache OFF |
 | M7/M8 | frozen |
-| Next safe action | 在 WP8 Storage 独立实现 worktree 写入 Manifest v2 失败测试并观察 RED |
+| Next safe action | 在 WP8 Storage 独立实现 worktree 为 BaseV1SixCf 与 VectorSetV1SevenCf 写入 staged migration durable-phase 失败测试并观察 RED |
 
-PR #417 已修复 WP0 固定提交区间验证；main@688d905fec31b54aec76f36676f55efd8b5cfa17 的 ci run 30801285622 成功，当前 baseline commit 733888fc90ad8ef039947e87b08d7500a405954a 是其后继。WP0 已进入 accepted。PR #356 随后把 VectorSet Phase 1 合入主线，用户通过 D019 授权用 Draft PR #422 聚合 #415、#418、#421 的全量闭环。书面设计已确认，逐文件实施计划已建立，独立 `codex/wp8-storage-recovery` worktree 已建立，WP8 当前为 in-progress；下一安全动作是写入 Manifest v2 的第一个失败测试。
+PR #417 已修复 WP0 固定提交区间验证；main@688d905fec31b54aec76f36676f55efd8b5cfa17 的 ci run 30801285622 成功，当前 baseline commit 733888fc90ad8ef039947e87b08d7500a405954a 是其后继。WP0 已进入 accepted。PR #356 随后把 VectorSet Phase 1 合入主线，用户通过 D019 授权用 Draft PR #422 聚合 #415、#418、#421 的全量闭环。书面设计已确认，逐文件实施计划已建立，独立 `codex/wp8-storage-recovery` worktree 已建立，WP8 当前为 in-progress；Task 1 的 canonical CF registry 与 Root/Instance Manifest v2 已完成 TDD、变异验证、规格复审和代码质量复审，下一安全动作是为 BaseV1SixCf 与 VectorSetV1SevenCf 写入 staged migration durable-phase 失败测试。
 
 ## 18. 决策门禁
 

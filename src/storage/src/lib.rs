@@ -47,6 +47,7 @@ mod expiration_manager;
 mod merge_iterator;
 pub mod slot_indexer;
 mod statistics;
+mod storage_schema;
 mod util;
 
 mod batch;
@@ -88,14 +89,23 @@ pub use format_base_key::BaseMetaKey;
 pub use format_base_value::*;
 pub use format_zset_score_key::{ScoreMember, ZsetScoreMember};
 pub use options::StorageOptions;
-pub use redis::{ColumnFamilyIndex, GenerationProvider, Redis, TypeCheckState};
+pub use redis::{GenerationProvider, Redis, TypeCheckState};
 pub use redis_vectors::VectorDataSample;
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use storage_impl::BeforeOrAfter;
-pub use storage_manifest::STORAGE_MANIFEST_FILE;
 #[cfg(any(test, feature = "test-fault-injection"))]
 pub use storage_manifest::fail_next_storage_manifest_persist;
+pub use storage_manifest::{
+    INSTANCE_STORAGE_MANIFEST_VERSION, InstanceStorageManifestV2, ManifestDigest, MigrationPhase,
+    MigrationSourceProfile, MigrationTransaction, ROOT_STORAGE_MANIFEST_FILE,
+    ROOT_STORAGE_MANIFEST_VERSION, RootStorageManifestV2, SLOT_MAPPING_VERSION,
+    STORAGE_MANIFEST_FILE, STORAGE_SCHEMA_VERSION_V2, slot_mapping_digest,
+};
+pub use storage_schema::{
+    CANONICAL_COLUMN_FAMILIES, CANONICAL_COLUMN_FAMILY_NAMES, ColumnFamilyIndex, ColumnFamilyRole,
+    ColumnFamilySpec, ComparatorId, canonical_column_family_names,
+};
 pub use util::{safe_cleanup_test_db, unique_test_db_path};
 pub use vector::{
     CanonicalVector, PreparedVectorQuery, QuantizationType, VectorHit, VectorInfo, VectorQuery,

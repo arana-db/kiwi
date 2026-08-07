@@ -113,7 +113,7 @@ RootStorageManifestV2
   - key_codec_version / value_codec_version
 - snapshot_read_min_version / snapshot_read_max_version / snapshot_write_version
 - migration transaction
-  - transaction_id / from_schema / to_schema / phase / current_instance
+  - transaction_id / from_schema / to_schema / source_profile / phase / current_instance
   - source_name / shadow_name / backup_name
 - rollback_floor / features_used
 - created_by / last_migrated_by
@@ -133,7 +133,7 @@ InstanceStorageManifestV2
 合法 phase：
 
 ```text
-LegacyDetected
+SourceDetected
 → ShadowPrepared
 → InstanceCopied(i)
 → InstanceUpgraded(i)
@@ -148,16 +148,16 @@ LegacyDetected
 
 合同：
 
-1. `LegacyDetected` 只接受登记的真实 Base 六 CF fingerprint；未知 CF、comparator、部分 manifest 或未来 schema fail closed。
+1. `SourceDetected` 只接受两个登记 profile：`BaseV1SixCf` 是 exact Base `688d905fec31b54aec76f36676f55efd8b5cfa17` 产生的真实六 CF、无 Vector 数据 source；`VectorSetV1SevenCf` 是 exact merged Vector-v1 `733888fc90ad8ef039947e87b08d7500a405954a` 产生的真实七 CF、每实例 manifest v1、无 Root manifest source。未知 CF/comparator、缺失或混合 v1/v2 manifest、未来 schema 一律 fail closed。
 2. `ShadowPrepared` 为每个 instance 创建 sibling shadow，并 fsync root manifest；原目录保持不变。
 3. `InstanceCopied(i)` 使用 RocksDB checkpoint/copy 创建 shadow，不能在原目录增加 CF。
-4. `InstanceUpgraded(i)` 只在 shadow 中创建 `VectorDataCF`，写入绑定 root manifest digest 的 instance manifest。
-5. `AllInstancesVerified` 关闭并重新打开全部 shadow，校验普通数据、TTL、精确 CF 集、checksum 和 instance identity；任一失败不启动服务。
+4. `InstanceUpgraded(i)` 对 `BaseV1SixCf` 只在 shadow 中创建 `VectorDataCF`；对 `VectorSetV1SevenCf` 不重建已有 Vector CF，必须保留 v1 manifest 的 `storage_incarnation` 和 `next_generation`。两种 profile 都写入绑定 root manifest digest 的 Instance v2。
+5. `AllInstancesVerified` 关闭并重新打开全部 shadow，校验普通数据、TTL、精确 CF 集、checksum 和 instance identity；`VectorSetV1SevenCf` 还要全量验证 Vector meta/member 与 incarnation/generation；任一失败不启动服务。
 6. `SwitchPrepared` 持久化切换意图。
 7. `OldMovedToBackup(i)` 和 `ShadowPromoted(i)` 每次 rename 后都 fsync parent 并持久化 phase；在所有 instance 完成前不得发布 `Storage`。
 8. `NewStorageOpened` 使用 Head 对正式目录做真实 reopen，并验证所有 instance 属于同一 transaction/root digest。
 9. `Committed` 只说明新目录可启动；此时尚未接受客户端写入。
-10. 开放网络 admission 前必须持久化 `RollbackWindowClosed`。从这一点开始，旧 backup 会与任何新写入分叉，不能再自动作为无损 Base rollback；需要逻辑导出/导入或显式降级工具。
+10. 开放网络 admission 前必须持久化 `RollbackWindowClosed`。从这一点开始，旧 backup 会与任何新写入分叉，不能再自动作为无损 source rollback；需要逻辑导出/导入或显式降级工具。窗口关闭前的 rollback 验证必须使用 source profile 对应的 exact Base 或 Vector-v1 binary 真实 reopen/read。
 
 恢复不能只根据目录存在与否猜测。root manifest phase、transaction ID、目录 identity、instance manifest digest 和实际目录组合必须一致。任一阶段必须至少保留一个经过验证、可启动的数据副本；不得删除唯一有效副本。
 
