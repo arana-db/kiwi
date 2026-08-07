@@ -3,7 +3,7 @@
 ## 文档状态
 
 - 日期：2026-08-06
-- 状态：待用户确认书面设计
+- 状态：已确认，实施计划已建立
 - 基线：`arana-db/kiwi main@733888fc90ad8ef039947e87b08d7500a405954a`
 - 来源：[PR #356](https://github.com/arana-db/kiwi/pull/356) 合并后的代码事实
 - Primary Issue：[Issue #421](https://github.com/arana-db/kiwi/issues/421)
@@ -467,9 +467,59 @@ cargo tree --locked --offline --target all --all-features -i rkyv@0.7.46
 ## 15. PR 生命周期
 
 1. 本文、SDD、Requirement、Decision 和 validator 先进入 Draft PR。
-2. 用户确认本文后，编写精确 implementation plan。
+2. 用户已确认本文；精确 implementation plan 由 [VectorSet 合并后全量闭环实施总计划](../plans/2026-08-07-vector-set-post-merge-remediation.md) 和三个下属工作流计划固定。
 3. 每个 workstream 在独立子任务/worktree 中按 TDD 实施并经规格、质量双审查。
 4. 每批提交更新 Draft PR 的验证矩阵，不提前改为 Ready。
 5. 最终 Head 重跑全部 required Linux、Oracle、cluster、migration 和 recovery 门禁。
 6. 无未解决 P0/P1、所有依赖 Issue 验收闭合、GitHub checks 和 merge policy 满足后，才能请求用户决定是否标记 Ready。
 7. merge 始终需要用户另行授权。
+
+## 16. 实施期精确合同
+
+详细源码映射发现了设计中必须在编码前消除的多义性。以下条款是已确认方案 C 的实施级收窄，不扩大产品范围。
+
+### 16.1 Manifest digest 与目录 identity
+
+- Root/instance manifest v2 使用固定字段顺序的 Rust struct 序列化为 compact JSON。
+- Digest 输入是不含 `digest` 字段的完整 JSON bytes，算法为 SHA-256，文本编码为 lowercase hexadecimal。
+- Manifest 字段不使用序列化顺序不稳定的 map 承载 digest 内容；可变列表必须先按 stable ID 或 byte-order key 排序。
+- 目录 identity 是 root manifest UUID、migration transaction UUID、instance UUID 和 manifest digest 的组合，不依赖 inode、Windows file ID 或目录路径本身。
+
+### 16.2 Snapshot `RaftMetadataPersisted`
+
+`RaftMetadataPersisted` 只在以下条件全部成立后写入 marker：
+
+1. 新 storage 已 close/reopen 并通过 root/instance digest 和全量 Vector 一致性验证。
+2. current snapshot metadata/data 已通过项目的 durable API 持久化。
+3. state-machine applied index/membership 的 durable 状态已写入并在重新读取后与 snapshot metadata 一致。
+4. 不把内存字段赋值或未 fsync 的文件当作 durable evidence。
+
+### 16.3 Oracle v3 与 artifact kind
+
+- 正式 schema 为 `kiwi-redis-oracle-build/v3` 和 `kiwi-redis-oracle-provenance/v3`。
+- 固定 recipe ID 为 `redis-8.8.1-linux-release-v3`，变量包含 `BUILD_TLS=no`、`MALLOC=libc`、`DEBUG=`、`DEBUG_FLAGS=`、`ENABLE_LTO=`、`OPT=-O3 -fno-omit-frame-pointer` 和 `-j 1`。
+- Artifact kind 只允许 `regular` 和受约束的 `symlink`。Symlink 目标必须是 source-relative path，不得绝对或逃出 source root，不得成环，解析深度不超过 8，最终必须指向 manifest 内的 regular file。
+- Primary/rebuild 比较要求所有 entry 的 path、kind、mode、size、SHA-256 或 symlink target 完全相等。
+
+### 16.4 Differential runtime lease
+
+Differential 和 cleanup-before-publish 使用同一 verifier supervisor：
+
+```text
+primary/rebuild equality
+→ start held rebuild Redis
+→ validate INFO/PID/file identity/hash
+→ run bounded differential callback
+→ stop and reap callback/Kiwi/Redis process groups
+→ remove runtime/checkout/log/temp resources
+→ final identity revalidation
+→ fsync/close/atomic provenance publish
+```
+
+不允许在 cleanup 前发布 provenance，也不允许 cleanup 后从未绑定复制品重新启动 Oracle。
+
+### 16.5 Required collection registry
+
+- `tests/compat/redis-8.8.1/vector-required-jobs.yaml` 只保存 required CI selection：job ID、test module、pytest marker、protocols、command scope、expected node IDs/item count、manifest profile 和 fast-job ownership。
+- 产品 known difference 和 operational-limit difference 仍只保存在 Redis compatibility manifest，不在 required-jobs registry 复制一份。
+- Rust contract test 必须证明 required-jobs command scope 与 manifest 的 Vector required/known-difference scope 完全相等，并证明实际 pytest node IDs/count 与 registry 一致。

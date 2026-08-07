@@ -3,8 +3,8 @@ document: kiwi-sdd
 title: Kiwi 架构设计与 SDD 开发计划
 status: accepted-design
 authority: sole-project-entry
-version: 3
-updated_at: 2026-08-06
+version: 4
+updated_at: 2026-08-07
 baseline_repository: arana-db/kiwi
 baseline_branch: main
 baseline_ref: 733888fc90ad8ef039947e87b08d7500a405954a
@@ -22,12 +22,12 @@ redis_oracle_ref: 77b6c308396c9700672390a210143a8496fb4b10
 required_runtime_mode: cache-off
 executable_scope: M0-M6
 long_term_scope: M0-M10
-current_work_package: WP0
-current_work_package_status: accepted
-current_plan: .planning/SDD.md#wp0
-current_issue: 413
-current_pr: 414
-next_safe_action: review-and-confirm-wp8-vector-remediation-design
+current_work_package: WP8
+current_work_package_status: ready
+current_plan: docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md
+current_issue: 421
+current_pr: 422
+next_safe_action: create-wp8-storage-implementation-worktree
 ---
 
 # Kiwi 架构设计与 SDD 开发计划
@@ -1416,13 +1416,15 @@ Requirement：
 
 ### WP8：VectorSet 合并后生命周期、兼容性与门禁闭环
 
-状态：accepted-design。
+状态：ready。
 
 Primary Issue handling：
 
 - Primary Issue：[#421](https://github.com/arana-db/kiwi/issues/421)。
 - [PR #356](https://github.com/arana-db/kiwi/pull/356) 是已合并事实和缺口来源，不作为当前开放 Issue。
 - 只有 #415、#418、#421 的 required acceptance 与本工作包退出门禁全部闭合时，聚合 PR 才能使用 `Fixes`。
+
+Implementation PR：[#422](https://github.com/arana-db/kiwi/pull/422)。
 
 Parent / Related：
 
@@ -1456,7 +1458,7 @@ Requirement：
 - exact main 包含 PR #356，即 733888fc90ad8ef039947e87b08d7500a405954a 或其后继；
 - D019 明确授权在一个 Draft PR 中聚合 #415 Trusted Oracle 和 WP8 产品闭环；
 - 复用 WP1-WP7 已定义的 Oracle、manifest/topology、runtime、Raft、snapshot、Redis semantics 和 fault-gate 合同，并按本文限定范围逐项实施和验收；D019 不要求这些工作包的无关范围先行 accepted；
-- 进入 ready 前，用户确认 [VectorSet 合并后全量闭环设计](../docs/superpowers/specs/2026-08-06-vector-set-post-merge-remediation-design.md)，并建立逐文件 implementation plan。
+- 用户已确认 [VectorSet 合并后全量闭环设计](../docs/superpowers/specs/2026-08-06-vector-set-post-merge-remediation-design.md)；[VectorSet 合并后全量闭环实施总计划](../docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md) 和三个逐文件工作流计划已建立。
 
 主要范围：
 
@@ -1695,18 +1697,18 @@ docs/sdd/WP-N/
 | 字段 | 当前值 |
 |---|---|
 | Baseline | main@733888fc90ad8ef039947e87b08d7500a405954a |
-| Current milestone | M0 |
-| Current work package | WP0 |
-| Status | accepted |
-| Current plan | [.planning/SDD.md 的 WP0 章节](#wp0) |
-| Current Issue | [#413](https://github.com/arana-db/kiwi/issues/413) |
-| Current PR | [#414](https://github.com/arana-db/kiwi/pull/414) |
+| Current milestone | M0-M6 / WP8 |
+| Current work package | WP8 |
+| Status | ready |
+| Current plan | [WP8 VectorSet 合并后全量闭环实施总计划](../docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md) |
+| Current Issue | [#421](https://github.com/arana-db/kiwi/issues/421) |
+| Current PR | [#422](https://github.com/arana-db/kiwi/pull/422) |
 | WP0 exact-main verification | passed |
 | Required mode | Cache OFF |
 | M7/M8 | frozen |
-| Next safe action | 审阅并确认 WP8 VectorSet 合并后全量闭环设计；确认后建立实施计划和独立实现任务 |
+| Next safe action | 创建 WP8 Storage 独立实现 worktree 并按 TDD 执行第一个失败测试 |
 
-PR #417 已修复 WP0 固定提交区间验证；main@688d905fec31b54aec76f36676f55efd8b5cfa17 的 ci run 30801285622 成功，当前 baseline commit 733888fc90ad8ef039947e87b08d7500a405954a 是其后继。WP0 已进入 accepted。PR #356 随后把 VectorSet Phase 1 合入主线，用户通过 D019 授权用一个 Draft PR 聚合 #415、#418、#421 的全量闭环；源码实现仍必须等待书面设计确认和逐文件 plan。
+PR #417 已修复 WP0 固定提交区间验证；main@688d905fec31b54aec76f36676f55efd8b5cfa17 的 ci run 30801285622 成功，当前 baseline commit 733888fc90ad8ef039947e87b08d7500a405954a 是其后继。WP0 已进入 accepted。PR #356 随后把 VectorSet Phase 1 合入主线，用户通过 D019 授权用 Draft PR #422 聚合 #415、#418、#421 的全量闭环。书面设计已确认，逐文件实施计划已建立，WP8 当前为 ready；下一安全动作是建立独立 Storage 实现 worktree。
 
 ## 18. 决策门禁
 
