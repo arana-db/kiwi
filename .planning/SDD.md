@@ -23,11 +23,11 @@ required_runtime_mode: cache-off
 executable_scope: M0-M6
 long_term_scope: M0-M10
 current_work_package: WP8
-current_work_package_status: ready
+current_work_package_status: in-progress
 current_plan: docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md
 current_issue: 421
 current_pr: 422
-next_safe_action: create-wp8-storage-implementation-worktree
+next_safe_action: execute-wp8-storage-manifest-v2-red-test
 ---
 
 # Kiwi 架构设计与 SDD 开发计划
@@ -1416,7 +1416,7 @@ Requirement：
 
 ### WP8：VectorSet 合并后生命周期、兼容性与门禁闭环
 
-状态：ready。
+状态：in-progress。
 
 Primary Issue handling：
 
@@ -1699,16 +1699,16 @@ docs/sdd/WP-N/
 | Baseline | main@733888fc90ad8ef039947e87b08d7500a405954a |
 | Current milestone | M0-M6 / WP8 |
 | Current work package | WP8 |
-| Status | ready |
+| Status | in-progress |
 | Current plan | [WP8 VectorSet 合并后全量闭环实施总计划](../docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md) |
 | Current Issue | [#421](https://github.com/arana-db/kiwi/issues/421) |
 | Current PR | [#422](https://github.com/arana-db/kiwi/pull/422) |
 | WP0 exact-main verification | passed |
 | Required mode | Cache OFF |
 | M7/M8 | frozen |
-| Next safe action | 创建 WP8 Storage 独立实现 worktree 并按 TDD 执行第一个失败测试 |
+| Next safe action | 在 WP8 Storage 独立实现 worktree 写入 Manifest v2 失败测试并观察 RED |
 
-PR #417 已修复 WP0 固定提交区间验证；main@688d905fec31b54aec76f36676f55efd8b5cfa17 的 ci run 30801285622 成功，当前 baseline commit 733888fc90ad8ef039947e87b08d7500a405954a 是其后继。WP0 已进入 accepted。PR #356 随后把 VectorSet Phase 1 合入主线，用户通过 D019 授权用 Draft PR #422 聚合 #415、#418、#421 的全量闭环。书面设计已确认，逐文件实施计划已建立，WP8 当前为 ready；下一安全动作是建立独立 Storage 实现 worktree。
+PR #417 已修复 WP0 固定提交区间验证；main@688d905fec31b54aec76f36676f55efd8b5cfa17 的 ci run 30801285622 成功，当前 baseline commit 733888fc90ad8ef039947e87b08d7500a405954a 是其后继。WP0 已进入 accepted。PR #356 随后把 VectorSet Phase 1 合入主线，用户通过 D019 授权用 Draft PR #422 聚合 #415、#418、#421 的全量闭环。书面设计已确认，逐文件实施计划已建立，独立 `codex/wp8-storage-recovery` worktree 已建立，WP8 当前为 in-progress；下一安全动作是写入 Manifest v2 的第一个失败测试。
 
 ## 18. 决策门禁
 

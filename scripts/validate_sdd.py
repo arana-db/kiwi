@@ -1252,6 +1252,7 @@ def set_wp0_state_text(
         f"status={verification_status}，ref={verification_ref}，run={verification_run}。",
         "WP0 evidence projection",
     )
+    suffix = re.sub(r"(?m)^状态：in-progress。$", "状态：ready。", suffix)
     updated = prefix + wp0 + suffix
     for label, value in (
         ("Current work package", "WP0"),
