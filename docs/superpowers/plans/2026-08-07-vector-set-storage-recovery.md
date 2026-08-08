@@ -421,9 +421,10 @@
 - Create: `scripts/test-vector-storage-compat.sh`
 - Create: `scripts/test-vector-storage-compat.ps1`
 - Create: `tests/compat/vector_storage_fixture.py`
-- Modify: `.github/workflows/ci.yml` 的 required Linux compatibility job 接线由 Oracle/CI 工作流完成；本 Task 只交付可独立运行的 runner。
+- Modify: `docs/superpowers/plans/2026-08-07-vector-set-storage-recovery.md` 的 Task 7 完成证据。
+- Deferred: `.github/workflows/ci.yml` 的 required Linux compatibility job 接线由 Oracle/CI 工作流完成；本 Task 只交付可独立运行的 runner。
 
-- [ ] **步骤 1：先固定 runner 失败门禁**
+- [x] **步骤 1：先固定 runner 失败门禁**
 
   runner 逐项输出且 fail closed：
 
@@ -441,7 +442,7 @@
 
   Base/Head build 或 fixture 数为零、任一 phase 未执行、任一数据读回失败或 cleanup 失败均返回非零。
 
-- [ ] **步骤 2：实现 exact-ref 矩阵**
+- [x] **步骤 2：实现 exact-ref 矩阵**
 
   - 在 Linux 临时目录分别创建 exact Base 与 exact Vector-v1 worktree/build，不写入当前实现 worktree。
   - Base 写入 String、Hash、ZSet、TTL 并生成 v1 snapshot。
@@ -450,11 +451,13 @@
   - 受控 rollback 后必须分别使用 Base binary 或 Vector-v1 binary 真实 reopen/read，不使用 Head parser 推断旧格式可读。
   - cleanup 移除临时 worktree、build 输出和 server 进程，并在退出前检查无遗留。
 
-- [ ] **步骤 3：Linux 验收**
+- [x] **步骤 3：Linux 验收**
 
   ```powershell
   wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && ./scripts/test-vector-storage-compat.sh --base-ref 688d905fec31b54aec76f36676f55efd8b5cfa17 --vector-v1-ref 733888fc90ad8ef039947e87b08d7500a405954a --head-ref "$(git rev-parse HEAD)"'
   ```
+
+  实际结果：11 个 gate、30 个 migration phase 全部执行并通过；cleanup 移除 3 个临时 worktree、全部 build 输出且无 runner 进程遗留。
 
 ## 工作流最终门禁
 
