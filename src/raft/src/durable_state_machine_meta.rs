@@ -55,48 +55,6 @@ impl DurableStateMachineMeta {
     }
 }
 
-#[cfg(test)]
-mod test_hooks {
-    use std::collections::HashSet;
-    use std::path::PathBuf;
-    use std::sync::LazyLock;
-
-    use parking_lot::Mutex;
-
-    pub static SM_META_SAVE_FAILURES: LazyLock<Mutex<HashSet<PathBuf>>> =
-        LazyLock::new(|| Mutex::new(HashSet::new()));
-}
-
-#[cfg(test)]
-pub struct SmMetaSaveFailureGuard {
-    db_path: PathBuf,
-}
-
-#[cfg(test)]
-impl Drop for SmMetaSaveFailureGuard {
-    fn drop(&mut self) {
-        test_hooks::SM_META_SAVE_FAILURES
-            .lock()
-            .remove(&self.db_path);
-    }
-}
-
-/// note(guozhihao-224) Inject one failure into the next save_meta for the DB.
-#[cfg(test)]
-#[doc(hidden)]
-#[must_use]
-pub fn fail_next_sm_meta_save(db: &DB) -> SmMetaSaveFailureGuard {
-    let db_path = db.path().to_path_buf();
-    assert!(
-        test_hooks::SM_META_SAVE_FAILURES
-            .lock()
-            .insert(db_path.clone()),
-        "sm_meta save failure already registered for {}",
-        db_path.display()
-    );
-    SmMetaSaveFailureGuard { db_path }
-}
-
 pub struct DurableStateMachineStore {
     db: Arc<DB>,
 }
@@ -165,4 +123,46 @@ impl DurableStateMachineStore {
             }
         }
     }
+}
+
+#[cfg(test)]
+pub struct SmMetaSaveFailureGuard {
+    db_path: PathBuf,
+}
+
+#[cfg(test)]
+impl Drop for SmMetaSaveFailureGuard {
+    fn drop(&mut self) {
+        test_hooks::SM_META_SAVE_FAILURES
+            .lock()
+            .remove(&self.db_path);
+    }
+}
+
+/// note(guozhihao-224) Inject one failure into the next save_meta for the DB.
+#[cfg(test)]
+#[doc(hidden)]
+#[must_use]
+pub fn fail_next_sm_meta_save(db: &DB) -> SmMetaSaveFailureGuard {
+    let db_path = db.path().to_path_buf();
+    assert!(
+        test_hooks::SM_META_SAVE_FAILURES
+            .lock()
+            .insert(db_path.clone()),
+        "sm_meta save failure already registered for {}",
+        db_path.display()
+    );
+    SmMetaSaveFailureGuard { db_path }
+}
+
+#[cfg(test)]
+mod test_hooks {
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+    use std::sync::LazyLock;
+
+    use parking_lot::Mutex;
+
+    pub static SM_META_SAVE_FAILURES: LazyLock<Mutex<HashSet<PathBuf>>> =
+        LazyLock::new(|| Mutex::new(HashSet::new()));
 }
