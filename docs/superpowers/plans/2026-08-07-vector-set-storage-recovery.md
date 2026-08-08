@@ -371,13 +371,15 @@
 - Modify: `src/storage/src/redis_vectors.rs`
 - Modify: `src/storage/src/storage_impl.rs`
 - Modify: `src/storage/src/format_vector.rs`
+- Modify: `src/storage/src/redis.rs`
+- Modify: `src/storage/src/vector.rs`
 - Modify: `src/storage/src/vector_fault.rs`
 - Modify: `src/storage/src/lib.rs`
 - Modify: `src/cmd/src/vector/vsim.rs`
 - Create: `src/storage/tests/vsim_session_test.rs`
 - Modify: `src/cmd/src/vector/vsim.rs` 内部测试
 
-- [ ] **步骤 1：写入确定性交错失败测试**
+- [x] **步骤 1：写入确定性交错失败测试**
 
   - `vsim_session_blocks_query_member_update_until_search_finishes`
   - `vsim_session_blocks_other_member_update_until_search_finishes`
@@ -395,18 +397,18 @@
   cargo test -p storage --test vsim_session_test -- --nocapture
   ```
 
-- [ ] **步骤 2：实现 RAII session**
+- [x] **步骤 2：实现 RAII session**
 
   - `PreparedVsimSession<'a>` 持有 `&'a Redis`、`PreparedVectorQuery`、捕获的 `logical_now_micros`、RocksDB snapshot 和与 VADD/VREM/DEL 相同 key 的 `ScopeRecordLock<'a>`。
   - `prepare_vsim_session` 先加锁，再读 missing/WRONGTYPE/meta/ELE query；`search` 使用同一 generation、snapshot 和 logical time。
   - `Storage::{prepare_vsim, vsim}` 双入口删除或收窄为不可绕过 session 的 crate-private helper。
   - `VSimCmd::do_cmd` 在 guard 存活期内完成 direct vector/options 解析和 search。
 
-- [ ] **步骤 3：回归**
+- [x] **步骤 3：回归**
 
   ```powershell
   cargo test -p storage --test vsim_session_test -- --nocapture
-  cargo test -p storage --test redis_vector_test vsim_session -- --nocapture
+  cargo test -p storage --test redis_vector_test vsim -- --nocapture
   cargo test -p cmd vector::vsim::tests -- --nocapture
   ```
 

@@ -29,6 +29,7 @@ pub mod vector_fault;
 mod vector_flat;
 pub mod vector_metrics;
 pub mod vector_mutation;
+mod vsim_session;
 
 mod data_compaction_filter;
 mod durable_fs;
@@ -119,13 +120,14 @@ pub use storage_schema::{
 };
 pub use util::{safe_cleanup_test_db, unique_test_db_path};
 pub use vector::{
-    CanonicalVector, PreparedVectorQuery, QuantizationType, VectorHit, VectorInfo, VectorQuery,
-    VectorSearchEngine, VectorSearchMode, VectorSearchOptions,
+    CanonicalVector, QuantizationType, VectorHit, VectorInfo, VectorQuery, VectorSearchEngine,
+    VectorSearchMode, VectorSearchOptions,
 };
 pub use vector_consistency::VectorConsistencyReport;
-pub use vector_fault::VectorFaultHooks;
+pub use vector_fault::{VectorFaultHooks, VectorVsimTestGate};
 pub use vector_flat::{FlatQueryCancel, FlatQueryGate, FlatScanGuard};
 pub use vector_metrics::{VectorMetrics, VectorMetricsSnapshot};
 pub use vector_mutation::{
     VectorSetApplyError, VectorSetApplyResult, VectorSetBusinessError, VectorSetMutationV1,
 };
+pub use vsim_session::PreparedVsimSession;

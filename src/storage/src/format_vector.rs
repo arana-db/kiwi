@@ -256,7 +256,11 @@ impl VectorMeta {
     }
 
     pub(crate) fn is_stale(&self) -> bool {
-        self.etime != 0 && self.etime < Utc::now().timestamp_micros() as u64
+        self.is_stale_at(Utc::now().timestamp_micros() as u64)
+    }
+
+    pub(crate) fn is_stale_at(&self, logical_now_micros: u64) -> bool {
+        self.etime != 0 && self.etime < logical_now_micros
     }
 
     pub fn set_etime(&mut self, etime: u64) {

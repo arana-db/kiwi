@@ -995,11 +995,20 @@ impl Redis {
     }
 
     pub fn check_type_state(&self, value_raw: &[u8], expected: DataType) -> Result<TypeCheckState> {
+        self.check_type_state_at(value_raw, expected, Utc::now().timestamp_micros() as u64)
+    }
+
+    pub(crate) fn check_type_state_at(
+        &self,
+        value_raw: &[u8],
+        expected: DataType,
+        logical_now_micros: u64,
+    ) -> Result<TypeCheckState> {
         if value_raw.is_empty() {
             return Ok(TypeCheckState::Missing);
         }
 
-        if self.is_stale(value_raw)? {
+        if Self::is_stale_static_at(value_raw, logical_now_micros)? {
             return Ok(TypeCheckState::Stale);
         }
 
@@ -1076,6 +1085,10 @@ impl Redis {
     /// * `Ok(false)` - the value is not expired and is valid
     /// * `Err(_)` - parsing error
     pub fn is_stale_static(val_raw: &[u8]) -> Result<bool> {
+        Self::is_stale_static_at(val_raw, Utc::now().timestamp_micros() as u64)
+    }
+
+    pub(crate) fn is_stale_static_at(val_raw: &[u8], logical_now_micros: u64) -> Result<bool> {
         if val_raw.is_empty() {
             return Ok(false);
         }
@@ -1088,7 +1101,6 @@ impl Redis {
             .fail();
         }
 
-        let now = Utc::now().timestamp_micros() as u64;
         match data_type {
             DataType::String => {
                 // | type(1B) | value | reserve(16B) | ctime(8B) | etime(8B) |
@@ -1102,7 +1114,7 @@ impl Redis {
                 if etime == 0 {
                     return Ok(false);
                 }
-                Ok(etime < now)
+                Ok(etime < logical_now_micros)
             }
             DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                 // | type(1B) | count(8B) | version(8B) | reserve(16B) | ctime(8B) | etime(8B) |
@@ -1127,7 +1139,7 @@ impl Redis {
                 if etime == 0 {
                     return Ok(false);
                 }
-                Ok(etime < now)
+                Ok(etime < logical_now_micros)
             }
             DataType::List => {
                 // | type(1B) | count(8B) | version(8B) | left(8B) | right(8B) | reserve(16B) | ctime(8B) | etime(8B) |
@@ -1152,7 +1164,7 @@ impl Redis {
                 if etime == 0 {
                     return Ok(false);
                 }
-                Ok(etime < now)
+                Ok(etime < logical_now_micros)
             }
             _ => InvalidFormatSnafu {
                 message: format!(

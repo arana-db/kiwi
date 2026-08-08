@@ -114,8 +114,8 @@ impl Cmd for VSimCmd {
             .filter(|kind| kind.eq_ignore_ascii_case(b"ELE"))
             .and_then(|_| argv.get(3))
             .map(Vec::as_slice);
-        let prepared = match storage.prepare_vsim(&client.key(), element) {
-            Ok(Some(prepared)) => prepared,
+        let session = match storage.prepare_vsim_session(&client.key(), element) {
+            Ok(Some(session)) => session,
             Ok(None) => {
                 client.set_reply(RespData::Array(Some(Vec::new())));
                 return;
@@ -129,7 +129,7 @@ impl Cmd for VSimCmd {
             .storage_options()
             .map(|options| VectorParseLimits::from(&options.vector))
             .unwrap_or_default();
-        let (mut query, option_index) = match parse_vsim_query(&argv, limits) {
+        let (query, option_index) = match parse_vsim_query(&argv, limits) {
             Ok(parsed) => parsed,
             Err(message) => {
                 client.set_reply(error_reply(message));
@@ -137,16 +137,9 @@ impl Cmd for VSimCmd {
             }
         };
         match &query {
-            VectorQuery::Vector(vector) if vector.dimension() != prepared.dimension => {
+            VectorQuery::Vector(vector) if vector.dimension() != session.dimension() => {
                 client.set_reply(error_reply(ERR_VECTOR_DIMENSION));
                 return;
-            }
-            VectorQuery::Element(_) => {
-                query = VectorQuery::Vector(
-                    prepared
-                        .element_query
-                        .expect("ELE preparation returns an element query"),
-                );
             }
             _ => {}
         }
@@ -157,7 +150,7 @@ impl Cmd for VSimCmd {
                 return;
             }
         };
-        let reply = match storage.vsim(&client.key(), parsed.query, parsed.options) {
+        let reply = match session.search(parsed.query, parsed.options) {
             Ok(hits) if parsed.with_scores => RespData::Map(
                 hits.into_iter()
                     .map(|hit| {
@@ -182,8 +175,14 @@ impl Cmd for VSimCmd {
 #[allow(clippy::unwrap_used)]
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc::{RecvTimeoutError, sync_channel};
+    use std::time::Duration;
+
     use client::StreamTrait;
-    use storage::{CanonicalVector, StorageOptions, safe_cleanup_test_db, unique_test_db_path};
+    use storage::{
+        CanonicalVector, StorageOptions, VectorVsimTestGate, safe_cleanup_test_db,
+        unique_test_db_path,
+    };
 
     use super::*;
 
@@ -419,6 +418,98 @@ mod tests {
             error_reply(super::super::ERR_ELEMENT_NOT_FOUND)
         );
 
+        drop(storage);
+        safe_cleanup_test_db(&db_path);
+    }
+
+    #[tokio::test]
+    async fn vsim_command_does_not_call_unlocked_prepare_then_unlocked_search() {
+        let (db_path, storage) = open_storage();
+        let query = CanonicalVector::from_values(&[1.0, 0.0]).expect("query vector");
+        let other = CanonicalVector::from_values(&[0.0, 1.0]).expect("other vector");
+        storage
+            .vadd(b"vectors", b"query", &query)
+            .expect("add query member");
+        storage
+            .vadd(b"vectors", b"other", &other)
+            .expect("add other member");
+        let gate = Arc::new(VectorVsimTestGate::default());
+        storage.insts[0]
+            .vector_fault_hooks
+            .set_vsim_scan_gate(Some(Arc::clone(&gate)));
+        let client = Arc::new(Client::new(Box::new(TestStream)));
+        let argv = vec![
+            b"vsim".to_vec(),
+            b"vectors".to_vec(),
+            b"ELE".to_vec(),
+            b"query".to_vec(),
+            b"WITHSCORES".to_vec(),
+            b"COUNT".to_vec(),
+            b"2".to_vec(),
+        ];
+        let (writer_started_tx, writer_started_rx) = sync_channel(0);
+        let (writer_done_tx, writer_done_rx) = sync_channel(0);
+
+        let reply = std::thread::scope(|scope| {
+            let query_client = Arc::clone(&client);
+            let query_storage = Arc::clone(&storage);
+            let query_thread = scope.spawn(move || {
+                query_client.set_argv(&argv);
+                VSimCmd::new().execute(&query_client, query_storage);
+                query_client.take_reply()
+            });
+            assert!(
+                gate.wait_until_entered(Duration::from_secs(5)),
+                "command did not reach the VSIM scan barrier"
+            );
+            let writer_storage = Arc::clone(&storage);
+            let writer = scope.spawn(move || {
+                writer_started_tx.send(()).expect("announce writer start");
+                let replacement =
+                    CanonicalVector::from_values(&[1.0, 0.0]).expect("replacement vector");
+                let result = writer_storage.vadd(b"vectors", b"other", &replacement);
+                writer_done_tx.send(result).expect("publish writer result");
+            });
+            writer_started_rx.recv().expect("writer started");
+            match writer_done_rx.recv_timeout(Duration::from_millis(200)) {
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => {
+                    gate.release();
+                    panic!("writer disconnected while command session was live");
+                }
+                Ok(result) => {
+                    gate.release();
+                    panic!("writer bypassed the command's VSIM session: {result:?}");
+                }
+            }
+            gate.release();
+            let reply = query_thread.join().expect("query command thread");
+            writer_done_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("writer completes after command")
+                .expect("writer update");
+            writer.join().expect("writer thread");
+            reply
+        });
+        storage.insts[0].vector_fault_hooks.set_vsim_scan_gate(None);
+
+        let RespData::Map(entries) = reply else {
+            panic!("expected WITHSCORES map reply");
+        };
+        let other_score = entries
+            .iter()
+            .find_map(|(element, score)| match (element, score) {
+                (RespData::BulkString(Some(element)), RespData::Double(score))
+                    if element.as_ref() == b"other" =>
+                {
+                    Some(*score)
+                }
+                _ => None,
+            })
+            .expect("old other member score");
+        assert!((other_score - 0.5).abs() < 1e-6);
+
+        drop(client);
         drop(storage);
         safe_cleanup_test_db(&db_path);
     }
