@@ -25,36 +25,40 @@
 //! When a snapshot is installed:
 //! 1. The archive is unpacked, validated and staged without touching live data.
 //! 2. StorageServer is paused and all hot-swappable Storage owners are drained.
-//! 3. A durable recovery marker is written before the old Storage is detached.
-//! 4. The staged checkpoint is committed and ArcSwap switches to the restored Storage.
-//! 5. Snapshot state is durably persisted, the marker is removed, and requests resume.
+//! 3. A durable staged-install intent is written before pausing live access.
+//! 4. Every destructive rename and publication boundary advances a durable phase marker.
+//! 5. Startup recovery resumes or rolls back the transaction before requests are admitted.
 
-use std::ffi::OsString;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{self, Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
-
-#[cfg(test)]
-use std::collections::HashSet;
-#[cfg(test)]
-use std::sync::LazyLock;
 
 use arc_swap::ArcSwap;
 use openraft::{
     CommittedLeaderId, EntryPayload, ErrorSubject, ErrorVerb, LogId, RaftSnapshotBuilder, Snapshot,
     SnapshotMeta, StorageError, StoredMembership, storage::RaftStateMachine,
 };
+#[cfg(test)]
+use storage::StorageOptions;
 use storage::storage::Storage;
 use storage::{
-    ParsedSnapshotMeta, RaftSnapshotMeta, StorageOptions, close_rollback_window,
+    ParsedSnapshotMeta, RAFT_SNAPSHOT_META_FILE, RaftSnapshotMeta, close_rollback_window,
     prepare_classified_checkpoint_restore, sync_parent_directory,
 };
 
 use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
 
 use crate::snapshot_archive::{pack_dir_to_vec, unpack_tar_to_dir, unpacked_checkpoint_root};
+use crate::snapshot_install::{
+    CURRENT_SNAPSHOT_DATA, CURRENT_SNAPSHOT_META, SnapshotInstallIntent, SnapshotInstallPhase,
+    abandon_staged_install, complete_pending_cleanup, persist_paused_old_storage, persist_phase,
+    persist_staged_validated, publish_pending_current_snapshot, remove_completed_install,
+    rename_and_sync, storage_identity_from_open, validate_snapshot_install_marker,
+};
+
+pub use crate::snapshot_install::snapshot_install_marker_path;
 
 fn storage_err_to_raft(e: storage::error::Error) -> StorageError<u64> {
     StorageError::from_io_error(
@@ -68,200 +72,38 @@ fn io_err_to_raft(e: std::io::Error) -> StorageError<u64> {
     StorageError::from_io_error(ErrorSubject::StateMachine, ErrorVerb::Write, e)
 }
 
-/// OpenRaft expects a single on-disk "current" snapshot; `build_snapshot` / `install_snapshot`
-/// must persist here so [`RaftStateMachine::get_current_snapshot`] can return it.
-const CURRENT_SNAPSHOT_DATA: &str = "current_snapshot.tar";
-const CURRENT_SNAPSHOT_META: &str = "current_snapshot_meta.json";
-const SNAPSHOT_INSTALL_MARKER_VERSION: u32 = 1;
-const SNAPSHOT_INSTALL_MARKER_SUFFIX: &str = ".snapshot-install-in-progress.json";
-
 /// Number of vector metas / member entries decoded per instance when
 /// validating restored snapshot data (sampling, not a full scan).
 const RESTORED_VECTOR_SAMPLE_SIZE: usize = 64;
-const SNAPSHOT_INSTALL_CLEANUP_SUFFIX: &str = ".cleanup-pending";
 
-#[cfg(test)]
-static MARKER_PRIMARY_REMOVAL_SYNC_FAILURES: LazyLock<parking_lot::Mutex<HashSet<PathBuf>>> =
-    LazyLock::new(|| parking_lot::Mutex::new(HashSet::new()));
-
-#[cfg(test)]
-struct MarkerPrimaryRemovalSyncFailureGuard {
-    marker_path: PathBuf,
-}
-
-#[cfg(test)]
-impl Drop for MarkerPrimaryRemovalSyncFailureGuard {
-    fn drop(&mut self) {
-        MARKER_PRIMARY_REMOVAL_SYNC_FAILURES
-            .lock()
-            .remove(&self.marker_path);
-    }
-}
-
-#[cfg(test)]
-fn fail_next_marker_primary_removal_sync(
-    marker_path: &Path,
-) -> MarkerPrimaryRemovalSyncFailureGuard {
-    let marker_path = marker_path.to_path_buf();
-    assert!(
-        MARKER_PRIMARY_REMOVAL_SYNC_FAILURES
-            .lock()
-            .insert(marker_path.clone()),
-        "marker removal sync failure already registered for {}",
-        marker_path.display()
-    );
-    MarkerPrimaryRemovalSyncFailureGuard { marker_path }
-}
-
-#[derive(Debug, serde::Deserialize, serde::Serialize)]
-struct SnapshotInstallMarker {
-    version: u32,
-    id: String,
-    index: u64,
-    term: u64,
-    db: PathBuf,
-    workdir: PathBuf,
-    instances: usize,
-}
-
-/// Return the stable sibling marker used to reject startup after an incomplete install.
-pub fn snapshot_install_marker_path(db_path: &Path) -> io::Result<PathBuf> {
-    let file_name = db_path.file_name().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("database path has no file name: {}", db_path.display()),
-        )
-    })?;
-    let parent = db_path.parent().filter(|path| !path.as_os_str().is_empty());
-    let mut marker_name = OsString::from(".");
-    marker_name.push(file_name);
-    marker_name.push(SNAPSHOT_INSTALL_MARKER_SUFFIX);
-    Ok(parent.unwrap_or_else(|| Path::new(".")).join(marker_name))
-}
-
-fn snapshot_install_cleanup_marker_path(marker_path: &Path) -> PathBuf {
-    let mut cleanup_name = marker_path.as_os_str().to_os_string();
-    cleanup_name.push(SNAPSHOT_INSTALL_CLEANUP_SUFFIX);
-    PathBuf::from(cleanup_name)
-}
-
-fn incomplete_install_error(marker_path: &Path, detail: impl std::fmt::Display) -> io::Error {
-    io::Error::new(
-        io::ErrorKind::InvalidData,
-        format!(
-            "snapshot install recovery marker {} blocks startup: {detail}; the node must remain stopped and rejoin from a healthy leader with a new node ID and clean DB and Raft data directories",
-            marker_path.display()
-        ),
-    )
-}
-
-/// Fail closed whenever an install marker exists, including malformed and unknown-version files.
+/// Direct Raft-node creation must not bypass server startup recovery.
 pub fn preflight_snapshot_install(db_path: &Path) -> io::Result<()> {
     let marker_path = snapshot_install_marker_path(db_path)?;
-    if marker_path.try_exists()? {
-        return reject_install_marker(&marker_path, "snapshot install did not complete");
-    }
-
-    let cleanup_path = snapshot_install_cleanup_marker_path(&marker_path);
-    if cleanup_path.try_exists()? {
-        return reject_install_marker(&cleanup_path, "snapshot marker cleanup did not complete");
-    }
-
-    Ok(())
-}
-
-fn reject_install_marker(marker_path: &Path, state: &str) -> io::Result<()> {
-    let bytes = std::fs::read(marker_path).map_err(|error| {
-        incomplete_install_error(marker_path, format!("failed to read marker: {error}"))
-    })?;
-    let marker: SnapshotInstallMarker = serde_json::from_slice(&bytes).map_err(|error| {
-        incomplete_install_error(marker_path, format!("marker is malformed: {error}"))
-    })?;
-    if marker.version != SNAPSHOT_INSTALL_MARKER_VERSION {
-        return Err(incomplete_install_error(
-            marker_path,
+    let pending_instances = validate_snapshot_install_marker(db_path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
             format!(
-                "unsupported marker version {}, expected {}",
-                marker.version, SNAPSHOT_INSTALL_MARKER_VERSION
+                "invalid snapshot install marker {}: {error}",
+                marker_path.display()
+            ),
+        )
+    })?;
+    if pending_instances.is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "snapshot install marker {} requires startup recovery before Raft initialization",
+                marker_path.display()
             ),
         ));
     }
-    Err(incomplete_install_error(
-        marker_path,
-        format!(
-            "{state}: snapshot {} at index {} term {}",
-            marker.id, marker.index, marker.term,
-        ),
-    ))
+    Ok(())
 }
 
 fn write_and_sync(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut file = File::create(path)?;
     file.write_all(bytes)?;
     file.sync_all()
-}
-
-fn persist_install_marker(path: &Path, marker: &SnapshotInstallMarker) -> io::Result<Vec<u8>> {
-    let cleanup_path = snapshot_install_cleanup_marker_path(path);
-    if cleanup_path.try_exists()? {
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            format!(
-                "snapshot install cleanup marker already exists: {}",
-                cleanup_path.display()
-            ),
-        ));
-    }
-
-    let bytes = serde_json::to_vec_pretty(marker)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
-    file.write_all(&bytes)?;
-    file.sync_all()?;
-    sync_parent_directory(path)?;
-    Ok(bytes)
-}
-
-fn remove_install_marker(path: &Path, marker_bytes: &[u8]) -> io::Result<()> {
-    let cleanup_path = snapshot_install_cleanup_marker_path(path);
-    let mut cleanup_file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&cleanup_path)?;
-    cleanup_file.write_all(marker_bytes)?;
-    cleanup_file.sync_all()?;
-    sync_parent_directory(&cleanup_path)?;
-
-    std::fs::remove_file(path)?;
-    sync_marker_parent_after_primary_removal(path)?;
-
-    std::fs::remove_file(&cleanup_path)?;
-    if let Err(error) = sync_parent_directory(&cleanup_path) {
-        // The cleanup marker was durably created before the primary marker was
-        // removed. If this final unlink is not durable, a restart observes
-        // either the cleanup marker (and blocks conservatively) or no marker
-        // after all restored state was already synchronized.
-        log::warn!(
-            "Failed to durably remove snapshot cleanup marker {}: {error}",
-            cleanup_path.display()
-        );
-    }
-    Ok(())
-}
-
-fn sync_marker_parent_after_primary_removal(marker_path: &Path) -> io::Result<()> {
-    #[cfg(test)]
-    if MARKER_PRIMARY_REMOVAL_SYNC_FAILURES
-        .lock()
-        .remove(marker_path)
-    {
-        return Err(io::Error::other(format!(
-            "injected marker primary removal sync failure for {}",
-            marker_path.display()
-        )));
-    }
-
-    sync_parent_directory(marker_path)
 }
 
 #[allow(clippy::result_large_err)]
@@ -367,27 +209,40 @@ pub trait PauseController: Send + Sync {
     fn resume(&self);
 }
 
-struct ResumeBeforeMarkerGuard {
+struct ResumeBeforeStoragePausedGuard {
     controller: Arc<dyn PauseController>,
+    intent: Option<SnapshotInstallIntent>,
     armed: bool,
 }
 
-impl ResumeBeforeMarkerGuard {
-    fn new(controller: Arc<dyn PauseController>) -> Self {
+impl ResumeBeforeStoragePausedGuard {
+    fn new(controller: Arc<dyn PauseController>, intent: SnapshotInstallIntent) -> Self {
         Self {
             controller,
+            intent: Some(intent),
             armed: true,
         }
     }
 
-    fn disarm(&mut self) {
+    fn disarm_and_take(&mut self) -> io::Result<SnapshotInstallIntent> {
         self.armed = false;
+        self.intent.take().ok_or_else(|| {
+            io::Error::other("snapshot install guard lost its staged durable intent")
+        })
     }
 }
 
-impl Drop for ResumeBeforeMarkerGuard {
+impl Drop for ResumeBeforeStoragePausedGuard {
     fn drop(&mut self) {
         if self.armed {
+            if let Some(intent) = self.intent.as_ref()
+                && let Err(error) = abandon_staged_install(intent)
+            {
+                log::error!(
+                    "Failed to abandon pre-destructive snapshot install {}: {error}",
+                    intent.layout.marker_path().display()
+                );
+            }
             self.controller.resume();
         }
     }
@@ -395,6 +250,8 @@ impl Drop for ResumeBeforeMarkerGuard {
 
 #[cfg(test)]
 type StagedRestoreReopenHook = Arc<dyn Fn(&Path) + Send + Sync>;
+#[cfg(test)]
+type StoragePausedHook = Arc<dyn Fn(&SnapshotInstallIntent) -> io::Result<()> + Send + Sync>;
 
 /// Kiwi state machine with hot-swapping Storage support.
 pub struct KiwiStateMachine {
@@ -421,6 +278,8 @@ pub struct KiwiStateMachine {
     append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
     #[cfg(test)]
     staged_restore_reopen_hook: Option<StagedRestoreReopenHook>,
+    #[cfg(test)]
+    storage_paused_hook: Option<StoragePausedHook>,
 }
 
 impl KiwiStateMachine {
@@ -451,6 +310,8 @@ impl KiwiStateMachine {
             append_log_fn,
             #[cfg(test)]
             staged_restore_reopen_hook: None,
+            #[cfg(test)]
+            storage_paused_hook: None,
         }
     }
 
@@ -598,6 +459,25 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         // prepare only read and copy checkpoint input, and the owner remains
         // live until the durable marker has been written after pause/drain.
         let current_storage = self.storage_swap.load_full();
+        let live_db_path = current_storage.db_path().ok_or_else(|| {
+            io_err_to_raft(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "snapshot install requires an open live Storage at {}",
+                    self.db_path.display()
+                ),
+            ))
+        })?;
+        if live_db_path != self.db_path.as_path() {
+            return Err(io_err_to_raft(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "snapshot install live Storage path {} does not match configured target {}",
+                    live_db_path.display(),
+                    self.db_path.display()
+                ),
+            )));
+        }
         let db_instance_num = current_storage.db_instance_num;
         let db_id = current_storage.db_id;
 
@@ -614,12 +494,12 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             file_meta.last_included_term
         );
 
-        let options = current_storage.storage_options().unwrap_or_else(|| {
-            log::warn!(
-                "snapshot install found unopened Storage without configured options; using defaults"
-            );
-            Arc::new(StorageOptions::default())
-        });
+        let options = current_storage.storage_options().ok_or_else(|| {
+            io_err_to_raft(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "snapshot install live Storage has no configured options",
+            ))
+        })?;
         let prepared = prepare_classified_checkpoint_restore(
             &checkpoint_root,
             &self.db_path,
@@ -664,45 +544,49 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             }
         }
 
+        let staged_path = prepared.staged_path().to_path_buf();
+        let intent = persist_staged_validated(
+            &self.db_path,
+            &staged_path,
+            &self.snapshot_work_dir,
+            meta,
+            &bytes,
+            &checkpoint_root.join(RAFT_SNAPSHOT_META_FILE),
+            db_instance_num,
+            &options,
+        )
+        .map_err(io_err_to_raft)?;
+        let transferred_staged_path = prepared.into_staged_path();
+        debug_assert_eq!(transferred_staged_path, staged_path);
+
+        // Until StoragePaused is durably recorded, cancellation is safe: live
+        // storage is still attached and this guard removes the disposable
+        // staged install plus its pending metadata before reopening admission.
+        let mut resume_before_storage_paused =
+            ResumeBeforeStoragePausedGuard::new(Arc::clone(&self.pause_controller), intent);
+
         let _snapshot_publication = Arc::clone(&self.snapshot_publication_gate)
             .lock_owned()
             .await;
         self.pause_controller.request_pause().await;
-        let mut resume_before_marker =
-            ResumeBeforeMarkerGuard::new(Arc::clone(&self.pause_controller));
         let _snapshot_state = Arc::clone(&self.snapshot_state_gate).lock_owned().await;
 
-        let marker_path = snapshot_install_marker_path(&self.db_path).map_err(io_err_to_raft)?;
-        let marker = SnapshotInstallMarker {
-            version: SNAPSHOT_INSTALL_MARKER_VERSION,
-            id: meta.snapshot_id.clone(),
-            index: expected_index,
-            term: expected_term,
-            db: self.db_path.clone(),
-            workdir: self.snapshot_work_dir.clone(),
-            instances: db_instance_num,
-        };
-        let marker_bytes = persist_install_marker(&marker_path, &marker).map_err(|error| {
-            StorageError::from_io_error(
-                ErrorSubject::Snapshot(None),
-                ErrorVerb::Write,
-                io::Error::new(
-                    error.kind(),
-                    format!(
-                        "failed to durably create snapshot install marker {} before changing live storage: {error}",
-                        marker_path.display()
-                    ),
-                ),
-            )
-        })?;
-        resume_before_marker.disarm();
+        // Capture the old identity only after request owners have drained. No
+        // mutation can race this digest, but RocksDB handles still exist until
+        // the placeholder swap below.
+        let old_storage_identity =
+            storage_identity_from_open(&current_storage).map_err(io_err_to_raft)?;
+        let mut intent = resume_before_storage_paused
+            .disarm_and_take()
+            .map_err(io_err_to_raft)?;
+        let marker_path = intent.layout.marker_path().to_path_buf();
 
         let post_marker_error = |context: &str, error: &dyn std::fmt::Display| {
             StorageError::from_io_error(
                 ErrorSubject::Snapshot(None),
                 ErrorVerb::Write,
                 io::Error::other(format!(
-                    "snapshot install failed after durable recovery marker {} was written while {context}: {error}; storage access remains paused and the marker must remain in place; rejoin from a healthy leader with a new node ID and clean DB and Raft data directories",
+                    "snapshot install failed after durable recovery marker {} was written while {context}: {error}; storage access remains paused and startup recovery must resume or roll back this install before admission",
                     marker_path.display()
                 )),
             )
@@ -713,14 +597,50 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         drop(current_storage);
         log::info!("Old Storage dropped, RocksDB lock released");
 
-        prepared
-            .commit()
-            .map_err(|error| post_marker_error("committing the staged checkpoint", &error))?;
+        persist_paused_old_storage(&mut intent, old_storage_identity).map_err(|error| {
+            post_marker_error("recording the paused old-storage identity", &error)
+        })?;
+        #[cfg(test)]
+        if let Some(hook) = self.storage_paused_hook.as_ref() {
+            hook(&intent).map_err(|error| {
+                post_marker_error("running the post-StoragePaused test hook", &error)
+            })?;
+        }
+        persist_phase(&mut intent, SnapshotInstallPhase::MarkerPersisted).map_err(|error| {
+            post_marker_error("recording the destructive rename boundary", &error)
+        })?;
+
+        rename_and_sync(intent.layout.target_path(), intent.layout.backup_path())
+            .map_err(|error| post_marker_error("renaming live storage to its backup", &error))?;
+        persist_phase(&mut intent, SnapshotInstallPhase::OldRenamedToBackup)
+            .map_err(|error| post_marker_error("recording the old-storage backup", &error))?;
+
+        std::fs::rename(intent.layout.staged_path(), intent.layout.target_path())
+            .map_err(|error| post_marker_error("promoting staged storage", &error))?;
+        storage::checkpoint::sync_restore_parent_after_rename(intent.layout.target_path())
+            .map_err(|error| post_marker_error("syncing the promoted storage parent", &error))?;
+        persist_phase(&mut intent, SnapshotInstallPhase::NewRenamedToTarget)
+            .map_err(|error| post_marker_error("recording the promoted storage", &error))?;
 
         let mut new_storage = Storage::new(db_instance_num, db_id);
         new_storage
-            .open(options, &self.db_path)
+            .open(Arc::clone(&options), &self.db_path)
             .map_err(|error| post_marker_error("opening the restored storage", &error))?;
+        new_storage
+            .validate_vector_data_sample(RESTORED_VECTOR_SAMPLE_SIZE)
+            .map_err(|error| post_marker_error("validating restored Vector data", &error))?;
+        let reopened_identity = storage_identity_from_open(&new_storage).map_err(|error| {
+            post_marker_error("verifying the restored storage identity", &error)
+        })?;
+        if reopened_identity != intent.marker.new_storage {
+            return Err(post_marker_error(
+                "verifying the restored storage identity",
+                &"reopened storage does not match the staged durable identity",
+            ));
+        }
+        persist_phase(&mut intent, SnapshotInstallPhase::NewStorageReopened).map_err(|error| {
+            post_marker_error("recording the reopened restored storage", &error)
+        })?;
         self.rearm_append_log_fn(&new_storage);
 
         self.storage_swap.swap(Arc::new(new_storage));
@@ -751,16 +671,22 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         self.last_applied = meta.last_log_id;
         self.last_membership = meta.last_membership.clone();
 
-        persist_current_snapshot(&self.snapshot_work_dir, meta, &bytes).map_err(|error| {
-            let context = format!(
-                "persisting the installed current snapshot under {}",
-                self.snapshot_work_dir.display()
-            );
-            post_marker_error(&context, &error)
+        publish_pending_current_snapshot(&intent).map_err(|error| {
+            post_marker_error("publishing installed Raft snapshot metadata", &error)
         })?;
-
-        remove_install_marker(&marker_path, &marker_bytes)
-            .map_err(|error| post_marker_error("removing the durable install marker", &error))?;
+        persist_phase(&mut intent, SnapshotInstallPhase::RaftMetadataPersisted).map_err(
+            |error| post_marker_error("recording durable Raft snapshot metadata", &error),
+        )?;
+        persist_phase(&mut intent, SnapshotInstallPhase::CleanupPending)
+            .map_err(|error| post_marker_error("recording deferred install cleanup", &error))?;
+        complete_pending_cleanup(&intent).map_err(|error| {
+            post_marker_error("cleaning the verified old-storage backup", &error)
+        })?;
+        persist_phase(&mut intent, SnapshotInstallPhase::Complete).map_err(|error| {
+            post_marker_error("recording completed snapshot installation", &error)
+        })?;
+        remove_completed_install(&intent)
+            .map_err(|error| post_marker_error("removing completed install metadata", &error))?;
 
         self.pause_controller.resume();
 
@@ -1230,7 +1156,10 @@ mod snapshot_gate_tests {
         })
         .await
         .expect("install should pause before waiting for the state gate");
-        assert!(!marker_path.exists());
+        assert!(
+            marker_path.exists(),
+            "the staged durable intent must exist while install waits for the state gate"
+        );
         assert!(Arc::ptr_eq(&storage_swap.load_full(), &old_storage));
 
         install.abort();
@@ -1260,54 +1189,109 @@ mod snapshot_gate_tests {
         safe_cleanup_test_db(&db_path);
         safe_cleanup_test_db(&snapshot_work_dir);
     }
-}
 
-#[cfg(test)]
-mod marker_cleanup_tests {
-    use super::*;
+    #[tokio::test]
+    async fn storage_paused_closes_live_handles_and_keeps_network_admission_closed() {
+        let db_path = unique_test_db_path();
+        let snapshot_work_dir = unique_test_db_path();
+        std::fs::create_dir_all(&snapshot_work_dir)
+            .expect("snapshot work directory should be created");
 
-    #[test]
-    fn primary_marker_removal_sync_failure_leaves_restart_blocker() {
-        let root = tempfile::tempdir().expect("temporary directory should be created");
-        let db_path = root.path().join("db");
-        let marker_path = snapshot_install_marker_path(&db_path)
-            .expect("marker path should be derived from database path");
-        let cleanup_path = snapshot_install_cleanup_marker_path(&marker_path);
-        let marker = SnapshotInstallMarker {
-            version: SNAPSHOT_INSTALL_MARKER_VERSION,
-            id: "snapshot-test".to_string(),
-            index: 42,
-            term: 7,
-            db: db_path.clone(),
-            workdir: root.path().join("snapshots"),
-            instances: 1,
-        };
-        let marker_bytes =
-            persist_install_marker(&marker_path, &marker).expect("marker should be persisted");
-        let _failure = fail_next_marker_primary_removal_sync(&marker_path);
+        let options = Arc::new(StorageOptions::default());
+        let mut storage = Storage::new(1, 0);
+        let storage_rx = storage
+            .open(Arc::clone(&options), &db_path)
+            .expect("test storage should open");
+        storage
+            .set(b"live-key", b"live-value")
+            .expect("live data should be written");
+        let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+        let controller = Arc::new(CountingPauseController::default());
+        let mut state_machine = KiwiStateMachine::new(
+            1,
+            Arc::clone(&storage_swap),
+            db_path.clone(),
+            snapshot_work_dir.clone(),
+            controller.clone(),
+            None,
+        );
 
-        let error = remove_install_marker(&marker_path, &marker_bytes)
-            .expect_err("primary marker removal sync must fail at the injected point");
+        let mut builder = state_machine.get_snapshot_builder().await;
+        let snapshot = builder
+            .build_snapshot()
+            .await
+            .expect("test snapshot should build");
+        drop(builder);
+        state_machine.storage_paused_hook = Some(Arc::new(|intent| {
+            assert_eq!(intent.marker.phase, SnapshotInstallPhase::StoragePaused);
+            Err(io::Error::other("injected stop after StoragePaused"))
+        }));
+
+        let error = state_machine
+            .install_snapshot(&snapshot.meta, snapshot.snapshot)
+            .await
+            .expect_err("test hook should stop install after closing live handles");
         assert!(
             error
                 .to_string()
-                .contains("injected marker primary removal sync failure"),
-            "unexpected error: {error}"
+                .contains("injected stop after StoragePaused"),
+            "unexpected install error: {error}"
         );
+        assert!(controller.paused.load(Ordering::SeqCst));
+        assert_eq!(controller.resume_count.load(Ordering::SeqCst), 0);
         assert!(
-            cleanup_path.is_file(),
-            "a durable cleanup marker must remain at {}",
-            cleanup_path.display()
+            storage_swap.load_full().db_path().is_none(),
+            "ArcSwap must contain only the closed placeholder after StoragePaused"
         );
 
-        let restart_error = preflight_snapshot_install(&db_path)
-            .expect_err("restart must reject a pending marker cleanup");
+        let admission = Arc::clone(&controller).enter();
         assert!(
-            restart_error
-                .to_string()
-                .contains(&cleanup_path.display().to_string()),
-            "restart refusal must identify cleanup marker: {restart_error}"
+            tokio::time::timeout(std::time::Duration::from_millis(50), admission)
+                .await
+                .is_err(),
+            "network admission must remain blocked while durable recovery is pending"
         );
+
+        let mut offline_probe = Storage::new(1, 0);
+        let offline_rx = offline_probe
+            .open(Arc::clone(&options), &db_path)
+            .expect("old target must be openable after live RocksDB handles are closed");
+        assert_eq!(
+            offline_probe
+                .get(b"live-key")
+                .expect("old target should retain its data"),
+            "live-value"
+        );
+        offline_probe.shutdown().await;
+        offline_probe.close();
+        drop(offline_rx);
+
+        let intent =
+            crate::snapshot_install::read_snapshot_install_intent(&db_path, &snapshot_work_dir)
+                .expect("StoragePaused marker should be readable")
+                .expect("StoragePaused marker should remain");
+        assert_eq!(intent.marker.phase, SnapshotInstallPhase::StoragePaused);
+
+        drop(state_machine);
+        let placeholder = storage_swap.load_full();
+        drop(storage_swap);
+        drop(placeholder);
+        drop(storage_rx);
+        let decision = crate::snapshot_install::recover_snapshot_install(
+            &db_path,
+            &snapshot_work_dir,
+            Arc::clone(&options),
+        )
+        .await
+        .expect("startup recovery should finish the paused install");
+        assert_eq!(
+            decision,
+            crate::snapshot_install::SnapshotInstallRecoveryDecision::Installed
+        );
+        controller.resume();
+
+        safe_cleanup_test_db(&db_path);
+        safe_cleanup_test_db(&snapshot_work_dir);
     }
 }
 

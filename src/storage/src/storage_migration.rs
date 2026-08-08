@@ -43,9 +43,9 @@ use crate::format_base_key::ParsedBaseKey;
 use crate::format_vector::{VectorDataValue, VectorMeta};
 use crate::format_vector_member_key::ParsedVectorMemberDataKey;
 use crate::storage_manifest::{
-    InstanceStorageManifestV2, MigrationPhase, MigrationSourceProfile, MigrationTransaction,
-    ROOT_STORAGE_MANIFEST_FILE, RootStorageManifestV2, SLOT_MAPPING_VERSION, STORAGE_MANIFEST_FILE,
-    slot_mapping_digest,
+    InstanceStorageManifestV2, ManifestDigest, MigrationPhase, MigrationSourceProfile,
+    MigrationTransaction, ROOT_STORAGE_MANIFEST_FILE, RootStorageManifestV2, SLOT_MAPPING_VERSION,
+    STORAGE_MANIFEST_FILE, slot_mapping_digest,
 };
 use crate::storage_schema::{CANONICAL_COLUMN_FAMILIES, ColumnFamilySpec, ComparatorId};
 use crate::{DataType, StorageOptions};
@@ -1674,6 +1674,43 @@ fn logical_cf_digest(db: &DB, cf_name: &str) -> Result<(u64, [u8; 32])> {
         digest.update(&value);
     }
     Ok((count, digest.finalize().into()))
+}
+
+pub(crate) fn logical_open_db_digest(db: &DB) -> Result<ManifestDigest> {
+    let mut encoded = Vec::with_capacity(CANONICAL_COLUMN_FAMILIES.len() * 96);
+    for spec in CANONICAL_COLUMN_FAMILIES {
+        let (count, digest) = logical_cf_digest(db, spec.name)?;
+        encoded.extend_from_slice(&(spec.name.len() as u64).to_le_bytes());
+        encoded.extend_from_slice(spec.name.as_bytes());
+        encoded.extend_from_slice(&count.to_le_bytes());
+        encoded.extend_from_slice(&digest);
+    }
+    Ok(ManifestDigest::compute(&encoded))
+}
+
+/// Compute one checksum-verified logical digest per current-schema instance.
+/// The result is stable across RocksDB physical compaction and file layout.
+pub fn logical_snapshot_digests_from_root(
+    root: &Path,
+    db_instance_num: usize,
+    options: &StorageOptions,
+) -> Result<Vec<ManifestDigest>> {
+    let root_manifest = RootStorageManifestV2::read_from_dir(root)?;
+    root_manifest.validate_runtime_topology(db_instance_num)?;
+    let names: Vec<&str> = CANONICAL_COLUMN_FAMILIES
+        .iter()
+        .map(|spec| spec.name)
+        .collect();
+    (0..db_instance_num)
+        .map(|instance_id| {
+            let instance = root.join(instance_id.to_string());
+            validate_v2_instance_structure(&instance, options)?;
+            InstanceStorageManifestV2::read_from_dir(&instance)?
+                .validate_root_binding(instance_id as u32, &root_manifest)?;
+            let db = open_instance_strict(&instance, options, &names)?;
+            logical_open_db_digest(&db)
+        })
+        .collect()
 }
 
 fn validate_vector_identity(db: &DB, storage_incarnation: u64, instance: &Path) -> Result<()> {

@@ -172,8 +172,9 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
     }; // All source-side references dropped here, RocksDB locks should be released
 
     // Create target state machine and install snapshot
-    let target_storage = Arc::new(Storage::new(1, 0));
-    let target_swap = Arc::new(ArcSwap::from(target_storage));
+    let mut target_storage = Storage::new(1, 0);
+    let _target_rx = target_storage.open(Arc::new(StorageOptions::default()), &restore_db_path)?;
+    let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
 
     let mut sm2 = KiwiStateMachine::new(
         2,

@@ -110,8 +110,8 @@ pub use storage_manifest::{
 pub use storage_migration::fail_next_storage_migration;
 pub use storage_migration::{
     MigrationFaultPoint, MigrationLayout, classify_storage_root, close_rollback_window,
-    finalize_migration_after_storage_open, prepare_or_resume_migration,
-    recover_or_rollback_before_admission,
+    finalize_migration_after_storage_open, logical_snapshot_digests_from_root,
+    prepare_or_resume_migration, recover_or_rollback_before_admission,
 };
 pub use storage_schema::{
     CANONICAL_COLUMN_FAMILIES, CANONICAL_COLUMN_FAMILY_NAMES, ColumnFamilyIndex, ColumnFamilyRole,

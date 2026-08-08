@@ -166,6 +166,28 @@ impl Storage {
         self.db_path.as_deref()
     }
 
+    /// Compute checksum-verified logical digests using the already-open RocksDB
+    /// handles, so snapshot install can bind the exact pre-pause live state.
+    pub fn logical_snapshot_digests(&self) -> crate::error::Result<Vec<crate::ManifestDigest>> {
+        self.insts
+            .iter()
+            .enumerate()
+            .map(|(instance_id, instance)| {
+                let db =
+                    instance
+                        .db
+                        .as_ref()
+                        .ok_or_else(|| crate::error::Error::InvalidFormat {
+                            message: format!(
+                                "storage instance {instance_id} is closed during logical digest"
+                            ),
+                            location: snafu::location!(),
+                        })?;
+                crate::storage_migration::logical_open_db_digest(db.as_ref())
+            })
+            .collect()
+    }
+
     /// Wait for shared top-level command access without blocking a runtime worker.
     ///
     /// The owned guard is `Send`, so a dispatcher may keep it while command

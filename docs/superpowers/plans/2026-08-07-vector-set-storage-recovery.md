@@ -235,18 +235,22 @@
 - Create: `src/raft/tests/snapshot_install_recovery_test.rs`
 - Modify: `src/raft/tests/snapshot_roundtrip_test.rs`
 
-- [ ] **步骤 1：写入 restart/fault 失败测试**
+- [x] **步骤 1：写入 restart/fault 失败测试**
 
   - `marker_rejects_absolute_or_non_basename_paths`
   - `restart_resumes_from_staged_validated`
+  - `abandoning_partial_staged_install_removes_intent_before_cleanup`
   - `restart_resumes_after_storage_paused_before_marker_persisted`
   - `storage_paused_closes_live_handles_and_keeps_network_admission_closed`
   - `restart_resumes_from_marker_persisted`
   - `restart_restores_backup_after_old_renamed_before_new_promoted`
+  - `rollback_pending_survives_restart_after_backup_restore`
+  - `rollback_cleanup_pending_survives_partial_cleanup_restart`
   - `restart_resumes_after_new_renamed_to_target`
   - `restart_reopens_and_verifies_new_storage_before_publication`
   - `restart_persists_raft_metadata_before_cleanup`
   - `cleanup_pending_survives_restart_and_completes_idempotently`
+  - `cleanup_pending_survives_partial_backup_deletion_restart`
   - `target_and_backup_both_present_with_digest_mismatch_fail_closed`
   - `marker_snapshot_metadata_digest_mismatch_fail_closed`
   - `marker_root_or_instance_manifest_digest_mismatch_fail_closed`
@@ -256,7 +260,7 @@
   cargo test -p raft --test snapshot_install_recovery_test -- --nocapture
   ```
 
-- [ ] **步骤 2：实现 marker 编排和恢复决策**
+- [x] **步骤 2：实现 marker 编排和恢复决策**
 
   `snapshot_install.rs` 定义 `SnapshotInstallPhase`、`SnapshotInstallMarkerV2`、`SnapshotInstallLayout`、`SnapshotInstallRecoveryDecision`、`persist_phase`、`recover_snapshot_install`、`validate_install_layout_and_digests`、`complete_pending_cleanup`。
 
@@ -274,9 +278,22 @@
   -> Complete
   ```
 
+  在 `MarkerPersisted` 或 `OldRenamedToBackup` 尚未完成新库 promotion 时，恢复分支固定为：
+
+  ```text
+  MarkerPersisted | OldRenamedToBackup
+  -> RollbackPending
+  -> RollbackCleanupPending
+  -> marker removed
+  ```
+
+  **计划偏差：** 原计划只持久化正向安装阶段，但回滚包含 `backup -> target`、删除 stage/pending 文件和删除 marker 等多次独立落盘操作；若回滚本身在任一步骤后崩溃，旧 phase 无法唯一解释磁盘布局。为满足同一 fail-closed/restart-safe 要求，回滚也必须先持久化 `RollbackPending`，恢复旧库后持久化 `RollbackCleanupPending`，再执行可重入清理。
+
+  `StagedValidated` 放弃路径尚未触碰 live target，因此必须先持久删除 marker、再清理 disposable stage/pending 文件；清理中途崩溃只允许留下无权威性的孤儿文件，不能留下指向残缺 stage 的恢复意图。正向和回滚 cleanup phase 在进入前完成副本 identity 校验，phase 持久化后只复验权威 target 和待删路径类型，以允许递归删除中途崩溃后的可重入清理。server preflight 同时要求 marker 的 `db_instance_num` 与启动配置一致，任何配置漂移必须在 rename/cleanup 之前失败。
+
   `StoragePaused` 必须在任何 target/backup rename 之前关闭全部 live RocksDB handle、停止 background task 并保持 network admission 关闭。在 `StoragePaused` 后、`MarkerPersisted` 前崩溃时，启动预检必须使用 snapshot/install intent 和未改名的 target 恢复到可重试状态，不得开放未复验的 storage。`PreparedCheckpointRestore::commit` 不再删除 target；所有 target/backup/stage 判定由 marker phase 和 digest 决定。无法确定唯一权威副本时 fail closed。
 
-- [ ] **步骤 3：回归**
+- [x] **步骤 3：回归**
 
   ```powershell
   cargo test -p raft --test snapshot_install_recovery_test -- --nocapture

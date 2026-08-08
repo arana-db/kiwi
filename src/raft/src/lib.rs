@@ -28,6 +28,7 @@ pub mod log_store_rocksdb;
 pub mod network;
 pub mod node;
 pub mod snapshot_archive;
+pub mod snapshot_install;
 pub mod state_machine;
 
 pub mod raft_proto {

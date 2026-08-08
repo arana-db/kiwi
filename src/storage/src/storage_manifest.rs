@@ -654,7 +654,7 @@ impl RootStorageManifestV2 {
         Ok(())
     }
 
-    pub(crate) fn validate_runtime_topology(&self, db_instance_num: usize) -> Result<()> {
+    pub fn validate_runtime_topology(&self, db_instance_num: usize) -> Result<()> {
         ensure!(
             self.db_instance_num == db_instance_num as u32,
             InvalidFormatSnafu {

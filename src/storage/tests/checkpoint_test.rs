@@ -76,7 +76,7 @@ fn missing_checkpoint_instance_leaves_target_unchanged() {
 }
 
 #[test]
-fn prepared_restore_does_not_replace_target_until_commit() {
+fn prepared_restore_commit_refuses_to_delete_existing_target() {
     let root = tempfile::tempdir().unwrap();
     let checkpoint_root = root.path().join("checkpoint");
     let target = root.path().join("db");
@@ -89,13 +89,9 @@ fn prepared_restore_does_not_replace_target_until_commit() {
     assert_eq!(std::fs::read(target.join("sentinel")).unwrap(), b"live");
     assert_eq!(restore_temp_dirs(root.path()).len(), 1);
 
-    prepared.commit().unwrap();
-
-    assert!(!target.join("sentinel").exists());
-    assert_eq!(
-        std::fs::read(target.join("0/CURRENT")).unwrap(),
-        b"snapshot"
-    );
+    let error = prepared.commit().unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+    assert_eq!(std::fs::read(target.join("sentinel")).unwrap(), b"live");
     assert!(restore_temp_dirs(root.path()).is_empty());
 }
 

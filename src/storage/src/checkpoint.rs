@@ -22,7 +22,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 #[cfg(any(test, feature = "test-fault-injection"))]
 use std::collections::HashSet;
@@ -54,9 +53,6 @@ use crate::{
 pub const RAFT_SNAPSHOT_META_FILE: &str = "__raft_snapshot_meta";
 
 const ROCKSDB_LOCK_FILE: &str = "LOCK";
-const TARGET_REMOVE_ATTEMPTS: usize = 5;
-const TARGET_REMOVE_RETRY_BASE_DELAY: Duration = Duration::from_millis(100);
-
 static RESTORE_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(any(test, feature = "test-fault-injection"))]
@@ -562,6 +558,13 @@ impl PreparedCheckpointRestore {
         self.historical_migration
     }
 
+    /// Transfer cleanup ownership of the staged directory to the durable
+    /// snapshot-install state machine.
+    pub fn into_staged_path(mut self) -> PathBuf {
+        self.committed = true;
+        self.temp_dir.clone()
+    }
+
     /// Pair snapshot metadata incarnations with the staged per-instance manifests.
     pub fn validate_storage_incarnations(&self, expected: &[u64]) -> io::Result<()> {
         if expected.len() != self.db_instance_num {
@@ -689,22 +692,18 @@ impl PreparedCheckpointRestore {
         Ok(())
     }
 
-    /// Replace the target database directory with the staged checkpoint layout.
-    ///
-    /// This is the destructive phase of checkpoint restoration. On Windows, removing the old
-    /// target is retried to tolerate transient filesystem locks.
+    /// Move the staged checkpoint into a target that does not already exist.
+    /// Existing live storage is never deleted by this low-level helper; snapshot
+    /// replacement is owned by the durable install state machine.
     pub fn commit(mut self) -> io::Result<()> {
         if self.target_db_path.exists() {
-            remove_target_with_retry(&self.target_db_path)?;
-            sync_parent_directory(&self.target_db_path).map_err(|error| {
-                io::Error::new(
-                    error.kind(),
-                    format!(
-                        "failed to sync target parent after removing {}: {error}",
-                        self.target_db_path.display()
-                    ),
-                )
-            })?;
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "refusing to delete existing checkpoint restore target {}",
+                    self.target_db_path.display()
+                ),
+            ));
         }
 
         fs::rename(&self.temp_dir, &self.target_db_path).map_err(|error| {
@@ -1037,7 +1036,8 @@ fn create_restore_temp_dir(target_db_path: &Path) -> io::Result<PathBuf> {
     }
 }
 
-fn sync_restore_parent_after_rename(target_db_path: &Path) -> io::Result<()> {
+#[doc(hidden)]
+pub fn sync_restore_parent_after_rename(target_db_path: &Path) -> io::Result<()> {
     #[cfg(any(test, feature = "test-fault-injection"))]
     if RESTORE_PARENT_SYNC_FAILURES.lock().remove(target_db_path) {
         return Err(io::Error::other(format!(
@@ -1055,36 +1055,6 @@ fn sync_restore_parent_after_rename(target_db_path: &Path) -> io::Result<()> {
             ),
         )
     })
-}
-
-fn remove_target_with_retry(target_db_path: &Path) -> io::Result<()> {
-    for attempt in 0..TARGET_REMOVE_ATTEMPTS {
-        match fs::remove_dir_all(target_db_path) {
-            Ok(()) => return Ok(()),
-            Err(error)
-                if error.kind() == io::ErrorKind::PermissionDenied
-                    && attempt + 1 < TARGET_REMOVE_ATTEMPTS =>
-            {
-                std::thread::sleep(TARGET_REMOVE_RETRY_BASE_DELAY * (attempt as u32 + 1));
-            }
-            Err(error) => {
-                return Err(io::Error::new(
-                    error.kind(),
-                    format!(
-                        "failed to remove target database directory {}: {error}",
-                        target_db_path.display()
-                    ),
-                ));
-            }
-        }
-    }
-
-    // Every match arm in the loop body returns, so this line is unreachable
-    // in practice. Return an error as a safe fallback rather than panicking.
-    Err(io::Error::other(format!(
-        "target removal loop exhausted for {}",
-        target_db_path.display()
-    )))
 }
 
 /// Copy checkpoint layout from `checkpoint_root` into `target_db_path` (`0/`, `1/`, …).

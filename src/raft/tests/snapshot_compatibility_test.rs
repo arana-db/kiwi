@@ -150,7 +150,9 @@ async fn staged_storage_is_closed_reopened_and_revalidated_before_install() -> a
         snapshot_id: "base-v1-compatibility".to_string(),
     };
 
-    let storage_swap = Arc::new(ArcSwap::from_pointee(Storage::new(1, 0)));
+    let mut live_storage = Storage::new(1, 0);
+    let live_rx = live_storage.open(Arc::new(StorageOptions::default()), &target)?;
+    let storage_swap = Arc::new(ArcSwap::from_pointee(live_storage));
     let mut state_machine = KiwiStateMachine::new(
         2,
         Arc::clone(&storage_swap),
@@ -185,6 +187,7 @@ async fn staged_storage_is_closed_reopened_and_revalidated_before_install() -> a
         .map_err(|_| anyhow::anyhow!("restored Storage still has Arc owners"))?;
     restored.shutdown().await;
     restored.close();
+    drop(live_rx);
 
     let closed_root = RootStorageManifestV2::read_from_dir(&target)?;
     assert_eq!(

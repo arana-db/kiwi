@@ -2178,6 +2178,7 @@ dependencies = [
  "tonic-prost",
  "tonic-prost-build",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2602,6 +2603,7 @@ dependencies = [
  "net",
  "raft",
  "runtime",
+ "serde_json",
  "storage",
  "tokio",
  "tokio-stream",
