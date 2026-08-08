@@ -387,15 +387,18 @@ HEAD_STORAGE_DRIVER = LICENSE_HEADER + r'''
 
 #![allow(clippy::unwrap_used)]
 
+use std::collections::HashSet;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use rocksdb::DB;
 use storage::{
     CANONICAL_COLUMN_FAMILY_NAMES, InstanceStorageManifestV2, MigrationFaultPoint,
-    MigrationPhase, MigrationSourceProfile, ROOT_STORAGE_MANIFEST_FILE, RootStorageManifestV2,
-    STORAGE_MANIFEST_FILE, StorageOptions, classify_storage_root, close_rollback_window,
-    fail_next_storage_migration, recover_or_rollback_before_admission, storage::Storage,
+    ManifestDigest, MigrationPhase, MigrationSourceProfile, MigrationTransaction,
+    ROOT_STORAGE_MANIFEST_FILE, RootStorageManifestV2, STORAGE_MANIFEST_FILE, StorageOptions,
+    classify_storage_root, close_rollback_window, fail_next_storage_migration,
+    recover_or_rollback_before_admission, storage::Storage,
 };
 
 const STRING_KEY: &[u8] = b"compat:string";
@@ -502,15 +505,355 @@ fn assert_safe_basename(value: &str) {
     assert!(matches!(path.components().next(), Some(Component::Normal(_))));
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpectedDiskKind {
+    Missing,
+    Legacy,
+    V2,
+    PartialBaseVectorCf,
+}
+
+fn assert_directory_or_missing(path: &Path, should_exist: bool, label: &str) {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            assert!(should_exist, "{label} unexpectedly exists: {}", path.display());
+            assert!(!metadata.file_type().is_symlink(), "{label} must not be a symlink");
+            assert!(metadata.is_dir(), "{label} must be a directory");
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            assert!(!should_exist, "{label} is missing: {}", path.display());
+        }
+        Err(error) => panic!("cannot inspect {label} {}: {error}", path.display()),
+    }
+}
+
+fn sorted_cf_names(path: &Path) -> Vec<String> {
+    let mut names = DB::list_cf(&StorageOptions::default().options, path)
+        .unwrap_or_else(|error| panic!("list CFs for {}: {error}", path.display()));
+    names.sort();
+    names
+}
+
+fn expected_legacy_cf_names(profile: MigrationSourceProfile) -> Vec<String> {
+    let count = if profile == MigrationSourceProfile::BaseV1SixCf { 6 } else { 7 };
+    let mut names: Vec<String> = CANONICAL_COLUMN_FAMILY_NAMES[..count]
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+fn expected_v2_cf_names() -> Vec<String> {
+    let mut names: Vec<String> = CANONICAL_COLUMN_FAMILY_NAMES
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+fn read_v1_identity(instance: &Path) -> (u64, u64) {
+    let bytes = fs::read(instance.join(STORAGE_MANIFEST_FILE)).expect("read Vector-v1 manifest");
+    let value: serde_json::Value = serde_json::from_slice(&bytes).expect("parse Vector-v1 manifest");
+    assert_eq!(value["version"].as_u64(), Some(1));
+    assert!(value.get("manifest_version").is_none());
+    (
+        value["storage_incarnation"].as_u64().expect("v1 incarnation"),
+        value["next_generation"].as_u64().expect("v1 generation"),
+    )
+}
+
+fn assert_disk_kind(
+    path: &Path,
+    expected: ExpectedDiskKind,
+    profile: MigrationSourceProfile,
+    instance_id: u32,
+    root_manifest: &RootStorageManifestV2,
+    v1_identities: &[(u64, u64)],
+) {
+    if expected == ExpectedDiskKind::Missing {
+        assert_directory_or_missing(path, false, "migration instance");
+        return;
+    }
+    assert_directory_or_missing(path, true, "migration instance");
+    let actual_cf = sorted_cf_names(path);
+    let manifest_path = path.join(STORAGE_MANIFEST_FILE);
+    match expected {
+        ExpectedDiskKind::Legacy => {
+            assert_eq!(actual_cf, expected_legacy_cf_names(profile));
+            if profile == MigrationSourceProfile::BaseV1SixCf {
+                assert!(!manifest_path.exists(), "Base-v1 authority must not have a manifest");
+            } else {
+                assert_eq!(read_v1_identity(path), v1_identities[instance_id as usize]);
+            }
+        }
+        ExpectedDiskKind::V2 => {
+            assert_eq!(actual_cf, expected_v2_cf_names());
+            let manifest = InstanceStorageManifestV2::read_from_dir(path)
+                .expect("read and digest-validate interrupted v2 manifest");
+            manifest
+                .validate_root_binding(instance_id, root_manifest)
+                .expect("interrupted v2 manifest must bind current root digest");
+            assert_eq!(manifest.manifest_digest().as_str().len(), 64);
+            if profile == MigrationSourceProfile::VectorSetV1SevenCf {
+                assert_eq!(
+                    (manifest.storage_incarnation(), manifest.next_generation()),
+                    v1_identities[instance_id as usize],
+                    "Vector-v1 identity must survive every interrupted v2 copy"
+                );
+            }
+        }
+        ExpectedDiskKind::PartialBaseVectorCf => {
+            assert_eq!(profile, MigrationSourceProfile::BaseV1SixCf);
+            assert_eq!(actual_cf, expected_v2_cf_names());
+            assert!(!manifest_path.exists(), "partial Base shadow must fail before v2 manifest");
+        }
+        ExpectedDiskKind::Missing => unreachable!(),
+    }
+}
+
+fn expected_layout(
+    fault_name: &str,
+    phase: MigrationPhase,
+    current_instance: u32,
+    instance_id: u32,
+) -> (ExpectedDiskKind, ExpectedDiskKind, ExpectedDiskKind) {
+    use ExpectedDiskKind::{Legacy, Missing, PartialBaseVectorCf, V2};
+    match phase {
+        MigrationPhase::SourceDetected | MigrationPhase::ShadowPrepared => (Legacy, Missing, Missing),
+        MigrationPhase::InstanceCopied => {
+            let shadow = if instance_id < current_instance {
+                V2
+            } else if instance_id == current_instance {
+                if fault_name.starts_with("vector-cf-created-") { PartialBaseVectorCf } else { Legacy }
+            } else {
+                Missing
+            };
+            (Legacy, shadow, Missing)
+        }
+        MigrationPhase::InstanceUpgraded => (
+            Legacy,
+            if instance_id <= current_instance { V2 } else { Missing },
+            Missing,
+        ),
+        MigrationPhase::AllInstancesVerified | MigrationPhase::SwitchPrepared => (Legacy, V2, Missing),
+        MigrationPhase::OldMovedToBackup => {
+            if instance_id < current_instance {
+                (V2, Missing, Legacy)
+            } else if instance_id == current_instance {
+                (Missing, V2, Legacy)
+            } else {
+                (Legacy, V2, Missing)
+            }
+        }
+        MigrationPhase::ShadowPromoted => {
+            if instance_id <= current_instance {
+                (V2, Missing, Legacy)
+            } else {
+                (Legacy, V2, Missing)
+            }
+        }
+        MigrationPhase::NewStorageOpened | MigrationPhase::Committed => (V2, Missing, Legacy),
+        MigrationPhase::RollbackWindowClosed => panic!("no retry fault targets RollbackWindowClosed"),
+    }
+}
+
+fn copy_tree(source: &Path, target: &Path) {
+    let metadata = fs::symlink_metadata(source).expect("inspect authority source");
+    assert!(metadata.is_dir() && !metadata.file_type().is_symlink());
+    assert!(!target.exists(), "authority copy target must start absent");
+    fs::create_dir(target).expect("create authority copy target");
+    for entry in fs::read_dir(source).expect("read authority source") {
+        let entry = entry.expect("authority entry");
+        let file_type = entry.file_type().expect("authority entry type");
+        assert!(!file_type.is_symlink(), "authority copy refuses symlink");
+        let destination = target.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_tree(&entry.path(), &destination);
+        } else {
+            assert!(file_type.is_file(), "authority entry must be a file or directory");
+            fs::copy(entry.path(), destination).expect("copy authority file");
+        }
+    }
+}
+
+fn legacy_authority_instance(root: &Path, transaction: &MigrationTransaction, instance_id: u32) -> PathBuf {
+    let backup = root.join(&transaction.backup_name).join(instance_id.to_string());
+    if backup.is_dir() { backup } else { root.join(instance_id.to_string()) }
+}
+
+fn read_authority_v1_identities(root: &Path, profile: MigrationSourceProfile) -> Vec<(u64, u64)> {
+    if profile == MigrationSourceProfile::BaseV1SixCf {
+        return Vec::new();
+    }
+    let root_manifest = RootStorageManifestV2::read_from_dir(root).expect("read interrupted root");
+    let transaction = root_manifest.migration().expect("interrupted journal");
+    (0..2_u32)
+        .map(|instance_id| read_v1_identity(&legacy_authority_instance(root, transaction, instance_id)))
+        .collect()
+}
+
+fn assert_exact_root_entries(
+    root: &Path,
+    transaction: &MigrationTransaction,
+    expected_layouts: &[(ExpectedDiskKind, ExpectedDiskKind, ExpectedDiskKind)],
+    shadow_root_exists: bool,
+    backup_root_exists: bool,
+) {
+    let mut expected: HashSet<String> = [ROOT_STORAGE_MANIFEST_FILE.to_string()].into_iter().collect();
+    for (instance_id, (live, _, _)) in expected_layouts.iter().enumerate() {
+        if *live != ExpectedDiskKind::Missing {
+            expected.insert(instance_id.to_string());
+        }
+    }
+    if shadow_root_exists {
+        expected.insert(transaction.shadow_name.clone());
+    }
+    if backup_root_exists {
+        expected.insert(transaction.backup_name.clone());
+    }
+    let actual: HashSet<String> = fs::read_dir(root)
+        .expect("read interrupted root entries")
+        .map(|entry| entry.expect("root entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(actual, expected, "interrupted root entries must match the durable phase");
+
+    for (directory, selector, should_exist, label) in [
+        (
+            root.join(&transaction.shadow_name),
+            1_usize,
+            shadow_root_exists,
+            "shadow root",
+        ),
+        (
+            root.join(&transaction.backup_name),
+            2_usize,
+            backup_root_exists,
+            "backup root",
+        ),
+    ] {
+        if !should_exist {
+            continue;
+        }
+        let expected_children: HashSet<String> = expected_layouts
+            .iter()
+            .enumerate()
+            .filter_map(|(instance_id, layout)| {
+                let kind = match selector {
+                    1 => layout.1,
+                    2 => layout.2,
+                    _ => unreachable!(),
+                };
+                (kind != ExpectedDiskKind::Missing).then(|| instance_id.to_string())
+            })
+            .collect();
+        let actual_children: HashSet<String> = fs::read_dir(&directory)
+            .unwrap_or_else(|error| panic!("read {label} {}: {error}", directory.display()))
+            .map(|entry| {
+                let entry = entry.expect("migration root entry");
+                let file_type = entry.file_type().expect("migration root entry type");
+                assert!(file_type.is_dir() && !file_type.is_symlink());
+                entry.file_name().to_string_lossy().into_owned()
+            })
+            .collect();
+        assert_eq!(
+            actual_children, expected_children,
+            "{label} children must match the durable phase"
+        );
+    }
+}
+
+fn assert_interrupted_state(
+    root: &Path,
+    authority_root: &Path,
+    source_profile: MigrationSourceProfile,
+    fault_name: &str,
+    expected_phase: MigrationPhase,
+    expected_instance: u32,
+    v1_identities: &[(u64, u64)],
+) {
+    let root_bytes = fs::read(root.join(ROOT_STORAGE_MANIFEST_FILE)).expect("read root journal bytes");
+    let root_manifest = RootStorageManifestV2::read_from_dir(root)
+        .expect("read and digest-validate interrupted root journal");
+    assert_eq!(
+        ManifestDigest::compute_payload(&root_bytes).expect("compute root payload digest"),
+        root_manifest.manifest_digest().clone()
+    );
+    root_manifest.validate_runtime_topology(2).expect("validate interrupted topology");
+    assert_eq!(root_manifest.db_instance_num(), 2);
+    assert_eq!(root_manifest.manifest_digest().as_str().len(), 64);
+    let transaction = root_manifest.migration().expect("interrupted migration journal");
+    assert_eq!(transaction.from_schema, 1);
+    assert_eq!(transaction.to_schema, 2);
+    assert_eq!(transaction.source_profile, source_profile);
+    assert_eq!(transaction.phase, expected_phase);
+    assert_eq!(transaction.current_instance, expected_instance);
+    assert_eq!(transaction.source_name, "live");
+    assert_eq!(transaction.shadow_name, format!(".kiwi-shadow-{}", transaction.transaction_id));
+    assert_eq!(transaction.backup_name, format!(".kiwi-backup-{}", transaction.transaction_id));
+    assert_safe_basename(&transaction.source_name);
+    assert_safe_basename(&transaction.shadow_name);
+    assert_safe_basename(&transaction.backup_name);
+
+    let layouts: Vec<_> = (0..2_u32)
+        .map(|instance_id| expected_layout(fault_name, expected_phase, expected_instance, instance_id))
+        .collect();
+    let shadow_root_exists = !matches!(
+        expected_phase,
+        MigrationPhase::SourceDetected | MigrationPhase::NewStorageOpened | MigrationPhase::Committed
+    );
+    let backup_root_exists = matches!(
+        expected_phase,
+        MigrationPhase::OldMovedToBackup
+            | MigrationPhase::ShadowPromoted
+            | MigrationPhase::NewStorageOpened
+            | MigrationPhase::Committed
+    );
+    let shadow_root = root.join(&transaction.shadow_name);
+    let backup_root = root.join(&transaction.backup_name);
+    assert_directory_or_missing(&shadow_root, shadow_root_exists, "shadow root");
+    assert_directory_or_missing(&backup_root, backup_root_exists, "backup root");
+    assert_exact_root_entries(root, transaction, &layouts, shadow_root_exists, backup_root_exists);
+
+    for (instance_id, (live, shadow, backup)) in layouts.iter().copied().enumerate() {
+        let instance_id = instance_id as u32;
+        assert_disk_kind(
+            &root.join(instance_id.to_string()), live, source_profile, instance_id,
+            &root_manifest, v1_identities,
+        );
+        assert_disk_kind(
+            &shadow_root.join(instance_id.to_string()), shadow, source_profile, instance_id,
+            &root_manifest, v1_identities,
+        );
+        assert_disk_kind(
+            &backup_root.join(instance_id.to_string()), backup, source_profile, instance_id,
+            &root_manifest, v1_identities,
+        );
+    }
+
+    assert!(!authority_root.exists(), "authority verification root must start absent");
+    fs::create_dir(authority_root).expect("create authority verification root");
+    for instance_id in 0..2_u32 {
+        let source = legacy_authority_instance(root, transaction, instance_id);
+        assert_disk_kind(
+            &source, ExpectedDiskKind::Legacy, source_profile, instance_id,
+            &root_manifest, v1_identities,
+        );
+        copy_tree(&source, &authority_root.join(instance_id.to_string()));
+    }
+}
+
 fn assert_committed(
     root: &Path,
     source_profile: MigrationSourceProfile,
     v1_identities: &[(u64, u64)],
+    expected_phase: MigrationPhase,
 ) {
     let root_manifest = RootStorageManifestV2::read_from_dir(root).expect("read v2 root manifest");
     let transaction = root_manifest.migration().expect("migration journal");
     assert_eq!(transaction.source_profile, source_profile);
-    assert!(matches!(transaction.phase, MigrationPhase::Committed | MigrationPhase::RollbackWindowClosed));
+    assert_eq!(transaction.phase, expected_phase);
     assert_safe_basename(&transaction.source_name);
     assert_safe_basename(&transaction.shadow_name);
     assert_safe_basename(&transaction.backup_name);
@@ -573,12 +916,16 @@ fn head_upgrade_and_reopen_external() {
     };
     open_and_verify(&root, source_profile).expect("Head must migrate exact historical fixture");
     open_and_verify(&root, source_profile).expect("Head must reopen migrated fixture");
-    assert_committed(&root, source_profile, &identities);
+    assert_committed(&root, source_profile, &identities, MigrationPhase::Committed);
 }
 
 #[test]
-fn migrate_fault_retry_external() {
+fn inject_fault_and_assert_interrupted_external() {
     let root = fixture_root();
+    let authority_root = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_AUTHORITY_ROOT")
+            .expect("KIWI_COMPAT_AUTHORITY_ROOT is required"),
+    );
     let source_profile = profile();
     let identities = if source_profile == MigrationSourceProfile::VectorSetV1SevenCf {
         read_v1_identities(&root)
@@ -596,12 +943,24 @@ fn migrate_fault_retry_external() {
     assert_eq!(transaction.source_profile, source_profile);
     assert_eq!(transaction.phase, expected_phase);
     assert_eq!(transaction.current_instance, expected_instance);
-    assert_safe_basename(&transaction.source_name);
-    assert_safe_basename(&transaction.shadow_name);
-    assert_safe_basename(&transaction.backup_name);
-    assert!(root.join(ROOT_STORAGE_MANIFEST_FILE).is_file());
+    assert_interrupted_state(
+        &root,
+        &authority_root,
+        source_profile,
+        &fault_name,
+        expected_phase,
+        expected_instance,
+        &identities,
+    );
+}
+
+#[test]
+fn resume_after_asserted_fault_external() {
+    let root = fixture_root();
+    let source_profile = profile();
+    let identities = read_authority_v1_identities(&root, source_profile);
     open_and_verify(&root, source_profile).expect("Head must resume exact historical migration");
-    assert_committed(&root, source_profile, &identities);
+    assert_committed(&root, source_profile, &identities, MigrationPhase::Committed);
 }
 
 #[test]
@@ -651,7 +1010,12 @@ fn close_window_and_reject_rollback_external() {
         .expect_err("closed rollback window must reject restore");
     assert!(error.to_string().contains("RollbackWindowClosed"));
     open_and_verify(&root, source_profile).expect("closed storage must remain reopenable");
-    assert_committed(&root, source_profile, &identities);
+    assert_committed(
+        &root,
+        source_profile,
+        &identities,
+        MigrationPhase::RollbackWindowClosed,
+    );
 }
 '''
 
@@ -660,15 +1024,26 @@ HEAD_SNAPSHOT_DRIVER = LICENSE_HEADER + r'''
 
 #![allow(clippy::unwrap_used)]
 
-use std::path::PathBuf;
+#[path = "../../storage/tests/support/legacy_storage.rs"]
+mod legacy_storage;
+
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use arc_swap::ArcSwap;
 use conf::raft_type::KiwiNode;
+use openraft::RaftSnapshotBuilder;
 use openraft::SnapshotMeta;
 use openraft::storage::RaftStateMachine;
+use raft::snapshot_archive::{pack_dir_to_vec, unpack_tar_to_dir, unpacked_checkpoint_root};
 use raft::state_machine::{KiwiStateMachine, PauseController, StorageAccessPermit};
-use storage::{MigrationPhase, RootStorageManifestV2, StorageOptions, storage::Storage};
+use rocksdb::{DB, Options};
+use storage::{
+    InstanceStorageManifestV2, ManifestDigest, MigrationPhase, ParsedSnapshotMeta,
+    RaftSnapshotMeta, RootStorageManifestV2, StorageOptions, ZsetScoreMember,
+    format_base_value::DataType, storage::Storage,
+};
 
 const STRING_KEY: &[u8] = b"compat:string";
 const HASH_KEY: &[u8] = b"compat:hash";
@@ -679,6 +1054,13 @@ const TTL_KEY: &[u8] = b"compat:ttl";
 
 struct NoopPauseController;
 struct NoopStorageAccessPermit;
+
+#[derive(Default)]
+struct CountingPauseController {
+    requested: AtomicUsize,
+    entered: AtomicUsize,
+    resumed: AtomicUsize,
+}
 
 impl StorageAccessPermit for NoopStorageAccessPermit {}
 
@@ -698,6 +1080,283 @@ impl PauseController for NoopPauseController {
     }
 
     fn resume(&self) {}
+}
+
+impl PauseController for CountingPauseController {
+    fn request_pause(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+        self.requested.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async {})
+    }
+
+    fn enter(
+        self: Arc<Self>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>,
+    > {
+        self.entered.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Box::new(NoopStorageAccessPermit) as Box<dyn StorageAccessPermit> })
+    }
+
+    fn resume(&self) {
+        self.resumed.fetch_add(1, Ordering::SeqCst);
+    }
+}
+
+fn assert_history(storage: &Storage) -> anyhow::Result<()> {
+    assert_eq!(storage.get(STRING_KEY)?, "string-value");
+    assert_eq!(
+        storage.hget(HASH_KEY, HASH_FIELD)?,
+        Some("hash-value".to_string())
+    );
+    assert_eq!(storage.zscore(ZSET_KEY, ZSET_MEMBER)?, Some(b"42.5".to_vec()));
+    assert_eq!(storage.get(TTL_KEY)?, "ttl-value");
+    assert!(storage.ttl(TTL_KEY)? > 0);
+    assert_eq!(storage.get(b"compat:post-restore")?, "accepted");
+    Ok(())
+}
+
+fn assert_manifest_pairing(root_path: &std::path::Path) -> anyhow::Result<()> {
+    let root = RootStorageManifestV2::read_from_dir(root_path)?;
+    root.validate_runtime_topology(2)?;
+    assert_eq!(root.db_instance_num(), 2);
+    assert_eq!(root.manifest_digest().as_str().len(), 64);
+    for instance_id in 0..2_u32 {
+        let instance = InstanceStorageManifestV2::read_from_dir(
+            &root_path.join(instance_id.to_string()),
+        )?;
+        assert_eq!(instance.instance_id(), instance_id);
+        instance.validate_root_binding(instance_id, &root)?;
+        assert_eq!(instance.manifest_digest().as_str().len(), 64);
+    }
+    Ok(())
+}
+
+fn read_snapshot_meta(path: &Path) -> anyhow::Result<SnapshotMeta<u64, KiwiNode>> {
+    let meta: SnapshotMeta<u64, KiwiNode> = serde_json::from_slice(&std::fs::read(path)?)?;
+    anyhow::ensure!(!meta.snapshot_id.is_empty(), "SnapshotMeta id is empty");
+    Ok(meta)
+}
+
+fn assert_archive_meta_matches(
+    checkpoint_root: &Path,
+    meta: &SnapshotMeta<u64, KiwiNode>,
+) -> anyhow::Result<()> {
+    let file_meta = ParsedSnapshotMeta::read_from_dir(checkpoint_root)?;
+    let expected_index = meta.last_log_id.map(|log_id| log_id.index).unwrap_or(0);
+    let expected_term = meta
+        .last_log_id
+        .map(|log_id| log_id.leader_id.term)
+        .unwrap_or(0);
+    assert_eq!(file_meta.metadata().last_included_index, expected_index);
+    assert_eq!(file_meta.metadata().last_included_term, expected_term);
+    Ok(())
+}
+
+fn mutate_exact_base_archive(
+    bytes: &[u8],
+    meta: &SnapshotMeta<u64, KiwiNode>,
+    mutation_root: &Path,
+    mutation: &str,
+) -> anyhow::Result<Vec<u8>> {
+    anyhow::ensure!(!mutation_root.exists(), "mutation root must start absent");
+    unpack_tar_to_dir(bytes, mutation_root)?;
+    let checkpoint_root = unpacked_checkpoint_root(mutation_root);
+    assert_archive_meta_matches(&checkpoint_root, meta)?;
+    let instance = checkpoint_root.join("0");
+    let mut db_options = Options::default();
+    db_options.create_missing_column_families(true);
+    let db = DB::open_cf_descriptors(
+        &db_options,
+        &instance,
+        legacy_storage::descriptors(&legacy_storage::BASE_CF_NAMES),
+    )?;
+    match mutation {
+        "unknown-cf" => db.create_cf("unknown_cf", &Options::default())?,
+        "vector-cf" => db.create_cf("vector_data_cf", &Options::default())?,
+        "vector-meta" => {
+            let meta_cf = db.cf_handle("default").expect("default CF");
+            db.put_cf(&meta_cf, b"compat:forbidden-vector-meta", [DataType::VectorSet as u8])?;
+        }
+        other => anyhow::bail!("unknown exact Base archive mutation: {other}"),
+    }
+    drop(db);
+    assert_archive_meta_matches(&checkpoint_root, meta)?;
+    Ok(pack_dir_to_vec(&checkpoint_root)?)
+}
+
+fn target_authority_bytes(target: &Path) -> anyhow::Result<Vec<Vec<u8>>> {
+    let mut bytes = vec![std::fs::read(target.join("__kiwi_root_storage_manifest"))?];
+    for instance_id in 0..2_u32 {
+        bytes.push(std::fs::read(
+            target
+                .join(instance_id.to_string())
+                .join("__kiwi_storage_manifest"),
+        )?);
+    }
+    Ok(bytes)
+}
+
+async fn assert_full_install_rejected_before_pause(
+    meta: &SnapshotMeta<u64, KiwiNode>,
+    bytes: Vec<u8>,
+    target: PathBuf,
+    snapshot_work: PathBuf,
+    expected_error: &str,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(!target.exists(), "negative install target must start absent");
+    std::fs::create_dir_all(&snapshot_work)?;
+    let mut live_storage = Storage::new(2, 0);
+    let live_receiver = live_storage.open(Arc::new(StorageOptions::default()), &target)?;
+    live_storage.set(b"compat:target-authority", b"unchanged")?;
+    let authority_before = target_authority_bytes(&target)?;
+    let original = Arc::new(live_storage);
+    let storage_swap = Arc::new(ArcSwap::from(Arc::clone(&original)));
+    let pause = Arc::new(CountingPauseController::default());
+    let mut state_machine = KiwiStateMachine::new(
+        2,
+        Arc::clone(&storage_swap),
+        target.clone(),
+        snapshot_work,
+        Arc::clone(&pause) as Arc<dyn PauseController>,
+        None,
+    );
+    let error = state_machine
+        .install_snapshot(meta, Box::new(std::io::Cursor::new(bytes)))
+        .await
+        .expect_err("mutated snapshot must be rejected");
+    assert!(
+        error.to_string().contains(expected_error),
+        "unexpected install rejection: {error}"
+    );
+    assert_eq!(pause.requested.load(Ordering::SeqCst), 0);
+    assert_eq!(pause.entered.load(Ordering::SeqCst), 0);
+    assert_eq!(pause.resumed.load(Ordering::SeqCst), 0);
+    let unchanged = storage_swap.load_full();
+    assert!(Arc::ptr_eq(&unchanged, &original));
+    assert_eq!(unchanged.get(b"compat:target-authority")?, "unchanged");
+    assert_eq!(target_authority_bytes(&target)?, authority_before);
+
+    drop(unchanged);
+    drop(state_machine);
+    drop(storage_swap);
+    drop(pause);
+    let mut original = Arc::try_unwrap(original)
+        .map_err(|_| anyhow::anyhow!("negative target Storage still has Arc owners"))?;
+    original.shutdown().await;
+    original.close();
+    drop(live_receiver);
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ExactPairing {
+    root_id: String,
+    root_digest: String,
+    instances: Vec<(u32, String, u64, u64, String)>,
+}
+
+fn capture_exact_pairing(root_path: &Path) -> anyhow::Result<ExactPairing> {
+    let root = RootStorageManifestV2::read_from_dir(root_path)?;
+    root.validate_runtime_topology(2)?;
+    let mut instances = Vec::new();
+    for instance_id in 0..2_u32 {
+        let instance = InstanceStorageManifestV2::read_from_dir(
+            &root_path.join(instance_id.to_string()),
+        )?;
+        instance.validate_root_binding(instance_id, &root)?;
+        instances.push((
+            instance.instance_id(),
+            instance.instance_uuid().to_string(),
+            instance.storage_incarnation(),
+            instance.next_generation(),
+            instance.manifest_digest().as_str().to_string(),
+        ));
+    }
+    Ok(ExactPairing {
+        root_id: root.manifest_id().to_string(),
+        root_digest: root.manifest_digest().as_str().to_string(),
+        instances,
+    })
+}
+
+fn write_head_data(storage: &Storage) -> anyhow::Result<()> {
+    storage.set(STRING_KEY, b"string-value")?;
+    storage.hset(HASH_KEY, HASH_FIELD, b"hash-value")?;
+    storage.zadd(
+        ZSET_KEY,
+        &[ZsetScoreMember::new(42.5, ZSET_MEMBER.to_vec())],
+    )?;
+    storage.set(TTL_KEY, b"ttl-value")?;
+    assert!(storage.expire(TTL_KEY, 86_400)?);
+    for index in 0..64_u32 {
+        let key = format!("compat:head-sentinel:{index}");
+        let value = format!("value:{index}");
+        storage.set(key.as_bytes(), value.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn verify_head_data(storage: &Storage) -> anyhow::Result<()> {
+    assert_eq!(storage.get(STRING_KEY)?, "string-value");
+    assert_eq!(
+        storage.hget(HASH_KEY, HASH_FIELD)?,
+        Some("hash-value".to_string())
+    );
+    assert_eq!(storage.zscore(ZSET_KEY, ZSET_MEMBER)?, Some(b"42.5".to_vec()));
+    assert_eq!(storage.get(TTL_KEY)?, "ttl-value");
+    assert!(storage.ttl(TTL_KEY)? > 0);
+    for index in 0..64_u32 {
+        let key = format!("compat:head-sentinel:{index}");
+        let value = format!("value:{index}");
+        assert_eq!(storage.get(key.as_bytes())?, value);
+    }
+    Ok(())
+}
+
+fn mutate_head_v2_archive(
+    bytes: &[u8],
+    meta: &SnapshotMeta<u64, KiwiNode>,
+    mutation_root: &Path,
+    mutation: &str,
+) -> anyhow::Result<Vec<u8>> {
+    anyhow::ensure!(!mutation_root.exists(), "Head mutation root must start absent");
+    unpack_tar_to_dir(bytes, mutation_root)?;
+    let checkpoint_root = unpacked_checkpoint_root(mutation_root);
+    assert_archive_meta_matches(&checkpoint_root, meta)?;
+    match mutation {
+        "swap-instance-manifests" => {
+            let manifest0 = checkpoint_root.join("0").join("__kiwi_storage_manifest");
+            let manifest1 = checkpoint_root.join("1").join("__kiwi_storage_manifest");
+            let temporary = checkpoint_root.join("manifest.swap.tmp");
+            std::fs::rename(&manifest0, &temporary)?;
+            std::fs::rename(&manifest1, &manifest0)?;
+            std::fs::rename(&temporary, &manifest1)?;
+        }
+        "instance1-digest" => {
+            let mut file_meta = RaftSnapshotMeta::read_from_dir(&checkpoint_root)?;
+            file_meta.instance_manifests[1].manifest_digest =
+                ManifestDigest::compute(b"tampered instance 1 digest");
+            file_meta.write_to_dir(&checkpoint_root)?;
+        }
+        "instance1-incarnation" => {
+            let mut file_meta = RaftSnapshotMeta::read_from_dir(&checkpoint_root)?;
+            file_meta.instance_manifests[1].storage_incarnation = file_meta.instance_manifests[1]
+                .storage_incarnation
+                .wrapping_add(1)
+                .max(1);
+            file_meta.write_to_dir(&checkpoint_root)?;
+        }
+        "root-digest" => {
+            let mut file_meta = RaftSnapshotMeta::read_from_dir(&checkpoint_root)?;
+            file_meta.root_manifest_digest = Some(ManifestDigest::compute(b"tampered root digest"));
+            file_meta.write_to_dir(&checkpoint_root)?;
+        }
+        other => anyhow::bail!("unknown Head v2 archive mutation: {other}"),
+    }
+    assert_archive_meta_matches(&checkpoint_root, meta)?;
+    Ok(pack_dir_to_vec(&checkpoint_root)?)
 }
 
 #[tokio::test]
@@ -739,12 +1398,9 @@ async fn restore_exact_base_v1_archive_external() -> anyhow::Result<()> {
         .await?;
 
     let restored = storage_swap.load_full();
-    assert_eq!(restored.get(STRING_KEY)?, "string-value");
-    assert_eq!(restored.hget(HASH_KEY, HASH_FIELD)?, Some("hash-value".to_string()));
-    assert_eq!(restored.zscore(ZSET_KEY, ZSET_MEMBER)?, Some(b"42.5".to_vec()));
-    assert_eq!(restored.get(TTL_KEY)?, "ttl-value");
-    assert!(restored.ttl(TTL_KEY)? > 0);
     restored.set(b"compat:post-restore", b"accepted")?;
+    assert_history(&restored)?;
+    assert_manifest_pairing(&target)?;
 
     drop(state_machine);
     drop(storage_swap);
@@ -761,10 +1417,194 @@ async fn restore_exact_base_v1_archive_external() -> anyhow::Result<()> {
     );
     let mut reopened = Storage::new(2, 0);
     let reopened_receiver = reopened.open(Arc::new(StorageOptions::default()), &target)?;
-    assert_eq!(reopened.get(b"compat:post-restore")?, "accepted");
+    assert_history(&reopened)?;
+    assert_manifest_pairing(&target)?;
     reopened.shutdown().await;
     reopened.close();
     drop(reopened_receiver);
+    Ok(())
+}
+
+#[tokio::test]
+async fn reject_mutated_exact_base_v1_archive_external() -> anyhow::Result<()> {
+    let archive = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_ARCHIVE").expect("KIWI_COMPAT_ARCHIVE is required"),
+    );
+    let snapshot_meta_path = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_SNAPSHOT_META")
+            .expect("KIWI_COMPAT_SNAPSHOT_META is required"),
+    );
+    let mutation =
+        std::env::var("KIWI_COMPAT_MUTATION").expect("KIWI_COMPAT_MUTATION is required");
+    let mutation_root = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_MUTATION_ROOT")
+            .expect("KIWI_COMPAT_MUTATION_ROOT is required"),
+    );
+    let target = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_TARGET").expect("KIWI_COMPAT_TARGET is required"),
+    );
+    let snapshot_work = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_SNAPSHOT_WORK")
+            .expect("KIWI_COMPAT_SNAPSHOT_WORK is required"),
+    );
+    let bytes = std::fs::read(&archive)?;
+    anyhow::ensure!(!bytes.is_empty(), "exact Base v1 archive is empty");
+    let snapshot_meta = read_snapshot_meta(&snapshot_meta_path)?;
+    let mutated = mutate_exact_base_archive(&bytes, &snapshot_meta, &mutation_root, &mutation)?;
+    let expected_error = match mutation.as_str() {
+        "unknown-cf" => "unregistered legacy column-family layout",
+        "vector-cf" => "invalid Base-v1 snapshot instance 0",
+        "vector-meta" => "contains Vector Set metadata",
+        _ => unreachable!(),
+    };
+    assert_full_install_rejected_before_pause(
+        &snapshot_meta,
+        mutated,
+        target,
+        snapshot_work,
+        expected_error,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn head_v2_two_instance_exact_pairing_external() -> anyhow::Result<()> {
+    let source = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_HEAD_SOURCE")
+            .expect("KIWI_COMPAT_HEAD_SOURCE is required"),
+    );
+    let target = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_TARGET").expect("KIWI_COMPAT_TARGET is required"),
+    );
+    let build_work = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_BUILD_WORK")
+            .expect("KIWI_COMPAT_BUILD_WORK is required"),
+    );
+    let install_work = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_SNAPSHOT_WORK")
+            .expect("KIWI_COMPAT_SNAPSHOT_WORK is required"),
+    );
+    let negative_root = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_NEGATIVE_ROOT")
+            .expect("KIWI_COMPAT_NEGATIVE_ROOT is required"),
+    );
+    let archive_path = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_HEAD_ARCHIVE")
+            .expect("KIWI_COMPAT_HEAD_ARCHIVE is required"),
+    );
+    let meta_path = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_HEAD_SNAPSHOT_META")
+            .expect("KIWI_COMPAT_HEAD_SNAPSHOT_META is required"),
+    );
+    std::fs::create_dir_all(&build_work)?;
+    std::fs::create_dir_all(&install_work)?;
+    std::fs::create_dir_all(&negative_root)?;
+
+    let mut source_storage = Storage::new(2, 0);
+    let source_receiver =
+        source_storage.open(Arc::new(StorageOptions::default()), &source)?;
+    write_head_data(&source_storage)?;
+    verify_head_data(&source_storage)?;
+    let expected_pairing = capture_exact_pairing(&source)?;
+    assert_eq!(expected_pairing.instances.len(), 2);
+    let source_storage = Arc::new(source_storage);
+    let source_swap = Arc::new(ArcSwap::from(Arc::clone(&source_storage)));
+    let mut source_state_machine = KiwiStateMachine::new(
+        1,
+        Arc::clone(&source_swap),
+        source.clone(),
+        build_work,
+        Arc::new(NoopPauseController),
+        None,
+    );
+    let mut builder = source_state_machine.get_snapshot_builder().await;
+    let snapshot = builder.build_snapshot().await?;
+    let snapshot_meta = snapshot.meta.clone();
+    let snapshot_bytes = snapshot.snapshot.into_inner();
+    anyhow::ensure!(!snapshot_bytes.is_empty(), "Head v2 snapshot archive is empty");
+    std::fs::write(&archive_path, &snapshot_bytes)?;
+    std::fs::write(&meta_path, serde_json::to_vec_pretty(&snapshot_meta)?)?;
+    drop(builder);
+    drop(source_state_machine);
+    drop(source_swap);
+    let mut source_storage = Arc::try_unwrap(source_storage)
+        .map_err(|_| anyhow::anyhow!("Head snapshot source Storage still has Arc owners"))?;
+    source_storage.shutdown().await;
+    source_storage.close();
+    drop(source_receiver);
+
+    let mut target_storage = Storage::new(2, 0);
+    let target_receiver =
+        target_storage.open(Arc::new(StorageOptions::default()), &target)?;
+    target_storage.set(b"compat:target-authority", b"replace-me")?;
+    let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
+    let mut target_state_machine = KiwiStateMachine::new(
+        2,
+        Arc::clone(&target_swap),
+        target.clone(),
+        install_work,
+        Arc::new(NoopPauseController),
+        None,
+    );
+    target_state_machine
+        .install_snapshot(
+            &snapshot_meta,
+            Box::new(std::io::Cursor::new(snapshot_bytes.clone())),
+        )
+        .await?;
+    let installed = target_swap.load_full();
+    verify_head_data(&installed)?;
+    assert_eq!(capture_exact_pairing(&target)?, expected_pairing);
+    installed.set(b"compat:head-post-install", b"accepted")?;
+
+    drop(target_state_machine);
+    drop(target_swap);
+    let mut installed = Arc::try_unwrap(installed)
+        .map_err(|_| anyhow::anyhow!("installed Head Storage still has Arc owners"))?;
+    installed.shutdown().await;
+    installed.close();
+    drop(target_receiver);
+
+    let mut reopened = Storage::new(2, 0);
+    let reopened_receiver = reopened.open(Arc::new(StorageOptions::default()), &target)?;
+    verify_head_data(&reopened)?;
+    assert_eq!(reopened.get(b"compat:head-post-install")?, "accepted");
+    assert_eq!(capture_exact_pairing(&target)?, expected_pairing);
+    reopened.shutdown().await;
+    reopened.close();
+    drop(reopened_receiver);
+
+    for (mutation, expected_error) in [
+        (
+            "swap-instance-manifests",
+            "instance_id 1 does not match expected 0",
+        ),
+        ("instance1-digest", "instance 1 manifest digest mismatch"),
+        (
+            "instance1-incarnation",
+            "snapshot instance 1 incarnation metadata is inconsistent",
+        ),
+        ("root-digest", "root manifest digest mismatch"),
+    ] {
+        let case_root = negative_root.join(mutation);
+        let mutation_root = case_root.join("unpack");
+        let negative_target = case_root.join("target");
+        let negative_work = case_root.join("work");
+        let mutated = mutate_head_v2_archive(
+            &snapshot_bytes,
+            &snapshot_meta,
+            &mutation_root,
+            mutation,
+        )?;
+        assert_full_install_rejected_before_pause(
+            &snapshot_meta,
+            mutated,
+            negative_target,
+            negative_work,
+            expected_error,
+        )
+        .await?;
+    }
     Ok(())
 }
 '''

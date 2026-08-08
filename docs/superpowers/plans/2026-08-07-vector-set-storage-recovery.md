@@ -448,16 +448,22 @@
   - Base 写入 String、Hash、ZSet、TTL 并生成 v1 snapshot。
   - Vector-v1 写入 String、Hash、ZSet、TTL、Vector meta/member，并记录每实例 v1 manifest 的 incarnation/generation。
   - Head 对两种 source profile 的复制目录逐 phase 注入失败，每次检查目录、journal、CF、manifest 和用户数据。
+  - 30 个 fault case 在 retry/resume 和 phase 计数前逐项验证 phase-aware live/shadow/backup 布局、Root/Instance digest 与历史 binary 权威副本读回；普通完成态严格为 `Committed`，仅显式关闭窗口后为 `RollbackWindowClosed`。
   - 受控 rollback 后必须分别使用 Base binary 或 Vector-v1 binary 真实 reopen/read，不使用 Head parser 推断旧格式可读。
+  - exact Base v1 archive 的 unknown CF、Vector CF、Vector meta 三个变体均通过 Head `install_snapshot` 完整入口在 pause 前拒绝，并验证 target authority 未变。
+  - exact Head v2 使用两个实例真实 build/install/关闭/reopen/read；交换 0/1 pairing、篡改 instance 1 digest/incarnation、篡改 Root digest 均通过完整 install 入口拒绝。
+  - runner 拒绝位于任一 Git worktree 内（含 symlink realpath）的 `TMPDIR`，禁用共享 sccache/wrapper，并检查无引用临时根的存活进程。
   - cleanup 移除临时 worktree、build 输出和 server 进程，并在退出前检查无遗留。
 
 - [x] **步骤 3：Linux 验收**
 
   ```powershell
+  wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && bash -n scripts/test-vector-storage-compat.sh && python3 tests/compat/vector_storage_fixture.py emit-rust --kind head-storage | rustfmt --edition 2024 --emit stdout >/dev/null'
+  .\scripts\test-vector-storage-compat.ps1 --help
   wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && ./scripts/test-vector-storage-compat.sh --base-ref 688d905fec31b54aec76f36676f55efd8b5cfa17 --vector-v1-ref 733888fc90ad8ef039947e87b08d7500a405954a --head-ref "$(git rev-parse HEAD)"'
   ```
 
-  实际结果：11 个 gate、30 个 migration phase 全部执行并通过；cleanup 移除 3 个临时 worktree、全部 build 输出且无 runner 进程遗留。
+  实际结果：针对 interrupted-state、Base snapshot reopen、完整 install、两实例 pairing、process cleanup 的 5 个变异均红灯；修复后静态/CLI 门禁通过。完整 Linux 矩阵 11 个 gate、30 个 migration phase（Base 16、Vector-v1 14）全部执行并通过，耗时 1009 秒；cleanup 移除 3 个临时 worktree、全部 build 输出，`tracked_processes=0`、`lingering_temp_processes=0`。
 
 ## 工作流最终门禁
 

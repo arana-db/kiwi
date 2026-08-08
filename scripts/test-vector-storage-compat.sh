@@ -22,6 +22,16 @@ die() {
     exit 1
 }
 
+if (($# == 1)) && [[ $1 == --help || $1 == -h ]]; then
+    usage
+    exit 0
+fi
+for argument in "$@"; do
+    if [[ $argument == --help || $argument == -h ]]; then
+        die "--help must be used as the only argument"
+    fi
+done
+
 BASE_REF=""
 VECTOR_V1_REF=""
 HEAD_REF=""
@@ -31,10 +41,6 @@ HEAD_SEEN=0
 
 while (($# > 0)); do
     case "$1" in
-        --help|-h)
-            usage
-            exit 0
-            ;;
         --base-ref)
             ((BASE_SEEN == 0)) || die "duplicate --base-ref"
             (($# >= 2)) || die "--base-ref requires a value"
@@ -77,18 +83,16 @@ FIXTURE_TOOL="$REPO_ROOT/tests/compat/vector_storage_fixture.py"
 [[ -f $FIXTURE_TOOL ]] || die "fixture tool is missing: $FIXTURE_TOOL"
 
 for tool in awk bash basename c++ cargo cat cc cp date dirname find git grep mkdir mktemp \
-    python3 realpath rm sed sha256sum stat wc; do
+    pgrep python3 realpath rm sed sha256sum stat wc; do
     command -v "$tool" >/dev/null 2>&1 || die "required Linux tool is missing: $tool"
 done
 
-if command -v sccache >/dev/null 2>&1; then
-    export RUSTC_WRAPPER=sccache
-    export CC="sccache cc"
-    export CXX="sccache c++"
-    printf 'BUILD_CACHE sccache=%s\n' "$(command -v sccache)"
-else
-    printf 'BUILD_CACHE sccache=unavailable\n'
-fi
+unset RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER
+unset SCCACHE_DIR SCCACHE_CACHE_SIZE SCCACHE_ENDPOINT SCCACHE_BUCKET SCCACHE_REGION
+unset SCCACHE_S3_USE_SSL SCCACHE_REDIS SCCACHE_MEMCACHED
+export CC="$(command -v cc)"
+export CXX="$(command -v c++)"
+printf 'BUILD_CACHE mode=disabled cc=%s cxx=%s\n' "$CC" "$CXX"
 
 if [[ -d $REPO_ROOT/.git ]]; then
     COMMON_GIT_DIR=$(realpath -- "$REPO_ROOT/.git")
@@ -111,6 +115,25 @@ else
 fi
 [[ -d $COMMON_GIT_DIR ]] || die "common Git directory is missing: $COMMON_GIT_DIR"
 
+path_is_within() {
+    local candidate=$1
+    local authority=$2
+    [[ $candidate == "$authority" || $candidate == "$authority"/* ]]
+}
+
+declare -a REGISTERED_WORKTREE_ROOTS=()
+while IFS= read -r record; do
+    [[ $record == worktree\ * ]] || continue
+    worktree_root=${record#worktree }
+    if [[ $worktree_root =~ ^[A-Za-z]:[/\\] ]]; then
+        command -v wslpath >/dev/null 2>&1 || die "wslpath is required for Windows worktree paths"
+        worktree_root=$(wslpath -u "$worktree_root")
+    fi
+    worktree_root=$(realpath -- "$worktree_root")
+    REGISTERED_WORKTREE_ROOTS+=("$worktree_root")
+done < <(git --git-dir="$COMMON_GIT_DIR" worktree list --porcelain)
+((${#REGISTERED_WORKTREE_ROOTS[@]} > 0)) || die "Git reported zero registered worktrees"
+
 resolve_exact_commit() {
     git --git-dir="$COMMON_GIT_DIR" rev-parse --verify --end-of-options "$1^{commit}"
 }
@@ -122,13 +145,25 @@ HEAD_SHA=$(resolve_exact_commit "$HEAD_REF") || die "cannot resolve Head commit:
 [[ $VECTOR_V1_SHA == "$EXPECTED_VECTOR_V1_REF" ]] || die "Vector-v1 resolves to $VECTOR_V1_SHA, expected $EXPECTED_VECTOR_V1_REF"
 [[ $HEAD_SHA == "${HEAD_REF,,}" ]] || die "Head input must name the exact resolved commit: input=$HEAD_REF resolved=$HEAD_SHA"
 
-TMP_BASE=$(realpath -- "${TMPDIR:-/tmp}")
+TMP_CANDIDATE=${TMPDIR:-/tmp}
+[[ -d $TMP_CANDIDATE ]] || die "TMPDIR is not an existing directory: $TMP_CANDIDATE"
+TMP_BASE=$(realpath -- "$TMP_CANDIDATE")
+for worktree_root in "${REGISTERED_WORKTREE_ROOTS[@]}"; do
+    path_is_within "$TMP_BASE" "$worktree_root" && \
+        die "TMPDIR must be outside every Git worktree: tmp=$TMP_BASE worktree=$worktree_root"
+done
+path_is_within "$TMP_BASE" "$REPO_ROOT" && die "TMPDIR must be outside REPO_ROOT: $TMP_BASE"
 TEMP_ROOT=$(mktemp -d "$TMP_BASE/kiwi-vector-storage-compat.XXXXXX")
 TEMP_ROOT=$(realpath -- "$TEMP_ROOT")
 [[ $(dirname -- "$TEMP_ROOT") == "$TMP_BASE" ]] || die "temporary root escaped TMPDIR: $TEMP_ROOT"
 [[ $(basename -- "$TEMP_ROOT") == kiwi-vector-storage-compat.* ]] || die "unexpected temporary root basename: $TEMP_ROOT"
+for worktree_root in "${REGISTERED_WORKTREE_ROOTS[@]}"; do
+    path_is_within "$TEMP_ROOT" "$worktree_root" && \
+        die "temporary root is inside a Git worktree: temp=$TEMP_ROOT worktree=$worktree_root"
+done
 
 declare -a WORKTREES=()
+declare -a BACKGROUND_PIDS=()
 declare -a EXECUTED_GATES=()
 declare -A GATE_SET=()
 ACTIVE_GATE=""
@@ -153,10 +188,25 @@ safe_remove() {
 cleanup() {
     local status=$?
     local cleanup_failed=0
+    local -a lingering_temp_pids=()
     trap - EXIT INT TERM
     set +e
     if [[ -n $ACTIVE_GATE ]]; then
         printf 'GATE %s FAIL duration=%ss\n' "$ACTIVE_GATE" "$(( $(date +%s) - ACTIVE_GATE_STARTED ))" >&2
+    fi
+    for pid in "${BACKGROUND_PIDS[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            printf 'CLEANUP FAIL runner_background_pid_alive=%s\n' "$pid" >&2
+            cleanup_failed=1
+        fi
+    done
+    while IFS= read -r pid; do
+        [[ -n $pid && $pid != $$ && $pid != $PPID ]] || continue
+        lingering_temp_pids+=("$pid")
+    done < <(pgrep -f -- "$TEMP_ROOT" 2>/dev/null || true)
+    if ((${#lingering_temp_pids[@]} > 0)); then
+        printf 'CLEANUP FAIL temp_root_processes=%s\n' "${lingering_temp_pids[*]}" >&2
+        cleanup_failed=1
     fi
     for ((index=${#WORKTREES[@]} - 1; index >= 0; index--)); do
         worktree=${WORKTREES[$index]}
@@ -184,7 +234,8 @@ cleanup() {
     if ((cleanup_failed != 0)); then
         status=1
     else
-        printf 'CLEANUP PASS temp_root_removed=true worktrees_removed=%d tracked_processes=0\n' "${#WORKTREES[@]}"
+        printf 'CLEANUP PASS temp_root_removed=true worktrees_removed=%d tracked_processes=%d lingering_temp_processes=0\n' \
+            "${#WORKTREES[@]}" "${#BACKGROUND_PIDS[@]}"
     fi
     exit "$status"
 }
@@ -304,6 +355,22 @@ copy_fixture() {
     cp -a --reflink=auto -- "$source" "$target"
 }
 
+copy_temp_file() {
+    local source=$1
+    local target=$2
+    local target_parent
+    target_parent=$(dirname -- "$target")
+    assert_under_temp "$source"
+    assert_under_temp "$target"
+    assert_under_temp "$target_parent"
+    [[ -f $source && ! -L $source ]] || die "temporary copy source must be a regular file: $source"
+    mkdir -p -- "$target_parent"
+    [[ ! -e $target ]] || die "temporary copy target already exists: $target"
+    cp --preserve=mode,timestamps -- "$source" "$target"
+    [[ $(sha256sum -- "$source" | awk '{print $1}') == $(sha256sum -- "$target" | awk '{print $1}') ]] || \
+        die "temporary file copy hash mismatch: source=$source target=$target"
+}
+
 printf 'PROVENANCE base=%s vector_v1=%s head=%s common_git_dir=%s temp_root=%s\n' \
     "$BASE_SHA" "$VECTOR_V1_SHA" "$HEAD_SHA" "$COMMON_GIT_DIR" "$TEMP_ROOT"
 
@@ -345,13 +412,11 @@ VECTOR_STORAGE_EXE=$(copy_group_executable vector-storage "$VECTOR_WORKTREE" "$V
 HEAD_BUILD_LOG=$(build_test_group head "$HEAD_WORKTREE" "$HEAD_TARGET" \
     storage/test-fault-injection \
     storage:vector_storage_compat_external raft:vector_storage_snapshot_compat_external \
-    storage:checkpoint_test raft:snapshot_roundtrip_test)
+    raft:snapshot_roundtrip_test)
 HEAD_STORAGE_EXE=$(copy_group_executable head-storage "$HEAD_WORKTREE" "$HEAD_ARTIFACTS" \
     "$HEAD_BUILD_LOG" vector_storage_compat_external)
 HEAD_SNAPSHOT_EXE=$(copy_group_executable head-snapshot "$HEAD_WORKTREE" "$HEAD_ARTIFACTS" \
     "$HEAD_BUILD_LOG" vector_storage_snapshot_compat_external)
-HEAD_CHECKPOINT_EXE=$(copy_group_executable head-checkpoint "$HEAD_WORKTREE" "$HEAD_ARTIFACTS" \
-    "$HEAD_BUILD_LOG" checkpoint_test)
 HEAD_ROUNDTRIP_EXE=$(copy_group_executable head-roundtrip "$HEAD_WORKTREE" "$HEAD_ARTIFACTS" \
     "$HEAD_BUILD_LOG" snapshot_roundtrip_test)
 
@@ -404,11 +469,21 @@ for source_profile in base vector; do
     fi
     for fault in "${faults[@]}"; do
         case_root="$TEMP_ROOT/cases/retry-$source_profile-$fault"
+        authority_root="$TEMP_ROOT/cases/authority-$source_profile-$fault"
         copy_fixture "$source_root" "$case_root"
-        run_exact_test "$HEAD_STORAGE_EXE" migrate_fault_retry_external \
-            KIWI_COMPAT_ROOT="$case_root" KIWI_COMPAT_PROFILE="$source_profile" KIWI_COMPAT_FAULT="$fault"
-        safe_remove "$case_root"
+        run_exact_test "$HEAD_STORAGE_EXE" inject_fault_and_assert_interrupted_external \
+            KIWI_COMPAT_ROOT="$case_root" KIWI_COMPAT_AUTHORITY_ROOT="$authority_root" \
+            KIWI_COMPAT_PROFILE="$source_profile" KIWI_COMPAT_FAULT="$fault"
+        if [[ $source_profile == base ]]; then
+            run_exact_test "$BASE_STORAGE_EXE" reopen_fixture KIWI_COMPAT_ROOT="$authority_root"
+        else
+            run_exact_test "$VECTOR_STORAGE_EXE" reopen_fixture KIWI_COMPAT_ROOT="$authority_root"
+        fi
         ((PHASE_COUNT += 1))
+        run_exact_test "$HEAD_STORAGE_EXE" resume_after_asserted_fault_external \
+            KIWI_COMPAT_ROOT="$case_root" KIWI_COMPAT_PROFILE="$source_profile"
+        safe_remove "$case_root"
+        safe_remove "$authority_root"
     done
 done
 [[ $PHASE_COUNT -eq 30 ]] || die "migration phase execution count mismatch: $PHASE_COUNT"
@@ -462,14 +537,44 @@ run_exact_test "$HEAD_SNAPSHOT_EXE" restore_exact_base_v1_archive_external \
 pass_gate base_v1_snapshot_restores_on_head
 
 begin_gate v1_snapshot_with_unknown_or_vector_schema_is_rejected
-run_exact_test "$HEAD_CHECKPOINT_EXE" base_v1_snapshot_with_vector_data_cf_fails_before_pause
-run_exact_test "$HEAD_CHECKPOINT_EXE" base_v1_snapshot_with_vector_meta_fails_before_pause
-run_exact_test "$HEAD_CHECKPOINT_EXE" base_v1_snapshot_with_unknown_cf_fails_before_pause
+for mutation in unknown-cf vector-cf vector-meta; do
+    MUTATED_BASE_ARCHIVE="$TEMP_ROOT/snapshots/base-v1-$mutation.snapshot"
+    MUTATED_BASE_META="$TEMP_ROOT/snapshots/base-v1-$mutation.meta.json"
+    MUTATION_ROOT="$TEMP_ROOT/snapshots/base-v1-$mutation-unpack"
+    MUTATION_TARGET="$TEMP_ROOT/snapshots/base-v1-$mutation-target"
+    MUTATION_WORK="$TEMP_ROOT/snapshots/base-v1-$mutation-work"
+    copy_temp_file "$BASE_ARCHIVE" "$MUTATED_BASE_ARCHIVE"
+    copy_temp_file "$BASE_SNAPSHOT_META" "$MUTATED_BASE_META"
+    run_exact_test "$HEAD_SNAPSHOT_EXE" reject_mutated_exact_base_v1_archive_external \
+        KIWI_COMPAT_ARCHIVE="$MUTATED_BASE_ARCHIVE" \
+        KIWI_COMPAT_SNAPSHOT_META="$MUTATED_BASE_META" \
+        KIWI_COMPAT_MUTATION="$mutation" KIWI_COMPAT_MUTATION_ROOT="$MUTATION_ROOT" \
+        KIWI_COMPAT_TARGET="$MUTATION_TARGET" KIWI_COMPAT_SNAPSHOT_WORK="$MUTATION_WORK"
+done
 pass_gate v1_snapshot_with_unknown_or_vector_schema_is_rejected
 
 begin_gate head_v2_snapshot_reopens_with_exact_manifest_pairing
-run_exact_test "$HEAD_CHECKPOINT_EXE" v2_snapshot_requires_exact_root_manifest_digest
-run_exact_test "$HEAD_CHECKPOINT_EXE" v2_snapshot_requires_every_instance_manifest_digest_and_incarnation
+HEAD_V2_SOURCE="$TEMP_ROOT/snapshots/head-v2-source"
+HEAD_V2_TARGET="$TEMP_ROOT/snapshots/head-v2-target"
+HEAD_V2_BUILD_WORK="$TEMP_ROOT/snapshots/head-v2-build-work"
+HEAD_V2_INSTALL_WORK="$TEMP_ROOT/snapshots/head-v2-install-work"
+HEAD_V2_NEGATIVE_ROOT="$TEMP_ROOT/snapshots/head-v2-negative"
+HEAD_V2_ARCHIVE="$TEMP_ROOT/snapshots/head-v2.snapshot"
+HEAD_V2_META="$TEMP_ROOT/snapshots/head-v2.meta.json"
+run_exact_test "$HEAD_SNAPSHOT_EXE" head_v2_two_instance_exact_pairing_external \
+    KIWI_COMPAT_HEAD_SOURCE="$HEAD_V2_SOURCE" KIWI_COMPAT_TARGET="$HEAD_V2_TARGET" \
+    KIWI_COMPAT_BUILD_WORK="$HEAD_V2_BUILD_WORK" \
+    KIWI_COMPAT_SNAPSHOT_WORK="$HEAD_V2_INSTALL_WORK" \
+    KIWI_COMPAT_NEGATIVE_ROOT="$HEAD_V2_NEGATIVE_ROOT" \
+    KIWI_COMPAT_HEAD_ARCHIVE="$HEAD_V2_ARCHIVE" \
+    KIWI_COMPAT_HEAD_SNAPSHOT_META="$HEAD_V2_META"
+[[ -s $HEAD_V2_ARCHIVE ]] || die "Head v2 snapshot archive is empty"
+[[ -s $HEAD_V2_META ]] || die "Head v2 SnapshotMeta sidecar is empty"
+printf 'SNAPSHOT head_v2_sha256=%s bytes=%s meta_sha256=%s meta_bytes=%s instances=2 negative_cases=4\n' \
+    "$(sha256sum -- "$HEAD_V2_ARCHIVE" | awk '{print $1}')" \
+    "$(stat -c %s -- "$HEAD_V2_ARCHIVE")" \
+    "$(sha256sum -- "$HEAD_V2_META" | awk '{print $1}')" \
+    "$(stat -c %s -- "$HEAD_V2_META")"
 run_exact_test "$HEAD_ROUNDTRIP_EXE" cursor_snapshot_roundtrip
 pass_gate head_v2_snapshot_reopens_with_exact_manifest_pairing
 
