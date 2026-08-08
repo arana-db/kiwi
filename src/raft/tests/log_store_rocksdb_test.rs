@@ -48,6 +48,7 @@ fn create_test_db() -> (TempDir, Arc<DB>) {
         ColumnFamilyDescriptor::new("logs", Options::default()),
         ColumnFamilyDescriptor::new("meta", Options::default()),
         ColumnFamilyDescriptor::new("state", Options::default()),
+        ColumnFamilyDescriptor::new("sm_meta", Options::default()),
     ];
 
     let db = DB::open_cf_descriptors(&opts, temp_dir.path(), cfs).expect("Failed to open database");

@@ -53,6 +53,7 @@ use storage::{
 
 use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
 
+use crate::durable_state_machine_meta::{DurableStateMachineMeta, DurableStateMachineStore};
 use crate::snapshot_archive::{pack_dir_to_vec, unpack_tar_to_dir, unpacked_checkpoint_root};
 
 fn storage_err_to_raft(e: storage::error::Error) -> StorageError<u64> {
@@ -306,7 +307,7 @@ fn persist_current_snapshot(
 }
 
 #[allow(clippy::result_large_err)]
-fn load_current_snapshot(
+pub(crate) fn load_current_snapshot(
     work_dir: &std::path::Path,
 ) -> Result<Option<Snapshot<KiwiTypeConfig>>, StorageError<u64>> {
     let data_path = work_dir.join(CURRENT_SNAPSHOT_DATA);
@@ -415,6 +416,7 @@ pub struct KiwiStateMachine {
     snapshot_publication_gate: Arc<tokio::sync::Mutex<()>>,
     /// Shared Raft append-log callback used to re-arm restored Storage after snapshot install.
     append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
+    durable_meta: Option<Arc<DurableStateMachineStore>>,
 }
 
 impl KiwiStateMachine {
@@ -443,7 +445,24 @@ impl KiwiStateMachine {
             snapshot_state_gate: Arc::new(tokio::sync::Mutex::new(())),
             snapshot_publication_gate: Arc::new(tokio::sync::Mutex::new(())),
             append_log_fn,
+            durable_meta: None,
         }
+    }
+
+    pub fn with_durable_meta(mut self, store: Arc<DurableStateMachineStore>) -> Self {
+        self.durable_meta = Some(store);
+        self
+    }
+
+    /// Seed the frontier recovered at startup so applied_state() stays a pure read.
+    pub fn with_recovered_state(
+        mut self,
+        last_applied: Option<LogId<u64>>,
+        last_membership: StoredMembership<u64, KiwiNode>,
+    ) -> Self {
+        self.last_applied = last_applied;
+        self.last_membership = last_membership;
+        self
     }
 
     /// Initialize cf_tracker from restored SST properties after snapshot install
@@ -518,6 +537,20 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             // Reached only after the entry has been durably applied.
             self.last_applied = Some(log_id);
             responses.push(response);
+        }
+
+        // note(guozhihao-224) Persist the frontier only after every entry is
+        // durably applied; a failure is fatal and reports no success.
+        if let Some(store) = &self.durable_meta {
+            let meta =
+                DurableStateMachineMeta::new(self.last_applied, self.last_membership.clone());
+            store.save_meta(&meta).map_err(|error| {
+                log::error!(
+                    "fatal error persisting applied frontier: last_applied={:?}, error={error}",
+                    self.last_applied
+                );
+                io_err_to_raft(io::Error::other(error.to_string()))
+            })?;
         }
 
         Ok(responses)
@@ -718,6 +751,19 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         self.last_applied = meta.last_log_id;
         self.last_membership = meta.last_membership.clone();
 
+        // note(guozhihao-224) Keep the frontier aligned with the installed
+        // snapshot; failure keeps the marker in place and storage paused.
+        if let Some(store) = &self.durable_meta {
+            let durable_meta =
+                DurableStateMachineMeta::new(self.last_applied, self.last_membership.clone());
+            store.save_meta(&durable_meta).map_err(|error| {
+                post_marker_error(
+                    "persisting the applied frontier after snapshot install",
+                    &error,
+                )
+            })?;
+        }
+
         persist_current_snapshot(&self.snapshot_work_dir, meta, &bytes).map_err(|error| {
             let context = format!(
                 "persisting the installed current snapshot under {}",
@@ -752,8 +798,20 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             .lock_owned()
             .await;
         let _snapshot_state = Arc::clone(&self.snapshot_state_gate).lock_owned().await;
-        // On first access, lazily load from persisted snapshot to recover last_applied
-        // after restart (otherwise openraft would scan from index 0 and fail if logs were purged).
+        // note(guozhihao-224) On first access after restart the frontier is empty;
+        // recover from the durable store, falling back to the persisted snapshot only
+        // when no durable frontier exists, otherwise OpenRaft scans from index 0.
+        if self.last_applied.is_none()
+            && let Some(store) = &self.durable_meta
+            && let Some(meta) = store.load_meta()?
+        {
+            self.last_applied = meta.last_applied;
+            self.last_membership = meta.last_membership;
+            log::info!(
+                "Recovered last_applied={:?} from durable state machine metadata",
+                self.last_applied
+            );
+        }
         if self.last_applied.is_none()
             && let Some(snap) = load_current_snapshot(&self.snapshot_work_dir)?
         {
@@ -885,6 +943,9 @@ mod snapshot_gate_tests {
 
     use openraft::{Entry, LeaderId};
     use storage::{safe_cleanup_test_db, unique_test_db_path};
+
+    use crate::durable_state_machine_meta::DurableStateMachineStore;
+    use crate::log_store_rocksdb::RocksdbLogStore;
 
     use super::*;
 
@@ -1154,6 +1215,77 @@ mod snapshot_gate_tests {
         safe_cleanup_test_db(&db_path);
         safe_cleanup_test_db(&snapshot_work_dir);
     }
+
+    #[tokio::test]
+    async fn install_snapshot_persists_matching_frontier() {
+        let db_path = unique_test_db_path();
+        let snapshot_work_dir = unique_test_db_path();
+        std::fs::create_dir_all(&snapshot_work_dir)
+            .expect("snapshot work directory should be created");
+
+        let raft_log_path = unique_test_db_path();
+        let log_store = RocksdbLogStore::open(&raft_log_path).expect("raft log store should open");
+        let durable_store = Arc::new(DurableStateMachineStore::new(log_store.db()));
+
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _storage_rx = storage
+            .open(options, &db_path)
+            .expect("test storage should open");
+        storage
+            .set(b"snapshot-key", b"snapshot-value")
+            .expect("test data should be written");
+        let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+        let controller = Arc::new(CountingPauseController::default());
+        let mut state_machine = KiwiStateMachine::new(
+            1,
+            Arc::clone(&storage_swap),
+            db_path.clone(),
+            snapshot_work_dir.clone(),
+            controller.clone(),
+            None,
+        )
+        .with_durable_meta(Arc::clone(&durable_store));
+
+        let mut builder = state_machine.get_snapshot_builder().await;
+        let snapshot = builder
+            .build_snapshot()
+            .await
+            .expect("test snapshot should build");
+        drop(builder);
+        let snapshot_meta = snapshot.meta.clone();
+        let snapshot_bytes = snapshot.snapshot.into_inner();
+
+        state_machine
+            .install_snapshot(
+                &snapshot_meta,
+                Box::new(std::io::Cursor::new(snapshot_bytes)),
+            )
+            .await
+            .expect("snapshot install should succeed");
+
+        let persisted = durable_store
+            .load_meta()
+            .expect("frontier should be persisted")
+            .expect("frontier must exist after install");
+        assert_eq!(
+            persisted.last_applied, snapshot_meta.last_log_id,
+            "frontier must match the installed snapshot last log id"
+        );
+        assert_eq!(
+            persisted.last_membership, snapshot_meta.last_membership,
+            "frontier membership must match the installed snapshot"
+        );
+
+        drop(state_machine);
+        let storage = storage_swap.load_full();
+        drop(storage_swap);
+        close_storage(storage).await;
+        drop(_storage_rx);
+        safe_cleanup_test_db(&db_path);
+        safe_cleanup_test_db(&snapshot_work_dir);
+        safe_cleanup_test_db(&raft_log_path);
+    }
 }
 
 #[cfg(test)]
@@ -1223,6 +1355,9 @@ mod apply_ordering_tests {
         ColumnFamilyIndex, fail_next_rocks_batch_commit, safe_cleanup_test_db, unique_test_db_path,
     };
 
+    use crate::durable_state_machine_meta::{DurableStateMachineStore, fail_next_sm_meta_save};
+    use crate::log_store_rocksdb::RocksdbLogStore;
+
     use super::*;
 
     struct NoopPermit;
@@ -1252,11 +1387,14 @@ mod apply_ordering_tests {
         db_path: PathBuf,
         snapshot_work_dir: PathBuf,
         storage_rx: Box<dyn std::any::Any + Send>,
+        sm_meta_store: Arc<DurableStateMachineStore>,
+        raft_log_path: PathBuf,
     }
 
     struct ClosedFixture {
         db_path: PathBuf,
         snapshot_work_dir: PathBuf,
+        raft_log_path: PathBuf,
     }
 
     impl Fixture {
@@ -1265,6 +1403,11 @@ mod apply_ordering_tests {
             let snapshot_work_dir = unique_test_db_path();
             std::fs::create_dir_all(&snapshot_work_dir)
                 .expect("snapshot work directory should be created");
+
+            let raft_log_path = unique_test_db_path();
+            let log_store =
+                RocksdbLogStore::open(&raft_log_path).expect("test raft log store should open");
+            let sm_meta_store = Arc::new(DurableStateMachineStore::new(log_store.db()));
 
             let mut storage = Storage::new(1, 0);
             let options = Arc::new(StorageOptions::default());
@@ -1279,7 +1422,8 @@ mod apply_ordering_tests {
                 snapshot_work_dir.clone(),
                 Arc::new(NoopPauseController),
                 None,
-            );
+            )
+            .with_durable_meta(Arc::clone(&sm_meta_store));
 
             Self {
                 state_machine,
@@ -1287,6 +1431,8 @@ mod apply_ordering_tests {
                 db_path,
                 snapshot_work_dir,
                 storage_rx: Box::new(storage_rx),
+                sm_meta_store,
+                raft_log_path,
             }
         }
 
@@ -1297,8 +1443,11 @@ mod apply_ordering_tests {
                 db_path,
                 snapshot_work_dir,
                 storage_rx,
+                sm_meta_store,
+                raft_log_path,
             } = self;
             drop(state_machine);
+            drop(sm_meta_store);
             let storage = storage_swap.load_full();
             drop(storage_swap);
             let mut storage = match Arc::try_unwrap(storage) {
@@ -1313,6 +1462,7 @@ mod apply_ordering_tests {
             ClosedFixture {
                 db_path,
                 snapshot_work_dir,
+                raft_log_path,
             }
         }
 
@@ -1356,6 +1506,7 @@ mod apply_ordering_tests {
             drop(reopened);
             safe_cleanup_test_db(&self.db_path);
             safe_cleanup_test_db(&self.snapshot_work_dir);
+            safe_cleanup_test_db(&self.raft_log_path);
         }
     }
 
@@ -1509,5 +1660,127 @@ mod apply_ordering_tests {
                 (b"after-failure", None),
             ])
             .await;
+    }
+
+    #[tokio::test]
+    async fn apply_persists_durable_frontier() {
+        let mut fx = Fixture::new();
+        assert!(
+            fx.sm_meta_store
+                .load_meta()
+                .expect("load should work")
+                .is_none()
+        );
+
+        fx.state_machine
+            .apply([entry_at(
+                5,
+                EntryPayload::Normal(string_put_binlog(b"durable-frontier", b"value")),
+            )])
+            .await
+            .expect("a valid binlog should apply");
+
+        let meta = fx
+            .sm_meta_store
+            .load_meta()
+            .expect("frontier should be persisted")
+            .expect("frontier must exist after apply");
+        assert_eq!(
+            meta.last_applied.map(|l| l.index),
+            Some(5),
+            "durable frontier must advance to the applied entry"
+        );
+
+        fx.close()
+            .await
+            .assert_reopened_values(&[(b"durable-frontier", Some("value"))])
+            .await;
+    }
+
+    /// note(guozhihao-224) Persist failure is fatal even though business data
+    /// is committed (allowed lagging-frontier window).
+    #[tokio::test]
+    async fn frontier_persist_failure_is_fatal() {
+        let mut fx = Fixture::new();
+        let key = b"frontier-fail";
+        let _failure = fail_next_sm_meta_save(&fx.sm_meta_store.db());
+
+        let err = fx
+            .state_machine
+            .apply([entry_at(
+                7,
+                EntryPayload::Normal(string_put_binlog(key, b"value")),
+            )])
+            .await
+            .expect_err("apply must fail when the frontier cannot be persisted");
+        let _ = err;
+
+        assert_eq!(
+            fx.sm_meta_store
+                .load_meta()
+                .expect("load should work")
+                .map(|m| m.last_applied.map(|l| l.index)),
+            None,
+            "durable frontier must not advance when its persistence fails"
+        );
+        // Business data is committed; the durable frontier lags. On restart this
+        // lag is the allowed window replayed idempotently (per-instance markers).
+        assert_eq!(
+            fx.storage_swap
+                .load_full()
+                .get(key)
+                .expect("business data is committed"),
+            "value"
+        );
+
+        fx.close()
+            .await
+            .assert_reopened_values(&[(key, Some("value"))])
+            .await;
+    }
+
+    /// note(guozhihao-224) Restart recovers the frontier, not a memory default.
+    #[tokio::test]
+    async fn applied_state_returns_durable_value() {
+        let mut fx = Fixture::new();
+        fx.state_machine
+            .apply([entry_at(
+                9,
+                EntryPayload::Normal(string_put_binlog(b"durable-read", b"v")),
+            )])
+            .await
+            .expect("binlog should apply");
+
+        let db_path = fx.db_path.clone();
+        let snapshot_work_dir = fx.snapshot_work_dir.clone();
+        let raft_log_path = fx.raft_log_path.clone();
+        fx.close().await;
+
+        let log_store =
+            RocksdbLogStore::open(&raft_log_path).expect("raft log store should reopen");
+        let store = Arc::new(DurableStateMachineStore::new(log_store.db()));
+        let mut reopened = KiwiStateMachine::new(
+            1,
+            Arc::new(ArcSwap::from_pointee(Storage::new(1, 0))),
+            db_path.clone(),
+            snapshot_work_dir.clone(),
+            Arc::new(NoopPauseController),
+            None,
+        )
+        .with_durable_meta(store);
+
+        let (applied, _membership) = reopened
+            .applied_state()
+            .await
+            .expect("applied_state should recover the durable frontier");
+        assert_eq!(
+            applied.map(|l| l.index),
+            Some(9),
+            "restarted state machine must recover the exact applied index"
+        );
+
+        safe_cleanup_test_db(&raft_log_path);
+        safe_cleanup_test_db(&db_path);
+        safe_cleanup_test_db(&snapshot_work_dir);
     }
 }
