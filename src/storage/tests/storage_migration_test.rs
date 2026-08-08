@@ -338,6 +338,7 @@ fn legacy_root_with_interrupted_root_manifest_temp_retries_for_each_profile() {
             .expect("create interrupted Root manifest temp");
         file.sync_all()
             .expect("sync interrupted Root manifest temp");
+        drop(file);
 
         open_storage(temp.path(), 2).expect("retry migration with known Root temp evidence");
         assert!(!root_manifest_temp.exists());
