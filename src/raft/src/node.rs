@@ -16,14 +16,16 @@
 // limitations under the License.
 
 use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
-use openraft::{Config, Raft, SnapshotPolicy};
+use openraft::storage::RaftLogStorage;
+use openraft::{Config, LogId, Raft, SnapshotPolicy, StoredMembership};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::OnceLock;
 
 use arc_swap::ArcSwap;
 
+use crate::durable_state_machine_meta::{DurableStateMachineMeta, DurableStateMachineStore};
 use crate::grpc::{
     create_admin_service, create_client_service, create_core_service, create_metrics_service,
 };
@@ -33,7 +35,7 @@ use crate::raft_proto::raft_admin_service_server::RaftAdminServiceServer;
 use crate::raft_proto::raft_client_service_server::RaftClientServiceServer;
 use crate::raft_proto::raft_core_service_server::RaftCoreServiceServer;
 use crate::raft_proto::raft_metrics_service_server::RaftMetricsServiceServer;
-use crate::state_machine::{KiwiStateMachine, PauseController};
+use crate::state_machine::{KiwiStateMachine, PauseController, load_current_snapshot};
 use storage::storage::Storage;
 
 #[derive(Debug, thiserror::Error)]
@@ -207,6 +209,72 @@ fn build_raft_config(config: &RaftConfig) -> Result<Arc<Config>, anyhow::Error> 
     Ok(Arc::new(raft_config.validate()?))
 }
 
+/// Recover and validate the durable applied frontier at startup.
+/// note(guozhihao-224) Corrupt or unknown-version metadata, a frontier ahead of
+/// the last log, or a snapshot ahead of the frontier all refuse startup. Without a
+/// durable frontier, bootstrap from a persisted snapshot; with neither, first start.
+async fn recover_applied_state(
+    log_store: &mut RocksdbLogStore,
+    durable_meta: &Arc<DurableStateMachineStore>,
+    snapshot_work_dir: &Path,
+) -> Result<(Option<LogId<u64>>, StoredMembership<u64, KiwiNode>), anyhow::Error> {
+    let snapshot = load_current_snapshot(snapshot_work_dir)
+        .map_err(|error| anyhow::anyhow!("failed to read current snapshot metadata: {error}"))?;
+
+    let frontier = durable_meta
+        .validate()
+        .map_err(|error| anyhow::anyhow!("durable state machine metadata is unusable: {error}"))?;
+
+    let (last_applied, last_membership) = match frontier {
+        Some(meta) => (meta.last_applied, meta.last_membership),
+        None => match &snapshot {
+            Some(snap) => {
+                let meta = DurableStateMachineMeta::new(
+                    snap.meta.last_log_id,
+                    snap.meta.last_membership.clone(),
+                );
+                durable_meta.save_meta(&meta).map_err(|error| {
+                    anyhow::anyhow!("failed to bootstrap applied frontier from snapshot: {error}")
+                })?;
+                log::info!(
+                    "Bootstrapped applied frontier from persisted snapshot: last_applied={:?}",
+                    meta.last_applied.map(|log_id| log_id.index)
+                );
+                (meta.last_applied, meta.last_membership)
+            }
+            None => (None, StoredMembership::default()),
+        },
+    };
+
+    let log_state = log_store
+        .get_log_state()
+        .await
+        .map_err(|error| anyhow::anyhow!("failed to read Raft log state: {error}"))?;
+    let last_log_index = log_state.last_log_id.map(|log_id| log_id.index);
+
+    if let Some(applied) = last_applied {
+        if last_log_index.is_none_or(|last| applied.index > last) {
+            return Err(anyhow::anyhow!(
+                "durable applied frontier {} is ahead of the last Raft log {:?}, refusing to start",
+                applied.index,
+                last_log_index
+            ));
+        }
+        if let Some(snap) = &snapshot
+            && let Some(snap_last) = snap.meta.last_log_id
+            && snap_last.index > applied.index
+        {
+            return Err(anyhow::anyhow!(
+                "persisted snapshot index {} is ahead of the durable applied frontier {}, refusing to start",
+                snap_last.index,
+                applied.index
+            ));
+        }
+    }
+
+    Ok((last_applied, last_membership))
+}
+
 pub async fn create_raft_node(
     config: RaftConfig,
     storage_swap: Arc<ArcSwap<Storage>>,
@@ -218,6 +286,27 @@ pub async fn create_raft_node(
     let snapshot_work_dir = config.data_dir.join("snapshots");
     fs::create_dir_all(&snapshot_work_dir)?;
 
+    let legacy_log_store_path = config.data_dir.join("raft_logs");
+    if legacy_log_store_path.try_exists()? {
+        return Err(anyhow::anyhow!(
+            "cannot safely migrate legacy in-memory Raft log state in place; use a new node ID and clean data-dir/raft-data-dir to rejoin from a healthy leader"
+        ));
+    }
+
+    let log_store_path = config.data_dir.join("raft_logs_rocksdb");
+    std::fs::create_dir_all(&log_store_path)?;
+    let mut log_store = RocksdbLogStore::open(&log_store_path)?;
+
+    // note(guozhihao-224) Validate the durable frontier before serving; a
+    // violation refuses startup.
+    let durable_meta = Arc::new(DurableStateMachineStore::new(log_store.db()));
+    let (last_applied, last_membership) =
+        recover_applied_state(&mut log_store, &durable_meta, &snapshot_work_dir).await?;
+    log::info!(
+        "Recovered applied frontier: last_applied={:?}",
+        last_applied.map(|log_id| log_id.index)
+    );
+
     // Per-instance LogIndex collectors / cf_trackers live in the Storage; the state
     // machine looks them up through storage_swap so it sees the right ones after a
     // snapshot install hot-swaps Storage.
@@ -228,20 +317,11 @@ pub async fn create_raft_node(
         snapshot_work_dir,
         Arc::clone(&pause_controller),
         append_log_fn,
-    );
+    )
+    .with_durable_meta(Arc::clone(&durable_meta))
+    .with_recovered_state(last_applied, last_membership);
 
     let network = KiwiNetworkFactory::new();
-
-    let legacy_log_store_path = config.data_dir.join("raft_logs");
-    if legacy_log_store_path.try_exists()? {
-        return Err(anyhow::anyhow!(
-            "cannot safely migrate legacy in-memory Raft log state in place; use a new node ID and clean data-dir/raft-data-dir to rejoin from a healthy leader"
-        ));
-    }
-
-    let log_store_path = config.data_dir.join("raft_logs_rocksdb");
-    std::fs::create_dir_all(&log_store_path)?;
-    let log_store = RocksdbLogStore::open(&log_store_path)?;
 
     let raft = Raft::new(
         config.node_id,
@@ -271,7 +351,7 @@ mod tests {
     use crate::state_machine::{StorageAccessPermit, snapshot_install_marker_path};
     use conf::raft_type::{BinlogEntry, OperateType};
     use openraft::storage::{RaftLogStorage, RaftLogStorageExt};
-    use openraft::{Entry, EntryPayload, LeaderId, LogId, Vote};
+    use openraft::{Entry, EntryPayload, LeaderId, LogId, SnapshotMeta, Vote};
     use storage::BaseMetaKey;
     use storage::ColumnFamilyIndex;
     use storage::format_strings_value::StringValue;
@@ -653,5 +733,154 @@ mod tests {
                 fixture.name()
             );
         }
+    }
+
+    fn write_snapshot_meta(snap_root: &std::path::Path, last_index: u64) {
+        std::fs::create_dir_all(snap_root).expect("snapshot root should be created");
+        let meta: SnapshotMeta<u64, KiwiNode> = SnapshotMeta {
+            last_log_id: Some(LogId::new(LeaderId::new(1, 1), last_index)),
+            last_membership: StoredMembership::default(),
+            snapshot_id: "snapshot-test".to_string(),
+        };
+        let json = serde_json::to_string_pretty(&meta).expect("snapshot meta should serialize");
+        std::fs::write(snap_root.join("current_snapshot_meta.json"), json)
+            .expect("snapshot meta file should be written");
+        std::fs::write(snap_root.join("current_snapshot.tar"), b"")
+            .expect("snapshot data file should be written");
+    }
+
+    #[tokio::test]
+    async fn fresh_db_no_snapshot_recovers_none() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let mut log_store = RocksdbLogStore::open(temp_dir.path().join("raft_logs_rocksdb"))
+            .expect("log store should open");
+        let store = Arc::new(DurableStateMachineStore::new(log_store.db()));
+
+        let (applied, _membership) =
+            recover_applied_state(&mut log_store, &store, &temp_dir.path().join("snapshots"))
+                .await
+                .expect("first start with no durable state should recover cleanly");
+        assert_eq!(applied, None, "first start must recover an empty frontier");
+        assert!(
+            store.load_meta().expect("load should work").is_none(),
+            "first start must not fabricate metadata"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_sm_meta_with_snapshot_bootstraps_from_snapshot() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let mut log_store = RocksdbLogStore::open(temp_dir.path().join("raft_logs_rocksdb"))
+            .expect("log store should open");
+        log_store
+            .blocking_append([Entry {
+                log_id: LogId::new(LeaderId::new(1, 1), 5),
+                payload: EntryPayload::Blank,
+            }])
+            .await
+            .expect("a log entry should be appended");
+        let store = Arc::new(DurableStateMachineStore::new(log_store.db()));
+        write_snapshot_meta(&temp_dir.path().join("snapshots"), 5);
+
+        let (applied, _membership) =
+            recover_applied_state(&mut log_store, &store, &temp_dir.path().join("snapshots"))
+                .await
+                .expect("bootstrap from a persisted snapshot should recover");
+        assert_eq!(
+            applied.map(|l| l.index),
+            Some(5),
+            "bootstrap must recover the snapshot last log id"
+        );
+        let persisted = store
+            .load_meta()
+            .expect("load should work")
+            .expect("must be persisted");
+        assert_eq!(
+            persisted.last_applied.map(|l| l.index),
+            Some(5),
+            "bootstrap must persist the snapshot-derived frontier"
+        );
+    }
+
+    #[tokio::test]
+    async fn corrupt_sm_meta_fails_closed() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let mut log_store = RocksdbLogStore::open(temp_dir.path().join("raft_logs_rocksdb"))
+            .expect("log store should open");
+        let db = log_store.db();
+        {
+            let cf = db.cf_handle("sm_meta").expect("sm_meta CF should exist");
+            db.put_cf(&cf, b"state_machine_meta", b"not-valid-json")
+                .expect("corrupt bytes should be written");
+        }
+        let store = Arc::new(DurableStateMachineStore::new(db));
+
+        let error =
+            recover_applied_state(&mut log_store, &store, &temp_dir.path().join("snapshots"))
+                .await
+                .expect_err("corrupt metadata must refuse startup");
+        let _ = error;
+    }
+
+    #[tokio::test]
+    async fn unknown_format_version_fails_closed() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let mut log_store = RocksdbLogStore::open(temp_dir.path().join("raft_logs_rocksdb"))
+            .expect("log store should open");
+        let store = Arc::new(DurableStateMachineStore::new(log_store.db()));
+        store
+            .save_meta(&DurableStateMachineMeta {
+                format_version: 99,
+                last_applied: Some(LogId::new(LeaderId::new(1, 1), 7)),
+                last_membership: StoredMembership::default(),
+            })
+            .expect("meta should be persisted");
+
+        let error =
+            recover_applied_state(&mut log_store, &store, &temp_dir.path().join("snapshots"))
+                .await
+                .expect_err("unsupported format version must refuse startup");
+        let _ = error;
+    }
+
+    #[tokio::test]
+    async fn frontier_ahead_of_log_store_fails_closed() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let mut log_store = RocksdbLogStore::open(temp_dir.path().join("raft_logs_rocksdb"))
+            .expect("log store should open");
+        let store = Arc::new(DurableStateMachineStore::new(log_store.db()));
+        store
+            .save_meta(&DurableStateMachineMeta::new(
+                Some(LogId::new(LeaderId::new(1, 1), 100)),
+                StoredMembership::default(),
+            ))
+            .expect("meta should be persisted");
+
+        let error =
+            recover_applied_state(&mut log_store, &store, &temp_dir.path().join("snapshots"))
+                .await
+                .expect_err("frontier ahead of the last log must refuse startup");
+        let _ = error;
+    }
+
+    #[tokio::test]
+    async fn snapshot_ahead_of_frontier_fails_closed() {
+        let temp_dir = TempDir::new().expect("temporary directory should be created");
+        let mut log_store = RocksdbLogStore::open(temp_dir.path().join("raft_logs_rocksdb"))
+            .expect("log store should open");
+        let store = Arc::new(DurableStateMachineStore::new(log_store.db()));
+        store
+            .save_meta(&DurableStateMachineMeta::new(
+                Some(LogId::new(LeaderId::new(1, 1), 3)),
+                StoredMembership::default(),
+            ))
+            .expect("meta should be persisted");
+        write_snapshot_meta(&temp_dir.path().join("snapshots"), 5);
+
+        let error =
+            recover_applied_state(&mut log_store, &store, &temp_dir.path().join("snapshots"))
+                .await
+                .expect_err("snapshot ahead of the durable frontier must refuse startup");
+        let _ = error;
     }
 }

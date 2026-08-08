@@ -52,6 +52,7 @@ use rocksdb::{ColumnFamilyDescriptor, DB, Direction, IteratorMode, Options, Writ
 const LOGS_CF: &str = "logs";
 const META_CF: &str = "meta";
 const STATE_CF: &str = "state";
+pub(crate) const SM_META_CF: &str = "sm_meta";
 
 const LAST_PURGED_KEY: &[u8] = b"last_purged_log_id";
 const VOTE_KEY: &[u8] = b"vote";
@@ -338,12 +339,17 @@ impl RocksdbLogStore {
 impl RocksdbLogStore {
     /// 从已有的 RocksDB 数据库创建日志存储实例
     pub fn new(db: Arc<DB>) -> Result<Self, StorageError<u64>> {
-        for cf_name in [LOGS_CF, META_CF, STATE_CF] {
+        for cf_name in [LOGS_CF, META_CF, STATE_CF, SM_META_CF] {
             if db.cf_handle(cf_name).is_none() {
                 return Err(cf_not_found_read(cf_name));
             }
         }
         Ok(Self { db })
+    }
+
+    /// 返回底层 RocksDB 句柄，供共享同一 DB 的 state machine 持久化 store 使用。
+    pub fn db(&self) -> Arc<DB> {
+        Arc::clone(&self.db)
     }
 
     /// 打开或创建指定路径的 RocksDB 日志存储
@@ -356,6 +362,7 @@ impl RocksdbLogStore {
             ColumnFamilyDescriptor::new(LOGS_CF, Options::default()),
             ColumnFamilyDescriptor::new(META_CF, Options::default()),
             ColumnFamilyDescriptor::new(STATE_CF, Options::default()),
+            ColumnFamilyDescriptor::new(SM_META_CF, Options::default()),
         ];
 
         let db = Arc::new(DB::open_cf_descriptors(&opts, path, cfs)?);
@@ -432,7 +439,7 @@ impl openraft::storage::RaftLogStorage<KiwiTypeConfig> for RocksdbLogStore {
 // 辅助函数
 
 /// 将任意错误包装为写操作的 StorageError::IO
-fn io_write_err(e: impl std::fmt::Display) -> StorageError<u64> {
+pub(crate) fn io_write_err(e: impl std::fmt::Display) -> StorageError<u64> {
     let io_err = std::io::Error::other(e.to_string());
     StorageError::IO {
         source: openraft::StorageIOError::write(&io_err),
@@ -440,7 +447,7 @@ fn io_write_err(e: impl std::fmt::Display) -> StorageError<u64> {
 }
 
 /// 将任意错误包装为读操作的 StorageError::IO
-fn io_read_err(e: impl std::fmt::Display) -> StorageError<u64> {
+pub(crate) fn io_read_err(e: impl std::fmt::Display) -> StorageError<u64> {
     let io_err = std::io::Error::other(e.to_string());
     StorageError::IO {
         source: openraft::StorageIOError::read(&io_err),
@@ -459,7 +466,7 @@ fn cf_not_found_write(name: &str) -> StorageError<u64> {
 }
 
 /// 将 CF 不存在包装为读操作的 StorageError::IO
-fn cf_not_found_read(name: &str) -> StorageError<u64> {
+pub(crate) fn cf_not_found_read(name: &str) -> StorageError<u64> {
     let io_err = std::io::Error::new(
         std::io::ErrorKind::NotFound,
         format!("Column family '{}' not found", name),
@@ -470,7 +477,7 @@ fn cf_not_found_read(name: &str) -> StorageError<u64> {
 }
 
 /// 序列化数据结构为字节序列
-fn serialize<T: Serialize>(data: &T) -> Result<Vec<u8>, StorageError<u64>> {
+pub(crate) fn serialize<T: Serialize>(data: &T) -> Result<Vec<u8>, StorageError<u64>> {
     serde_json::to_vec(data).map_err(|e| {
         let io_err = std::io::Error::new(std::io::ErrorKind::InvalidData, e);
         StorageError::IO {
@@ -480,7 +487,7 @@ fn serialize<T: Serialize>(data: &T) -> Result<Vec<u8>, StorageError<u64>> {
 }
 
 /// 反序列化字节序列为数据结构
-fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, StorageError<u64>> {
+pub(crate) fn deserialize<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, StorageError<u64>> {
     serde_json::from_slice(bytes).map_err(|e| {
         let io_err = std::io::Error::new(std::io::ErrorKind::InvalidData, e);
         StorageError::IO {
@@ -681,6 +688,7 @@ mod tests {
             ColumnFamilyDescriptor::new(LOGS_CF, Options::default()),
             ColumnFamilyDescriptor::new(META_CF, Options::default()),
             ColumnFamilyDescriptor::new(STATE_CF, Options::default()),
+            ColumnFamilyDescriptor::new(SM_META_CF, Options::default()),
         ];
 
         let db =
