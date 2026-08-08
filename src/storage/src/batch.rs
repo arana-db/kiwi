@@ -587,10 +587,12 @@ mod tests {
         for cf_idx in ColumnFamilyIndex::ALL {
             assert_eq!(
                 cf_index_to_usize(cf_idx),
-                usize::try_from(cf_idx.stable_id()).unwrap()
+                usize::try_from(cf_idx.stable_id())
+                    .expect("registered stable CF ID should fit usize")
             );
             assert_eq!(
-                ColumnFamilyIndex::try_from(cf_idx.stable_id()).unwrap(),
+                ColumnFamilyIndex::try_from(cf_idx.stable_id())
+                    .expect("registered stable CF ID should round-trip"),
                 cf_idx
             );
         }
@@ -599,10 +601,10 @@ mod tests {
         let mut batch = BinlogBatch::new(append_log_fn);
         batch
             .put(ColumnFamilyIndex::VectorDataCF, b"physical-key", b"value")
-            .unwrap();
+            .expect("registry wire-ID test should put Vector data");
         batch
             .delete(ColumnFamilyIndex::ZsetsScoreCF, b"physical-key")
-            .unwrap();
+            .expect("registry wire-ID test should delete ZSet score data");
         assert_eq!(
             batch.entries[0].cf_idx,
             ColumnFamilyIndex::VectorDataCF.stable_id()
