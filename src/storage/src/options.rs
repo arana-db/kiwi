@@ -90,7 +90,7 @@ impl Default for StorageOptions {
         let block_cache_size = 8 << 30; // 8GB
         let mut options = Options::default();
         options.create_if_missing(true);
-        options.create_missing_column_families(true);
+        options.create_missing_column_families(false);
         options.set_max_open_files(10000);
         options.set_write_buffer_size(64 << 20); // 64MB
         options.set_max_write_buffer_number(3);
@@ -124,7 +124,8 @@ impl StorageOptions {
 
     /// Build StorageOptions from a loaded [`conf::config::Config`].
     pub fn from_config(config: &conf::config::Config) -> Self {
-        let rocksdb_opts = config.get_rocksdb_options();
+        let mut rocksdb_opts = config.get_rocksdb_options();
+        rocksdb_opts.create_missing_column_families(false);
         // Build the shared block cache once when sharing is enabled and a
         // memory budget is configured. Every `Redis` instance receives the
         // same `Arc<StorageOptions>` and therefore reuses this single cache.

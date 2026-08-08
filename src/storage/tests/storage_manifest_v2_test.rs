@@ -326,8 +326,8 @@ fn root_manifest_rejects_absolute_parent_or_nested_migration_paths() {
         for field in ["source_name", "shadow_name", "backup_name"] {
             let (source_name, shadow_name, backup_name) = match field {
                 "source_name" => (invalid_name, ".0.shadow", ".0.backup"),
-                "shadow_name" => ("0", invalid_name, ".0.backup"),
-                "backup_name" => ("0", ".0.shadow", invalid_name),
+                "shadow_name" => ("live", invalid_name, ".0.backup"),
+                "backup_name" => ("live", ".0.shadow", invalid_name),
                 _ => unreachable!(),
             };
             let migration = MigrationTransaction::new(
@@ -357,6 +357,41 @@ fn root_manifest_rejects_absolute_parent_or_nested_migration_paths() {
 }
 
 #[test]
+fn root_manifest_rejects_aliased_or_reserved_migration_basenames() {
+    for (source, shadow, backup) in [
+        ("0", ".shadow", ".backup"),
+        ("live", ".same", ".same"),
+        ("live", "0", ".backup"),
+        ("live", ROOT_STORAGE_MANIFEST_FILE, ".backup"),
+        ("live", ".shadow", STORAGE_MANIFEST_FILE),
+        ("live", "__kiwi_root_storage_manifest.tmp", ".backup"),
+    ] {
+        let migration = MigrationTransaction::new(
+            MIGRATION_TRANSACTION_ID.parse().unwrap(),
+            1,
+            2,
+            MigrationSourceProfile::BaseV1SixCf,
+            MigrationPhase::SourceDetected,
+            0,
+            source,
+            shadow,
+            backup,
+        );
+        assert!(
+            RootStorageManifestV2::new(
+                ROOT_MANIFEST_ID.parse().unwrap(),
+                1,
+                1,
+                ManifestDigest::compute(b"slot-modulo-v1:1"),
+                Some(migration),
+            )
+            .is_err(),
+            "reserved or aliased migration layout must fail: {source}/{shadow}/{backup}"
+        );
+    }
+}
+
+#[test]
 fn root_manifest_persists_source_profile_in_fixed_migration_order() {
     for source_profile in [
         MigrationSourceProfile::BaseV1SixCf,
@@ -369,7 +404,7 @@ fn root_manifest_persists_source_profile_in_fixed_migration_order() {
             source_profile,
             MigrationPhase::SourceDetected,
             0,
-            "0",
+            "live",
             ".0.shadow",
             ".0.backup",
         );

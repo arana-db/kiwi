@@ -16,8 +16,14 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::collections::HashSet;
 use std::ops::Deref;
 use std::path::Path;
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::path::PathBuf;
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -64,6 +70,63 @@ use crate::storage_schema::{CANONICAL_COLUMN_FAMILIES, ColumnFamilySpec, Compara
 /// manifest generator. Cluster mode installs a provider returning the Raft
 /// log index that created the key (wired up by the raft layer later).
 pub type GenerationProvider = Arc<dyn Fn() -> Result<u64> + Send + Sync>;
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+static REDIS_OPEN_FAILURES: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+pub struct RedisOpenFailureGuard {
+    db_path: PathBuf,
+}
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+impl Drop for RedisOpenFailureGuard {
+    fn drop(&mut self) {
+        if let Ok(mut failures) = REDIS_OPEN_FAILURES.lock() {
+            failures.remove(&self.db_path);
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+#[must_use]
+pub fn fail_next_redis_open(db_path: &Path) -> RedisOpenFailureGuard {
+    let db_path = db_path.to_path_buf();
+    let inserted = REDIS_OPEN_FAILURES
+        .lock()
+        .map(|mut failures| failures.insert(db_path.clone()))
+        .unwrap_or(false);
+    assert!(
+        inserted,
+        "Redis open failure already registered for {}",
+        db_path.display()
+    );
+    RedisOpenFailureGuard { db_path }
+}
+
+fn maybe_fail_redis_open(db_path: &Path) -> Result<()> {
+    #[cfg(any(test, feature = "test-fault-injection"))]
+    {
+        let should_fail = REDIS_OPEN_FAILURES
+            .lock()
+            .map(|mut failures| failures.remove(db_path))
+            .unwrap_or(false);
+        if should_fail {
+            return Err(InvalidFormatSnafu {
+                message: format!(
+                    "injected Redis open failure after RocksDB open: {}",
+                    db_path.display()
+                ),
+            }
+            .build());
+        }
+    }
+    let _ = db_path;
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TypeCheckState {
@@ -439,6 +502,8 @@ impl Redis {
         let db_directory = Path::new(db_path);
         let manifest_path = db_directory.join(crate::storage_manifest::STORAGE_MANIFEST_FILE);
         let current_path = db_directory.join("CURRENT");
+        db_opts.create_if_missing(allow_manifest_creation && !current_path.exists());
+        db_opts.create_missing_column_families(allow_manifest_creation && !current_path.exists());
         if !manifest_path.exists() && current_path.exists() {
             return Err(InvalidFormatSnafu {
                 message: format!(
@@ -502,6 +567,7 @@ impl Redis {
         let db = RocksDbOwner::new(
             DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?,
         );
+        maybe_fail_redis_open(db_directory)?;
         let _ = db_once_cell.set(db.downgrade());
 
         let handles = CANONICAL_COLUMN_FAMILIES

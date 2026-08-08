@@ -30,7 +30,13 @@ use crate::expiration_manager::ExpirationManager;
 use crate::format_base_value::DataType;
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
-use crate::storage_manifest::{load_or_create_root_manifest, validate_existing_instance_manifests};
+use crate::storage_manifest::{
+    MigrationPhase, RootStorageManifestV2, load_or_create_root_manifest,
+    validate_existing_instance_manifests,
+};
+use crate::storage_migration::{
+    finalize_migration_after_storage_open, prepare_or_resume_migration,
+};
 use crate::storage_scan::{SCAN_CURSOR_STATE_CAPACITY, ScanCursorState};
 use crate::{ColumnFamilyIndex, Redis, StorageOptions, data_type_to_tag};
 use conf::raft_type::{Binlog, OperateType};
@@ -197,16 +203,71 @@ impl Storage {
         db_path: impl AsRef<Path>,
     ) -> Result<mpsc::Receiver<BgTask>> {
         let db_path = db_path.as_ref();
-        let root_load = load_or_create_root_manifest(db_path, self.db_instance_num)?;
+        prepare_or_resume_migration(db_path, self.db_instance_num, &options)?;
+        let mut root_load = load_or_create_root_manifest(db_path, self.db_instance_num)?;
         validate_existing_instance_manifests(
             db_path,
             &root_load.manifest,
             root_load.created_this_call,
         )?;
-        let root_manifest = root_load.manifest;
+        let mut root_manifest = root_load.manifest;
 
         let (handler, receiver) = BgTaskHandler::new();
         let handler_arc = Arc::new(handler);
+        let mut opened_instances = self.open_instances(
+            Arc::clone(&options),
+            db_path,
+            &root_manifest,
+            root_load.created_this_call,
+            &handler_arc,
+        )?;
+
+        let requires_runtime_finalize = root_manifest.migration().is_some_and(|transaction| {
+            matches!(
+                transaction.phase,
+                MigrationPhase::ShadowPromoted | MigrationPhase::NewStorageOpened
+            )
+        });
+        if requires_runtime_finalize {
+            drop(opened_instances);
+            finalize_migration_after_storage_open(db_path, self.db_instance_num, &options)?;
+            root_load = load_or_create_root_manifest(db_path, self.db_instance_num)?;
+            validate_existing_instance_manifests(
+                db_path,
+                &root_load.manifest,
+                root_load.created_this_call,
+            )?;
+            root_manifest = root_load.manifest;
+            opened_instances = self.open_instances(
+                Arc::clone(&options),
+                db_path,
+                &root_manifest,
+                false,
+                &handler_arc,
+            )?;
+        }
+
+        let expiration_manager = Arc::new(ExpirationManager::new(Arc::clone(&handler_arc)));
+        let cleanup_task = expiration_manager.start_cleanup_task();
+
+        self.scan_cursor_states.clear();
+        self.insts = opened_instances;
+        self.bg_task_handler = Some(handler_arc);
+        self.expiration_manager = Some(expiration_manager);
+        self.expiration_cleanup_task = Some(cleanup_task);
+        self.is_opened.store(true, Ordering::SeqCst);
+
+        Ok(receiver)
+    }
+
+    fn open_instances(
+        &self,
+        options: Arc<StorageOptions>,
+        db_path: &Path,
+        root_manifest: &RootStorageManifestV2,
+        allow_manifest_creation: bool,
+        handler_arc: &Arc<BgTaskHandler>,
+    ) -> Result<Vec<Arc<Redis>>> {
         let mut opened_instances = Vec::with_capacity(self.db_instance_num);
         for i in 0..self.db_instance_num {
             let sub_path = db_path.join(i.to_string());
@@ -222,14 +283,14 @@ impl Storage {
             let mut inst = Redis::new(
                 options.clone(),
                 i as i32,
-                Arc::clone(&handler_arc),
+                Arc::clone(handler_arc),
                 Arc::clone(&self.lock_mgr),
             );
             if let Err(e) = inst.open_bound(
                 sub_path_str,
                 i as u32,
-                &root_manifest,
-                root_load.created_this_call,
+                root_manifest,
+                allow_manifest_creation,
             ) {
                 log::error!("open RocksDB{i} failed: {e:?}");
                 return Err(e);
@@ -237,18 +298,7 @@ impl Storage {
             log::info!("open RocksDB{i} success!");
             opened_instances.push(Arc::new(inst));
         }
-
-        let expiration_manager = Arc::new(ExpirationManager::new(Arc::clone(&handler_arc)));
-        let cleanup_task = expiration_manager.start_cleanup_task();
-
-        self.scan_cursor_states.clear();
-        self.insts = opened_instances;
-        self.bg_task_handler = Some(handler_arc);
-        self.expiration_manager = Some(expiration_manager);
-        self.expiration_cleanup_task = Some(cleanup_task);
-        self.is_opened.store(true, Ordering::SeqCst);
-
-        Ok(receiver)
+        Ok(opened_instances)
     }
 
     pub async fn shutdown(&mut self) {

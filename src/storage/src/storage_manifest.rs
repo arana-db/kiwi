@@ -269,6 +269,40 @@ impl MigrationTransaction {
                 }
             );
         }
+        ensure!(
+            self.source_name == "live",
+            InvalidFormatSnafu {
+                message: format!(
+                    "migration source_name must use the reserved live basename, got {:?}",
+                    self.source_name
+                )
+            }
+        );
+        ensure!(
+            self.shadow_name != self.source_name
+                && self.backup_name != self.source_name
+                && self.shadow_name != self.backup_name,
+            InvalidFormatSnafu {
+                message: "migration source/shadow/backup basenames must be distinct".to_string()
+            }
+        );
+        let root_manifest_temp = Path::new(ROOT_STORAGE_MANIFEST_FILE).with_extension("tmp");
+        for (field, value) in [
+            ("shadow_name", self.shadow_name.as_str()),
+            ("backup_name", self.backup_name.as_str()),
+        ] {
+            ensure!(
+                value != ROOT_STORAGE_MANIFEST_FILE
+                    && value != STORAGE_MANIFEST_FILE
+                    && value != root_manifest_temp.to_string_lossy()
+                    && value.parse::<u32>().is_err(),
+                InvalidFormatSnafu {
+                    message: format!(
+                        "migration {field} conflicts with a reserved storage basename: {value:?}"
+                    )
+                }
+            );
+        }
         Ok(())
     }
 }
@@ -609,6 +643,17 @@ impl RootStorageManifestV2 {
         &self.column_families
     }
 
+    pub fn migration(&self) -> Option<&MigrationTransaction> {
+        self.migration.as_ref()
+    }
+
+    pub(crate) fn set_migration(&mut self, migration: Option<MigrationTransaction>) -> Result<()> {
+        self.migration = migration;
+        self.validate_payload()?;
+        self.digest = ManifestDigest::compute(&self.payload_bytes()?);
+        Ok(())
+    }
+
     pub(crate) fn validate_runtime_topology(&self, db_instance_num: usize) -> Result<()> {
         ensure!(
             self.db_instance_num == db_instance_num as u32,
@@ -774,7 +819,7 @@ impl InstanceStorageManifestV2 {
         Ok(())
     }
 
-    pub(crate) fn validate_root_binding(
+    pub fn validate_root_binding(
         &self,
         expected_instance_id: u32,
         root: &RootStorageManifestV2,
@@ -868,8 +913,24 @@ impl InstanceStorageManifestV2 {
         &self.root_manifest_digest
     }
 
+    pub fn storage_incarnation(&self) -> u64 {
+        self.storage_incarnation
+    }
+
+    pub fn next_generation(&self) -> u64 {
+        self.next_generation
+    }
+
     pub fn manifest_digest(&self) -> &ManifestDigest {
         &self.digest
+    }
+
+    pub(crate) fn rebind_root(&mut self, root: &RootStorageManifestV2) -> Result<()> {
+        self.root_manifest_id = root.manifest_id;
+        self.root_manifest_digest = root.digest.clone();
+        self.validate_payload()?;
+        self.digest = ManifestDigest::compute(&self.payload_bytes()?);
+        Ok(())
     }
 }
 
@@ -952,6 +1013,20 @@ pub(crate) fn validate_existing_instance_manifests(
             }
             .build()
         })?;
+        if root.migration().is_some_and(|transaction| {
+            name == transaction.shadow_name || name == transaction.backup_name
+        }) {
+            ensure!(
+                entry.file_type().context(IoSnafu)?.is_dir(),
+                InvalidFormatSnafu {
+                    message: format!(
+                        "storage migration artifact {} is not a directory",
+                        path.display()
+                    )
+                }
+            );
+            continue;
+        }
         let instance_id = name.parse::<u32>().map_err(|_| {
             InvalidFormatSnafu {
                 message: format!("storage root contains unknown entry {}", path.display()),
@@ -1412,7 +1487,7 @@ mod tests {
                 source_profile,
                 MigrationPhase::SourceDetected,
                 0,
-                "0",
+                "live",
                 ".0.shadow",
                 ".0.backup",
             );
@@ -1434,7 +1509,7 @@ mod tests {
             MigrationSourceProfile::BaseV1SixCf,
             MigrationPhase::SourceDetected,
             0,
-            "0",
+            "live",
             ".0.shadow",
             ".0.backup",
         );

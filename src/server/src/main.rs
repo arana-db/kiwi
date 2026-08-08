@@ -254,9 +254,36 @@ async fn initialize_storage(config: &Config) -> Result<GlobalStorage, DualRuntim
     let mut storage = Storage::new(config.db_instance_num, 0);
 
     info!("Opening storage at path: {:?}", data_dir);
-    let bg_task_receiver = storage
-        .open(storage_options, &data_dir)
-        .map_err(|e| DualRuntimeError::storage_runtime(format!("Failed to open storage: {}", e)))?;
+    let mut bg_task_receiver = match storage.open(Arc::clone(&storage_options), &data_dir) {
+        Ok(receiver) => receiver,
+        Err(error) => {
+            let rollback = storage::recover_or_rollback_before_admission(
+                &data_dir,
+                config.db_instance_num,
+                &storage_options,
+            );
+            let rollback_context = match rollback {
+                Ok(true) => "; verified legacy backup restored before admission".to_string(),
+                Ok(false) => String::new(),
+                Err(rollback_error) => format!("; rollback also failed: {rollback_error}"),
+            };
+            return Err(DualRuntimeError::storage_runtime(format!(
+                "Failed to open storage: {error}{rollback_context}"
+            )));
+        }
+    };
+    if storage::close_rollback_window(&data_dir).map_err(|error| {
+        DualRuntimeError::storage_runtime(format!("Failed to close rollback window: {error}"))
+    })? {
+        drop(bg_task_receiver);
+        bg_task_receiver = storage
+            .reopen(storage_options, &data_dir)
+            .map_err(|error| {
+                DualRuntimeError::storage_runtime(format!(
+                    "Failed to reopen storage after closing rollback window: {error}"
+                ))
+            })?;
+    }
     info!("Storage opened successfully");
 
     tokio::spawn(async move {

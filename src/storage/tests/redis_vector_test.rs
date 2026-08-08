@@ -651,7 +651,7 @@ fn test_generation_is_not_reused_across_restart() {
 }
 
 #[test]
-fn test_legacy_db_migration_preserves_data() {
+fn test_legacy_db_requires_staged_storage_migration_without_mutation() {
     let path = unique_test_db_path();
     safe_cleanup_test_db(&path);
     create_legacy_db_with_string(&path);
@@ -663,30 +663,29 @@ fn test_legacy_db_migration_preserves_data() {
             .any(|name| name == ColumnFamilyIndex::VectorDataCF.name())
     );
 
-    {
-        let redis = open_redis(&path);
-        assert_eq!(
-            redis.get(b"legacy-key").expect("read migrated value"),
-            "legacy-value"
-        );
-        assert!(path.join(STORAGE_MANIFEST_FILE).exists());
-    }
-
-    let reopened = open_redis(&path);
-    assert_eq!(
-        reopened.get(b"legacy-key").expect("read legacy value"),
-        "legacy-value"
+    let before = listed_column_families(&path);
+    let mut redis = new_redis();
+    let error = redis
+        .open(path.to_str().expect("test path must be UTF-8"))
+        .expect_err("direct Redis open must not mutate a legacy DB");
+    assert!(error.to_string().contains("staged migration is required"));
+    assert!(redis.db().is_none());
+    assert!(!path.join(STORAGE_MANIFEST_FILE).exists());
+    assert_eq!(listed_column_families(&path), before);
+    assert!(
+        !listed_column_families(&path)
+            .iter()
+            .any(|name| name == ColumnFamilyIndex::VectorDataCF.name()),
+        "direct live open must not create the missing Vector CF"
     );
-    drop(reopened);
     safe_cleanup_test_db(&path);
 }
 
 #[cfg(feature = "test-fault-injection")]
 #[test]
-fn test_manifest_persist_failure_leaves_legacy_schema_and_retry_succeeds() {
+fn test_manifest_persist_failure_on_fresh_storage_leaves_incomplete_root_fail_closed() {
     let path = unique_test_db_path();
     safe_cleanup_test_db(&path);
-    create_legacy_db_with_string(&path);
 
     let _failure = fail_next_storage_manifest_persist(&path);
     let mut failed_open = new_redis();
@@ -707,23 +706,64 @@ fn test_manifest_persist_failure_leaves_legacy_schema_and_retry_succeeds() {
         "pre-rename failure must leave the retryable temporary manifest"
     );
     assert!(
-        !listed_column_families(&path)
-            .iter()
-            .any(|name| name == ColumnFamilyIndex::VectorDataCF.name()),
-        "failed manifest persistence must not create the vector column family"
+        !path.join("CURRENT").exists(),
+        "manifest persistence must complete before RocksDB creation"
     );
 
-    let retried = open_redis(&path);
-    assert!(path.join(STORAGE_MANIFEST_FILE).exists());
+    let mut retried = new_redis();
+    let retry_error = retried
+        .open(path.to_str().expect("test path must be UTF-8"))
+        .expect_err("an existing Root manifest must not recreate a missing Instance manifest");
+    assert!(retry_error.to_string().contains("existing root manifest"));
+    assert!(retried.db().is_none());
+    assert!(!path.join(STORAGE_MANIFEST_FILE).exists());
     assert!(
-        !temp_manifest.exists(),
-        "successful retry must consume the temporary manifest path"
+        temp_manifest.exists(),
+        "fail-closed retry must preserve the interrupted temporary evidence"
     );
+    assert!(
+        !path.join("CURRENT").exists(),
+        "fail-closed retry must not create RocksDB"
+    );
+    safe_cleanup_test_db(&path);
+}
+
+#[test]
+fn test_vector_v1_manifest_requires_root_staged_migration_without_mutation() {
+    let path = unique_test_db_path();
+    safe_cleanup_test_db(&path);
+    let (storage_incarnation, next_generation) = {
+        let redis = open_redis(&path);
+        let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
+        redis
+            .vadd(b"vector-v1", b"member", &vector)
+            .expect("write vector fixture");
+        let manifest = storage::InstanceStorageManifestV2::read_from_dir(&path)
+            .expect("read v2 instance identity");
+        (manifest.storage_incarnation(), manifest.next_generation())
+    };
+    let v1_manifest = format!(
+        "{{\"version\":1,\"storage_incarnation\":{storage_incarnation},\"next_generation\":{next_generation}}}"
+    );
+    std::fs::write(path.join(STORAGE_MANIFEST_FILE), v1_manifest.as_bytes())
+        .expect("replace manifest with Vector-v1 fixture");
+    let before_cf = listed_column_families(&path);
+    let before_manifest =
+        std::fs::read(path.join(STORAGE_MANIFEST_FILE)).expect("read v1 manifest");
+
+    let mut redis = new_redis();
+    assert!(
+        redis
+            .open(path.to_str().expect("test path must be UTF-8"))
+            .is_err(),
+        "direct Redis open must not upgrade a Vector-v1 manifest"
+    );
+    assert!(redis.db().is_none());
+    assert_eq!(listed_column_families(&path), before_cf);
     assert_eq!(
-        retried.get(b"legacy-key").expect("read legacy value"),
-        "legacy-value"
+        std::fs::read(path.join(STORAGE_MANIFEST_FILE)).expect("reread v1 manifest"),
+        before_manifest
     );
-    drop(retried);
     safe_cleanup_test_db(&path);
 }
 

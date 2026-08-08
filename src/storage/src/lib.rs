@@ -22,6 +22,7 @@ mod format_member_data_key;
 pub mod format_vector;
 pub mod format_vector_member_key;
 mod storage_manifest;
+mod storage_migration;
 pub mod vector;
 pub mod vector_fault;
 mod vector_flat;
@@ -89,6 +90,8 @@ pub use format_base_key::BaseMetaKey;
 pub use format_base_value::*;
 pub use format_zset_score_key::{ScoreMember, ZsetScoreMember};
 pub use options::StorageOptions;
+#[cfg(any(test, feature = "test-fault-injection"))]
+pub use redis::fail_next_redis_open;
 pub use redis::{GenerationProvider, Redis, TypeCheckState};
 pub use redis_vectors::VectorDataSample;
 pub use statistics::KeyStatistics;
@@ -101,6 +104,13 @@ pub use storage_manifest::{
     MigrationSourceProfile, MigrationTransaction, ROOT_STORAGE_MANIFEST_FILE,
     ROOT_STORAGE_MANIFEST_VERSION, RootStorageManifestV2, SLOT_MAPPING_VERSION,
     STORAGE_MANIFEST_FILE, STORAGE_SCHEMA_VERSION_V2, slot_mapping_digest,
+};
+#[cfg(any(test, feature = "test-fault-injection"))]
+pub use storage_migration::fail_next_storage_migration;
+pub use storage_migration::{
+    MigrationFaultPoint, MigrationLayout, classify_storage_root, close_rollback_window,
+    finalize_migration_after_storage_open, prepare_or_resume_migration,
+    recover_or_rollback_before_admission,
 };
 pub use storage_schema::{
     CANONICAL_COLUMN_FAMILIES, CANONICAL_COLUMN_FAMILY_NAMES, ColumnFamilyIndex, ColumnFamilyRole,
