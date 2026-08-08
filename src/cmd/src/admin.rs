@@ -262,6 +262,93 @@ impl Cmd for InfoCmd {
     }
 }
 
+/// CONFIG command - Get/Set configuration parameters
+#[derive(Clone, Default)]
+pub struct ConfigCmd {
+    meta: CmdMeta,
+}
+
+impl ConfigCmd {
+    pub fn new() -> Self {
+        Self {
+            meta: CmdMeta {
+                name: "config".to_string(),
+                arity: -2,
+                flags: CmdFlags::ADMIN,
+                acl_category: AclCategory::ADMIN,
+                ..Default::default()
+            },
+        }
+    }
+}
+
+impl Cmd for ConfigCmd {
+    impl_cmd_meta!();
+    impl_cmd_clone_box!();
+
+    fn do_initial(&self, _client: &Client) -> bool {
+        true
+    }
+
+    fn do_cmd(&self, client: &Client, _storage: Arc<Storage>) {
+        if client.argv().len() < 2 {
+            client.set_reply(RespData::Error(
+                "ERR wrong number of arguments for 'config' command".into(),
+            ));
+            return;
+        }
+
+        let subcommand = String::from_utf8_lossy(&client.argv()[1]).to_lowercase();
+
+        match subcommand.as_str() {
+            "get" => {
+                if client.argv().len() < 3 {
+                    client.set_reply(RespData::Error(
+                        "ERR wrong number of arguments for 'config get' command".into(),
+                    ));
+                    return;
+                }
+
+                let parameter = String::from_utf8_lossy(&client.argv()[2]).to_lowercase();
+
+                // Return configuration (cluster mode is removed; report disabled)
+                match parameter.as_str() {
+                    "cluster-enabled" => {
+                        let result = vec![
+                            RespData::BulkString(Some(Bytes::from("cluster-enabled"))),
+                            RespData::BulkString(Some(Bytes::from("no"))),
+                        ];
+                        client.set_reply(RespData::Array(Some(result)));
+                    }
+                    "*" => {
+                        let result = vec![
+                            RespData::BulkString(Some(Bytes::from("cluster-enabled"))),
+                            RespData::BulkString(Some(Bytes::from("no"))),
+                            RespData::BulkString(Some(Bytes::from("port"))),
+                            RespData::BulkString(Some(Bytes::from("7379"))),
+                        ];
+                        client.set_reply(RespData::Array(Some(result)));
+                    }
+                    _ => {
+                        client.set_reply(RespData::Array(Some(vec![])));
+                    }
+                }
+            }
+            "set" => {
+                // For now, don't allow runtime configuration changes
+                client.set_reply(RespData::Error(
+                    "ERR runtime configuration changes not supported".into(),
+                ));
+            }
+            _ => {
+                client.set_reply(RespData::Error(
+                    format!("ERR unknown CONFIG subcommand '{}'", subcommand).into(),
+                ));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use client::{Client, StreamTrait};
@@ -392,92 +479,5 @@ mod tests {
         let out = run_info(&cmd, &["info", "all"]);
         assert!(out.contains("# Keyspace\r\n"), "{out}");
         assert!(out.contains("# Vector\r\n"), "{out}");
-    }
-}
-
-/// CONFIG command - Get/Set configuration parameters
-#[derive(Clone, Default)]
-pub struct ConfigCmd {
-    meta: CmdMeta,
-}
-
-impl ConfigCmd {
-    pub fn new() -> Self {
-        Self {
-            meta: CmdMeta {
-                name: "config".to_string(),
-                arity: -2,
-                flags: CmdFlags::ADMIN,
-                acl_category: AclCategory::ADMIN,
-                ..Default::default()
-            },
-        }
-    }
-}
-
-impl Cmd for ConfigCmd {
-    impl_cmd_meta!();
-    impl_cmd_clone_box!();
-
-    fn do_initial(&self, _client: &Client) -> bool {
-        true
-    }
-
-    fn do_cmd(&self, client: &Client, _storage: Arc<Storage>) {
-        if client.argv().len() < 2 {
-            client.set_reply(RespData::Error(
-                "ERR wrong number of arguments for 'config' command".into(),
-            ));
-            return;
-        }
-
-        let subcommand = String::from_utf8_lossy(&client.argv()[1]).to_lowercase();
-
-        match subcommand.as_str() {
-            "get" => {
-                if client.argv().len() < 3 {
-                    client.set_reply(RespData::Error(
-                        "ERR wrong number of arguments for 'config get' command".into(),
-                    ));
-                    return;
-                }
-
-                let parameter = String::from_utf8_lossy(&client.argv()[2]).to_lowercase();
-
-                // Return configuration (cluster mode is removed; report disabled)
-                match parameter.as_str() {
-                    "cluster-enabled" => {
-                        let result = vec![
-                            RespData::BulkString(Some(Bytes::from("cluster-enabled"))),
-                            RespData::BulkString(Some(Bytes::from("no"))),
-                        ];
-                        client.set_reply(RespData::Array(Some(result)));
-                    }
-                    "*" => {
-                        let result = vec![
-                            RespData::BulkString(Some(Bytes::from("cluster-enabled"))),
-                            RespData::BulkString(Some(Bytes::from("no"))),
-                            RespData::BulkString(Some(Bytes::from("port"))),
-                            RespData::BulkString(Some(Bytes::from("7379"))),
-                        ];
-                        client.set_reply(RespData::Array(Some(result)));
-                    }
-                    _ => {
-                        client.set_reply(RespData::Array(Some(vec![])));
-                    }
-                }
-            }
-            "set" => {
-                // For now, don't allow runtime configuration changes
-                client.set_reply(RespData::Error(
-                    "ERR runtime configuration changes not supported".into(),
-                ));
-            }
-            _ => {
-                client.set_reply(RespData::Error(
-                    format!("ERR unknown CONFIG subcommand '{}'", subcommand).into(),
-                ));
-            }
-        }
     }
 }
