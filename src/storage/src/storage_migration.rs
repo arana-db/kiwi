@@ -1060,9 +1060,15 @@ fn validate_resume_layout(
                     triplet == legacy_with_shadow
                 }
             }
-            MigrationPhase::NewStorageOpened
-            | MigrationPhase::Committed
-            | MigrationPhase::RollbackWindowClosed => triplet == promoted,
+            MigrationPhase::NewStorageOpened | MigrationPhase::Committed => triplet == promoted,
+            MigrationPhase::RollbackWindowClosed => {
+                source_kind == InstanceDiskKind::V2
+                    && shadow_kind == InstanceDiskKind::Missing
+                    && matches!(
+                        backup_kind,
+                        InstanceDiskKind::Legacy | InstanceDiskKind::Missing
+                    )
+            }
         };
         ensure!(
             valid,
@@ -1556,6 +1562,83 @@ fn strict_open_legacy_instance(
         validate_vector_identity(&db, manifest.storage_incarnation, instance)?;
     }
     Ok(())
+}
+
+pub(crate) fn validate_base_v1_snapshot_instance(
+    instance: &Path,
+    options: &StorageOptions,
+) -> Result<()> {
+    ensure!(
+        classify_instance(instance)? == MigrationSourceProfile::BaseV1SixCf,
+        InvalidFormatSnafu {
+            message: format!(
+                "legacy snapshot instance {} is not the registered Base-v1 six-CF profile",
+                instance.display()
+            )
+        }
+    );
+    let names: Vec<&str> = CANONICAL_COLUMN_FAMILIES[..BASE_V1_CF_COUNT]
+        .iter()
+        .map(|spec| spec.name)
+        .collect();
+    let db = open_instance_strict(instance, options, &names)?;
+    let meta_cf = db
+        .cf_handle(CANONICAL_COLUMN_FAMILIES[0].name)
+        .ok_or_else(|| {
+            InvalidFormatSnafu {
+                message: format!("Base-v1 snapshot {} is missing MetaCF", instance.display()),
+            }
+            .build()
+        })?;
+    let mut read_options = ReadOptions::default();
+    read_options.set_verify_checksums(true);
+    for entry in db.iterator_cf_opt(&meta_cf, read_options, IteratorMode::Start) {
+        let (_, value) = entry.context(RocksSnafu)?;
+        ensure!(
+            value.first() != Some(&(DataType::VectorSet as u8)),
+            InvalidFormatSnafu {
+                message: format!(
+                    "Base-v1 snapshot {} contains Vector Set metadata without the registered Vector layout",
+                    instance.display()
+                )
+            }
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_vector_v1_snapshot_instance(
+    instance: &Path,
+    expected_storage_incarnation: u64,
+    options: &StorageOptions,
+) -> Result<()> {
+    ensure!(
+        classify_instance(instance)? == MigrationSourceProfile::VectorSetV1SevenCf,
+        InvalidFormatSnafu {
+            message: format!(
+                "historical snapshot instance {} is not the registered Vector-v1 seven-CF profile",
+                instance.display()
+            )
+        }
+    );
+    let names: Vec<&str> = CANONICAL_COLUMN_FAMILIES
+        .iter()
+        .map(|spec| spec.name)
+        .collect();
+    let db = open_instance_strict(instance, options, &names)?;
+    let manifest = VectorV1Manifest::read_from_dir(instance)?;
+    ensure!(
+        manifest.storage_incarnation == expected_storage_incarnation,
+        InvalidFormatSnafu {
+            message: format!(
+                "Vector-v1 snapshot {} storage incarnation {} does not match metadata {}",
+                instance.display(),
+                manifest.storage_incarnation,
+                expected_storage_incarnation
+            )
+        }
+    );
+    validate_vector_identity(&db, manifest.storage_incarnation, instance)
 }
 
 fn open_instance_strict(instance: &Path, options: &StorageOptions, names: &[&str]) -> Result<DB> {

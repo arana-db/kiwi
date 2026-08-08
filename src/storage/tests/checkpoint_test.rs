@@ -19,10 +19,24 @@
 
 use std::sync::Arc;
 
+use rocksdb::{DB, Options};
 use storage::{
-    RaftSnapshotMeta, StorageOptions, prepare_checkpoint_restore, restore_checkpoint_layout,
-    storage::Storage, unique_test_db_path,
+    DataType, ManifestDigest, MigrationSourceProfile, ParsedSnapshotMeta,
+    ROOT_STORAGE_MANIFEST_FILE, RaftSnapshotMeta, StorageOptions, classify_storage_root,
+    close_rollback_window, prepare_checkpoint_restore, prepare_classified_checkpoint_restore,
+    restore_checkpoint_layout, storage::Storage, unique_test_db_path,
 };
+
+#[allow(dead_code)]
+mod support;
+
+fn write_v1_snapshot_meta(checkpoint_root: &std::path::Path) {
+    std::fs::write(
+        checkpoint_root.join(storage::RAFT_SNAPSHOT_META_FILE),
+        br#"{"version":1,"last_included_index":42,"last_included_term":7,"logindex_collector_states":[]}"#,
+    )
+    .unwrap();
+}
 
 fn restore_temp_dirs(parent: &std::path::Path) -> Vec<std::path::PathBuf> {
     std::fs::read_dir(parent)
@@ -191,7 +205,7 @@ fn test_snapshot_meta_rejects_unsupported_version() {
 }
 
 #[test]
-fn test_snapshot_meta_rejects_future_version() {
+fn snapshot_meta_rejects_unknown_future_version() {
     use std::fs;
 
     let tmp_dir = tempfile::tempdir().unwrap();
@@ -206,7 +220,7 @@ fn test_snapshot_meta_rejects_future_version() {
     }"#;
     fs::write(&meta_path, json).unwrap();
 
-    let result = RaftSnapshotMeta::read_from_dir(tmp_dir.path());
+    let result = ParsedSnapshotMeta::read_from_dir(tmp_dir.path());
     assert!(result.is_err(), "Higher versions must be rejected");
     assert!(
         result
@@ -218,14 +232,28 @@ fn test_snapshot_meta_rejects_future_version() {
 }
 
 #[test]
-fn test_snapshot_meta_rejects_v1() {
+fn snapshot_meta_rejects_unknown_fields_in_known_version() {
+    let tmp_dir = tempfile::tempdir().unwrap();
+    let json = r#"{
+        "version": 1,
+        "last_included_index": 42,
+        "last_included_term": 7,
+        "logindex_collector_states": [],
+        "future_storage_contract": true
+    }"#;
+    std::fs::write(tmp_dir.path().join(storage::RAFT_SNAPSHOT_META_FILE), json).unwrap();
+
+    let error = ParsedSnapshotMeta::read_from_dir(tmp_dir.path()).unwrap_err();
+    assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
+fn snapshot_meta_classifies_known_base_v1() {
     use std::fs;
 
     let tmp_dir = tempfile::tempdir().unwrap();
     let meta_path = tmp_dir.path().join("__raft_snapshot_meta");
 
-    // v1 was a development-phase format that never shipped; it lacks the
-    // storage schema description and is rejected outright.
     let json = r#"{
         "version": 1,
         "last_included_index": 42,
@@ -234,15 +262,195 @@ fn test_snapshot_meta_rejects_v1() {
     }"#;
     fs::write(&meta_path, json).unwrap();
 
-    let result = RaftSnapshotMeta::read_from_dir(tmp_dir.path());
-    assert!(result.is_err(), "v1 snapshot meta must be rejected");
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("unsupported snapshot version"),
-        "Error should mention unsupported version"
+    let parsed = ParsedSnapshotMeta::read_from_dir(tmp_dir.path()).unwrap();
+    let ParsedSnapshotMeta::LegacyV1(meta) = parsed else {
+        panic!("known snapshot version 1 must classify as LegacyV1");
+    };
+    assert_eq!(meta.last_included_index, 42);
+    assert_eq!(meta.last_included_term, 7);
+}
+
+#[tokio::test]
+async fn base_v1_snapshot_stages_and_migrates_every_registered_cf() {
+    let root = tempfile::tempdir().unwrap();
+    let checkpoint_root = root.path().join("checkpoint");
+    let target = root.path().join("target");
+    support::legacy_storage::create_legacy_root(&checkpoint_root, 1, false);
+    write_v1_snapshot_meta(&checkpoint_root);
+    let parsed = ParsedSnapshotMeta::read_from_dir(&checkpoint_root).unwrap();
+    let options = StorageOptions::default();
+
+    let prepared =
+        prepare_classified_checkpoint_restore(&checkpoint_root, &target, 1, &parsed, &options)
+            .unwrap();
+    assert_eq!(
+        classify_storage_root(prepared.staged_path(), 1, &options).unwrap(),
+        Some(MigrationSourceProfile::BaseV1SixCf)
     );
+    assert!(
+        prepared
+            .staged_path()
+            .join(ROOT_STORAGE_MANIFEST_FILE)
+            .is_file()
+    );
+
+    let staged_path = prepared.staged_path().to_path_buf();
+    let mut staged = Storage::new(1, 0);
+    let staged_rx = staged
+        .open(Arc::new(StorageOptions::default()), &staged_path)
+        .unwrap();
+    staged.close();
+    drop(staged_rx);
+    drop(staged);
+    for (cf_name, key) in [
+        ("default", b"string:alpha".as_slice()),
+        ("hash_data_cf", b"hash:field".as_slice()),
+        ("zset_data_cf", b"zset:member".as_slice()),
+        ("default", b"ttl:alpha".as_slice()),
+    ] {
+        assert!(
+            !support::legacy_storage::read_sentinel(&staged_path.join("0"), cf_name, key)
+                .is_empty()
+        );
+    }
+}
+
+#[test]
+fn base_v1_snapshot_with_vector_data_cf_fails_before_pause() {
+    let root = tempfile::tempdir().unwrap();
+    let checkpoint_root = root.path().join("checkpoint");
+    let target = root.path().join("target");
+    support::legacy_storage::create_legacy_root(&checkpoint_root, 1, true);
+    write_v1_snapshot_meta(&checkpoint_root);
+    let parsed = ParsedSnapshotMeta::read_from_dir(&checkpoint_root).unwrap();
+
+    let error = prepare_classified_checkpoint_restore(
+        &checkpoint_root,
+        &target,
+        1,
+        &parsed,
+        &StorageOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("invalid Base-v1 snapshot instance 0")
+    );
+    assert!(restore_temp_dirs(root.path()).is_empty());
+    assert!(!target.exists());
+}
+
+#[test]
+fn base_v1_snapshot_with_vector_meta_fails_before_pause() {
+    let root = tempfile::tempdir().unwrap();
+    let checkpoint_root = root.path().join("checkpoint");
+    let target = root.path().join("target");
+    support::legacy_storage::create_legacy_root(&checkpoint_root, 1, false);
+    write_v1_snapshot_meta(&checkpoint_root);
+    {
+        let instance = checkpoint_root.join("0");
+        let db = DB::open_cf_descriptors(
+            &Options::default(),
+            &instance,
+            support::legacy_storage::descriptors(&support::legacy_storage::BASE_CF_NAMES),
+        )
+        .unwrap();
+        let meta_cf = db.cf_handle("default").unwrap();
+        db.put_cf(
+            &meta_cf,
+            b"forbidden-vector-meta",
+            [DataType::VectorSet as u8],
+        )
+        .unwrap();
+    }
+    let parsed = ParsedSnapshotMeta::read_from_dir(&checkpoint_root).unwrap();
+
+    let error = prepare_classified_checkpoint_restore(
+        &checkpoint_root,
+        &target,
+        1,
+        &parsed,
+        &StorageOptions::default(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("contains Vector Set metadata"));
+    assert!(restore_temp_dirs(root.path()).is_empty());
+}
+
+#[test]
+fn base_v1_snapshot_with_unknown_cf_fails_before_pause() {
+    let root = tempfile::tempdir().unwrap();
+    let checkpoint_root = root.path().join("checkpoint");
+    let target = root.path().join("target");
+    support::legacy_storage::create_legacy_root(&checkpoint_root, 1, false);
+    write_v1_snapshot_meta(&checkpoint_root);
+    {
+        let instance = checkpoint_root.join("0");
+        let db = DB::open_cf_descriptors(
+            &Options::default(),
+            &instance,
+            support::legacy_storage::descriptors(&support::legacy_storage::BASE_CF_NAMES),
+        )
+        .unwrap();
+        db.create_cf("unknown_cf", &Options::default()).unwrap();
+    }
+    let parsed = ParsedSnapshotMeta::read_from_dir(&checkpoint_root).unwrap();
+
+    let error = prepare_classified_checkpoint_restore(
+        &checkpoint_root,
+        &target,
+        1,
+        &parsed,
+        &StorageOptions::default(),
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unregistered legacy column-family layout")
+    );
+    assert!(restore_temp_dirs(root.path()).is_empty());
+}
+
+#[tokio::test]
+async fn restore_lists_actual_cfs_before_opening_staged_rocksdb() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let checkpoint = root.path().join("checkpoint");
+    let target = root.path().join("target");
+    let options = Arc::new(StorageOptions::default());
+    let mut storage = Storage::new(1, 0);
+    let storage_rx = storage.open(Arc::clone(&options), &source).unwrap();
+    let meta = RaftSnapshotMeta::for_storage(42, 7, &[], &storage).unwrap();
+    storage.create_checkpoint(&checkpoint, &meta).unwrap();
+    storage.shutdown().await;
+    storage.close();
+    drop(storage_rx);
+    drop(storage);
+
+    {
+        let db = DB::open_cf_descriptors(
+            &Options::default(),
+            checkpoint.join("0"),
+            support::legacy_storage::descriptors(&support::legacy_storage::VECTOR_CF_NAMES),
+        )
+        .unwrap();
+        db.create_cf("unknown_cf", &Options::default()).unwrap();
+    }
+
+    let parsed = ParsedSnapshotMeta::read_from_dir(&checkpoint).unwrap();
+    let error = prepare_classified_checkpoint_restore(
+        &checkpoint,
+        &target,
+        1,
+        &parsed,
+        &StorageOptions::default(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("non-canonical CF set"));
+    assert!(restore_temp_dirs(root.path()).is_empty());
+    assert!(!target.exists());
 }
 
 #[test]
@@ -348,11 +556,19 @@ async fn test_v2_meta_for_storage_roundtrip_and_validate() {
 
     assert_eq!(meta.version, 2);
     assert_eq!(meta.db_instance_num, 2);
+    assert!(meta.root_manifest_id.is_some());
+    assert!(meta.root_manifest_digest.is_some());
+    assert_eq!(meta.instance_manifests.len(), 2);
     assert_eq!(meta.storage_incarnations.len(), 2);
     for (i, inst) in storage.insts.iter().enumerate() {
         assert_eq!(
             meta.storage_incarnations[i],
             inst.storage_incarnation().unwrap()
+        );
+        assert_eq!(meta.instance_manifests[i].instance_id, i as u32);
+        assert_eq!(
+            meta.instance_manifests[i].storage_incarnation,
+            meta.storage_incarnations[i]
         );
     }
     assert_eq!(
@@ -365,6 +581,7 @@ async fn test_v2_meta_for_storage_roundtrip_and_validate() {
     );
 
     storage.create_checkpoint(&cp_root, &meta).unwrap();
+    assert!(cp_root.join(ROOT_STORAGE_MANIFEST_FILE).is_file());
     let read_back = RaftSnapshotMeta::read_from_dir(&cp_root).unwrap();
     assert_eq!(read_back, meta);
     read_back.validate_for_restore(2).unwrap();
@@ -372,17 +589,21 @@ async fn test_v2_meta_for_storage_roundtrip_and_validate() {
     let restore_path = unique_test_db_path();
     let prepared = prepare_checkpoint_restore(&cp_root, &restore_path, 2).unwrap();
     prepared
-        .validate_storage_incarnations(&read_back.storage_incarnations)
+        .validate_snapshot_manifests(&ParsedSnapshotMeta::CurrentV2(read_back.clone()))
         .unwrap();
 
     let mut mismatched = read_back.storage_incarnations.clone();
     mismatched[1] = mismatched[1].wrapping_add(1).max(1);
+    let mut mismatched_meta = read_back.clone();
+    mismatched_meta.storage_incarnations = mismatched;
+    mismatched_meta.instance_manifests[1].storage_incarnation =
+        mismatched_meta.storage_incarnations[1];
     let err = prepared
-        .validate_storage_incarnations(&mismatched)
+        .validate_snapshot_manifests(&ParsedSnapshotMeta::CurrentV2(mismatched_meta))
         .unwrap_err();
     assert!(
         err.to_string()
-            .contains("storage incarnation mismatch for instance 1"),
+            .contains("instance 1 storage incarnation mismatch"),
         "unexpected error: {err}"
     );
 
@@ -393,13 +614,246 @@ async fn test_v2_meta_for_storage_roundtrip_and_validate() {
     let _ = std::fs::remove_dir_all(restore_path);
 }
 
+#[tokio::test]
+async fn v2_snapshot_requires_exact_root_manifest_digest() {
+    let db_path = unique_test_db_path();
+    let cp_root = unique_test_db_path();
+    let restore_path = unique_test_db_path();
+    let mut storage = Storage::new(1, 0);
+    let _rx = storage
+        .open(Arc::new(StorageOptions::default()), &db_path)
+        .unwrap();
+    let collectors: Vec<_> = (0..storage.db_instance_num)
+        .filter_map(|i| storage.get_logindex_collector(i))
+        .collect();
+    let meta = RaftSnapshotMeta::for_storage(42, 7, &collectors, &storage).unwrap();
+    storage.create_checkpoint(&cp_root, &meta).unwrap();
+    let prepared = prepare_checkpoint_restore(&cp_root, &restore_path, 1).unwrap();
+    let mut tampered = meta;
+    tampered.root_manifest_digest = Some(ManifestDigest::compute(b"wrong root"));
+
+    let error = prepared
+        .validate_snapshot_manifests(&ParsedSnapshotMeta::CurrentV2(tampered))
+        .unwrap_err();
+    assert!(error.to_string().contains("root manifest digest mismatch"));
+}
+
+#[tokio::test]
+async fn v2_snapshot_requires_every_instance_manifest_digest_and_incarnation() {
+    let db_path = unique_test_db_path();
+    let cp_root = unique_test_db_path();
+    let restore_path = unique_test_db_path();
+    let mut storage = Storage::new(1, 0);
+    let _rx = storage
+        .open(Arc::new(StorageOptions::default()), &db_path)
+        .unwrap();
+    let collectors: Vec<_> = (0..storage.db_instance_num)
+        .filter_map(|i| storage.get_logindex_collector(i))
+        .collect();
+    let meta = RaftSnapshotMeta::for_storage(42, 7, &collectors, &storage).unwrap();
+    storage.create_checkpoint(&cp_root, &meta).unwrap();
+    let prepared = prepare_checkpoint_restore(&cp_root, &restore_path, 1).unwrap();
+
+    let mut bad_digest = meta.clone();
+    bad_digest.instance_manifests[0].manifest_digest = ManifestDigest::compute(b"wrong instance");
+    let error = prepared
+        .validate_snapshot_manifests(&ParsedSnapshotMeta::CurrentV2(bad_digest))
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("instance 0 manifest digest mismatch")
+    );
+
+    let mut bad_incarnation = meta;
+    bad_incarnation.instance_manifests[0].storage_incarnation = bad_incarnation.instance_manifests
+        [0]
+    .storage_incarnation
+    .wrapping_add(1)
+    .max(1);
+    let error = prepared
+        .validate_snapshot_manifests(&ParsedSnapshotMeta::CurrentV2(bad_incarnation))
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("instance 0 storage incarnation mismatch")
+    );
+}
+
+#[tokio::test]
+async fn rollback_window_closed_snapshot_restores_without_legacy_backup() {
+    let source = tempfile::tempdir().unwrap();
+    support::vector_v1_storage::create_vector_v1_root(source.path(), 1);
+    let options = Arc::new(StorageOptions::default());
+
+    let mut migrated = Storage::new(1, 0);
+    let migrated_rx = migrated.open(Arc::clone(&options), source.path()).unwrap();
+    migrated.shutdown().await;
+    migrated.close();
+    drop(migrated_rx);
+    drop(migrated);
+    assert!(close_rollback_window(source.path()).unwrap());
+
+    let closed_root = storage::RootStorageManifestV2::read_from_dir(source.path()).unwrap();
+    let backup_name = closed_root
+        .migration()
+        .expect("closed migration transaction")
+        .backup_name
+        .clone();
+    std::fs::remove_dir_all(source.path().join(backup_name)).unwrap();
+
+    let mut source_storage = Storage::new(1, 0);
+    let source_rx = source_storage
+        .open(Arc::clone(&options), source.path())
+        .unwrap();
+    let meta = RaftSnapshotMeta::for_storage(42, 7, &[], &source_storage).unwrap();
+    let checkpoint = tempfile::tempdir().unwrap();
+    source_storage
+        .create_checkpoint(checkpoint.path(), &meta)
+        .unwrap();
+    source_storage.shutdown().await;
+    source_storage.close();
+    drop(source_rx);
+    drop(source_storage);
+
+    let target_parent = tempfile::tempdir().unwrap();
+    let target = target_parent.path().join("restored");
+    let parsed = ParsedSnapshotMeta::read_from_dir(checkpoint.path()).unwrap();
+    let prepared =
+        prepare_classified_checkpoint_restore(checkpoint.path(), &target, 1, &parsed, &options)
+            .unwrap();
+    assert!(
+        !prepared
+            .staged_path()
+            .join(&closed_root.migration().unwrap().backup_name)
+            .exists(),
+        "a current snapshot must not depend on the legacy rollback backup"
+    );
+
+    let mut staged = Storage::new(1, 0);
+    let staged_rx = staged
+        .open(Arc::clone(&options), prepared.staged_path())
+        .unwrap();
+    staged.shutdown().await;
+    staged.close();
+    drop(staged_rx);
+}
+
+#[tokio::test]
+async fn merged_head_v2_snapshot_migrates_legacy_vector_manifest_before_install() {
+    let checkpoint = tempfile::tempdir().unwrap();
+    let identities = support::vector_v1_storage::create_vector_v1_root(checkpoint.path(), 1);
+    let old_incarnation = identities[0].0;
+    let old_meta = RaftSnapshotMeta {
+        version: storage::CURRENT_SNAPSHOT_VERSION,
+        last_included_index: 42,
+        last_included_term: 7,
+        storage_schema_version: 1,
+        storage_incarnations: vec![old_incarnation],
+        root_manifest_id: None,
+        root_manifest_digest: None,
+        instance_manifests: Vec::new(),
+        db_instance_num: 1,
+        column_families: storage::checkpoint::expected_column_families(),
+        vector_value_format_max: storage::format_vector::VECTOR_VALUE_FORMAT,
+        logindex_collector_states: Vec::new(),
+    };
+    old_meta.write_to_dir(checkpoint.path()).unwrap();
+    let parsed = ParsedSnapshotMeta::read_from_dir(checkpoint.path()).unwrap();
+    let target_parent = tempfile::tempdir().unwrap();
+    let target = target_parent.path().join("restored");
+
+    let prepared = prepare_classified_checkpoint_restore(
+        checkpoint.path(),
+        &target,
+        1,
+        &parsed,
+        &StorageOptions::default(),
+    )
+    .unwrap();
+    let root = storage::RootStorageManifestV2::read_from_dir(prepared.staged_path()).unwrap();
+    let instance =
+        storage::InstanceStorageManifestV2::read_from_dir(&prepared.staged_path().join("0"))
+            .unwrap();
+    instance.validate_root_binding(0, &root).unwrap();
+    assert_eq!(
+        instance.storage_incarnation(),
+        old_incarnation,
+        "Vector-v1 migration must preserve the identity encoded in member keys"
+    );
+
+    let mut staged = Storage::new(1, 0);
+    let staged_rx = staged
+        .open(Arc::new(StorageOptions::default()), prepared.staged_path())
+        .unwrap();
+    let sample = staged.validate_vector_data_sample(8).unwrap();
+    assert_eq!(sample.metas, 1);
+    assert_eq!(sample.members, 1);
+    staged.shutdown().await;
+    staged.close();
+    drop(staged_rx);
+}
+
+#[test]
+fn merged_head_v2_snapshot_requires_manifest_incarnation_match_before_stage() {
+    let root = tempfile::tempdir().unwrap();
+    let checkpoint = root.path().join("checkpoint");
+    let identities = support::vector_v1_storage::create_vector_v1_root(&checkpoint, 1);
+    let mismatched_incarnation = identities[0].0.wrapping_add(1).max(1);
+    let old_meta = RaftSnapshotMeta {
+        version: storage::CURRENT_SNAPSHOT_VERSION,
+        last_included_index: 42,
+        last_included_term: 7,
+        storage_schema_version: 1,
+        storage_incarnations: vec![mismatched_incarnation],
+        root_manifest_id: None,
+        root_manifest_digest: None,
+        instance_manifests: Vec::new(),
+        db_instance_num: 1,
+        column_families: storage::checkpoint::expected_column_families(),
+        vector_value_format_max: storage::format_vector::VECTOR_VALUE_FORMAT,
+        logindex_collector_states: Vec::new(),
+    };
+    old_meta.write_to_dir(&checkpoint).unwrap();
+    let parsed = ParsedSnapshotMeta::read_from_dir(&checkpoint).unwrap();
+    let target = root.path().join("restored");
+
+    let error = prepare_classified_checkpoint_restore(
+        &checkpoint,
+        &target,
+        1,
+        &parsed,
+        &StorageOptions::default(),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("storage incarnation"));
+    assert!(restore_temp_dirs(root.path()).is_empty());
+    assert!(!target.exists());
+}
+
 #[test]
 fn test_validate_for_restore_rejects_bad_schema() {
     use storage::format_vector::VECTOR_VALUE_FORMAT;
+    use storage::{ManifestDigest, SnapshotInstanceManifest};
 
     let valid = || RaftSnapshotMeta {
         db_instance_num: 2,
         storage_incarnations: vec![11, 22],
+        root_manifest_id: Some(uuid::Uuid::nil()),
+        root_manifest_digest: Some(ManifestDigest::compute(b"test root manifest")),
+        instance_manifests: vec![
+            SnapshotInstanceManifest {
+                instance_id: 0,
+                manifest_digest: ManifestDigest::compute(b"test instance 0"),
+                storage_incarnation: 11,
+            },
+            SnapshotInstanceManifest {
+                instance_id: 1,
+                manifest_digest: ManifestDigest::compute(b"test instance 1"),
+                storage_incarnation: 22,
+            },
+        ],
         ..RaftSnapshotMeta::new(42, 7)
     };
 
@@ -420,9 +874,12 @@ fn test_validate_for_restore_rejects_bad_schema() {
         "unexpected error: {err}"
     );
 
-    // Differing incarnation values are accepted.
+    // Differing incarnation values are accepted when the redundant metadata
+    // remains internally consistent; exact values are checked against files.
     let mut meta = valid();
     meta.storage_incarnations = vec![999, 888];
+    meta.instance_manifests[0].storage_incarnation = 999;
+    meta.instance_manifests[1].storage_incarnation = 888;
     meta.validate_for_restore(2).unwrap();
 
     // Missing / mismatched column families.

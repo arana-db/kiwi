@@ -48,7 +48,8 @@ use openraft::{
 };
 use storage::storage::Storage;
 use storage::{
-    RaftSnapshotMeta, StorageOptions, prepare_checkpoint_restore, sync_parent_directory,
+    ParsedSnapshotMeta, RaftSnapshotMeta, StorageOptions, close_rollback_window,
+    prepare_classified_checkpoint_restore, sync_parent_directory,
 };
 
 use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
@@ -392,6 +393,9 @@ impl Drop for ResumeBeforeMarkerGuard {
     }
 }
 
+#[cfg(test)]
+type StagedRestoreReopenHook = Arc<dyn Fn(&Path) + Send + Sync>;
+
 /// Kiwi state machine with hot-swapping Storage support.
 pub struct KiwiStateMachine {
     _node_id: u64,
@@ -415,6 +419,8 @@ pub struct KiwiStateMachine {
     snapshot_publication_gate: Arc<tokio::sync::Mutex<()>>,
     /// Shared Raft append-log callback used to re-arm restored Storage after snapshot install.
     append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
+    #[cfg(test)]
+    staged_restore_reopen_hook: Option<StagedRestoreReopenHook>,
 }
 
 impl KiwiStateMachine {
@@ -443,6 +449,8 @@ impl KiwiStateMachine {
             snapshot_state_gate: Arc::new(tokio::sync::Mutex::new(())),
             snapshot_publication_gate: Arc::new(tokio::sync::Mutex::new(())),
             append_log_fn,
+            #[cfg(test)]
+            staged_restore_reopen_hook: None,
         }
     }
 
@@ -563,8 +571,9 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         unpack_tar_to_dir(&bytes, unpack_root.path()).map_err(io_err_to_raft)?;
 
         let checkpoint_root = unpacked_checkpoint_root(unpack_root.path());
-        let file_meta =
-            RaftSnapshotMeta::read_from_dir(&checkpoint_root).map_err(io_err_to_raft)?;
+        let parsed_file_meta =
+            ParsedSnapshotMeta::read_from_dir(&checkpoint_root).map_err(io_err_to_raft)?;
+        let file_meta = parsed_file_meta.metadata();
 
         let expected_index = meta.last_log_id.map(|l| l.index).unwrap_or(0);
         let expected_term = meta.last_log_id.map(|l| l.leader_id.term).unwrap_or(0);
@@ -595,7 +604,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         // Deterministically reject snapshots whose storage schema this binary
         // cannot consume (version, instance count, column families, vector
         // value format), before touching live storage.
-        file_meta
+        parsed_file_meta
             .validate_for_restore(db_instance_num)
             .map_err(io_err_to_raft)?;
 
@@ -611,25 +620,49 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             );
             Arc::new(StorageOptions::default())
         });
-        let prepared = prepare_checkpoint_restore(&checkpoint_root, &self.db_path, db_instance_num)
-            .map_err(io_err_to_raft)?;
-        prepared
-            .validate_storage_incarnations(&file_meta.storage_incarnations)
-            .map_err(io_err_to_raft)?;
+        let prepared = prepare_classified_checkpoint_restore(
+            &checkpoint_root,
+            &self.db_path,
+            db_instance_num,
+            &parsed_file_meta,
+            &options,
+        )
+        .map_err(io_err_to_raft)?;
 
-        // Open and sample the disposable staged copy before pausing live
-        // storage. All RocksDB handles must be released before rename.
-        let mut staged_storage = Storage::new(db_instance_num, db_id);
-        let staged_rx = staged_storage
-            .open(Arc::clone(&options), prepared.staged_path())
-            .map_err(storage_err_to_raft)?;
-        staged_storage
-            .validate_vector_data_sample(RESTORED_VECTOR_SAMPLE_SIZE)
-            .map_err(storage_err_to_raft)?;
-        staged_storage.shutdown().await;
-        staged_storage.close();
-        drop(staged_rx);
-        drop(staged_storage);
+        // Open, validate, close and reopen the disposable staged copy before
+        // pausing live storage. This proves the migrated/checkpointed files are
+        // self-contained and all RocksDB handles can be released before rename.
+        for _validation_pass in 0..2 {
+            let mut staged_storage = Storage::new(db_instance_num, db_id);
+            let staged_rx = staged_storage
+                .open(Arc::clone(&options), prepared.staged_path())
+                .map_err(storage_err_to_raft)?;
+            staged_storage
+                .validate_vector_data_sample(RESTORED_VECTOR_SAMPLE_SIZE)
+                .map_err(storage_err_to_raft)?;
+            staged_storage.shutdown().await;
+            staged_storage.close();
+            drop(staged_rx);
+            drop(staged_storage);
+
+            if _validation_pass == 0 && prepared.has_historical_migration() {
+                let rollback_window_closed =
+                    close_rollback_window(prepared.staged_path()).map_err(storage_err_to_raft)?;
+                if !rollback_window_closed {
+                    return Err(io_err_to_raft(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "staged historical snapshot migration did not expose a rollback window",
+                    )));
+                }
+            }
+
+            #[cfg(test)]
+            if _validation_pass == 0
+                && let Some(hook) = self.staged_restore_reopen_hook.as_ref()
+            {
+                hook(prepared.staged_path());
+            }
+        }
 
         let _snapshot_publication = Arc::clone(&self.snapshot_publication_gate)
             .lock_owned()
@@ -1063,6 +1096,79 @@ mod snapshot_gate_tests {
         let storage = storage_swap.load_full();
         drop(storage_swap);
         close_storage(storage).await;
+        drop(_storage_rx);
+        safe_cleanup_test_db(&db_path);
+        safe_cleanup_test_db(&snapshot_work_dir);
+    }
+
+    #[tokio::test]
+    async fn staged_storage_is_closed_reopened_and_revalidated_before_install() {
+        let db_path = unique_test_db_path();
+        let snapshot_work_dir = unique_test_db_path();
+        std::fs::create_dir_all(&snapshot_work_dir)
+            .expect("snapshot work directory should be created");
+
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _storage_rx = storage
+            .open(options, &db_path)
+            .expect("test storage should open");
+        storage
+            .set(b"live-key", b"live-value")
+            .expect("live data should be written");
+        let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+        let controller = Arc::new(CountingPauseController::default());
+        let mut state_machine = KiwiStateMachine::new(
+            1,
+            Arc::clone(&storage_swap),
+            db_path.clone(),
+            snapshot_work_dir.clone(),
+            controller.clone(),
+            None,
+        );
+
+        let mut builder = state_machine.get_snapshot_builder().await;
+        let snapshot = builder
+            .build_snapshot()
+            .await
+            .expect("test snapshot should build");
+        drop(builder);
+        let live_storage = storage_swap.load_full();
+        let hook_calls = Arc::new(AtomicUsize::new(0));
+        let observed_hook_calls = Arc::clone(&hook_calls);
+        state_machine.staged_restore_reopen_hook = Some(Arc::new(move |staged_path| {
+            observed_hook_calls.fetch_add(1, Ordering::SeqCst);
+            std::fs::remove_file(staged_path.join("0").join(storage::STORAGE_MANIFEST_FILE))
+                .expect("test hook should corrupt the staged manifest between opens");
+        }));
+
+        let error = state_machine
+            .install_snapshot(&snapshot.meta, snapshot.snapshot)
+            .await
+            .expect_err("the second staged open must revalidate the manifest");
+        assert!(
+            error.to_string().contains("manifest"),
+            "unexpected staged reopen error: {error}"
+        );
+        assert_eq!(hook_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(controller.pause_count.load(Ordering::SeqCst), 0);
+        assert_eq!(controller.resume_count.load(Ordering::SeqCst), 0);
+        assert!(Arc::ptr_eq(&storage_swap.load_full(), &live_storage));
+        assert_eq!(
+            live_storage
+                .get(b"live-key")
+                .expect("live storage should remain readable"),
+            "live-value"
+        );
+        assert!(
+            !snapshot_install_marker_path(&db_path)
+                .expect("snapshot marker path")
+                .exists()
+        );
+
+        drop(state_machine);
+        drop(storage_swap);
+        close_storage(live_storage).await;
         drop(_storage_rx);
         safe_cleanup_test_db(&db_path);
         safe_cleanup_test_db(&snapshot_work_dir);

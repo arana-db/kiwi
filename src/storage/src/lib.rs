@@ -80,8 +80,9 @@ pub mod logindex;
 pub use batch::fail_next_rocks_batch_commit;
 pub use batch::{AppendLogFn, Batch, BinlogBatch, RocksBatch};
 pub use checkpoint::{
-    CURRENT_SNAPSHOT_VERSION, PreparedCheckpointRestore, RAFT_SNAPSHOT_META_FILE, RaftSnapshotMeta,
-    STORAGE_SCHEMA_VERSION, prepare_checkpoint_restore, restore_checkpoint_layout,
+    CURRENT_SNAPSHOT_VERSION, ParsedSnapshotMeta, PreparedCheckpointRestore,
+    RAFT_SNAPSHOT_META_FILE, RaftSnapshotMeta, STORAGE_SCHEMA_VERSION, SnapshotInstanceManifest,
+    prepare_checkpoint_restore, prepare_classified_checkpoint_restore, restore_checkpoint_layout,
 };
 pub use durable_fs::{sync_directory, sync_parent_directory};
 pub use error::Result;

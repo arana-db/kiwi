@@ -945,6 +945,46 @@ fn rollback_window_closed_rejects_automatic_backup_restore() {
 }
 
 #[test]
+fn rollback_window_closed_reopens_without_legacy_backup() {
+    let temp = tempfile::tempdir().expect("closed root without backup");
+    create_vector_v1_root(temp.path(), 2);
+    let options = StorageOptions::default();
+    open_storage(temp.path(), 2).expect("migrate Vector-v1 through production open");
+    assert!(close_rollback_window(temp.path()).expect("close rollback window"));
+
+    let closed = RootStorageManifestV2::read_from_dir(temp.path()).expect("closed root");
+    let backup_name = closed
+        .migration()
+        .expect("closed migration transaction")
+        .backup_name
+        .clone();
+    std::fs::remove_dir_all(temp.path().join(&backup_name))
+        .expect("simulate a self-contained snapshot without the legacy backup");
+
+    {
+        let instance = temp.path().join("0");
+        let db = DB::open_cf_descriptors(
+            &Options::default(),
+            &instance,
+            support::legacy_storage::descriptors(&CANONICAL_COLUMN_FAMILY_NAMES),
+        )
+        .expect("open closed live instance");
+        let default = db.cf_handle("default").expect("default CF");
+        db.put_cf(&default, b"post-close:no-backup", b"accepted")
+            .expect("write after backup removal");
+    }
+
+    open_storage(temp.path(), 2).expect("reopen closed storage without legacy backup");
+    assert_eq!(
+        read_sentinel(&temp.path().join("0"), "default", b"post-close:no-backup"),
+        b"accepted"
+    );
+    let error = recover_or_rollback_before_admission(temp.path(), 2, &options)
+        .expect_err("closed rollback window must stay irreversible without backup");
+    assert!(error.to_string().contains("RollbackWindowClosed"));
+}
+
+#[test]
 fn committed_resume_repairs_instance_binding_after_journal_first_crash() {
     let temp = tempfile::tempdir().expect("committed rebinding root");
     create_legacy_root(temp.path(), 2, false);

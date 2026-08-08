@@ -16,7 +16,7 @@
 // limitations under the License.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -121,6 +121,7 @@ pub struct Storage {
     pub db_instance_num: usize,
     pub db_id: usize,
     pub scan_keynum_exit: AtomicBool,
+    db_path: Option<PathBuf>,
 }
 
 impl Drop for Storage {
@@ -147,6 +148,7 @@ impl Storage {
             bg_task: None,
             current_task_type: AtomicU8::new(TaskType::None.into()),
             scan_keynum_exit: AtomicBool::new(false),
+            db_path: None,
             ignore_tasks: AtomicBool::new(false),
             expiration_manager: None,
             expiration_cleanup_task: None,
@@ -158,6 +160,10 @@ impl Storage {
         self.insts
             .first()
             .map(|instance| Arc::clone(&instance.storage))
+    }
+
+    pub fn db_path(&self) -> Option<&Path> {
+        self.db_path.as_deref()
     }
 
     /// Wait for shared top-level command access without blocking a runtime worker.
@@ -195,6 +201,7 @@ impl Storage {
         // owners remain valid and keep their RocksDB handles alive.
         self.scan_cursor_states.clear();
         self.insts.clear();
+        self.db_path = None;
     }
 
     pub fn open(
@@ -252,6 +259,7 @@ impl Storage {
 
         self.scan_cursor_states.clear();
         self.insts = opened_instances;
+        self.db_path = Some(db_path.to_path_buf());
         self.bg_task_handler = Some(handler_arc);
         self.expiration_manager = Some(expiration_manager);
         self.expiration_cleanup_task = Some(cleanup_task);
@@ -563,6 +571,15 @@ impl Storage {
             // RocksDB Checkpoint::create_checkpoint requires `sub` to not exist.
             inst.create_checkpoint(&sub)?;
         }
+
+        let db_path = self
+            .db_path()
+            .ok_or_else(|| crate::error::Error::InvalidFormat {
+                message: "cannot checkpoint Storage without an opened database path".to_string(),
+                location: snafu::location!(),
+            })?;
+        crate::RootStorageManifestV2::read_from_dir(db_path)?
+            .write_to_dir_atomically(checkpoint_root)?;
 
         meta.write_to_dir_atomically(checkpoint_root)
             .context(crate::error::IoSnafu)?;
