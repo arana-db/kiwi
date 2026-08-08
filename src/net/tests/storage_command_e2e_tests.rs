@@ -196,6 +196,7 @@ impl TestServer {
         let requirepass_for_provider = requirepass.clone();
         let cmd_table = Arc::new(cmd::table::create_command_table_with_gates(
             Arc::new(move || requirepass_for_provider.clone()),
+            Arc::new(cmd::server_info::NoopServerInfoProvider),
             gates,
         ));
         let executor = Arc::new(executor::CmdExecutorBuilder::new().build());
