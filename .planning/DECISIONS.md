@@ -103,7 +103,7 @@
 
 - 日期：2026-08-02
 - 状态：accepted
-- 决定：.planning/SDD.md 是项目唯一权威入口，统一维护当前架构、M0-M10 路线、M0-M6 当前可执行里程碑范围、WP0-WP7 工作包、当前状态、Issue/PR 追踪和验证门禁。
+- 决定：.planning/SDD.md 是项目唯一权威入口，统一维护当前架构、M0-M10 路线、M0-M6 当前可执行里程碑范围、WP0-WP8 工作包、当前状态、Issue/PR 追踪和验证门禁。
 - 后果：STATE.md、KANBAN.md 和 ROADMAP.md 只保留兼容迁移指针，不维护独立状态。PROJECT、REQUIREMENTS、DECISIONS、OPEN_QUESTIONS 和 REFERENCES 作为 SDD 下属注册表。
 - 理由：此前同一状态分散在多份文件中，PR 合并后容易产生状态、优先级和当前计划漂移。
 
@@ -145,3 +145,13 @@
 - 状态：accepted
 - 决定：PR fast gate 运行受影响的 raw RESP、单元、集成和静态门禁；nightly/full gate 运行 TCL、完整 differential、fuzz、deterministic Raft 和故障矩阵；M6/release gate 运行 fresh rebuild、真实 upgrade/rollback、close/reopen 和 3/5 节点历史验证。
 - 后果：绿色 PR fast gate 不能被解释为系统稳定或生产级一致性已经证明。
+
+## D019：在一个 Draft PR 中聚合 VectorSet 合并后全量闭环
+
+- 日期：2026-08-06
+- 状态：accepted
+- 决定：用户明确选择方案 C，授权在一个最终 Draft PR 中聚合 WP8 VectorSet 合并后闭环、Issue #415 Trusted Redis Oracle、Issue #418 differential、Storage migration/snapshot、Runtime admission、协议一致性、Cluster fail-closed 和供应链哨兵。
+- 任务隔离：本决定不废止 D012。治理设计、实施计划、Oracle、Storage、Runtime/Protocol 和 CI/Security 必须使用独立 Codex 子任务、独立 recovery checkpoint 和隔离 worktree；同一个 GitHub PR 只聚合按顺序审查通过的提交，不能把单 PR 解释为单一未隔离执行上下文。
+- 范围例外：PR #356 已合并的 VectorSet Phase 1 允许实施正确性、恢复、兼容性和门禁修复；HNSW、量化扩展、新 Vector 命令、全文索引和其他 AI 主线继续 frozen。
+- 验收：单 PR 不降低 #415、#418、#421 或现有 COMPAT/STORAGE/RAFT/STABILITY Requirement；任何 hash equality、upgrade/rollback、raw differential、cluster execution、cleanup 或 exact-Head 证据缺失都会使 PR 保持 Draft。
+- 权限：本决定授权设计、实现、测试、commit、push 和创建 Draft PR，不授权 merge、修改 branch protection、关闭 Issue 或 Resolve 历史评论。

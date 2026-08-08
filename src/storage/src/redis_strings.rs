@@ -2166,17 +2166,7 @@ impl Redis {
         })?;
 
         // Process each column family separately to limit memory usage
-        let all_cf_indexes = [
-            ColumnFamilyIndex::MetaCF,
-            ColumnFamilyIndex::HashesDataCF,
-            ColumnFamilyIndex::SetsDataCF,
-            ColumnFamilyIndex::ListsDataCF,
-            ColumnFamilyIndex::ZsetsDataCF,
-            ColumnFamilyIndex::ZsetsScoreCF,
-            ColumnFamilyIndex::VectorDataCF,
-        ];
-
-        for cf_index in all_cf_indexes {
+        for cf_index in ColumnFamilyIndex::ALL {
             let cf_handle = self.get_cf_handle(cf_index);
             if let Some(cf) = cf_handle {
                 let mut keys_chunk: Vec<Vec<u8>> = Vec::with_capacity(CHUNK_SIZE);
@@ -2218,7 +2208,7 @@ impl Redis {
 
         let mut keys_by_slot: HashMap<u32, Vec<&Vec<u8>>> = HashMap::new();
         for key in keys_chunk {
-            let user_key = BinlogBatch::infer_user_key(cf_index as u32, key)?;
+            let user_key = BinlogBatch::infer_user_key(cf_index.stable_id(), key)?;
             let slot_idx = key_to_slot_id(&user_key) as u32;
             keys_by_slot.entry(slot_idx).or_default().push(key);
         }

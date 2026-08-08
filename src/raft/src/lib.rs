@@ -28,6 +28,7 @@ pub mod log_store_rocksdb;
 pub mod network;
 pub mod node;
 pub mod snapshot_archive;
+pub mod snapshot_install;
 pub mod state_machine;
 
 pub mod raft_proto {
@@ -53,15 +54,7 @@ pub use storage::logindex::types::LogIndexError;
 pub const COLUMN_FAMILY_COUNT: usize = storage::ColumnFamilyIndex::COUNT;
 
 /// List of CF names, in the same order as storage::ColumnFamilyIndex
-pub const CF_NAMES: [&str; COLUMN_FAMILY_COUNT] = [
-    "default",        // MetaCF = 0
-    "hash_data_cf",   // HashesDataCF = 1
-    "set_data_cf",    // SetsDataCF = 2
-    "list_data_cf",   // ListsDataCF = 3
-    "zset_data_cf",   // ZsetsDataCF = 4
-    "zset_score_cf",  // ZsetsScoreCF = 5
-    "vector_data_cf", // VectorDataCF = 6
-];
+pub const CF_NAMES: [&str; COLUMN_FAMILY_COUNT] = storage::CANONICAL_COLUMN_FAMILY_NAMES;
 
 const _: () = assert!(
     CF_NAMES.len() == storage::ColumnFamilyIndex::COUNT,
@@ -74,7 +67,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cf_names_match_storage() {
+    fn cf_names_match_storage_indices() {
         use storage::ColumnFamilyIndex;
         let variants: [ColumnFamilyIndex; ColumnFamilyIndex::COUNT] = [
             ColumnFamilyIndex::MetaCF,

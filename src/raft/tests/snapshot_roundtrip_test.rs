@@ -27,6 +27,7 @@ use arc_swap::ArcSwap;
 use openraft::RaftSnapshotBuilder;
 use openraft::storage::RaftStateMachine;
 use raft::snapshot_archive::{pack_dir_to_vec, unpack_tar_to_dir, unpacked_checkpoint_root};
+use raft::snapshot_install::{SnapshotInstallRecoveryDecision, recover_snapshot_install};
 use raft::state_machine::{
     KiwiStateMachine, PauseController, StorageAccessPermit, preflight_snapshot_install,
     snapshot_install_marker_path,
@@ -450,11 +451,11 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
 
     let meta = snap.meta.clone();
     let bytes = snap.snapshot.into_inner();
-    // Create target storage but do NOT open it yet - this is expected because
-    // install_snapshot will restore the checkpoint directly to db_path, bypassing
-    // the normal open flow. The storage is opened after install_snapshot completes.
-    let target_storage = Arc::new(Storage::new(1, 0));
-    let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
+    // Production snapshot installation always replaces an already-open follower
+    // Storage after admission is paused and request owners are drained.
+    let mut target_storage = Storage::new(1, 0);
+    let target_rx = target_storage.open(Arc::new(StorageOptions::default()), &restore_db_path)?;
+    let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
     let mut sm2 = KiwiStateMachine::new(
         2,
         target_swap.clone(),
@@ -480,7 +481,7 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
     drop(sm2);
     drop(target_swap);
     close_storage(restored, "restored storage").await?;
-    close_storage(target_storage, "target placeholder storage").await?;
+    drop(target_rx);
 
     safe_cleanup_test_db(&src_db_path);
     safe_cleanup_test_db(&restore_db_path);
@@ -532,15 +533,12 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     drop(source_swap);
     close_storage(source_storage, "source storage").await?;
 
-    // Create old data directory structure directly without opening Storage.
-    // This simulates a Follower that has existing stale data.
-    let old_data_dir = restore_db_path.join("0");
-    std::fs::create_dir_all(&old_data_dir)?;
-    std::fs::write(old_data_dir.join("marker_old_data"), b"stale")?;
-
-    // Install the snapshot - this should REPLACE the old data.
-    let target_storage = Arc::new(Storage::new(1, 0));
-    let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
+    // Create a valid, open follower Storage containing stale logical data.
+    // Arbitrary unmanifested directories are rejected rather than deleted.
+    let mut target_storage = Storage::new(1, 0);
+    let target_rx = target_storage.open(Arc::new(StorageOptions::default()), &restore_db_path)?;
+    target_storage.set(b"old-only", b"stale")?;
+    let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
     let mut sm_target = KiwiStateMachine::new(
         2,
         target_swap.clone(),
@@ -562,11 +560,12 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     let restored = target_swap.load_full();
     assert_eq!(restored.get(b"key1")?, "value1");
     assert_eq!(restored.get(b"key2")?, "value2");
+    assert!(restored.get(b"old-only").is_err());
 
     drop(sm_target);
     drop(target_swap);
     close_storage(restored, "restored storage").await?;
-    close_storage(target_storage, "target placeholder storage").await?;
+    drop(target_rx);
 
     safe_cleanup_test_db(&src_db_path);
     safe_cleanup_test_db(&restore_db_path);
@@ -620,8 +619,9 @@ async fn install_snapshot_rearms_append_log_hook() -> anyhow::Result<()> {
     let append_log_fn_holder = Arc::new(OnceLock::new());
     let _ = append_log_fn_holder.set(append_log_fn);
 
-    let target_storage = Arc::new(Storage::new(1, 0));
-    let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
+    let mut target_storage = Storage::new(1, 0);
+    let target_rx = target_storage.open(Arc::new(StorageOptions::default()), &restore_db_path)?;
+    let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
     let mut target_sm = KiwiStateMachine::new(
         2,
         target_swap.clone(),
@@ -649,7 +649,7 @@ async fn install_snapshot_rearms_append_log_hook() -> anyhow::Result<()> {
     drop(target_sm);
     drop(target_swap);
     close_storage(restored, "restored storage").await?;
-    close_storage(target_storage, "target placeholder storage").await?;
+    drop(target_rx);
 
     safe_cleanup_test_db(&src_db_path);
     safe_cleanup_test_db(&restore_db_path);
@@ -835,7 +835,7 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
 
     let mut target_storage = Storage::new(1, 0);
     let options = Arc::new(StorageOptions::default());
-    let _target_rx = target_storage.open(options, &restore_db_path)?;
+    let target_rx = target_storage.open(Arc::clone(&options), &restore_db_path)?;
     target_storage.set(b"stale_key", b"stale_value")?;
 
     // Persisting the current snapshot happens after the target database has been
@@ -884,12 +884,16 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
     let marker_json: serde_json::Value = serde_json::from_slice(&std::fs::read(&marker_path)?)?;
     for field in [
         "version",
-        "id",
-        "index",
-        "term",
-        "db",
-        "workdir",
-        "instances",
+        "phase",
+        "snapshot_id",
+        "last_log_index",
+        "last_log_term",
+        "db_instance_num",
+        "target_name",
+        "staged_name",
+        "backup_name",
+        "old_storage",
+        "new_storage",
     ] {
         assert!(
             marker_json.get(field).is_some(),
@@ -905,8 +909,8 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
         "restart refusal must identify the marker path: {restart_error}"
     );
     assert!(
-        restart_error.to_string().contains("new node ID"),
-        "restart refusal must give the safe rejoin recovery path: {restart_error}"
+        restart_error.to_string().contains("startup recovery"),
+        "direct Raft initialization must require startup recovery: {restart_error}"
     );
 
     let attempts_before = pause_controller.enter_attempts.load(Ordering::SeqCst);
@@ -935,10 +939,15 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
     drop(target_sm);
     drop(target_swap);
     close_storage(restored, "restored storage after failed install").await?;
-    drop(pause_controller);
-    drop(_target_rx);
+    drop(target_rx);
 
-    std::fs::remove_file(&marker_path)?;
+    std::fs::remove_dir_all(invalid_work_dir.join("current_snapshot.tar"))?;
+    let recovery =
+        recover_snapshot_install(&restore_db_path, &invalid_work_dir, Arc::clone(&options)).await?;
+    assert_eq!(recovery, SnapshotInstallRecoveryDecision::Installed);
+    assert!(!marker_path.exists());
+    drop(pause_controller);
+
     safe_cleanup_test_db(&src_db_path);
     safe_cleanup_test_db(&restore_db_path);
     safe_cleanup_test_db(&snap_root);
@@ -984,7 +993,7 @@ async fn install_snapshot_stays_paused_when_restore_parent_sync_fails_after_rena
 
     let mut target_storage = Storage::new(1, 0);
     let options = Arc::new(StorageOptions::default());
-    let _target_rx = target_storage.open(options, &restore_db_path)?;
+    let target_rx = target_storage.open(Arc::clone(&options), &restore_db_path)?;
     target_storage.set(b"stale_key", b"stale_value")?;
     std::fs::write(restore_db_path.join("sentinel"), b"old target")?;
 
@@ -1009,8 +1018,8 @@ async fn install_snapshot_stays_paused_when_restore_parent_sync_fails_after_rena
         .expect_err("the injected parent directory sync failure must fail install");
     let error = error.to_string();
     assert!(
-        error.contains("committing the staged checkpoint"),
-        "error must identify checkpoint commit: {error}"
+        error.contains("syncing the promoted storage parent"),
+        "error must identify the promoted-storage durability boundary: {error}"
     );
     assert!(
         error.contains("injected restore parent sync failure after rename"),
@@ -1043,8 +1052,8 @@ async fn install_snapshot_stays_paused_when_restore_parent_sync_fails_after_rena
         "restart refusal must identify the marker path: {restart_error}"
     );
     assert!(
-        restart_error.to_string().contains("new node ID"),
-        "restart refusal must give the safe rejoin recovery path: {restart_error}"
+        restart_error.to_string().contains("startup recovery"),
+        "direct Raft initialization must require startup recovery: {restart_error}"
     );
 
     let attempts_before = pause_controller.enter_attempts.load(Ordering::SeqCst);
@@ -1075,10 +1084,23 @@ async fn install_snapshot_stays_paused_when_restore_parent_sync_fails_after_rena
 
     drop(target_sm);
     drop(target_swap);
-    drop(pause_controller);
-    drop(_target_rx);
+    drop(target_rx);
+    drop(_fault_guard);
 
-    std::fs::remove_file(&marker_path)?;
+    let recovery =
+        recover_snapshot_install(&restore_db_path, &snap_root, Arc::clone(&options)).await?;
+    assert_eq!(recovery, SnapshotInstallRecoveryDecision::Installed);
+    assert!(!marker_path.exists());
+
+    let mut recovered_storage = Storage::new(1, 0);
+    let recovered_rx = recovered_storage.open(options, &restore_db_path)?;
+    assert_eq!(recovered_storage.get(b"snapshot_key")?, "snapshot_value");
+    assert!(recovered_storage.get(b"stale_key").is_err());
+    recovered_storage.shutdown().await;
+    recovered_storage.close();
+    drop(recovered_rx);
+    drop(pause_controller);
+
     safe_cleanup_test_db(&src_db_path);
     safe_cleanup_test_db(&restore_db_path);
     safe_cleanup_test_db(&snap_root);

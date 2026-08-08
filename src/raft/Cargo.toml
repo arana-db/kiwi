@@ -37,6 +37,9 @@ prost = "0.14.3"
 tonic-prost = "0.14.5"
 tokio-stream = "0.1"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
 [build-dependencies]
 tonic-prost-build = "0.14.6"
 
