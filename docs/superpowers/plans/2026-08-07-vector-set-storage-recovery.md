@@ -312,14 +312,16 @@
 - Create: `src/storage/src/vector_consistency.rs`
 - Modify: `src/storage/src/redis_vectors.rs`
 - Modify: `src/storage/src/storage.rs`
+- Modify: `src/storage/src/storage_migration.rs`
 - Modify: `src/storage/src/format_vector.rs`
 - Modify: `src/storage/src/lib.rs`
 - Modify: `src/raft/src/state_machine.rs`
+- Modify: `src/raft/src/snapshot_install.rs`
 - Create: `src/storage/tests/vector_consistency_test.rs`
 - Modify: `src/storage/tests/redis_vector_test.rs`
-- Modify: `src/raft/tests/snapshot_compatibility_test.rs`
+- Modify: `src/storage/tests/checkpoint_test.rs`
 
-- [ ] **步骤 1：写入第 65 条损坏和双向闭包失败测试**
+- [x] **步骤 1：写入第 65 条损坏和双向闭包失败测试**
 
   - `full_validation_detects_corrupt_member_after_first_64_entries`
   - `full_validation_rejects_wrong_storage_incarnation`
@@ -343,20 +345,20 @@
   cargo test -p storage --test vector_consistency_test -- --nocapture
   ```
 
-- [ ] **步骤 2：实现全量双遍校验**
+- [x] **步骤 2：实现全量双遍校验**
 
   - 第一遍遍历 `VectorDataCF`，严格验证 member key codec version 和 vector value codec version，解码 key/value，按 instance/incarnation/user-key/generation 统计 member 数并验证 dimension/quantization。
   - 第二遍遍历 `MetaCF` 的 `DataType::VectorSet`，核对 generation、count、dimension、quantization、metric、member range 和 `data_revision` 的非零/可解码合同；VADD/VREM/DEL+recreate 操作测试另外证明 revision 不回退。
   - orphan member、orphan meta、跨 incarnation/generation、count 不一致均 fail closed。
   - snapshot restore 删除 `RESTORED_VECTOR_SAMPLE_SIZE` 和 `validate_vector_data_sample(64)`，必须执行全量 validator。
 
-- [ ] **步骤 3：回归**
+- [x] **步骤 3：回归**
 
   ```powershell
   cargo test -p storage --test vector_consistency_test -- --nocapture
-  cargo test -p storage --test redis_vector_test vector_data -- --nocapture
+  cargo test -p storage --test redis_vector_test vector_consistency -- --nocapture
   cargo test -p storage --test redis_vector_test data_revision -- --nocapture
-  cargo test -p raft --test snapshot_compatibility_test corruption -- --nocapture
+  cargo test -p raft snapshot_corruption_after_64th_member_fails_before_storage_pause -- --nocapture
   ```
 
 ## Task 6：`PreparedVsimSession` key-scoped 单一串行视图

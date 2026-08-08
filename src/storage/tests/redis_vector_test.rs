@@ -1789,25 +1789,21 @@ fn test_vector_batch_commit_fault_preserves_atomicity() {
 }
 
 #[test]
-fn vector_data_sample_validation_passes_on_healthy_data() {
+fn vector_consistency_validation_passes_on_healthy_data() {
     with_redis(|redis| {
         let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
         redis.vadd(b"vs", b"e1", &vector).expect("vadd e1");
         redis.vadd(b"vs", b"e2", &vector).expect("vadd e2");
 
-        let sample = redis.validate_vector_data_sample(16).expect("sample");
-        assert_eq!(sample.members, 2);
-        assert_eq!(sample.metas, 1);
-
-        // A sample size of zero samples nothing and always passes.
-        let empty = redis.validate_vector_data_sample(0).expect("empty sample");
-        assert_eq!(empty.members, 0);
-        assert_eq!(empty.metas, 0);
+        let report = redis.validate_vector_consistency().expect("validation");
+        assert_eq!(report.instances, 1);
+        assert_eq!(report.members, 2);
+        assert_eq!(report.metas, 1);
     });
 }
 
 #[test]
-fn vector_data_sample_validation_rejects_wrong_storage_incarnation() {
+fn vector_consistency_validation_rejects_wrong_storage_incarnation() {
     with_redis(|redis| {
         let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
         redis.vadd(b"vs", b"e1", &vector).expect("vadd e1");
@@ -1840,7 +1836,7 @@ fn vector_data_sample_validation_rejects_wrong_storage_incarnation() {
             .expect("write wrong-incarnation member");
 
         let error = redis
-            .validate_vector_data_sample(16)
+            .validate_vector_consistency()
             .expect_err("wrong storage incarnation must fail validation");
         assert!(
             error.to_string().contains("storage incarnation"),
@@ -1850,7 +1846,7 @@ fn vector_data_sample_validation_rejects_wrong_storage_incarnation() {
 }
 
 #[test]
-fn vector_data_sample_validation_rejects_corrupt_member() {
+fn vector_consistency_validation_rejects_corrupt_member() {
     with_redis(|redis| {
         let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
         redis.vadd(b"vs", b"e1", &vector).expect("vadd e1");
@@ -1868,12 +1864,12 @@ fn vector_data_sample_validation_rejects_corrupt_member() {
         db.put_cf(&vector_cf, &member_key, b"garbage")
             .expect("corrupt member value");
 
-        assert!(redis.validate_vector_data_sample(16).is_err());
+        assert!(redis.validate_vector_consistency().is_err());
     });
 }
 
 #[test]
-fn vector_data_sample_validation_rejects_corrupt_meta() {
+fn vector_consistency_validation_rejects_corrupt_meta() {
     with_redis(|redis| {
         let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("vector");
         redis.vadd(b"vs", b"e1", &vector).expect("vadd e1");
@@ -1891,6 +1887,6 @@ fn vector_data_sample_validation_rejects_corrupt_meta() {
         )
         .expect("corrupt meta value");
 
-        assert!(redis.validate_vector_data_sample(16).is_err());
+        assert!(redis.validate_vector_consistency().is_err());
     });
 }

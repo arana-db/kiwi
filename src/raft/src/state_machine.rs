@@ -72,10 +72,6 @@ fn io_err_to_raft(e: std::io::Error) -> StorageError<u64> {
     StorageError::from_io_error(ErrorSubject::StateMachine, ErrorVerb::Write, e)
 }
 
-/// Number of vector metas / member entries decoded per instance when
-/// validating restored snapshot data (sampling, not a full scan).
-const RESTORED_VECTOR_SAMPLE_SIZE: usize = 64;
-
 /// Direct Raft-node creation must not bypass server startup recovery.
 pub fn preflight_snapshot_install(db_path: &Path) -> io::Result<()> {
     let marker_path = snapshot_install_marker_path(db_path)?;
@@ -251,6 +247,8 @@ impl Drop for ResumeBeforeStoragePausedGuard {
 #[cfg(test)]
 type StagedRestoreReopenHook = Arc<dyn Fn(&Path) + Send + Sync>;
 #[cfg(test)]
+type StagedRestoreValidationHook = Arc<dyn Fn(&Storage, usize) + Send + Sync>;
+#[cfg(test)]
 type StoragePausedHook = Arc<dyn Fn(&SnapshotInstallIntent) -> io::Result<()> + Send + Sync>;
 
 /// Kiwi state machine with hot-swapping Storage support.
@@ -278,6 +276,8 @@ pub struct KiwiStateMachine {
     append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
     #[cfg(test)]
     staged_restore_reopen_hook: Option<StagedRestoreReopenHook>,
+    #[cfg(test)]
+    staged_restore_validation_hook: Option<StagedRestoreValidationHook>,
     #[cfg(test)]
     storage_paused_hook: Option<StoragePausedHook>,
 }
@@ -310,6 +310,8 @@ impl KiwiStateMachine {
             append_log_fn,
             #[cfg(test)]
             staged_restore_reopen_hook: None,
+            #[cfg(test)]
+            staged_restore_validation_hook: None,
             #[cfg(test)]
             storage_paused_hook: None,
         }
@@ -517,8 +519,12 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             let staged_rx = staged_storage
                 .open(Arc::clone(&options), prepared.staged_path())
                 .map_err(storage_err_to_raft)?;
+            #[cfg(test)]
+            if let Some(hook) = self.staged_restore_validation_hook.as_ref() {
+                hook(&staged_storage, _validation_pass);
+            }
             staged_storage
-                .validate_vector_data_sample(RESTORED_VECTOR_SAMPLE_SIZE)
+                .validate_vector_consistency()
                 .map_err(storage_err_to_raft)?;
             staged_storage.shutdown().await;
             staged_storage.close();
@@ -627,7 +633,7 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             .open(Arc::clone(&options), &self.db_path)
             .map_err(|error| post_marker_error("opening the restored storage", &error))?;
         new_storage
-            .validate_vector_data_sample(RESTORED_VECTOR_SAMPLE_SIZE)
+            .validate_vector_consistency()
             .map_err(|error| post_marker_error("validating restored Vector data", &error))?;
         let reopened_identity = storage_identity_from_open(&new_storage).map_err(|error| {
             post_marker_error("verifying the restored storage identity", &error)
@@ -843,7 +849,7 @@ mod snapshot_gate_tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use openraft::{Entry, LeaderId};
-    use storage::{safe_cleanup_test_db, unique_test_db_path};
+    use storage::{CanonicalVector, ColumnFamilyIndex, safe_cleanup_test_db, unique_test_db_path};
 
     use super::*;
 
@@ -1085,6 +1091,92 @@ mod snapshot_gate_tests {
                 .get(b"live-key")
                 .expect("live storage should remain readable"),
             "live-value"
+        );
+        assert!(
+            !snapshot_install_marker_path(&db_path)
+                .expect("snapshot marker path")
+                .exists()
+        );
+
+        drop(state_machine);
+        drop(storage_swap);
+        close_storage(live_storage).await;
+        drop(_storage_rx);
+        safe_cleanup_test_db(&db_path);
+        safe_cleanup_test_db(&snapshot_work_dir);
+    }
+
+    #[tokio::test]
+    async fn snapshot_corruption_after_64th_member_fails_before_storage_pause() {
+        let db_path = unique_test_db_path();
+        let snapshot_work_dir = unique_test_db_path();
+        std::fs::create_dir_all(&snapshot_work_dir)
+            .expect("snapshot work directory should be created");
+
+        let mut storage = Storage::new(1, 0);
+        let options = Arc::new(StorageOptions::default());
+        let _storage_rx = storage
+            .open(options, &db_path)
+            .expect("test storage should open");
+        let vector = CanonicalVector::from_values(&[1.0, 0.0]).expect("valid vector");
+        for index in 0..65 {
+            storage
+                .vadd(b"vectors", format!("member-{index:03}").as_bytes(), &vector)
+                .expect("populate snapshot VectorSet");
+        }
+        let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+        let controller = Arc::new(CountingPauseController::default());
+        let mut state_machine = KiwiStateMachine::new(
+            1,
+            Arc::clone(&storage_swap),
+            db_path.clone(),
+            snapshot_work_dir.clone(),
+            controller.clone(),
+            None,
+        );
+
+        let mut builder = state_machine.get_snapshot_builder().await;
+        let snapshot = builder
+            .build_snapshot()
+            .await
+            .expect("test snapshot should build");
+        drop(builder);
+        let live_storage = storage_swap.load_full();
+        state_machine.staged_restore_validation_hook = Some(Arc::new(|staged, pass| {
+            if pass != 0 {
+                return;
+            }
+            let redis = &staged.insts[0];
+            let db = redis.db().expect("staged Redis DB");
+            let vector_cf = redis
+                .get_cf_handle(ColumnFamilyIndex::VectorDataCF)
+                .expect("staged VectorDataCF");
+            let member_key = db
+                .iterator_cf(&vector_cf, rocksdb::IteratorMode::Start)
+                .nth(64)
+                .expect("65th member entry")
+                .expect("read 65th member entry")
+                .0;
+            db.put_cf(&vector_cf, member_key, b"corrupt")
+                .expect("corrupt 65th staged member");
+        }));
+
+        let error = state_machine
+            .install_snapshot(&snapshot.meta, snapshot.snapshot)
+            .await
+            .expect_err("full validation must reject corruption beyond the old sample window");
+        assert!(
+            error.to_string().contains("vector value"),
+            "unexpected staged validation error: {error}"
+        );
+        assert_eq!(controller.pause_count.load(Ordering::SeqCst), 0);
+        assert_eq!(controller.resume_count.load(Ordering::SeqCst), 0);
+        assert!(Arc::ptr_eq(&storage_swap.load_full(), &live_storage));
+        assert_eq!(
+            live_storage
+                .vcard(b"vectors")
+                .expect("live VectorSet remains readable"),
+            65
         );
         assert!(
             !snapshot_install_marker_path(&db_path)

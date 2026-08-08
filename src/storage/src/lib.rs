@@ -24,6 +24,7 @@ pub mod format_vector_member_key;
 mod storage_manifest;
 mod storage_migration;
 pub mod vector;
+mod vector_consistency;
 pub mod vector_fault;
 mod vector_flat;
 pub mod vector_metrics;
@@ -94,7 +95,6 @@ pub use options::StorageOptions;
 #[cfg(any(test, feature = "test-fault-injection"))]
 pub use redis::fail_next_redis_open;
 pub use redis::{GenerationProvider, Redis, TypeCheckState};
-pub use redis_vectors::VectorDataSample;
 pub use statistics::KeyStatistics;
 pub use storage::{BgTask, BgTaskHandler};
 pub use storage_impl::BeforeOrAfter;
@@ -122,6 +122,7 @@ pub use vector::{
     CanonicalVector, PreparedVectorQuery, QuantizationType, VectorHit, VectorInfo, VectorQuery,
     VectorSearchEngine, VectorSearchMode, VectorSearchOptions,
 };
+pub use vector_consistency::VectorConsistencyReport;
 pub use vector_fault::VectorFaultHooks;
 pub use vector_flat::{FlatQueryCancel, FlatQueryGate, FlatScanGuard};
 pub use vector_metrics::{VectorMetrics, VectorMetricsSnapshot};

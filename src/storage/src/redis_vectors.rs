@@ -684,67 +684,15 @@ impl Redis {
         self.read_vector_meta_opt(key, None)
     }
 
-    /// Sample-decode vector set metas (MetaCF) and member entries
-    /// (VectorDataCF) to verify the codec can parse this instance's data.
-    ///
-    /// Used to validate restored snapshot data: at most `sample_size` members
-    /// and `sample_size` metas are decoded (sampling, not a full scan); any
-    /// decode failure rejects the data.
-    pub fn validate_vector_data_sample(&self, sample_size: usize) -> Result<VectorDataSample> {
+    /// Validate every persisted VectorSet meta and member in this instance.
+    pub fn validate_vector_consistency(&self) -> Result<crate::VectorConsistencyReport> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
-        let vector_cf = self
-            .get_cf_handle(ColumnFamilyIndex::VectorDataCF)
-            .context(OptionNoneSnafu {
-                message: "VectorDataCF is not initialized".to_string(),
-            })?;
-        let meta_cf = self
-            .get_cf_handle(ColumnFamilyIndex::MetaCF)
-            .context(OptionNoneSnafu {
-                message: "MetaCF is not initialized".to_string(),
-            })?;
-
-        let storage_incarnation = self.storage_incarnation()?;
-        let mut sample = VectorDataSample::default();
-        for entry in db
-            .iterator_cf(&vector_cf, IteratorMode::Start)
-            .take(sample_size)
-        {
-            let (encoded_key, encoded_value) = entry.context(RocksSnafu)?;
-            let member_key = ParsedVectorMemberDataKey::decode(&encoded_key)?;
-            ensure!(
-                member_key.storage_incarnation() == storage_incarnation,
-                InvalidFormatSnafu {
-                    message: format!(
-                        "vector member storage incarnation {} does not match manifest {}",
-                        member_key.storage_incarnation(),
-                        storage_incarnation
-                    )
-                }
-            );
-            VectorDataValue::decode(&encoded_value)?;
-            sample.members += 1;
-        }
-
-        for entry in db.iterator_cf(&meta_cf, IteratorMode::Start) {
-            if sample.metas >= sample_size {
-                break;
-            }
-            let (_encoded_key, encoded_value) = entry.context(RocksSnafu)?;
-            if encoded_value.first() == Some(&(DataType::VectorSet as u8)) {
-                VectorMeta::decode(&encoded_value)?;
-                sample.metas += 1;
-            }
-        }
-
-        Ok(sample)
+        crate::vector_consistency::validate_vector_consistency_db(
+            db,
+            self.storage_incarnation()?,
+            "open Redis instance",
+        )
     }
-}
-
-/// Counts of vector entries decoded during a restore validation sample.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct VectorDataSample {
-    pub metas: usize,
-    pub members: usize,
 }

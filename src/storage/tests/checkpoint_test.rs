@@ -783,9 +783,10 @@ async fn merged_head_v2_snapshot_migrates_legacy_vector_manifest_before_install(
     let staged_rx = staged
         .open(Arc::new(StorageOptions::default()), prepared.staged_path())
         .unwrap();
-    let sample = staged.validate_vector_data_sample(8).unwrap();
-    assert_eq!(sample.metas, 1);
-    assert_eq!(sample.members, 1);
+    let report = staged.validate_vector_consistency().unwrap();
+    assert_eq!(report.instances, 1);
+    assert_eq!(report.metas, 1);
+    assert_eq!(report.members, 1);
     staged.shutdown().await;
     staged.close();
     drop(staged_rx);

@@ -1083,7 +1083,7 @@ async fn reopen_and_verify(
         .open(options, &intent.layout.target_path)
         .map_err(|error| invalid_data(format!("failed to reopen installed storage: {error}")))?;
     storage
-        .validate_vector_data_sample(64)
+        .validate_vector_consistency()
         .map_err(|error| invalid_data(format!("installed Vector data is invalid: {error}")))?;
     let actual = storage_identity_from_open(&storage)?;
     if actual != intent.marker.new_storage {

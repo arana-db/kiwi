@@ -608,18 +608,11 @@ impl Storage {
         Ok(())
     }
 
-    /// Sample-decode vector set metas and member entries on every instance to
-    /// verify the codec can parse the data (used to validate restored
-    /// snapshot data before it serves traffic).
-    pub fn validate_vector_data_sample(
-        &self,
-        sample_size: usize,
-    ) -> Result<crate::VectorDataSample> {
-        let mut total = crate::VectorDataSample::default();
+    /// Validate the complete VectorSet meta/member closure on every instance.
+    pub fn validate_vector_consistency(&self) -> Result<crate::VectorConsistencyReport> {
+        let mut total = crate::VectorConsistencyReport::default();
         for inst in &self.insts {
-            let sample = inst.validate_vector_data_sample(sample_size)?;
-            total.metas += sample.metas;
-            total.members += sample.members;
+            total.merge(inst.validate_vector_consistency()?)?;
         }
         Ok(total)
     }

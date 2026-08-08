@@ -17,10 +17,12 @@
 
 //! Fail-closed staged migration from the two registered v1 storage layouts.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::collections::HashMap;
 #[cfg(any(test, feature = "test-fault-injection"))]
 use std::sync::LazyLock;
 
@@ -39,9 +41,6 @@ use crate::custom_comparator::{
 };
 use crate::durable_fs::{sync_directory, sync_parent_directory};
 use crate::error::{InvalidFormatSnafu, IoSnafu, Result, RocksSnafu};
-use crate::format_base_key::ParsedBaseKey;
-use crate::format_vector::{VectorDataValue, VectorMeta};
-use crate::format_vector_member_key::ParsedVectorMemberDataKey;
 use crate::storage_manifest::{
     InstanceStorageManifestV2, ManifestDigest, MigrationPhase, MigrationSourceProfile,
     MigrationTransaction, ROOT_STORAGE_MANIFEST_FILE, RootStorageManifestV2, SLOT_MAPPING_VERSION,
@@ -1714,110 +1713,11 @@ pub fn logical_snapshot_digests_from_root(
 }
 
 fn validate_vector_identity(db: &DB, storage_incarnation: u64, instance: &Path) -> Result<()> {
-    let vector_cf = db
-        .cf_handle(CANONICAL_COLUMN_FAMILIES[6].name)
-        .ok_or_else(|| {
-            InvalidFormatSnafu {
-                message: format!("VectorDataCF is missing in {}", instance.display()),
-            }
-            .build()
-        })?;
-    let meta_cf = db
-        .cf_handle(CANONICAL_COLUMN_FAMILIES[0].name)
-        .ok_or_else(|| {
-            InvalidFormatSnafu {
-                message: format!("MetaCF is missing in {}", instance.display()),
-            }
-            .build()
-        })?;
-    let mut member_groups: HashMap<(Vec<u8>, u64), (u64, u32)> = HashMap::new();
-    let mut member_read_options = ReadOptions::default();
-    member_read_options.set_verify_checksums(true);
-    for entry in db.iterator_cf_opt(&vector_cf, member_read_options, IteratorMode::Start) {
-        let (encoded_key, encoded_value) = entry.context(RocksSnafu)?;
-        let member = ParsedVectorMemberDataKey::decode(&encoded_key)?;
-        ensure!(
-            member.storage_incarnation() == storage_incarnation,
-            InvalidFormatSnafu {
-                message: format!(
-                    "vector member storage incarnation {} does not match manifest {} in {}",
-                    member.storage_incarnation(),
-                    storage_incarnation,
-                    instance.display()
-                )
-            }
-        );
-        ensure!(
-            member.generation_sequence() != 0,
-            InvalidFormatSnafu {
-                message: format!(
-                    "vector member has zero generation in {}",
-                    instance.display()
-                )
-            }
-        );
-        let value = VectorDataValue::decode(&encoded_value)?;
-        let group = member_groups
-            .entry((member.key().to_vec(), member.generation_sequence()))
-            .or_insert((0, value.dimension()));
-        ensure!(
-            group.1 == value.dimension(),
-            InvalidFormatSnafu {
-                message: format!(
-                    "vector members for one key/generation have mixed dimensions in {}",
-                    instance.display()
-                )
-            }
-        );
-        group.0 = group.0.checked_add(1).ok_or_else(|| {
-            InvalidFormatSnafu {
-                message: format!("vector member count overflow in {}", instance.display()),
-            }
-            .build()
-        })?;
-    }
-
-    let mut meta_read_options = ReadOptions::default();
-    meta_read_options.set_verify_checksums(true);
-    for entry in db.iterator_cf_opt(&meta_cf, meta_read_options, IteratorMode::Start) {
-        let (encoded_key, encoded_value) = entry.context(RocksSnafu)?;
-        if encoded_value.first() != Some(&(DataType::VectorSet as u8)) {
-            continue;
-        }
-        let key = ParsedBaseKey::new(&encoded_key)?;
-        let meta = VectorMeta::decode(&encoded_value)?;
-        ensure!(
-            meta.version() != 0,
-            InvalidFormatSnafu {
-                message: format!("vector meta has zero generation in {}", instance.display())
-            }
-        );
-        let (member_count, member_dimension) = member_groups
-            .get(&(key.key().to_vec(), meta.version()))
-            .copied()
-            .unwrap_or((0, meta.dimension()));
-        ensure!(
-            member_count == meta.count(),
-            InvalidFormatSnafu {
-                message: format!(
-                    "vector meta/member count mismatch for generation {} in {}: meta={}, members={member_count}",
-                    meta.version(),
-                    instance.display(),
-                    meta.count()
-                )
-            }
-        );
-        ensure!(
-            member_dimension == meta.dimension(),
-            InvalidFormatSnafu {
-                message: format!(
-                    "vector meta/member dimension mismatch for generation {} in {}",
-                    meta.version(),
-                    instance.display()
-                )
-            }
-        );
-    }
+    crate::vector_consistency::validate_vector_consistency_db(
+        db,
+        storage_incarnation,
+        &instance.display().to_string(),
+    )?;
     Ok(())
 }
 
