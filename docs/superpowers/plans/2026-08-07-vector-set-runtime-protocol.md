@@ -44,7 +44,7 @@ RESP parse to Bytes
 - Create: `src/cmd/src/vector/admission.rs`
 - Modify: `src/cmd/src/vector/mod.rs`
 
-- [ ] **步骤 1：写入失败测试**
+- [x] **步骤 1：写入失败测试**
 
   - `vector::admission::tests::admission_checks_fp32_actual_bytes_and_dimension_bytes`
   - `vector::admission::tests::admission_counts_values_raw_token_bytes`
@@ -59,7 +59,7 @@ RESP parse to Bytes
 
   预期 RED：当前没有 `VectorAdmissionLimits` 和 `admit_vector_request`。
 
-- [ ] **步骤 2：实现限额类型和纯函数**
+- [x] **步骤 2：实现限额类型和纯函数**
 
   ```rust
   pub struct VectorAdmissionLimits {
@@ -84,9 +84,11 @@ RESP parse to Bytes
   - element 按 raw bulk length 检查，不解码 UTF-8。
   - 不计 key、command name 和 option token，不新增未批准的全 argv 限额。
 
-- [ ] **步骤 3：GREEN 与 mutant 检查**
+- [x] **步骤 3：GREEN 与 mutant 检查**
 
   重跑 Task 1 测试；删除 VALUES raw-token 累加、把 `checked_add` 改为普通加法或删除任一 element command 分支时对应测试必须失败。
+
+  实际证据：clean baseline 的现有 Vector 命令测试 13/13 通过；tests-first 运行因 `VectorAdmissionLimits`、`VectorAdmissionError`、`admit_vector_request` 和 checked-sum helper 尚不存在而以编译错误 RED。实现后 admission 6/6、完整 `cmd` 167/167 通过，`cargo clippy -p cmd --all-targets --all-features -- -D warnings`、`cargo fmt --all -- --check` 与 `git diff --check` 通过。删除 VALUES raw-byte 限额使 `admission_counts_values_raw_token_bytes` 失败，普通加法使 overflow 测试 panic，删除 `VISMEMBER` element 分支使全 element 命令表格测试失败；恢复实现后全部回归重新通过。规格复审发现畸形 FP32 在 byte limit 内但 `len / 4` 超 dimension 时曾错误 defer；新增精确测试先以 `Ok(()) != DimensionLimit` RED，再移除余数对 dimension 检查的屏蔽。最终规格复审 `RUNTIME_TASK1_SPEC_PASS`，质量复审 `RUNTIME_TASK1_QUALITY_PASS`。
 
 ## Task 2：Cmd admission hook 与双层 `GatedCmd` 转发
 

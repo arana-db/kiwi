@@ -125,16 +125,16 @@
 
 ## 任务 1：建立 Storage 独立实现边界
 
-- [ ] 从包含本计划的 clean 聚合分支 commit 创建 `codex/wp8-storage-recovery` 和 `D:\test\github\kiwi\.worktrees\wp8-storage-recovery`。
-- [ ] 用 `scripts/codex-workstate.ps1` 建立 TaskId `wp8-vector-storage-recovery-implementation`，mode `implementation`，禁止 merge/rebase/reset/clean/resolve-comments。
-- [ ] 把 SDD WP8 状态从 `ready` 改为 `in-progress`，不改 current plan/Issue/PR。
-- [ ] 按 Storage 计划 Task 1→7 执行；每个 Task 的 RED、GREEN、规格复核、质量复核和 checkpoint 都完成后才进入下一 Task。
-- [ ] 完成后将 Storage 分支提交顺序集成到聚合分支，在聚合分支重跑 Storage 计划的 changed-path 门禁后 push。
+- [x] 从包含本计划的 clean 聚合分支 commit 创建 `codex/wp8-storage-recovery` 和 `D:\test\github\kiwi\.worktrees\wp8-storage-recovery`。
+- [x] 用 `scripts/codex-workstate.ps1` 建立 TaskId `wp8-vector-storage-recovery-implementation`，mode `implementation`，禁止 merge/rebase/reset/clean/resolve-comments。
+- [x] 把 SDD WP8 状态从 `ready` 改为 `in-progress`，不改 current plan/Issue/PR。
+- [x] 按 Storage 计划 Task 1→7 执行；每个 Task 的 RED、GREEN、规格复核、质量复核和 checkpoint 都完成后才进入下一 Task。
+- [x] 完成后将 Storage 分支提交顺序集成到聚合分支，在聚合分支重跑 Storage 计划的 changed-path 门禁后 push。
 
 ## 任务 2：建立 Runtime/Protocol 独立实现边界
 
-- [ ] 从已集成 Storage 的 clean 聚合分支 commit 创建 `codex/wp8-runtime-protocol` 和 `D:\test\github\kiwi\.worktrees\wp8-runtime-protocol`。
-- [ ] 用 `scripts/codex-workstate.ps1` 建立 TaskId `wp8-vector-runtime-protocol-implementation`。
+- [x] 从已集成 Storage 的 clean 聚合分支 commit 创建 `codex/wp8-runtime-protocol` 和 `D:\test\github\kiwi\.worktrees\wp8-runtime-protocol`。
+- [x] 用 `scripts/codex-workstate.ps1` 建立 TaskId `wp8-vector-runtime-protocol-implementation`。
 - [ ] 按 Runtime/Protocol 计划 Task 1→5 执行，保留 Storage 工作流在 `VSimCmd::do_cmd()` 和 server startup 建立的合同。
 - [ ] 完成后顺序集成、重跑 cmd/net/server/storage VSIM changed-path 门禁并 push。
 
