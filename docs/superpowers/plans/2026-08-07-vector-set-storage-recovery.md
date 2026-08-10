@@ -448,22 +448,23 @@
   - Base 写入 String、Hash、ZSet、TTL 并生成 v1 snapshot。
   - Vector-v1 写入 String、Hash、ZSet、TTL、Vector meta/member，并记录每实例 v1 manifest 的 incarnation/generation。
   - Head 对两种 source profile 的复制目录逐 phase 注入失败，每次检查目录、journal、CF、manifest 和用户数据。
-  - 30 个 fault case 在 retry/resume 和 phase 计数前逐项验证 phase-aware live/shadow/backup 布局、Root/Instance digest 与历史 binary 权威副本读回；普通完成态严格为 `Committed`，仅显式关闭窗口后为 `RollbackWindowClosed`。
+  - 30 个 fault case 在 retry/resume 和 phase 计数前逐项验证 phase-aware live/shadow/backup 布局、Root/Instance digest 与历史 binary 权威副本读回；所有当时存在的 V2 live/shadow/backup 副本先复制到隔离验证根，通过 exact Head `Storage` 严格 reopen/read，累计验证 43 个 V2 副本；普通完成态严格为 `Committed`，仅显式关闭窗口后为 `RollbackWindowClosed`。
   - 受控 rollback 后必须分别使用 Base binary 或 Vector-v1 binary 真实 reopen/read，不使用 Head parser 推断旧格式可读。
-  - exact Base v1 archive 的 unknown CF、Vector CF、Vector meta 三个变体均通过 Head `install_snapshot` 完整入口在 pause 前拒绝，并验证 target authority 未变。
-  - exact Head v2 使用两个实例真实 build/install/关闭/reopen/read；交换 0/1 pairing、篡改 instance 1 digest/incarnation、篡改 Root digest 均通过完整 install 入口拒绝。
-  - runner 拒绝位于任一 Git worktree 内（含 symlink realpath）的 `TMPDIR`，禁用共享 sccache/wrapper，并检查无引用临时根的存活进程。
+  - exact Base v1 archive 的 unknown CF、Vector CF、Vector meta 分别污染 instance 0/1，共 6 个 case，均通过 Head `install_snapshot` 完整入口在 pause 前拒绝；每个负例在两个 target instance 写入并校验 String、Hash、ZSet、TTL、sentinel、Vector，保存 logical digest 和 manifest pairing，拒绝后在 live handle 与关闭/new `Storage` reopen 两个阶段验证 authority 未变。
+  - exact Head v2 使用两个实例真实 build/install/关闭/reopen/read；交换 0/1 pairing、篡改 instance 1 digest/incarnation、篡改 Root digest 均通过完整 install 入口拒绝，每个负例同样验证双实例完整 target authority。
+  - runner 拒绝位于任一 Git worktree 内（含 symlink realpath）的 `TMPDIR`；使用 runner-owned `CARGO_HOME`、真实 toolchain `rustc` 和绝对路径 `cc`/`c++`，禁用共享 sccache/wrapper；通过 `/proc` numeric PID 的 cwd/root/exe/fd realpath 检查无引用临时根的存活进程。
   - cleanup 移除临时 worktree、build 输出和 server 进程，并在退出前检查无遗留。
 
 - [x] **步骤 3：Linux 验收**
 
   ```powershell
-  wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && bash -n scripts/test-vector-storage-compat.sh && python3 tests/compat/vector_storage_fixture.py emit-rust --kind head-storage | rustfmt --edition 2024 --emit stdout >/dev/null'
+  wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && bash -n scripts/test-vector-storage-compat.sh && python3 -B tests/compat/vector_storage_fixture.py --help >/dev/null && git diff --check'
   .\scripts\test-vector-storage-compat.ps1 --help
+  wsl env TMPDIR=/mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery CARGO_HOME=/home/alex/.cargo bash ./scripts/test-vector-storage-compat.sh --base-ref 688d905fec31b54aec76f36676f55efd8b5cfa17 --vector-v1-ref 733888fc90ad8ef039947e87b08d7500a405954a --head-ref 0bbd5d209b8812ec33b8aa31755d793ddd56fae7
   wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && ./scripts/test-vector-storage-compat.sh --base-ref 688d905fec31b54aec76f36676f55efd8b5cfa17 --vector-v1-ref 733888fc90ad8ef039947e87b08d7500a405954a --head-ref "$(git rev-parse HEAD)"'
   ```
 
-  实际结果：针对 interrupted-state、Base snapshot reopen、完整 install、两实例 pairing、process cleanup 的 5 个变异均红灯；修复后静态/CLI 门禁通过。完整 Linux 矩阵 11 个 gate、30 个 migration phase（Base 16、Vector-v1 14）全部执行并通过，耗时 1009 秒；cleanup 移除 3 个临时 worktree、全部 build 输出，`tracked_processes=0`、`lingering_temp_processes=0`。
+  实际结果：静态、CLI mixed-help、PowerShell 转发和 worktree-local `TMPDIR` 负例门禁通过。V2 shadow 数据损坏、instance 1 三类 invalid schema、另一 instance 的 Hash/ZSet/TTL authority 污染，以及 argv 不含临时路径但 cwd/fd 指向临时根的进程引用变异均被杀死。预提交完整 Linux 矩阵 11 个 gate、30 个 migration phase（Base 16、Vector-v1 14）、43 个 interrupted V2 副本和 Gate10 6 个完整 install case 全部通过，耗时 878 秒；cleanup 移除 3 个临时 worktree 和全部 build 输出，自测启动并回收 2 个 runner-owned PID，`lingering_temp_refs=0`。
 
 ## 工作流最终门禁
 

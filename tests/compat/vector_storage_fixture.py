@@ -53,7 +53,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rocksdb::DB;
-use storage::{StorageOptions, ZsetScoreMember, storage::Storage};
+use storage::{
+    StorageOptions, ZsetScoreMember,
+    slot_indexer::{SlotIndexer, key_to_slot_id},
+    storage::Storage,
+};
 
 const STRING_KEY: &[u8] = b"compat:string";
 const HASH_KEY: &[u8] = b"compat:hash";
@@ -66,6 +70,79 @@ const INSTANCE_MANIFEST: &str = "__kiwi_storage_manifest";
 
 fn fixture_root() -> PathBuf {
     PathBuf::from(std::env::var_os("KIWI_COMPAT_ROOT").expect("KIWI_COMPAT_ROOT is required"))
+}
+
+fn partition_key(kind: &str, instance_id: usize) -> Vec<u8> {
+    let indexer = SlotIndexer::new(2);
+    for nonce in 0..10_000_u32 {
+        let key = format!("compat:partition:{kind}:{instance_id}:{nonce}").into_bytes();
+        if indexer.get_instance_id(key_to_slot_id(&key)) == instance_id {
+            return key;
+        }
+    }
+    panic!("cannot find partitioned key for instance {instance_id}");
+}
+
+fn write_partitioned_data(storage: &Storage) {
+    for instance_id in 0..2_usize {
+        let string_key = partition_key("string", instance_id);
+        let hash_key = partition_key("hash", instance_id);
+        let zset_key = partition_key("zset", instance_id);
+        let ttl_key = partition_key("ttl", instance_id);
+        let sentinel_key = partition_key("sentinel", instance_id);
+        storage
+            .set(&string_key, format!("partition-string-{instance_id}").as_bytes())
+            .expect("write partitioned String");
+        storage
+            .hset(&hash_key, HASH_FIELD, format!("partition-hash-{instance_id}").as_bytes())
+            .expect("write partitioned Hash");
+        storage
+            .zadd(
+                &zset_key,
+                &[ZsetScoreMember::new(42.5, format!("partition-member-{instance_id}").into_bytes())],
+            )
+            .expect("write partitioned ZSet");
+        storage
+            .set(&ttl_key, format!("partition-ttl-{instance_id}").as_bytes())
+            .expect("write partitioned TTL value");
+        assert!(storage.expire(&ttl_key, 86_400).expect("write partitioned TTL"));
+        storage
+            .set(&sentinel_key, format!("partition-sentinel-{instance_id}").as_bytes())
+            .expect("write partitioned sentinel");
+    }
+}
+
+fn verify_partitioned_data(storage: &Storage) {
+    for instance_id in 0..2_usize {
+        let string_key = partition_key("string", instance_id);
+        let hash_key = partition_key("hash", instance_id);
+        let zset_key = partition_key("zset", instance_id);
+        let ttl_key = partition_key("ttl", instance_id);
+        let sentinel_key = partition_key("sentinel", instance_id);
+        assert_eq!(
+            storage.get(&string_key).expect("read partitioned String"),
+            format!("partition-string-{instance_id}")
+        );
+        assert_eq!(
+            storage.hget(&hash_key, HASH_FIELD).expect("read partitioned Hash"),
+            Some(format!("partition-hash-{instance_id}"))
+        );
+        assert_eq!(
+            storage
+                .zscore(&zset_key, format!("partition-member-{instance_id}").as_bytes())
+                .expect("read partitioned ZSet"),
+            Some(b"42.5".to_vec())
+        );
+        assert_eq!(
+            storage.get(&ttl_key).expect("read partitioned TTL value"),
+            format!("partition-ttl-{instance_id}")
+        );
+        assert!(storage.ttl(&ttl_key).expect("read partitioned TTL") > 0);
+        assert_eq!(
+            storage.get(&sentinel_key).expect("read partitioned sentinel"),
+            format!("partition-sentinel-{instance_id}")
+        );
+    }
 }
 
 fn verify_data(storage: &Storage) {
@@ -85,6 +162,7 @@ fn verify_data(storage: &Storage) {
         let value = format!("value:{index}");
         assert_eq!(storage.get(key.as_bytes()).expect("read sentinel"), value);
     }
+    verify_partitioned_data(storage);
 }
 
 fn assert_schema(root: &Path) {
@@ -150,6 +228,7 @@ fn create_fixture() {
         let value = format!("value:{index}");
         storage.set(key.as_bytes(), value.as_bytes()).expect("write sentinel");
     }
+    write_partitioned_data(&storage);
     verify_data(&storage);
     runtime.block_on(storage.shutdown());
     storage.close();
@@ -173,7 +252,9 @@ use std::sync::Arc;
 
 use rocksdb::DB;
 use storage::{
-    CanonicalVector, STORAGE_MANIFEST_FILE, StorageOptions, ZsetScoreMember, storage::Storage,
+    CanonicalVector, STORAGE_MANIFEST_FILE, StorageOptions, ZsetScoreMember,
+    slot_indexer::{SlotIndexer, key_to_slot_id},
+    storage::Storage,
 };
 
 const STRING_KEY: &[u8] = b"compat:string";
@@ -188,6 +269,96 @@ const ROOT_MANIFEST: &str = "__kiwi_root_storage_manifest";
 
 fn fixture_root() -> PathBuf {
     PathBuf::from(std::env::var_os("KIWI_COMPAT_ROOT").expect("KIWI_COMPAT_ROOT is required"))
+}
+
+fn partition_key(kind: &str, instance_id: usize) -> Vec<u8> {
+    let indexer = SlotIndexer::new(2);
+    for nonce in 0..10_000_u32 {
+        let key = format!("compat:partition:{kind}:{instance_id}:{nonce}").into_bytes();
+        if indexer.get_instance_id(key_to_slot_id(&key)) == instance_id {
+            return key;
+        }
+    }
+    panic!("cannot find partitioned key for instance {instance_id}");
+}
+
+fn write_partitioned_data(storage: &Storage) {
+    for instance_id in 0..2_usize {
+        let string_key = partition_key("string", instance_id);
+        let hash_key = partition_key("hash", instance_id);
+        let zset_key = partition_key("zset", instance_id);
+        let ttl_key = partition_key("ttl", instance_id);
+        let sentinel_key = partition_key("sentinel", instance_id);
+        let vector_key = partition_key("vector", instance_id);
+        storage
+            .set(&string_key, format!("partition-string-{instance_id}").as_bytes())
+            .expect("write partitioned String");
+        storage
+            .hset(&hash_key, HASH_FIELD, format!("partition-hash-{instance_id}").as_bytes())
+            .expect("write partitioned Hash");
+        storage
+            .zadd(
+                &zset_key,
+                &[ZsetScoreMember::new(42.5, format!("partition-member-{instance_id}").into_bytes())],
+            )
+            .expect("write partitioned ZSet");
+        storage
+            .set(&ttl_key, format!("partition-ttl-{instance_id}").as_bytes())
+            .expect("write partitioned TTL value");
+        assert!(storage.expire(&ttl_key, 86_400).expect("write partitioned TTL"));
+        storage
+            .set(&sentinel_key, format!("partition-sentinel-{instance_id}").as_bytes())
+            .expect("write partitioned sentinel");
+        let vector = CanonicalVector::from_values(&[instance_id as f32 + 0.25, 0.75])
+            .expect("build partitioned Vector member");
+        assert!(
+            storage
+                .vadd(&vector_key, VECTOR_ELEMENT, &vector)
+                .expect("write partitioned Vector member")
+        );
+    }
+}
+
+fn verify_partitioned_data(storage: &Storage) {
+    for instance_id in 0..2_usize {
+        let string_key = partition_key("string", instance_id);
+        let hash_key = partition_key("hash", instance_id);
+        let zset_key = partition_key("zset", instance_id);
+        let ttl_key = partition_key("ttl", instance_id);
+        let sentinel_key = partition_key("sentinel", instance_id);
+        let vector_key = partition_key("vector", instance_id);
+        assert_eq!(
+            storage.get(&string_key).expect("read partitioned String"),
+            format!("partition-string-{instance_id}")
+        );
+        assert_eq!(
+            storage.hget(&hash_key, HASH_FIELD).expect("read partitioned Hash"),
+            Some(format!("partition-hash-{instance_id}"))
+        );
+        assert_eq!(
+            storage
+                .zscore(&zset_key, format!("partition-member-{instance_id}").as_bytes())
+                .expect("read partitioned ZSet"),
+            Some(b"42.5".to_vec())
+        );
+        assert_eq!(
+            storage.get(&ttl_key).expect("read partitioned TTL value"),
+            format!("partition-ttl-{instance_id}")
+        );
+        assert!(storage.ttl(&ttl_key).expect("read partitioned TTL") > 0);
+        assert_eq!(
+            storage.get(&sentinel_key).expect("read partitioned sentinel"),
+            format!("partition-sentinel-{instance_id}")
+        );
+        let vector = storage
+            .vemb(&vector_key, VECTOR_ELEMENT)
+            .expect("read partitioned Vector member")
+            .expect("partitioned Vector member exists");
+        assert_eq!(vector.len(), 2);
+        assert!(vector.iter().all(|value| value.is_finite()));
+        assert!((vector[0] - (instance_id as f64 + 0.25)).abs() <= 1e-6);
+        assert!((vector[1] - 0.75).abs() <= 1e-6);
+    }
 }
 
 fn verify_data(storage: &Storage) {
@@ -215,6 +386,7 @@ fn verify_data(storage: &Storage) {
         let value = format!("value:{index}");
         assert_eq!(storage.get(key.as_bytes()).expect("read sentinel"), value);
     }
+    verify_partitioned_data(storage);
 }
 
 fn assert_schema(root: &Path) {
@@ -283,6 +455,7 @@ fn create_fixture() {
         let value = format!("value:{index}");
         storage.set(key.as_bytes(), value.as_bytes()).expect("write sentinel");
     }
+    write_partitioned_data(&storage);
     verify_data(&storage);
     runtime.block_on(storage.shutdown());
     storage.close();
@@ -398,8 +571,11 @@ use storage::{
     ManifestDigest, MigrationPhase, MigrationSourceProfile, MigrationTransaction,
     ROOT_STORAGE_MANIFEST_FILE, RootStorageManifestV2, STORAGE_MANIFEST_FILE, StorageOptions,
     classify_storage_root, close_rollback_window, fail_next_storage_migration,
-    recover_or_rollback_before_admission, storage::Storage,
+    recover_or_rollback_before_admission,
+    slot_indexer::{SlotIndexer, key_to_slot_id},
+    slot_mapping_digest, storage::Storage,
 };
+use uuid::Uuid;
 
 const STRING_KEY: &[u8] = b"compat:string";
 const HASH_KEY: &[u8] = b"compat:hash";
@@ -419,6 +595,73 @@ fn profile() -> MigrationSourceProfile {
         "base" => MigrationSourceProfile::BaseV1SixCf,
         "vector" => MigrationSourceProfile::VectorSetV1SevenCf,
         other => panic!("unknown profile: {other}"),
+    }
+}
+
+fn partition_key(kind: &str, instance_id: usize) -> Vec<u8> {
+    let indexer = SlotIndexer::new(2);
+    for nonce in 0..10_000_u32 {
+        let key = format!("compat:partition:{kind}:{instance_id}:{nonce}").into_bytes();
+        if indexer.get_instance_id(key_to_slot_id(&key)) == instance_id {
+            return key;
+        }
+    }
+    panic!("cannot find partitioned key for instance {instance_id}");
+}
+
+fn verify_partitioned_instance(
+    storage: &Storage,
+    source_profile: MigrationSourceProfile,
+    original_instance_id: usize,
+) {
+    let string_key = partition_key("string", original_instance_id);
+    let hash_key = partition_key("hash", original_instance_id);
+    let zset_key = partition_key("zset", original_instance_id);
+    let ttl_key = partition_key("ttl", original_instance_id);
+    let sentinel_key = partition_key("sentinel", original_instance_id);
+    assert_eq!(
+        storage.get(&string_key).expect("read partitioned String"),
+        format!("partition-string-{original_instance_id}"),
+        "V2 validation copy partitioned String mismatch for original instance {original_instance_id}"
+    );
+    assert_eq!(
+        storage.hget(&hash_key, HASH_FIELD).expect("read partitioned Hash"),
+        Some(format!("partition-hash-{original_instance_id}"))
+    );
+    assert_eq!(
+        storage
+            .zscore(
+                &zset_key,
+                format!("partition-member-{original_instance_id}").as_bytes(),
+            )
+            .expect("read partitioned ZSet"),
+        Some(b"42.5".to_vec())
+    );
+    assert_eq!(
+        storage.get(&ttl_key).expect("read partitioned TTL value"),
+        format!("partition-ttl-{original_instance_id}")
+    );
+    assert!(storage.ttl(&ttl_key).expect("read partitioned TTL") > 0);
+    assert_eq!(
+        storage.get(&sentinel_key).expect("read partitioned sentinel"),
+        format!("partition-sentinel-{original_instance_id}")
+    );
+    if source_profile == MigrationSourceProfile::VectorSetV1SevenCf {
+        let vector_key = partition_key("vector", original_instance_id);
+        let vector = storage
+            .vemb(&vector_key, VECTOR_ELEMENT)
+            .expect("read partitioned Vector member")
+            .expect("partitioned Vector member exists");
+        assert_eq!(vector.len(), 2);
+        assert!(vector.iter().all(|value| value.is_finite()));
+        assert!((vector[0] - (original_instance_id as f64 + 0.25)).abs() <= 1e-6);
+        assert!((vector[1] - 0.75).abs() <= 1e-6);
+    }
+}
+
+fn verify_partitioned_data(storage: &Storage, source_profile: MigrationSourceProfile) {
+    for instance_id in 0..2_usize {
+        verify_partitioned_instance(storage, source_profile, instance_id);
     }
 }
 
@@ -465,6 +708,7 @@ fn verify_data(storage: &Storage, source_profile: MigrationSourceProfile) {
         let value = format!("value:{index}");
         assert_eq!(storage.get(key.as_bytes()).expect("read sentinel"), value);
     }
+    verify_partitioned_data(storage, source_profile);
 }
 
 fn open_and_verify(root: &Path, source_profile: MigrationSourceProfile) -> Result<(), String> {
@@ -678,6 +922,105 @@ fn copy_tree(source: &Path, target: &Path) {
     }
 }
 
+fn verify_v2_copy_data(
+    source: &Path,
+    validation_root: &Path,
+    source_profile: MigrationSourceProfile,
+    original_instance_id: u32,
+    disk_kind: ExpectedDiskKind,
+    interrupted_root: &RootStorageManifestV2,
+    v1_identities: &[(u64, u64)],
+) {
+    assert!(matches!(disk_kind, ExpectedDiskKind::V2 | ExpectedDiskKind::PartialBaseVectorCf));
+    assert!(!validation_root.exists(), "V2 validation root must start absent");
+    fs::create_dir(validation_root).expect("create V2 validation root");
+    let copied_instance = validation_root.join("0");
+    copy_tree(source, &copied_instance);
+
+    let original_manifest = if disk_kind == ExpectedDiskKind::V2 {
+        let manifest = InstanceStorageManifestV2::read_from_dir(source)
+            .expect("read interrupted V2 manifest before isolated validation");
+        manifest
+            .validate_root_binding(original_instance_id, interrupted_root)
+            .expect("interrupted V2 manifest must bind interrupted Root");
+        Some(manifest)
+    } else {
+        None
+    };
+    let copied_manifest_path = copied_instance.join(STORAGE_MANIFEST_FILE);
+    if copied_manifest_path.exists() {
+        fs::remove_file(&copied_manifest_path).expect("remove copied manifest before strict rebind");
+    }
+    let strict_root = RootStorageManifestV2::new(
+        Uuid::new_v4(),
+        1,
+        interrupted_root.slot_mapping_version(),
+        slot_mapping_digest(1),
+        None,
+    )
+    .expect("create strict single-instance Root manifest");
+    strict_root
+        .write_to_dir_atomically(validation_root)
+        .expect("write strict V2 Root manifest");
+    let (instance_uuid, storage_incarnation, next_generation) = original_manifest
+        .as_ref()
+        .map(|manifest| {
+            (
+                manifest.instance_uuid(),
+                manifest.storage_incarnation(),
+                manifest.next_generation(),
+            )
+        })
+        .unwrap_or_else(|| (Uuid::new_v4(), 1, 1));
+    let strict_instance = InstanceStorageManifestV2::new(
+        0,
+        instance_uuid,
+        &strict_root,
+        storage_incarnation,
+        next_generation,
+    )
+    .expect("create strict single-instance manifest");
+    strict_instance
+        .write_to_dir_atomically(&copied_instance)
+        .expect("write strict single-instance manifest");
+    strict_instance
+        .validate_root_binding(0, &strict_root)
+        .expect("strict validation manifest pairing");
+    if source_profile == MigrationSourceProfile::VectorSetV1SevenCf {
+        assert_eq!(
+            (storage_incarnation, next_generation),
+            v1_identities[original_instance_id as usize],
+            "isolated V2 validation must preserve Vector-v1 identity"
+        );
+    }
+
+    let runtime = tokio::runtime::Runtime::new().expect("create V2 validation runtime");
+    let _runtime_guard = runtime.enter();
+    let mut storage = Storage::new(1, 0);
+    let receiver = storage
+        .open(Arc::new(StorageOptions::default()), validation_root)
+        .expect("exact Head Storage must strictly reopen isolated V2 copy");
+    if std::env::var_os("KIWI_COMPAT_CORRUPT_V2_VALIDATION").is_some() {
+        storage
+            .set(
+                &partition_key("string", original_instance_id as usize),
+                b"corrupted-v2-copy",
+            )
+            .expect("inject V2 validation-copy corruption");
+    }
+    verify_partitioned_instance(&storage, source_profile, original_instance_id as usize);
+    runtime.block_on(storage.shutdown());
+    storage.close();
+    drop(receiver);
+    let reopened_root = RootStorageManifestV2::read_from_dir(validation_root)
+        .expect("re-read strict V2 Root manifest");
+    let reopened_instance = InstanceStorageManifestV2::read_from_dir(&copied_instance)
+        .expect("re-read strict V2 instance manifest");
+    reopened_instance
+        .validate_root_binding(0, &reopened_root)
+        .expect("strict V2 pairing must survive reopen/read");
+}
+
 fn legacy_authority_instance(root: &Path, transaction: &MigrationTransaction, instance_id: u32) -> PathBuf {
     let backup = root.join(&transaction.backup_name).join(instance_id.to_string());
     if backup.is_dir() { backup } else { root.join(instance_id.to_string()) }
@@ -767,12 +1110,13 @@ fn assert_exact_root_entries(
 fn assert_interrupted_state(
     root: &Path,
     authority_root: &Path,
+    v2_authority_root: &Path,
     source_profile: MigrationSourceProfile,
     fault_name: &str,
     expected_phase: MigrationPhase,
     expected_instance: u32,
     v1_identities: &[(u64, u64)],
-) {
+) -> usize {
     let root_bytes = fs::read(root.join(ROOT_STORAGE_MANIFEST_FILE)).expect("read root journal bytes");
     let root_manifest = RootStorageManifestV2::read_from_dir(root)
         .expect("read and digest-validate interrupted root journal");
@@ -816,21 +1160,43 @@ fn assert_interrupted_state(
     assert_directory_or_missing(&backup_root, backup_root_exists, "backup root");
     assert_exact_root_entries(root, transaction, &layouts, shadow_root_exists, backup_root_exists);
 
+    assert!(!v2_authority_root.exists(), "V2 authority root must start absent");
+    fs::create_dir(v2_authority_root).expect("create V2 authority root");
+    let mut v2_copy_count = 0_usize;
     for (instance_id, (live, shadow, backup)) in layouts.iter().copied().enumerate() {
         let instance_id = instance_id as u32;
-        assert_disk_kind(
-            &root.join(instance_id.to_string()), live, source_profile, instance_id,
-            &root_manifest, v1_identities,
-        );
-        assert_disk_kind(
-            &shadow_root.join(instance_id.to_string()), shadow, source_profile, instance_id,
-            &root_manifest, v1_identities,
-        );
-        assert_disk_kind(
-            &backup_root.join(instance_id.to_string()), backup, source_profile, instance_id,
-            &root_manifest, v1_identities,
-        );
+        for (label, path, disk_kind) in [
+            ("live", root.join(instance_id.to_string()), live),
+            ("shadow", shadow_root.join(instance_id.to_string()), shadow),
+            ("backup", backup_root.join(instance_id.to_string()), backup),
+        ] {
+            assert_disk_kind(
+                &path,
+                disk_kind,
+                source_profile,
+                instance_id,
+                &root_manifest,
+                v1_identities,
+            );
+            if matches!(disk_kind, ExpectedDiskKind::V2 | ExpectedDiskKind::PartialBaseVectorCf) {
+                verify_v2_copy_data(
+                    &path,
+                    &v2_authority_root.join(format!("{label}-{instance_id}")),
+                    source_profile,
+                    instance_id,
+                    disk_kind,
+                    &root_manifest,
+                    v1_identities,
+                );
+                v2_copy_count += 1;
+            }
+        }
     }
+    assert_eq!(
+        fs::read(root.join(ROOT_STORAGE_MANIFEST_FILE)).expect("re-read original interrupted journal"),
+        root_bytes,
+        "isolated V2 data validation must not advance or rewrite the original journal"
+    );
 
     assert!(!authority_root.exists(), "authority verification root must start absent");
     fs::create_dir(authority_root).expect("create authority verification root");
@@ -842,6 +1208,7 @@ fn assert_interrupted_state(
         );
         copy_tree(&source, &authority_root.join(instance_id.to_string()));
     }
+    v2_copy_count
 }
 
 fn assert_committed(
@@ -926,6 +1293,14 @@ fn inject_fault_and_assert_interrupted_external() {
         std::env::var_os("KIWI_COMPAT_AUTHORITY_ROOT")
             .expect("KIWI_COMPAT_AUTHORITY_ROOT is required"),
     );
+    let v2_authority_root = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_V2_AUTHORITY_ROOT")
+            .expect("KIWI_COMPAT_V2_AUTHORITY_ROOT is required"),
+    );
+    let v2_count_file = PathBuf::from(
+        std::env::var_os("KIWI_COMPAT_V2_COUNT_FILE")
+            .expect("KIWI_COMPAT_V2_COUNT_FILE is required"),
+    );
     let source_profile = profile();
     let identities = if source_profile == MigrationSourceProfile::VectorSetV1SevenCf {
         read_v1_identities(&root)
@@ -943,15 +1318,21 @@ fn inject_fault_and_assert_interrupted_external() {
     assert_eq!(transaction.source_profile, source_profile);
     assert_eq!(transaction.phase, expected_phase);
     assert_eq!(transaction.current_instance, expected_instance);
-    assert_interrupted_state(
+    let v2_copy_count = assert_interrupted_state(
         &root,
         &authority_root,
+        &v2_authority_root,
         source_profile,
         &fault_name,
         expected_phase,
         expected_instance,
         &identities,
     );
+    println!(
+        "INTERRUPTED_V2_DATA PASS profile={source_profile:?} fault={fault_name} copies={v2_copy_count}"
+    );
+    fs::write(&v2_count_file, format!("{v2_copy_count}\n"))
+        .expect("write completed V2-copy count");
 }
 
 #[test]
@@ -1040,9 +1421,11 @@ use raft::snapshot_archive::{pack_dir_to_vec, unpack_tar_to_dir, unpacked_checkp
 use raft::state_machine::{KiwiStateMachine, PauseController, StorageAccessPermit};
 use rocksdb::{DB, Options};
 use storage::{
-    InstanceStorageManifestV2, ManifestDigest, MigrationPhase, ParsedSnapshotMeta,
-    RaftSnapshotMeta, RootStorageManifestV2, StorageOptions, ZsetScoreMember,
-    format_base_value::DataType, storage::Storage,
+    CanonicalVector, InstanceStorageManifestV2, ManifestDigest, MigrationPhase,
+    ParsedSnapshotMeta, RaftSnapshotMeta, RootStorageManifestV2, StorageOptions,
+    ZsetScoreMember, format_base_value::DataType,
+    slot_indexer::{SlotIndexer, key_to_slot_id},
+    storage::Storage,
 };
 
 const STRING_KEY: &[u8] = b"compat:string";
@@ -1051,6 +1434,7 @@ const HASH_FIELD: &[u8] = b"field";
 const ZSET_KEY: &[u8] = b"compat:zset";
 const ZSET_MEMBER: &[u8] = b"member";
 const TTL_KEY: &[u8] = b"compat:ttl";
+const VECTOR_ELEMENT: &[u8] = b"authority-element";
 
 struct NoopPauseController;
 struct NoopStorageAccessPermit;
@@ -1133,6 +1517,116 @@ fn assert_manifest_pairing(root_path: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn authority_key(kind: &str, instance_id: usize) -> Vec<u8> {
+    let indexer = SlotIndexer::new(2);
+    for nonce in 0..10_000_u32 {
+        let key = format!("compat:target-authority:{kind}:{instance_id}:{nonce}").into_bytes();
+        if indexer.get_instance_id(key_to_slot_id(&key)) == instance_id {
+            return key;
+        }
+    }
+    panic!("cannot find target-authority key for instance {instance_id}");
+}
+
+fn write_target_authority(storage: &Storage) -> anyhow::Result<()> {
+    for instance_id in 0..2_usize {
+        let string_key = authority_key("string", instance_id);
+        let hash_key = authority_key("hash", instance_id);
+        let zset_key = authority_key("zset", instance_id);
+        let ttl_key = authority_key("ttl", instance_id);
+        let sentinel_key = authority_key("sentinel", instance_id);
+        let vector_key = authority_key("vector", instance_id);
+        storage.set(
+            &string_key,
+            format!("authority-string-{instance_id}").as_bytes(),
+        )?;
+        storage.hset(
+            &hash_key,
+            HASH_FIELD,
+            format!("authority-hash-{instance_id}").as_bytes(),
+        )?;
+        storage.zadd(
+            &zset_key,
+            &[ZsetScoreMember::new(
+                42.5,
+                format!("authority-member-{instance_id}").into_bytes(),
+            )],
+        )?;
+        storage.set(
+            &ttl_key,
+            format!("authority-ttl-{instance_id}").as_bytes(),
+        )?;
+        assert!(storage.expire(&ttl_key, 86_400)?);
+        storage.set(
+            &sentinel_key,
+            format!("authority-sentinel-{instance_id}").as_bytes(),
+        )?;
+        let vector = CanonicalVector::from_values(&[instance_id as f32 + 0.5, 1.5])?;
+        assert!(storage.vadd(&vector_key, VECTOR_ELEMENT, &vector)?);
+    }
+    Ok(())
+}
+
+fn verify_target_authority(storage: &Storage) -> anyhow::Result<()> {
+    for instance_id in 0..2_usize {
+        let string_key = authority_key("string", instance_id);
+        let hash_key = authority_key("hash", instance_id);
+        let zset_key = authority_key("zset", instance_id);
+        let ttl_key = authority_key("ttl", instance_id);
+        let sentinel_key = authority_key("sentinel", instance_id);
+        let vector_key = authority_key("vector", instance_id);
+        assert_eq!(
+            storage.get(&string_key)?,
+            format!("authority-string-{instance_id}"),
+            "target authority String mismatch instance {instance_id}"
+        );
+        assert_eq!(
+            storage.hget(&hash_key, HASH_FIELD)?,
+            Some(format!("authority-hash-{instance_id}")),
+            "target authority Hash mismatch instance {instance_id}"
+        );
+        assert_eq!(
+            storage.zscore(
+                &zset_key,
+                format!("authority-member-{instance_id}").as_bytes(),
+            )?,
+            Some(b"42.5".to_vec()),
+            "target authority ZSet mismatch instance {instance_id}"
+        );
+        assert_eq!(
+            storage.get(&ttl_key)?,
+            format!("authority-ttl-{instance_id}"),
+            "target authority TTL value mismatch instance {instance_id}"
+        );
+        assert!(
+            storage.ttl(&ttl_key)? > 0,
+            "target authority TTL expiry missing instance {instance_id}"
+        );
+        assert_eq!(
+            storage.get(&sentinel_key)?,
+            format!("authority-sentinel-{instance_id}"),
+            "target authority sentinel mismatch instance {instance_id}"
+        );
+        let vector = storage
+            .vemb(&vector_key, VECTOR_ELEMENT)?
+            .expect("target-authority Vector member exists");
+        assert_eq!(vector.len(), 2, "target authority Vector dimension instance {instance_id}");
+        assert!(
+            vector.iter().all(|value| value.is_finite()),
+            "target authority Vector contains non-finite values instance {instance_id}"
+        );
+        assert!(
+            (vector[0] - (instance_id as f64 + 0.5)).abs() <= 1e-6,
+            "target authority Vector first element mismatch instance {instance_id}"
+        );
+        assert!(
+            (vector[1] - 1.5).abs() <= 1e-6,
+            "target authority Vector second element mismatch instance {instance_id}"
+        );
+    }
+    Ok(())
+}
+
 fn read_snapshot_meta(path: &Path) -> anyhow::Result<SnapshotMeta<u64, KiwiNode>> {
     let meta: SnapshotMeta<u64, KiwiNode> = serde_json::from_slice(&std::fs::read(path)?)?;
     anyhow::ensure!(!meta.snapshot_id.is_empty(), "SnapshotMeta id is empty");
@@ -1159,12 +1653,14 @@ fn mutate_exact_base_archive(
     meta: &SnapshotMeta<u64, KiwiNode>,
     mutation_root: &Path,
     mutation: &str,
+    instance_id: usize,
 ) -> anyhow::Result<Vec<u8>> {
     anyhow::ensure!(!mutation_root.exists(), "mutation root must start absent");
     unpack_tar_to_dir(bytes, mutation_root)?;
     let checkpoint_root = unpacked_checkpoint_root(mutation_root);
     assert_archive_meta_matches(&checkpoint_root, meta)?;
-    let instance = checkpoint_root.join("0");
+    anyhow::ensure!(instance_id < 2, "Base mutation instance must be 0 or 1");
+    let instance = checkpoint_root.join(instance_id.to_string());
     let mut db_options = Options::default();
     db_options.create_missing_column_families(true);
     let db = DB::open_cf_descriptors(
@@ -1204,13 +1700,18 @@ async fn assert_full_install_rejected_before_pause(
     target: PathBuf,
     snapshot_work: PathBuf,
     expected_error: &str,
+    expected_location: Option<&str>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(!target.exists(), "negative install target must start absent");
     std::fs::create_dir_all(&snapshot_work)?;
     let mut live_storage = Storage::new(2, 0);
     let live_receiver = live_storage.open(Arc::new(StorageOptions::default()), &target)?;
-    live_storage.set(b"compat:target-authority", b"unchanged")?;
-    let authority_before = target_authority_bytes(&target)?;
+    write_target_authority(&live_storage)?;
+    verify_target_authority(&live_storage)?;
+    let manifest_bytes_before = target_authority_bytes(&target)?;
+    let pairing_before = capture_exact_pairing(&target)?;
+    let logical_digests_before = live_storage.logical_snapshot_digests()?;
+    anyhow::ensure!(logical_digests_before.len() == 2, "target must expose two logical digests");
     let original = Arc::new(live_storage);
     let storage_swap = Arc::new(ArcSwap::from(Arc::clone(&original)));
     let pause = Arc::new(CountingPauseController::default());
@@ -1230,13 +1731,38 @@ async fn assert_full_install_rejected_before_pause(
         error.to_string().contains(expected_error),
         "unexpected install rejection: {error}"
     );
+    if let Some(expected_location) = expected_location {
+        assert!(
+            error.to_string().contains(expected_location),
+            "install rejection did not identify polluted instance: {error}"
+        );
+    }
     assert_eq!(pause.requested.load(Ordering::SeqCst), 0);
     assert_eq!(pause.entered.load(Ordering::SeqCst), 0);
     assert_eq!(pause.resumed.load(Ordering::SeqCst), 0);
     let unchanged = storage_swap.load_full();
     assert!(Arc::ptr_eq(&unchanged, &original));
-    assert_eq!(unchanged.get(b"compat:target-authority")?, "unchanged");
-    assert_eq!(target_authority_bytes(&target)?, authority_before);
+    if let Some(mutation) = std::env::var_os("KIWI_COMPAT_CORRUPT_TARGET_AFTER_REJECT") {
+        match mutation.to_string_lossy().as_ref() {
+            "hash-instance1" => {
+                unchanged.hset(&authority_key("hash", 1), HASH_FIELD, b"corrupted-hash")?;
+            }
+            "zset-instance1" => {
+                unchanged.zadd(
+                    &authority_key("zset", 1),
+                    &[ZsetScoreMember::new(7.0, b"authority-member-1".to_vec())],
+                )?;
+            }
+            "ttl-instance1" => {
+                unchanged.set(&authority_key("ttl", 1), b"corrupted-ttl")?;
+            }
+            other => anyhow::bail!("unknown target-authority corruption: {other}"),
+        }
+    }
+    verify_target_authority(&unchanged)?;
+    assert_eq!(unchanged.logical_snapshot_digests()?, logical_digests_before);
+    assert_eq!(capture_exact_pairing(&target)?, pairing_before);
+    assert_eq!(target_authority_bytes(&target)?, manifest_bytes_before);
 
     drop(unchanged);
     drop(state_machine);
@@ -1247,6 +1773,15 @@ async fn assert_full_install_rejected_before_pause(
     original.shutdown().await;
     original.close();
     drop(live_receiver);
+    let mut reopened = Storage::new(2, 0);
+    let reopened_receiver = reopened.open(Arc::new(StorageOptions::default()), &target)?;
+    verify_target_authority(&reopened)?;
+    assert_eq!(reopened.logical_snapshot_digests()?, logical_digests_before);
+    assert_eq!(capture_exact_pairing(&target)?, pairing_before);
+    assert_eq!(target_authority_bytes(&target)?, manifest_bytes_before);
+    reopened.shutdown().await;
+    reopened.close();
+    drop(reopened_receiver);
     Ok(())
 }
 
@@ -1436,6 +1971,9 @@ async fn reject_mutated_exact_base_v1_archive_external() -> anyhow::Result<()> {
     );
     let mutation =
         std::env::var("KIWI_COMPAT_MUTATION").expect("KIWI_COMPAT_MUTATION is required");
+    let mutation_instance: usize = std::env::var("KIWI_COMPAT_MUTATION_INSTANCE")
+        .expect("KIWI_COMPAT_MUTATION_INSTANCE is required")
+        .parse()?;
     let mutation_root = PathBuf::from(
         std::env::var_os("KIWI_COMPAT_MUTATION_ROOT")
             .expect("KIWI_COMPAT_MUTATION_ROOT is required"),
@@ -1450,19 +1988,27 @@ async fn reject_mutated_exact_base_v1_archive_external() -> anyhow::Result<()> {
     let bytes = std::fs::read(&archive)?;
     anyhow::ensure!(!bytes.is_empty(), "exact Base v1 archive is empty");
     let snapshot_meta = read_snapshot_meta(&snapshot_meta_path)?;
-    let mutated = mutate_exact_base_archive(&bytes, &snapshot_meta, &mutation_root, &mutation)?;
+    let mutated = mutate_exact_base_archive(
+        &bytes,
+        &snapshot_meta,
+        &mutation_root,
+        &mutation,
+        mutation_instance,
+    )?;
     let expected_error = match mutation.as_str() {
         "unknown-cf" => "unregistered legacy column-family layout",
-        "vector-cf" => "invalid Base-v1 snapshot instance 0",
+        "vector-cf" => "is missing its v1 manifest",
         "vector-meta" => "contains Vector Set metadata",
         _ => unreachable!(),
     };
+    let expected_location = format!("invalid Base-v1 snapshot instance {mutation_instance}");
     assert_full_install_rejected_before_pause(
         &snapshot_meta,
         mutated,
         target,
         snapshot_work,
         expected_error,
+        Some(&expected_location),
     )
     .await
 }
@@ -1504,7 +2050,9 @@ async fn head_v2_two_instance_exact_pairing_external() -> anyhow::Result<()> {
     let source_receiver =
         source_storage.open(Arc::new(StorageOptions::default()), &source)?;
     write_head_data(&source_storage)?;
+    write_target_authority(&source_storage)?;
     verify_head_data(&source_storage)?;
+    verify_target_authority(&source_storage)?;
     let expected_pairing = capture_exact_pairing(&source)?;
     assert_eq!(expected_pairing.instances.len(), 2);
     let source_storage = Arc::new(source_storage);
@@ -1554,6 +2102,7 @@ async fn head_v2_two_instance_exact_pairing_external() -> anyhow::Result<()> {
         .await?;
     let installed = target_swap.load_full();
     verify_head_data(&installed)?;
+    verify_target_authority(&installed)?;
     assert_eq!(capture_exact_pairing(&target)?, expected_pairing);
     installed.set(b"compat:head-post-install", b"accepted")?;
 
@@ -1568,6 +2117,7 @@ async fn head_v2_two_instance_exact_pairing_external() -> anyhow::Result<()> {
     let mut reopened = Storage::new(2, 0);
     let reopened_receiver = reopened.open(Arc::new(StorageOptions::default()), &target)?;
     verify_head_data(&reopened)?;
+    verify_target_authority(&reopened)?;
     assert_eq!(reopened.get(b"compat:head-post-install")?, "accepted");
     assert_eq!(capture_exact_pairing(&target)?, expected_pairing);
     reopened.shutdown().await;
@@ -1602,6 +2152,7 @@ async fn head_v2_two_instance_exact_pairing_external() -> anyhow::Result<()> {
             negative_target,
             negative_work,
             expected_error,
+            None,
         )
         .await?;
     }

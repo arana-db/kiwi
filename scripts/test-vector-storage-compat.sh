@@ -83,16 +83,32 @@ FIXTURE_TOOL="$REPO_ROOT/tests/compat/vector_storage_fixture.py"
 [[ -f $FIXTURE_TOOL ]] || die "fixture tool is missing: $FIXTURE_TOOL"
 
 for tool in awk bash basename c++ cargo cat cc cp date dirname find git grep mkdir mktemp \
-    pgrep python3 realpath rm sed sha256sum stat wc; do
+    python3 readlink realpath rm rustc sed sha256sum stat tail tr wc; do
     command -v "$tool" >/dev/null 2>&1 || die "required Linux tool is missing: $tool"
 done
 
+SOURCE_CARGO_HOME_CANDIDATE=${CARGO_HOME:-$HOME/.cargo}
+[[ -d $SOURCE_CARGO_HOME_CANDIDATE ]] || \
+    die "source Cargo cache directory is missing: $SOURCE_CARGO_HOME_CANDIDATE"
+SOURCE_CARGO_HOME=$(realpath -- "$SOURCE_CARGO_HOME_CANDIDATE")
+RUSTC_SYSROOT=$(rustc --print sysroot) || die "rustc did not report its active sysroot"
+RUSTC_SYSROOT=$(realpath -- "$RUSTC_SYSROOT")
+RUSTC_BIN=$(realpath -- "$RUSTC_SYSROOT/bin/rustc")
+[[ -x $RUSTC_BIN ]] || die "active toolchain rustc is not executable: $RUSTC_BIN"
+"$RUSTC_BIN" -vV | grep -E '^host: ' >/dev/null || \
+    die "active toolchain rustc identity is incomplete: $RUSTC_BIN"
+CC_BIN=$(realpath -- "$(command -v cc)")
+CXX_BIN=$(realpath -- "$(command -v c++)")
 unset RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER
-unset SCCACHE_DIR SCCACHE_CACHE_SIZE SCCACHE_ENDPOINT SCCACHE_BUCKET SCCACHE_REGION
-unset SCCACHE_S3_USE_SSL SCCACHE_REDIS SCCACHE_MEMCACHED
-export CC="$(command -v cc)"
-export CXX="$(command -v c++)"
-printf 'BUILD_CACHE mode=disabled cc=%s cxx=%s\n' "$CC" "$CXX"
+unset CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER
+while IFS= read -r sccache_name; do
+    [[ -n $sccache_name ]] || continue
+    unset "$sccache_name"
+done < <(compgen -A variable SCCACHE_ || true)
+unset CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER
+unset LD_LIBRARY_PATH
+export CC="$CC_BIN"
+export CXX="$CXX_BIN"
 
 if [[ -d $REPO_ROOT/.git ]]; then
     COMMON_GIT_DIR=$(realpath -- "$REPO_ROOT/.git")
@@ -164,6 +180,7 @@ done
 
 declare -a WORKTREES=()
 declare -a BACKGROUND_PIDS=()
+declare -a STARTED_BACKGROUND_PIDS=()
 declare -a EXECUTED_GATES=()
 declare -A GATE_SET=()
 ACTIVE_GATE=""
@@ -185,10 +202,101 @@ safe_remove() {
     rm -rf -- "$path"
 }
 
+proc_link_target_under_temp() {
+    local link=$1
+    local raw_target resolved_target
+    raw_target=$(readlink -- "$link" 2>/dev/null) || return 1
+    raw_target=${raw_target% (deleted)}
+    [[ $raw_target == /* ]] || return 1
+    resolved_target=$(realpath -m -- "$raw_target") || return 1
+    path_is_within "$resolved_target" "$TEMP_ROOT" || return 1
+    printf '%s\n' "$resolved_target"
+}
+
+scan_temp_process_references() {
+    local proc_dir pid link_name resolved_target fd
+    local -a fd_entries=()
+    for proc_dir in /proc/[0-9]*; do
+        [[ -d $proc_dir ]] || continue
+        pid=${proc_dir##*/}
+        [[ $pid =~ ^[0-9]+$ && $pid != $$ ]] || continue
+        for link_name in cwd root exe; do
+            if resolved_target=$(proc_link_target_under_temp "$proc_dir/$link_name"); then
+                printf '%s:%s:%s\n' "$pid" "$link_name" "$resolved_target"
+            fi
+        done
+        fd_entries=("$proc_dir"/fd/*)
+        for fd in "${fd_entries[@]}"; do
+            [[ -e $fd || -L $fd ]] || continue
+            if resolved_target=$(proc_link_target_under_temp "$fd"); then
+                printf '%s:fd-%s:%s\n' "$pid" "${fd##*/}" "$resolved_target"
+            fi
+        done
+    done
+}
+
+verify_process_reference_scanner() {
+    local probe_root="$TEMP_ROOT/process-scan-probe"
+    local cwd_root="$probe_root/cwd"
+    local fd_file="$probe_root/fd-authority"
+    local cwd_pid fd_pid attempt process_ref cmdline
+    local cwd_seen=0
+    local fd_seen=0
+    assert_under_temp "$probe_root"
+    mkdir -p -- "$cwd_root"
+    printf 'fd authority\n' >"$fd_file"
+    (
+        cd -- "$cwd_root"
+        exec tail -f /dev/null
+    ) &
+    cwd_pid=$!
+    BACKGROUND_PIDS+=("$cwd_pid")
+    STARTED_BACKGROUND_PIDS+=("$cwd_pid")
+    (
+        cd -- /
+        exec 3<"$fd_file"
+        exec tail -f /dev/null
+    ) &
+    fd_pid=$!
+    BACKGROUND_PIDS+=("$fd_pid")
+    STARTED_BACKGROUND_PIDS+=("$fd_pid")
+
+    for attempt in {1..1000}; do
+        cwd_seen=0
+        fd_seen=0
+        while IFS= read -r process_ref; do
+            case "$process_ref" in
+                "$cwd_pid:cwd:$cwd_root") cwd_seen=1 ;;
+                "$fd_pid:fd-3:$fd_file") fd_seen=1 ;;
+            esac
+        done < <(scan_temp_process_references)
+        ((cwd_seen == 1 && fd_seen == 1)) && break
+        kill -0 "$cwd_pid" 2>/dev/null || die "cwd process exited before scanner observed it"
+        kill -0 "$fd_pid" 2>/dev/null || die "fd process exited before scanner observed it"
+    done
+    ((cwd_seen == 1)) || die "process scanner missed TEMP_ROOT cwd authority"
+    ((fd_seen == 1)) || die "process scanner missed TEMP_ROOT fd authority"
+    for pid in "$cwd_pid" "$fd_pid"; do
+        cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline")
+        [[ $cmdline != *"$TEMP_ROOT"* ]] || die "process scanner mutation leaked temp path into argv: $pid"
+        kill "$pid"
+        wait "$pid" 2>/dev/null || true
+    done
+    BACKGROUND_PIDS=()
+    while IFS= read -r process_ref; do
+        [[ -n $process_ref ]] || continue
+        die "process reference remained after owned probe cleanup: $process_ref"
+    done < <(scan_temp_process_references)
+    safe_remove "$probe_root"
+    printf 'PROCESS_SCAN PASS cwd_refs=1 fd_refs=1 argv_temp_refs=0 tracked_processes=%d\n' \
+        "${#STARTED_BACKGROUND_PIDS[@]}"
+}
+
 cleanup() {
     local status=$?
     local cleanup_failed=0
-    local -a lingering_temp_pids=()
+    local cleanup_attempt
+    local -a lingering_temp_refs=()
     trap - EXIT INT TERM
     set +e
     if [[ -n $ACTIVE_GATE ]]; then
@@ -196,16 +304,26 @@ cleanup() {
     fi
     for pid in "${BACKGROUND_PIDS[@]}"; do
         if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null
+            for cleanup_attempt in {1..1000}; do
+                kill -0 "$pid" 2>/dev/null || break
+            done
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -KILL "$pid" 2>/dev/null
+            fi
+            wait "$pid" 2>/dev/null
+        fi
+        if kill -0 "$pid" 2>/dev/null; then
             printf 'CLEANUP FAIL runner_background_pid_alive=%s\n' "$pid" >&2
             cleanup_failed=1
         fi
     done
-    while IFS= read -r pid; do
-        [[ -n $pid && $pid != $$ && $pid != $PPID ]] || continue
-        lingering_temp_pids+=("$pid")
-    done < <(pgrep -f -- "$TEMP_ROOT" 2>/dev/null || true)
-    if ((${#lingering_temp_pids[@]} > 0)); then
-        printf 'CLEANUP FAIL temp_root_processes=%s\n' "${lingering_temp_pids[*]}" >&2
+    while IFS= read -r process_ref; do
+        [[ -n $process_ref ]] || continue
+        lingering_temp_refs+=("$process_ref")
+    done < <(scan_temp_process_references)
+    if ((${#lingering_temp_refs[@]} > 0)); then
+        printf 'CLEANUP FAIL temp_root_process_refs=%s\n' "${lingering_temp_refs[*]}" >&2
         cleanup_failed=1
     fi
     for ((index=${#WORKTREES[@]} - 1; index >= 0; index--)); do
@@ -234,8 +352,8 @@ cleanup() {
     if ((cleanup_failed != 0)); then
         status=1
     else
-        printf 'CLEANUP PASS temp_root_removed=true worktrees_removed=%d tracked_processes=%d lingering_temp_processes=0\n' \
-            "${#WORKTREES[@]}" "${#BACKGROUND_PIDS[@]}"
+        printf 'CLEANUP PASS temp_root_removed=true worktrees_removed=%d tracked_processes=%d lingering_temp_refs=0\n' \
+            "${#WORKTREES[@]}" "${#STARTED_BACKGROUND_PIDS[@]}"
     fi
     exit "$status"
 }
@@ -243,6 +361,8 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+
+verify_process_reference_scanner
 
 begin_gate() {
     local gate=$1
@@ -271,6 +391,11 @@ add_worktree() {
     local actual
     actual=$(git -C "$path" rev-parse HEAD)
     [[ $actual == "$sha" ]] || die "worktree Head mismatch: path=$path expected=$sha actual=$actual"
+    while IFS= read -r cargo_config; do
+        if grep -Eq '^[[:space:]]*rustc[-_](workspace[-_])?wrapper[[:space:]]*=' "$cargo_config"; then
+            die "exact-ref Cargo config declares a compiler wrapper: $cargo_config"
+        fi
+    done < <(find "$path/.cargo" -maxdepth 1 -type f \( -name config -o -name config.toml \) 2>/dev/null)
 }
 
 emit_driver() {
@@ -342,6 +467,26 @@ run_exact_test() {
     env RUST_BACKTRACE=1 "$@" "$executable" --exact "$test_name" --nocapture --test-threads=1
 }
 
+expect_exact_test_failure() {
+    local label=$1
+    local expected=$2
+    local executable=$3
+    local test_name=$4
+    local log_file="$TEMP_ROOT/mutation-logs/$label.log"
+    shift 4
+    assert_under_temp "$log_file"
+    mkdir -p -- "$(dirname -- "$log_file")"
+    if run_exact_test "$executable" "$test_name" "$@" >"$log_file" 2>&1; then
+        cat -- "$log_file" >&2
+        die "mutation unexpectedly survived: $label"
+    fi
+    if ! grep -F "$expected" "$log_file" >/dev/null; then
+        cat -- "$log_file" >&2
+        die "mutation failed for the wrong reason: label=$label expected=$expected"
+    fi
+    printf 'MUTATION %s PASS expected_failure=%s\n' "$label" "$expected"
+}
+
 copy_fixture() {
     local source=$1
     local target=$2
@@ -370,6 +515,76 @@ copy_temp_file() {
     [[ $(sha256sum -- "$source" | awk '{print $1}') == $(sha256sum -- "$target" | awk '{print $1}') ]] || \
         die "temporary file copy hash mismatch: source=$source target=$target"
 }
+
+setup_cargo_isolation() {
+    local cache_name source_cache cargo_version_log probe_root probe_log
+    export CARGO_HOME="$TEMP_ROOT/cargo-home"
+    export CARGO_NET_OFFLINE=true
+    export CARGO_BUILD_RUSTC="$RUSTC_BIN"
+    export CARGO_INCREMENTAL=0
+    assert_under_temp "$CARGO_HOME"
+    mkdir -p -- "$CARGO_HOME"
+    for cache_name in registry git; do
+        source_cache="$SOURCE_CARGO_HOME/$cache_name"
+        [[ -d $source_cache ]] || die "required source Cargo cache is missing: $source_cache"
+        [[ ! -e $CARGO_HOME/$cache_name ]] || die "isolated Cargo cache target exists: $cache_name"
+        cp -a --reflink=auto -- "$source_cache" "$CARGO_HOME/$cache_name"
+    done
+    cat >"$CARGO_HOME/config.toml" <<EOF
+[build]
+rustc = "$RUSTC_BIN"
+
+[net]
+offline = true
+git-fetch-with-cli = false
+EOF
+    [[ ! -e $CARGO_HOME/credentials && ! -e $CARGO_HOME/credentials.toml ]] || \
+        die "isolated Cargo home must not inherit registry credentials"
+    if grep -Eqi 'rustc[-_](workspace[-_])?wrapper|sccache' "$CARGO_HOME/config.toml"; then
+        die "isolated Cargo config unexpectedly declares a compiler wrapper"
+    fi
+    for wrapper_name in RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER \
+        CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER; do
+        [[ -z ${!wrapper_name-} ]] || die "compiler wrapper environment survived isolation: $wrapper_name"
+    done
+
+    cargo_version_log="$TEMP_ROOT/cargo-version.txt"
+    cargo -vV >"$cargo_version_log"
+    grep -E '^cargo [0-9]' "$cargo_version_log" >/dev/null || \
+        die "cargo -vV did not report Cargo identity"
+    probe_root="$TEMP_ROOT/cargo-probe"
+    probe_log="$TEMP_ROOT/cargo-probe.log"
+    mkdir -p -- "$probe_root/src"
+    cat >"$probe_root/Cargo.toml" <<'EOF'
+[package]
+name = "kiwi-compat-cargo-probe"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+EOF
+    cat >"$probe_root/src/main.rs" <<'EOF'
+fn main() {
+    println!("kiwi compatibility cargo probe");
+}
+EOF
+    if ! (
+        cd -- "$probe_root"
+        CARGO_TARGET_DIR="$probe_root/target" cargo check -vv
+    ) >"$probe_log" 2>&1; then
+        cat -- "$probe_log" >&2
+        die "isolated Cargo compiler probe failed"
+    fi
+    grep -F "$RUSTC_BIN" "$probe_log" >/dev/null || \
+        die "Cargo probe did not invoke the pinned direct rustc path"
+    if grep -Fi 'sccache' "$probe_log" >/dev/null; then
+        die "Cargo probe invoked or reported sccache"
+    fi
+    printf 'BUILD_CACHE mode=disabled cargo_home=%s source_cache=%s rustc=%s cc=%s cxx=%s tracked_processes=%d\n' \
+        "$CARGO_HOME" "$SOURCE_CARGO_HOME" "$RUSTC_BIN" "$CC" "$CXX" "${#BACKGROUND_PIDS[@]}"
+}
+
+setup_cargo_isolation
 
 printf 'PROVENANCE base=%s vector_v1=%s head=%s common_git_dir=%s temp_root=%s\n' \
     "$BASE_SHA" "$VECTOR_V1_SHA" "$HEAD_SHA" "$COMMON_GIT_DIR" "$TEMP_ROOT"
@@ -451,6 +666,24 @@ run_exact_test "$HEAD_STORAGE_EXE" head_upgrade_and_reopen_external \
 pass_gate head_upgrades_and_reopens_real_vector_v1_storage
 
 begin_gate head_retries_every_migration_phase_for_both_source_profiles
+V2_MUTATION_ROOT="$TEMP_ROOT/cases/mutation-v2-shadow-data"
+V2_MUTATION_AUTHORITY="$TEMP_ROOT/cases/mutation-v2-shadow-authority"
+V2_MUTATION_COPY_ROOT="$TEMP_ROOT/cases/mutation-v2-shadow-copies"
+V2_MUTATION_COUNT="$TEMP_ROOT/cases/mutation-v2-shadow-count"
+copy_fixture "$BASE_SOURCE" "$V2_MUTATION_ROOT"
+expect_exact_test_failure v2-shadow-data \
+    "V2 validation copy partitioned String mismatch for original instance 0" \
+    "$HEAD_STORAGE_EXE" inject_fault_and_assert_interrupted_external \
+    KIWI_COMPAT_ROOT="$V2_MUTATION_ROOT" \
+    KIWI_COMPAT_AUTHORITY_ROOT="$V2_MUTATION_AUTHORITY" \
+    KIWI_COMPAT_V2_AUTHORITY_ROOT="$V2_MUTATION_COPY_ROOT" \
+    KIWI_COMPAT_V2_COUNT_FILE="$V2_MUTATION_COUNT" \
+    KIWI_COMPAT_PROFILE=base KIWI_COMPAT_FAULT=instance-upgraded-0 \
+    KIWI_COMPAT_CORRUPT_V2_VALIDATION=1
+safe_remove "$V2_MUTATION_ROOT"
+safe_remove "$V2_MUTATION_AUTHORITY"
+safe_remove "$V2_MUTATION_COPY_ROOT"
+safe_remove "$V2_MUTATION_COUNT"
 COMMON_FAULTS=(
     source-detected shadow-prepared instance-copied-0 instance-copied-1
     instance-upgraded-0 instance-upgraded-1 all-verified switch-prepared
@@ -459,6 +692,7 @@ COMMON_FAULTS=(
 )
 BASE_ONLY_FAULTS=(vector-cf-created-0 vector-cf-created-1)
 PHASE_COUNT=0
+V2_COPY_COUNT=0
 for source_profile in base vector; do
     if [[ $source_profile == base ]]; then
         source_root=$BASE_SOURCE
@@ -470,24 +704,37 @@ for source_profile in base vector; do
     for fault in "${faults[@]}"; do
         case_root="$TEMP_ROOT/cases/retry-$source_profile-$fault"
         authority_root="$TEMP_ROOT/cases/authority-$source_profile-$fault"
+        v2_authority_root="$TEMP_ROOT/cases/v2-authority-$source_profile-$fault"
+        v2_count_file="$TEMP_ROOT/cases/v2-count-$source_profile-$fault"
         copy_fixture "$source_root" "$case_root"
         run_exact_test "$HEAD_STORAGE_EXE" inject_fault_and_assert_interrupted_external \
             KIWI_COMPAT_ROOT="$case_root" KIWI_COMPAT_AUTHORITY_ROOT="$authority_root" \
+            KIWI_COMPAT_V2_AUTHORITY_ROOT="$v2_authority_root" \
+            KIWI_COMPAT_V2_COUNT_FILE="$v2_count_file" \
             KIWI_COMPAT_PROFILE="$source_profile" KIWI_COMPAT_FAULT="$fault"
+        [[ -f $v2_count_file && ! -L $v2_count_file ]] || \
+            die "completed V2-copy count is missing: profile=$source_profile fault=$fault"
+        v2_case_count=$(<"$v2_count_file")
+        [[ $v2_case_count =~ ^[0-9]+$ ]] || \
+            die "invalid V2-copy count: profile=$source_profile fault=$fault count=$v2_case_count"
         if [[ $source_profile == base ]]; then
             run_exact_test "$BASE_STORAGE_EXE" reopen_fixture KIWI_COMPAT_ROOT="$authority_root"
         else
             run_exact_test "$VECTOR_STORAGE_EXE" reopen_fixture KIWI_COMPAT_ROOT="$authority_root"
         fi
+        V2_COPY_COUNT=$((V2_COPY_COUNT + v2_case_count))
         ((PHASE_COUNT += 1))
         run_exact_test "$HEAD_STORAGE_EXE" resume_after_asserted_fault_external \
             KIWI_COMPAT_ROOT="$case_root" KIWI_COMPAT_PROFILE="$source_profile"
         safe_remove "$case_root"
         safe_remove "$authority_root"
+        safe_remove "$v2_authority_root"
+        safe_remove "$v2_count_file"
     done
 done
 [[ $PHASE_COUNT -eq 30 ]] || die "migration phase execution count mismatch: $PHASE_COUNT"
-printf 'PHASES PASS executed=%d base=16 vector=14\n' "$PHASE_COUNT"
+[[ $V2_COPY_COUNT -eq 43 ]] || die "interrupted V2-copy execution count mismatch: $V2_COPY_COUNT"
+printf 'PHASES PASS executed=%d base=16 vector=14 v2_copies=%d\n' "$PHASE_COUNT" "$V2_COPY_COUNT"
 pass_gate head_retries_every_migration_phase_for_both_source_profiles
 
 begin_gate base_reopens_verified_pre_admission_rollback
@@ -537,20 +784,53 @@ run_exact_test "$HEAD_SNAPSHOT_EXE" restore_exact_base_v1_archive_external \
 pass_gate base_v1_snapshot_restores_on_head
 
 begin_gate v1_snapshot_with_unknown_or_vector_schema_is_rejected
+GATE10_CASE_COUNT=0
 for mutation in unknown-cf vector-cf vector-meta; do
-    MUTATED_BASE_ARCHIVE="$TEMP_ROOT/snapshots/base-v1-$mutation.snapshot"
-    MUTATED_BASE_META="$TEMP_ROOT/snapshots/base-v1-$mutation.meta.json"
-    MUTATION_ROOT="$TEMP_ROOT/snapshots/base-v1-$mutation-unpack"
-    MUTATION_TARGET="$TEMP_ROOT/snapshots/base-v1-$mutation-target"
-    MUTATION_WORK="$TEMP_ROOT/snapshots/base-v1-$mutation-work"
-    copy_temp_file "$BASE_ARCHIVE" "$MUTATED_BASE_ARCHIVE"
-    copy_temp_file "$BASE_SNAPSHOT_META" "$MUTATED_BASE_META"
-    run_exact_test "$HEAD_SNAPSHOT_EXE" reject_mutated_exact_base_v1_archive_external \
-        KIWI_COMPAT_ARCHIVE="$MUTATED_BASE_ARCHIVE" \
-        KIWI_COMPAT_SNAPSHOT_META="$MUTATED_BASE_META" \
-        KIWI_COMPAT_MUTATION="$mutation" KIWI_COMPAT_MUTATION_ROOT="$MUTATION_ROOT" \
-        KIWI_COMPAT_TARGET="$MUTATION_TARGET" KIWI_COMPAT_SNAPSHOT_WORK="$MUTATION_WORK"
+    for mutation_instance in 0 1; do
+        MUTATED_BASE_ARCHIVE="$TEMP_ROOT/snapshots/base-v1-$mutation-instance$mutation_instance.snapshot"
+        MUTATED_BASE_META="$TEMP_ROOT/snapshots/base-v1-$mutation-instance$mutation_instance.meta.json"
+        MUTATION_ROOT="$TEMP_ROOT/snapshots/base-v1-$mutation-instance$mutation_instance-unpack"
+        MUTATION_TARGET="$TEMP_ROOT/snapshots/base-v1-$mutation-instance$mutation_instance-target"
+        MUTATION_WORK="$TEMP_ROOT/snapshots/base-v1-$mutation-instance$mutation_instance-work"
+        copy_temp_file "$BASE_ARCHIVE" "$MUTATED_BASE_ARCHIVE"
+        copy_temp_file "$BASE_SNAPSHOT_META" "$MUTATED_BASE_META"
+        run_exact_test "$HEAD_SNAPSHOT_EXE" reject_mutated_exact_base_v1_archive_external \
+            KIWI_COMPAT_ARCHIVE="$MUTATED_BASE_ARCHIVE" \
+            KIWI_COMPAT_SNAPSHOT_META="$MUTATED_BASE_META" \
+            KIWI_COMPAT_MUTATION="$mutation" \
+            KIWI_COMPAT_MUTATION_INSTANCE="$mutation_instance" \
+            KIWI_COMPAT_MUTATION_ROOT="$MUTATION_ROOT" \
+            KIWI_COMPAT_TARGET="$MUTATION_TARGET" KIWI_COMPAT_SNAPSHOT_WORK="$MUTATION_WORK"
+        ((GATE10_CASE_COUNT += 1))
+    done
 done
+[[ $GATE10_CASE_COUNT -eq 6 ]] || die "Gate10 invalid-snapshot case count mismatch: $GATE10_CASE_COUNT"
+printf 'GATE10_CASES PASS executed=%d instances=2 mutations=3\n' "$GATE10_CASE_COUNT"
+for authority_mutation in hash-instance1 zset-instance1 ttl-instance1; do
+    case "$authority_mutation" in
+        hash-instance1) authority_expected="target authority Hash mismatch instance 1" ;;
+        zset-instance1) authority_expected="target authority ZSet mismatch instance 1" ;;
+        ttl-instance1) authority_expected="target authority TTL value mismatch instance 1" ;;
+        *) die "unknown target-authority mutation: $authority_mutation" ;;
+    esac
+    AUTHORITY_ARCHIVE="$TEMP_ROOT/snapshots/authority-$authority_mutation.snapshot"
+    AUTHORITY_META="$TEMP_ROOT/snapshots/authority-$authority_mutation.meta.json"
+    AUTHORITY_MUTATION_ROOT="$TEMP_ROOT/snapshots/authority-$authority_mutation-unpack"
+    AUTHORITY_TARGET="$TEMP_ROOT/snapshots/authority-$authority_mutation-target"
+    AUTHORITY_WORK="$TEMP_ROOT/snapshots/authority-$authority_mutation-work"
+    copy_temp_file "$BASE_ARCHIVE" "$AUTHORITY_ARCHIVE"
+    copy_temp_file "$BASE_SNAPSHOT_META" "$AUTHORITY_META"
+    expect_exact_test_failure "target-authority-$authority_mutation" "$authority_expected" \
+        "$HEAD_SNAPSHOT_EXE" reject_mutated_exact_base_v1_archive_external \
+        KIWI_COMPAT_ARCHIVE="$AUTHORITY_ARCHIVE" \
+        KIWI_COMPAT_SNAPSHOT_META="$AUTHORITY_META" \
+        KIWI_COMPAT_MUTATION=unknown-cf KIWI_COMPAT_MUTATION_INSTANCE=0 \
+        KIWI_COMPAT_MUTATION_ROOT="$AUTHORITY_MUTATION_ROOT" \
+        KIWI_COMPAT_TARGET="$AUTHORITY_TARGET" \
+        KIWI_COMPAT_SNAPSHOT_WORK="$AUTHORITY_WORK" \
+        KIWI_COMPAT_CORRUPT_TARGET_AFTER_REJECT="$authority_mutation"
+done
+printf 'MUTATIONS target-authority PASS executed=3 polluted_instance=1 invalid_instance=0\n'
 pass_gate v1_snapshot_with_unknown_or_vector_schema_is_rejected
 
 begin_gate head_v2_snapshot_reopens_with_exact_manifest_pairing
@@ -583,5 +863,6 @@ for gate in "${EXECUTED_GATES[@]}"; do
     GATE_ARGS+=(--executed "$gate")
 done
 python3 "$FIXTURE_TOOL" verify-gate-contract "${GATE_ARGS[@]}"
-printf 'MATRIX PASS gates=%d phases=%d base=%s vector_v1=%s head=%s\n' \
-    "${#EXECUTED_GATES[@]}" "$PHASE_COUNT" "$BASE_SHA" "$VECTOR_V1_SHA" "$HEAD_SHA"
+printf 'MATRIX PASS gates=%d phases=%d v2_copies=%d gate10_cases=%d base=%s vector_v1=%s head=%s\n' \
+    "${#EXECUTED_GATES[@]}" "$PHASE_COUNT" "$V2_COPY_COUNT" "$GATE10_CASE_COUNT" \
+    "$BASE_SHA" "$VECTOR_V1_SHA" "$HEAD_SHA"
