@@ -120,10 +120,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bitflags::bitflags;
+use bytes::Bytes;
 use client::Client;
 use log::debug;
 use resp::RespData;
 use storage::storage::Storage;
+
+use crate::vector::admission::VectorAdmissionLimits;
 
 pub use auth::RequirepassProvider;
 
@@ -196,6 +199,14 @@ pub trait Cmd: Send + Sync {
     /// Reject commands that must not reach cluster routing or read barriers.
     fn check_pre_route(&self, _client: &Client) -> bool {
         true
+    }
+
+    fn admit_network_request(
+        &self,
+        _argv: &[Bytes],
+        _limits: VectorAdmissionLimits,
+    ) -> Result<(), RespData> {
+        Ok(())
     }
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>);

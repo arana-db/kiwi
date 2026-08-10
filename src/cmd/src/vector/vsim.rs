@@ -24,6 +24,7 @@ use storage::{VectorQuery, VectorSearchMode, VectorSearchOptions, storage::Stora
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
+use super::admission::{VectorAdmissionLimits, admit_vector_request};
 use super::{
     ERR_INVALID_VECTOR, ERR_VECTOR_DIMENSION, MissingError, ParseResult, VectorParseLimits,
     error_reply, parse_direct_vector, parse_positive_usize, storage_error_reply,
@@ -102,6 +103,14 @@ fn parse_vsim(argv: &[Vec<u8>]) -> ParseResult<ParsedVSim> {
 impl Cmd for VSimCmd {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
+
+    fn admit_network_request(
+        &self,
+        argv: &[Bytes],
+        limits: VectorAdmissionLimits,
+    ) -> Result<(), RespData> {
+        admit_vector_request(argv, limits).map_err(|error| error_reply(error.as_str()))
+    }
 
     fn do_initial(&self, client: &Client) -> bool {
         super::set_command_key(client)

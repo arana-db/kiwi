@@ -104,7 +104,7 @@ RESP parse to Bytes
 - Modify: `src/cmd/src/vector/vrem.rs`
 - Modify: `src/cmd/src/vector/vismember.rs`
 
-- [ ] **步骤 1：写入 wrapper 绕过失败测试**
+- [x] **步骤 1：写入 wrapper 绕过失败测试**
 
   - `table::tests::gated_vector_commands_forward_network_admission`
   - `table::tests::network_admission_feature_gate_precedes_cluster_gate`
@@ -117,19 +117,21 @@ RESP parse to Bytes
   cargo test -p cmd table::tests::network_admission_cluster_gate_precedes_resource_limit -- --exact
   ```
 
-- [ ] **步骤 2：实现 hook 和显式转发**
+- [x] **步骤 2：实现 hook 和显式转发**
 
   - `Cmd` 增加默认 no-op `admit_network_request(&[Bytes], VectorAdmissionLimits)`。
   - 五个 payload command 覆盖 hook 并调用 Task 1 纯函数。
   - `GatedCmd::admit_network_request` 先执行当前 wrapper 的 `allowed/error`，允许时再转发 inner。
   - 保留现有 `check_pre_route` cluster 防御，不把所有 command `do_initial` 前移。
 
-- [ ] **步骤 3：回归**
+- [x] **步骤 3：回归**
 
   ```powershell
   cargo test -p cmd table::tests -- --nocapture
   cargo test -p cmd vector::admission::tests -- --nocapture
   ```
+
+  实际证据：四个 tests-first 用例先因 `dyn Cmd` 不存在 `admit_network_request` 而编译 RED；实现默认 no-op hook、Vector feature/cluster 双层 `GatedCmd` 显式转发和五个 payload 命令 override 后全部转绿，完整 `cmd` 171/171 与 all-targets/all-features clippy 通过。删除 wrapper 转发、删除 `VISMEMBER` override、让 inner 在 outer 前执行时对应测试均失败。质量复审发现通用 `GatedCmd` 还包装 FLUSH，若无区分会提前改变非 Vector 顺序；真实 disabled-FLUSH admission 测试先 RED，随后增加仅 Vector 两层启用的 `reject_during_network_admission` 私有标志，FLUSH 继续由原 `do_initial` 门禁处理。最终规格复审 `RUNTIME_TASK2_SPEC_PASS`，质量复审 `RUNTIME_TASK2_QUALITY_PASS`。
 
 ## Task 3：`ParsedCommand<Bytes>`、Config 传递与真实 TCP storage spy
 

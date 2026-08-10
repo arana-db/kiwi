@@ -17,12 +17,14 @@
 
 use std::sync::Arc;
 
+use bytes::Bytes;
 use client::Client;
 use resp::RespData;
 use storage::{CanonicalVector, QuantizationType, storage::Storage};
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
+use super::admission::{VectorAdmissionLimits, admit_vector_request};
 use super::{
     ERR_INVALID_VECTOR, ERR_VECTOR_ELEMENT_LIMIT, MissingError, ParseResult, VectorParseLimits,
     error_reply, parse_direct_vector, parse_positive_usize, storage_error_reply,
@@ -105,6 +107,14 @@ fn parse_vadd(argv: &[Vec<u8>]) -> ParseResult<ParsedVAdd> {
 impl Cmd for VAddCmd {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
+
+    fn admit_network_request(
+        &self,
+        argv: &[Bytes],
+        limits: VectorAdmissionLimits,
+    ) -> Result<(), RespData> {
+        admit_vector_request(argv, limits).map_err(|error| error_reply(error.as_str()))
+    }
 
     fn do_initial(&self, client: &Client) -> bool {
         super::set_command_key(client)
