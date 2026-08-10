@@ -452,19 +452,20 @@
   - 受控 rollback 后必须分别使用 Base binary 或 Vector-v1 binary 真实 reopen/read，不使用 Head parser 推断旧格式可读。
   - exact Base v1 archive 的 unknown CF、Vector CF、Vector meta 分别污染 instance 0/1，共 6 个 case，均通过 Head `install_snapshot` 完整入口在 pause 前拒绝；每个负例在两个 target instance 写入并校验 String、Hash、ZSet、TTL、sentinel、Vector，保存 logical digest 和 manifest pairing，拒绝后在 live handle 与关闭/new `Storage` reopen 两个阶段验证 authority 未变。
   - exact Head v2 使用两个实例真实 build/install/关闭/reopen/read；交换 0/1 pairing、篡改 instance 1 digest/incarnation、篡改 Root digest 均通过完整 install 入口拒绝，每个负例同样验证双实例完整 target authority。
-  - runner 拒绝位于任一 Git worktree 内（含 symlink realpath）的 `TMPDIR`；使用 runner-owned `CARGO_HOME`、真实 toolchain `rustc` 和绝对路径 `cc`/`c++`，禁用共享 sccache/wrapper；通过 `/proc` numeric PID 的 cwd/root/exe/fd realpath 检查无引用临时根的存活进程。
+  - runner 在创建临时根或构建前绑定 controller worktree：controller HEAD 必须等于 exact Head，shell/PowerShell/fixture 的 Head tree mode、blob、index 和 worktree 内容必须精确一致，并记录三文件 SHA256。`cargo`/`rustc` 固定为同一 `1.97.1-x86_64-unknown-linux-gnu` toolchain 的真实绝对路径，校验完整版本、host、commit 和 binary SHA256；所有 exact-ref build 使用 `--locked`。
+  - runner 拒绝位于任一 Git worktree 内（含 symlink realpath）的 `TMPDIR`；使用 runner-owned `CARGO_HOME`、真实 toolchain `rustc` 和绝对路径 `cc`/`c++`，清除共享 sccache/wrapper 环境，并在 Cargo 实际搜索的 exact worktree/祖先/Cargo home 配置链上拒绝 hyphen、underscore 或 dotted wrapper key；受控 compiler probe 证明首个编译进程为固定 `rustc`，PATH/function shim 不可截获。通过 `/proc` numeric PID 的 cwd/root/exe/fd realpath 检查无引用临时根的存活进程。
   - cleanup 移除临时 worktree、build 输出和 server 进程，并在退出前检查无遗留。
 
 - [x] **步骤 3：Linux 验收**
 
   ```powershell
-  wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && bash -n scripts/test-vector-storage-compat.sh && python3 -B tests/compat/vector_storage_fixture.py --help >/dev/null && git diff --check'
+  wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && bash -n scripts/test-vector-storage-compat.sh && python3 -B tests/compat/vector_storage_fixture.py --help >/dev/null && python3 -B tests/compat/vector_storage_fixture.py --help --bogus >/dev/null 2>&1; test $? -eq 2 || exit 1; python3 -B tests/compat/vector_storage_fixture.py emit-rust --help --bogus >/dev/null 2>&1; test $? -eq 2 || exit 1; git diff --check'
   .\scripts\test-vector-storage-compat.ps1 --help
-  wsl env TMPDIR=/mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery CARGO_HOME=/home/alex/.cargo bash ./scripts/test-vector-storage-compat.sh --base-ref 688d905fec31b54aec76f36676f55efd8b5cfa17 --vector-v1-ref 733888fc90ad8ef039947e87b08d7500a405954a --head-ref 0bbd5d209b8812ec33b8aa31755d793ddd56fae7
+  wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && TMPDIR="$PWD" CARGO_HOME=/home/alex/.cargo ./scripts/test-vector-storage-compat.sh --base-ref 688d905fec31b54aec76f36676f55efd8b5cfa17 --vector-v1-ref 733888fc90ad8ef039947e87b08d7500a405954a --head-ref "$(git rev-parse HEAD)"'
   wsl bash -lc 'cd /mnt/d/test/github/kiwi/.worktrees/wp8-storage-recovery && ./scripts/test-vector-storage-compat.sh --base-ref 688d905fec31b54aec76f36676f55efd8b5cfa17 --vector-v1-ref 733888fc90ad8ef039947e87b08d7500a405954a --head-ref "$(git rev-parse HEAD)"'
   ```
 
-  实际结果：静态、CLI mixed-help、PowerShell 转发和 worktree-local `TMPDIR` 负例门禁通过。V2 shadow 数据损坏、instance 1 三类 invalid schema、另一 instance 的 Hash/ZSet/TTL authority 污染，以及 argv 不含临时路径但 cwd/fd 指向临时根的进程引用变异均被杀死。预提交完整 Linux 矩阵 11 个 gate、30 个 migration phase（Base 16、Vector-v1 14）、43 个 interrupted V2 副本和 Gate10 6 个完整 install case 全部通过，耗时 878 秒；cleanup 移除 3 个临时 worktree 和全部 build 输出，自测启动并回收 2 个 runner-owned PID，`lingering_temp_refs=0`。
+  实际结果：`3d10a60c18505af4efa80fbed59173737e4dd89e` self-SHA 的完整 Linux 矩阵 11 个 gate、30 个 migration phase（Base 16、Vector-v1 14）、43 个 interrupted V2 副本和 Gate10 6 个完整 install case 全部通过，耗时 839 秒；cleanup 移除 3 个临时 worktree 和全部 build 输出，自测启动并回收 2 个 runner-owned PID，`lingering_temp_refs=0`。第三轮 quality follow-up 的 TDD 红灯确认：两个 fixture mixed-help 组合错误返回 0、dirty controller 越过 provenance、ambient `cargo` function 被调用、祖先 dotted wrapper 绕过旧正则并被 Cargo 执行；对应最小门禁修复后，mixed-help 精确返回 2、dirty controller 在临时根前拒绝、TOML parser 在 wrapper 执行前拒绝 dotted key、`--locked -vv` probe 的首个编译进程精确等于固定 `rustc`。最终验收使用上方 self-SHA 命令，提交后执行以避免 controller dirty guard 产生假阴性。
 
 ## 工作流最终门禁
 

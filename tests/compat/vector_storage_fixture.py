@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import shlex
 import sys
 import textwrap
+import tomllib
 
 
 EXPECTED_GATES = (
@@ -2241,7 +2243,102 @@ def render_cargo_diagnostics(input_path: Path) -> int:
     return 0
 
 
-def parse_args() -> argparse.Namespace:
+def normalize_cargo_key(key: str) -> str:
+    return "".join(character for character in key.lower() if character not in "-_.")
+
+
+def verify_cargo_config(input_path: Path) -> int:
+    try:
+        with input_path.open("rb") as stream:
+            config = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        print(f"cannot parse Cargo config {input_path}: {error}", file=sys.stderr)
+        return 1
+
+    wrapper_keys = {"buildrustcwrapper", "buildrustcworkspacewrapper"}
+    violations: list[str] = []
+
+    def visit(value: object, path: tuple[str, ...]) -> None:
+        if not isinstance(value, dict):
+            return
+        for raw_key, child in value.items():
+            child_path = (*path, str(raw_key))
+            normalized_path = "".join(normalize_cargo_key(part) for part in child_path)
+            if normalized_path in wrapper_keys:
+                violations.append(".".join(child_path))
+            visit(child, child_path)
+
+    visit(config, ())
+    if violations:
+        print(
+            f"Cargo config declares a compiler wrapper: {input_path}: "
+            f"{', '.join(sorted(set(violations)))}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def verify_cargo_probe(input_path: Path, rustc_path: Path) -> int:
+    expected = str(rustc_path)
+    matching_commands: list[list[str]] = []
+    with input_path.open("r", encoding="utf-8") as stream:
+        for raw_line in stream:
+            if "Running `" not in raw_line or "--crate-name kiwi_compat_cargo_probe" not in raw_line:
+                continue
+            command_text = raw_line.split("Running `", 1)[1].rsplit("`", 1)[0]
+            try:
+                tokens = shlex.split(command_text)
+            except ValueError as error:
+                print(f"cannot parse Cargo probe command: {error}", file=sys.stderr)
+                return 1
+            while tokens and "=" in tokens[0] and not tokens[0].startswith(("/", ".")):
+                name, _, _ = tokens[0].partition("=")
+                if not name.replace("_", "").isalnum():
+                    break
+                tokens.pop(0)
+            if tokens:
+                matching_commands.append(tokens)
+
+    if len(matching_commands) != 1:
+        print(
+            f"expected one Cargo probe compiler command, found {len(matching_commands)}",
+            file=sys.stderr,
+        )
+        return 1
+    actual = matching_commands[0][0]
+    if actual != expected:
+        print(
+            f"Cargo probe compiler process mismatch: expected {expected}, got {actual}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+COMMANDS = {
+    "verify-gate-contract",
+    "emit-rust",
+    "extract-executable",
+    "render-cargo-diagnostics",
+    "verify-cargo-config",
+    "verify-cargo-probe",
+}
+
+
+def reject_mixed_help(argv: list[str]) -> int:
+    help_flags = {"-h", "--help"}
+    if not any(argument in help_flags for argument in argv):
+        return 0
+    if len(argv) == 1 and argv[0] in help_flags:
+        return 0
+    if len(argv) == 2 and argv[0] in COMMANDS and argv[1] in help_flags:
+        return 0
+    print("help must be the only root argument or the only argument after a subcommand", file=sys.stderr)
+    return 2
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     gate_contract = subparsers.add_parser("verify-gate-contract")
@@ -2253,11 +2350,20 @@ def parse_args() -> argparse.Namespace:
     executable.add_argument("--target", required=True)
     diagnostics = subparsers.add_parser("render-cargo-diagnostics")
     diagnostics.add_argument("--input", type=Path, required=True)
-    return parser.parse_args()
+    cargo_config = subparsers.add_parser("verify-cargo-config")
+    cargo_config.add_argument("--input", type=Path, required=True)
+    cargo_probe = subparsers.add_parser("verify-cargo-probe")
+    cargo_probe.add_argument("--input", type=Path, required=True)
+    cargo_probe.add_argument("--rustc", type=Path, required=True)
+    return parser.parse_args(argv)
 
 
 def main() -> int:
-    args = parse_args()
+    argv = sys.argv[1:]
+    mixed_help = reject_mixed_help(argv)
+    if mixed_help != 0:
+        return mixed_help
+    args = parse_args(argv)
     if args.command == "verify-gate-contract":
         return verify_gate_contract(args.executed)
     if args.command == "emit-rust":
@@ -2266,6 +2372,10 @@ def main() -> int:
         return extract_executable(args.input, args.target)
     if args.command == "render-cargo-diagnostics":
         return render_cargo_diagnostics(args.input)
+    if args.command == "verify-cargo-config":
+        return verify_cargo_config(args.input)
+    if args.command == "verify-cargo-probe":
+        return verify_cargo_probe(args.input, args.rustc)
     raise AssertionError(f"unhandled command: {args.command}")
 
 

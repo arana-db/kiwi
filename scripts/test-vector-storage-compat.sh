@@ -4,6 +4,9 @@ set -euo pipefail
 
 readonly EXPECTED_BASE_REF="688d905fec31b54aec76f36676f55efd8b5cfa17"
 readonly EXPECTED_VECTOR_V1_REF="733888fc90ad8ef039947e87b08d7500a405954a"
+readonly EXPECTED_RUST_RELEASE="1.97.1"
+readonly EXPECTED_RUST_HOST="x86_64-unknown-linux-gnu"
+readonly EXPECTED_RUST_TOOLCHAIN="1.97.1-x86_64-unknown-linux-gnu"
 
 usage() {
     cat <<'EOF'
@@ -82,36 +85,14 @@ REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd -P)
 FIXTURE_TOOL="$REPO_ROOT/tests/compat/vector_storage_fixture.py"
 [[ -f $FIXTURE_TOOL ]] || die "fixture tool is missing: $FIXTURE_TOOL"
 
-for tool in awk bash basename c++ cargo cat cc cp date dirname find git grep mkdir mktemp \
-    python3 readlink realpath rm rustc sed sha256sum stat tail tr wc; do
+for tool in awk bash basename c++ cat cc chmod cmp cp date dirname find git grep mkdir mktemp \
+    python3 readlink realpath rm sed sha256sum stat tail tr wc; do
     command -v "$tool" >/dev/null 2>&1 || die "required Linux tool is missing: $tool"
 done
 
-SOURCE_CARGO_HOME_CANDIDATE=${CARGO_HOME:-$HOME/.cargo}
-[[ -d $SOURCE_CARGO_HOME_CANDIDATE ]] || \
-    die "source Cargo cache directory is missing: $SOURCE_CARGO_HOME_CANDIDATE"
-SOURCE_CARGO_HOME=$(realpath -- "$SOURCE_CARGO_HOME_CANDIDATE")
-RUSTC_SYSROOT=$(rustc --print sysroot) || die "rustc did not report its active sysroot"
-RUSTC_SYSROOT=$(realpath -- "$RUSTC_SYSROOT")
-RUSTC_BIN=$(realpath -- "$RUSTC_SYSROOT/bin/rustc")
-[[ -x $RUSTC_BIN ]] || die "active toolchain rustc is not executable: $RUSTC_BIN"
-"$RUSTC_BIN" -vV | grep -E '^host: ' >/dev/null || \
-    die "active toolchain rustc identity is incomplete: $RUSTC_BIN"
-CC_BIN=$(realpath -- "$(command -v cc)")
-CXX_BIN=$(realpath -- "$(command -v c++)")
-unset RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER
-unset CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER
-while IFS= read -r sccache_name; do
-    [[ -n $sccache_name ]] || continue
-    unset "$sccache_name"
-done < <(compgen -A variable SCCACHE_ || true)
-unset CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER
-unset LD_LIBRARY_PATH
-export CC="$CC_BIN"
-export CXX="$CXX_BIN"
-
 if [[ -d $REPO_ROOT/.git ]]; then
-    COMMON_GIT_DIR=$(realpath -- "$REPO_ROOT/.git")
+    CONTROLLER_GIT_DIR=$(realpath -- "$REPO_ROOT/.git")
+    COMMON_GIT_DIR=$CONTROLLER_GIT_DIR
 elif [[ -f $REPO_ROOT/.git ]]; then
     GITDIR_RECORD=$(sed -n 's/^gitdir:[[:space:]]*//p' "$REPO_ROOT/.git")
     [[ -n $GITDIR_RECORD ]] || die "cannot parse linked-worktree .git file"
@@ -122,6 +103,7 @@ elif [[ -f $REPO_ROOT/.git ]]; then
         GITDIR_RECORD="$REPO_ROOT/$GITDIR_RECORD"
     fi
     GITDIR_RECORD=$(realpath -- "$GITDIR_RECORD")
+    CONTROLLER_GIT_DIR=$GITDIR_RECORD
     case "$GITDIR_RECORD" in
         */.git/worktrees/*) COMMON_GIT_DIR=${GITDIR_RECORD%/worktrees/*} ;;
         *) die "linked-worktree gitdir is outside the expected common Git layout: $GITDIR_RECORD" ;;
@@ -130,6 +112,7 @@ else
     die "repository .git metadata is missing"
 fi
 [[ -d $COMMON_GIT_DIR ]] || die "common Git directory is missing: $COMMON_GIT_DIR"
+[[ -d $CONTROLLER_GIT_DIR ]] || die "controller Git directory is missing: $CONTROLLER_GIT_DIR"
 
 path_is_within() {
     local candidate=$1
@@ -161,6 +144,114 @@ HEAD_SHA=$(resolve_exact_commit "$HEAD_REF") || die "cannot resolve Head commit:
 [[ $VECTOR_V1_SHA == "$EXPECTED_VECTOR_V1_REF" ]] || die "Vector-v1 resolves to $VECTOR_V1_SHA, expected $EXPECTED_VECTOR_V1_REF"
 [[ $HEAD_SHA == "${HEAD_REF,,}" ]] || die "Head input must name the exact resolved commit: input=$HEAD_REF resolved=$HEAD_SHA"
 
+RUNNER_REAL=$(realpath -- "${BASH_SOURCE[0]}")
+[[ $RUNNER_REAL == "$REPO_ROOT/scripts/test-vector-storage-compat.sh" ]] || \
+    die "runner must execute from its controller worktree path: $RUNNER_REAL"
+CONTROLLER_SHA=$(git --git-dir="$CONTROLLER_GIT_DIR" --work-tree="$REPO_ROOT" rev-parse HEAD) || \
+    die "cannot resolve controller worktree Head"
+[[ $CONTROLLER_SHA == "$HEAD_SHA" ]] || \
+    die "controller worktree Head differs from --head-ref: controller=$CONTROLLER_SHA head=$HEAD_SHA"
+
+declare -A CONTROLLER_FILE_SHA256=()
+verify_controller_file() {
+    local relative=$1
+    local worktree_file="$REPO_ROOT/$relative"
+    local head_record head_mode head_type head_oid head_path
+    local index_record index_mode index_oid index_stage index_path
+    local head_sha256 worktree_sha256
+    [[ -f $worktree_file && ! -L $worktree_file ]] || \
+        die "controller file must be a regular non-symlink: $relative"
+    head_record=$(git --git-dir="$COMMON_GIT_DIR" ls-tree "$HEAD_SHA" -- "$relative") || \
+        die "cannot inspect controller Head tree: $relative"
+    [[ $(printf '%s\n' "$head_record" | wc -l) -eq 1 && -n $head_record ]] || \
+        die "controller Head must contain exactly one entry: $relative"
+    read -r head_mode head_type head_oid head_path <<<"$head_record"
+    [[ $head_type == blob && $head_path == "$relative" ]] || \
+        die "controller Head entry is not the expected blob: $relative"
+    index_record=$(git --git-dir="$CONTROLLER_GIT_DIR" --work-tree="$REPO_ROOT" \
+        ls-files --stage -- "$relative") || die "cannot inspect controller index: $relative"
+    [[ $(printf '%s\n' "$index_record" | wc -l) -eq 1 && -n $index_record ]] || \
+        die "controller index must contain exactly one entry: $relative"
+    read -r index_mode index_oid index_stage index_path <<<"$index_record"
+    [[ $index_stage == 0 && $index_path == "$relative" ]] || \
+        die "controller index entry is not stage zero: $relative"
+    [[ $index_mode == "$head_mode" ]] || \
+        die "controller index mode drift from Head: $relative index=$index_mode head=$head_mode"
+    [[ $index_oid == "$head_oid" ]] || \
+        die "controller index drift from Head: $relative index=$index_oid head=$head_oid"
+    head_sha256=$(git --git-dir="$COMMON_GIT_DIR" cat-file blob "$head_oid" | sha256sum | awk '{print $1}') || \
+        die "cannot hash Head blob: $relative"
+    worktree_sha256=$(sha256sum -- "$worktree_file" | awk '{print $1}') || \
+        die "cannot hash controller worktree file: $relative"
+    [[ $worktree_sha256 == "$head_sha256" ]] || \
+        die "controller worktree drift from Head: $relative worktree=$worktree_sha256 head=$head_sha256"
+    CONTROLLER_FILE_SHA256["$relative"]=$worktree_sha256
+}
+
+verify_controller_file scripts/test-vector-storage-compat.sh
+verify_controller_file scripts/test-vector-storage-compat.ps1
+verify_controller_file tests/compat/vector_storage_fixture.py
+printf 'CONTROLLER commit=%s shell_sha256=%s powershell_sha256=%s fixture_sha256=%s\n' \
+    "$CONTROLLER_SHA" \
+    "${CONTROLLER_FILE_SHA256[scripts/test-vector-storage-compat.sh]}" \
+    "${CONTROLLER_FILE_SHA256[scripts/test-vector-storage-compat.ps1]}" \
+    "${CONTROLLER_FILE_SHA256[tests/compat/vector_storage_fixture.py]}"
+
+SOURCE_CARGO_HOME_CANDIDATE=${CARGO_HOME:-$HOME/.cargo}
+[[ -d $SOURCE_CARGO_HOME_CANDIDATE ]] || \
+    die "source Cargo cache directory is missing: $SOURCE_CARGO_HOME_CANDIDATE"
+SOURCE_CARGO_HOME=$(realpath -- "$SOURCE_CARGO_HOME_CANDIDATE")
+RUSTUP_HOME_CANDIDATE=${RUSTUP_HOME:-"$(dirname -- "$SOURCE_CARGO_HOME")/.rustup"}
+RUSTUP_HOME_REAL=$(realpath -- "$RUSTUP_HOME_CANDIDATE") || \
+    die "Rustup home is missing: $RUSTUP_HOME_CANDIDATE"
+RUST_TOOLCHAIN_ROOT=$(realpath -- "$RUSTUP_HOME_REAL/toolchains/$EXPECTED_RUST_TOOLCHAIN") || \
+    die "expected Rust toolchain is missing: $EXPECTED_RUST_TOOLCHAIN"
+RUSTC_BIN=$(realpath -- "$RUST_TOOLCHAIN_ROOT/bin/rustc") || die "pinned rustc is missing"
+CARGO_BIN=$(realpath -- "$RUST_TOOLCHAIN_ROOT/bin/cargo") || die "pinned cargo is missing"
+[[ $RUSTC_BIN == "$RUST_TOOLCHAIN_ROOT/bin/rustc" && -f $RUSTC_BIN && -x $RUSTC_BIN ]] || \
+    die "pinned rustc is outside the expected toolchain: $RUSTC_BIN"
+[[ $CARGO_BIN == "$RUST_TOOLCHAIN_ROOT/bin/cargo" && -f $CARGO_BIN && -x $CARGO_BIN ]] || \
+    die "pinned cargo is outside the expected toolchain: $CARGO_BIN"
+RUSTC_VERSION=$("$RUSTC_BIN" -vV) || die "pinned rustc did not report its identity"
+CARGO_VERSION=$("$CARGO_BIN" -vV) || die "pinned cargo did not report its identity"
+RUSTC_SYSROOT=$("$RUSTC_BIN" --print sysroot) || die "pinned rustc did not report its sysroot"
+RUSTC_SYSROOT=$(realpath -- "$RUSTC_SYSROOT")
+[[ $RUSTC_SYSROOT == "$RUST_TOOLCHAIN_ROOT" ]] || \
+    die "pinned rustc sysroot differs from toolchain root: sysroot=$RUSTC_SYSROOT root=$RUST_TOOLCHAIN_ROOT"
+RUSTC_RELEASE=$(awk '/^release: / {print $2}' <<<"$RUSTC_VERSION")
+CARGO_RELEASE=$(awk '/^release: / {print $2}' <<<"$CARGO_VERSION")
+RUSTC_HOST=$(awk '/^host: / {print $2}' <<<"$RUSTC_VERSION")
+CARGO_HOST=$(awk '/^host: / {print $2}' <<<"$CARGO_VERSION")
+RUSTC_COMMIT=$(awk '/^commit-hash: / {print $2}' <<<"$RUSTC_VERSION")
+CARGO_COMMIT=$(awk '/^commit-hash: / {print $2}' <<<"$CARGO_VERSION")
+[[ $RUSTC_RELEASE == "$EXPECTED_RUST_RELEASE" && $CARGO_RELEASE == "$EXPECTED_RUST_RELEASE" ]] || \
+    die "Rust release mismatch: rustc=$RUSTC_RELEASE cargo=$CARGO_RELEASE expected=$EXPECTED_RUST_RELEASE"
+[[ $RUSTC_HOST == "$EXPECTED_RUST_HOST" && $CARGO_HOST == "$EXPECTED_RUST_HOST" ]] || \
+    die "Rust host mismatch: rustc=$RUSTC_HOST cargo=$CARGO_HOST expected=$EXPECTED_RUST_HOST"
+[[ $RUSTC_COMMIT =~ ^[0-9a-f]{40}$ && $CARGO_COMMIT =~ ^[0-9a-f]{40}$ ]] || \
+    die "Rust toolchain commit identity is incomplete"
+RUSTC_SHA256=$(sha256sum -- "$RUSTC_BIN" | awk '{print $1}')
+CARGO_SHA256=$(sha256sum -- "$CARGO_BIN" | awk '{print $1}')
+printf 'RUST_TOOLCHAIN root=%s release=%s host=%s rustc=%s rustc_sha256=%s cargo=%s cargo_sha256=%s\n' \
+    "$RUST_TOOLCHAIN_ROOT" "$EXPECTED_RUST_RELEASE" "$EXPECTED_RUST_HOST" \
+    "$RUSTC_BIN" "$RUSTC_SHA256" "$CARGO_BIN" "$CARGO_SHA256"
+printf 'RUSTC_VERSION_BEGIN\n%s\nRUSTC_VERSION_END\nCARGO_VERSION_BEGIN\n%s\nCARGO_VERSION_END\n' \
+    "$RUSTC_VERSION" "$CARGO_VERSION"
+CC_BIN=$(realpath -- "$(command -v cc)")
+CXX_BIN=$(realpath -- "$(command -v c++)")
+export RUSTC_WRAPPER=""
+export RUSTC_WORKSPACE_WRAPPER=""
+export CARGO_BUILD_RUSTC_WRAPPER=""
+export CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=""
+while IFS= read -r sccache_name; do
+    [[ -n $sccache_name ]] || continue
+    unset "$sccache_name"
+done < <(compgen -A variable SCCACHE_ || true)
+unset CMAKE_C_COMPILER_LAUNCHER CMAKE_CXX_COMPILER_LAUNCHER
+unset LD_LIBRARY_PATH
+export CC="$CC_BIN"
+export CXX="$CXX_BIN"
+
 TMP_CANDIDATE=${TMPDIR:-/tmp}
 [[ -d $TMP_CANDIDATE ]] || die "TMPDIR is not an existing directory: $TMP_CANDIDATE"
 TMP_BASE=$(realpath -- "$TMP_CANDIDATE")
@@ -185,6 +276,7 @@ declare -a EXECUTED_GATES=()
 declare -A GATE_SET=()
 ACTIVE_GATE=""
 ACTIVE_GATE_STARTED=0
+PATH_AUTHORITY_MARKER=""
 
 assert_under_temp() {
     local path resolved
@@ -326,6 +418,10 @@ cleanup() {
         printf 'CLEANUP FAIL temp_root_process_refs=%s\n' "${lingering_temp_refs[*]}" >&2
         cleanup_failed=1
     fi
+    if [[ -n $PATH_AUTHORITY_MARKER && -s $PATH_AUTHORITY_MARKER ]]; then
+        printf 'CLEANUP FAIL ambient_rust_tool_invoked=%s\n' "$(tr '\n' ',' <"$PATH_AUTHORITY_MARKER")" >&2
+        cleanup_failed=1
+    fi
     for ((index=${#WORKTREES[@]} - 1; index >= 0; index--)); do
         worktree=${WORKTREES[$index]}
         assert_under_temp "$worktree" || cleanup_failed=1
@@ -391,11 +487,95 @@ add_worktree() {
     local actual
     actual=$(git -C "$path" rev-parse HEAD)
     [[ $actual == "$sha" ]] || die "worktree Head mismatch: path=$path expected=$sha actual=$actual"
-    while IFS= read -r cargo_config; do
-        if grep -Eq '^[[:space:]]*rustc[-_](workspace[-_])?wrapper[[:space:]]*=' "$cargo_config"; then
-            die "exact-ref Cargo config declares a compiler wrapper: $cargo_config"
+    verify_cargo_config_chain "$path"
+}
+
+verify_cargo_config_file() {
+    local config=$1
+    [[ -f $config && ! -L $config ]] || die "Cargo config must be a regular non-symlink: $config"
+    python3 "$FIXTURE_TOOL" verify-cargo-config --input "$config" || \
+        die "Cargo config authority rejected: $config"
+}
+
+verify_cargo_config_chain() {
+    local directory config
+    directory=$(realpath -- "$1")
+    while :; do
+        for config in "$directory/.cargo/config" "$directory/.cargo/config.toml"; do
+            if [[ -e $config || -L $config ]]; then
+                verify_cargo_config_file "$config"
+            fi
+        done
+        [[ $directory == / ]] && break
+        directory=$(dirname -- "$directory")
+    done
+    for config in "$CARGO_HOME/config" "$CARGO_HOME/config.toml"; do
+        if [[ -e $config || -L $config ]]; then
+            verify_cargo_config_file "$config"
         fi
-    done < <(find "$path/.cargo" -maxdepth 1 -type f \( -name config -o -name config.toml \) 2>/dev/null)
+    done
+}
+
+verify_cargo_config_guard() {
+    local mutation_root="$TEMP_ROOT/cargo-config-guard"
+    local child="$mutation_root/project"
+    local marker="$mutation_root/wrapper-used"
+    local log="$mutation_root/rejection.log"
+    assert_under_temp "$mutation_root"
+    mkdir -p -- "$mutation_root/.cargo" "$child"
+    cat >"$mutation_root/wrapper" <<EOF
+#!/usr/bin/env bash
+printf 'wrapper-used\\n' >"$marker"
+exit 97
+EOF
+    chmod 700 "$mutation_root/wrapper"
+    cat >"$mutation_root/.cargo/config.toml" <<EOF
+build.rustc-workspace-wrapper = "$mutation_root/wrapper"
+EOF
+    if (verify_cargo_config_chain "$child") >"$log" 2>&1; then
+        die "ancestor dotted Cargo wrapper mutation survived config authority"
+    fi
+    grep -F "Cargo config declares a compiler wrapper" "$log" >/dev/null || {
+        cat -- "$log" >&2
+        die "ancestor dotted Cargo wrapper failed for the wrong reason"
+    }
+    [[ ! -e $marker ]] || die "ancestor dotted Cargo wrapper executed before rejection"
+    safe_remove "$mutation_root"
+    printf 'CARGO_CONFIG_GUARD PASS ancestor_dotted_wrapper=rejected_before_execution\n'
+}
+
+setup_path_authority_guard() {
+    local shim_root="$TEMP_ROOT/path-authority-guard"
+    assert_under_temp "$shim_root"
+    mkdir -p -- "$shim_root"
+    PATH_AUTHORITY_MARKER="$shim_root/ambient-tool-used"
+    cat >"$shim_root/cargo" <<EOF
+#!/usr/bin/env bash
+printf 'PATH cargo\\n' >>"$PATH_AUTHORITY_MARKER"
+exit 97
+EOF
+    cat >"$shim_root/rustc" <<EOF
+#!/usr/bin/env bash
+printf 'PATH rustc\\n' >>"$PATH_AUTHORITY_MARKER"
+exit 97
+EOF
+    chmod 700 "$shim_root/cargo" "$shim_root/rustc"
+    cargo() {
+        printf 'function cargo\n' >>"$PATH_AUTHORITY_MARKER"
+        return 97
+    }
+    rustc() {
+        printf 'function rustc\n' >>"$PATH_AUTHORITY_MARKER"
+        return 97
+    }
+    export -f cargo rustc
+    export PATH="$shim_root:$PATH"
+}
+
+verify_path_authority_guard() {
+    [[ -n $PATH_AUTHORITY_MARKER && ! -e $PATH_AUTHORITY_MARKER ]] || \
+        die "ambient cargo/rustc PATH or function shim was invoked"
+    printf 'RUST_PATH_GUARD PASS ambient_path_shims=unused ambient_functions=unused\n'
 }
 
 emit_driver() {
@@ -415,7 +595,7 @@ build_test_group() {
     shift 4
     local json_log="$TEMP_ROOT/build-logs/$group_label.json"
     mkdir -p -- "$(dirname -- "$json_log")" "$target_dir"
-    local -a command=(cargo test)
+    local -a command=("$CARGO_BIN" test --locked)
     local spec package test_target
     for spec in "$@"; do
         package=${spec%%:*}
@@ -517,7 +697,7 @@ copy_temp_file() {
 }
 
 setup_cargo_isolation() {
-    local cache_name source_cache cargo_version_log probe_root probe_log
+    local cache_name source_cache cargo_version_log probe_root probe_log wrapper_name
     export CARGO_HOME="$TEMP_ROOT/cargo-home"
     export CARGO_NET_OFFLINE=true
     export CARGO_BUILD_RUSTC="$RUSTC_BIN"
@@ -540,18 +720,19 @@ git-fetch-with-cli = false
 EOF
     [[ ! -e $CARGO_HOME/credentials && ! -e $CARGO_HOME/credentials.toml ]] || \
         die "isolated Cargo home must not inherit registry credentials"
-    if grep -Eqi 'rustc[-_](workspace[-_])?wrapper|sccache' "$CARGO_HOME/config.toml"; then
-        die "isolated Cargo config unexpectedly declares a compiler wrapper"
-    fi
+    verify_cargo_config_file "$CARGO_HOME/config.toml"
     for wrapper_name in RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTC_WRAPPER \
         CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER; do
         [[ -z ${!wrapper_name-} ]] || die "compiler wrapper environment survived isolation: $wrapper_name"
     done
 
     cargo_version_log="$TEMP_ROOT/cargo-version.txt"
-    cargo -vV >"$cargo_version_log"
+    "$CARGO_BIN" -vV >"$cargo_version_log"
     grep -E '^cargo [0-9]' "$cargo_version_log" >/dev/null || \
         die "cargo -vV did not report Cargo identity"
+    cmp -s <(printf '%s\n' "$CARGO_VERSION") "$cargo_version_log" || \
+        die "pinned Cargo identity changed after isolation"
+    verify_cargo_config_guard
     probe_root="$TEMP_ROOT/cargo-probe"
     probe_log="$TEMP_ROOT/cargo-probe.log"
     mkdir -p -- "$probe_root/src"
@@ -563,6 +744,14 @@ edition = "2024"
 
 [workspace]
 EOF
+    cat >"$probe_root/Cargo.lock" <<'EOF'
+# This file is automatically @generated by Cargo.
+version = 4
+
+[[package]]
+name = "kiwi-compat-cargo-probe"
+version = "0.0.0"
+EOF
     cat >"$probe_root/src/main.rs" <<'EOF'
 fn main() {
     println!("kiwi compatibility cargo probe");
@@ -570,24 +759,28 @@ fn main() {
 EOF
     if ! (
         cd -- "$probe_root"
-        CARGO_TARGET_DIR="$probe_root/target" cargo check -vv
+        verify_cargo_config_chain "$probe_root"
+        CARGO_TARGET_DIR="$probe_root/target" "$CARGO_BIN" check --locked -vv
     ) >"$probe_log" 2>&1; then
         cat -- "$probe_log" >&2
         die "isolated Cargo compiler probe failed"
     fi
-    grep -F "$RUSTC_BIN" "$probe_log" >/dev/null || \
-        die "Cargo probe did not invoke the pinned direct rustc path"
+    python3 "$FIXTURE_TOOL" verify-cargo-probe --input "$probe_log" --rustc "$RUSTC_BIN" || \
+        die "Cargo probe did not use pinned rustc as the compiler process"
     if grep -Fi 'sccache' "$probe_log" >/dev/null; then
         die "Cargo probe invoked or reported sccache"
     fi
-    printf 'BUILD_CACHE mode=disabled cargo_home=%s source_cache=%s rustc=%s cc=%s cxx=%s tracked_processes=%d\n' \
-        "$CARGO_HOME" "$SOURCE_CARGO_HOME" "$RUSTC_BIN" "$CC" "$CXX" "${#BACKGROUND_PIDS[@]}"
+    verify_path_authority_guard
+    printf 'BUILD_CACHE mode=disabled cargo_home=%s source_cache=%s cargo=%s rustc=%s cc=%s cxx=%s tracked_processes=%d\n' \
+        "$CARGO_HOME" "$SOURCE_CARGO_HOME" "$CARGO_BIN" "$RUSTC_BIN" "$CC" "$CXX" \
+        "${#BACKGROUND_PIDS[@]}"
 }
 
+setup_path_authority_guard
 setup_cargo_isolation
 
-printf 'PROVENANCE base=%s vector_v1=%s head=%s common_git_dir=%s temp_root=%s\n' \
-    "$BASE_SHA" "$VECTOR_V1_SHA" "$HEAD_SHA" "$COMMON_GIT_DIR" "$TEMP_ROOT"
+printf 'PROVENANCE base=%s vector_v1=%s head=%s controller=%s common_git_dir=%s temp_root=%s\n' \
+    "$BASE_SHA" "$VECTOR_V1_SHA" "$HEAD_SHA" "$CONTROLLER_SHA" "$COMMON_GIT_DIR" "$TEMP_ROOT"
 
 BASE_WORKTREE="$TEMP_ROOT/worktrees/base"
 VECTOR_WORKTREE="$TEMP_ROOT/worktrees/vector-v1"
@@ -863,6 +1056,7 @@ for gate in "${EXECUTED_GATES[@]}"; do
     GATE_ARGS+=(--executed "$gate")
 done
 python3 "$FIXTURE_TOOL" verify-gate-contract "${GATE_ARGS[@]}"
+verify_path_authority_guard
 printf 'MATRIX PASS gates=%d phases=%d v2_copies=%d gate10_cases=%d base=%s vector_v1=%s head=%s\n' \
     "${#EXECUTED_GATES[@]}" "$PHASE_COUNT" "$V2_COPY_COUNT" "$GATE10_CASE_COUNT" \
     "$BASE_SHA" "$VECTOR_V1_SHA" "$HEAD_SHA"
