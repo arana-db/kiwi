@@ -104,6 +104,11 @@ fn build_script_path() -> PathBuf {
 }
 
 #[cfg(target_os = "linux")]
+fn verify_script_path() -> PathBuf {
+    repository_root().join("scripts/compat/verify-redis-8.8.1.sh")
+}
+
+#[cfg(target_os = "linux")]
 fn run_python_probe(test_dir: &TestDir, body: &str) -> Output {
     let probe = test_dir.path().join("probe.py");
     let controller = controller_path();
@@ -803,6 +808,388 @@ assert not candidate.exists()
         candidate = candidate.to_string_lossy(),
     );
     assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_rejects_existing_output_before_source_access() {
+    let test_dir = TestDir::new("verifier-existing-output");
+    let missing_source = test_dir.path().join("missing-source");
+    let missing_primary = test_dir.path().join("missing-primary.json");
+    let output_path = test_dir.path().join("oracle-provenance.json");
+    fs::write(&output_path, b"do-not-replace\n").unwrap();
+
+    let output = Command::new("/usr/bin/bash")
+        .arg(verify_script_path())
+        .arg("--source")
+        .arg(&missing_source)
+        .arg("--primary-metadata")
+        .arg(&missing_primary)
+        .arg("--output")
+        .arg(&output_path)
+        .arg("--run-after-ready")
+        .arg("/bin/true")
+        .env_clear()
+        .output()
+        .expect("Redis verifier wrapper must start");
+
+    assert!(
+        !output.status.success(),
+        "existing output target was accepted"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("already exists"),
+        "verifier did not reject the output target first: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read(&output_path).unwrap(), b"do-not-replace\n");
+    assert!(
+        fs::read_dir(test_dir.path()).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("oracle-verifier")),
+        "verifier created temporary resources before rejecting the existing output"
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_callback_output_flood_reaps_its_process_group() {
+    let test_dir = TestDir::new("verifier-callback-flood");
+    let body = format!(
+        r##"import os
+import pathlib
+
+root = pathlib.Path({root:?})
+script = root / "callback.sh"
+child_pid = root / "child.pid"
+script.write_text(
+    "#!/bin/sh\n(sleep 30) &\nprintf '%s' \"$!\" > \"$1\"\n"
+    "while :; do printf 0123456789; printf abcdefghij >&2; done\n",
+    encoding="utf-8",
+)
+script.chmod(0o755)
+(root / "home").mkdir()
+(root / "tmp").mkdir()
+with controller.HeldExecutable.open("callback", script) as held:
+    result = controller.run_bounded(
+        held,
+        [str(script), str(child_pid)],
+        env={{"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TMPDIR": str(root / "tmp")}},
+        timeout_ms=5000,
+        term_grace_ms=100,
+        stdout_limit_bytes=64,
+        stderr_limit_bytes=64,
+        terminate_on_output_limit=True,
+    )
+assert not result.timed_out
+assert result.output_truncated
+assert result.process_group_reaped
+pid = int(child_pid.read_text(encoding="utf-8"))
+try:
+    os.kill(pid, 0)
+except ProcessLookupError:
+    pass
+else:
+    raise AssertionError(f"callback descendant {{pid}} survived output-flood cleanup")
+"##,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_held_source_rename_replace_uses_original_or_fails_closed() {
+    let test_dir = TestDir::new("verifier-source-replace");
+    let body = format!(
+        r#"import os
+import pathlib
+
+root = pathlib.Path({root:?})
+source = root / "source-a"
+moved = root / "held-source-a"
+source.mkdir()
+(source / "identity").write_text("original", encoding="utf-8")
+held = controller.HeldDirectory.open(source)
+try:
+    source.rename(moved)
+    source.mkdir()
+    (source / "identity").write_text("replacement", encoding="utf-8")
+    fd = held.open_regular("identity")
+    try:
+        assert os.read(fd, 64) == b"original"
+    finally:
+        os.close(fd)
+    try:
+        held.verify_path()
+    except controller.OracleError:
+        pass
+    else:
+        raise AssertionError("source A rename-replace was not rejected")
+finally:
+    held.close()
+"#,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_provenance_publish_is_exclusive_atomic_and_rust_validated() {
+    let test_dir = TestDir::new("verifier-publish");
+    let provenance = test_dir.path().join("oracle-provenance.json");
+    let fixture = canonical_provenance();
+    let body = format!(
+        r#"import json
+import pathlib
+
+provenance = pathlib.Path({provenance:?})
+document = json.loads(r'''{document}''')
+controller.publish_provenance(provenance, document)
+assert provenance.exists()
+try:
+    controller.publish_provenance(provenance, document)
+except controller.OracleError:
+    pass
+else:
+    raise AssertionError("existing provenance was overwritten")
+assert not list(provenance.parent.glob(".*.provenance-*"))
+"#,
+        provenance = provenance.to_string_lossy(),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+
+    let raw = fs::read_to_string(&provenance).expect("provenance must be published");
+    OracleProvenance::from_json(&raw).expect("published provenance must satisfy Task 1 API");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_provenance_parent_replacement_leaves_no_final_or_temp() {
+    let test_dir = TestDir::new("verifier-publish-parent-replace");
+    let parent = test_dir.path().join("output-parent");
+    let moved = test_dir.path().join("held-output-parent");
+    fs::create_dir(&parent).unwrap();
+    let provenance = parent.join("oracle-provenance.json");
+    let fixture = canonical_provenance();
+    let body = format!(
+        r#"import json
+import os
+import pathlib
+import stat
+
+parent = pathlib.Path({parent:?})
+moved = pathlib.Path({moved:?})
+provenance = pathlib.Path({provenance:?})
+document = json.loads(r'''{document}''')
+original_fsync = os.fsync
+redirected = False
+
+def replace_parent_after_temp_fsync(fd):
+    global redirected
+    original_fsync(fd)
+    if not redirected and stat.S_ISREG(os.fstat(fd).st_mode):
+        parent.rename(moved)
+        parent.mkdir()
+        redirected = True
+
+os.fsync = replace_parent_after_temp_fsync
+try:
+    controller.publish_provenance(provenance, document)
+except controller.OracleError:
+    pass
+else:
+    raise AssertionError("output parent replacement was accepted")
+finally:
+    os.fsync = original_fsync
+
+for directory in (parent, moved):
+    assert not (directory / provenance.name).exists()
+    assert not list(directory.glob(".*.provenance-*"))
+"#,
+        parent = parent.to_string_lossy(),
+        moved = moved.to_string_lossy(),
+        provenance = provenance.to_string_lossy(),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+fn oracle_verifier_wrappers_keep_verification_in_linux_and_preserve_callback_argv() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("compat crate must be below the repository root");
+    let bash = fs::read_to_string(root.join("scripts/compat/verify-redis-8.8.1.sh"))
+        .expect("Bash verifier wrapper must exist");
+    let powershell = fs::read_to_string(root.join("scripts/compat/verify-redis-8.8.1.ps1"))
+        .expect("PowerShell verifier wrapper must exist");
+
+    assert!(bash.contains("oracle_controller.py"));
+    assert!(
+        bash.contains("\"$@\""),
+        "Bash wrapper must preserve argv boundaries"
+    );
+    assert!(!bash.contains("eval "));
+    assert!(powershell.contains("wslpath"));
+    assert!(powershell.contains("--run-after-ready"));
+    assert!(!powershell.contains("Invoke-Expression"));
+    assert!(!powershell.contains("Start-Process"));
+}
+
+#[test]
+#[ignore = "real external Redis 8.8.1 primary plus independent rebuild"]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_real_redis_8_8_1_rebuild_runtime_callback_and_cleanup() {
+    let test_dir = TestDir::new("verifier-real-redis");
+    let source = test_dir.path().join("source-a");
+    let primary = test_dir.path().join("primary-build.json");
+    let provenance = test_dir.path().join("oracle-provenance.json");
+    let callback = test_dir.path().join("callback.py");
+    let callback_marker = test_dir.path().join("callback-ok.json");
+    clone_exact_redis(&source);
+
+    let primary_output = Command::new("/usr/bin/bash")
+        .arg(build_script_path())
+        .arg("--source")
+        .arg(&source)
+        .arg("--metadata")
+        .arg(&primary)
+        .env_clear()
+        .output()
+        .expect("primary build wrapper must start");
+    assert!(
+        primary_output.status.success(),
+        "primary build failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&primary_output.stdout),
+        String::from_utf8_lossy(&primary_output.stderr)
+    );
+
+    fs::write(
+        &callback,
+        r#"#!/usr/bin/python3
+import json
+import os
+import pathlib
+import socket
+import sys
+
+required = [
+    "KIWI_REDIS_ORACLE_HOST",
+    "KIWI_REDIS_ORACLE_PORT",
+    "KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE",
+]
+missing = [name for name in required if not os.environ.get(name)]
+if missing:
+    raise SystemExit(f"missing Oracle callback environment: {missing}")
+evidence_path = pathlib.Path(os.environ["KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE"])
+evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+if evidence["binary_sha256"] == "" or evidence["info_redis_versions"] != ["8.8.1"]:
+    raise SystemExit("invalid runtime evidence")
+try:
+    evidence_path.write_text("tampered", encoding="utf-8")
+except OSError:
+    pass
+else:
+    raise SystemExit("runtime evidence was writable")
+with socket.create_connection(
+    (os.environ["KIWI_REDIS_ORACLE_HOST"], int(os.environ["KIWI_REDIS_ORACLE_PORT"])),
+    timeout=5,
+) as connection:
+    connection.sendall(b"*1\r\n$4\r\nPING\r\n")
+    if connection.recv(64) != b"+PONG\r\n":
+        raise SystemExit("Oracle runtime did not answer PING")
+pathlib.Path(sys.argv[1]).write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&callback).unwrap().permissions();
+    use std::os::unix::fs::PermissionsExt;
+    permissions.set_mode(0o755);
+    fs::set_permissions(&callback, permissions).unwrap();
+
+    let output = Command::new("/usr/bin/bash")
+        .arg(verify_script_path())
+        .arg("--source")
+        .arg(&source)
+        .arg("--primary-metadata")
+        .arg(&primary)
+        .arg("--output")
+        .arg(&provenance)
+        .arg("--run-after-ready")
+        .arg(&callback)
+        .arg(&callback_marker)
+        .env_clear()
+        .output()
+        .expect("Redis verifier wrapper must start");
+    assert!(
+        output.status.success(),
+        "verifier failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let raw = fs::read_to_string(&provenance).expect("final provenance must exist");
+    let parsed = OracleProvenance::from_json(&raw).expect("final provenance must validate");
+    assert_eq!(parsed.primary().source().commit(), REDIS_COMMIT);
+    assert_eq!(parsed.rebuild().source().commit(), REDIS_COMMIT);
+    assert_eq!(
+        parsed.primary().redis_server().sha256(),
+        parsed.rebuild().redis_server().sha256()
+    );
+    assert_eq!(parsed.runtime().info_redis_versions(), &[REDIS_TAG]);
+    let document: Value = serde_json::from_str(&raw).unwrap();
+    for field in [
+        "redis_process_reaped",
+        "process_group_reaped",
+        "runtime_removed",
+        "checkout_removed",
+        "logs_removed",
+        "temp_removed",
+        "final_identity_revalidated",
+        "output_parent_revalidated",
+    ] {
+        assert_eq!(document["cleanup"][field], json!(true), "cleanup.{field}");
+    }
+    assert!(callback_marker.exists(), "callback did not complete");
+    assert!(
+        !Path::new(document["rebuild"]["source"]["root_path"].as_str().unwrap()).exists(),
+        "disposable rebuild checkout survived cleanup"
+    );
+    let runtime_pid = document["runtime"]["pid"].as_u64().unwrap();
+    assert!(
+        !Path::new(&format!("/proc/{runtime_pid}")).exists(),
+        "Redis runtime survived cleanup"
+    );
+    assert!(
+        fs::read_dir(test_dir.path()).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("oracle-verifier")),
+        "verifier temporary root survived cleanup"
+    );
+}
+
+#[test]
+#[ignore = "accept an externally generated provenance file through the Task 1 API"]
+#[cfg(target_os = "linux")]
+fn task1_external_provenance_file_is_accepted() {
+    let path = std::env::var_os("KIWI_ORACLE_PROVENANCE")
+        .map(PathBuf::from)
+        .expect("KIWI_ORACLE_PROVENANCE must name the fresh acceptance output");
+    let raw = fs::read_to_string(&path).expect("external provenance must be readable");
+    let provenance = OracleProvenance::from_json(&raw)
+        .unwrap_or_else(|error| panic!("Task 1 rejected {}: {error}", path.display()));
+    assert_eq!(provenance.schema_version(), PROVENANCE_SCHEMA);
+    assert_eq!(provenance.primary().source().commit(), REDIS_COMMIT);
+    assert_eq!(provenance.rebuild().source().commit(), REDIS_COMMIT);
+    assert_eq!(provenance.runtime().info_redis_versions(), &[REDIS_TAG]);
 }
 
 #[test]

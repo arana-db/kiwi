@@ -20,6 +20,7 @@ import pathlib
 import selectors
 import shutil
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -29,6 +30,7 @@ from datetime import datetime, timezone
 from typing import Callable, Iterable, Mapping, Sequence
 
 BUILD_SCHEMA = "kiwi-redis-oracle-build/v3"
+PROVENANCE_SCHEMA = "kiwi-redis-oracle-provenance/v3"
 RECIPE_ID = "redis-8.8.1-linux-release-v3"
 REDIS_TAG = "8.8.1"
 REDIS_COMMIT = "77b6c308396c9700672390a210143a8496fb4b10"
@@ -55,6 +57,9 @@ BUILD_TIMEOUT_MS = 1_200_000
 TERM_GRACE_MS = 5_000
 VERSION_OUTPUT_LIMIT = 16 * 1024
 BUILD_OUTPUT_LIMIT = 16 * 1024 * 1024
+CALLBACK_TIMEOUT_MS = 600_000
+CALLBACK_OUTPUT_LIMIT = 16 * 1024 * 1024
+REDIS_START_TIMEOUT_MS = 30_000
 CONTROLLED_PATH_FD = 198
 MAX_JSON_BYTES = 1024 * 1024
 
@@ -373,6 +378,96 @@ class CandidateTarget:
         self.parent.close()
 
 
+class HeldRegularFile:
+    """A bounded regular input retained through a no-follow file descriptor."""
+
+    def __init__(
+        self,
+        path: pathlib.Path,
+        parent_path: pathlib.Path,
+        basename: str,
+        parent: HeldDirectory,
+        fd: int,
+        limit: int,
+    ):
+        self.path = path
+        self.parent_path = parent_path
+        self.basename = basename
+        self.parent = parent
+        self.fd = fd
+        self.stat = os.fstat(fd)
+        if not stat.S_ISREG(self.stat.st_mode) or self.stat.st_size > limit:
+            raise OracleError(f"input must be a bounded regular file: {path}")
+        self.sha256 = _sha256_fd(fd)
+
+    @classmethod
+    def open(cls, argument: str | pathlib.Path, limit: int) -> "HeldRegularFile":
+        raw = os.fspath(argument)
+        if not os.path.isabs(raw) or os.path.normpath(raw) != raw:
+            raise OracleError("input file path must be absolute and canonical")
+        basename = os.path.basename(raw)
+        if not basename or basename in {".", ".."} or "/" in basename or "\\" in basename:
+            raise OracleError(f"invalid input basename: {basename!r}")
+        parent_path = pathlib.Path(os.path.dirname(raw))
+        parent = HeldDirectory.open_absolute_nofollow(parent_path)
+        fd = -1
+        try:
+            before = os.stat(basename, dir_fd=parent.fd, follow_symlinks=False)
+            fd = os.open(
+                basename,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=parent.fd,
+            )
+            held = cls(pathlib.Path(raw), parent_path, basename, parent, fd, limit)
+            if not _same_identity(before, held.stat):
+                raise OracleError(f"input changed while it was opened: {raw}")
+            return held
+        except BaseException:
+            if fd >= 0:
+                os.close(fd)
+            parent.close()
+            raise
+
+    def read_bytes(self) -> bytes:
+        os.lseek(self.fd, 0, os.SEEK_SET)
+        content = bytearray()
+        while len(content) <= self.stat.st_size:
+            chunk = os.read(self.fd, min(64 * 1024, self.stat.st_size + 1 - len(content)))
+            if not chunk:
+                break
+            content.extend(chunk)
+        os.lseek(self.fd, 0, os.SEEK_SET)
+        if len(content) != self.stat.st_size:
+            raise OracleError(f"input size changed while reading: {self.path}")
+        return bytes(content)
+
+    def verify_path(self) -> None:
+        visible = HeldDirectory.open_absolute_nofollow(self.parent_path)
+        try:
+            if not _same_directory_object(self.parent.stat, visible.stat):
+                raise OracleError(f"input parent changed: {self.parent_path}")
+        finally:
+            visible.close()
+        current = os.stat(self.basename, dir_fd=self.parent.fd, follow_symlinks=False)
+        if not _same_identity(self.stat, current) or _sha256_fd(self.fd) != self.sha256:
+            raise OracleError(f"input identity changed: {self.path}")
+
+    def close(self) -> None:
+        errors: list[BaseException] = []
+        if self.fd >= 0:
+            try:
+                os.close(self.fd)
+            except BaseException as error:
+                errors.append(error)
+            self.fd = -1
+        try:
+            self.parent.close()
+        except BaseException as error:
+            errors.append(error)
+        if errors:
+            raise OracleError(f"input close failed: {errors}")
+
+
 @dataclass
 class RunResult:
     argv: list[str]
@@ -441,6 +536,13 @@ class HeldExecutable:
             "identity": _file_identity(self.stat),
             "held_fd": True,
         }
+
+    def verify_path(self) -> None:
+        current = os.stat(self.path, follow_symlinks=False)
+        if not _same_identity(self.stat, current):
+            raise OracleError(f"tool {self.role!r} path identity changed: {self.path}")
+        if _sha256_fd(self.fd) != self.sha256:
+            raise OracleError(f"held tool {self.role!r} content changed")
 
     def close(self) -> None:
         if self.fd >= 0:
@@ -635,6 +737,7 @@ def run_bounded(
     extra_fds: Iterable[int] = (),
     readonly_bind_directories: Sequence["FrozenToolDirectory"] = (),
     cwd: pathlib.Path | None = None,
+    terminate_on_output_limit: bool = False,
 ) -> RunResult:
     """Run one held executable in a new process group with bounded evidence."""
     if not argv or any(not isinstance(value, str) or not value for value in argv):
@@ -709,6 +812,7 @@ def run_bounded(
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     counts = {"stdout": 0, "stderr": 0}
     timed_out = False
+    output_limit_hit = False
     deadline = started + timeout_ms / 1000
 
     while selector.get_map():
@@ -734,11 +838,22 @@ def run_bounded(
             capacity = limit - len(buffers[name])
             if capacity > 0:
                 buffers[name].extend(chunk[:capacity])
+            if terminate_on_output_limit and counts[name] > limit:
+                output_limit_hit = True
+                _signal_group(process.pid, signal.SIGTERM)
+                term_deadline = time.monotonic() + term_grace_ms / 1000
+                while time.monotonic() < term_deadline and process.poll() is None:
+                    time.sleep(0.01)
+                if process.poll() is None:
+                    _signal_group(process.pid, signal.SIGKILL)
+                break
+        if output_limit_hit:
+            break
         if process.poll() is not None and not events:
             # Pipes can still have buffered data, so continue until EOF.
             continue
 
-    if timed_out:
+    if timed_out or output_limit_hit:
         _signal_group(process.pid, signal.SIGKILL)
     try:
         exit_code = process.wait(timeout=max(1.0, term_grace_ms / 1000))
@@ -763,7 +878,7 @@ def run_bounded(
                 buffers[name].extend(chunk[:capacity])
         stream.close()
 
-    if timed_out:
+    if timed_out or output_limit_hit:
         group_reaped = _reap_descendants(process.pid, time.monotonic() + 2.0)
     else:
         group_reaped = _reap_descendants(process.pid, time.monotonic() + 0.2)
@@ -1107,6 +1222,95 @@ def publish_candidate(
             if linked and not completed:
                 try:
                     os.unlink(target.basename, dir_fd=target.parent.fd)
+                except FileNotFoundError:
+                    pass
+    finally:
+        if owned_target:
+            target.close()
+
+
+def _rename_noreplace(directory_fd: int, source: str, target: str) -> None:
+    rename_noreplace = 1
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    target_bytes = os.fsencode(target)
+    renameat2 = getattr(libc, "renameat2", None)
+    if renameat2 is not None:
+        result = renameat2(
+            directory_fd,
+            source_bytes,
+            directory_fd,
+            target_bytes,
+            rename_noreplace,
+        )
+    else:
+        result = libc.syscall(
+            316,
+            directory_fd,
+            source_bytes,
+            directory_fd,
+            target_bytes,
+            rename_noreplace,
+        )
+    if result == 0:
+        return
+    error = ctypes.get_errno()
+    if error == errno.EEXIST:
+        raise OracleError(f"output target already exists: {target}")
+    raise OSError(error, f"renameat2 RENAME_NOREPLACE: {os.strerror(error)}")
+
+
+def publish_provenance(
+    path: pathlib.Path | CandidateTarget, document: Mapping[str, object]
+) -> None:
+    """Publish final provenance only with same-directory atomic no-replace rename."""
+    owned_target = not isinstance(path, CandidateTarget)
+    target = CandidateTarget.open(path) if owned_target else path
+    try:
+        payload = canonical_json_bytes(document)
+        if len(payload) > MAX_JSON_BYTES:
+            raise OracleError(
+                f"final provenance exceeds {MAX_JSON_BYTES} byte JSON limit"
+            )
+        target.reject_existing()
+        temporary = (
+            f".{target.basename}.provenance-{os.getpid()}-{time.monotonic_ns()}"
+        )
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+            0o600,
+            dir_fd=target.parent.fd,
+        )
+        published = False
+        completed = False
+        try:
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OracleError("final provenance write made no progress")
+                view = view[written:]
+            os.fsync(fd)
+            os.close(fd)
+            fd = -1
+            target.verify_visible_parent()
+            _rename_noreplace(target.parent.fd, temporary, target.basename)
+            published = True
+            os.fsync(target.parent.fd)
+            target.verify_visible_parent()
+            completed = True
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            try:
+                os.unlink(temporary, dir_fd=target.parent.fd)
+            except FileNotFoundError:
+                pass
+            if published and not completed:
+                try:
+                    os.unlink(target.basename, dir_fd=target.parent.fd)
+                    os.fsync(target.parent.fd)
                 except FileNotFoundError:
                     pass
     finally:
@@ -1754,6 +1958,15 @@ def _tool_evidence(
                 cwd=version_cwd,
             )
             version = _command_text(result, tool.role)
+            if tool.role == "cc-component-cc1":
+                stable_lines = [
+                    line.strip()
+                    for line in version.splitlines()
+                    if line.strip()
+                ][:2]
+                if not stable_lines or "GNU" not in stable_lines[0]:
+                    raise OracleError("cc1 returned no stable GNU version identity")
+                version = "\n".join(stable_lines)
         evidence.append(tool.evidence(version))
     return evidence
 
@@ -1770,6 +1983,680 @@ def _recipe() -> dict[str, object]:
         "jobs": 1,
         "source_date_epoch": SOURCE_DATE_EPOCH,
         "argv": BUILD_ARGV,
+    }
+
+
+def _load_json_object(held: HeldRegularFile, label: str) -> dict[str, object]:
+    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise OracleError(f"{label} contains duplicate JSON key: {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        decoded = held.read_bytes().decode("utf-8", "strict")
+        document = json.loads(decoded, object_pairs_hook=reject_duplicates)
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise OracleError(f"{label} is not strict JSON: {error}") from error
+    if not isinstance(document, dict):
+        raise OracleError(f"{label} root must be an object")
+    return document
+
+
+def _require_object(value: object, field: str) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise OracleError(f"{field} must be an object")
+    return value
+
+
+def _require_list(value: object, field: str) -> list[object]:
+    if not isinstance(value, list):
+        raise OracleError(f"{field} must be an array")
+    return value
+
+
+def _require_exact_keys(value: Mapping[str, object], keys: set[str], field: str) -> None:
+    actual = set(value)
+    if actual != keys:
+        raise OracleError(
+            f"{field} keys differ: missing={sorted(keys - actual)}, unknown={sorted(actual - keys)}"
+        )
+
+
+def _validate_artifact_document(
+    root: HeldDirectory, document: Mapping[str, object]
+) -> None:
+    artifacts = _require_list(document.get("artifacts"), "artifacts")
+    if not artifacts or len(artifacts) > ArtifactLimits().max_count:
+        raise OracleError("artifact manifest count is invalid")
+    paths: list[str] = []
+    by_path: dict[str, dict[str, object]] = {}
+    total_bytes = 0
+    for index, raw_entry in enumerate(artifacts):
+        entry = _require_object(raw_entry, f"artifacts[{index}]")
+        kind = entry.get("kind")
+        path = entry.get("path")
+        if not isinstance(path, str):
+            raise OracleError(f"artifacts[{index}].path must be a string")
+        HeldDirectory._parts(path)
+        if path in by_path:
+            raise OracleError(f"duplicate artifact path: {path}")
+        metadata = root.lstat(path)
+        if kind == "regular":
+            _require_exact_keys(entry, {"kind", "path", "mode", "size", "sha256"}, f"artifacts[{index}]")
+            actual, sha256 = root.regular_evidence(path)
+            expected_mode = entry.get("mode")
+            expected_size = entry.get("size")
+            expected_sha = entry.get("sha256")
+            if (
+                isinstance(expected_mode, bool)
+                or not isinstance(expected_mode, int)
+                or isinstance(expected_size, bool)
+                or not isinstance(expected_size, int)
+                or not isinstance(expected_sha, str)
+                or actual.st_mode != expected_mode
+                or actual.st_size != expected_size
+                or sha256 != expected_sha
+            ):
+                raise OracleError(f"regular artifact evidence changed: {path}")
+            total_bytes += actual.st_size
+            if total_bytes > ArtifactLimits().max_total_bytes:
+                raise OracleError("artifact manifest exceeds total byte bound")
+        elif kind == "symlink":
+            _require_exact_keys(entry, {"kind", "path", "mode", "target"}, f"artifacts[{index}]")
+            target = entry.get("target")
+            expected_mode = entry.get("mode")
+            if (
+                isinstance(expected_mode, bool)
+                or not isinstance(expected_mode, int)
+                or not isinstance(target, str)
+                or not stat.S_ISLNK(metadata.st_mode)
+                or metadata.st_mode != expected_mode
+                or root.readlink(path) != target
+            ):
+                raise OracleError(f"symlink artifact evidence changed: {path}")
+            _resolve_manifest_symlink(path, target)
+        else:
+            raise OracleError(f"unsupported artifact kind at {path!r}: {kind!r}")
+        paths.append(path)
+        by_path[path] = entry
+    if paths != sorted(paths, key=os.fsencode):
+        raise OracleError("artifact manifest is not source-relative byte ordered")
+
+    for entry in by_path.values():
+        if entry["kind"] != "symlink":
+            continue
+        current_path = str(entry["path"])
+        visited: set[str] = set()
+        for _depth in range(9):
+            if current_path in visited:
+                raise OracleError(f"artifact symlink cycle at {entry['path']!r}")
+            visited.add(current_path)
+            target_entry = by_path.get(current_path)
+            if target_entry is None:
+                raise OracleError(f"artifact symlink target is absent: {current_path!r}")
+            if target_entry["kind"] == "regular":
+                break
+            current_path = _resolve_manifest_symlink(
+                str(target_entry["path"]), str(target_entry["target"])
+            )
+        else:
+            raise OracleError(f"artifact symlink depth exceeds eight: {entry['path']!r}")
+
+    redis_server = _require_object(document.get("redis_server"), "redis_server")
+    _require_exact_keys(
+        redis_server,
+        {"artifact_path", "path", "sha256", "identity"},
+        "redis_server",
+    )
+    if redis_server.get("artifact_path") != "src/redis-server":
+        raise OracleError("redis_server.artifact_path must equal src/redis-server")
+    if redis_server.get("path") != str(root.path / "src/redis-server"):
+        raise OracleError("redis_server.path is not bound to the held source")
+    binary_stat, binary_sha = root.regular_evidence("src/redis-server")
+    if (
+        redis_server.get("sha256") != binary_sha
+        or redis_server.get("identity") != _file_identity(binary_stat)
+        or not binary_stat.st_mode & 0o111
+    ):
+        raise OracleError("redis_server identity/hash changed")
+    binary_entry = by_path.get("src/redis-server")
+    if binary_entry is None or binary_entry.get("kind") != "regular":
+        raise OracleError("artifact manifest lacks regular src/redis-server")
+    if binary_entry.get("sha256") != binary_sha:
+        raise OracleError("redis_server SHA differs from its artifact entry")
+
+
+def _validate_build_document(
+    document: Mapping[str, object],
+    source_root: HeldDirectory,
+    expected_tools: Sequence[Mapping[str, object]],
+) -> None:
+    _require_exact_keys(
+        document,
+        {
+            "schema_version",
+            "source",
+            "recipe",
+            "tools",
+            "artifacts",
+            "redis_server",
+            "started_at_utc",
+            "finished_at_utc",
+        },
+        "build evidence",
+    )
+    if document.get("schema_version") != BUILD_SCHEMA:
+        raise OracleError("build evidence schema is not v3")
+    source = _require_object(document.get("source"), "source")
+    expected_source = {
+        "repository": REDIS_REPOSITORY,
+        "tag": REDIS_TAG,
+        "commit": REDIS_COMMIT,
+        "head": REDIS_COMMIT,
+        "tag_commit": REDIS_COMMIT,
+        "root_path": str(source_root.path),
+        "git_dir_path": str(source_root.path / ".git"),
+        "tracked_untracked_clean": True,
+    }
+    if source != expected_source:
+        raise OracleError("build source evidence is not exact or held-source bound")
+    if document.get("recipe") != _recipe():
+        raise OracleError("build recipe evidence differs from the fixed v3 recipe")
+    actual_tools = document.get("tools")
+    if actual_tools != list(expected_tools):
+        if not isinstance(actual_tools, list):
+            detail = "metadata tools is not an array"
+        elif len(actual_tools) != len(expected_tools):
+            detail = f"count metadata={len(actual_tools)} verifier={len(expected_tools)}"
+        else:
+            detail = "unknown tool difference"
+            for index, (actual, expected) in enumerate(zip(actual_tools, expected_tools)):
+                if actual != expected:
+                    actual_role = actual.get("role") if isinstance(actual, dict) else None
+                    expected_role = expected.get("role")
+                    differing = sorted(
+                        key
+                        for key in set(actual if isinstance(actual, dict) else {}).union(expected)
+                        if not isinstance(actual, dict) or actual.get(key) != expected.get(key)
+                    )
+                    detail = (
+                        f"index={index} metadata_role={actual_role!r} "
+                        f"verifier_role={expected_role!r} fields={differing}"
+                    )
+                    break
+        raise OracleError(
+            f"build tool evidence differs from independently held tools: {detail}"
+        )
+    if not isinstance(document.get("started_at_utc"), str) or not isinstance(
+        document.get("finished_at_utc"), str
+    ):
+        raise OracleError("build timestamps must be strings")
+    _validate_artifact_document(source_root, document)
+
+
+def _compare_builds(
+    primary: Mapping[str, object], rebuild: Mapping[str, object]
+) -> dict[str, bool]:
+    primary_source = _require_object(primary.get("source"), "primary.source")
+    rebuild_source = _require_object(rebuild.get("source"), "rebuild.source")
+    source_fields = ("repository", "tag", "commit", "head", "tag_commit")
+    source_equal = all(primary_source.get(field) == rebuild_source.get(field) for field in source_fields)
+    comparisons = {
+        "manifests_equal": primary.get("artifacts") == rebuild.get("artifacts"),
+        "redis_server_sha256_equal": _require_object(
+            primary.get("redis_server"), "primary.redis_server"
+        ).get("sha256")
+        == _require_object(rebuild.get("redis_server"), "rebuild.redis_server").get("sha256"),
+        "source_identity_equal": source_equal,
+        "recipe_equal": primary.get("recipe") == rebuild.get("recipe"),
+        "toolchain_equal": primary.get("tools") == rebuild.get("tools"),
+    }
+    failed = [field for field, equal in comparisons.items() if not equal]
+    if failed:
+        raise OracleError(f"primary/rebuild equality failed before Redis startup: {failed}")
+    return comparisons
+
+
+def _reserve_child_directory(parent: HeldDirectory, prefix: str) -> tuple[str, HeldDirectory]:
+    for attempt in range(100):
+        name = f".{prefix}-{os.getpid()}-{time.monotonic_ns()}-{attempt}"
+        try:
+            os.mkdir(name, mode=0o700, dir_fd=parent.fd)
+        except FileExistsError:
+            continue
+        return name, parent.open_directory(name)
+    raise OracleError(f"unable to reserve {prefix} directory")
+
+
+def _require_command_success(result: RunResult, label: str) -> None:
+    if result.timed_out or result.output_truncated or result.exit_code != 0:
+        raise OracleError(
+            f"{label} failed: exit={result.exit_code}, timeout={result.timed_out}, "
+            f"truncated={result.output_truncated}; "
+            f"stderr={result.stderr.decode('utf-8', 'replace')}"
+        )
+
+
+def _object_file_identities(root: HeldDirectory) -> set[tuple[int, int]]:
+    identities: set[tuple[int, int]] = set()
+    pending = [os.dup(root.fd)]
+    while pending:
+        directory_fd = pending.pop()
+        try:
+            for name in os.listdir(directory_fd):
+                metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISDIR(metadata.st_mode):
+                    pending.append(
+                        os.open(
+                            name,
+                            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                            dir_fd=directory_fd,
+                        )
+                    )
+                elif stat.S_ISREG(metadata.st_mode):
+                    if metadata.st_nlink != 1:
+                        raise OracleError("independent Git object storage contains hardlinks")
+                    identities.add((metadata.st_dev, metadata.st_ino))
+                else:
+                    raise OracleError("independent Git object storage contains non-regular entry")
+        finally:
+            os.close(directory_fd)
+    return identities
+
+
+def _clone_independent_source(
+    source_root: HeldDirectory,
+    verifier_root: HeldDirectory,
+    git: HeldExecutable,
+    tools: Sequence[HeldExecutable],
+    env: Mapping[str, str],
+    aliases_directory: FrozenToolDirectory,
+) -> HeldDirectory:
+    checkout_name = "checkout-b"
+    checkout_path = verifier_root.path / checkout_name
+    result = run_bounded(
+        git,
+        [
+            "git",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "protocol.file.allow=always",
+            "clone",
+            "--no-hardlinks",
+            "--no-checkout",
+            f"/proc/self/fd/{source_root.fd}",
+            f"/proc/self/fd/{verifier_root.fd}/{checkout_name}",
+        ],
+        env=env,
+        timeout_ms=COMMAND_TIMEOUT_MS,
+        term_grace_ms=1_000,
+        stdout_limit_bytes=1024 * 1024,
+        stderr_limit_bytes=1024 * 1024,
+        extra_fds=(verifier_root.fd, source_root.fd, *(tool.fd for tool in tools)),
+        readonly_bind_directories=(aliases_directory,),
+    )
+    _require_command_success(result, "fresh independent checkout clone")
+    checkout = HeldDirectory.open(checkout_path)
+    git_dir: HeldDirectory | None = None
+    source_git: HeldDirectory | None = None
+    try:
+        git_dir = checkout.open_directory(".git")
+        for args in (
+            ["checkout", "--detach", REDIS_COMMIT],
+            ["remote", "set-url", "origin", REDIS_REPOSITORY],
+        ):
+            _git_bytes(git, checkout, git_dir, args, env)
+        _validate_git_trust_root(checkout, git_dir, git, env)
+        _validate_pristine_source_tree(checkout, git_dir, git, env)
+        _validate_source(checkout, git_dir, git, env)
+        source_git = source_root.open_directory(".git")
+        source_objects = source_git.open_directory("objects")
+        checkout_objects = git_dir.open_directory("objects")
+        try:
+            source_ids = _object_file_identities(source_objects)
+            checkout_ids = _object_file_identities(checkout_objects)
+            if source_ids.intersection(checkout_ids):
+                raise OracleError("fresh checkout shares Git object identities with source A")
+        finally:
+            checkout_objects.close()
+            source_objects.close()
+        reopened = HeldDirectory.open(checkout_path)
+        if not _same_directory_object(checkout.stat, reopened.stat):
+            reopened.close()
+            raise OracleError("checkout B root was replaced during exact checkout")
+        checkout.close()
+        checkout = reopened
+        source_root.verify_path()
+        return checkout
+    except BaseException:
+        checkout.close()
+        raise
+    finally:
+        if source_git is not None:
+            source_git.close()
+        if git_dir is not None:
+            git_dir.close()
+
+
+def _validate_built_source_revision(
+    source: HeldDirectory,
+    git: HeldExecutable,
+    env: Mapping[str, str],
+) -> None:
+    git_dir = source.open_directory(".git")
+    try:
+        _validate_git_trust_root(source, git_dir, git, env)
+        head = _git_text(git, source, git_dir, ["rev-parse", "HEAD"], env)
+        tag_commit = _git_text(
+            git, source, git_dir, ["rev-parse", f"{REDIS_TAG}^{{commit}}"], env
+        )
+        repository = _git_text(
+            git, source, git_dir, ["remote", "get-url", "origin"], env
+        )
+        if head != REDIS_COMMIT or tag_commit != REDIS_COMMIT or repository != REDIS_REPOSITORY:
+            raise OracleError("primary source revision/origin is no longer exact Redis 8.8.1")
+    finally:
+        git_dir.close()
+
+
+def _build_rebuild_candidate(
+    checkout: HeldDirectory,
+    verifier_root: HeldDirectory,
+    python: HeldExecutable,
+    controller: HeldExecutable,
+    tools: Sequence[HeldExecutable],
+    env: Mapping[str, str],
+) -> tuple[HeldRegularFile, dict[str, object]]:
+    metadata_path = verifier_root.path / "rebuild-build.json"
+    result = run_bounded(
+        python,
+        [
+            str(python.path),
+            "-I",
+            "-B",
+            f"/proc/self/fd/{controller.fd}",
+            "--bootstrap-python-path",
+            str(python.path),
+            "--bootstrap-python-fd",
+            str(python.fd),
+            "--bootstrap-controller-path",
+            str(controller.path),
+            "--bootstrap-controller-fd",
+            str(controller.fd),
+            "--source",
+            str(checkout.path),
+            "--metadata",
+            str(metadata_path),
+        ],
+        env=env,
+        timeout_ms=BUILD_TIMEOUT_MS + COMMAND_TIMEOUT_MS,
+        term_grace_ms=TERM_GRACE_MS,
+        stdout_limit_bytes=BUILD_OUTPUT_LIMIT,
+        stderr_limit_bytes=BUILD_OUTPUT_LIMIT,
+        extra_fds=(
+            verifier_root.fd,
+            checkout.fd,
+            controller.fd,
+            python.fd,
+            *(tool.fd for tool in tools),
+        ),
+    )
+    _require_command_success(result, "independent Redis rebuild")
+    metadata = HeldRegularFile.open(metadata_path, MAX_JSON_BYTES)
+    document = _load_json_object(metadata, "rebuild metadata")
+    return metadata, document
+
+
+def _read_resp_line(connection: socket.socket, limit: int) -> bytes:
+    line = bytearray()
+    while len(line) <= limit:
+        chunk = connection.recv(1)
+        if not chunk:
+            raise OracleError("Redis runtime closed INFO response early")
+        line.extend(chunk)
+        if line.endswith(b"\r\n"):
+            return bytes(line[:-2])
+    raise OracleError("Redis runtime response line exceeds byte bound")
+
+
+def _query_redis_info(host: str, port: int) -> list[str]:
+    with socket.create_connection((host, port), timeout=1.0) as connection:
+        connection.settimeout(1.0)
+        connection.sendall(b"*2\r\n$4\r\nINFO\r\n$6\r\nserver\r\n")
+        header = _read_resp_line(connection, 128)
+        if not header.startswith(b"$"):
+            raise OracleError(f"Redis INFO did not return a bulk string: {header!r}")
+        try:
+            size = int(header[1:])
+        except ValueError as error:
+            raise OracleError("Redis INFO returned an invalid bulk length") from error
+        if size <= 0 or size > 1024 * 1024:
+            raise OracleError("Redis INFO bulk length is outside the byte bound")
+        payload = bytearray()
+        while len(payload) < size + 2:
+            chunk = connection.recv(size + 2 - len(payload))
+            if not chunk:
+                raise OracleError("Redis INFO bulk payload ended early")
+            payload.extend(chunk)
+        if payload[-2:] != b"\r\n":
+            raise OracleError("Redis INFO bulk payload lacks CRLF")
+        text = bytes(payload[:-2]).decode("utf-8", "strict")
+    return [line.split(":", 1)[1] for line in text.splitlines() if line.startswith("redis_version:")]
+
+
+def _start_redis_runtime(
+    binary: HeldExecutable,
+    runtime_root: HeldDirectory,
+    logs_root: HeldDirectory,
+) -> tuple[subprocess.Popen[bytes], int, dict[str, object]]:
+    log_fd = os.open(
+        "redis.log",
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+        0o600,
+        dir_fd=logs_root.fd,
+    )
+    process: subprocess.Popen[bytes] | None = None
+    port = 0
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            port = int(reservation.getsockname()[1])
+        process = subprocess.Popen(
+            [
+                str(binary.path),
+                "--bind",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--protected-mode",
+                "no",
+                "--save",
+                "",
+                "--appendonly",
+                "no",
+                "--daemonize",
+                "no",
+                "--dir",
+                f"/proc/self/fd/{runtime_root.fd}",
+                "--dbfilename",
+                "oracle.rdb",
+                "--loglevel",
+                "warning",
+            ],
+            executable=f"/proc/self/fd/{binary.fd}",
+            stdin=subprocess.DEVNULL,
+            stdout=log_fd,
+            stderr=log_fd,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "HOME": f"/proc/self/fd/{runtime_root.fd}",
+                "TMPDIR": f"/proc/self/fd/{runtime_root.fd}",
+                "LC_ALL": "C",
+                "LANG": "C",
+                "TZ": "UTC",
+            },
+            cwd=f"/proc/self/fd/{runtime_root.fd}",
+            close_fds=True,
+            pass_fds=(binary.fd, runtime_root.fd),
+            start_new_session=True,
+        )
+    finally:
+        os.close(log_fd)
+    assert process is not None
+    try:
+        deadline = time.monotonic() + REDIS_START_TIMEOUT_MS / 1000
+        info_versions: list[str] | None = None
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise OracleError(
+                    f"held rebuild Redis exited before readiness: {process.returncode}"
+                )
+            try:
+                info_versions = _query_redis_info("127.0.0.1", port)
+                break
+            except (ConnectionError, OSError, OracleError):
+                time.sleep(0.05)
+        if info_versions is None:
+            raise OracleError("held rebuild Redis did not become ready before deadline")
+        if info_versions != [REDIS_TAG]:
+            raise OracleError(
+                f"Redis INFO server must contain exactly one redis_version:{REDIS_TAG}; got {info_versions}"
+            )
+        proc_identity = os.stat(f"/proc/{process.pid}/exe")
+        if not _same_identity(binary.stat, proc_identity):
+            raise OracleError("Redis /proc executable identity differs from held rebuild binary")
+        binary.verify_path()
+        return process, port, {
+            "build_role": "rebuild",
+            "binary_path": str(binary.path),
+            "binary_sha256": binary.sha256,
+            "binary_identity": _file_identity(binary.stat),
+            "held_fd": True,
+            "pid": process.pid,
+            "info_redis_versions": info_versions,
+        }
+    except BaseException as business_error:
+        try:
+            _stop_process_group(process, "failed Redis startup")
+        except BaseException as cleanup_error:
+            raise OracleError(
+                f"{business_error}; Redis startup cleanup failed: {cleanup_error}"
+            ) from business_error
+        raise
+
+
+def _stop_process_group(process: subprocess.Popen[bytes], label: str) -> None:
+    if process.poll() is None:
+        _signal_group(process.pid, signal.SIGTERM)
+        try:
+            process.wait(timeout=TERM_GRACE_MS / 1000)
+        except subprocess.TimeoutExpired:
+            _signal_group(process.pid, signal.SIGKILL)
+            process.wait(timeout=5)
+    _signal_group(process.pid, signal.SIGKILL)
+    if not _reap_descendants(process.pid, time.monotonic() + 2.0):
+        raise OracleError(f"{label} process group was not fully reaped")
+    if process.poll() is None:
+        raise OracleError(f"{label} process was not reaped")
+
+
+def _write_runtime_evidence(
+    runtime_root: HeldDirectory, runtime: Mapping[str, object]
+) -> int:
+    payload = canonical_json_bytes(runtime)
+    fd = os.open(
+        "runtime-evidence.json",
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+        0o400,
+        dir_fd=runtime_root.fd,
+    )
+    try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OracleError("runtime evidence write made no progress")
+            view = view[written:]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    evidence_fd = runtime_root.open_regular("runtime-evidence.json")
+    if _sha256_fd(evidence_fd) != hashlib.sha256(payload).hexdigest():
+        os.close(evidence_fd)
+        raise OracleError("runtime evidence changed after publication to held FD")
+    return evidence_fd
+
+
+def _run_callback(
+    callback_argv: Sequence[str],
+    aliases_directory: FrozenToolDirectory,
+    callback_root: HeldDirectory,
+    runtime_evidence_fd: int,
+    host: str,
+    port: int,
+) -> dict[str, object]:
+    if not callback_argv or len(callback_argv) > 32:
+        raise OracleError("--run-after-ready requires 1..32 callback argv entries")
+    executable_path = pathlib.Path(callback_argv[0])
+    if not executable_path.is_absolute():
+        raise OracleError("callback executable must use an absolute path")
+    home = callback_root.path / "home"
+    temporary = callback_root.path / "tmp"
+    working = callback_root.path / "work"
+    for path in (home, temporary, working):
+        path.mkdir(mode=0o700)
+    executable = HeldExecutable.open("callback", executable_path)
+    try:
+        env = _sanitized_environment(aliases_directory.child_path, home, temporary)
+        env.update(
+            {
+                "KIWI_REDIS_ORACLE_HOST": host,
+                "KIWI_REDIS_ORACLE_PORT": str(port),
+                "KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE": f"/proc/self/fd/{runtime_evidence_fd}",
+            }
+        )
+        result = run_bounded(
+            executable,
+            callback_argv,
+            env=env,
+            timeout_ms=CALLBACK_TIMEOUT_MS,
+            term_grace_ms=TERM_GRACE_MS,
+            stdout_limit_bytes=CALLBACK_OUTPUT_LIMIT,
+            stderr_limit_bytes=CALLBACK_OUTPUT_LIMIT,
+            extra_fds=(callback_root.fd, runtime_evidence_fd),
+            readonly_bind_directories=(aliases_directory,),
+            cwd=working,
+            terminate_on_output_limit=True,
+        )
+    finally:
+        executable.close()
+    if result.timed_out or result.output_truncated or result.exit_code != 0:
+        raise OracleError(
+            "Oracle callback failed: "
+            f"exit={result.exit_code}, timeout={result.timed_out}, "
+            f"truncated={result.output_truncated}; "
+            f"stderr={result.stderr.decode('utf-8', 'replace')}"
+        )
+    return {
+        "argv": result.argv,
+        "timeout_ms": result.timeout_ms,
+        "term_grace_ms": result.term_grace_ms,
+        "stdout_limit_bytes": result.stdout_limit_bytes,
+        "stderr_limit_bytes": result.stderr_limit_bytes,
+        "stdout_bytes": result.stdout_bytes,
+        "stderr_bytes": result.stderr_bytes,
+        "started_at_utc": result.started_at_utc,
+        "finished_at_utc": result.finished_at_utc,
+        "exit_code": result.exit_code,
+        "timed_out": result.timed_out,
+        "output_truncated": result.output_truncated,
+        "process_group_reaped": result.process_group_reaped,
     }
 
 
@@ -1791,6 +2678,331 @@ def _assert_no_checkout_path_in_binary(
             tail = data[-overlap:] if overlap else b""
     finally:
         os.close(fd)
+
+
+def verify_oracle(
+    source_argument: str,
+    primary_metadata_argument: str,
+    output_argument: str,
+    callback_argv: Sequence[str],
+    bootstrap_python_path: pathlib.Path,
+    bootstrap_python_fd: int,
+    bootstrap_controller_path: pathlib.Path,
+    bootstrap_controller_fd: int,
+) -> None:
+    if not sys.flags.isolated or sys.dont_write_bytecode is False:
+        raise OracleError("controller must run with Python -I -B")
+    if sys.platform != "linux" or os.uname().machine not in {"x86_64", "amd64"}:
+        raise OracleError("Redis Oracle verification supports Linux x86_64 only")
+    if not callback_argv:
+        raise OracleError("--run-after-ready requires callback argv")
+    for value in (
+        source_argument,
+        primary_metadata_argument,
+        output_argument,
+    ):
+        if not pathlib.Path(value).is_absolute():
+            raise OracleError("--source, --primary-metadata, and --output must be absolute")
+
+    target = CandidateTarget.open(output_argument)
+    source_root: HeldDirectory | None = None
+    primary_metadata: HeldRegularFile | None = None
+    controller: HeldExecutable | None = None
+    python: HeldExecutable | None = None
+    tools: list[HeldExecutable] = []
+    aliases_directory: FrozenToolDirectory | None = None
+    verifier_name: str | None = None
+    verifier_root: HeldDirectory | None = None
+    checkout: HeldDirectory | None = None
+    rebuild_metadata: HeldRegularFile | None = None
+    rebuild_binary: HeldExecutable | None = None
+    runtime_root: HeldDirectory | None = None
+    logs_root: HeldDirectory | None = None
+    callback_root: HeldDirectory | None = None
+    runtime_evidence_fd = -1
+    redis_process: subprocess.Popen[bytes] | None = None
+    primary_document: dict[str, object] | None = None
+    rebuild_document: dict[str, object] | None = None
+    comparison: dict[str, bool] | None = None
+    runtime_document: dict[str, object] | None = None
+    callback_document: dict[str, object] | None = None
+    business_error: BaseException | None = None
+    cleanup_errors: list[tuple[str, BaseException]] = []
+    cleanup_state = {
+        "redis_process_reaped": False,
+        "process_group_reaped": False,
+        "runtime_removed": False,
+        "checkout_removed": False,
+        "logs_removed": False,
+        "temp_removed": False,
+        "final_identity_revalidated": False,
+        "output_parent_revalidated": False,
+    }
+
+    def cleanup(label: str, action: Callable[[], None]) -> None:
+        try:
+            action()
+        except BaseException as error:
+            cleanup_errors.append((label, error))
+
+    try:
+        source_path = pathlib.Path(source_argument).resolve(strict=True)
+        if not source_path.is_dir() or source_path.is_symlink():
+            raise OracleError("--source must resolve to a real directory")
+        if target.parent_path == source_path or source_path in target.parent_path.parents:
+            raise OracleError("final provenance and verifier temp root must be outside source A")
+        source_root = HeldDirectory.open(source_path)
+        primary_metadata = HeldRegularFile.open(primary_metadata_argument, MAX_JSON_BYTES)
+        if primary_metadata.path == target.path:
+            raise OracleError("primary metadata and final provenance paths must differ")
+
+        verifier_name, verifier_root = _reserve_child_directory(
+            target.parent, "kiwi-oracle-verifier"
+        )
+        held_verifier_path = pathlib.Path(f"/proc/self/fd/{verifier_root.fd}")
+        runtime_path = held_verifier_path / "runtime"
+        logs_path = held_verifier_path / "logs"
+        callback_path = held_verifier_path / "callback"
+        for path in (
+            held_verifier_path / "home",
+            held_verifier_path / "tmp",
+            held_verifier_path / "versions",
+            runtime_path,
+            logs_path,
+            callback_path,
+        ):
+            path.mkdir(mode=0o700)
+        runtime_root = verifier_root.open_directory("runtime")
+        logs_root = verifier_root.open_directory("logs")
+        callback_root = verifier_root.open_directory("callback")
+        home = held_verifier_path / "home"
+        temporary = held_verifier_path / "tmp"
+        versions = held_verifier_path / "versions"
+        tool_path = held_verifier_path / "tools"
+
+        controller = HeldExecutable.from_fd(
+            "controller", bootstrap_controller_path, bootstrap_controller_fd
+        )
+        python = HeldExecutable.from_fd(
+            "python", bootstrap_python_path, bootstrap_python_fd
+        )
+        discovery_env = _sanitized_environment("/usr/bin:/bin", home, temporary)
+        tools, aliases, versions_by_role = _register_tools(
+            controller, python, discovery_env, versions, tools
+        )
+        aliases_directory = FrozenToolDirectory.create(tool_path, aliases)
+        env = _sanitized_environment(aliases_directory.child_path, home, temporary)
+        tool_evidence = _tool_evidence(
+            tools, versions_by_role, env, versions, aliases_directory
+        )
+        _empty_directory(versions, "verifier tool version working directory")
+        _empty_directory(home, "verifier HOME")
+        _empty_directory(temporary, "verifier TMPDIR")
+        git = next(tool for tool in tools if tool.role == "git")
+
+        _validate_built_source_revision(source_root, git, env)
+        primary_document = _load_json_object(primary_metadata, "primary metadata")
+        _validate_build_document(primary_document, source_root, tool_evidence)
+        checkout = _clone_independent_source(
+            source_root, verifier_root, git, tools, env, aliases_directory
+        )
+        rebuild_metadata, rebuild_document = _build_rebuild_candidate(
+            checkout,
+            verifier_root,
+            python,
+            controller,
+            tools,
+            env,
+        )
+        _validate_build_document(rebuild_document, checkout, tool_evidence)
+        comparison = _compare_builds(primary_document, rebuild_document)
+
+        rebuild_binary = HeldExecutable.open(
+            "redis-server", checkout.path / "src/redis-server"
+        )
+        redis_process, port, runtime_document = _start_redis_runtime(
+            rebuild_binary, runtime_root, logs_root
+        )
+        runtime_evidence_fd = _write_runtime_evidence(runtime_root, runtime_document)
+        immutable_path_snapshots = {
+            home: snapshot_tree(home),
+            temporary: snapshot_tree(temporary),
+            versions: snapshot_tree(versions),
+        }
+        checkout_snapshot = _tree_entries(checkout)
+        runtime_snapshot = _tree_entries(runtime_root)
+        verifier_identity_before_callback = os.fstat(verifier_root.fd)
+        runtime_evidence_sha256 = hashlib.sha256(
+            canonical_json_bytes(runtime_document)
+        ).hexdigest()
+        callback_document = _run_callback(
+            callback_argv,
+            aliases_directory,
+            callback_root,
+            runtime_evidence_fd,
+            "127.0.0.1",
+            port,
+        )
+        if redis_process.poll() is not None:
+            raise OracleError("Redis runtime exited during the supervised callback")
+        if _query_redis_info("127.0.0.1", port) != [REDIS_TAG]:
+            raise OracleError("Redis runtime INFO identity changed after callback")
+        if not _same_identity(
+            rebuild_binary.stat, os.stat(f"/proc/{redis_process.pid}/exe")
+        ):
+            raise OracleError("Redis /proc executable identity changed after callback")
+        rebuild_binary.verify_path()
+        aliases_directory.verify_frozen()
+        _validate_artifact_document(checkout, rebuild_document)
+        if _tree_entries(checkout) != checkout_snapshot:
+            raise OracleError("callback modified the verifier checkout B resource tree")
+        if _tree_entries(runtime_root) != runtime_snapshot:
+            raise OracleError("callback modified the verifier runtime resource tree")
+        for path, expected in immutable_path_snapshots.items():
+            if snapshot_tree(path) != expected:
+                raise OracleError(f"callback modified verifier resource directory: {path}")
+        verifier_identity_after_callback = os.fstat(verifier_root.fd)
+        if (
+            not _same_directory_object(
+                verifier_identity_before_callback, verifier_identity_after_callback
+            )
+            or stat.S_IMODE(verifier_identity_after_callback.st_mode) != 0o700
+        ):
+            raise OracleError("callback changed the verifier temp-root identity or mode")
+        rebuild_metadata.verify_path()
+        if _sha256_fd(runtime_evidence_fd) != runtime_evidence_sha256:
+            raise OracleError("callback modified held runtime evidence")
+    except BaseException as error:
+        business_error = error
+
+    if redis_process is not None:
+        def stop_redis() -> None:
+            assert redis_process is not None
+            _stop_process_group(redis_process, "Redis runtime")
+            cleanup_state["redis_process_reaped"] = True
+            cleanup_state["process_group_reaped"] = True
+
+        cleanup("Redis runtime reap", stop_redis)
+    if runtime_evidence_fd >= 0:
+        cleanup("runtime evidence close", lambda: os.close(runtime_evidence_fd))
+        runtime_evidence_fd = -1
+    if rebuild_binary is not None:
+        cleanup("rebuild binary close", rebuild_binary.close)
+    if rebuild_metadata is not None:
+        cleanup("rebuild metadata close", rebuild_metadata.close)
+    if callback_root is not None:
+        cleanup("callback directory close", callback_root.close)
+    if logs_root is not None:
+        cleanup("logs directory close", logs_root.close)
+    if runtime_root is not None:
+        cleanup("runtime directory close", runtime_root.close)
+    if checkout is not None:
+        cleanup("checkout B close", checkout.close)
+
+    if verifier_root is not None:
+        def remove_runtime() -> None:
+            assert verifier_root is not None
+            _remove_runtime_name(verifier_root.fd, "runtime")
+            cleanup_state["runtime_removed"] = True
+
+        def remove_checkout() -> None:
+            assert verifier_root is not None
+            _remove_runtime_name(verifier_root.fd, "checkout-b")
+            cleanup_state["checkout_removed"] = True
+
+        def remove_logs() -> None:
+            assert verifier_root is not None
+            _remove_runtime_name(verifier_root.fd, "logs")
+            cleanup_state["logs_removed"] = True
+
+        if runtime_root is not None:
+            cleanup("runtime remove", remove_runtime)
+        if checkout is not None:
+            cleanup("checkout B remove", remove_checkout)
+        if logs_root is not None:
+            cleanup("logs remove", remove_logs)
+    if aliases_directory is not None:
+        cleanup("controlled aliases remove", aliases_directory.remove_path)
+        cleanup("controlled aliases close", aliases_directory.close)
+    if verifier_root is not None and verifier_name is not None:
+        def remove_temp_root() -> None:
+            assert verifier_root is not None and verifier_name is not None
+            _remove_runtime_directory(target.parent.fd, verifier_name, verifier_root)
+            cleanup_state["temp_removed"] = True
+
+        cleanup("verifier temp root remove", remove_temp_root)
+        cleanup("verifier temp root close", verifier_root.close)
+
+    if business_error is None and not cleanup_errors:
+        def final_revalidation() -> None:
+            assert source_root is not None
+            assert primary_metadata is not None
+            assert primary_document is not None
+            source_root.verify_path()
+            primary_metadata.verify_path()
+            _validate_artifact_document(source_root, primary_document)
+            for tool in tools:
+                tool.verify_path()
+            target.verify_visible_parent()
+            target.reject_existing()
+            cleanup_state["final_identity_revalidated"] = True
+            cleanup_state["output_parent_revalidated"] = True
+
+        cleanup("final evidence identity revalidation", final_revalidation)
+
+    for index, tool in enumerate(tools):
+        cleanup(f"tool {index} close", tool.close)
+    if controller is not None and all(tool is not controller for tool in tools):
+        cleanup("controller close", controller.close)
+    if python is not None and all(tool is not python for tool in tools):
+        cleanup("Python close", python.close)
+    if primary_metadata is not None:
+        cleanup("primary metadata close", primary_metadata.close)
+    if source_root is not None:
+        cleanup("source A close", source_root.close)
+
+    try:
+        if cleanup_errors:
+            details = "; ".join(
+                f"{label}: {type(error).__name__}: {error}"
+                for label, error in cleanup_errors
+            )
+            if business_error is not None:
+                raise OracleError(
+                    f"{type(business_error).__name__}: {business_error}; cleanup errors: {details}"
+                ) from business_error
+            raise OracleError(f"verifier cleanup errors: {details}")
+        if business_error is not None:
+            raise business_error
+        if not all(cleanup_state.values()):
+            raise OracleError(f"cleanup-before-publish is incomplete: {cleanup_state}")
+        if any(
+            value is None
+            for value in (
+                primary_document,
+                rebuild_document,
+                comparison,
+                runtime_document,
+                callback_document,
+            )
+        ):
+            raise OracleError("verifier produced incomplete provenance evidence")
+        completed_at = _utc_now()
+        document = {
+            "schema_version": PROVENANCE_SCHEMA,
+            "primary": primary_document,
+            "rebuild": rebuild_document,
+            "comparison": comparison,
+            "runtime": runtime_document,
+            "callback": callback_document,
+            "cleanup": {**cleanup_state, "completed_at_utc": completed_at},
+            "published_after_cleanup": True,
+            "published_at_utc": _utc_now(),
+        }
+        publish_provenance(target, document)
+        print(str(target.path))
+    finally:
+        target.close()
 
 
 def build_primary(
@@ -1995,30 +3207,68 @@ def build_primary(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Build exact Redis 8.8.1 primary Oracle candidate evidence"
+        description="Build or independently verify exact Redis 8.8.1 Oracle evidence"
     )
     parser.add_argument("--bootstrap-python-path", required=True, help=argparse.SUPPRESS)
     parser.add_argument("--bootstrap-python-fd", type=int, required=True, help=argparse.SUPPRESS)
     parser.add_argument("--bootstrap-controller-path", required=True, help=argparse.SUPPRESS)
     parser.add_argument("--bootstrap-controller-fd", type=int, required=True, help=argparse.SUPPRESS)
     parser.add_argument("--source", required=True, help="absolute exact Redis 8.8.1 checkout")
-    parser.add_argument("--metadata", required=True, help="absolute candidate build metadata path")
+    parser.add_argument("--metadata", help="absolute candidate build metadata path")
+    parser.add_argument("--primary-metadata", help="absolute primary build metadata path")
+    parser.add_argument("--output", help="absolute final provenance path")
+    parser.add_argument(
+        "--run-after-ready",
+        nargs=argparse.REMAINDER,
+        default=None,
+        metavar="CALLBACK_ARG",
+        help="callback executable and argv run inside the verifier runtime lease",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = _parser().parse_args(argv)
     try:
-        build_primary(
-            arguments.source,
-            arguments.metadata,
-            pathlib.Path(arguments.bootstrap_python_path),
-            arguments.bootstrap_python_fd,
-            pathlib.Path(arguments.bootstrap_controller_path),
-            arguments.bootstrap_controller_fd,
-        )
+        if arguments.metadata is not None:
+            if any(
+                value is not None
+                for value in (
+                    arguments.primary_metadata,
+                    arguments.output,
+                    arguments.run_after_ready,
+                )
+            ):
+                raise OracleError("primary-build and verifier arguments cannot be mixed")
+            build_primary(
+                arguments.source,
+                arguments.metadata,
+                pathlib.Path(arguments.bootstrap_python_path),
+                arguments.bootstrap_python_fd,
+                pathlib.Path(arguments.bootstrap_controller_path),
+                arguments.bootstrap_controller_fd,
+            )
+        else:
+            if (
+                arguments.primary_metadata is None
+                or arguments.output is None
+                or not arguments.run_after_ready
+            ):
+                raise OracleError(
+                    "verifier requires --primary-metadata, --output, and --run-after-ready argv"
+                )
+            verify_oracle(
+                arguments.source,
+                arguments.primary_metadata,
+                arguments.output,
+                arguments.run_after_ready,
+                pathlib.Path(arguments.bootstrap_python_path),
+                arguments.bootstrap_python_fd,
+                pathlib.Path(arguments.bootstrap_controller_path),
+                arguments.bootstrap_controller_fd,
+            )
     except (OracleError, OSError, UnicodeError, ValueError) as error:
-        print(f"oracle build rejected: {error}", file=sys.stderr)
+        print(f"oracle operation rejected: {error}", file=sys.stderr)
         return 1
     return 0
 
