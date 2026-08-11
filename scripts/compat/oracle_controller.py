@@ -184,6 +184,26 @@ class HeldDirectory:
         finally:
             os.close(directory_fd)
 
+    def open_directory(self, relative: str) -> "HeldDirectory":
+        directory_fd, name = self._parent_fd(relative)
+        try:
+            fd = os.open(
+                name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=directory_fd,
+            )
+        finally:
+            os.close(directory_fd)
+        try:
+            held = HeldDirectory(self.path / relative, fd)
+            before = self.lstat(relative)
+            if not _same_identity(before, held.stat):
+                raise OracleError(f"directory changed while it was opened: {relative}")
+            return held
+        except BaseException:
+            os.close(fd)
+            raise
+
     def readlink(self, relative: str) -> str:
         directory_fd, name = self._parent_fd(relative)
         try:
@@ -514,6 +534,7 @@ def run_bounded(
     stderr_limit_bytes: int,
     extra_fds: Iterable[int] = (),
     readonly_bind_directories: Sequence["FrozenToolDirectory"] = (),
+    cwd: pathlib.Path | None = None,
 ) -> RunResult:
     """Run one held executable in a new process group with bounded evidence."""
     if not argv or any(not isinstance(value, str) or not value for value in argv):
@@ -572,6 +593,7 @@ def run_bounded(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=dict(env),
+            cwd=cwd,
             close_fds=True,
             pass_fds=passed_fds,
             start_new_session=True,
@@ -1008,7 +1030,6 @@ UTILITY_ALIASES = (
     "tr",
     "uname",
     "wc",
-    "which",
     "xargs",
 )
 
@@ -1045,23 +1066,54 @@ def _empty_directory(path: pathlib.Path, field: str) -> None:
 
 def _git_bytes(
     git: HeldExecutable,
-    source: pathlib.Path | HeldDirectory,
+    source: HeldDirectory,
+    git_dir: HeldDirectory,
     args: Sequence[str],
     env: Mapping[str, str],
 ) -> bytes:
-    source_path = (
-        f"/proc/self/fd/{source.fd}" if isinstance(source, HeldDirectory) else str(source)
+    source_path = f"/proc/self/fd/{source.fd}"
+    git_dir_path = f"/proc/self/fd/{git_dir.fd}"
+    git_env = dict(env)
+    git_env.update(
+        {
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_LITERAL_PATHSPECS": "1",
+            "GIT_ATTR_NOSYSTEM": "1",
+            "XDG_CONFIG_HOME": env["HOME"],
+        }
     )
-    source_fds = (source.fd,) if isinstance(source, HeldDirectory) else ()
+    safe_config = [
+        "-c",
+        "core.useReplaceRefs=false",
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "-c",
+        "core.attributesFile=/dev/null",
+        "-c",
+        "diff.external=",
+        "-c",
+        "protocol.file.allow=never",
+        "-c",
+        "protocol.ext.allow=never",
+    ]
     result = run_bounded(
         git,
-        ["git", "-C", source_path, *args],
-        env=env,
+        [
+            "git",
+            *safe_config,
+            f"--git-dir={git_dir_path}",
+            f"--work-tree={source_path}",
+            *args,
+        ],
+        env=git_env,
         timeout_ms=COMMAND_TIMEOUT_MS,
         term_grace_ms=1_000,
         stdout_limit_bytes=1024 * 1024,
         stderr_limit_bytes=1024 * 1024,
-        extra_fds=source_fds,
+        extra_fds=(source.fd, git_dir.fd),
     )
     if result.timed_out or result.output_truncated or result.exit_code != 0:
         raise OracleError(
@@ -1073,22 +1125,142 @@ def _git_bytes(
 
 def _git_text(
     git: HeldExecutable,
-    source: pathlib.Path | HeldDirectory,
+    source: HeldDirectory,
+    git_dir: HeldDirectory,
     args: Sequence[str],
     env: Mapping[str, str],
 ) -> str:
-    return _git_bytes(git, source, args, env).decode("utf-8", "strict").strip()
+    return _git_bytes(git, source, git_dir, args, env).decode("utf-8", "strict").strip()
+
+
+def _read_held_regular(root: HeldDirectory, relative: str, limit: int = 1024 * 1024) -> bytes:
+    fd = root.open_regular(relative)
+    try:
+        metadata = os.fstat(fd)
+        if metadata.st_size > limit:
+            raise OracleError(f"Git control file exceeds byte bound: {relative}")
+        content = bytearray()
+        while len(content) <= limit:
+            chunk = os.read(fd, min(64 * 1024, limit + 1 - len(content)))
+            if not chunk:
+                return bytes(content)
+            content.extend(chunk)
+        raise OracleError(f"Git control file exceeds byte bound: {relative}")
+    finally:
+        os.close(fd)
+
+
+def _reject_git_path(git_dir: HeldDirectory, relative: str) -> None:
+    try:
+        git_dir.lstat(relative)
+    except FileNotFoundError:
+        return
+    raise OracleError(f"source Git storage is not independent: .git/{relative}")
+
+
+def _validate_git_trust_root(
+    source: HeldDirectory,
+    git_dir: HeldDirectory,
+    git: HeldExecutable,
+    env: Mapping[str, str],
+) -> None:
+    for relative in (
+        "commondir",
+        "shallow",
+        "info/grafts",
+        "objects/info/alternates",
+        "objects/info/http-alternates",
+        "refs/replace",
+    ):
+        _reject_git_path(git_dir, relative)
+
+    try:
+        packed_refs = _read_held_regular(git_dir, "packed-refs")
+    except FileNotFoundError:
+        packed_refs = b""
+    if b" refs/replace/" in packed_refs:
+        raise OracleError("source Git storage contains packed replacement refs")
+
+    try:
+        pack_dir = git_dir.open_directory("objects/pack")
+    except FileNotFoundError:
+        pack_dir = None
+    if pack_dir is not None:
+        try:
+            promisor = sorted(
+                (name for name in os.listdir(pack_dir.fd) if name.endswith(".promisor")),
+                key=os.fsencode,
+            )
+            if promisor:
+                raise OracleError(f"source Git storage contains promisor packs: {promisor}")
+        finally:
+            pack_dir.close()
+
+    config_keys = _git_bytes(
+        git,
+        source,
+        git_dir,
+        ["config", "--local", "--null", "--name-only", "--list", "--no-includes"],
+        env,
+    ).split(b"\0")
+    unsafe_keys: list[str] = []
+    for raw_key in config_keys:
+        if not raw_key:
+            continue
+        key = raw_key.decode("utf-8", "strict").lower()
+        executable_or_authority = (
+            key in {
+                "core.fsmonitor",
+                "core.hookspath",
+                "core.attributesfile",
+                "core.worktree",
+                "core.sshcommand",
+                "gpg.program",
+                "sequence.editor",
+            }
+            or key.startswith(("include.", "includeif.", "extensions."))
+            or (key.startswith("filter.") and key.rsplit(".", 1)[-1] in {"clean", "smudge", "process"})
+            or (key.startswith("diff.") and key.rsplit(".", 1)[-1] in {"command", "textconv"})
+            or (key.startswith("remote.") and key.endswith(".promisor"))
+            or (key.startswith("credential.") and key.endswith(".helper"))
+            or (key.startswith("submodule.") and key.endswith(".update"))
+        )
+        if executable_or_authority:
+            unsafe_keys.append(key)
+    if unsafe_keys:
+        raise OracleError(f"source Git config contains unsafe extensions: {unsafe_keys}")
+
+    replace_refs = _git_text(
+        git,
+        source,
+        git_dir,
+        ["for-each-ref", "--format=%(refname)", "refs/replace"],
+        env,
+    )
+    if replace_refs:
+        raise OracleError(f"source Git storage contains replacement refs: {replace_refs}")
 
 
 def _validate_source(
-    source: HeldDirectory, git: HeldExecutable, env: Mapping[str, str]
+    source: HeldDirectory,
+    git_dir: HeldDirectory,
+    git: HeldExecutable,
+    env: Mapping[str, str],
 ) -> dict[str, object]:
-    head = _git_text(git, source, ["rev-parse", "HEAD"], env)
-    tag_commit = _git_text(git, source, ["rev-parse", f"{REDIS_TAG}^{{commit}}"], env)
-    status_output = _git_text(
-        git, source, ["status", "--porcelain=v1", "--untracked-files=all"], env
+    head = _git_text(git, source, git_dir, ["rev-parse", "HEAD"], env)
+    tag_commit = _git_text(
+        git, source, git_dir, ["rev-parse", f"{REDIS_TAG}^{{commit}}"], env
     )
-    repository = _git_text(git, source, ["remote", "get-url", "origin"], env)
+    status_output = _git_text(
+        git,
+        source,
+        git_dir,
+        ["status", "--porcelain=v1", "--untracked-files=all"],
+        env,
+    )
+    repository = _git_text(
+        git, source, git_dir, ["remote", "get-url", "origin"], env
+    )
     if head != REDIS_COMMIT or tag_commit != REDIS_COMMIT:
         raise OracleError(
             f"source must be exact Redis {REDIS_TAG} commit {REDIS_COMMIT}; "
@@ -1098,10 +1270,6 @@ def _validate_source(
         raise OracleError(f"source origin must equal {REDIS_REPOSITORY}, got {repository!r}")
     if status_output:
         raise OracleError("source checkout must be tracked/untracked clean before build")
-    git_dir_metadata = source.lstat(".git")
-    if not stat.S_ISDIR(git_dir_metadata.st_mode):
-        raise OracleError("source .git must be a real directory below source root")
-    git_dir = source.path / ".git"
     return {
         "repository": REDIS_REPOSITORY,
         "tag": REDIS_TAG,
@@ -1109,18 +1277,19 @@ def _validate_source(
         "head": head,
         "tag_commit": tag_commit,
         "root_path": str(source.path),
-        "git_dir_path": str(git_dir),
+        "git_dir_path": str(source.path / ".git"),
         "tracked_untracked_clean": True,
     }
 
 
 def _validate_pristine_source_tree(
     source: HeldDirectory,
+    git_dir: HeldDirectory,
     git: HeldExecutable,
     env: Mapping[str, str],
 ) -> dict[str, tuple[object, ...]]:
     index_records = _git_bytes(
-        git, source, ["ls-files", "-v", "-z", "--cached"], env
+        git, source, git_dir, ["ls-files", "-v", "-z", "--cached"], env
     ).split(b"\0")
     non_default_index_flags: list[str] = []
     for record in index_records:
@@ -1133,7 +1302,11 @@ def _validate_pristine_source_tree(
         if tag != b"H":
             non_default_index_flags.append(f"{tag.decode('ascii', 'replace')} {path}")
     tree_records = _git_bytes(
-        git, source, ["ls-tree", "-rz", "--full-tree", REDIS_COMMIT], env
+        git,
+        source,
+        git_dir,
+        ["ls-tree", "-rz", "--full-tree", REDIS_COMMIT],
+        env,
     ).split(b"\0")
     expected: dict[str, tuple[str, str]] = {}
     for record in tree_records:
@@ -1250,6 +1423,7 @@ def _register_tools(
     controller: HeldExecutable,
     python: HeldExecutable,
     discovery_env: Mapping[str, str],
+    discovery_cwd: pathlib.Path,
 ) -> tuple[list[HeldExecutable], dict[str, HeldExecutable], dict[str, tuple[str, ...]]]:
     tools = [controller, python]
     aliases: dict[str, HeldExecutable] = {"python3": python}
@@ -1271,18 +1445,17 @@ def _register_tools(
             aliases["sh"] = tool
 
     cc = next(tool for tool in tools if tool.role == "cc")
-    for program, query in (
-        ("cc1", "-print-prog-name=cc1"),
-        ("collect2", "-print-prog-name=collect2"),
-        ("lto-wrapper", "-print-prog-name=lto-wrapper"),
-        ("liblto_plugin.so", "-print-file-name=liblto_plugin.so"),
-        ("crtbegin.o", "-print-file-name=crtbegin.o"),
-        ("crtbeginS.o", "-print-file-name=crtbeginS.o"),
-        ("crtbeginT.o", "-print-file-name=crtbeginT.o"),
-        ("crtend.o", "-print-file-name=crtend.o"),
-        ("crtendS.o", "-print-file-name=crtendS.o"),
-        ("libgcc.a", "-print-file-name=libgcc.a"),
-        ("libgcc_s.so", "-print-file-name=libgcc_s.so"),
+    for program, query, component_version in (
+        ("cc1", "-print-prog-name=cc1", ("-version", "-o", "/dev/null", "/dev/null")),
+        ("collect2", "-print-prog-name=collect2", ("--version",)),
+        ("liblto_plugin.so", "-print-file-name=liblto_plugin.so", None),
+        ("crtbegin.o", "-print-file-name=crtbegin.o", None),
+        ("crtbeginS.o", "-print-file-name=crtbeginS.o", None),
+        ("crtbeginT.o", "-print-file-name=crtbeginT.o", None),
+        ("crtend.o", "-print-file-name=crtend.o", None),
+        ("crtendS.o", "-print-file-name=crtendS.o", None),
+        ("libgcc.a", "-print-file-name=libgcc.a", None),
+        ("libgcc_s.so", "-print-file-name=libgcc_s.so", None),
     ):
         result = run_bounded(
             cc,
@@ -1292,6 +1465,7 @@ def _register_tools(
             term_grace_ms=1_000,
             stdout_limit_bytes=VERSION_OUTPUT_LIMIT,
             stderr_limit_bytes=VERSION_OUTPUT_LIMIT,
+            cwd=discovery_cwd,
         )
         path_text = _command_text(result, f"cc {program} discovery").splitlines()[0]
         path = pathlib.Path(path_text)
@@ -1301,10 +1475,12 @@ def _register_tools(
             character.lower() if character.isascii() and character.isalnum() else "-"
             for character in program
         ).strip("-")
-        internal = HeldExecutable.open(f"cc-internal-{role_suffix}", path)
+        role_prefix = "cc-component" if component_version is not None else "cc-resource"
+        internal = HeldExecutable.open(f"{role_prefix}-{role_suffix}", path)
         tools.append(internal)
         by_path[path] = internal
-        versions[internal.role] = ("--version",)
+        if component_version is not None:
+            versions[internal.role] = component_version
         aliases[program] = internal
 
     for alias in UTILITY_ALIASES:
@@ -1332,13 +1508,15 @@ def _tool_evidence(
     tools: Sequence[HeldExecutable],
     version_args: Mapping[str, tuple[str, ...]],
     env: Mapping[str, str],
+    version_cwd: pathlib.Path,
+    aliases_directory: FrozenToolDirectory,
 ) -> list[dict[str, object]]:
     evidence = []
     for tool in tools:
+        if tool.role.startswith("cc-resource-"):
+            continue
         if tool.role == "controller":
             version = "kiwi Redis Oracle controller v3"
-        elif tool.role.startswith(("utility-", "cc-internal-")):
-            version = f"identity-only sha256:{tool.sha256}"
         else:
             args = version_args[tool.role]
             result = run_bounded(
@@ -1349,6 +1527,9 @@ def _tool_evidence(
                 term_grace_ms=1_000,
                 stdout_limit_bytes=VERSION_OUTPUT_LIMIT,
                 stderr_limit_bytes=VERSION_OUTPUT_LIMIT,
+                extra_fds=tuple(candidate.fd for candidate in tools),
+                readonly_bind_directories=(aliases_directory,),
+                cwd=version_cwd,
             )
             version = _command_text(result, tool.role)
         evidence.append(tool.evidence(version))
@@ -1422,6 +1603,7 @@ def build_primary(
     python = HeldExecutable.from_fd("python", bootstrap_python_path, bootstrap_python_fd)
     tools: list[HeldExecutable] = []
     aliases_directory: FrozenToolDirectory | None = None
+    git_directory: HeldDirectory | None = None
     runtime = pathlib.Path(
         tempfile.mkdtemp(prefix=".kiwi-oracle-primary-", dir=metadata_parent)
     )
@@ -1429,19 +1611,28 @@ def build_primary(
         home = runtime / "home"
         temporary = runtime / "tmp"
         tool_path = runtime / "tools"
+        version_working = runtime / "versions"
         home.mkdir(mode=0o700)
         temporary.mkdir(mode=0o700)
+        version_working.mkdir(mode=0o700)
         _empty_directory(home, "HOME")
         _empty_directory(temporary, "TMPDIR")
 
         discovery_env = _sanitized_environment("/usr/bin:/bin", home, temporary)
-        tools, aliases, versions = _register_tools(controller, python, discovery_env)
+        tools, aliases, versions = _register_tools(
+            controller, python, discovery_env, version_working
+        )
         aliases_directory = FrozenToolDirectory.create(tool_path, aliases)
         env = _sanitized_environment(aliases_directory.child_path, home, temporary)
-        tool_evidence = _tool_evidence(tools, versions, env)
+        tool_evidence = _tool_evidence(
+            tools, versions, env, version_working, aliases_directory
+        )
+        _empty_directory(version_working, "tool version working directory")
         git = next(tool for tool in tools if tool.role == "git")
-        baseline = _validate_pristine_source_tree(source_root, git, env)
-        source_evidence = _validate_source(source_root, git, env)
+        git_directory = source_root.open_directory(".git")
+        _validate_git_trust_root(source_root, git_directory, git, env)
+        baseline = _validate_pristine_source_tree(source_root, git_directory, git, env)
+        source_evidence = _validate_source(source_root, git_directory, git, env)
 
         source_fd = os.dup(source_root.fd)
         started_at = _utc_now()
@@ -1516,6 +1707,8 @@ def build_primary(
     finally:
         if aliases_directory is not None and aliases_directory.path.exists():
             aliases_directory.remove()
+        if git_directory is not None:
+            git_directory.close()
         for tool in tools:
             tool.close()
         if controller not in tools:

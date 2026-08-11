@@ -128,8 +128,7 @@ fn clone_exact_redis(source: &Path) {
     let clone = Command::new("/usr/bin/git")
         .args([
             "clone",
-            "--depth",
-            "1",
+            "--single-branch",
             "--branch",
             REDIS_TAG,
             "https://github.com/redis/redis.git",
@@ -707,6 +706,191 @@ fn oracle_build_rejects_fixed_commit_tree_and_index_mutations_before_make() {
 }
 
 #[test]
+#[ignore = "external exact checkout; run with --include-ignored"]
+#[cfg(unix)]
+fn oracle_build_rejects_replace_ref_tree_before_make() {
+    let test_dir = TestDir::new("replace-ref");
+    let source = test_dir.path().join("source");
+    let metadata = test_dir.path().join("primary-build.json");
+    let marker = test_dir.path().join("replace-tree-reached-make");
+    clone_exact_redis(&source);
+
+    let makefile = source.join("Makefile");
+    let original = fs::read_to_string(&makefile).unwrap();
+    fs::write(
+        &makefile,
+        format!(
+            "$(shell /usr/bin/touch {})\n$(error replace tree reached make)\n{}",
+            marker.display(),
+            original
+        ),
+    )
+    .unwrap();
+    git_fixture(&source, &["add", "Makefile"]);
+    git_fixture(
+        &source,
+        &[
+            "-c",
+            "user.name=Oracle Test",
+            "-c",
+            "user.email=oracle@example.invalid",
+            "commit",
+            "-m",
+            "malicious replacement tree",
+        ],
+    );
+    let malicious = Command::new("/usr/bin/git")
+        .arg("-C")
+        .arg(&source)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(malicious.status.success());
+    let malicious = String::from_utf8(malicious.stdout).unwrap();
+    let malicious = malicious.trim();
+    git_fixture(&source, &["replace", REDIS_COMMIT, malicious]);
+    git_fixture(&source, &["update-ref", "HEAD", REDIS_COMMIT]);
+    let status = Command::new("/usr/bin/git")
+        .arg("-C")
+        .arg(&source)
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    assert!(
+        status.stdout.is_empty(),
+        "replace-ref fixture must look clean"
+    );
+
+    let output = Command::new("/usr/bin/bash")
+        .arg(build_script_path())
+        .arg("--source")
+        .arg(&source)
+        .arg("--metadata")
+        .arg(&metadata)
+        .env_clear()
+        .output()
+        .expect("Redis build wrapper must start");
+    assert!(!output.status.success(), "replace ref was accepted");
+    assert!(!marker.exists(), "replacement tree reached Make");
+    assert!(!metadata.exists(), "replace ref published metadata");
+}
+
+#[test]
+#[ignore = "external exact checkout; run with --include-ignored"]
+#[cfg(unix)]
+fn oracle_build_disables_repo_local_fsmonitor_before_any_git_query() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let test_dir = TestDir::new("git-fsmonitor");
+    let source = test_dir.path().join("source");
+    let metadata = test_dir.path().join("primary-build.json");
+    let marker = test_dir.path().join("fsmonitor-ran");
+    let monitor = test_dir.path().join("fsmonitor.sh");
+    clone_exact_redis(&source);
+    fs::write(
+        &monitor,
+        format!("#!/bin/sh\n/usr/bin/touch '{}'\nexit 0\n", marker.display()),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&monitor).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&monitor, permissions).unwrap();
+    git_fixture(
+        &source,
+        &["config", "core.fsmonitor", monitor.to_str().unwrap()],
+    );
+    git_fixture(
+        &source,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://example.invalid/redis.git",
+        ],
+    );
+
+    let output = Command::new("/usr/bin/bash")
+        .arg(build_script_path())
+        .arg("--source")
+        .arg(&source)
+        .arg("--metadata")
+        .arg(&metadata)
+        .env_clear()
+        .output()
+        .expect("Redis build wrapper must start");
+    assert!(
+        !output.status.success(),
+        "repo-local fsmonitor config was accepted"
+    );
+    assert!(!marker.exists(), "repo-local fsmonitor executable ran");
+    assert!(!metadata.exists(), "fsmonitor fixture published metadata");
+}
+
+#[test]
+#[ignore = "external exact checkout; run with --include-ignored"]
+#[cfg(unix)]
+fn oracle_build_rejects_non_independent_git_object_storage() {
+    let test_dir = TestDir::new("git-storage");
+    let seed = test_dir.path().join("seed");
+    clone_exact_redis(&seed);
+    for (name, relative, content, expected) in [
+        (
+            "shallow",
+            ".git/shallow",
+            format!("{REDIS_COMMIT}\n"),
+            ".git/shallow",
+        ),
+        (
+            "grafts",
+            ".git/info/grafts",
+            format!("{REDIS_COMMIT}\n"),
+            ".git/info/grafts",
+        ),
+        (
+            "alternates",
+            ".git/objects/info/alternates",
+            format!("{}\n", seed.join(".git/objects").display()),
+            ".git/objects/info/alternates",
+        ),
+        (
+            "commondir",
+            ".git/commondir",
+            ".\n".to_owned(),
+            ".git/commondir",
+        ),
+        (
+            "promisor",
+            ".git/objects/pack/fake.promisor",
+            String::new(),
+            "promisor packs",
+        ),
+    ] {
+        let source = test_dir.path().join(format!("source-{name}"));
+        let metadata = test_dir.path().join(format!("{name}-build.json"));
+        clone_local_exact_redis(&seed, &source);
+        fs::write(source.join(relative), content).unwrap();
+
+        let output = Command::new("/usr/bin/bash")
+            .arg(build_script_path())
+            .arg("--source")
+            .arg(&source)
+            .arg("--metadata")
+            .arg(&metadata)
+            .env_clear()
+            .output()
+            .expect("Redis build wrapper must start");
+        assert!(!output.status.success(), "{name} Git storage was accepted");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected),
+            "{name} rejection did not identify {expected}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!metadata.exists(), "{name} Git storage published metadata");
+    }
+}
+
+#[test]
 #[ignore = "real external Redis 8.8.1 build; run with --include-ignored"]
 #[cfg(unix)]
 fn oracle_build_real_redis_8_8_1_produces_valid_primary_evidence_only() {
@@ -737,6 +921,27 @@ fn oracle_build_real_redis_8_8_1_produces_valid_primary_evidence_only() {
     let build = BuildEvidence::from_json(&evidence).expect("candidate metadata must validate");
     assert_eq!(build.source().commit(), REDIS_COMMIT);
     assert_eq!(build.recipe().id(), RECIPE_ID);
+    assert!(
+        build
+            .tools()
+            .iter()
+            .all(|tool| !tool.version().starts_with("identity-only sha256:")),
+        "tool version evidence must come from an actual controlled command"
+    );
+    assert!(
+        build
+            .tools()
+            .iter()
+            .any(|tool| tool.role() == "cc-component-cc1" && tool.version().contains("GNU C")),
+        "held cc1 must have actual version output"
+    );
+    assert!(
+        build
+            .tools()
+            .iter()
+            .all(|tool| !tool.role().starts_with("cc-resource-")),
+        "non-executable GCC resources must not masquerade as versioned tools"
+    );
     assert!(!build.artifacts().is_empty());
     assert!(
         fs::read_dir(test_dir.path()).unwrap().all(|entry| !entry
