@@ -54,6 +54,10 @@ fn command_table_gates(config: &Config) -> cmd::table::CommandTableGates {
     )
 }
 
+fn vector_admission_limits(config: &Config) -> cmd::vector::admission::VectorAdmissionLimits {
+    cmd::vector::admission::VectorAdmissionLimits::from(&config.vector)
+}
+
 impl StorageAccessPermit for PausePermitWrapper {}
 
 impl PauseController for PauseControllerWrapper {
@@ -511,6 +515,7 @@ async fn start_server(
         config.requirepass.clone(),
         leader_gate,
         command_table_gates(config),
+        vector_admission_limits(config),
     ) {
         Some(server) => {
             tokio::spawn(async move {
@@ -539,6 +544,28 @@ mod tests {
     use storage::{ManifestDigest, SnapshotInstanceManifest};
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn vector_admission_limits_follow_config() {
+        let config = Config {
+            vector: conf::vector_config::VectorConfig {
+                max_dimension: 17,
+                max_element_bytes: 23,
+                max_vector_bytes: 29,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(
+            vector_admission_limits(&config),
+            cmd::vector::admission::VectorAdmissionLimits {
+                max_dimension: 17,
+                max_element_bytes: 23,
+                max_vector_bytes: 29,
+            }
+        );
+    }
 
     fn write_valid_install_marker(db_path: &std::path::Path) -> PathBuf {
         let digest = ManifestDigest::compute(b"server startup preflight");

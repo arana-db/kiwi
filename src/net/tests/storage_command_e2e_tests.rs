@@ -37,6 +37,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use client::Client;
+use cmd::vector::admission::VectorAdmissionLimits;
 use cmd::{AclCategory, Cmd, CmdFlags, CmdMeta};
 use net::{network_server::NetworkServer, storage_client::StorageClient};
 use raft::leader_gate::LeaderGate;
@@ -158,6 +159,34 @@ impl TestServer {
         leader_gate: Option<Arc<dyn LeaderGate>>,
         gates: cmd::table::CommandTableGates,
     ) -> Self {
+        Self::start_with_options(
+            requirepass,
+            leader_gate,
+            gates,
+            permissive_vector_admission_limits(),
+        )
+        .await
+    }
+
+    async fn start_with_vector_admission_limits(
+        requirepass: Option<String>,
+        vector_admission_limits: VectorAdmissionLimits,
+    ) -> Self {
+        Self::start_with_options(
+            requirepass,
+            None,
+            cmd::table::CommandTableGates::default(),
+            vector_admission_limits,
+        )
+        .await
+    }
+
+    async fn start_with_options(
+        requirepass: Option<String>,
+        leader_gate: Option<Arc<dyn LeaderGate>>,
+        gates: cmd::table::CommandTableGates,
+        vector_admission_limits: VectorAdmissionLimits,
+    ) -> Self {
         let db_path = unique_test_db_path();
         safe_cleanup_test_db(&db_path);
 
@@ -207,6 +236,7 @@ impl TestServer {
                 net_storage_client.clone(),
                 cmd_table,
                 executor,
+                vector_admission_limits,
                 requirepass,
                 leader_gate,
             )
@@ -274,6 +304,26 @@ impl TestServer {
         let _ = tokio::time::timeout(Duration::from_secs(5), self.runtime_manager.stop()).await;
         safe_cleanup_test_db(&self.db_path);
     }
+}
+
+fn vector_admission_limits(
+    max_dimension: usize,
+    max_element_bytes: usize,
+    max_vector_bytes: usize,
+) -> VectorAdmissionLimits {
+    VectorAdmissionLimits {
+        max_dimension,
+        max_element_bytes,
+        max_vector_bytes,
+    }
+}
+
+fn permissive_vector_admission_limits() -> VectorAdmissionLimits {
+    vector_admission_limits(4096, 1_048_576, 16_777_216)
+}
+
+async fn requests_sent(server: &TestServer) -> u64 {
+    server.storage_client.channel_stats().await.requests_sent
 }
 
 /// Poll until the server accepts TCP connections, with a timeout.
@@ -362,6 +412,10 @@ async fn send_command_and_read_line(stream: &mut tokio::net::TcpStream, args: &[
         .await
         .expect("write to server");
 
+    read_response_line(stream).await
+}
+
+async fn read_response_line(stream: &mut tokio::net::TcpStream) -> Bytes {
     tokio::time::timeout(Duration::from_secs(5), async {
         let mut response = Vec::with_capacity(16);
         loop {
@@ -583,6 +637,7 @@ async fn network_server_continues_after_connection_task_panic() {
             Arc::new(StorageClient::new(runtime_storage_client)),
             Arc::new(cmd_table),
             Arc::new(executor::CmdExecutorBuilder::new().build()),
+            permissive_vector_admission_limits(),
             Some("secret".to_string()),
             None,
         )
@@ -675,6 +730,7 @@ async fn network_server_shutdown_joins_cleanup_clears_pool_and_releases_channel(
             storage_client.clone(),
             cmd_table,
             executor,
+            permissive_vector_admission_limits(),
             None,
             None,
         )
@@ -747,6 +803,7 @@ async fn network_server_abort_releases_cleanup_pool_and_storage_sender() {
             storage_client.clone(),
             Arc::new(cmd::table::create_command_table(Arc::new(|| None))),
             Arc::new(executor::CmdExecutorBuilder::new().build()),
+            permissive_vector_admission_limits(),
             None,
             None,
         )
@@ -828,6 +885,7 @@ async fn network_server_waits_for_inflight_storage_request_before_shutdown() {
             storage_client,
             Arc::new(cmd::table::create_command_table(Arc::new(|| None))),
             Arc::new(executor::CmdExecutorBuilder::new().build()),
+            permissive_vector_admission_limits(),
             None,
             None,
         )
@@ -891,6 +949,7 @@ async fn network_server_rejects_concurrent_and_repeated_run() {
             Arc::new(StorageClient::new(runtime_storage_client)),
             Arc::new(cmd::table::create_command_table(Arc::new(|| None))),
             Arc::new(executor::CmdExecutorBuilder::new().build()),
+            permissive_vector_admission_limits(),
             None,
             None,
         )
@@ -960,6 +1019,7 @@ async fn network_server_rejects_duplicate_bind() {
         Arc::new(StorageClient::new(runtime_storage_client)),
         Arc::new(cmd::table::create_command_table(Arc::new(|| None))),
         Arc::new(executor::CmdExecutorBuilder::new().build()),
+        permissive_vector_admission_limits(),
         None,
         None,
     )
@@ -1124,6 +1184,215 @@ async fn storage_command_e2e_generic_storage_commands_use_storage_path() {
         "generic commands should traverse the storage channel"
     );
 
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_vector_admission_rejects_before_storage_dispatch() {
+    let server =
+        TestServer::start_with_vector_admission_limits(None, vector_admission_limits(1, 64, 64))
+            .await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+    let before = requests_sent(&server).await;
+
+    let reply = send_command(
+        &mut stream,
+        &[
+            "VADD", "vectors", "VALUES", "2", "1", "0", "member", "NOQUANT",
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        reply,
+        RespData::Error(Bytes::from_static(
+            b"ERR vector dimension exceeds max_dimension"
+        ))
+    );
+    assert_eq!(requests_sent(&server).await, before);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_vector_admission_uses_values_raw_byte_count() {
+    let server =
+        TestServer::start_with_vector_admission_limits(None, vector_admission_limits(2, 64, 8))
+            .await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+    let before = requests_sent(&server).await;
+
+    let reply = send_command(
+        &mut stream,
+        &[
+            "VADD", "vectors", "VALUES", "2", "12345678", "0", "member", "NOQUANT",
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        reply,
+        RespData::Error(Bytes::from_static(b"ERR vector exceeds max_vector_bytes"))
+    );
+    assert_eq!(requests_sent(&server).await, before);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_vector_admission_checks_all_element_commands() {
+    let server =
+        TestServer::start_with_vector_admission_limits(None, vector_admission_limits(2, 3, 8))
+            .await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+    let expected = RespData::Error(Bytes::from_static(
+        b"ERR vector element exceeds max_element_bytes",
+    ));
+
+    for args in [
+        &["VADD", "vectors", "VALUES", "1", "0", "four", "NOQUANT"][..],
+        &["VSIM", "vectors", "ELE", "four"][..],
+        &["VEMB", "vectors", "four"][..],
+        &["VREM", "vectors", "four"][..],
+        &["VISMEMBER", "vectors", "four"][..],
+    ] {
+        let before = requests_sent(&server).await;
+        let reply = send_command(&mut stream, args).await;
+        assert_eq!(reply, expected, "command: {args:?}");
+        assert_eq!(
+            requests_sent(&server).await,
+            before,
+            "rejected command reached storage: {args:?}"
+        );
+    }
+
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_vector_admission_preserves_auth_pipeline_order() {
+    let server = TestServer::start_with_vector_admission_limits(
+        Some("secret".to_string()),
+        vector_admission_limits(1, 64, 64),
+    )
+    .await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+    let before = requests_sent(&server).await;
+
+    let oversized = encode_command(&[
+        "VADD", "vectors", "VALUES", "2", "1", "0", "member", "NOQUANT",
+    ]);
+    let mut pipeline = Vec::with_capacity(oversized.len() * 2 + 64);
+    pipeline.extend_from_slice(&oversized);
+    pipeline.extend_from_slice(&encode_command(&["AUTH", "secret"]));
+    pipeline.extend_from_slice(&oversized);
+    stream
+        .write_all(&pipeline)
+        .await
+        .expect("write authentication pipeline");
+
+    assert_eq!(
+        read_response_line(&mut stream).await,
+        Bytes::from_static(b"-NOAUTH Authentication required.\r\n")
+    );
+    assert_eq!(
+        read_response_line(&mut stream).await,
+        Bytes::from_static(b"+OK\r\n")
+    );
+    assert_eq!(
+        read_response_line(&mut stream).await,
+        Bytes::from_static(b"-ERR vector dimension exceeds max_dimension\r\n")
+    );
+    assert_eq!(requests_sent(&server).await, before);
+    server.shutdown().await;
+}
+
+#[tokio::test]
+async fn storage_command_e2e_vector_admission_preserves_static_gate_order() {
+    let cases = [
+        (
+            cmd::table::CommandTableGates::from_flags(false, false, true),
+            b"ERR vector support is disabled (vector-enabled=false)".as_slice(),
+        ),
+        (
+            cmd::table::CommandTableGates::from_flags(true, false, true),
+            b"ERR vector commands are not supported in cluster mode yet".as_slice(),
+        ),
+        (
+            cmd::table::CommandTableGates::from_flags(true, true, true),
+            b"ERR vector dimension exceeds max_dimension".as_slice(),
+        ),
+    ];
+
+    for (gates, expected) in cases {
+        let server = TestServer::start_with_options(
+            None,
+            Some(Arc::new(FollowerGate)),
+            gates,
+            vector_admission_limits(1, 64, 64),
+        )
+        .await;
+        let mut stream = tokio::net::TcpStream::connect(server.addr)
+            .await
+            .expect("connect to server");
+        let before = requests_sent(&server).await;
+
+        let reply = send_command(
+            &mut stream,
+            &[
+                "VADD", "vectors", "VALUES", "2", "1", "0", "member", "NOQUANT",
+            ],
+        )
+        .await;
+        assert_eq!(reply, RespData::Error(Bytes::copy_from_slice(expected)));
+        assert_eq!(requests_sent(&server).await, before);
+
+        let short = send_command(&mut stream, &["VADD", "vectors"]).await;
+        assert_eq!(
+            short,
+            RespData::Error(Bytes::from_static(
+                b"ERR wrong number of arguments for 'vadd' command"
+            )),
+            "generic arity must precede static and resource gates"
+        );
+        assert_eq!(requests_sent(&server).await, before);
+        server.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn storage_command_e2e_vector_admission_dispatches_under_limit_once() {
+    let server =
+        TestServer::start_with_vector_admission_limits(None, vector_admission_limits(2, 64, 8))
+            .await;
+    let mut stream = tokio::net::TcpStream::connect(server.addr)
+        .await
+        .expect("connect to server");
+    let before = requests_sent(&server).await;
+
+    let reply = send_command(
+        &mut stream,
+        &[
+            "VADD",
+            "under-limit",
+            "VALUES",
+            "2",
+            "1",
+            "0",
+            "member",
+            "NOQUANT",
+        ],
+    )
+    .await;
+
+    assert_eq!(reply, RespData::Integer(1));
+    assert_eq!(requests_sent(&server).await, before + 1);
     server.shutdown().await;
 }
 

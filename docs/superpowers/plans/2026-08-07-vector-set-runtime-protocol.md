@@ -146,9 +146,10 @@ RESP parse to Bytes
 - Modify: `src/server/src/main.rs`
 - Modify: `src/net/tests/storage_command_e2e_tests.rs`
 
-- [ ] **步骤 1：写入 copy-boundary 和 dispatch 失败测试**
+- [x] **步骤 1：写入 copy-boundary 和 dispatch 失败测试**
 
   - `network_handle::tests::parsed_command_keeps_bulk_bytes_until_admission`
+  - `network_handle::tests::parsed_command_admission_precedes_client_payload_copy`
   - `network_handle::tests::non_bulk_arguments_preserve_existing_empty_argument_semantics`
   - `storage_command_e2e_vector_admission_rejects_before_storage_dispatch`
   - `storage_command_e2e_vector_admission_uses_values_raw_byte_count`
@@ -157,6 +158,7 @@ RESP parse to Bytes
   - `storage_command_e2e_vector_admission_preserves_static_gate_order`
   - `storage_command_e2e_vector_admission_dispatches_under_limit_once`
   - `server::tests::vector_admission_limits_follow_config`
+  - `net::tests::server_factory_forwards_vector_admission_limits`
 
   ```powershell
   cargo test -p net network_handle::tests::parsed_command_keeps_bulk_bytes_until_admission -- --exact
@@ -166,7 +168,7 @@ RESP parse to Bytes
 
   预期 RED：当前 `ParsedCommand` 已深拷贝，network 不持有 limits，超限请求会进入 storage channel。
 
-- [ ] **步骤 2：实现 `Bytes` 保留和必填 limits 连接**
+- [x] **步骤 2：实现 `Bytes` 保留和必填 limits 连接**
 
   ```rust
   struct ParsedCommand {
@@ -191,17 +193,19 @@ RESP parse to Bytes
 
   storage spy 使用现有 `ChannelStats.requests_sent`：超限前后不变，under-limit control 恰好增加 1。AUTH pipeline 覆盖同一 TCP write 中的 `AUTH` + over-limit VADD；未认证时 `NOAUTH` 优先。
 
-- [ ] **步骤 3：生产连接变异检查**
+- [x] **步骤 3：生产连接变异检查**
 
   删除 `Config.vector -> VectorAdmissionLimits -> NetworkServer` 任一连接点、恢复 `ParsedCommand: Vec<Vec<u8>>` 或把 admission 移到 `executor_ext.rs` 时对应测试必须失败。
 
-- [ ] **步骤 4：回归**
+- [x] **步骤 4：回归**
 
   ```powershell
   cargo test -p net network_handle::tests -- --nocapture
   cargo test -p net --test storage_command_e2e_tests storage_command_e2e_vector_admission -- --nocapture
   cargo test -p server -- --nocapture
   ```
+
+  实际证据：copy-boundary 测试先因 `ParsedCommand` 仍为 `Vec<Vec<u8>>` 编译 RED；真实 TCP storage spy 随后观察到超限 VADD 返回 `Integer(1)` 并进入 storage channel。实现把 bulk payload 作为 `Bytes` 保持到 AUTH、generic arity、Vector feature/cluster/resource admission 全部通过之后，再进行唯一一次 `Bytes -> Vec<u8>` 转换，并把 `Config.vector` limits 作为必填值沿完整 production chain 传入。六个 admission E2E、完整 33 项 storage E2E、全 `net` 和全 `server` 回归通过。断开 Config 映射、在 factory 中替换 limits、绕过 admission、在 admission 前覆盖 `Client.argv` 时对应测试均 RED；独立复审补充的 direct-batch sentinel/pointer 测试和 factory full-path 测试闭合了“把 admission 移到 executor”与 factory 转发盲区。
 
 ## Task 4：VADD 类型化 parse outcome 和错误优先级
 

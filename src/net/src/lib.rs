@@ -40,6 +40,7 @@ use crate::network_server::NetworkServer;
 use crate::storage_client::StorageClient;
 use crate::tcp::TcpServer;
 use cmd::table::{CommandTableGates, create_command_table_with_gates};
+use cmd::vector::admission::VectorAdmissionLimits;
 use executor::CmdExecutorBuilder;
 use runtime::RuntimeManager;
 use std::sync::Arc;
@@ -47,6 +48,11 @@ use std::sync::Arc;
 #[async_trait]
 pub trait ServerTrait: Send + Sync + 'static {
     async fn run(&self) -> Result<(), Box<dyn Error>>;
+
+    #[cfg(test)]
+    fn vector_admission_limits(&self) -> Option<VectorAdmissionLimits> {
+        None
+    }
 }
 
 pub struct ServerFactory;
@@ -59,6 +65,7 @@ impl ServerFactory {
         requirepass: Option<String>,
         leader_gate: Option<Arc<dyn raft::leader_gate::LeaderGate>>,
         gates: CommandTableGates,
+        vector_admission_limits: VectorAdmissionLimits,
     ) -> Option<Box<dyn ServerTrait>> {
         match protocol.to_lowercase().as_str() {
             "tcp" => {
@@ -68,6 +75,7 @@ impl ServerFactory {
                     requirepass,
                     leader_gate,
                     gates,
+                    vector_admission_limits,
                 ) {
                     Ok(server) => Some(Box::new(server) as Box<dyn ServerTrait>),
                     Err(e) => {
@@ -125,6 +133,7 @@ impl ServerFactory {
         requirepass: Option<String>,
         leader_gate: Option<Arc<dyn raft::leader_gate::LeaderGate>>,
         gates: CommandTableGates,
+        vector_admission_limits: VectorAdmissionLimits,
     ) -> Result<NetworkServer, Box<dyn std::error::Error>> {
         // Get the storage client from RuntimeManager
         let runtime_storage_client = runtime_manager.storage_client().map_err(|e| {
@@ -150,8 +159,40 @@ impl ServerFactory {
             storage_client,
             cmd_table,
             executor,
+            vector_admission_limits,
             requirepass,
             leader_gate,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn server_factory_forwards_vector_admission_limits() {
+        let mut runtime_manager = RuntimeManager::with_defaults().expect("runtime manager");
+        let _request_receiver = runtime_manager
+            .initialize_storage_components()
+            .expect("storage components");
+        let limits = VectorAdmissionLimits {
+            max_dimension: 17,
+            max_element_bytes: 23,
+            max_vector_bytes: 29,
+        };
+
+        let server = ServerFactory::create_server(
+            "tcp",
+            Some("127.0.0.1:0".to_string()),
+            &runtime_manager,
+            None,
+            None,
+            CommandTableGates::default(),
+            limits,
+        )
+        .expect("network server");
+
+        assert_eq!(server.vector_admission_limits(), Some(limits));
     }
 }
