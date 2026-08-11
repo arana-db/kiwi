@@ -54,7 +54,10 @@ $arguments.Add('--output')
 $arguments.Add((Convert-ToWslPath $Output))
 $arguments.Add('--run-after-ready')
 foreach ($argument in $RunAfterReady) {
-    if ($argument -match '^[A-Za-z]:[\\/]') {
+    if (
+        $argument -match '^[A-Za-z]:[\\/]' -or
+        $argument -match '^\\\\[^\\]+\\[^\\]+(?:\\|$)'
+    ) {
         $arguments.Add((Convert-ToWslPath $argument))
     }
     else {

@@ -698,6 +698,210 @@ def _readonly_mount_namespace_setup(
     checked(libc.prctl(pr_set_no_new_privs, 1, 0, 0, 0), "set no_new_privs")
 
 
+def _drop_namespace_privileges() -> None:
+    pr_set_securebits = 28
+    pr_set_no_new_privs = 38
+    secure_noroot = 1 | 2
+    secure_no_setuid_fixup = 4 | 8
+    linux_capability_version_3 = 0x20080522
+
+    class CapabilityHeader(ctypes.Structure):
+        _fields_ = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
+
+    class CapabilityData(ctypes.Structure):
+        _fields_ = [
+            ("effective", ctypes.c_uint32),
+            ("permitted", ctypes.c_uint32),
+            ("inheritable", ctypes.c_uint32),
+        ]
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(
+        pr_set_securebits,
+        secure_noroot | secure_no_setuid_fixup,
+        0,
+        0,
+        0,
+    ) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, f"lock namespace securebits: {os.strerror(error)}")
+    header = CapabilityHeader(linux_capability_version_3, 0)
+    data = (CapabilityData * 2)()
+    if libc.capset(ctypes.byref(header), ctypes.byref(data)) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, f"drop namespace capabilities: {os.strerror(error)}")
+    if libc.prctl(pr_set_no_new_privs, 1, 0, 0, 0) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, f"set no_new_privs: {os.strerror(error)}")
+
+
+def _mount(
+    source: str | None,
+    target: str,
+    filesystem: str | None,
+    flags: int,
+    data: str | None = None,
+) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    result = libc.mount(
+        None if source is None else os.fsencode(source),
+        os.fsencode(target),
+        None if filesystem is None else os.fsencode(filesystem),
+        flags,
+        None if data is None else os.fsencode(data),
+    )
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, f"mount {source!r} on {target!r}: {os.strerror(error)}")
+
+
+def _callback_filesystem_setup(callback_root_fd: int, runtime_evidence_fd: int) -> None:
+    ms_rdonly = 1
+    ms_nosuid = 2
+    ms_nodev = 4
+    ms_noexec = 8
+    ms_remount = 32
+    ms_bind = 4096
+    ms_rec = 16384
+    ms_private = 1 << 18
+    callback_root = os.readlink(f"/proc/self/fd/{callback_root_fd}")
+    if not callback_root.startswith("/") or callback_root.endswith(" (deleted)"):
+        raise OracleError("callback sandbox root is no longer a visible absolute directory")
+    runtime_evidence = os.readlink(f"/proc/self/fd/{runtime_evidence_fd}")
+    if not runtime_evidence.startswith("/") or runtime_evidence.endswith(" (deleted)"):
+        raise OracleError("runtime evidence is no longer a visible absolute file")
+    root = f"{callback_root}/sandbox-root"
+    _mount(None, "/", None, ms_rec | ms_private)
+    _mount("/usr", f"{root}/usr", None, ms_bind | ms_rec)
+    _mount(
+        None,
+        f"{root}/usr",
+        None,
+        ms_bind | ms_remount | ms_rdonly | ms_nosuid | ms_nodev,
+    )
+    _mount(f"{callback_root}/work", f"{root}/work", None, ms_bind)
+    _mount(
+        runtime_evidence,
+        f"{root}/runtime-evidence.json",
+        None,
+        ms_bind,
+    )
+    _mount(
+        None,
+        f"{root}/runtime-evidence.json",
+        None,
+        ms_bind | ms_remount | ms_rdonly | ms_nosuid | ms_nodev,
+    )
+    _mount("/dev/null", f"{root}/dev/null", None, ms_bind)
+    _mount(
+        "proc",
+        f"{root}/proc",
+        "proc",
+        ms_nosuid | ms_nodev | ms_noexec,
+    )
+    os.chroot(root)
+    os.chdir("/work")
+    os.close(callback_root_fd)
+    os.close(runtime_evidence_fd)
+
+
+def _pid_namespace_preexec(
+    report_fd: int,
+    host_uid: int,
+    host_gid: int,
+    term_grace_ms: int,
+    child_setup: Callable[[], None] | None,
+) -> None:
+    clone_newns = 0x00020000
+    clone_newuser = 0x10000000
+    clone_newpid = 0x20000000
+    flags = clone_newuser | clone_newpid
+    if child_setup is not None:
+        flags |= clone_newns
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.unshare(flags) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, f"unshare callback namespaces: {os.strerror(error)}")
+    try:
+        _write_proc_mapping("/proc/self/setgroups", "deny")
+    except FileNotFoundError:
+        pass
+    _write_proc_mapping("/proc/self/uid_map", f"0 {host_uid} 1")
+    _write_proc_mapping("/proc/self/gid_map", f"0 {host_gid} 1")
+    namespace_init = os.fork()
+    if namespace_init == 0:
+        try:
+            if child_setup is not None:
+                child_setup()
+            _drop_namespace_privileges()
+        except BaseException as error:
+            os.write(
+                report_fd,
+                f"ERROR:{type(error).__name__}:{error}\n".encode("utf-8", "replace"),
+            )
+            raise
+        finally:
+            os.close(report_fd)
+        return
+
+    os.write(report_fd, f"{namespace_init}\n".encode("ascii"))
+    os.close(report_fd)
+    for fd in (0, 1, 2):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    for raw_fd in os.listdir("/proc/self/fd"):
+        try:
+            fd = int(raw_fd)
+        except ValueError:
+            continue
+        if fd <= 2:
+            continue
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+    def terminate(_signal_number: int, _frame: object) -> None:
+        try:
+            os.kill(namespace_init, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + term_grace_ms / 1000
+        while time.monotonic() < deadline:
+            try:
+                child, _status = os.waitpid(namespace_init, os.WNOHANG)
+            except ChildProcessError:
+                os._exit(128 + signal.SIGTERM)
+            if child == namespace_init:
+                os._exit(128 + signal.SIGTERM)
+            time.sleep(0.005)
+        try:
+            os.kill(namespace_init, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            os.waitpid(namespace_init, 0)
+        except ChildProcessError:
+            pass
+        os._exit(128 + signal.SIGTERM)
+
+    signal.signal(signal.SIGTERM, terminate)
+    signal.signal(signal.SIGINT, terminate)
+    while True:
+        try:
+            _child, status = os.waitpid(namespace_init, 0)
+            break
+        except InterruptedError:
+            continue
+    if os.WIFEXITED(status):
+        os._exit(os.WEXITSTATUS(status))
+    if os.WIFSIGNALED(status):
+        os._exit(128 + os.WTERMSIG(status))
+    os._exit(127)
+
+
 def _signal_group(pid: int, sig: signal.Signals) -> None:
     try:
         os.killpg(pid, sig)
@@ -738,6 +942,8 @@ def run_bounded(
     readonly_bind_directories: Sequence["FrozenToolDirectory"] = (),
     cwd: pathlib.Path | None = None,
     terminate_on_output_limit: bool = False,
+    pid_namespace: bool = False,
+    callback_filesystem: tuple[int, int] | None = None,
 ) -> RunResult:
     """Run one held executable in a new process group with bounded evidence."""
     if not argv or any(not isinstance(value, str) or not value for value in argv):
@@ -748,6 +954,10 @@ def run_bounded(
         raise OracleError("command output limits must be positive")
     if executable.fd < 0:
         raise OracleError("held executable is closed")
+    if callback_filesystem is not None and not pid_namespace:
+        raise OracleError("callback filesystem isolation requires a PID namespace")
+    if pid_namespace and readonly_bind_directories:
+        raise OracleError("callback PID namespace cannot reuse the build PATH namespace")
 
     _enable_subreaper()
     started_at = _utc_now()
@@ -772,9 +982,38 @@ def run_bounded(
             os.close(placeholder)
         reserved_path_fd = CONTROLLED_PATH_FD
     path_fds = (reserved_path_fd,) if reserved_path_fd >= 0 else ()
-    passed_fds = tuple(dict.fromkeys((executable.fd, *extra_fds, *path_fds)))
+    report_read_fd = -1
+    report_write_fd = -1
+    if pid_namespace:
+        report_read_fd, report_write_fd = os.pipe2(os.O_CLOEXEC)
+    report_fds = (report_write_fd,) if report_write_fd >= 0 else ()
+    passed_fds = tuple(
+        dict.fromkeys((executable.fd, *extra_fds, *path_fds, *report_fds))
+    )
     preexec_fn = None
-    if readonly_bind_directories:
+    if pid_namespace:
+        host_uid = os.getuid()
+        host_gid = os.getgid()
+
+        def enter_pid_namespace() -> None:
+            child_setup = None
+            if callback_filesystem is not None:
+                callback_root_fd, runtime_evidence_fd = callback_filesystem
+
+                def setup_callback_filesystem() -> None:
+                    _callback_filesystem_setup(callback_root_fd, runtime_evidence_fd)
+
+                child_setup = setup_callback_filesystem
+            _pid_namespace_preexec(
+                report_write_fd,
+                host_uid,
+                host_gid,
+                term_grace_ms,
+                child_setup,
+            )
+
+        preexec_fn = enter_pid_namespace
+    elif readonly_bind_directories:
         host_uid = os.getuid()
         host_gid = os.getgid()
 
@@ -802,34 +1041,98 @@ def run_bounded(
             start_new_session=True,
             preexec_fn=preexec_fn,
         )
+    except BaseException as error:
+        report = b""
+        if report_read_fd >= 0:
+            try:
+                report = os.read(report_read_fd, 4096)
+            finally:
+                os.close(report_read_fd)
+                report_read_fd = -1
+        if report:
+            raise OracleError(
+                f"callback namespace setup failed: {report.decode('utf-8', 'replace').strip()}"
+            ) from error
+        raise
     finally:
+        if report_write_fd >= 0:
+            os.close(report_write_fd)
         if reserved_path_fd >= 0:
             os.close(reserved_path_fd)
+    namespace_init_pid = -1
+    if report_read_fd >= 0:
+        try:
+            report = os.read(report_read_fd, 4096).decode("utf-8", "replace")
+        finally:
+            os.close(report_read_fd)
+        lines = [line for line in report.splitlines() if line]
+        errors = [line for line in lines if line.startswith("ERROR:")]
+        if errors:
+            raise OracleError(f"callback namespace setup failed: {errors}")
+        if not lines:
+            raise OracleError("callback PID namespace supervisor reported no init PID")
+        try:
+            namespace_init_pid = int(lines[0])
+        except ValueError as error:
+            raise OracleError("callback PID namespace supervisor did not report its init PID") from error
     assert process.stdout is not None and process.stderr is not None
     selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ, ("stdout", stdout_limit_bytes))
-    selector.register(process.stderr, selectors.EVENT_READ, ("stderr", stderr_limit_bytes))
+    for stream, name, limit in (
+        (process.stdout, "stdout", stdout_limit_bytes),
+        (process.stderr, "stderr", stderr_limit_bytes),
+    ):
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, selectors.EVENT_READ, (name, limit))
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     counts = {"stdout": 0, "stderr": 0}
     timed_out = False
     output_limit_hit = False
     deadline = started + timeout_ms / 1000
+    termination_deadline: float | None = None
 
-    while selector.get_map():
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            timed_out = True
+    def request_termination() -> None:
+        nonlocal termination_deadline
+        if termination_deadline is not None:
+            return
+        if pid_namespace:
+            try:
+                os.kill(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        else:
             _signal_group(process.pid, signal.SIGTERM)
-            term_deadline = time.monotonic() + term_grace_ms / 1000
-            while time.monotonic() < term_deadline and process.poll() is None:
-                time.sleep(0.01)
-            if process.poll() is None:
-                _signal_group(process.pid, signal.SIGKILL)
+        termination_deadline = time.monotonic() + term_grace_ms / 1000 + 0.25
+
+    def force_termination() -> None:
+        if namespace_init_pid > 0:
+            try:
+                os.kill(namespace_init_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if pid_namespace:
+            try:
+                os.kill(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            _signal_group(process.pid, signal.SIGKILL)
+
+    while selector.get_map() or process.poll() is None:
+        now = time.monotonic()
+        if termination_deadline is None and now >= deadline:
+            timed_out = True
+            request_termination()
+        active_deadline = termination_deadline if termination_deadline is not None else deadline
+        if now >= active_deadline:
+            force_termination()
             break
-        events = selector.select(max(0.0, min(remaining, 0.05)))
+        events = selector.select(max(0.0, min(active_deadline - now, 0.05)))
         for key, _mask in events:
             name, limit = key.data
-            chunk = os.read(key.fileobj.fileno(), 64 * 1024)
+            try:
+                chunk = os.read(key.fileobj.fileno(), 64 * 1024)
+            except BlockingIOError:
+                continue
             if not chunk:
                 selector.unregister(key.fileobj)
                 key.fileobj.close()
@@ -840,46 +1143,37 @@ def run_bounded(
                 buffers[name].extend(chunk[:capacity])
             if terminate_on_output_limit and counts[name] > limit:
                 output_limit_hit = True
-                _signal_group(process.pid, signal.SIGTERM)
-                term_deadline = time.monotonic() + term_grace_ms / 1000
-                while time.monotonic() < term_deadline and process.poll() is None:
-                    time.sleep(0.01)
-                if process.poll() is None:
-                    _signal_group(process.pid, signal.SIGKILL)
-                break
-        if output_limit_hit:
-            break
-        if process.poll() is not None and not events:
-            # Pipes can still have buffered data, so continue until EOF.
-            continue
+                request_termination()
 
-    if timed_out or output_limit_hit:
-        _signal_group(process.pid, signal.SIGKILL)
+    final_deadline = (
+        termination_deadline
+        if termination_deadline is not None
+        else max(deadline, time.monotonic() + 0.2)
+    )
     try:
-        exit_code = process.wait(timeout=max(1.0, term_grace_ms / 1000))
+        exit_code = process.wait(timeout=max(0.01, final_deadline - time.monotonic()))
     except subprocess.TimeoutExpired as error:
-        _signal_group(process.pid, signal.SIGKILL)
-        process.wait()
-        raise OracleError("command could not be reaped after SIGKILL") from error
+        force_termination()
+        try:
+            exit_code = process.wait(timeout=0.25)
+        except subprocess.TimeoutExpired:
+            raise OracleError("command could not be reaped within its wall-clock deadline") from error
 
-    for stream, name, limit in [
-        (process.stdout, "stdout", stdout_limit_bytes),
-        (process.stderr, "stderr", stderr_limit_bytes),
-    ]:
+    selector.close()
+    for stream in (process.stdout, process.stderr):
         if stream.closed:
             continue
-        while True:
-            chunk = os.read(stream.fileno(), 64 * 1024)
-            if not chunk:
-                break
-            counts[name] += len(chunk)
-            capacity = limit - len(buffers[name])
-            if capacity > 0:
-                buffers[name].extend(chunk[:capacity])
         stream.close()
 
-    if timed_out or output_limit_hit:
-        group_reaped = _reap_descendants(process.pid, time.monotonic() + 2.0)
+    if pid_namespace:
+        containment_deadline = time.monotonic() + 0.25
+        while namespace_init_pid > 0 and time.monotonic() < containment_deadline:
+            if not pathlib.Path(f"/proc/{namespace_init_pid}").exists():
+                break
+            time.sleep(0.005)
+        group_reaped = namespace_init_pid <= 0 or not pathlib.Path(
+            f"/proc/{namespace_init_pid}"
+        ).exists()
     else:
         group_reaped = _reap_descendants(process.pid, time.monotonic() + 0.2)
         if not group_reaped:
@@ -1066,13 +1360,16 @@ def scan_artifacts(
     root: pathlib.Path | HeldDirectory,
     baseline: Mapping[str, tuple[object, ...]],
     *,
+    tracked_tree: Mapping[str, tuple[str, str]] | None = None,
     limits: ArtifactLimits = ArtifactLimits(),
 ) -> list[dict[str, object]]:
     owned_root = not isinstance(root, HeldDirectory)
     held = HeldDirectory.open(root) if owned_root else root
     try:
         current, _directories = _tree_entries(held)
-        return _scan_artifacts_from_entries(held, baseline, current, limits)
+        return _scan_artifacts_from_entries(
+            held, baseline, current, tracked_tree or {}, limits
+        )
     finally:
         if owned_root:
             held.close()
@@ -1082,9 +1379,34 @@ def _scan_artifacts_from_entries(
     root: HeldDirectory,
     baseline: Mapping[str, tuple[object, ...]],
     current: Mapping[str, tuple[object, ...]],
+    tracked_tree: Mapping[str, tuple[str, str]],
     limits: ArtifactLimits,
 ) -> list[dict[str, object]]:
     changed = [path for path, fingerprint in current.items() if baseline.get(path) != fingerprint]
+    semantically_unchanged_tracked: set[str] = set()
+    for path in changed:
+        expected = tracked_tree.get(path)
+        if expected is None:
+            continue
+        expected_mode, expected_oid = expected
+        metadata = root.lstat(path)
+        if expected_mode == "120000":
+            matches = stat.S_ISLNK(metadata.st_mode) and (
+                _git_blob_oid_bytes(root.readlink_bytes(path)) == expected_oid
+            )
+        else:
+            required_permissions = 0o755 if expected_mode == "100755" else 0o644
+            if not stat.S_ISREG(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != required_permissions:
+                matches = False
+            else:
+                fd = root.open_regular(path)
+                try:
+                    matches = _git_blob_oid_fd(fd, os.fstat(fd).st_size) == expected_oid
+                finally:
+                    os.close(fd)
+        if matches:
+            semantically_unchanged_tracked.add(path)
+    changed = [path for path in changed if path not in semantically_unchanged_tracked]
     changed.sort(key=os.fsencode)
     if not changed:
         raise OracleError("artifact manifest is empty after build")
@@ -1157,6 +1479,39 @@ def canonical_json_bytes(document: Mapping[str, object]) -> bytes:
     return (
         json.dumps(document, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode("utf-8")
+
+
+def _parse_utc_timestamp(value: object, field: str) -> datetime:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise OracleError(f"{field} must be an RFC3339 UTC timestamp ending in Z")
+    try:
+        parsed = datetime.fromisoformat(f"{value[:-1]}+00:00")
+    except ValueError as error:
+        raise OracleError(f"{field} must be a valid RFC3339 timestamp") from error
+    if parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise OracleError(f"{field} must use UTC")
+    return parsed
+
+
+def _validate_provenance_timestamp_order(document: Mapping[str, object]) -> None:
+    primary = _require_object(document.get("primary"), "primary")
+    rebuild = _require_object(document.get("rebuild"), "rebuild")
+    callback = _require_object(document.get("callback"), "callback")
+    cleanup = _require_object(document.get("cleanup"), "cleanup")
+    ordered = [
+        ("primary.started_at_utc", primary.get("started_at_utc")),
+        ("primary.finished_at_utc", primary.get("finished_at_utc")),
+        ("rebuild.started_at_utc", rebuild.get("started_at_utc")),
+        ("rebuild.finished_at_utc", rebuild.get("finished_at_utc")),
+        ("callback.started_at_utc", callback.get("started_at_utc")),
+        ("callback.finished_at_utc", callback.get("finished_at_utc")),
+        ("cleanup.completed_at_utc", cleanup.get("completed_at_utc")),
+        ("published_at_utc", document.get("published_at_utc")),
+    ]
+    parsed = [(_parse_utc_timestamp(value, field), field) for field, value in ordered]
+    for (earlier, _earlier_field), (later, later_field) in zip(parsed, parsed[1:]):
+        if later < earlier:
+            raise OracleError(f"{later_field} is earlier than the preceding Oracle stage")
 
 
 def publish_candidate(
@@ -1261,12 +1616,19 @@ def _rename_noreplace(directory_fd: int, source: str, target: str) -> None:
 
 
 def publish_provenance(
-    path: pathlib.Path | CandidateTarget, document: Mapping[str, object]
+    path: pathlib.Path | CandidateTarget,
+    document: Mapping[str, object],
+    *,
+    close_target: bool = False,
 ) -> None:
     """Publish final provenance only with same-directory atomic no-replace rename."""
     owned_target = not isinstance(path, CandidateTarget)
     target = CandidateTarget.open(path) if owned_target else path
+    close_after_publication = owned_target or close_target
+    published = False
     try:
+        if document.get("schema_version") == PROVENANCE_SCHEMA:
+            _validate_provenance_timestamp_order(document)
         payload = canonical_json_bytes(document)
         if len(payload) > MAX_JSON_BYTES:
             raise OracleError(
@@ -1282,7 +1644,6 @@ def publish_provenance(
             0o600,
             dir_fd=target.parent.fd,
         )
-        published = False
         completed = False
         try:
             view = memoryview(payload)
@@ -1314,8 +1675,34 @@ def publish_provenance(
                 except FileNotFoundError:
                     pass
     finally:
-        if owned_target:
-            target.close()
+        if close_after_publication:
+            try:
+                target.close()
+            except BaseException as close_error:
+                rollback_error: BaseException | None = None
+                if published:
+                    try:
+                        visible = HeldDirectory.open_absolute_nofollow(target.parent_path)
+                        try:
+                            if not _same_directory_object(target.parent.stat, visible.stat):
+                                raise OracleError(
+                                    "output parent identity changed before close-failure rollback"
+                                )
+                            try:
+                                os.unlink(target.basename, dir_fd=visible.fd)
+                            except FileNotFoundError:
+                                pass
+                            os.fsync(visible.fd)
+                        finally:
+                            visible.close()
+                    except BaseException as error:
+                        rollback_error = error
+                if rollback_error is not None:
+                    raise OracleError(
+                        "output-parent close failed and publication rollback failed: "
+                        f"{close_error}; {rollback_error}"
+                    ) from close_error
+                raise
 
 
 def _run_cleanup_actions(
@@ -1687,25 +2074,12 @@ def _validate_source(
     }
 
 
-def _validate_pristine_source_tree(
+def _fixed_commit_tree(
     source: HeldDirectory,
     git_dir: HeldDirectory,
     git: HeldExecutable,
     env: Mapping[str, str],
-) -> dict[str, tuple[object, ...]]:
-    index_records = _git_bytes(
-        git, source, git_dir, ["ls-files", "-v", "-z", "--cached"], env
-    ).split(b"\0")
-    non_default_index_flags: list[str] = []
-    for record in index_records:
-        if not record:
-            continue
-        if len(record) < 3 or record[1:2] != b" ":
-            raise OracleError("git returned malformed index flag evidence")
-        tag = record[:1]
-        path = record[2:].decode("utf-8", "strict")
-        if tag != b"H":
-            non_default_index_flags.append(f"{tag.decode('ascii', 'replace')} {path}")
+) -> dict[str, tuple[str, str]]:
     tree_records = _git_bytes(
         git,
         source,
@@ -1740,6 +2114,29 @@ def _validate_pristine_source_tree(
         expected[path] = (mode, oid)
     if not expected:
         raise OracleError("exact fixed Redis commit tree has no tracked files")
+    return expected
+
+
+def _validate_pristine_source_tree(
+    source: HeldDirectory,
+    git_dir: HeldDirectory,
+    git: HeldExecutable,
+    env: Mapping[str, str],
+) -> tuple[dict[str, tuple[object, ...]], dict[str, tuple[str, str]]]:
+    index_records = _git_bytes(
+        git, source, git_dir, ["ls-files", "-v", "-z", "--cached"], env
+    ).split(b"\0")
+    non_default_index_flags: list[str] = []
+    for record in index_records:
+        if not record:
+            continue
+        if len(record) < 3 or record[1:2] != b" ":
+            raise OracleError("git returned malformed index flag evidence")
+        tag = record[:1]
+        path = record[2:].decode("utf-8", "strict")
+        if tag != b"H":
+            non_default_index_flags.append(f"{tag.decode('ascii', 'replace')} {path}")
+    expected = _fixed_commit_tree(source, git_dir, git, env)
 
     tracked = set(expected)
     allowed_directories: set[str] = set()
@@ -1792,7 +2189,7 @@ def _validate_pristine_source_tree(
         problems.append(f"source differs from fixed Redis commit tree: {mismatches}")
     if problems:
         raise OracleError("; ".join(problems))
-    return entries
+    return entries, expected
 
 
 def _sanitized_environment(
@@ -2026,7 +2423,9 @@ def _require_exact_keys(value: Mapping[str, object], keys: set[str], field: str)
 
 
 def _validate_artifact_document(
-    root: HeldDirectory, document: Mapping[str, object]
+    root: HeldDirectory,
+    document: Mapping[str, object],
+    tracked_tree: Mapping[str, tuple[str, str]],
 ) -> None:
     artifacts = _require_list(document.get("artifacts"), "artifacts")
     if not artifacts or len(artifacts) > ArtifactLimits().max_count:
@@ -2105,6 +2504,55 @@ def _validate_artifact_document(
         else:
             raise OracleError(f"artifact symlink depth exceeds eight: {entry['path']!r}")
 
+    tracked_paths = set(tracked_tree)
+    artifact_paths = set(by_path)
+    overlap = sorted(tracked_paths.intersection(artifact_paths), key=os.fsencode)
+    if overlap:
+        raise OracleError(f"tracked source entries cannot be declared artifacts: {overlap}")
+    entries, directories = _tree_entries(root)
+    expected_paths = tracked_paths.union(artifact_paths)
+    missing = sorted(expected_paths.difference(entries), key=os.fsencode)
+    extra = sorted(set(entries).difference(expected_paths), key=os.fsencode)
+    allowed_directories: set[str] = set()
+    for path in expected_paths:
+        parts = path.split("/")
+        for index in range(1, len(parts)):
+            allowed_directories.add("/".join(parts[:index]))
+    extra_directories = sorted(directories.difference(allowed_directories), key=os.fsencode)
+    if missing or extra or extra_directories:
+        raise OracleError(
+            "artifact closure differs from tracked source plus declared artifacts: "
+            f"missing={missing}, extra={extra}, extra_directories={extra_directories}"
+        )
+    tracked_mismatches: list[str] = []
+    for path in sorted(tracked_paths, key=os.fsencode):
+        expected_mode, expected_oid = tracked_tree[path]
+        metadata = root.lstat(path)
+        if expected_mode == "120000":
+            if not stat.S_ISLNK(metadata.st_mode):
+                tracked_mismatches.append(f"{path}: expected symlink")
+                continue
+            actual_oid = _git_blob_oid_bytes(root.readlink_bytes(path))
+        else:
+            required_permissions = 0o755 if expected_mode == "100755" else 0o644
+            if not stat.S_ISREG(metadata.st_mode):
+                tracked_mismatches.append(f"{path}: expected regular file")
+                continue
+            if stat.S_IMODE(metadata.st_mode) != required_permissions:
+                tracked_mismatches.append(
+                    f"{path}: mode {stat.S_IMODE(metadata.st_mode):04o} != {required_permissions:04o}"
+                )
+                continue
+            fd = root.open_regular(path)
+            try:
+                actual_oid = _git_blob_oid_fd(fd, os.fstat(fd).st_size)
+            finally:
+                os.close(fd)
+        if actual_oid != expected_oid:
+            tracked_mismatches.append(f"{path}: Git blob differs from {expected_oid}")
+    if tracked_mismatches:
+        raise OracleError(f"tracked source closure changed: {tracked_mismatches}")
+
     redis_server = _require_object(document.get("redis_server"), "redis_server")
     _require_exact_keys(
         redis_server,
@@ -2133,6 +2581,7 @@ def _validate_build_document(
     document: Mapping[str, object],
     source_root: HeldDirectory,
     expected_tools: Sequence[Mapping[str, object]],
+    tracked_tree: Mapping[str, tuple[str, str]],
 ) -> None:
     _require_exact_keys(
         document,
@@ -2194,7 +2643,7 @@ def _validate_build_document(
         document.get("finished_at_utc"), str
     ):
         raise OracleError("build timestamps must be strings")
-    _validate_artifact_document(source_root, document)
+    _validate_artifact_document(source_root, document, tracked_tree)
 
 
 def _compare_builds(
@@ -2274,7 +2723,7 @@ def _clone_independent_source(
     tools: Sequence[HeldExecutable],
     env: Mapping[str, str],
     aliases_directory: FrozenToolDirectory,
-) -> HeldDirectory:
+) -> tuple[HeldDirectory, dict[str, tuple[str, str]]]:
     checkout_name = "checkout-b"
     checkout_path = verifier_root.path / checkout_name
     result = run_bounded(
@@ -2313,7 +2762,7 @@ def _clone_independent_source(
         ):
             _git_bytes(git, checkout, git_dir, args, env)
         _validate_git_trust_root(checkout, git_dir, git, env)
-        _validate_pristine_source_tree(checkout, git_dir, git, env)
+        _baseline, tracked_tree = _validate_pristine_source_tree(checkout, git_dir, git, env)
         _validate_source(checkout, git_dir, git, env)
         source_git = source_root.open_directory(".git")
         source_objects = source_git.open_directory("objects")
@@ -2333,7 +2782,7 @@ def _clone_independent_source(
         checkout.close()
         checkout = reopened
         source_root.verify_path()
-        return checkout
+        return checkout, tracked_tree
     except BaseException:
         checkout.close()
         raise
@@ -2348,7 +2797,7 @@ def _validate_built_source_revision(
     source: HeldDirectory,
     git: HeldExecutable,
     env: Mapping[str, str],
-) -> None:
+) -> dict[str, tuple[str, str]]:
     git_dir = source.open_directory(".git")
     try:
         _validate_git_trust_root(source, git_dir, git, env)
@@ -2361,6 +2810,7 @@ def _validate_built_source_revision(
         )
         if head != REDIS_COMMIT or tag_commit != REDIS_COMMIT or repository != REDIS_REPOSITORY:
             raise OracleError("primary source revision/origin is no longer exact Redis 8.8.1")
+        return _fixed_commit_tree(source, git_dir, git, env)
     finally:
         git_dir.close()
 
@@ -2425,7 +2875,7 @@ def _read_resp_line(connection: socket.socket, limit: int) -> bytes:
     raise OracleError("Redis runtime response line exceeds byte bound")
 
 
-def _query_redis_info(host: str, port: int) -> list[str]:
+def _query_redis_info(host: str, port: int) -> tuple[list[str], list[int]]:
     with socket.create_connection((host, port), timeout=1.0) as connection:
         connection.settimeout(1.0)
         connection.sendall(b"*2\r\n$4\r\nINFO\r\n$6\r\nserver\r\n")
@@ -2447,14 +2897,28 @@ def _query_redis_info(host: str, port: int) -> list[str]:
         if payload[-2:] != b"\r\n":
             raise OracleError("Redis INFO bulk payload lacks CRLF")
         text = bytes(payload[:-2]).decode("utf-8", "strict")
-    return [line.split(":", 1)[1] for line in text.splitlines() if line.startswith("redis_version:")]
+    versions = [
+        line.split(":", 1)[1]
+        for line in text.splitlines()
+        if line.startswith("redis_version:")
+    ]
+    raw_process_ids = [
+        line.split(":", 1)[1]
+        for line in text.splitlines()
+        if line.startswith("process_id:")
+    ]
+    try:
+        process_ids = [int(value) for value in raw_process_ids]
+    except ValueError as error:
+        raise OracleError("Redis INFO process_id must be a decimal integer") from error
+    return versions, process_ids
 
 
 def _start_redis_runtime(
     binary: HeldExecutable,
     runtime_root: HeldDirectory,
     logs_root: HeldDirectory,
-) -> tuple[subprocess.Popen[bytes], int, dict[str, object]]:
+) -> tuple[subprocess.Popen[bytes], int, dict[str, object], int]:
     log_fd = os.open(
         "redis.log",
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
@@ -2506,27 +2970,34 @@ def _start_redis_runtime(
             pass_fds=(binary.fd, runtime_root.fd),
             start_new_session=True,
         )
-    finally:
+    except BaseException:
         os.close(log_fd)
+        raise
     assert process is not None
     try:
         deadline = time.monotonic() + REDIS_START_TIMEOUT_MS / 1000
-        info_versions: list[str] | None = None
+        info: tuple[list[str], list[int]] | None = None
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise OracleError(
                     f"held rebuild Redis exited before readiness: {process.returncode}"
                 )
             try:
-                info_versions = _query_redis_info("127.0.0.1", port)
+                info = _query_redis_info("127.0.0.1", port)
                 break
             except (ConnectionError, OSError, OracleError):
                 time.sleep(0.05)
-        if info_versions is None:
+        if info is None:
             raise OracleError("held rebuild Redis did not become ready before deadline")
+        info_versions, info_process_ids = info
         if info_versions != [REDIS_TAG]:
             raise OracleError(
                 f"Redis INFO server must contain exactly one redis_version:{REDIS_TAG}; got {info_versions}"
+            )
+        if info_process_ids != [process.pid]:
+            raise OracleError(
+                "Redis INFO server must contain exactly one process_id matching the "
+                f"held runtime PID {process.pid}; got {info_process_ids}"
             )
         proc_identity = os.stat(f"/proc/{process.pid}/exe")
         if not _same_identity(binary.stat, proc_identity):
@@ -2540,13 +3011,20 @@ def _start_redis_runtime(
             "held_fd": True,
             "pid": process.pid,
             "info_redis_versions": info_versions,
-        }
+        }, log_fd
     except BaseException as business_error:
-        try:
-            _stop_process_group(process, "failed Redis startup")
-        except BaseException as cleanup_error:
+        cleanup_errors: list[BaseException] = []
+        for action in (
+            lambda: _stop_process_group(process, "failed Redis startup"),
+            lambda: os.close(log_fd),
+        ):
+            try:
+                action()
+            except BaseException as error:
+                cleanup_errors.append(error)
+        if cleanup_errors:
             raise OracleError(
-                f"{business_error}; Redis startup cleanup failed: {cleanup_error}"
+                f"{business_error}; Redis startup cleanup failed: {cleanup_errors}"
             ) from business_error
         raise
 
@@ -2564,6 +3042,23 @@ def _stop_process_group(process: subprocess.Popen[bytes], label: str) -> None:
         raise OracleError(f"{label} process group was not fully reaped")
     if process.poll() is None:
         raise OracleError(f"{label} process was not reaped")
+
+
+def _cleanup_redis_runtime(process: subprocess.Popen[bytes], log_fd: int) -> None:
+    errors: list[tuple[str, BaseException]] = []
+    for label, action in (
+        ("process", lambda: _stop_process_group(process, "Redis runtime")),
+        ("log fd", lambda: os.close(log_fd)),
+    ):
+        try:
+            action()
+        except BaseException as error:
+            errors.append((label, error))
+    if errors:
+        details = "; ".join(
+            f"{label}: {type(error).__name__}: {error}" for label, error in errors
+        )
+        raise OracleError(f"Redis runtime cleanup failed: {details}")
 
 
 def _write_runtime_evidence(
@@ -2606,19 +3101,30 @@ def _run_callback(
     executable_path = pathlib.Path(callback_argv[0])
     if not executable_path.is_absolute():
         raise OracleError("callback executable must use an absolute path")
-    home = callback_root.path / "home"
-    temporary = callback_root.path / "tmp"
     working = callback_root.path / "work"
-    for path in (home, temporary, working):
-        path.mkdir(mode=0o700)
+    working.mkdir(mode=0o700)
+    (working / "home").mkdir(mode=0o700)
+    (working / "tmp").mkdir(mode=0o700)
+    sandbox_root = callback_root.path / "sandbox-root"
+    sandbox_root.mkdir(mode=0o700)
+    for relative in ("usr", "proc", "dev", "work"):
+        (sandbox_root / relative).mkdir(mode=0o700)
+    for relative in ("runtime-evidence.json", "dev/null"):
+        (sandbox_root / relative).touch(mode=0o600, exist_ok=False)
+    for link, target in (("bin", "usr/bin"), ("lib", "usr/lib"), ("lib64", "usr/lib64")):
+        (sandbox_root / link).symlink_to(target)
     executable = HeldExecutable.open("callback", executable_path)
     try:
-        env = _sanitized_environment(aliases_directory.child_path, home, temporary)
+        aliases_directory.verify_frozen()
+        env = _sanitized_environment(
+            "/usr/bin:/bin", pathlib.Path("/work/home"), pathlib.Path("/work/tmp")
+        )
         env.update(
             {
                 "KIWI_REDIS_ORACLE_HOST": host,
                 "KIWI_REDIS_ORACLE_PORT": str(port),
-                "KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE": f"/proc/self/fd/{runtime_evidence_fd}",
+                "KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE": "/runtime-evidence.json",
+                "KIWI_REDIS_ORACLE_WORKDIR": "/work",
             }
         )
         result = run_bounded(
@@ -2630,10 +3136,11 @@ def _run_callback(
             stdout_limit_bytes=CALLBACK_OUTPUT_LIMIT,
             stderr_limit_bytes=CALLBACK_OUTPUT_LIMIT,
             extra_fds=(callback_root.fd, runtime_evidence_fd),
-            readonly_bind_directories=(aliases_directory,),
-            cwd=working,
             terminate_on_output_limit=True,
+            pid_namespace=True,
+            callback_filesystem=(callback_root.fd, runtime_evidence_fd),
         )
+        aliases_directory.verify_frozen()
     finally:
         executable.close()
     if result.timed_out or result.output_truncated or result.exit_code != 0:
@@ -2720,9 +3227,12 @@ def verify_oracle(
     logs_root: HeldDirectory | None = None
     callback_root: HeldDirectory | None = None
     runtime_evidence_fd = -1
+    redis_log_fd = -1
     redis_process: subprocess.Popen[bytes] | None = None
     primary_document: dict[str, object] | None = None
     rebuild_document: dict[str, object] | None = None
+    primary_tracked_tree: dict[str, tuple[str, str]] | None = None
+    rebuild_tracked_tree: dict[str, tuple[str, str]] | None = None
     comparison: dict[str, bool] | None = None
     runtime_document: dict[str, object] | None = None
     callback_document: dict[str, object] | None = None
@@ -2800,10 +3310,12 @@ def verify_oracle(
         _empty_directory(temporary, "verifier TMPDIR")
         git = next(tool for tool in tools if tool.role == "git")
 
-        _validate_built_source_revision(source_root, git, env)
+        primary_tracked_tree = _validate_built_source_revision(source_root, git, env)
         primary_document = _load_json_object(primary_metadata, "primary metadata")
-        _validate_build_document(primary_document, source_root, tool_evidence)
-        checkout = _clone_independent_source(
+        _validate_build_document(
+            primary_document, source_root, tool_evidence, primary_tracked_tree
+        )
+        checkout, rebuild_tracked_tree = _clone_independent_source(
             source_root, verifier_root, git, tools, env, aliases_directory
         )
         rebuild_metadata, rebuild_document = _build_rebuild_candidate(
@@ -2814,13 +3326,15 @@ def verify_oracle(
             tools,
             env,
         )
-        _validate_build_document(rebuild_document, checkout, tool_evidence)
+        _validate_build_document(
+            rebuild_document, checkout, tool_evidence, rebuild_tracked_tree
+        )
         comparison = _compare_builds(primary_document, rebuild_document)
 
         rebuild_binary = HeldExecutable.open(
             "redis-server", checkout.path / "src/redis-server"
         )
-        redis_process, port, runtime_document = _start_redis_runtime(
+        redis_process, port, runtime_document, redis_log_fd = _start_redis_runtime(
             rebuild_binary, runtime_root, logs_root
         )
         runtime_evidence_fd = _write_runtime_evidence(runtime_root, runtime_document)
@@ -2845,7 +3359,7 @@ def verify_oracle(
         )
         if redis_process.poll() is not None:
             raise OracleError("Redis runtime exited during the supervised callback")
-        if _query_redis_info("127.0.0.1", port) != [REDIS_TAG]:
+        if _query_redis_info("127.0.0.1", port) != ([REDIS_TAG], [redis_process.pid]):
             raise OracleError("Redis runtime INFO identity changed after callback")
         if not _same_identity(
             rebuild_binary.stat, os.stat(f"/proc/{redis_process.pid}/exe")
@@ -2853,7 +3367,7 @@ def verify_oracle(
             raise OracleError("Redis /proc executable identity changed after callback")
         rebuild_binary.verify_path()
         aliases_directory.verify_frozen()
-        _validate_artifact_document(checkout, rebuild_document)
+        _validate_artifact_document(checkout, rebuild_document, rebuild_tracked_tree)
         if _tree_entries(checkout) != checkout_snapshot:
             raise OracleError("callback modified the verifier checkout B resource tree")
         if _tree_entries(runtime_root) != runtime_snapshot:
@@ -2877,12 +3391,19 @@ def verify_oracle(
 
     if redis_process is not None:
         def stop_redis() -> None:
+            nonlocal redis_log_fd
             assert redis_process is not None
-            _stop_process_group(redis_process, "Redis runtime")
+            try:
+                _cleanup_redis_runtime(redis_process, redis_log_fd)
+            finally:
+                redis_log_fd = -1
             cleanup_state["redis_process_reaped"] = True
             cleanup_state["process_group_reaped"] = True
 
-        cleanup("Redis runtime reap", stop_redis)
+        cleanup("Redis runtime and log cleanup", stop_redis)
+    elif redis_log_fd >= 0:
+        cleanup("Redis log close", lambda: os.close(redis_log_fd))
+        redis_log_fd = -1
     if runtime_evidence_fd >= 0:
         cleanup("runtime evidence close", lambda: os.close(runtime_evidence_fd))
         runtime_evidence_fd = -1
@@ -2938,9 +3459,12 @@ def verify_oracle(
             assert source_root is not None
             assert primary_metadata is not None
             assert primary_document is not None
+            assert primary_tracked_tree is not None
             source_root.verify_path()
             primary_metadata.verify_path()
-            _validate_artifact_document(source_root, primary_document)
+            _validate_artifact_document(
+                source_root, primary_document, primary_tracked_tree
+            )
             for tool in tools:
                 tool.verify_path()
             target.verify_visible_parent()
@@ -2999,7 +3523,7 @@ def verify_oracle(
             "published_after_cleanup": True,
             "published_at_utc": _utc_now(),
         }
-        publish_provenance(target, document)
+        publish_provenance(target, document, close_target=True)
         print(str(target.path))
     finally:
         target.close()
@@ -3081,7 +3605,9 @@ def build_primary(
         git = next(tool for tool in tools if tool.role == "git")
         git_directory = source_root.open_directory(".git")
         _validate_git_trust_root(source_root, git_directory, git, env)
-        baseline = _validate_pristine_source_tree(source_root, git_directory, git, env)
+        baseline, tracked_tree = _validate_pristine_source_tree(
+            source_root, git_directory, git, env
+        )
         source_evidence = _validate_source(source_root, git_directory, git, env)
 
         source_fd = os.dup(source_root.fd)
@@ -3120,7 +3646,9 @@ def build_primary(
         aliases_directory.verify_frozen()
         _empty_directory(home, "HOME")
         _empty_directory(temporary, "TMPDIR")
-        artifacts = scan_artifacts(source_root, baseline)
+        artifacts = scan_artifacts(
+            source_root, baseline, tracked_tree=tracked_tree
+        )
         redis_path = source / "src/redis-server"
         redis_metadata, redis_sha256 = source_root.regular_evidence("src/redis-server")
         if not stat.S_ISREG(redis_metadata.st_mode) or not redis_metadata.st_mode & 0o111:
@@ -3155,6 +3683,7 @@ def build_primary(
             "started_at_utc": started_at,
             "finished_at_utc": _utc_now(),
         }
+        _validate_artifact_document(source_root, document, tracked_tree)
     except BaseException as error:
         business_error = error
 

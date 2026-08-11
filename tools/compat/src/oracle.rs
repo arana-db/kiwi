@@ -960,11 +960,30 @@ impl OracleProvenance {
         let callback = BoundedCallbackResult::validate(raw.callback)?;
         let cleanup = CleanupResult::validate(raw.cleanup)?;
         require_true("published_after_cleanup", raw.published_after_cleanup)?;
+        let primary_finished =
+            parse_timestamp("primary.finished_at_utc", &primary.finished_at_utc)?;
+        let rebuild_started = parse_timestamp("rebuild.started_at_utc", &rebuild.started_at_utc)?;
+        let rebuild_finished =
+            parse_timestamp("rebuild.finished_at_utc", &rebuild.finished_at_utc)?;
+        let callback_started =
+            parse_timestamp("callback.started_at_utc", &callback.started_at_utc)?;
         let callback_finished =
             parse_timestamp("callback.finished_at_utc", &callback.finished_at_utc)?;
         let cleanup_completed =
             parse_timestamp("cleanup.completed_at_utc", &cleanup.completed_at_utc)?;
         let published = parse_timestamp("published_at_utc", &raw.published_at_utc)?;
+        if rebuild_started < primary_finished {
+            return invalid(
+                "rebuild.started_at_utc",
+                "must be at or after primary completion",
+            );
+        }
+        if callback_started < rebuild_finished {
+            return invalid(
+                "callback.started_at_utc",
+                "must be at or after rebuild completion",
+            );
+        }
         if cleanup_completed < callback_finished {
             return invalid(
                 "cleanup.completed_at_utc",
