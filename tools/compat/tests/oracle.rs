@@ -22,10 +22,412 @@ use kiwi_compat::oracle::{
     REDIS_TAG,
 };
 use serde_json::{Map, Value, json};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const REDIS_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const CLI_SHA: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const TOOL_SHA: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+#[cfg(unix)]
+const CONTROLLED_PYTHON: &str = "/home/alex/miniconda3/bin/python3";
+
+#[cfg(unix)]
+struct TestDir(PathBuf);
+
+#[cfg(unix)]
+impl TestDir {
+    fn new(name: &str) -> Self {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock must be after the Unix epoch")
+            .as_nanos();
+        let path = PathBuf::from(format!(
+            "/tmp/kiwi-oracle-test-{name}-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir(&path).expect("test directory must be created");
+        Self(path)
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+#[cfg(unix)]
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+#[cfg(unix)]
+fn repository_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("compat crate must be below the repository root")
+        .to_path_buf()
+}
+
+#[cfg(unix)]
+fn controller_path() -> PathBuf {
+    repository_root().join("scripts/compat/oracle_controller.py")
+}
+
+#[cfg(unix)]
+fn build_script_path() -> PathBuf {
+    repository_root().join("scripts/compat/build-redis-8.8.1.sh")
+}
+
+#[cfg(unix)]
+fn run_python_probe(test_dir: &TestDir, body: &str) -> Output {
+    let probe = test_dir.path().join("probe.py");
+    let controller = controller_path();
+    let source = format!(
+        r#"import importlib.util
+import pathlib
+import sys
+
+controller_path = pathlib.Path({controller:?})
+spec = importlib.util.spec_from_file_location("kiwi_oracle_controller", controller_path)
+assert spec is not None and spec.loader is not None
+controller = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = controller
+spec.loader.exec_module(controller)
+
+{body}
+"#,
+        controller = controller.to_string_lossy(),
+    );
+    fs::write(&probe, source).expect("probe must be written");
+    Command::new(CONTROLLED_PYTHON)
+        .args(["-I", "-B"])
+        .arg(&probe)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .expect("controlled Python probe must start")
+}
+
+#[cfg(unix)]
+fn assert_probe_succeeds(output: Output) {
+    assert!(
+        output.status.success(),
+        "probe failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn oracle_build_wrapper_rejects_ambient_python_and_controller_selection() {
+    let test_dir = TestDir::new("ambient");
+    let evil_bin = test_dir.path().join("evil-bin");
+    let evil_python_path = test_dir.path().join("evil-pythonpath");
+    let python_marker = test_dir.path().join("ambient-python-ran");
+    let import_marker = test_dir.path().join("ambient-import-ran");
+    fs::create_dir(&evil_bin).unwrap();
+    fs::create_dir(&evil_python_path).unwrap();
+    fs::write(
+        evil_bin.join("python3"),
+        format!("#!/bin/sh\ntouch '{}'\nexit 91\n", python_marker.display()),
+    )
+    .unwrap();
+    fs::write(
+        evil_python_path.join("sitecustomize.py"),
+        format!("from pathlib import Path\nPath({import_marker:?}).touch()\n"),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let mut permissions = fs::metadata(evil_bin.join("python3"))
+        .unwrap()
+        .permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(evil_bin.join("python3"), permissions).unwrap();
+
+    let output = Command::new("/usr/bin/bash")
+        .arg(build_script_path())
+        .arg("--help")
+        .env_clear()
+        .env("PATH", &evil_bin)
+        .env("PYTHONPATH", &evil_python_path)
+        .env("PYTHONHOME", &evil_python_path)
+        .env("GIT_CONFIG_GLOBAL", evil_python_path.join("gitconfig"))
+        .output()
+        .expect("build wrapper must start");
+
+    assert!(
+        output.status.success(),
+        "wrapper --help failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!python_marker.exists(), "ambient PATH selected python3");
+    assert!(
+        !import_marker.exists(),
+        "ambient PYTHONPATH/PYTHONHOME loaded sitecustomize"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("--source"),
+        "controlled controller help was not emitted"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn oracle_build_holds_executable_fd_and_freezes_tool_aliases() {
+    let test_dir = TestDir::new("held-fd");
+    let body = format!(
+        r##"import os
+import pathlib
+import stat
+
+root = pathlib.Path({root:?})
+tool = root / "tool"
+replacement = root / "replacement"
+original_marker = root / "original-marker"
+replacement_marker = root / "replacement-marker"
+tool.write_text("#!/bin/sh\nprintf original > \"$1\"\n", encoding="utf-8")
+replacement.write_text("#!/bin/sh\nprintf replacement > \"$1\"\nprintf bad > \"$2\"\n", encoding="utf-8")
+tool.chmod(0o755)
+replacement.chmod(0o755)
+
+with controller.HeldExecutable.open("probe", tool) as held:
+    aliases = controller.FrozenToolDirectory.create(root / "tools", {{"probe": held}})
+    os.replace(replacement, tool)
+    result = controller.run_bounded(
+        held,
+        ["probe", str(original_marker), str(replacement_marker)],
+        env={{"PATH": str(aliases.path), "HOME": str(root / "home"), "TMPDIR": str(root / "tmp")}},
+        timeout_ms=2000,
+        term_grace_ms=100,
+        stdout_limit_bytes=64,
+        stderr_limit_bytes=64,
+    )
+    assert result.exit_code == 0
+    assert original_marker.read_text(encoding="utf-8") == "original"
+    assert not replacement_marker.exists()
+    assert stat.S_IMODE(os.lstat(aliases.path).st_mode) == 0o500
+    aliases.verify_frozen()
+    try:
+        os.unlink(aliases.path / "probe")
+    except PermissionError:
+        pass
+    else:
+        raise AssertionError("frozen alias directory allowed recipe replacement")
+    aliases.remove()
+"##,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(unix)]
+fn oracle_build_runner_caps_output_times_out_and_reaps_the_process_group() {
+    let test_dir = TestDir::new("runner");
+    let body = format!(
+        r##"import os
+import pathlib
+
+root = pathlib.Path({root:?})
+script = root / "runaway.sh"
+child_pid = root / "child.pid"
+script.write_text(
+    "#!/bin/sh\n(sleep 30) &\nprintf '%s' \"$!\" > \"$1\"\n"
+    "while :; do printf 0123456789; printf abcdefghij >&2; done\n",
+    encoding="utf-8",
+)
+script.chmod(0o755)
+(root / "home").mkdir()
+(root / "tmp").mkdir()
+with controller.HeldExecutable.open("shell", pathlib.Path("/usr/bin/bash")) as held:
+    result = controller.run_bounded(
+        held,
+        ["bash", str(script), str(child_pid)],
+        env={{"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TMPDIR": str(root / "tmp")}},
+        timeout_ms=250,
+        term_grace_ms=100,
+        stdout_limit_bytes=64,
+        stderr_limit_bytes=64,
+    )
+assert result.timed_out
+assert result.output_truncated
+assert result.stdout_bytes > result.stdout_limit_bytes
+assert result.stderr_bytes > result.stderr_limit_bytes
+assert result.process_group_reaped
+pid = int(child_pid.read_text(encoding="utf-8"))
+try:
+    os.kill(pid, 0)
+except ProcessLookupError:
+    pass
+else:
+    raise AssertionError(f"descendant {{pid}} survived process-group cleanup")
+"##,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(unix)]
+fn oracle_build_artifact_scan_is_sorted_bounded_and_fail_closed() {
+    let test_dir = TestDir::new("artifacts");
+    let body = format!(
+        r#"import os
+import pathlib
+import socket
+
+root = pathlib.Path({root:?}) / "source"
+root.mkdir()
+baseline = controller.snapshot_tree(root)
+(root / "z-last").write_bytes(b"z")
+(root / "a-first").write_bytes(b"a")
+os.symlink("a-first", root / "m-link")
+manifest = controller.scan_artifacts(root, baseline)
+assert [entry["path"] for entry in manifest] == ["a-first", "m-link", "z-last"]
+assert manifest[0]["kind"] == "regular"
+assert manifest[1] == {{"kind": "symlink", "path": "m-link", "mode": os.lstat(root / "m-link").st_mode, "target": "a-first"}}
+
+bad_link = root / "escape"
+os.symlink("../outside", bad_link)
+try:
+    controller.scan_artifacts(root, baseline)
+except controller.OracleError:
+    pass
+else:
+    raise AssertionError("escaping symlink was accepted")
+bad_link.unlink()
+
+sock = socket.socket(socket.AF_UNIX)
+sock.bind(str(root / "socket"))
+try:
+    try:
+        controller.scan_artifacts(root, baseline)
+    except controller.OracleError:
+        pass
+    else:
+        raise AssertionError("socket artifact was accepted")
+finally:
+    sock.close()
+    (root / "socket").unlink()
+
+try:
+    controller.scan_artifacts(root, baseline, limits=controller.ArtifactLimits(max_count=2, max_file_bytes=1024, max_total_bytes=1024))
+except controller.OracleError:
+    pass
+else:
+    raise AssertionError("artifact count bound was not enforced")
+"#,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(unix)]
+fn oracle_build_candidate_publish_is_exclusive_atomic_and_not_provenance() {
+    let test_dir = TestDir::new("publish");
+    let metadata = test_dir.path().join("primary-build.json");
+    let fixture = canonical_build("primary");
+    let body = format!(
+        r#"import json
+import pathlib
+
+metadata = pathlib.Path({metadata:?})
+document = json.loads(r'''{document}''')
+controller.publish_candidate(metadata, document)
+assert metadata.exists()
+assert not list(metadata.parent.glob("*provenance*"))
+try:
+    controller.publish_candidate(metadata, document)
+except controller.OracleError:
+    pass
+else:
+    raise AssertionError("existing candidate metadata was overwritten")
+"#,
+        metadata = metadata.to_string_lossy(),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+    let raw = fs::read_to_string(&metadata).unwrap();
+    let parsed = BuildEvidence::from_json(&raw).expect("candidate must satisfy Task 1 API");
+    assert_eq!(parsed.schema_version(), BUILD_SCHEMA);
+    assert!(!test_dir.path().join("provenance.json").exists());
+}
+
+#[test]
+#[ignore = "real external Redis 8.8.1 build; run with --include-ignored"]
+#[cfg(unix)]
+fn oracle_build_real_redis_8_8_1_produces_valid_primary_evidence_only() {
+    let test_dir = TestDir::new("real-redis");
+    let source = test_dir.path().join("source");
+    let metadata = test_dir.path().join("primary-build.json");
+    let clone = Command::new("/usr/bin/git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--branch",
+            REDIS_TAG,
+            "https://github.com/redis/redis.git",
+        ])
+        .arg(&source)
+        .output()
+        .expect("git clone must start");
+    assert!(
+        clone.status.success(),
+        "git clone failed: {}",
+        String::from_utf8_lossy(&clone.stderr)
+    );
+    let checkout = Command::new("/usr/bin/git")
+        .arg("-C")
+        .arg(&source)
+        .args(["checkout", "--detach", REDIS_COMMIT])
+        .output()
+        .expect("git checkout must start");
+    assert!(
+        checkout.status.success(),
+        "git checkout failed: {}",
+        String::from_utf8_lossy(&checkout.stderr)
+    );
+
+    let output = Command::new("/usr/bin/bash")
+        .arg(build_script_path())
+        .arg("--source")
+        .arg(&source)
+        .arg("--metadata")
+        .arg(&metadata)
+        .env_clear()
+        .env("PATH", "/untrusted")
+        .env("PYTHONPATH", "/untrusted")
+        .env("PYTHONHOME", "/untrusted")
+        .output()
+        .expect("Redis build wrapper must start");
+    assert!(
+        output.status.success(),
+        "Redis build failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let evidence = fs::read_to_string(&metadata).expect("candidate metadata must exist");
+    let build = BuildEvidence::from_json(&evidence).expect("candidate metadata must validate");
+    assert_eq!(build.source().commit(), REDIS_COMMIT);
+    assert_eq!(build.recipe().id(), RECIPE_ID);
+    assert!(!build.artifacts().is_empty());
+    assert!(
+        fs::read_dir(test_dir.path()).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains("provenance")),
+        "primary build must not publish final provenance"
+    );
+}
 
 #[test]
 fn loads_the_canonical_build_and_provenance_fixtures() {
