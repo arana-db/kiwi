@@ -26,9 +26,13 @@ use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_me
 
 use super::admission::{VectorAdmissionLimits, admit_vector_request};
 use super::{
-    ERR_INVALID_VECTOR, ERR_VECTOR_ELEMENT_LIMIT, MissingError, ParseResult, VectorParseLimits,
-    error_reply, parse_direct_vector, parse_positive_usize, storage_error_reply,
+    ERR_INVALID_VECTOR, ERR_VECTOR_BYTES_LIMIT, ERR_VECTOR_DIMENSION_LIMIT,
+    ERR_VECTOR_ELEMENT_LIMIT, MissingError, VectorParseLimits, error_reply, parse_direct_vector,
+    storage_error_reply,
 };
+
+#[cfg(test)]
+use super::ParseResult;
 
 const ERR_VADD_REDUCE: &str = "ERR VADD option REDUCE is not supported yet";
 const ERR_VADD_DEFAULT_QUANTIZATION: &str =
@@ -39,6 +43,7 @@ const ERR_VADD_CAS: &str = "ERR VADD option CAS is not supported yet";
 const ERR_VADD_EF: &str = "ERR VADD option EF is not supported yet";
 const ERR_VADD_SETATTR: &str = "ERR VADD option SETATTR is not supported yet";
 const ERR_VADD_M: &str = "ERR VADD option M is not supported yet";
+const ERR_VADD_INVALID_OPTION: &str = "ERR invalid option after element";
 
 crate::define_vector_command!(
     VAddCmd,
@@ -54,19 +59,52 @@ struct ParsedVAdd {
     element: Vec<u8>,
 }
 
-fn parse_vadd_with_limits(argv: &[Vec<u8>], limits: VectorParseLimits) -> ParseResult<ParsedVAdd> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VAddParseError {
+    InvalidVector,
+    MissingElement,
+    InvalidOption(&'static str),
+    ResourceLimit(&'static str),
+}
+
+impl VAddParseError {
+    const fn message(self) -> &'static str {
+        match self {
+            Self::InvalidVector => ERR_INVALID_VECTOR,
+            Self::MissingElement => "ERR wrong number of arguments for 'vadd' command",
+            Self::InvalidOption(message) | Self::ResourceLimit(message) => message,
+        }
+    }
+}
+
+fn classify_vector_parse_error(message: &'static str) -> VAddParseError {
+    match message {
+        ERR_VECTOR_DIMENSION_LIMIT | ERR_VECTOR_ELEMENT_LIMIT | ERR_VECTOR_BYTES_LIMIT => {
+            VAddParseError::ResourceLimit(message)
+        }
+        _ => VAddParseError::InvalidVector,
+    }
+}
+
+fn parse_vadd_with_limits(
+    argv: &[Vec<u8>],
+    limits: VectorParseLimits,
+) -> Result<ParsedVAdd, VAddParseError> {
     // REDUCE must precede the vector spec; reject it explicitly until
     // random-projection support lands.
     if argv
         .get(2)
         .is_some_and(|arg| arg.eq_ignore_ascii_case(b"REDUCE"))
     {
-        return Err(ERR_VADD_REDUCE);
+        return Err(VAddParseError::InvalidOption(ERR_VADD_REDUCE));
     }
-    let (vector, element_index) = parse_direct_vector(argv, 2, limits)?;
-    let element = argv.get(element_index).ok_or(ERR_INVALID_VECTOR)?;
+    let (vector, element_index) =
+        parse_direct_vector(argv, 2, limits).map_err(classify_vector_parse_error)?;
+    let element = argv
+        .get(element_index)
+        .ok_or(VAddParseError::MissingElement)?;
     if element.len() > limits.max_element_bytes {
-        return Err(ERR_VECTOR_ELEMENT_LIMIT);
+        return Err(VAddParseError::ResourceLimit(ERR_VECTOR_ELEMENT_LIMIT));
     }
     let element = element.clone();
 
@@ -75,33 +113,35 @@ fn parse_vadd_with_limits(argv: &[Vec<u8>], limits: VectorParseLimits) -> ParseR
         if option.eq_ignore_ascii_case(b"NOQUANT") {
             quantization = Some(QuantizationType::None);
         } else if option.eq_ignore_ascii_case(b"Q8") {
-            return Err(ERR_VADD_Q8);
+            return Err(VAddParseError::InvalidOption(ERR_VADD_Q8));
         } else if option.eq_ignore_ascii_case(b"BIN") {
-            return Err(ERR_VADD_BIN);
+            return Err(VAddParseError::InvalidOption(ERR_VADD_BIN));
         } else if option.eq_ignore_ascii_case(b"CAS") {
-            return Err(ERR_VADD_CAS);
+            return Err(VAddParseError::InvalidOption(ERR_VADD_CAS));
         } else if option.eq_ignore_ascii_case(b"EF") {
-            return Err(ERR_VADD_EF);
+            return Err(VAddParseError::InvalidOption(ERR_VADD_EF));
         } else if option.eq_ignore_ascii_case(b"SETATTR") {
-            return Err(ERR_VADD_SETATTR);
+            return Err(VAddParseError::InvalidOption(ERR_VADD_SETATTR));
         } else if option.eq_ignore_ascii_case(b"M") {
-            return Err(ERR_VADD_M);
+            return Err(VAddParseError::InvalidOption(ERR_VADD_M));
         } else {
-            return Err(ERR_INVALID_VECTOR);
+            return Err(VAddParseError::InvalidOption(ERR_VADD_INVALID_OPTION));
         }
     }
 
     // Fold the requested quantization into the vector here; from this point
     // on the vector's own quantization is the single source of truth.
     let vector = vector
-        .to_quantized(quantization.ok_or(ERR_VADD_DEFAULT_QUANTIZATION)?)
-        .map_err(|_| ERR_INVALID_VECTOR)?;
+        .to_quantized(
+            quantization.ok_or(VAddParseError::InvalidOption(ERR_VADD_DEFAULT_QUANTIZATION))?,
+        )
+        .map_err(|_| VAddParseError::InvalidVector)?;
     Ok(ParsedVAdd { vector, element })
 }
 
 #[cfg(test)]
 fn parse_vadd(argv: &[Vec<u8>]) -> ParseResult<ParsedVAdd> {
-    parse_vadd_with_limits(argv, VectorParseLimits::default())
+    parse_vadd_with_limits(argv, VectorParseLimits::default()).map_err(VAddParseError::message)
 }
 
 impl Cmd for VAddCmd {
@@ -128,23 +168,14 @@ impl Cmd for VAddCmd {
             .unwrap_or_default();
         let parsed = match parse_vadd_with_limits(&argv, limits) {
             Ok(parsed) => parsed,
-            Err(ERR_INVALID_VECTOR)
-                if argv.get(2).is_some_and(|kind| {
-                    (kind.eq_ignore_ascii_case(b"FP32") && argv.len() == 4)
-                        || (kind.eq_ignore_ascii_case(b"VALUES")
-                            && argv
-                                .get(3)
-                                .and_then(|raw| parse_positive_usize(raw))
-                                .is_some_and(|dimension| argv.len() == dimension + 4))
-                }) =>
-            {
+            Err(VAddParseError::MissingElement) => {
                 client.set_reply(error_reply(
                     "ERR wrong number of arguments for 'vadd' command",
                 ));
                 return;
             }
-            Err(message) => {
-                client.set_reply(error_reply(message));
+            Err(error) => {
+                client.set_reply(error_reply(error.message()));
                 return;
             }
         };
@@ -355,7 +386,10 @@ mod tests {
 
         let mut trailing = base;
         trailing.extend([b"NOQUANT".to_vec(), b"extra".to_vec()]);
-        assert_eq!(parse_vadd(&trailing).unwrap_err(), ERR_INVALID_VECTOR);
+        assert_eq!(
+            parse_vadd(&trailing).unwrap_err(),
+            "ERR invalid option after element"
+        );
     }
 
     #[tokio::test]
@@ -427,15 +461,42 @@ mod tests {
     }
 
     #[test]
-    fn complete_vector_without_element_returns_wrong_arity() {
-        let client = Client::new(Box::new(TestStream));
-        client.set_argv(&[
+    fn complete_values_without_element_returns_wrong_arity() {
+        let argv = vec![
             b"vadd".to_vec(),
             b"key".to_vec(),
             b"VALUES".to_vec(),
             b"1".to_vec(),
             b"1".to_vec(),
-        ]);
+        ];
+        assert!(matches!(
+            parse_vadd_with_limits(&argv, VectorParseLimits::default()),
+            Err(VAddParseError::MissingElement)
+        ));
+
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"vadd");
+        client.set_argv(&argv);
+        VAddCmd::new().execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert_eq!(
+            client.take_reply(),
+            RespData::Error("ERR wrong number of arguments for 'vadd' command".into())
+        );
+    }
+
+    #[test]
+    fn complete_fp32_without_element_returns_wrong_arity() {
+        let argv = vec![
+            b"vadd".to_vec(),
+            b"key".to_vec(),
+            b"FP32".to_vec(),
+            fp32(&[1.0]),
+        ];
+
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"vadd");
+        client.set_argv(&argv);
 
         VAddCmd::new().execute(&client, Arc::new(Storage::new(1, 0)));
 
@@ -446,18 +507,97 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_vector_keeps_typed_invalid_vector_error() {
-        let client = Client::new(Box::new(TestStream));
-        client.set_argv(&[
+    fn invalid_values_token_without_element_stays_invalid_vector() {
+        let argv = vec![
             b"vadd".to_vec(),
             b"key".to_vec(),
             b"VALUES".to_vec(),
-            b"2".to_vec(),
             b"1".to_vec(),
-        ]);
+            b"not-a-float".to_vec(),
+        ];
+        assert!(matches!(
+            parse_vadd_with_limits(&argv, VectorParseLimits::default()),
+            Err(VAddParseError::InvalidVector)
+        ));
+
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"vadd");
+        client.set_argv(&argv);
+        VAddCmd::new().execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert_eq!(client.take_reply(), error_reply(ERR_INVALID_VECTOR));
+    }
+
+    #[test]
+    fn invalid_fp32_length_without_element_returns_wrong_arity() {
+        let argv = vec![
+            b"vadd".to_vec(),
+            b"key".to_vec(),
+            b"FP32".to_vec(),
+            vec![1, 2, 3],
+        ];
+
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"vadd");
+        client.set_argv(&argv);
+
+        VAddCmd::new().execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert_eq!(
+            client.take_reply(),
+            RespData::Error("ERR wrong number of arguments for 'vadd' command".into())
+        );
+    }
+
+    #[test]
+    fn invalid_fp32_length_with_fifth_argument_stays_invalid_vector() {
+        let argv = vec![
+            b"vadd".to_vec(),
+            b"key".to_vec(),
+            b"FP32".to_vec(),
+            vec![1, 2, 3],
+            b"placeholder".to_vec(),
+        ];
+        assert!(matches!(
+            parse_vadd_with_limits(&argv, VectorParseLimits::default()),
+            Err(VAddParseError::InvalidVector)
+        ));
+
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"vadd");
+        client.set_argv(&argv);
 
         VAddCmd::new().execute(&client, Arc::new(Storage::new(1, 0)));
 
         assert_eq!(client.take_reply(), error_reply(ERR_INVALID_VECTOR));
+    }
+
+    #[test]
+    fn invalid_trailing_option_after_element_stays_typed() {
+        let argv = vec![
+            b"vadd".to_vec(),
+            b"key".to_vec(),
+            b"VALUES".to_vec(),
+            b"1".to_vec(),
+            b"1".to_vec(),
+            b"element".to_vec(),
+            b"invalid-option".to_vec(),
+        ];
+        assert!(matches!(
+            parse_vadd_with_limits(&argv, VectorParseLimits::default()),
+            Err(VAddParseError::InvalidOption(
+                "ERR invalid option after element"
+            ))
+        ));
+
+        let client = Client::new(Box::new(TestStream));
+        client.set_cmd_name(b"vadd");
+        client.set_argv(&argv);
+        VAddCmd::new().execute(&client, Arc::new(Storage::new(1, 0)));
+
+        assert_eq!(
+            client.take_reply(),
+            error_reply("ERR invalid option after element")
+        );
     }
 }

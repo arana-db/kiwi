@@ -214,45 +214,48 @@ RESP parse to Bytes
 **文件：**
 
 - Modify: `src/cmd/src/vector/vadd.rs`
-- Modify: `tests/python/test_vector_set_differential.py`
 
-- [ ] **步骤 1：写入能杀死 argv-shape heuristic 的失败测试**
+- [x] **步骤 1：写入能杀死 argv-shape heuristic 的失败测试**
 
   - `complete_values_without_element_returns_wrong_arity`
   - `complete_fp32_without_element_returns_wrong_arity`
   - `invalid_values_token_without_element_stays_invalid_vector`
-  - `invalid_fp32_length_without_element_stays_invalid_vector`
+  - `invalid_fp32_length_without_element_returns_wrong_arity`
+  - `invalid_fp32_length_with_fifth_argument_stays_invalid_vector`
   - `invalid_trailing_option_after_element_stays_typed`
 
   ```powershell
   cargo test -p cmd vector::vadd::tests -- --nocapture
   ```
 
-  关键 RED：`VADD key VALUES 1 not-a-float` 和 `VADD key FP32 <3 bytes>` 必须从当前 WrongArity 变为 invalid vector。
+  关键 RED：`VADD key VALUES 1 not-a-float` 在 Redis 的五参数入口内必须保持 invalid vector，不能再由 argv-shape heuristic 改写为 WrongArity。Redis 8.8.1 在 parser 前对全部四参数请求执行 `argc < 5` WrongArity，因此 `VADD key FP32 <3 bytes>` 也必须是 WrongArity；使用第五个 placeholder 才能证明非法 FP32 进入 parser 后保持 invalid vector。
 
-- [ ] **步骤 2：实现 `VAddParseError`**
+- [x] **步骤 2：实现 `VAddParseError`**
 
-  - VADD dispatcher 最小 arity 改为 `-4`，使 parser 看到 FP32 四参数形态。
+  - 保持 Redis 8.8.1 dispatcher 最小 arity `-5`；四参数 FP32 请求在 parser 前统一 WrongArity。
   - `parse_vadd_with_limits` 返回 `VAddParseError::{InvalidVector, MissingElement, InvalidOption, ResourceLimit}`。
-  - 只有 vector 完整消费后缺 element 映射为 standard WrongArity。
+  - 对已经通过 dispatcher 的请求，只有 vector 完整消费后缺 element 映射为 standard WrongArity。
+  - element 后未知 option 返回 Redis 8.8.1 的 `ERR invalid option after element`。
   - 删除 `do_cmd` 中基于 `argv.len()` 的 heuristic。
   - storage-side limits 保留为 defense-in-depth。
 
-- [ ] **步骤 3：增加 raw differential 节点**
+- [x] **步骤 3：明确 raw differential 由 Task 5 交付**
 
-  `test_vadd_typed_error_precedence_raw` 分别在 RESP2/RESP3 覆盖：合法 VALUES/FP32 缺 element、非法 VALUES token 缺 element、非法 FP32 length 缺 element、重复 option、element 后非法 option。
+  Task 4 只交付 Rust typed outcome；正式 frame-aware raw client 由 Task 5 创建，避免用 redis-py typed conversion 或临时单次 `recv()` 冒充 raw 证据。Task 5 的 `test_vadd_typed_error_precedence_raw` 分别在 RESP2/RESP3 覆盖：合法 VALUES 缺 element、四参数 FP32 WrongArity、非法 VALUES token 缺 element、带第五参数的非法 FP32 length、重复 option、element 后非法 option。
 
-- [ ] **步骤 4：回归**
+- [x] **步骤 4：回归**
 
   ```powershell
   cargo test -p cmd vector::vadd::tests -- --nocapture
   ```
 
-  在 Oracle runtime lease 建立后执行：
+  Task 5 建立 raw client 且 Oracle runtime lease 可用后执行：
 
   ```bash
   python3 -m pytest tests/python/test_vector_set_differential.py::test_vadd_typed_error_precedence_raw -vv
   ```
+
+  实际证据：对照 exact Redis 8.8.1 commit `77b6c308396c9700672390a210143a8496fb4b10` 的 `commands.json` 与 `modules/vector-sets/vset.c` 后，纠正了原计划把 VADD arity 改为 `-4` 的错误前提；public dispatcher 保持 `-5`，unknown trailing option 对齐为 `ERR invalid option after element`。tests-first Vector 运行得到 19/23 通过、4 个预期失败，分别命中 arity、四参数 malformed FP32 和 trailing-option 语义；最小 typed outcome 实现后 Vector 23/23、完整 `cmd` 175/175 通过。恢复 argv-shape heuristic、把 `MissingElement` 合并为 `InvalidVector`、把 unknown option 降级为 generic invalid-vector 时对应回归均失败；`cargo clippy -p cmd --all-targets --all-features -- -D warnings`、`cargo fmt --all -- --check`、`git diff --check` 和 SDD validator self-test/正向校验通过。test-guard 删除了两个生产不可达的四参数私有 parser 断言，并保证 wire 文本不复用生产常量自证；独立复核结论为 `SPEC_PASS` 和 `QUALITY_PASS`。正式 raw RESP2/RESP3 节点仍由 Task 5 的 frame-aware client 交付，本 Task 没有用 redis-py typed value 代替 raw evidence。
 
 ## Task 5：function-scoped RESP2/RESP3 raw 客户端与 manifest difference
 

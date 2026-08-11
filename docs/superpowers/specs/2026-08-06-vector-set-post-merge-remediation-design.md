@@ -22,7 +22,7 @@ PR #356 已把 VectorSet 合入 `main`，但合并后的主线仍存在十一类
 4. staged snapshot 校验会在确认来源合法前创建缺失 CF，并且只抽样验证 Vector member。
 5. Vector 请求在资源上限判断前已经跨 runtime 多次深拷贝；`VALUES` 还没有统计 raw token 实际长度。
 6. `VSIM ... ELE member` 的查询向量和候选成员来自两个 RocksDB snapshot，可能形成不可串行化的混合结果。
-7. `VADD` 用 argv shape 猜测 WrongArity，把非法 vector 且缺 element 的请求错误改写为参数数量错误。
+7. `VADD` 用 argv shape 猜测 WrongArity，把已进入 Redis 五参数入口的非法 VALUES vector 错误改写为参数数量错误。
 8. Vector differential 被正常测试目标排除，任何可 PING 的端口都可能被当作 Redis 8.8.1 Oracle。
 9. 三节点 Vector cluster gate 默认 skip，绿色 CI 不证明 fail-closed 路由真实执行。
 10. RESP3 测试通过共享 session 客户端执行 `HELLO 3`，污染后续 RESP2 测试。
@@ -303,22 +303,22 @@ RESP 解析后的 `ParsedCommand` 保留 `Bytes` 所有权，不立即把每个 
 
 ## 8. VADD 解析与错误优先级
 
-删除 `do_cmd` 中基于 argv 数量的 WrongArity heuristic。解析器返回可区分的内部结果：
+保持 Redis 8.8.1 命令元数据 `arity=-5`：所有四参数请求在 vector parser 前统一返回 WrongArity。删除 `do_cmd` 中基于 argv 数量的 WrongArity heuristic；对已经通过 dispatcher 的请求，解析器返回可区分的内部结果：
 
 - vector 编码非法；
 - vector 已成功消费，但 element 缺失；
 - element 存在但后续 option 非法；
 - 完整请求。
 
-只有“vector 已成功消费但 element 缺失”映射到 WrongArity。非法 VALUES token 或非法 FP32 blob 即使同时缺 element，也保留 invalid-vector 错误。
+只有“vector 已成功消费但 element 缺失”映射到 WrongArity。五参数入口中的非法 VALUES token 保留 invalid-vector 错误；非法 FP32 blob 只有在存在第五个参数、实际进入 parser 后才返回 invalid-vector。element 后未知 option 返回 Redis 8.8.1 的 `ERR invalid option after element`。
 
 必需 raw differential：
 
-- 完整合法 VALUES/FP32 缺 element；
+- 完整合法 VALUES 缺 element，以及四参数 FP32 的 dispatcher WrongArity；
 - 非法 VALUES token 缺 element；
-- 非法 FP32 长度缺 element；
+- 四参数非法 FP32 的 dispatcher WrongArity，以及带第五参数时的 invalid-vector；
 - 零向量；
-- 重复 option 和错误优先级。
+- 重复 option、element 后未知 option 和错误优先级。
 
 ## 9. Trusted Redis 8.8.1 Oracle
 
