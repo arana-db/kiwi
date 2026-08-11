@@ -56,6 +56,7 @@ BUILD_TIMEOUT_MS = 1_200_000
 TERM_GRACE_MS = 5_000
 VERSION_OUTPUT_LIMIT = 16 * 1024
 BUILD_OUTPUT_LIMIT = 16 * 1024 * 1024
+CONTROLLED_PATH_FD = 198
 
 
 class OracleError(RuntimeError):
@@ -102,6 +103,27 @@ def _sha256_fd(fd: int) -> str:
             break
         digest.update(chunk)
     os.lseek(fd, offset, os.SEEK_SET)
+    return digest.hexdigest()
+
+
+def _git_blob_oid_fd(fd: int, size: int) -> str:
+    offset = os.lseek(fd, 0, os.SEEK_CUR)
+    os.lseek(fd, 0, os.SEEK_SET)
+    digest = hashlib.sha1(usedforsecurity=False)
+    digest.update(f"blob {size}\0".encode("ascii"))
+    while True:
+        chunk = os.read(fd, 1024 * 1024)
+        if not chunk:
+            break
+        digest.update(chunk)
+    os.lseek(fd, offset, os.SEEK_SET)
+    return digest.hexdigest()
+
+
+def _git_blob_oid_bytes(content: bytes) -> str:
+    digest = hashlib.sha1(usedforsecurity=False)
+    digest.update(f"blob {len(content)}\0".encode("ascii"))
+    digest.update(content)
     return digest.hexdigest()
 
 
@@ -166,6 +188,13 @@ class HeldDirectory:
         directory_fd, name = self._parent_fd(relative)
         try:
             return os.readlink(name, dir_fd=directory_fd)
+        finally:
+            os.close(directory_fd)
+
+    def readlink_bytes(self, relative: str) -> bytes:
+        directory_fd, name = self._parent_fd(relative)
+        try:
+            return os.readlink(os.fsencode(name), dir_fd=directory_fd)
         finally:
             os.close(directory_fd)
 
@@ -323,17 +352,18 @@ def _write_proc_mapping(path: str, value: str) -> None:
 
 
 def _readonly_mount_namespace_setup(
-    bindings: Sequence[tuple[int, bytes]], host_uid: int, host_gid: int
+    directories: Sequence["FrozenToolDirectory"], host_uid: int, host_gid: int
 ):
     clone_newns = 0x00020000
     clone_newuser = 0x10000000
-    ms_rdonly = 1
-    ms_nosuid = 2
-    ms_nodev = 4
-    ms_remount = 32
-    ms_bind = 4096
-    ms_rec = 16384
-    ms_private = 1 << 18
+    at_empty_path = 0x1000
+    fsopen_cloexec = 1
+    fsconfig_set_string = 1
+    fsconfig_cmd_create = 6
+    fsmount_cloexec = 1
+    mount_attr_rdonly = 1
+    mount_attr_nosuid = 2
+    mount_attr_nodev = 4
     pr_set_securebits = 28
     pr_set_no_new_privs = 38
     secure_noroot = 1 | 2
@@ -350,6 +380,14 @@ def _readonly_mount_namespace_setup(
             ("inheritable", ctypes.c_uint32),
         ]
 
+    class MountAttr(ctypes.Structure):
+        _fields_ = [
+            ("attr_set", ctypes.c_uint64),
+            ("attr_clr", ctypes.c_uint64),
+            ("propagation", ctypes.c_uint64),
+            ("userns_fd", ctypes.c_uint64),
+        ]
+
     libc = ctypes.CDLL(None, use_errno=True)
 
     def checked(result: int, operation: str) -> None:
@@ -364,20 +402,64 @@ def _readonly_mount_namespace_setup(
         pass
     _write_proc_mapping("/proc/self/uid_map", f"0 {host_uid} 1")
     _write_proc_mapping("/proc/self/gid_map", f"0 {host_gid} 1")
-    checked(libc.mount(None, b"/", None, ms_rec | ms_private, None), "make mounts private")
-    for directory_fd, target in bindings:
-        checked(libc.mount(target, target, None, ms_bind, None), "bind tool directory")
+    if len(directories) != 1:
+        raise OracleError("exactly one controlled PATH directory is required")
+    directory = directories[0]
+    fs_context = libc.syscall(430, b"tmpfs", fsopen_cloexec)
+    if fs_context < 0:
+        checked(-1, "fsopen controlled PATH tmpfs")
+    mount_fd = -1
+    root_fd = -1
+    try:
         checked(
-            libc.mount(
-                None,
-                target,
-                None,
-                ms_bind | ms_remount | ms_rdonly | ms_nosuid | ms_nodev,
-                None,
+            libc.syscall(
+                431,
+                fs_context,
+                fsconfig_set_string,
+                b"mode",
+                b"0700",
+                0,
             ),
-            "remount tool directory read-only",
+            "configure controlled PATH tmpfs",
         )
-        os.close(directory_fd)
+        checked(
+            libc.syscall(431, fs_context, fsconfig_cmd_create, None, None, 0),
+            "create controlled PATH tmpfs",
+        )
+        mount_fd = libc.syscall(432, fs_context, fsmount_cloexec, 0)
+        if mount_fd < 0:
+            checked(-1, "fsmount controlled PATH tmpfs")
+        root_fd = os.open(
+            ".", os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC, dir_fd=mount_fd
+        )
+        for alias, target in directory.aliases.items():
+            os.symlink(target, alias, dir_fd=root_fd)
+        os.fchmod(root_fd, 0o500)
+        FrozenToolDirectory.verify_alias_fd(root_fd, directory.aliases)
+        attributes = MountAttr(
+            mount_attr_rdonly | mount_attr_nosuid | mount_attr_nodev, 0, 0, 0
+        )
+        checked(
+            libc.syscall(
+                442,
+                mount_fd,
+                b"",
+                at_empty_path,
+                ctypes.byref(attributes),
+                ctypes.sizeof(attributes),
+            ),
+            "make controlled PATH tmpfs read-only",
+        )
+        if not os.statvfs(root_fd).f_flag & os.ST_RDONLY:
+            raise OracleError("controlled PATH tmpfs is not read-only")
+        os.dup2(root_fd, directory.child_fd, inheritable=True)
+        FrozenToolDirectory.verify_alias_fd(directory.child_fd, directory.aliases)
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+        if mount_fd >= 0:
+            os.close(mount_fd)
+        os.close(fs_context)
     checked(
         libc.prctl(
             pr_set_securebits,
@@ -431,7 +513,7 @@ def run_bounded(
     stdout_limit_bytes: int,
     stderr_limit_bytes: int,
     extra_fds: Iterable[int] = (),
-    readonly_bind_paths: Sequence[pathlib.Path] = (),
+    readonly_bind_directories: Sequence["FrozenToolDirectory"] = (),
 ) -> RunResult:
     """Run one held executable in a new process group with bounded evidence."""
     if not argv or any(not isinstance(value, str) or not value for value in argv):
@@ -446,28 +528,37 @@ def run_bounded(
     _enable_subreaper()
     started_at = _utc_now()
     started = time.monotonic()
-    readonly_bindings: list[tuple[int, bytes]] = []
-    for path in readonly_bind_paths:
-        resolved = path.resolve(strict=True)
-        directory_fd = os.open(
-            resolved, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
-        )
-        metadata = os.fstat(directory_fd)
-        if not stat.S_ISDIR(metadata.st_mode):
-            os.close(directory_fd)
-            raise OracleError(f"read-only bind target is not a directory: {resolved}")
-        readonly_bindings.append((directory_fd, os.fsencode(resolved)))
-    passed_fds = tuple(
-        dict.fromkeys((executable.fd, *extra_fds, *(fd for fd, _ in readonly_bindings)))
-    )
+    for directory in readonly_bind_directories:
+        directory.verify_frozen()
+        if directory.child_fd in (executable.fd, *extra_fds):
+            raise OracleError("controlled PATH fd collides with a held command fd")
+    reserved_path_fd = -1
+    if readonly_bind_directories:
+        try:
+            os.fstat(CONTROLLED_PATH_FD)
+        except OSError as error:
+            if error.errno != errno.EBADF:
+                raise
+        else:
+            raise OracleError("controlled PATH fd is already open")
+        placeholder = os.open("/dev/null", os.O_RDONLY | os.O_CLOEXEC)
+        try:
+            os.dup2(placeholder, CONTROLLED_PATH_FD, inheritable=True)
+        finally:
+            os.close(placeholder)
+        reserved_path_fd = CONTROLLED_PATH_FD
+    path_fds = (reserved_path_fd,) if reserved_path_fd >= 0 else ()
+    passed_fds = tuple(dict.fromkeys((executable.fd, *extra_fds, *path_fds)))
     preexec_fn = None
-    if readonly_bindings:
+    if readonly_bind_directories:
         host_uid = os.getuid()
         host_gid = os.getgid()
 
         def enter_namespace() -> None:
             try:
-                _readonly_mount_namespace_setup(readonly_bindings, host_uid, host_gid)
+                _readonly_mount_namespace_setup(
+                    readonly_bind_directories, host_uid, host_gid
+                )
             except BaseException as error:
                 os.write(2, f"Oracle namespace setup failed: {error}\n".encode("utf-8"))
                 raise
@@ -487,12 +578,8 @@ def run_bounded(
             preexec_fn=preexec_fn,
         )
     finally:
-        for directory_fd, _target in readonly_bindings:
-            try:
-                os.close(directory_fd)
-            except OSError as error:
-                if error.errno != errno.EBADF:
-                    raise
+        if reserved_path_fd >= 0:
+            os.close(reserved_path_fd)
     assert process.stdout is not None and process.stderr is not None
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, ("stdout", stdout_limit_bytes))
@@ -586,9 +673,18 @@ def run_bounded(
 
 
 class FrozenToolDirectory:
-    def __init__(self, path: pathlib.Path, aliases: Mapping[str, str]):
+    def __init__(
+        self, path: pathlib.Path, aliases: Mapping[str, str], fd: int, identity: os.stat_result
+    ):
         self.path = path
         self.aliases = dict(aliases)
+        self.fd = fd
+        self.identity = identity
+        self.child_fd = CONTROLLED_PATH_FD
+
+    @property
+    def child_path(self) -> str:
+        return f"/proc/self/fd/{self.child_fd}"
 
     @classmethod
     def create(
@@ -602,30 +698,42 @@ class FrozenToolDirectory:
             target = f"/proc/self/fd/{tool.fd}"
             os.symlink(target, path / alias)
             expected[alias] = target
-        directory = cls(path, expected)
-        directory._verify_entries()
         os.chmod(path, 0o500)
-        directory.verify_frozen()
-        return directory
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            directory = cls(path, expected, fd, os.fstat(fd))
+            directory.verify_frozen()
+            return directory
+        except BaseException:
+            os.close(fd)
+            raise
 
-    def _verify_entries(self) -> None:
+    @staticmethod
+    def verify_alias_fd(fd: int, aliases: Mapping[str, str]) -> None:
         actual: dict[str, str] = {}
-        with os.scandir(self.path) as entries:
-            for entry in entries:
-                metadata = entry.stat(follow_symlinks=False)
-                if not stat.S_ISLNK(metadata.st_mode):
-                    raise OracleError(f"controlled tool alias is not a symlink: {entry.name}")
-                actual[entry.name] = os.readlink(entry.path)
-        if actual != self.aliases:
+        for name in os.listdir(fd):
+            metadata = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            if not stat.S_ISLNK(metadata.st_mode):
+                raise OracleError(f"controlled tool alias is not a symlink: {name}")
+            actual[name] = os.readlink(name, dir_fd=fd)
+        if actual != aliases:
             raise OracleError("controlled tool directory changed after population")
 
+    def _verify_entries(self) -> None:
+        self.verify_alias_fd(self.fd, self.aliases)
+
     def verify_frozen(self) -> None:
-        metadata = os.stat(self.path, follow_symlinks=False)
+        metadata = os.fstat(self.fd)
+        if not _same_identity(self.identity, metadata):
+            raise OracleError("held controlled tool directory identity changed")
         if not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o500:
             raise OracleError("controlled tool directory must remain frozen at mode 0500")
         self._verify_entries()
 
     def remove(self) -> None:
+        if self.fd >= 0:
+            os.close(self.fd)
+            self.fd = -1
         os.chmod(self.path, 0o700)
         shutil.rmtree(self.path)
 
@@ -935,12 +1043,12 @@ def _empty_directory(path: pathlib.Path, field: str) -> None:
         raise OracleError(f"isolated {field} directory is not empty: {path}")
 
 
-def _git_text(
+def _git_bytes(
     git: HeldExecutable,
     source: pathlib.Path | HeldDirectory,
     args: Sequence[str],
     env: Mapping[str, str],
-) -> str:
+) -> bytes:
     source_path = (
         f"/proc/self/fd/{source.fd}" if isinstance(source, HeldDirectory) else str(source)
     )
@@ -960,7 +1068,16 @@ def _git_text(
             f"controlled git command failed: {' '.join(args)}; "
             f"exit={result.exit_code}; stderr={result.stderr.decode('utf-8', 'replace')}"
         )
-    return result.stdout.decode("utf-8", "strict").strip()
+    return result.stdout
+
+
+def _git_text(
+    git: HeldExecutable,
+    source: pathlib.Path | HeldDirectory,
+    args: Sequence[str],
+    env: Mapping[str, str],
+) -> str:
+    return _git_bytes(git, source, args, env).decode("utf-8", "strict").strip()
 
 
 def _validate_source(
@@ -1002,14 +1119,54 @@ def _validate_pristine_source_tree(
     git: HeldExecutable,
     env: Mapping[str, str],
 ) -> dict[str, tuple[object, ...]]:
-    tracked = set(_git_text(git, source, ["ls-files", "--cached"], env).splitlines())
-    if not tracked:
-        raise OracleError("exact source checkout has no tracked files")
+    index_records = _git_bytes(
+        git, source, ["ls-files", "-v", "-z", "--cached"], env
+    ).split(b"\0")
+    non_default_index_flags: list[str] = []
+    for record in index_records:
+        if not record:
+            continue
+        if len(record) < 3 or record[1:2] != b" ":
+            raise OracleError("git returned malformed index flag evidence")
+        tag = record[:1]
+        path = record[2:].decode("utf-8", "strict")
+        if tag != b"H":
+            non_default_index_flags.append(f"{tag.decode('ascii', 'replace')} {path}")
+    tree_records = _git_bytes(
+        git, source, ["ls-tree", "-rz", "--full-tree", REDIS_COMMIT], env
+    ).split(b"\0")
+    expected: dict[str, tuple[str, str]] = {}
+    for record in tree_records:
+        if not record:
+            continue
+        try:
+            header, raw_path = record.split(b"\t", 1)
+            raw_mode, raw_kind, raw_oid = header.split(b" ", 2)
+        except ValueError as error:
+            raise OracleError("git returned malformed fixed-commit tree evidence") from error
+        mode = raw_mode.decode("ascii", "strict")
+        kind = raw_kind.decode("ascii", "strict")
+        oid = raw_oid.decode("ascii", "strict")
+        path = raw_path.decode("utf-8", "strict")
+        parts = path.split("/")
+        if not path or any(part in {"", ".", ".."} for part in parts):
+            raise OracleError(f"git returned a non-canonical tree path: {path!r}")
+        if kind != "blob" or mode not in {"100644", "100755", "120000"}:
+            raise OracleError(
+                f"fixed Redis commit contains unsupported tree entry: {mode} {kind} {path}"
+            )
+        if len(oid) != 40 or any(character not in "0123456789abcdef" for character in oid):
+            raise OracleError(f"git returned an invalid object id for {path!r}")
+        if path in expected:
+            raise OracleError(f"fixed Redis commit contains duplicate path: {path!r}")
+        expected[path] = (mode, oid)
+    if not expected:
+        raise OracleError("exact fixed Redis commit tree has no tracked files")
+
+    tracked = set(expected)
     allowed_directories: set[str] = set()
     for path in tracked:
         parts = path.split("/")
-        if not path or any(part in {"", ".", ".."} for part in parts):
-            raise OracleError(f"git returned a non-canonical tracked path: {path!r}")
         for index in range(1, len(parts)):
             allowed_directories.add("/".join(parts[:index]))
 
@@ -1022,11 +1179,46 @@ def _validate_pristine_source_tree(
     missing = sorted(tracked.difference(entries), key=os.fsencode)
     if missing:
         raise OracleError(f"tracked source entries are missing: {missing}")
+
+    mismatches: list[str] = []
+    for path in sorted(tracked, key=os.fsencode):
+        expected_mode, expected_oid = expected[path]
+        metadata = source.lstat(path)
+        if expected_mode == "120000":
+            if not stat.S_ISLNK(metadata.st_mode):
+                mismatches.append(f"{path}: expected symlink mode 120000")
+                continue
+            actual_oid = _git_blob_oid_bytes(source.readlink_bytes(path))
+        else:
+            if not stat.S_ISREG(metadata.st_mode):
+                mismatches.append(f"{path}: expected regular mode {expected_mode}")
+                continue
+            executable = bool(metadata.st_mode & 0o111)
+            if executable != (expected_mode == "100755"):
+                mismatches.append(f"{path}: executable mode differs from {expected_mode}")
+                continue
+            fd = source.open_regular(path)
+            try:
+                actual_oid = _git_blob_oid_fd(fd, os.fstat(fd).st_size)
+            finally:
+                os.close(fd)
+        if actual_oid != expected_oid:
+            mismatches.append(f"{path}: Git blob differs from {expected_oid}")
+    problems: list[str] = []
+    if non_default_index_flags:
+        problems.append(
+            "source index has assume-unchanged/skip-worktree flags: "
+            f"{non_default_index_flags}"
+        )
+    if mismatches:
+        problems.append(f"source differs from fixed Redis commit tree: {mismatches}")
+    if problems:
+        raise OracleError("; ".join(problems))
     return entries
 
 
 def _sanitized_environment(
-    tool_directory: pathlib.Path, home: pathlib.Path, temporary: pathlib.Path
+    tool_directory: str, home: pathlib.Path, temporary: pathlib.Path
 ) -> dict[str, str]:
     return {
         "PATH": str(tool_directory),
@@ -1048,12 +1240,16 @@ def _sanitized_environment(
         "LD": "ld",
         "AR": "ar",
         "RANLIB": "ranlib",
+        "COMPILER_PATH": str(tool_directory),
+        "LIBRARY_PATH": str(tool_directory),
         "MAKEFLAGS": "",
     }
 
 
 def _register_tools(
-    controller: HeldExecutable, python: HeldExecutable
+    controller: HeldExecutable,
+    python: HeldExecutable,
+    discovery_env: Mapping[str, str],
 ) -> tuple[list[HeldExecutable], dict[str, HeldExecutable], dict[str, tuple[str, ...]]]:
     tools = [controller, python]
     aliases: dict[str, HeldExecutable] = {"python3": python}
@@ -1073,6 +1269,43 @@ def _register_tools(
         aliases["bash" if role == "shell" else role] = tool
         if role == "shell":
             aliases["sh"] = tool
+
+    cc = next(tool for tool in tools if tool.role == "cc")
+    for program, query in (
+        ("cc1", "-print-prog-name=cc1"),
+        ("collect2", "-print-prog-name=collect2"),
+        ("lto-wrapper", "-print-prog-name=lto-wrapper"),
+        ("liblto_plugin.so", "-print-file-name=liblto_plugin.so"),
+        ("crtbegin.o", "-print-file-name=crtbegin.o"),
+        ("crtbeginS.o", "-print-file-name=crtbeginS.o"),
+        ("crtbeginT.o", "-print-file-name=crtbeginT.o"),
+        ("crtend.o", "-print-file-name=crtend.o"),
+        ("crtendS.o", "-print-file-name=crtendS.o"),
+        ("libgcc.a", "-print-file-name=libgcc.a"),
+        ("libgcc_s.so", "-print-file-name=libgcc_s.so"),
+    ):
+        result = run_bounded(
+            cc,
+            ["cc", query],
+            env=discovery_env,
+            timeout_ms=COMMAND_TIMEOUT_MS,
+            term_grace_ms=1_000,
+            stdout_limit_bytes=VERSION_OUTPUT_LIMIT,
+            stderr_limit_bytes=VERSION_OUTPUT_LIMIT,
+        )
+        path_text = _command_text(result, f"cc {program} discovery").splitlines()[0]
+        path = pathlib.Path(path_text)
+        if not path.is_absolute():
+            raise OracleError(f"cc returned a non-absolute internal program: {path_text!r}")
+        role_suffix = "".join(
+            character.lower() if character.isascii() and character.isalnum() else "-"
+            for character in program
+        ).strip("-")
+        internal = HeldExecutable.open(f"cc-internal-{role_suffix}", path)
+        tools.append(internal)
+        by_path[path] = internal
+        versions[internal.role] = ("--version",)
+        aliases[program] = internal
 
     for alias in UTILITY_ALIASES:
         if alias in aliases:
@@ -1104,7 +1337,7 @@ def _tool_evidence(
     for tool in tools:
         if tool.role == "controller":
             version = "kiwi Redis Oracle controller v3"
-        elif tool.role.startswith("utility-"):
+        elif tool.role.startswith(("utility-", "cc-internal-")):
             version = f"identity-only sha256:{tool.sha256}"
         else:
             args = version_args[tool.role]
@@ -1201,13 +1434,14 @@ def build_primary(
         _empty_directory(home, "HOME")
         _empty_directory(temporary, "TMPDIR")
 
-        tools, aliases, versions = _register_tools(controller, python)
+        discovery_env = _sanitized_environment("/usr/bin:/bin", home, temporary)
+        tools, aliases, versions = _register_tools(controller, python, discovery_env)
         aliases_directory = FrozenToolDirectory.create(tool_path, aliases)
-        env = _sanitized_environment(aliases_directory.path, home, temporary)
+        env = _sanitized_environment(aliases_directory.child_path, home, temporary)
         tool_evidence = _tool_evidence(tools, versions, env)
         git = next(tool for tool in tools if tool.role == "git")
-        source_evidence = _validate_source(source_root, git, env)
         baseline = _validate_pristine_source_tree(source_root, git, env)
+        source_evidence = _validate_source(source_root, git, env)
 
         source_fd = os.dup(source_root.fd)
         started_at = _utc_now()
@@ -1230,7 +1464,7 @@ def build_primary(
                 stdout_limit_bytes=BUILD_OUTPUT_LIMIT,
                 stderr_limit_bytes=BUILD_OUTPUT_LIMIT,
                 extra_fds=(source_fd, *(tool.fd for tool in tools)),
-                readonly_bind_paths=(aliases_directory.path,),
+                readonly_bind_directories=(aliases_directory,),
             )
         finally:
             os.close(source_fd)

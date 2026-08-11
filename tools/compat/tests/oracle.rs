@@ -155,6 +155,57 @@ fn clone_exact_redis(source: &Path) {
     );
 }
 
+#[cfg(unix)]
+fn clone_local_exact_redis(seed: &Path, source: &Path) {
+    let clone = Command::new("/usr/bin/git")
+        .args(["clone", "--no-hardlinks"])
+        .arg(seed)
+        .arg(source)
+        .output()
+        .expect("local git clone must start");
+    assert!(
+        clone.status.success(),
+        "local git clone failed: {}",
+        String::from_utf8_lossy(&clone.stderr)
+    );
+    for args in [
+        vec!["checkout", "--detach", REDIS_COMMIT],
+        vec![
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/redis/redis.git",
+        ],
+    ] {
+        let output = Command::new("/usr/bin/git")
+            .arg("-C")
+            .arg(source)
+            .args(args)
+            .output()
+            .expect("git fixture command must start");
+        assert!(
+            output.status.success(),
+            "git fixture command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[cfg(unix)]
+fn git_fixture(source: &Path, args: &[&str]) {
+    let output = Command::new("/usr/bin/git")
+        .arg("-C")
+        .arg(source)
+        .args(args)
+        .output()
+        .expect("git mutation command must start");
+    assert!(
+        output.status.success(),
+        "git mutation command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 #[cfg(unix)]
 fn oracle_build_wrapper_rejects_ambient_python_and_controller_selection() {
@@ -216,41 +267,98 @@ fn oracle_build_holds_executable_fd_and_freezes_tool_aliases() {
     let body = format!(
         r##"import os
 import pathlib
-import stat
 
 root = pathlib.Path({root:?})
 tool = root / "tool"
-attacker = root / "attacker.sh"
+replacement_tool = root / "replacement-tool"
+original_marker = root / "original-marker"
 replacement_marker = root / "replacement-marker"
-tool.write_text("#!/bin/sh\nprintf replacement > \"$1\"\n", encoding="utf-8")
+tool.write_text("#!/bin/sh\nprintf original > \"$1\"\n", encoding="utf-8")
+replacement_tool.write_text(
+    f"#!/bin/sh\nprintf replacement > \"{{replacement_marker}}\"\n",
+    encoding="utf-8",
+)
+tool.chmod(0o755)
+replacement_tool.chmod(0o755)
+
+with controller.HeldExecutable.open("probe", tool) as probe:
+    aliases = controller.FrozenToolDirectory.create(root / "tools", {{"probe": probe}})
+    held_path = aliases.path.with_name("held-tools")
+    os.rename(aliases.path, held_path)
+    aliases.path.mkdir(mode=0o700)
+    os.symlink(str(replacement_tool), aliases.path / "probe")
+    aliases.path.chmod(0o500)
+    with controller.HeldExecutable.open("shell", pathlib.Path("/usr/bin/bash")) as shell:
+        result = controller.run_bounded(
+            shell,
+            ["bash", "-c", "probe \"$1\"", "bash", str(original_marker)],
+            env={{"PATH": aliases.child_path, "HOME": str(root), "TMPDIR": str(root)}},
+            timeout_ms=2000,
+            term_grace_ms=100,
+            stdout_limit_bytes=64,
+            stderr_limit_bytes=4096,
+            extra_fds=(probe.fd,),
+            readonly_bind_directories=(aliases,),
+        )
+    assert result.exit_code == 0, (result.stdout, result.stderr)
+    assert original_marker.read_text(encoding="utf-8") == "original"
+    assert not replacement_marker.exists()
+    os.chmod(aliases.path, 0o700)
+    os.unlink(aliases.path / "probe")
+    os.rmdir(aliases.path)
+    os.rename(held_path, aliases.path)
+    aliases.verify_frozen()
+    aliases.remove()
+"##,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(unix)]
+fn oracle_build_readonly_controlled_path_blocks_same_uid_replacement() {
+    let test_dir = TestDir::new("readonly-path");
+    let body = format!(
+        r##"import pathlib
+
+root = pathlib.Path({root:?})
+tool = root / "tool"
+replacement = root / "replacement"
+marker = root / "replacement-marker"
+attacker = root / "attacker.sh"
+tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+replacement.write_text(
+    f"#!/bin/sh\nprintf replacement > \"{{marker}}\"\n",
+    encoding="utf-8",
+)
 attacker.write_text(
     "#!/bin/bash\nset -eu\n"
     "/usr/bin/chmod 0700 \"$1\"\n"
     "/usr/bin/rm -f \"$1/probe\"\n"
-    "/usr/bin/cp \"$2\" \"$1/probe\"\n"
-    "\"$1/probe\" \"$3\"\n"
-    "/usr/bin/rm -f \"$1/probe\"\n",
+    "/usr/bin/ln -s \"$2\" \"$1/probe\"\n"
+    "probe\n",
     encoding="utf-8",
 )
-tool.chmod(0o755)
-attacker.chmod(0o755)
+for path in (tool, replacement, attacker):
+    path.chmod(0o755)
 
 with controller.HeldExecutable.open("probe", tool) as probe:
     aliases = controller.FrozenToolDirectory.create(root / "tools", {{"probe": probe}})
     with controller.HeldExecutable.open("shell", pathlib.Path("/usr/bin/bash")) as shell:
         result = controller.run_bounded(
             shell,
-            ["bash", str(attacker), str(aliases.path), str(tool), str(replacement_marker)],
-            env={{"PATH": str(aliases.path), "HOME": str(root), "TMPDIR": str(root)}},
+            ["bash", str(attacker), aliases.child_path, str(replacement)],
+            env={{"PATH": aliases.child_path, "HOME": str(root), "TMPDIR": str(root)}},
             timeout_ms=2000,
             term_grace_ms=100,
             stdout_limit_bytes=64,
             stderr_limit_bytes=4096,
-            readonly_bind_paths=(aliases.path,),
+            extra_fds=(probe.fd,),
+            readonly_bind_directories=(aliases,),
         )
-    assert not replacement_marker.exists()
     assert result.exit_code != 0
-    assert stat.S_IMODE(os.lstat(aliases.path).st_mode) == 0o500
+    assert not marker.exists()
     aliases.verify_frozen()
     aliases.remove()
 "##,
@@ -516,6 +624,85 @@ fn oracle_build_rejects_ignored_preexisting_artifacts_before_make() {
     assert!(!metadata.exists());
     for artifact in artifacts {
         assert_eq!(fs::read(artifact).unwrap(), b"preexisting build artifact");
+    }
+}
+
+#[test]
+#[ignore = "external exact checkout; run with --include-ignored"]
+#[cfg(unix)]
+fn oracle_build_rejects_fixed_commit_tree_and_index_mutations_before_make() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+
+    let test_dir = TestDir::new("commit-tree");
+    let seed = test_dir.path().join("seed");
+    clone_exact_redis(&seed);
+    for mutation in ["assume", "skip", "regular", "mode", "symlink"] {
+        let source = test_dir.path().join(format!("source-{mutation}"));
+        let metadata = test_dir.path().join(format!("{mutation}-build.json"));
+        let marker = test_dir.path().join(format!("{mutation}-make-started"));
+        clone_local_exact_redis(&seed, &source);
+        let makefile = source.join("Makefile");
+        let original_makefile = fs::read_to_string(&makefile).unwrap();
+        fs::write(
+            &makefile,
+            format!(
+                "$(shell /usr/bin/touch {})\n$(error mutation reached make)\n{}",
+                marker.display(),
+                original_makefile
+            ),
+        )
+        .unwrap();
+        match mutation {
+            "assume" => {
+                git_fixture(&source, &["update-index", "--assume-unchanged", "Makefile"]);
+            }
+            "skip" => {
+                git_fixture(&source, &["update-index", "--skip-worktree", "Makefile"]);
+            }
+            "regular" => {
+                fs::write(source.join("README.md"), b"tracked regular mutation\n").unwrap();
+                git_fixture(&source, &["update-index", "--assume-unchanged", "Makefile"]);
+            }
+            "mode" => {
+                let path = source.join("README.md");
+                let mut permissions = fs::metadata(&path).unwrap().permissions();
+                permissions.set_mode(0o755);
+                fs::set_permissions(path, permissions).unwrap();
+                git_fixture(&source, &["update-index", "--assume-unchanged", "Makefile"]);
+            }
+            "symlink" => {
+                fs::remove_file(source.join("README.md")).unwrap();
+                symlink("LICENSE.txt", source.join("README.md")).unwrap();
+                git_fixture(&source, &["update-index", "--assume-unchanged", "Makefile"]);
+            }
+            _ => unreachable!(),
+        }
+
+        let output = Command::new("/usr/bin/bash")
+            .arg(build_script_path())
+            .arg("--source")
+            .arg(&source)
+            .arg("--metadata")
+            .arg(&metadata)
+            .env_clear()
+            .output()
+            .expect("Redis build wrapper must start");
+        assert!(!output.status.success(), "{mutation} mutation was accepted");
+        assert!(
+            !marker.exists(),
+            "{mutation} mutation reached make before the fixed-tree gate"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let expected_path = if matches!(mutation, "regular" | "mode" | "symlink") {
+            "README.md"
+        } else {
+            "Makefile"
+        };
+        assert!(
+            stderr.contains(expected_path),
+            "{mutation} rejection did not identify {expected_path}: {stderr}"
+        );
+        assert!(!metadata.exists(), "{mutation} mutation published metadata");
     }
 }
 
