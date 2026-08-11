@@ -485,6 +485,8 @@ class RunResult:
     timed_out: bool
     output_truncated: bool
     process_group_reaped: bool
+    namespace_init_pid: int | None = None
+    namespace_init_start_time: int | None = None
 
 
 class HeldExecutable:
@@ -828,7 +830,10 @@ def _move_detached_mount(mount_fd: int, target_fd: int) -> None:
 
 
 def _callback_filesystem_setup(
-    work_fd: int, runtime_evidence_fd: int, sandbox_root_fd: int
+    work_fd: int,
+    callback_input_fd: int,
+    runtime_evidence_fd: int,
+    sandbox_root_fd: int,
 ) -> None:
     ms_rdonly = 1
     ms_nosuid = 2
@@ -845,13 +850,16 @@ def _callback_filesystem_setup(
     current_evidence_fd = _reopen_held_mount_source(
         runtime_evidence_fd, directory=False, label="runtime evidence"
     )
+    current_callback_input_fd = _reopen_held_mount_source(
+        callback_input_fd, directory=True, label="callback input"
+    )
     current_sandbox_fd = _reopen_held_mount_source(
         sandbox_root_fd, directory=True, label="sandbox root"
     )
     root_mount_fd = _detached_tmpfs_mount()
     try:
         _move_detached_mount(root_mount_fd, current_sandbox_fd)
-        for relative in ("usr", "proc", "dev", "work"):
+        for relative in ("usr", "proc", "dev", "work", "callback-input"):
             os.mkdir(relative, mode=0o700, dir_fd=root_mount_fd)
         for relative in ("runtime-evidence.json", "dev/null"):
             placeholder = os.open(
@@ -878,6 +886,18 @@ def _callback_filesystem_setup(
         )
         _mount(f"/proc/self/fd/{current_work_fd}", "work", None, ms_bind)
         _mount(
+            f"/proc/self/fd/{current_callback_input_fd}",
+            "callback-input",
+            None,
+            ms_bind | ms_rec,
+        )
+        _mount(
+            None,
+            "callback-input",
+            None,
+            ms_bind | ms_remount | ms_rdonly | ms_nosuid | ms_nodev,
+        )
+        _mount(
             f"/proc/self/fd/{current_evidence_fd}",
             "runtime-evidence.json",
             None,
@@ -900,6 +920,11 @@ def _callback_filesystem_setup(
         if not _same_identity(os.fstat(work_fd), os.stat("work", follow_symlinks=False)):
             raise OracleError("callback work mount differs from its held directory")
         if not _same_identity(
+            os.fstat(callback_input_fd),
+            os.stat("callback-input", follow_symlinks=False),
+        ):
+            raise OracleError("callback input mount differs from its held directory")
+        if not _same_identity(
             os.fstat(runtime_evidence_fd),
             os.stat("runtime-evidence.json", follow_symlinks=False),
         ):
@@ -908,6 +933,8 @@ def _callback_filesystem_setup(
             raise OracleError("callback runtime evidence mount is not read-only")
         if os.statvfs("work").f_flag & os.ST_RDONLY:
             raise OracleError("callback work mount is unexpectedly read-only")
+        if not os.statvfs("callback-input").f_flag & os.ST_RDONLY:
+            raise OracleError("callback input mount is not read-only")
 
         _mount(
             None,
@@ -923,10 +950,12 @@ def _callback_filesystem_setup(
         for fd in (
             root_mount_fd,
             current_sandbox_fd,
+            current_callback_input_fd,
             current_evidence_fd,
             current_work_fd,
             sandbox_root_fd,
             runtime_evidence_fd,
+            callback_input_fd,
             work_fd,
         ):
             try:
@@ -964,6 +993,7 @@ def _pid_namespace_preexec(
             if child_setup is not None:
                 child_setup()
             _drop_namespace_privileges()
+            os.write(report_fd, b"READY\n")
         except BaseException as error:
             os.write(
                 report_fd,
@@ -974,7 +1004,10 @@ def _pid_namespace_preexec(
             os.close(report_fd)
         return
 
-    os.write(report_fd, f"{namespace_init}\n".encode("ascii"))
+    os.write(
+        report_fd,
+        f"INIT:{namespace_init}:{_process_start_time(namespace_init)}\n".encode("ascii"),
+    )
     os.close(report_fd)
     for fd in (0, 1, 2):
         try:
@@ -1039,6 +1072,147 @@ def _signal_group(pid: int, sig: signal.Signals) -> None:
         pass
 
 
+def _process_start_time(pid: int) -> int:
+    raw = pathlib.Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+    closing = raw.rfind(")")
+    if closing < 0:
+        raise OracleError(f"process {pid} has malformed /proc stat evidence")
+    fields = raw[closing + 2 :].split()
+    if len(fields) <= 19:
+        raise OracleError(f"process {pid} has incomplete /proc stat evidence")
+    return int(fields[19])
+
+
+def _process_matches_start_time(pid: int | None, start_time: int | None) -> bool:
+    if pid is None or start_time is None or pid <= 0:
+        return False
+    try:
+        return _process_start_time(pid) == start_time
+    except (FileNotFoundError, ProcessLookupError):
+        return False
+
+
+class _ForkedProcess:
+    def __init__(self, pid: int, argv: Sequence[str], stdout_fd: int, stderr_fd: int):
+        self.pid = pid
+        self.argv = list(argv)
+        self.stdout = os.fdopen(stdout_fd, "rb", buffering=0)
+        self.stderr = os.fdopen(stderr_fd, "rb", buffering=0)
+        self.returncode: int | None = None
+
+    @staticmethod
+    def _decode_status(status: int) -> int:
+        if os.WIFEXITED(status):
+            return os.WEXITSTATUS(status)
+        if os.WIFSIGNALED(status):
+            return -os.WTERMSIG(status)
+        return 127
+
+    def poll(self) -> int | None:
+        if self.returncode is not None:
+            return self.returncode
+        try:
+            child, status = os.waitpid(self.pid, os.WNOHANG)
+        except ChildProcessError:
+            return self.returncode
+        if child == 0:
+            return None
+        self.returncode = self._decode_status(status)
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.returncode is not None:
+            return self.returncode
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            result = self.poll()
+            if result is not None:
+                return result
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(self.argv, timeout)
+            time.sleep(0.005)
+
+
+def _close_child_fds(except_fds: set[int]) -> None:
+    for raw_fd in os.listdir("/proc/self/fd"):
+        try:
+            fd = int(raw_fd)
+        except ValueError:
+            continue
+        if fd in except_fds:
+            continue
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _spawn_with_supervised_setup(
+    executable: HeldExecutable,
+    argv: Sequence[str],
+    env: Mapping[str, str],
+    cwd: pathlib.Path | None,
+    inherited_fds: Sequence[int],
+    exec_fds: Sequence[int],
+    child_setup: Callable[[], None],
+    report_fd: int,
+) -> _ForkedProcess:
+    stdout_read, stdout_write = os.pipe2(os.O_CLOEXEC)
+    stderr_read, stderr_write = os.pipe2(os.O_CLOEXEC)
+    try:
+        pid = os.fork()
+    except BaseException:
+        for fd in (stdout_read, stdout_write, stderr_read, stderr_write):
+            os.close(fd)
+        raise
+    if pid == 0:
+        try:
+            os.close(stdout_read)
+            os.close(stderr_read)
+            os.setsid()
+            null_fd = os.open("/dev/null", os.O_RDONLY | os.O_CLOEXEC)
+            try:
+                os.dup2(null_fd, 0)
+            finally:
+                os.close(null_fd)
+            os.dup2(stdout_write, 1)
+            os.dup2(stderr_write, 2)
+            keep = {0, 1, 2, executable.fd, *inherited_fds}
+            _close_child_fds(keep)
+            if cwd is not None:
+                os.chdir(cwd)
+            child_setup()
+            for fd in exec_fds:
+                os.set_inheritable(fd, True)
+            os.execve(
+                f"/proc/self/fd/{executable.fd}",
+                list(argv),
+                dict(env),
+            )
+        except BaseException as error:
+            if report_fd >= 0:
+                try:
+                    os.write(
+                        report_fd,
+                        f"ERROR:{type(error).__name__}:{error}\n".encode(
+                            "utf-8", "replace"
+                        ),
+                    )
+                except OSError:
+                    pass
+            try:
+                os.write(
+                    2,
+                    f"Oracle child setup failed: {error}\n".encode("utf-8", "replace"),
+                )
+            except OSError:
+                pass
+            os._exit(127)
+    os.close(stdout_write)
+    os.close(stderr_write)
+    return _ForkedProcess(pid, argv, stdout_read, stderr_read)
+
+
 def _reap_descendants(group_id: int, deadline: float) -> bool:
     while time.monotonic() < deadline:
         reaped = False
@@ -1073,7 +1247,7 @@ def run_bounded(
     cwd: pathlib.Path | None = None,
     terminate_on_output_limit: bool = False,
     pid_namespace: bool = False,
-    callback_filesystem: tuple[int, int, int] | None = None,
+    callback_filesystem: tuple[int, int, int, int] | None = None,
 ) -> RunResult:
     """Run one held executable in a new process group with bounded evidence."""
     if not argv or any(not isinstance(value, str) or not value for value in argv):
@@ -1120,7 +1294,7 @@ def run_bounded(
     passed_fds = tuple(
         dict.fromkeys((executable.fd, *extra_fds, *path_fds, *report_fds))
     )
-    preexec_fn = None
+    child_setup_fn: Callable[[], None] | None = None
     if pid_namespace:
         host_uid = os.getuid()
         host_gid = os.getgid()
@@ -1128,11 +1302,19 @@ def run_bounded(
         def enter_pid_namespace() -> None:
             child_setup = None
             if callback_filesystem is not None:
-                work_fd, runtime_evidence_fd, sandbox_root_fd = callback_filesystem
+                (
+                    work_fd,
+                    callback_input_fd,
+                    runtime_evidence_fd,
+                    sandbox_root_fd,
+                ) = callback_filesystem
 
                 def setup_callback_filesystem() -> None:
                     _callback_filesystem_setup(
-                        work_fd, runtime_evidence_fd, sandbox_root_fd
+                        work_fd,
+                        callback_input_fd,
+                        runtime_evidence_fd,
+                        sandbox_root_fd,
                     )
 
                 child_setup = setup_callback_filesystem
@@ -1144,7 +1326,7 @@ def run_bounded(
                 child_setup,
             )
 
-        preexec_fn = enter_pid_namespace
+        child_setup_fn = enter_pid_namespace
     elif readonly_bind_directories:
         host_uid = os.getuid()
         host_gid = os.getgid()
@@ -1158,55 +1340,42 @@ def run_bounded(
                 os.write(2, f"Oracle namespace setup failed: {error}\n".encode("utf-8"))
                 raise
 
-        preexec_fn = enter_namespace
+        child_setup_fn = enter_namespace
     try:
-        process = subprocess.Popen(
-            list(argv),
-            executable=f"/proc/self/fd/{executable.fd}",
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=dict(env),
-            cwd=cwd,
-            close_fds=True,
-            pass_fds=passed_fds,
-            start_new_session=True,
-            preexec_fn=preexec_fn,
-        )
-    except BaseException as error:
-        report = b""
+        if child_setup_fn is not None:
+            process = _spawn_with_supervised_setup(
+                executable,
+                argv,
+                env,
+                cwd,
+                passed_fds,
+                passed_fds if readonly_bind_directories else (executable.fd,),
+                child_setup_fn,
+                report_write_fd,
+            )
+        else:
+            process = subprocess.Popen(
+                list(argv),
+                executable=f"/proc/self/fd/{executable.fd}",
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=dict(env),
+                cwd=cwd,
+                close_fds=True,
+                pass_fds=passed_fds,
+                start_new_session=True,
+            )
+    except BaseException:
         if report_read_fd >= 0:
-            try:
-                report = os.read(report_read_fd, 4096)
-            finally:
-                os.close(report_read_fd)
-                report_read_fd = -1
-        if report:
-            raise OracleError(
-                f"callback namespace setup failed: {report.decode('utf-8', 'replace').strip()}"
-            ) from error
+            os.close(report_read_fd)
+            report_read_fd = -1
         raise
     finally:
         if report_write_fd >= 0:
             os.close(report_write_fd)
         if reserved_path_fd >= 0:
             os.close(reserved_path_fd)
-    namespace_init_pid = -1
-    if report_read_fd >= 0:
-        try:
-            report = os.read(report_read_fd, 4096).decode("utf-8", "replace")
-        finally:
-            os.close(report_read_fd)
-        lines = [line for line in report.splitlines() if line]
-        errors = [line for line in lines if line.startswith("ERROR:")]
-        if errors:
-            raise OracleError(f"callback namespace setup failed: {errors}")
-        if not lines:
-            raise OracleError("callback PID namespace supervisor reported no init PID")
-        try:
-            namespace_init_pid = int(lines[0])
-        except ValueError as error:
-            raise OracleError("callback PID namespace supervisor did not report its init PID") from error
     assert process.stdout is not None and process.stderr is not None
     selector = selectors.DefaultSelector()
     for stream, name, limit in (
@@ -1215,8 +1384,16 @@ def run_bounded(
     ):
         os.set_blocking(stream.fileno(), False)
         selector.register(stream, selectors.EVENT_READ, (name, limit))
+    if report_read_fd >= 0:
+        os.set_blocking(report_read_fd, False)
+        selector.register(report_read_fd, selectors.EVENT_READ, ("control", 4096))
     buffers = {"stdout": bytearray(), "stderr": bytearray()}
     counts = {"stdout": 0, "stderr": 0}
+    control_buffer = bytearray()
+    control_errors: list[str] = []
+    namespace_ready = False
+    namespace_init_pid: int | None = None
+    namespace_init_start_time: int | None = None
     timed_out = False
     output_limit_hit = False
     deadline = started + timeout_ms / 1000
@@ -1236,8 +1413,11 @@ def run_bounded(
         termination_deadline = time.monotonic() + term_grace_ms / 1000 + 0.25
 
     def force_termination() -> None:
-        if namespace_init_pid > 0:
+        if _process_matches_start_time(
+            namespace_init_pid, namespace_init_start_time
+        ):
             try:
+                assert namespace_init_pid is not None
                 os.kill(namespace_init_pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
@@ -1262,12 +1442,41 @@ def run_bounded(
         for key, _mask in events:
             name, limit = key.data
             try:
-                chunk = os.read(key.fileobj.fileno(), 64 * 1024)
+                fd = key.fileobj if isinstance(key.fileobj, int) else key.fileobj.fileno()
+                chunk = os.read(fd, 64 * 1024)
             except BlockingIOError:
                 continue
             if not chunk:
                 selector.unregister(key.fileobj)
-                key.fileobj.close()
+                if isinstance(key.fileobj, int):
+                    os.close(key.fileobj)
+                    report_read_fd = -1
+                else:
+                    key.fileobj.close()
+                continue
+            if name == "control":
+                control_buffer.extend(chunk)
+                while b"\n" in control_buffer:
+                    raw_line, _, remainder = control_buffer.partition(b"\n")
+                    control_buffer = bytearray(remainder)
+                    line = raw_line.decode("utf-8", "replace")
+                    if line.startswith("INIT:"):
+                        try:
+                            _prefix, raw_pid, raw_start = line.split(":", 2)
+                            namespace_init_pid = int(raw_pid)
+                            namespace_init_start_time = int(raw_start)
+                        except ValueError:
+                            control_errors.append(
+                                "callback namespace supervisor reported malformed host PID evidence"
+                            )
+                    elif line == "READY":
+                        namespace_ready = True
+                    elif line.startswith("ERROR:"):
+                        control_errors.append(line)
+                    else:
+                        control_errors.append(
+                            f"callback namespace supervisor reported unexpected evidence: {line}"
+                        )
                 continue
             counts[name] += len(chunk)
             capacity = limit - len(buffers[name])
@@ -1292,6 +1501,8 @@ def run_bounded(
             raise OracleError("command could not be reaped within its wall-clock deadline") from error
 
     selector.close()
+    if report_read_fd >= 0:
+        os.close(report_read_fd)
     for stream in (process.stdout, process.stderr):
         if stream.closed:
             continue
@@ -1299,13 +1510,17 @@ def run_bounded(
 
     if pid_namespace:
         containment_deadline = time.monotonic() + 0.25
-        while namespace_init_pid > 0 and time.monotonic() < containment_deadline:
-            if not pathlib.Path(f"/proc/{namespace_init_pid}").exists():
+        while _process_matches_start_time(
+            namespace_init_pid, namespace_init_start_time
+        ) and time.monotonic() < containment_deadline:
+            if not _process_matches_start_time(
+                namespace_init_pid, namespace_init_start_time
+            ):
                 break
             time.sleep(0.005)
-        group_reaped = namespace_init_pid <= 0 or not pathlib.Path(
-            f"/proc/{namespace_init_pid}"
-        ).exists()
+        group_reaped = not _process_matches_start_time(
+            namespace_init_pid, namespace_init_start_time
+        )
     else:
         group_reaped = _reap_descendants(process.pid, time.monotonic() + 0.2)
         if not group_reaped:
@@ -1313,6 +1528,10 @@ def run_bounded(
             group_reaped = _reap_descendants(process.pid, time.monotonic() + 2.0)
     if not group_reaped:
         raise OracleError("command process group was not fully reaped")
+    if pid_namespace and control_errors:
+        raise OracleError(f"callback namespace setup failed: {control_errors}")
+    if pid_namespace and not (timed_out or output_limit_hit) and not namespace_ready:
+        raise OracleError("callback namespace setup did not report READY")
 
     return RunResult(
         argv=list(argv),
@@ -1332,17 +1551,27 @@ def run_bounded(
             counts["stdout"] > stdout_limit_bytes or counts["stderr"] > stderr_limit_bytes
         ),
         process_group_reaped=group_reaped,
+        namespace_init_pid=namespace_init_pid,
+        namespace_init_start_time=namespace_init_start_time,
     )
 
 
 class FrozenToolDirectory:
     def __init__(
-        self, path: pathlib.Path, aliases: Mapping[str, str], fd: int, identity: os.stat_result
+        self,
+        path: pathlib.Path,
+        aliases: Mapping[str, str],
+        fd: int,
+        identity: os.stat_result,
+        parent: HeldDirectory,
+        basename: str,
     ):
         self.path = path
         self.aliases = dict(aliases)
         self.fd = fd
         self.identity = identity
+        self.parent = parent
+        self.basename = basename
         self.child_fd = CONTROLLED_PATH_FD
 
     @property
@@ -1353,22 +1582,35 @@ class FrozenToolDirectory:
     def create(
         cls, path: pathlib.Path, aliases: Mapping[str, HeldExecutable]
     ) -> "FrozenToolDirectory":
-        path.mkdir(mode=0o700)
-        expected: dict[str, str] = {}
-        for alias, tool in aliases.items():
-            if not alias or "/" in alias or alias in {".", ".."}:
-                raise OracleError(f"invalid controlled tool alias: {alias!r}")
-            target = f"/proc/self/fd/{tool.fd}"
-            os.symlink(target, path / alias)
-            expected[alias] = target
-        os.chmod(path, 0o500)
-        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        parent = HeldDirectory.open(path.parent)
+        basename = path.name
         try:
-            directory = cls(path, expected, fd, os.fstat(fd))
+            os.mkdir(basename, mode=0o700, dir_fd=parent.fd)
+        except BaseException:
+            parent.close()
+            raise
+        expected: dict[str, str] = {}
+        fd = -1
+        try:
+            fd = os.open(
+                basename,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=parent.fd,
+            )
+            for alias, tool in aliases.items():
+                if not alias or "/" in alias or alias in {".", ".."}:
+                    raise OracleError(f"invalid controlled tool alias: {alias!r}")
+                target = f"/proc/self/fd/{tool.fd}"
+                os.symlink(target, alias, dir_fd=fd)
+                expected[alias] = target
+            os.fchmod(fd, 0o500)
+            directory = cls(path, expected, fd, os.fstat(fd), parent, basename)
             directory.verify_frozen()
             return directory
         except BaseException:
-            os.close(fd)
+            if fd >= 0:
+                os.close(fd)
+            parent.close()
             raise
 
     @staticmethod
@@ -1394,13 +1636,28 @@ class FrozenToolDirectory:
         self._verify_entries()
 
     def close(self) -> None:
+        errors: list[BaseException] = []
         if self.fd >= 0:
-            os.close(self.fd)
+            try:
+                os.close(self.fd)
+            except BaseException as error:
+                errors.append(error)
             self.fd = -1
+        try:
+            self.parent.close()
+        except BaseException as error:
+            errors.append(error)
+        if errors:
+            raise OracleError(f"controlled alias close failed: {errors}")
 
     def remove_path(self) -> None:
-        os.chmod(self.path, 0o700)
-        shutil.rmtree(self.path)
+        self.verify_frozen()
+        _remove_held_directory(
+            self.parent.fd,
+            self.basename,
+            self.fd,
+            "controlled alias directory",
+        )
 
     def remove(self) -> None:
         _run_cleanup_actions(
@@ -1758,7 +2015,12 @@ def publish_provenance(
     target = CandidateTarget.open(path) if owned_target else path
     close_after_publication = owned_target or close_target
     published = False
+    rollback_fd = -1
+    rollback_identity: os.stat_result | None = None
     try:
+        if close_after_publication:
+            rollback_fd = os.dup(target.parent.fd)
+            rollback_identity = os.fstat(rollback_fd)
         if document.get("schema_version") == PROVENANCE_SCHEMA:
             _validate_provenance_timestamp_order(document)
         payload = canonical_json_bytes(document)
@@ -1808,33 +2070,57 @@ def publish_provenance(
                     pass
     finally:
         if close_after_publication:
+            close_error: BaseException | None = None
             try:
                 target.close()
-            except BaseException as close_error:
+            except BaseException as error:
+                close_error = error
+            parent_error: BaseException | None = None
+            if published:
+                try:
+                    visible = HeldDirectory.open_absolute_nofollow(target.parent_path)
+                    try:
+                        assert rollback_identity is not None
+                        if not _same_directory_object(rollback_identity, visible.stat):
+                            raise OracleError(
+                                "output parent identity changed while its original handle closed"
+                            )
+                    finally:
+                        visible.close()
+                except BaseException as error:
+                    parent_error = error
+            if close_error is not None or parent_error is not None:
                 rollback_error: BaseException | None = None
                 if published:
                     try:
-                        visible = HeldDirectory.open_absolute_nofollow(target.parent_path)
+                        if rollback_fd < 0:
+                            raise OracleError("output publication rollback handle is unavailable")
                         try:
-                            if not _same_directory_object(target.parent.stat, visible.stat):
-                                raise OracleError(
-                                    "output parent identity changed before close-failure rollback"
-                                )
-                            try:
-                                os.unlink(target.basename, dir_fd=visible.fd)
-                            except FileNotFoundError:
-                                pass
-                            os.fsync(visible.fd)
-                        finally:
-                            visible.close()
+                            os.unlink(target.basename, dir_fd=rollback_fd)
+                        except FileNotFoundError:
+                            pass
+                        os.fsync(rollback_fd)
                     except BaseException as error:
                         rollback_error = error
+                if rollback_fd >= 0:
+                    try:
+                        os.close(rollback_fd)
+                    except BaseException as error:
+                        if rollback_error is None:
+                            rollback_error = error
                 if rollback_error is not None:
                     raise OracleError(
-                        "output-parent close failed and publication rollback failed: "
-                        f"{close_error}; {rollback_error}"
-                    ) from close_error
-                raise
+                        "output-parent close/identity verification failed and publication rollback failed: "
+                        f"close={close_error}; identity={parent_error}; rollback={rollback_error}"
+                    ) from (close_error or parent_error)
+                if close_error is not None:
+                    raise close_error
+                assert parent_error is not None
+                raise OracleError(
+                    f"output-parent identity verification failed after close: {parent_error}"
+                ) from parent_error
+            if rollback_fd >= 0:
+                os.close(rollback_fd)
 
 
 def _run_cleanup_actions(
@@ -1881,12 +2167,32 @@ def _remove_directory_contents(directory_fd: int) -> None:
             os.unlink(name, dir_fd=directory_fd)
 
 
+def _remove_held_directory(
+    parent_fd: int, directory_name: str, held_fd: int, label: str
+) -> None:
+    visible_fd = os.open(
+        directory_name,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=parent_fd,
+    )
+    try:
+        held_identity = os.fstat(held_fd)
+        visible_identity = os.fstat(visible_fd)
+        if not _same_directory_object(held_identity, visible_identity):
+            raise OracleError(f"{label} path no longer names its held directory")
+        os.fchmod(visible_fd, 0o700)
+        _remove_directory_contents(visible_fd)
+    finally:
+        os.close(visible_fd)
+    os.rmdir(directory_name, dir_fd=parent_fd)
+
+
 def _remove_runtime_directory(
     parent_fd: int, runtime_name: str, runtime_root: HeldDirectory
 ) -> None:
-    os.fchmod(runtime_root.fd, 0o700)
-    _remove_directory_contents(runtime_root.fd)
-    os.rmdir(runtime_name, dir_fd=parent_fd)
+    _remove_held_directory(
+        parent_fd, runtime_name, runtime_root.fd, "runtime directory"
+    )
 
 
 def _remove_runtime_name(parent_fd: int, runtime_name: str) -> None:
@@ -3224,6 +3530,7 @@ def _run_callback(
     callback_argv: Sequence[str],
     aliases_directory: FrozenToolDirectory,
     callback_root: HeldDirectory,
+    callback_input_root: HeldDirectory,
     runtime_evidence_fd: int,
     host: str,
     port: int,
@@ -3255,6 +3562,7 @@ def _run_callback(
                 "KIWI_REDIS_ORACLE_HOST": host,
                 "KIWI_REDIS_ORACLE_PORT": str(port),
                 "KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE": "/runtime-evidence.json",
+                "KIWI_REDIS_ORACLE_CALLBACK_INPUT": "/callback-input",
                 "KIWI_REDIS_ORACLE_WORKDIR": "/work",
             }
         )
@@ -3266,11 +3574,17 @@ def _run_callback(
             term_grace_ms=TERM_GRACE_MS,
             stdout_limit_bytes=CALLBACK_OUTPUT_LIMIT,
             stderr_limit_bytes=CALLBACK_OUTPUT_LIMIT,
-            extra_fds=(work_root.fd, runtime_evidence_fd, held_sandbox_root.fd),
+            extra_fds=(
+                work_root.fd,
+                callback_input_root.fd,
+                runtime_evidence_fd,
+                held_sandbox_root.fd,
+            ),
             terminate_on_output_limit=True,
             pid_namespace=True,
             callback_filesystem=(
                 work_root.fd,
+                callback_input_root.fd,
                 runtime_evidence_fd,
                 held_sandbox_root.fd,
             ),
@@ -3331,6 +3645,7 @@ def verify_oracle(
     source_argument: str,
     primary_metadata_argument: str,
     output_argument: str,
+    callback_input_argument: str,
     callback_argv: Sequence[str],
     bootstrap_python_path: pathlib.Path,
     bootstrap_python_fd: int,
@@ -3347,9 +3662,12 @@ def verify_oracle(
         source_argument,
         primary_metadata_argument,
         output_argument,
+        callback_input_argument,
     ):
         if not pathlib.Path(value).is_absolute():
-            raise OracleError("--source, --primary-metadata, and --output must be absolute")
+            raise OracleError(
+                "--source, --primary-metadata, --output, and --callback-input must be absolute"
+            )
 
     target = CandidateTarget.open(output_argument)
     source_root: HeldDirectory | None = None
@@ -3366,6 +3684,7 @@ def verify_oracle(
     runtime_root: HeldDirectory | None = None
     logs_root: HeldDirectory | None = None
     callback_root: HeldDirectory | None = None
+    callback_input_root: HeldDirectory | None = None
     runtime_evidence_fd = -1
     redis_log_fd = -1
     redis_process: subprocess.Popen[bytes] | None = None
@@ -3402,6 +3721,10 @@ def verify_oracle(
         if target.parent_path == source_path or source_path in target.parent_path.parents:
             raise OracleError("final provenance and verifier temp root must be outside source A")
         source_root = HeldDirectory.open(source_path)
+        callback_input_path = pathlib.Path(callback_input_argument).resolve(strict=True)
+        if not callback_input_path.is_dir() or callback_input_path.is_symlink():
+            raise OracleError("--callback-input must resolve to a real directory")
+        callback_input_root = HeldDirectory.open(callback_input_path)
         primary_metadata = HeldRegularFile.open(primary_metadata_argument, MAX_JSON_BYTES)
         if primary_metadata.path == target.path:
             raise OracleError("primary metadata and final provenance paths must differ")
@@ -3493,6 +3816,7 @@ def verify_oracle(
             callback_argv,
             aliases_directory,
             callback_root,
+            callback_input_root,
             runtime_evidence_fd,
             "127.0.0.1",
             port,
@@ -3551,29 +3875,30 @@ def verify_oracle(
         cleanup("rebuild binary close", rebuild_binary.close)
     if rebuild_metadata is not None:
         cleanup("rebuild metadata close", rebuild_metadata.close)
-    if callback_root is not None:
-        cleanup("callback directory close", callback_root.close)
-    if logs_root is not None:
-        cleanup("logs directory close", logs_root.close)
-    if runtime_root is not None:
-        cleanup("runtime directory close", runtime_root.close)
-    if checkout is not None:
-        cleanup("checkout B close", checkout.close)
+    if callback_input_root is not None:
+        def close_callback_input() -> None:
+            assert callback_input_root is not None
+            try:
+                callback_input_root.verify_path()
+            finally:
+                callback_input_root.close()
+
+        cleanup("callback input revalidation and close", close_callback_input)
 
     if verifier_root is not None:
         def remove_runtime() -> None:
-            assert verifier_root is not None
-            _remove_runtime_name(verifier_root.fd, "runtime")
+            assert verifier_root is not None and runtime_root is not None
+            _remove_runtime_directory(verifier_root.fd, "runtime", runtime_root)
             cleanup_state["runtime_removed"] = True
 
         def remove_checkout() -> None:
-            assert verifier_root is not None
-            _remove_runtime_name(verifier_root.fd, "checkout-b")
+            assert verifier_root is not None and checkout is not None
+            _remove_runtime_directory(verifier_root.fd, "checkout-b", checkout)
             cleanup_state["checkout_removed"] = True
 
         def remove_logs() -> None:
-            assert verifier_root is not None
-            _remove_runtime_name(verifier_root.fd, "logs")
+            assert verifier_root is not None and logs_root is not None
+            _remove_runtime_directory(verifier_root.fd, "logs", logs_root)
             cleanup_state["logs_removed"] = True
 
         if runtime_root is not None:
@@ -3582,6 +3907,14 @@ def verify_oracle(
             cleanup("checkout B remove", remove_checkout)
         if logs_root is not None:
             cleanup("logs remove", remove_logs)
+    if callback_root is not None:
+        cleanup("callback directory close", callback_root.close)
+    if logs_root is not None:
+        cleanup("logs directory close", logs_root.close)
+    if runtime_root is not None:
+        cleanup("runtime directory close", runtime_root.close)
+    if checkout is not None:
+        cleanup("checkout B close", checkout.close)
     if aliases_directory is not None:
         cleanup("controlled aliases remove", aliases_directory.remove_path)
         cleanup("controlled aliases close", aliases_directory.close)
@@ -3887,6 +4220,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--primary-metadata", help="absolute primary build metadata path")
     parser.add_argument("--output", help="absolute final provenance path")
     parser.add_argument(
+        "--callback-input",
+        help="absolute read-only callback input root exposed as /callback-input",
+    )
+    parser.add_argument(
         "--run-after-ready",
         nargs=argparse.REMAINDER,
         default=None,
@@ -3905,6 +4242,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for value in (
                     arguments.primary_metadata,
                     arguments.output,
+                    arguments.callback_input,
                     arguments.run_after_ready,
                 )
             ):
@@ -3921,15 +4259,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             if (
                 arguments.primary_metadata is None
                 or arguments.output is None
+                or arguments.callback_input is None
                 or not arguments.run_after_ready
             ):
                 raise OracleError(
-                    "verifier requires --primary-metadata, --output, and --run-after-ready argv"
+                    "verifier requires --primary-metadata, --output, --callback-input, and --run-after-ready argv"
                 )
             verify_oracle(
                 arguments.source,
                 arguments.primary_metadata,
                 arguments.output,
+                arguments.callback_input,
                 arguments.run_after_ready,
                 pathlib.Path(arguments.bootstrap_python_path),
                 arguments.bootstrap_python_fd,

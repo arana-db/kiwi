@@ -748,7 +748,8 @@ fn oracle_build_candidate_json_enforces_the_one_mibibyte_limit_before_temp_creat
     let exact = test_dir.path().join("exact.json");
     let oversized = test_dir.path().join("oversized.json");
     let body = format!(
-        r#"import pathlib
+        r#"import os
+import pathlib
 
 limit = 1024 * 1024
 exact = pathlib.Path({exact:?})
@@ -835,6 +836,8 @@ fn oracle_verifier_rejects_existing_output_before_source_access() {
         .arg(&missing_primary)
         .arg("--output")
         .arg(&output_path)
+        .arg("--callback-input")
+        .arg(test_dir.path())
         .arg("--run-after-ready")
         .arg("/bin/true")
         .env_clear()
@@ -921,23 +924,17 @@ root = pathlib.Path({root:?})
 (root / "home").mkdir()
 (root / "tmp").mkdir()
 callback_code = r'''
-import os, pathlib, sys, time
-pid_path = pathlib.Path(sys.argv[1])
-close_pipes = sys.argv[2] == "closed"
-flood = sys.argv[3] == "flood"
+import os, sys, time
+close_pipes = sys.argv[1] == "closed"
+flood = sys.argv[2] == "flood"
 child = os.fork()
 if child == 0:
     os.setsid()
-    pid_path.write_text(str(os.getpid()), encoding="ascii")
     if close_pipes:
         os.close(1)
         os.close(2)
     time.sleep(1.5)
     os._exit(0)
-for _ in range(100):
-    if pid_path.exists():
-        break
-    time.sleep(0.005)
 if flood:
     while True:
         os.write(1, b"x" * 4096)
@@ -948,11 +945,10 @@ else:
 failures = []
 with controller.HeldExecutable.open("callback-python", pathlib.Path("/usr/bin/python3")) as held:
     for pipes, trigger in (("closed", "timeout"), ("inherited", "timeout"), ("closed", "flood"), ("inherited", "flood")):
-        pid_path = root / f"{{pipes}}-{{trigger}}.pid"
         started = time.monotonic()
         result = controller.run_bounded(
             held,
-            ["python3", "-I", "-B", "-c", callback_code, str(pid_path), pipes, trigger],
+            ["python3", "-I", "-B", "-c", callback_code, pipes, trigger],
             env={{"PATH": "/usr/bin:/bin", "HOME": str(root / "home"), "TMPDIR": str(root / "tmp")}},
             timeout_ms=250,
             term_grace_ms=100,
@@ -963,24 +959,213 @@ with controller.HeldExecutable.open("callback-python", pathlib.Path("/usr/bin/py
         )
         elapsed = time.monotonic() - started
         deadline_ok = elapsed < 0.8
-        pid = int(pid_path.read_text(encoding="ascii"))
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            alive = False
-        else:
-            alive = True
-        if alive:
-            os.kill(pid, signal.SIGKILL)
-            try:
-                os.waitpid(pid, 0)
-            except ChildProcessError:
-                pass
+        pid = result.namespace_init_pid
+        start_time = result.namespace_init_start_time
+        alive = controller._process_matches_start_time(pid, start_time)
         if alive or not deadline_ok:
             failures.append((pipes, trigger, pid, alive, elapsed, result))
 
 if failures:
     raise AssertionError(f"setsid descendants escaped callback containment or pipe deadline: {{failures}}")
+"#,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_callback_input_exposes_repo_layout_read_only() {
+    let test_dir = TestDir::new("verifier-callback-input");
+    let body = format!(
+        r#"import os
+import pathlib
+
+root = pathlib.Path({root:?})
+callback_input = root / "callback-input"
+(callback_input / "scripts").mkdir(parents=True)
+(callback_input / "resources").mkdir()
+(callback_input / "resources/value.txt").write_text("trusted-resource", encoding="utf-8")
+runner = callback_input / "scripts/runner.py"
+runner.write_text(r'''#!/usr/bin/python3
+import os, pathlib
+callback_input = pathlib.Path(os.environ["KIWI_REDIS_ORACLE_CALLBACK_INPUT"])
+value = (callback_input / "resources/value.txt").read_text(encoding="utf-8")
+try:
+    (callback_input / "resources/value.txt").write_text("changed", encoding="utf-8")
+except OSError:
+    pass
+else:
+    raise SystemExit("callback input was writable")
+pathlib.Path(os.environ["KIWI_REDIS_ORACLE_WORKDIR"]).joinpath("result.txt").write_text(value, encoding="utf-8")
+''', encoding="utf-8")
+runner.chmod(0o755)
+callback_path = root / "callback"
+callback_path.mkdir()
+evidence = root / "runtime-evidence.json"
+evidence.write_text('{{"runtime":true}}', encoding="utf-8")
+evidence.chmod(0o400)
+aliases = controller.FrozenToolDirectory.create(root / "aliases", {{}})
+callback_root = controller.HeldDirectory.open(callback_path)
+callback_input_root = controller.HeldDirectory.open(callback_input)
+evidence_fd = os.open(evidence, os.O_RDONLY | os.O_CLOEXEC)
+try:
+    controller._run_callback(
+        [str(runner)], aliases, callback_root, callback_input_root, evidence_fd, "127.0.0.1", 1
+    )
+    assert (callback_path / "work/result.txt").read_text(encoding="utf-8") == "trusted-resource"
+    assert (callback_input / "resources/value.txt").read_text(encoding="utf-8") == "trusted-resource"
+finally:
+    aliases.remove()
+    os.close(evidence_fd)
+    callback_input_root.close()
+    callback_root.close()
+"#,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_callback_setup_stall_obeys_wall_clock_deadline() {
+    let test_dir = TestDir::new("verifier-callback-setup-stall");
+    let probe = test_dir.path().join("stall-probe.py");
+    let marker = test_dir.path().join("setup.pid");
+    let source = format!(
+        r#"import importlib.util
+import os
+import pathlib
+import sys
+import time
+
+controller_path = pathlib.Path({controller:?})
+spec = importlib.util.spec_from_file_location("kiwi_oracle_controller", controller_path)
+controller = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = controller
+spec.loader.exec_module(controller)
+root = pathlib.Path({root:?})
+marker = pathlib.Path({marker:?})
+for name in ("work", "input", "sandbox"):
+    (root / name).mkdir()
+evidence = root / "runtime-evidence.json"
+evidence.write_text("{{}}", encoding="utf-8")
+fds = [
+    os.open(root / "work", os.O_RDONLY | os.O_DIRECTORY),
+    os.open(root / "input", os.O_RDONLY | os.O_DIRECTORY),
+    os.open(evidence, os.O_RDONLY),
+    os.open(root / "sandbox", os.O_RDONLY | os.O_DIRECTORY),
+]
+original = controller._callback_filesystem_setup
+original_preexec = controller._pid_namespace_preexec
+def record_supervisor(*args):
+    marker.write_text(str(os.getpid()), encoding="ascii")
+    return original_preexec(*args)
+def stall(*args):
+    time.sleep(10)
+controller._callback_filesystem_setup = stall
+controller._pid_namespace_preexec = record_supervisor
+started = time.monotonic()
+try:
+    with controller.HeldExecutable.open("callback", pathlib.Path("/bin/true")) as held:
+        result = controller.run_bounded(
+            held, ["/bin/true"], env={{"PATH":"/usr/bin:/bin"}}, timeout_ms=250,
+            term_grace_ms=100, stdout_limit_bytes=1024, stderr_limit_bytes=1024,
+            pid_namespace=True, callback_filesystem=tuple(fds),
+        )
+        assert result.timed_out
+finally:
+    controller._callback_filesystem_setup = original
+    controller._pid_namespace_preexec = original_preexec
+    for fd in fds:
+        try: os.close(fd)
+        except OSError: pass
+assert time.monotonic() - started < 1.0
+"#,
+        controller = controller_path().to_string_lossy(),
+        root = test_dir.path().to_string_lossy(),
+        marker = marker.to_string_lossy(),
+    );
+    fs::write(&probe, source).unwrap();
+    let output = Command::new("/usr/bin/timeout")
+        .args(["--kill-after=0.5s", "1.5s", controlled_python(), "-I", "-B"])
+        .arg(&probe)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .expect("setup-stall probe must start");
+    if let Ok(raw_pid) = fs::read_to_string(&marker) {
+        if let Ok(pid) = raw_pid.trim().parse::<i32>() {
+            let probe_bytes = probe.as_os_str().as_encoded_bytes();
+            let matches_probe = || {
+                let cmdline = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+                cmdline
+                    .windows(probe_bytes.len())
+                    .any(|window| window == probe_bytes)
+            };
+            if matches_probe() {
+                let _ = Command::new("/bin/kill")
+                    .args(["-TERM", "--", &pid.to_string()])
+                    .status();
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+            if matches_probe() {
+                let _ = Command::new("/bin/kill")
+                    .args(["-KILL", "--", &pid.to_string()])
+                    .status();
+            }
+            assert!(
+                !matches_probe(),
+                "setup-stall supervisor PID survived cleanup"
+            );
+        }
+    }
+    assert_probe_succeeds(output);
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_held_cleanup_rejects_replacement_without_touching_it() {
+    let test_dir = TestDir::new("verifier-held-cleanup-replacement");
+    let body = format!(
+        r#"import os
+import pathlib
+
+root = pathlib.Path({root:?})
+visible = root / "aliases"
+moved = root / "held-aliases"
+aliases = controller.FrozenToolDirectory.create(visible, {{}})
+visible.rename(moved)
+visible.mkdir()
+marker = visible / "replacement.txt"
+marker.write_text("untouched", encoding="utf-8")
+try:
+    aliases.remove_path()
+except controller.OracleError:
+    pass
+else:
+    raise AssertionError("replacement controlled-tool directory was removed")
+assert marker.read_text(encoding="utf-8") == "untouched"
+assert moved.exists()
+aliases.close()
+
+parent = controller.HeldDirectory.open(root)
+os.mkdir("runtime", mode=0o700, dir_fd=parent.fd)
+runtime = parent.open_directory("runtime")
+(root / "runtime").rename(root / "held-runtime")
+(root / "runtime").mkdir()
+runtime_marker = root / "runtime/replacement.txt"
+runtime_marker.write_text("untouched", encoding="utf-8")
+try:
+    controller._remove_runtime_directory(parent.fd, "runtime", runtime)
+except controller.OracleError:
+    pass
+else:
+    raise AssertionError("replacement runtime directory was removed")
+assert runtime_marker.read_text(encoding="utf-8") == "untouched"
+runtime.close()
+parent.close()
+assert not (root / "oracle-provenance.json").exists()
 "#,
         root = test_dir.path().to_string_lossy(),
     );
@@ -1060,6 +1245,7 @@ try:
         [str(callback), *(str(path) for path in protected.values()), str(verifier)],
         aliases,
         callback_root,
+        parent,
         evidence_fd,
         "127.0.0.1",
         1,
@@ -1122,6 +1308,7 @@ for attack in ("work-source", "evidence-source", "sandbox-root-target"):
     evidence.chmod(0o400)
     aliases = controller.FrozenToolDirectory.create(case / "aliases", {{}})
     callback_root = controller.HeldDirectory.open(callback_path)
+    callback_input_root = controller.HeldDirectory.open(case)
     evidence_fd = os.open(evidence, os.O_RDONLY | os.O_CLOEXEC)
     original_mount = controller._mount
     original_setup = controller._callback_filesystem_setup
@@ -1168,7 +1355,7 @@ for attack in ("work-source", "evidence-source", "sandbox-root-target"):
     try:
         try:
             controller._run_callback(
-                [str(callback)], aliases, callback_root, evidence_fd, "127.0.0.1", 1
+                [str(callback)], aliases, callback_root, callback_input_root, evidence_fd, "127.0.0.1", 1
             )
         except controller.OracleError as error:
             print(f"{{attack}} rejected during setup: {{error}}")
@@ -1201,6 +1388,7 @@ for attack in ("work-source", "evidence-source", "sandbox-root-target"):
         controller._callback_filesystem_setup = original_setup
         aliases.remove()
         os.close(evidence_fd)
+        callback_input_root.close()
         callback_root.close()
 
 if failures:
@@ -1683,6 +1871,53 @@ assert not list(provenance.parent.glob(".*.provenance-*")), "temporary provenanc
 
 #[test]
 #[cfg(target_os = "linux")]
+fn oracle_verifier_provenance_parent_move_during_successful_close_rolls_back() {
+    let test_dir = TestDir::new("verifier-publish-parent-close-move");
+    let parent = test_dir.path().join("output-parent");
+    let moved = test_dir.path().join("held-output-parent");
+    fs::create_dir(&parent).unwrap();
+    let provenance = parent.join("oracle-provenance.json");
+    let fixture = canonical_provenance();
+    let body = format!(
+        r#"import json
+import pathlib
+
+parent = pathlib.Path({parent:?})
+moved = pathlib.Path({moved:?})
+provenance = pathlib.Path({provenance:?})
+document = json.loads(r'''{document}''')
+target = controller.CandidateTarget.open(provenance)
+original_close = controller.CandidateTarget.close
+
+def move_parent_during_successful_close(self):
+    original_close(self)
+    parent.rename(moved)
+    parent.mkdir()
+
+controller.CandidateTarget.close = move_parent_during_successful_close
+try:
+    controller.publish_provenance(target, document, close_target=True)
+except controller.OracleError:
+    pass
+else:
+    raise AssertionError("output parent move during successful close was accepted")
+finally:
+    controller.CandidateTarget.close = original_close
+
+for directory in (parent, moved):
+    assert not (directory / provenance.name).exists()
+    assert not list(directory.glob(".*.provenance-*"))
+"#,
+        parent = parent.to_string_lossy(),
+        moved = moved.to_string_lossy(),
+        provenance = provenance.to_string_lossy(),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 fn oracle_verifier_python_publication_rejects_cross_stage_timestamp_mutations() {
     let test_dir = TestDir::new("verifier-python-timestamp-order");
     let fixture = canonical_provenance();
@@ -1736,6 +1971,7 @@ fn oracle_verifier_wrappers_keep_verification_in_linux_and_preserve_callback_arg
     );
     assert!(!bash.contains("eval "));
     assert!(powershell.contains("wslpath"));
+    assert!(powershell.contains("--callback-input"));
     assert!(powershell.contains("--run-after-ready"));
     assert!(!powershell.contains("Invoke-Expression"));
     assert!(!powershell.contains("Start-Process"));
@@ -1743,7 +1979,7 @@ fn oracle_verifier_wrappers_keep_verification_in_linux_and_preserve_callback_arg
 
 #[test]
 #[cfg(target_os = "linux")]
-fn oracle_verifier_powershell_wrapper_preserves_literal_argv_and_converts_drive_and_unc_paths() {
+fn oracle_verifier_powershell_wrapper_preserves_literal_argv_and_converts_drive_paths() {
     let powershell = Path::new("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe");
     if !powershell.is_file() {
         eprintln!("Windows PowerShell interop is unavailable; skipping argv semantics probe");
@@ -1770,9 +2006,10 @@ function global:wsl.exe {
 
 & $Wrapper `
     -Source 'D:\source path' `
-    -PrimaryMetadata '\\server\share\primary.json' `
+    -PrimaryMetadata 'D:\primary path\primary.json' `
     -Output 'E:\out\oracle.json' `
-    -RunAfterReady @('C:\callback dir\callback.exe', 'literal ; $() []', '\\server\share\callback arg')
+    -CallbackInput 'F:\callback input' `
+    -RunAfterReady @('C:\callback dir\callback.exe', 'literal ; $() []')
 "#,
     )
     .unwrap();
@@ -1824,18 +2061,73 @@ function global:wsl.exe {
         "--source".to_string(),
         "WSL<D:\\source path>".to_string(),
         "--primary-metadata".to_string(),
-        "WSL<\\\\server\\share\\primary.json>".to_string(),
+        "WSL<D:\\primary path\\primary.json>".to_string(),
         "--output".to_string(),
         "WSL<E:\\out\\oracle.json>".to_string(),
+        "--callback-input".to_string(),
+        "WSL<F:\\callback input>".to_string(),
         "--run-after-ready".to_string(),
         "WSL<C:\\callback dir\\callback.exe>".to_string(),
         "literal ; $() []".to_string(),
-        "WSL<\\\\server\\share\\callback arg>".to_string(),
     ];
     assert_eq!(
         actual, expected,
         "PowerShell wrapper changed argv semantics"
     );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_powershell_wrapper_rejects_unc_before_wslpath() {
+    let powershell = Path::new("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe");
+    if !powershell.is_file() {
+        eprintln!("Windows PowerShell interop is unavailable; skipping UNC boundary probe");
+        return;
+    }
+    let test_dir = TestDir::new("verifier-powershell-unc");
+    let harness = test_dir.path().join("harness.ps1");
+    fs::write(
+        &harness,
+        r#"param([Parameter(Mandatory = $true)][string]$Wrapper)
+$global:WslCalls = 0
+function global:wsl.exe {
+    $global:WslCalls++
+    $global:LASTEXITCODE = 0
+    return '/unexpected'
+}
+try {
+    & $Wrapper -Source '\\server\share\source' -PrimaryMetadata 'D:\primary.json' -Output 'E:\out.json' -CallbackInput 'F:\input' -RunAfterReady @('C:\callback.exe')
+} catch {
+    [Console]::Out.WriteLine('ERROR:' + $_.Exception.Message)
+}
+[Console]::Out.WriteLine('WSLCALLS:' + $global:WslCalls)
+"#,
+    )
+    .unwrap();
+    let windows_path = |path: &Path| -> String {
+        let output = Command::new("/usr/bin/wslpath")
+            .args(["-w", "--"])
+            .arg(path)
+            .output()
+            .expect("wslpath must start");
+        assert!(output.status.success(), "wslpath failed: {output:?}");
+        String::from_utf8(output.stdout).unwrap().trim().to_string()
+    };
+    let output = Command::new(powershell)
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
+        .arg(windows_path(&harness))
+        .arg("-Wrapper")
+        .arg(windows_path(
+            &repository_root().join("scripts/compat/verify-redis-8.8.1.ps1"),
+        ))
+        .output()
+        .expect("PowerShell UNC harness must start");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("UNC paths are not supported"),
+        "stdout={stdout:?}"
+    );
+    assert!(stdout.contains("WSLCALLS:0"), "stdout={stdout:?}");
 }
 
 #[test]
@@ -1847,6 +2139,8 @@ fn oracle_verifier_real_redis_8_8_1_rebuild_runtime_callback_and_cleanup() {
     let primary = test_dir.path().join("primary-build.json");
     let provenance = test_dir.path().join("oracle-provenance.json");
     let callback = test_dir.path().join("callback.py");
+    let callback_input = test_dir.path().join("callback-input");
+    fs::create_dir(&callback_input).unwrap();
     clone_exact_redis(&source);
 
     let primary_output = Command::new("/usr/bin/bash")
@@ -1877,6 +2171,7 @@ required = [
     "KIWI_REDIS_ORACLE_HOST",
     "KIWI_REDIS_ORACLE_PORT",
     "KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE",
+    "KIWI_REDIS_ORACLE_CALLBACK_INPUT",
     "KIWI_REDIS_ORACLE_WORKDIR",
 ]
 missing = [name for name in required if not os.environ.get(name)]
@@ -1920,6 +2215,8 @@ if json.loads(marker.read_text(encoding="utf-8"))["pid"] != evidence["pid"]:
         .arg(&primary)
         .arg("--output")
         .arg(&provenance)
+        .arg("--callback-input")
+        .arg(&callback_input)
         .arg("--run-after-ready")
         .arg(&callback)
         .env_clear()
