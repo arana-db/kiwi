@@ -1080,6 +1080,138 @@ finally:
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_callback_mount_setup_rejects_source_and_target_rename_replace() {
+    let test_dir = TestDir::new("verifier-callback-mount-setup-race");
+    let body = format!(
+        r#"import json
+import os
+import pathlib
+
+root = pathlib.Path({root:?})
+callback = root / "callback.py"
+callback.write_text(r'''#!/usr/bin/python3
+import json, os, pathlib
+evidence = json.loads(pathlib.Path(os.environ["KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE"]).read_text(encoding="utf-8"))
+result = {{
+    "work": pathlib.Path("/work/identity").read_text(encoding="utf-8"),
+    "evidence": evidence["identity"],
+    "root": [os.stat("/").st_dev, os.stat("/").st_ino],
+    "dev": [os.stat("/dev").st_dev, os.stat("/dev").st_ino],
+}}
+pathlib.Path("/work/observed.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
+''', encoding="utf-8")
+callback.chmod(0o755)
+
+def replacement_sandbox(path):
+    path.mkdir(mode=0o700)
+    for relative in ("usr", "proc", "dev", "work"):
+        (path / relative).mkdir(mode=0o700)
+    for relative in ("runtime-evidence.json", "dev/null"):
+        (path / relative).touch(mode=0o600)
+    for link, target in (("bin", "usr/bin"), ("lib", "usr/lib"), ("lib64", "usr/lib64")):
+        (path / link).symlink_to(target)
+
+failures = []
+for attack in ("work-source", "evidence-source", "sandbox-root-target"):
+    case = root / attack
+    callback_path = case / "callback"
+    callback_path.mkdir(parents=True)
+    evidence = case / "runtime-evidence.json"
+    evidence.write_text('{{"identity":"original-evidence"}}', encoding="utf-8")
+    evidence.chmod(0o400)
+    aliases = controller.FrozenToolDirectory.create(case / "aliases", {{}})
+    callback_root = controller.HeldDirectory.open(callback_path)
+    evidence_fd = os.open(evidence, os.O_RDONLY | os.O_CLOEXEC)
+    original_mount = controller._mount
+    original_setup = controller._callback_filesystem_setup
+
+    def attack_mount(source, target, filesystem, flags, data=None):
+        target_text = os.fspath(target)
+        if target_text.rstrip("/").endswith("work"):
+            visible = callback_path / "work"
+            if not (visible / "identity").exists():
+                (visible / "identity").write_text("original-work", encoding="utf-8")
+            moved = callback_path / "work-held"
+            if attack == "work-source" and not moved.exists():
+                visible.rename(moved)
+                visible.mkdir(mode=0o700)
+                (visible / "home").mkdir(mode=0o700)
+                (visible / "tmp").mkdir(mode=0o700)
+                (visible / "identity").write_text("replacement-work", encoding="utf-8")
+        elif attack == "evidence-source" and target_text.endswith("runtime-evidence.json") and source is not None:
+            moved = case / "runtime-evidence-held.json"
+            if not moved.exists():
+                evidence.rename(moved)
+                evidence.write_text('{{"identity":"replacement-evidence"}}', encoding="utf-8")
+                evidence.chmod(0o400)
+        return original_mount(source, target, filesystem, flags, data)
+
+    def attack_setup(*args):
+        if attack == "sandbox-root-target":
+            visible = callback_path / "sandbox-root"
+            moved = callback_path / "sandbox-root-held"
+            visible.rename(moved)
+            replacement_sandbox(visible)
+            identities = {{
+                "root": [visible.stat().st_dev, visible.stat().st_ino],
+                "dev": [(visible / "dev").stat().st_dev, (visible / "dev").stat().st_ino],
+            }}
+            (case / "replacement-identities.json").write_text(
+                json.dumps(identities, sort_keys=True), encoding="utf-8"
+            )
+        return original_setup(*args)
+
+    controller._mount = attack_mount
+    controller._callback_filesystem_setup = attack_setup
+    rejected = False
+    try:
+        try:
+            controller._run_callback(
+                [str(callback)], aliases, callback_root, evidence_fd, "127.0.0.1", 1
+            )
+        except controller.OracleError as error:
+            print(f"{{attack}} rejected during setup: {{error}}")
+            rejected = True
+
+        if rejected:
+            continue
+        if attack == "work-source":
+            observed_path = callback_path / "work-held" / "observed.json"
+            if not observed_path.exists():
+                failures.append("work source replacement was consumed")
+                continue
+        else:
+            observed_path = callback_path / "work" / "observed.json"
+        observed = json.loads(observed_path.read_text(encoding="utf-8"))
+        if attack == "work-source" and observed["work"] != "original-work":
+            failures.append(f"callback observed replacement work: {{observed}}")
+        if attack == "evidence-source" and observed["evidence"] != "original-evidence":
+            failures.append(f"callback observed replacement evidence: {{observed}}")
+        if attack == "sandbox-root-target":
+            replacement = json.loads(
+                (case / "replacement-identities.json").read_text(encoding="utf-8")
+            )
+            if observed["root"] == replacement["root"] or observed["dev"] == replacement["dev"]:
+                failures.append(
+                    f"callback consumed replacement sandbox root/target: observed={{observed}} replacement={{replacement}}"
+                )
+    finally:
+        controller._mount = original_mount
+        controller._callback_filesystem_setup = original_setup
+        aliases.remove()
+        os.close(evidence_fd)
+        callback_root.close()
+
+if failures:
+    raise AssertionError(f"callback mount setup trusted rename-replaced paths: {{failures}}")
+"#,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
 #[ignore = "fresh exact Redis checkout for artifact-closure mutants"]
 #[cfg(target_os = "linux")]
 fn oracle_verifier_artifact_closure_rejects_unlisted_and_modified_source_entries() {

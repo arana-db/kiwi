@@ -755,7 +755,81 @@ def _mount(
         raise OSError(error, f"mount {source!r} on {target!r}: {os.strerror(error)}")
 
 
-def _callback_filesystem_setup(callback_root_fd: int, runtime_evidence_fd: int) -> None:
+def _reopen_held_mount_source(
+    held_fd: int, *, directory: bool, label: str
+) -> int:
+    visible = os.readlink(f"/proc/self/fd/{held_fd}")
+    if not visible.startswith("/") or visible.endswith(" (deleted)"):
+        raise OracleError(f"held callback {label} has no visible absolute path")
+    flags = os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC
+    if directory:
+        flags |= os.O_DIRECTORY
+    current_fd = os.open(visible, flags)
+    if not _same_identity(os.fstat(held_fd), os.fstat(current_fd)):
+        os.close(current_fd)
+        raise OracleError(f"held callback {label} changed while entering its mount namespace")
+    return current_fd
+
+
+def _detached_tmpfs_mount() -> int:
+    fsopen_clexec = 1
+    fsconfig_cmd_create = 6
+    fsmount_cloexec = 1
+    syscall_fsopen = 430
+    syscall_fsconfig = 431
+    syscall_fsmount = 432
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+
+    filesystem_fd = libc.syscall(
+        syscall_fsopen, ctypes.c_char_p(b"tmpfs"), fsopen_clexec
+    )
+    if filesystem_fd < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, f"fsopen callback tmpfs: {os.strerror(error)}")
+    try:
+        result = libc.syscall(
+            syscall_fsconfig,
+            filesystem_fd,
+            fsconfig_cmd_create,
+            ctypes.c_void_p(),
+            ctypes.c_void_p(),
+            0,
+        )
+        if result != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, f"fsconfig callback tmpfs: {os.strerror(error)}")
+        mount_fd = libc.syscall(syscall_fsmount, filesystem_fd, fsmount_cloexec, 0)
+        if mount_fd < 0:
+            error = ctypes.get_errno()
+            raise OSError(error, f"fsmount callback tmpfs: {os.strerror(error)}")
+        return int(mount_fd)
+    finally:
+        os.close(filesystem_fd)
+
+
+def _move_detached_mount(mount_fd: int, target_fd: int) -> None:
+    move_mount_f_empty_path = 0x00000004
+    move_mount_t_empty_path = 0x00000040
+    syscall_move_mount = 429
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.syscall.restype = ctypes.c_long
+    result = libc.syscall(
+        syscall_move_mount,
+        mount_fd,
+        ctypes.c_char_p(b""),
+        target_fd,
+        ctypes.c_char_p(b""),
+        move_mount_f_empty_path | move_mount_t_empty_path,
+    )
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, f"move_mount callback tmpfs: {os.strerror(error)}")
+
+
+def _callback_filesystem_setup(
+    work_fd: int, runtime_evidence_fd: int, sandbox_root_fd: int
+) -> None:
     ms_rdonly = 1
     ms_nosuid = 2
     ms_nodev = 4
@@ -764,45 +838,101 @@ def _callback_filesystem_setup(callback_root_fd: int, runtime_evidence_fd: int) 
     ms_bind = 4096
     ms_rec = 16384
     ms_private = 1 << 18
-    callback_root = os.readlink(f"/proc/self/fd/{callback_root_fd}")
-    if not callback_root.startswith("/") or callback_root.endswith(" (deleted)"):
-        raise OracleError("callback sandbox root is no longer a visible absolute directory")
-    runtime_evidence = os.readlink(f"/proc/self/fd/{runtime_evidence_fd}")
-    if not runtime_evidence.startswith("/") or runtime_evidence.endswith(" (deleted)"):
-        raise OracleError("runtime evidence is no longer a visible absolute file")
-    root = f"{callback_root}/sandbox-root"
     _mount(None, "/", None, ms_rec | ms_private)
-    _mount("/usr", f"{root}/usr", None, ms_bind | ms_rec)
-    _mount(
-        None,
-        f"{root}/usr",
-        None,
-        ms_bind | ms_remount | ms_rdonly | ms_nosuid | ms_nodev,
+    current_work_fd = _reopen_held_mount_source(
+        work_fd, directory=True, label="work directory"
     )
-    _mount(f"{callback_root}/work", f"{root}/work", None, ms_bind)
-    _mount(
-        runtime_evidence,
-        f"{root}/runtime-evidence.json",
-        None,
-        ms_bind,
+    current_evidence_fd = _reopen_held_mount_source(
+        runtime_evidence_fd, directory=False, label="runtime evidence"
     )
-    _mount(
-        None,
-        f"{root}/runtime-evidence.json",
-        None,
-        ms_bind | ms_remount | ms_rdonly | ms_nosuid | ms_nodev,
+    current_sandbox_fd = _reopen_held_mount_source(
+        sandbox_root_fd, directory=True, label="sandbox root"
     )
-    _mount("/dev/null", f"{root}/dev/null", None, ms_bind)
-    _mount(
-        "proc",
-        f"{root}/proc",
-        "proc",
-        ms_nosuid | ms_nodev | ms_noexec,
-    )
-    os.chroot(root)
-    os.chdir("/work")
-    os.close(callback_root_fd)
-    os.close(runtime_evidence_fd)
+    root_mount_fd = _detached_tmpfs_mount()
+    try:
+        _move_detached_mount(root_mount_fd, current_sandbox_fd)
+        for relative in ("usr", "proc", "dev", "work"):
+            os.mkdir(relative, mode=0o700, dir_fd=root_mount_fd)
+        for relative in ("runtime-evidence.json", "dev/null"):
+            placeholder = os.open(
+                relative,
+                os.O_RDONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+                0o600,
+                dir_fd=root_mount_fd,
+            )
+            os.close(placeholder)
+        for link, target in (
+            ("bin", "usr/bin"),
+            ("lib", "usr/lib"),
+            ("lib64", "usr/lib64"),
+        ):
+            os.symlink(target, link, dir_fd=root_mount_fd)
+
+        os.fchdir(root_mount_fd)
+        _mount("/usr", "usr", None, ms_bind | ms_rec)
+        _mount(
+            None,
+            "usr",
+            None,
+            ms_bind | ms_remount | ms_rdonly | ms_nosuid | ms_nodev,
+        )
+        _mount(f"/proc/self/fd/{current_work_fd}", "work", None, ms_bind)
+        _mount(
+            f"/proc/self/fd/{current_evidence_fd}",
+            "runtime-evidence.json",
+            None,
+            ms_bind,
+        )
+        _mount(
+            None,
+            "runtime-evidence.json",
+            None,
+            ms_bind | ms_remount | ms_rdonly | ms_nosuid | ms_nodev,
+        )
+        _mount("/dev/null", "dev/null", None, ms_bind)
+        _mount(
+            "proc",
+            "proc",
+            "proc",
+            ms_rdonly | ms_nosuid | ms_nodev | ms_noexec,
+        )
+
+        if not _same_identity(os.fstat(work_fd), os.stat("work", follow_symlinks=False)):
+            raise OracleError("callback work mount differs from its held directory")
+        if not _same_identity(
+            os.fstat(runtime_evidence_fd),
+            os.stat("runtime-evidence.json", follow_symlinks=False),
+        ):
+            raise OracleError("callback evidence mount differs from its held file")
+        if not os.statvfs("runtime-evidence.json").f_flag & os.ST_RDONLY:
+            raise OracleError("callback runtime evidence mount is not read-only")
+        if os.statvfs("work").f_flag & os.ST_RDONLY:
+            raise OracleError("callback work mount is unexpectedly read-only")
+
+        _mount(
+            None,
+            ".",
+            None,
+            ms_remount | ms_rdonly | ms_nosuid | ms_nodev,
+        )
+        if not os.statvfs(".").f_flag & os.ST_RDONLY:
+            raise OracleError("callback sandbox root mount is not read-only")
+        os.chroot(".")
+        os.chdir("/work")
+    finally:
+        for fd in (
+            root_mount_fd,
+            current_sandbox_fd,
+            current_evidence_fd,
+            current_work_fd,
+            sandbox_root_fd,
+            runtime_evidence_fd,
+            work_fd,
+        ):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
 
 
 def _pid_namespace_preexec(
@@ -943,7 +1073,7 @@ def run_bounded(
     cwd: pathlib.Path | None = None,
     terminate_on_output_limit: bool = False,
     pid_namespace: bool = False,
-    callback_filesystem: tuple[int, int] | None = None,
+    callback_filesystem: tuple[int, int, int] | None = None,
 ) -> RunResult:
     """Run one held executable in a new process group with bounded evidence."""
     if not argv or any(not isinstance(value, str) or not value for value in argv):
@@ -998,10 +1128,12 @@ def run_bounded(
         def enter_pid_namespace() -> None:
             child_setup = None
             if callback_filesystem is not None:
-                callback_root_fd, runtime_evidence_fd = callback_filesystem
+                work_fd, runtime_evidence_fd, sandbox_root_fd = callback_filesystem
 
                 def setup_callback_filesystem() -> None:
-                    _callback_filesystem_setup(callback_root_fd, runtime_evidence_fd)
+                    _callback_filesystem_setup(
+                        work_fd, runtime_evidence_fd, sandbox_root_fd
+                    )
 
                 child_setup = setup_callback_filesystem
             _pid_namespace_preexec(
@@ -3107,14 +3239,13 @@ def _run_callback(
     (working / "tmp").mkdir(mode=0o700)
     sandbox_root = callback_root.path / "sandbox-root"
     sandbox_root.mkdir(mode=0o700)
-    for relative in ("usr", "proc", "dev", "work"):
-        (sandbox_root / relative).mkdir(mode=0o700)
-    for relative in ("runtime-evidence.json", "dev/null"):
-        (sandbox_root / relative).touch(mode=0o600, exist_ok=False)
-    for link, target in (("bin", "usr/bin"), ("lib", "usr/lib"), ("lib64", "usr/lib64")):
-        (sandbox_root / link).symlink_to(target)
-    executable = HeldExecutable.open("callback", executable_path)
+    work_root: HeldDirectory | None = None
+    held_sandbox_root: HeldDirectory | None = None
+    executable: HeldExecutable | None = None
     try:
+        work_root = callback_root.open_directory("work")
+        held_sandbox_root = callback_root.open_directory("sandbox-root")
+        executable = HeldExecutable.open("callback", executable_path)
         aliases_directory.verify_frozen()
         env = _sanitized_environment(
             "/usr/bin:/bin", pathlib.Path("/work/home"), pathlib.Path("/work/tmp")
@@ -3135,14 +3266,23 @@ def _run_callback(
             term_grace_ms=TERM_GRACE_MS,
             stdout_limit_bytes=CALLBACK_OUTPUT_LIMIT,
             stderr_limit_bytes=CALLBACK_OUTPUT_LIMIT,
-            extra_fds=(callback_root.fd, runtime_evidence_fd),
+            extra_fds=(work_root.fd, runtime_evidence_fd, held_sandbox_root.fd),
             terminate_on_output_limit=True,
             pid_namespace=True,
-            callback_filesystem=(callback_root.fd, runtime_evidence_fd),
+            callback_filesystem=(
+                work_root.fd,
+                runtime_evidence_fd,
+                held_sandbox_root.fd,
+            ),
         )
         aliases_directory.verify_frozen()
     finally:
-        executable.close()
+        if executable is not None:
+            executable.close()
+        if held_sandbox_root is not None:
+            held_sandbox_root.close()
+        if work_root is not None:
+            work_root.close()
     if result.timed_out or result.output_truncated or result.exit_code != 0:
         raise OracleError(
             "Oracle callback failed: "
