@@ -31,13 +31,33 @@ const REDIS_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const CLI_SHA: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const TOOL_SHA: &str = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
-#[cfg(unix)]
-const CONTROLLED_PYTHON: &str = "/home/alex/miniconda3/bin/python3";
+#[test]
+fn oracle_build_linux_probes_use_only_approved_system_python() {
+    let wrapper = include_str!("../../../scripts/compat/build-redis-8.8.1.sh");
+    let tests = include_str!("oracle.rs");
+    let developer_home = concat!("/home/", "alex/");
+    let broad_unix_cfg = concat!("#[cfg(", "unix)]");
 
-#[cfg(unix)]
+    assert!(!wrapper.contains(developer_home));
+    assert!(wrapper.contains("/usr/bin/python3"));
+    assert!(wrapper.contains("/bin/python3"));
+    assert!(!tests.contains(developer_home));
+    assert!(!tests.contains(broad_unix_cfg));
+    assert!(tests.contains("#[cfg(target_os = \"linux\")]"));
+}
+
+#[cfg(target_os = "linux")]
+fn controlled_python() -> &'static str {
+    ["/usr/bin/python3", "/bin/python3"]
+        .into_iter()
+        .find(|candidate| Path::new(candidate).is_file())
+        .expect("an approved system Python must be installed")
+}
+
+#[cfg(target_os = "linux")]
 struct TestDir(PathBuf);
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 impl TestDir {
     fn new(name: &str) -> Self {
         let nonce = SystemTime::now()
@@ -57,14 +77,14 @@ impl TestDir {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 impl Drop for TestDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -73,17 +93,17 @@ fn repository_root() -> PathBuf {
         .to_path_buf()
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn controller_path() -> PathBuf {
     repository_root().join("scripts/compat/oracle_controller.py")
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn build_script_path() -> PathBuf {
     repository_root().join("scripts/compat/build-redis-8.8.1.sh")
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn run_python_probe(test_dir: &TestDir, body: &str) -> Output {
     let probe = test_dir.path().join("probe.py");
     let controller = controller_path();
@@ -104,7 +124,7 @@ spec.loader.exec_module(controller)
         controller = controller.to_string_lossy(),
     );
     fs::write(&probe, source).expect("probe must be written");
-    Command::new(CONTROLLED_PYTHON)
+    Command::new(controlled_python())
         .args(["-I", "-B"])
         .arg(&probe)
         .env_clear()
@@ -113,7 +133,7 @@ spec.loader.exec_module(controller)
         .expect("controlled Python probe must start")
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn assert_probe_succeeds(output: Output) {
     assert!(
         output.status.success(),
@@ -123,7 +143,7 @@ fn assert_probe_succeeds(output: Output) {
     );
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn clone_exact_redis(source: &Path) {
     let clone = Command::new("/usr/bin/git")
         .args([
@@ -154,7 +174,7 @@ fn clone_exact_redis(source: &Path) {
     );
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn clone_local_exact_redis(seed: &Path, source: &Path) {
     let clone = Command::new("/usr/bin/git")
         .args(["clone", "--no-hardlinks"])
@@ -190,7 +210,7 @@ fn clone_local_exact_redis(seed: &Path, source: &Path) {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn git_fixture(source: &Path, args: &[&str]) {
     let output = Command::new("/usr/bin/git")
         .arg("-C")
@@ -206,7 +226,7 @@ fn git_fixture(source: &Path, args: &[&str]) {
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_wrapper_rejects_ambient_python_and_controller_selection() {
     let test_dir = TestDir::new("ambient");
     let evil_bin = test_dir.path().join("evil-bin");
@@ -260,7 +280,7 @@ fn oracle_build_wrapper_rejects_ambient_python_and_controller_selection() {
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_holds_executable_fd_and_freezes_tool_aliases() {
     let test_dir = TestDir::new("held-fd");
     let body = format!(
@@ -315,7 +335,7 @@ with controller.HeldExecutable.open("probe", tool) as probe:
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_readonly_controlled_path_blocks_same_uid_replacement() {
     let test_dir = TestDir::new("readonly-path");
     let body = format!(
@@ -367,7 +387,7 @@ with controller.HeldExecutable.open("probe", tool) as probe:
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_make_uses_the_held_shell_fd_after_path_replacement() {
     let test_dir = TestDir::new("make-shell");
     let body = format!(
@@ -426,7 +446,7 @@ assert not replacement_marker.exists()
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_runner_caps_output_times_out_and_reaps_the_process_group() {
     let test_dir = TestDir::new("runner");
     let body = format!(
@@ -473,7 +493,7 @@ else:
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_artifact_scan_is_sorted_bounded_and_fail_closed() {
     let test_dir = TestDir::new("artifacts");
     let body = format!(
@@ -528,7 +548,7 @@ else:
 }
 
 #[test]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_candidate_publish_is_exclusive_atomic_and_not_provenance() {
     let test_dir = TestDir::new("publish");
     let metadata = test_dir.path().join("primary-build.json");
@@ -560,8 +580,153 @@ else:
 }
 
 #[test]
+#[cfg(target_os = "linux")]
+fn oracle_build_candidate_parent_replacement_fails_without_redirected_entries() {
+    let test_dir = TestDir::new("parent-binding");
+    let parent = test_dir.path().join("candidate-parent");
+    let moved_parent = test_dir.path().join("held-parent");
+    let replacement_parent = test_dir.path().join("replacement-parent");
+    let source = test_dir.path().join("source");
+    fs::create_dir(&parent).unwrap();
+    fs::create_dir(&source).unwrap();
+    let metadata = parent.join("primary-build.json");
+    let fixture = canonical_build("primary");
+    let body = format!(
+        r#"import json
+import os
+import pathlib
+import stat
+
+parent = pathlib.Path({parent:?})
+moved_parent = pathlib.Path({moved_parent:?})
+replacement_parent = pathlib.Path({replacement_parent:?})
+source = pathlib.Path({source:?})
+metadata = pathlib.Path({metadata:?})
+document = json.loads(r'''{document}''')
+original_fsync = os.fsync
+redirected = False
+
+def redirect_after_temp_fsync(fd):
+    global redirected
+    original_fsync(fd)
+    if not redirected and stat.S_ISREG(os.fstat(fd).st_mode):
+        parent.rename(moved_parent)
+        replacement_parent.mkdir()
+        replacement_parent.rename(parent)
+        redirected = True
+
+os.fsync = redirect_after_temp_fsync
+failure = None
+try:
+    controller.publish_candidate(metadata, document)
+except BaseException as error:
+    failure = error
+finally:
+    os.fsync = original_fsync
+
+def candidate_entries(directory):
+    if not directory.exists():
+        return []
+    return [entry.name for entry in directory.iterdir() if "candidate" in entry.name or entry.name == metadata.name]
+
+leftovers = {{
+    "held": candidate_entries(moved_parent),
+    "replacement": candidate_entries(parent),
+    "source": candidate_entries(source),
+}}
+if failure is None or any(leftovers.values()):
+    raise AssertionError(f"PARENT_REDIRECTED failure={{failure!r}} leftovers={{leftovers!r}}")
+"#,
+        parent = parent.to_string_lossy(),
+        moved_parent = moved_parent.to_string_lossy(),
+        replacement_parent = replacement_parent.to_string_lossy(),
+        source = source.to_string_lossy(),
+        metadata = metadata.to_string_lossy(),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_build_candidate_json_enforces_the_one_mibibyte_limit_before_temp_create() {
+    let test_dir = TestDir::new("json-limit");
+    let exact = test_dir.path().join("exact.json");
+    let oversized = test_dir.path().join("oversized.json");
+    let body = format!(
+        r#"import pathlib
+
+limit = 1024 * 1024
+exact = pathlib.Path({exact:?})
+oversized = pathlib.Path({oversized:?})
+empty_size = len(controller.canonical_json_bytes({{"pad": ""}}))
+exact_document = {{"pad": "x" * (limit - empty_size)}}
+oversized_document = {{"pad": "x" * (limit + 1 - empty_size)}}
+assert len(controller.canonical_json_bytes(exact_document)) == limit
+assert len(controller.canonical_json_bytes(oversized_document)) == limit + 1
+controller.publish_candidate(exact, exact_document)
+assert exact.stat().st_size == limit
+try:
+    controller.publish_candidate(oversized, oversized_document)
+except controller.OracleError:
+    pass
+else:
+    raise AssertionError("oversized candidate was published")
+assert not oversized.exists()
+assert not list(oversized.parent.glob(".*.candidate-*"))
+"#,
+        exact = exact.to_string_lossy(),
+        oversized = oversized.to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+    let exact_bytes = fs::read(&exact).expect("exact-limit candidate must exist");
+    assert_eq!(exact_bytes.len(), 1024 * 1024);
+    let exact_json: Value =
+        serde_json::from_slice(&exact_bytes).expect("exact-limit payload must be Rust JSON");
+    assert!(exact_json["pad"].as_str().is_some());
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_build_cleanup_aggregates_failures_and_runs_every_action() {
+    let test_dir = TestDir::new("cleanup-aggregation");
+    let candidate = test_dir.path().join("primary-build.json");
+    let body = format!(
+        r#"import pathlib
+
+candidate = pathlib.Path({candidate:?})
+action_names = ["alias remove", "tool close", "later close", "runtime remove", "source close"]
+
+def action(events, name, failing_name):
+    def run():
+        events.append(name)
+        if name == failing_name:
+            raise OSError(f"{{name}} boom")
+    return run
+
+for failing_name in ["alias remove", "tool close", "runtime remove"]:
+    events = []
+    actions = [(name, action(events, name, failing_name)) for name in action_names]
+    try:
+        controller._run_cleanup_actions(actions, controller.OracleError("business boom"))
+    except controller.OracleError as error:
+        message = str(error)
+    else:
+        raise AssertionError("cleanup failures were ignored")
+
+    assert events == action_names, (failing_name, events)
+    for expected in ["business boom", failing_name, f"{{failing_name}} boom"]:
+        assert expected in message, (expected, message)
+assert not candidate.exists()
+"#,
+        candidate = candidate.to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
 #[ignore = "external exact checkout; run with --include-ignored"]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_rejects_ignored_preexisting_artifacts_before_make() {
     use std::fs::{File, FileTimes};
     use std::time::Duration;
@@ -628,7 +793,7 @@ fn oracle_build_rejects_ignored_preexisting_artifacts_before_make() {
 
 #[test]
 #[ignore = "external exact checkout; run with --include-ignored"]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_rejects_fixed_commit_tree_and_index_mutations_before_make() {
     use std::os::unix::fs::{PermissionsExt, symlink};
 
@@ -707,7 +872,7 @@ fn oracle_build_rejects_fixed_commit_tree_and_index_mutations_before_make() {
 
 #[test]
 #[ignore = "external exact checkout; run with --include-ignored"]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_rejects_replace_ref_tree_before_make() {
     let test_dir = TestDir::new("replace-ref");
     let source = test_dir.path().join("source");
@@ -778,7 +943,7 @@ fn oracle_build_rejects_replace_ref_tree_before_make() {
 
 #[test]
 #[ignore = "external exact checkout; run with --include-ignored"]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_disables_repo_local_fsmonitor_before_any_git_query() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -829,7 +994,7 @@ fn oracle_build_disables_repo_local_fsmonitor_before_any_git_query() {
 
 #[test]
 #[ignore = "external exact checkout; run with --include-ignored"]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_rejects_non_independent_git_object_storage() {
     let test_dir = TestDir::new("git-storage");
     let seed = test_dir.path().join("seed");
@@ -892,7 +1057,7 @@ fn oracle_build_rejects_non_independent_git_object_storage() {
 
 #[test]
 #[ignore = "real external Redis 8.8.1 build; run with --include-ignored"]
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn oracle_build_real_redis_8_8_1_produces_valid_primary_evidence_only() {
     let test_dir = TestDir::new("real-redis");
     let source = test_dir.path().join("source");

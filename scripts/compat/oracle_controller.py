@@ -23,11 +23,10 @@ import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable, Mapping, Sequence
+from typing import Callable, Iterable, Mapping, Sequence
 
 BUILD_SCHEMA = "kiwi-redis-oracle-build/v3"
 RECIPE_ID = "redis-8.8.1-linux-release-v3"
@@ -57,6 +56,7 @@ TERM_GRACE_MS = 5_000
 VERSION_OUTPUT_LIMIT = 16 * 1024
 BUILD_OUTPUT_LIMIT = 16 * 1024 * 1024
 CONTROLLED_PATH_FD = 198
+MAX_JSON_BYTES = 1024 * 1024
 
 
 class OracleError(RuntimeError):
@@ -90,6 +90,18 @@ def _same_identity(left: os.stat_result, right: os.stat_result) -> bool:
         right.st_mode,
         right.st_size,
         right.st_nlink,
+    )
+
+
+def _same_directory_object(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        left.st_dev,
+        left.st_ino,
+        stat.S_IFMT(left.st_mode),
+    ) == (
+        right.st_dev,
+        right.st_ino,
+        stat.S_IFMT(right.st_mode),
     )
 
 
@@ -149,6 +161,32 @@ class HeldDirectory:
             if not _same_identity(before, held.stat):
                 raise OracleError(f"source root changed while it was opened: {resolved}")
             return held
+        except BaseException:
+            os.close(fd)
+            raise
+
+    @classmethod
+    def open_absolute_nofollow(cls, path: pathlib.Path) -> "HeldDirectory":
+        if not path.is_absolute():
+            raise OracleError(f"directory path must be absolute: {path}")
+        parts = path.parts
+        if not parts or parts[0] != os.sep or any(
+            part in {"", ".", ".."} for part in parts[1:]
+        ):
+            raise OracleError(f"directory path must be canonical: {path}")
+        fd = os.open(
+            os.sep, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
+        try:
+            for part in parts[1:]:
+                next_fd = os.open(
+                    part,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=fd,
+                )
+                os.close(fd)
+                fd = next_fd
+            return cls(path, fd)
         except BaseException:
             os.close(fd)
             raise
@@ -271,6 +309,68 @@ class HeldDirectory:
 
     def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
         self.close()
+
+
+class CandidateTarget:
+    """A candidate basename bound to one held, no-follow parent directory."""
+
+    def __init__(
+        self,
+        path: pathlib.Path,
+        parent_path: pathlib.Path,
+        basename: str,
+        parent: HeldDirectory,
+    ):
+        self.path = path
+        self.parent_path = parent_path
+        self.basename = basename
+        self.parent = parent
+
+    @classmethod
+    def open(cls, argument: str | pathlib.Path) -> "CandidateTarget":
+        raw = os.fspath(argument)
+        if not os.path.isabs(raw):
+            raise OracleError("candidate metadata path must be absolute")
+        basename = os.path.basename(raw)
+        if (
+            not basename
+            or basename in {".", ".."}
+            or "/" in basename
+            or "\\" in basename
+        ):
+            raise OracleError(f"invalid candidate metadata basename: {basename!r}")
+        parent_raw = os.path.dirname(raw)
+        if os.path.normpath(raw) != raw:
+            raise OracleError("candidate metadata path must be canonical")
+        parent_path = pathlib.Path(parent_raw)
+        parent = HeldDirectory.open_absolute_nofollow(parent_path)
+        target = cls(pathlib.Path(raw), parent_path, basename, parent)
+        try:
+            target.reject_existing()
+            return target
+        except BaseException:
+            parent.close()
+            raise
+
+    def reject_existing(self) -> None:
+        try:
+            os.stat(self.basename, dir_fd=self.parent.fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return
+        raise OracleError(f"candidate metadata already exists: {self.path}")
+
+    def verify_visible_parent(self) -> None:
+        visible = HeldDirectory.open_absolute_nofollow(self.parent_path)
+        try:
+            if not _same_directory_object(self.parent.stat, visible.stat):
+                raise OracleError(
+                    f"candidate metadata parent changed during build: {self.parent_path}"
+                )
+        finally:
+            visible.close()
+
+    def close(self) -> None:
+        self.parent.close()
 
 
 @dataclass
@@ -752,12 +852,22 @@ class FrozenToolDirectory:
             raise OracleError("controlled tool directory must remain frozen at mode 0500")
         self._verify_entries()
 
-    def remove(self) -> None:
+    def close(self) -> None:
         if self.fd >= 0:
             os.close(self.fd)
             self.fd = -1
+
+    def remove_path(self) -> None:
         os.chmod(self.path, 0o700)
         shutil.rmtree(self.path)
+
+    def remove(self) -> None:
+        _run_cleanup_actions(
+            [
+                ("controlled alias remove", self.remove_path),
+                ("controlled alias close", self.close),
+            ]
+        )
 
 
 @dataclass(frozen=True)
@@ -934,49 +1044,139 @@ def canonical_json_bytes(document: Mapping[str, object]) -> bytes:
     ).encode("utf-8")
 
 
-def publish_candidate(path: pathlib.Path, document: Mapping[str, object]) -> None:
-    path = path.absolute()
-    if path.name.endswith("provenance.json") or "provenance" in path.name.lower():
-        raise OracleError("primary controller must never publish final provenance")
-    parent = path.parent.resolve(strict=True)
-    if path.exists() or path.is_symlink():
-        raise OracleError(f"candidate metadata already exists: {path}")
-    payload = canonical_json_bytes(document)
-    temporary = parent / f".{path.name}.candidate-{os.getpid()}-{time.monotonic_ns()}"
-    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
-    linked = False
-    completed = False
+def publish_candidate(
+    path: pathlib.Path | CandidateTarget, document: Mapping[str, object]
+) -> None:
+    owned_target = not isinstance(path, CandidateTarget)
+    target = CandidateTarget.open(path) if owned_target else path
     try:
-        view = memoryview(payload)
-        while view:
-            written = os.write(fd, view)
-            view = view[written:]
-        os.fsync(fd)
-        os.close(fd)
-        fd = -1
+        if (
+            target.basename.endswith("provenance.json")
+            or "provenance" in target.basename.lower()
+        ):
+            raise OracleError("primary controller must never publish final provenance")
+        payload = canonical_json_bytes(document)
+        if len(payload) > MAX_JSON_BYTES:
+            raise OracleError(
+                f"candidate metadata exceeds {MAX_JSON_BYTES} byte JSON limit"
+            )
+        target.reject_existing()
+        temporary = (
+            f".{target.basename}.candidate-{os.getpid()}-{time.monotonic_ns()}"
+        )
+        fd = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+            0o600,
+            dir_fd=target.parent.fd,
+        )
+        linked = False
+        completed = False
         try:
-            os.link(temporary, path, follow_symlinks=False)
-        except FileExistsError as error:
-            raise OracleError(f"candidate metadata already exists: {path}") from error
-        linked = True
-        directory_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-        completed = True
-    finally:
-        if fd >= 0:
+            view = memoryview(payload)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
+            os.fsync(fd)
             os.close(fd)
-        try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
-        if linked and not completed:
+            fd = -1
+            target.verify_visible_parent()
             try:
-                path.unlink()
+                os.link(
+                    temporary,
+                    target.basename,
+                    src_dir_fd=target.parent.fd,
+                    dst_dir_fd=target.parent.fd,
+                    follow_symlinks=False,
+                )
+            except FileExistsError as error:
+                raise OracleError(
+                    f"candidate metadata already exists: {target.path}"
+                ) from error
+            linked = True
+            os.fsync(target.parent.fd)
+            target.verify_visible_parent()
+            completed = True
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            try:
+                os.unlink(temporary, dir_fd=target.parent.fd)
             except FileNotFoundError:
                 pass
+            if linked and not completed:
+                try:
+                    os.unlink(target.basename, dir_fd=target.parent.fd)
+                except FileNotFoundError:
+                    pass
+    finally:
+        if owned_target:
+            target.close()
+
+
+def _run_cleanup_actions(
+    actions: Sequence[tuple[str, Callable[[], None]]],
+    business_error: BaseException | None = None,
+) -> None:
+    cleanup_errors: list[tuple[str, BaseException]] = []
+    for label, action in actions:
+        try:
+            action()
+        except BaseException as error:
+            cleanup_errors.append((label, error))
+    if cleanup_errors:
+        details = "; ".join(
+            f"{label}: {type(error).__name__}: {error}"
+            for label, error in cleanup_errors
+        )
+        if business_error is not None:
+            raise OracleError(
+                f"{type(business_error).__name__}: {business_error}; "
+                f"cleanup errors: {details}"
+            ) from business_error
+        raise OracleError(f"primary cleanup errors: {details}")
+    if business_error is not None:
+        raise business_error
+
+
+def _remove_directory_contents(directory_fd: int) -> None:
+    for name in os.listdir(directory_fd):
+        metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if stat.S_ISDIR(metadata.st_mode):
+            child_fd = os.open(
+                name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=directory_fd,
+            )
+            try:
+                os.fchmod(child_fd, 0o700)
+                _remove_directory_contents(child_fd)
+            finally:
+                os.close(child_fd)
+            os.rmdir(name, dir_fd=directory_fd)
+        else:
+            os.unlink(name, dir_fd=directory_fd)
+
+
+def _remove_runtime_directory(
+    parent_fd: int, runtime_name: str, runtime_root: HeldDirectory
+) -> None:
+    os.fchmod(runtime_root.fd, 0o700)
+    _remove_directory_contents(runtime_root.fd)
+    os.rmdir(runtime_name, dir_fd=parent_fd)
+
+
+def _remove_runtime_name(parent_fd: int, runtime_name: str) -> None:
+    fd = os.open(
+        runtime_name,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=parent_fd,
+    )
+    runtime_root = HeldDirectory(pathlib.Path(runtime_name), fd)
+    try:
+        _remove_runtime_directory(parent_fd, runtime_name, runtime_root)
+    finally:
+        runtime_root.close()
 
 
 REQUIRED_TOOL_PATHS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
@@ -1424,8 +1624,12 @@ def _register_tools(
     python: HeldExecutable,
     discovery_env: Mapping[str, str],
     discovery_cwd: pathlib.Path,
+    registry: list[HeldExecutable] | None = None,
 ) -> tuple[list[HeldExecutable], dict[str, HeldExecutable], dict[str, tuple[str, ...]]]:
-    tools = [controller, python]
+    tools = registry if registry is not None else []
+    if tools:
+        raise OracleError("tool registry must be empty before discovery")
+    tools.extend([controller, python])
     aliases: dict[str, HeldExecutable] = {"python3": python}
     versions: dict[str, tuple[str, ...]] = {
         "controller": (),
@@ -1584,30 +1788,48 @@ def build_primary(
     if sys.platform != "linux" or os.uname().machine not in {"x86_64", "amd64"}:
         raise OracleError("Redis Oracle build supports Linux x86_64 only")
     source_input = pathlib.Path(source_argument)
-    metadata = pathlib.Path(metadata_argument)
-    if not source_input.is_absolute() or not metadata.is_absolute():
+    if not source_input.is_absolute() or not pathlib.Path(metadata_argument).is_absolute():
         raise OracleError("--source and --metadata must be absolute paths")
-    source = source_input.resolve(strict=True)
-    if not source.is_dir() or source.is_symlink():
-        raise OracleError("--source must resolve to a real directory")
-    metadata_parent = metadata.parent.resolve(strict=True)
-    if metadata.exists() or metadata.is_symlink():
-        raise OracleError(f"candidate metadata already exists: {metadata}")
-    if metadata_parent == source or source in metadata_parent.parents:
-        raise OracleError("candidate metadata must be outside the source checkout")
-
-    source_root = HeldDirectory.open(source)
-    controller = HeldExecutable.from_fd(
-        "controller", bootstrap_controller_path, bootstrap_controller_fd
-    )
-    python = HeldExecutable.from_fd("python", bootstrap_python_path, bootstrap_python_fd)
+    candidate = CandidateTarget.open(metadata_argument)
+    source_root: HeldDirectory | None = None
+    controller: HeldExecutable | None = None
+    python: HeldExecutable | None = None
     tools: list[HeldExecutable] = []
     aliases_directory: FrozenToolDirectory | None = None
     git_directory: HeldDirectory | None = None
-    runtime = pathlib.Path(
-        tempfile.mkdtemp(prefix=".kiwi-oracle-primary-", dir=metadata_parent)
-    )
+    runtime_name: str | None = None
+    runtime_root: HeldDirectory | None = None
+    document: Mapping[str, object] | None = None
+    business_error: BaseException | None = None
     try:
+        source = source_input.resolve(strict=True)
+        if not source.is_dir() or source.is_symlink():
+            raise OracleError("--source must resolve to a real directory")
+        if candidate.parent_path == source or source in candidate.parent_path.parents:
+            raise OracleError("candidate metadata must be outside the source checkout")
+
+        source_root = HeldDirectory.open(source)
+        controller = HeldExecutable.from_fd(
+            "controller", bootstrap_controller_path, bootstrap_controller_fd
+        )
+        python = HeldExecutable.from_fd(
+            "python", bootstrap_python_path, bootstrap_python_fd
+        )
+        for attempt in range(100):
+            runtime_name = (
+                f".kiwi-oracle-primary-{os.getpid()}-{time.monotonic_ns()}-{attempt}"
+            )
+            try:
+                os.mkdir(runtime_name, mode=0o700, dir_fd=candidate.parent.fd)
+                break
+            except FileExistsError:
+                continue
+        else:
+            raise OracleError("unable to reserve primary runtime directory")
+        runtime_root = candidate.parent.open_directory(runtime_name)
+        runtime = pathlib.Path(
+            f"/proc/self/fd/{candidate.parent.fd}/{runtime_name}"
+        )
         home = runtime / "home"
         temporary = runtime / "tmp"
         tool_path = runtime / "tools"
@@ -1620,7 +1842,7 @@ def build_primary(
 
         discovery_env = _sanitized_environment("/usr/bin:/bin", home, temporary)
         tools, aliases, versions = _register_tools(
-            controller, python, discovery_env, version_working
+            controller, python, discovery_env, version_working, tools
         )
         aliases_directory = FrozenToolDirectory.create(tool_path, aliases)
         env = _sanitized_environment(aliases_directory.child_path, home, temporary)
@@ -1689,6 +1911,7 @@ def build_primary(
             raise OracleError("src/redis-server changed after artifact manifest capture")
         _assert_no_checkout_path_in_binary(source_root, "src/redis-server")
         source_root.verify_path()
+        candidate.verify_visible_parent()
         document = {
             "schema_version": BUILD_SCHEMA,
             "source": source_evidence,
@@ -1704,24 +1927,54 @@ def build_primary(
             "started_at_utc": started_at,
             "finished_at_utc": _utc_now(),
         }
-    finally:
-        if aliases_directory is not None and aliases_directory.path.exists():
-            aliases_directory.remove()
-        if git_directory is not None:
-            git_directory.close()
-        for tool in tools:
-            tool.close()
-        if controller not in tools:
-            controller.close()
-        if python not in tools:
-            python.close()
-        source_root.close()
-        shutil.rmtree(runtime)
-        if runtime.exists():
-            raise OracleError(f"primary runtime cleanup failed: {runtime}")
+    except BaseException as error:
+        business_error = error
 
-    publish_candidate(metadata, document)
-    print(str(metadata))
+    cleanup_actions: list[tuple[str, Callable[[], None]]] = []
+    if aliases_directory is not None:
+        cleanup_actions.extend(
+            [
+                ("controlled alias remove", aliases_directory.remove_path),
+                ("controlled alias close", aliases_directory.close),
+            ]
+        )
+    if git_directory is not None:
+        cleanup_actions.append(("Git directory close", git_directory.close))
+    for index, tool in enumerate(tools):
+        cleanup_actions.append((f"tool {index} close", tool.close))
+    if controller is not None and all(tool is not controller for tool in tools):
+        cleanup_actions.append(("controller close", controller.close))
+    if python is not None and all(tool is not python for tool in tools):
+        cleanup_actions.append(("Python close", python.close))
+    if runtime_root is not None and runtime_name is not None:
+        cleanup_actions.append(
+            (
+                "runtime remove",
+                lambda: _remove_runtime_directory(
+                    candidate.parent.fd, runtime_name, runtime_root
+                ),
+            )
+        )
+        cleanup_actions.append(("runtime close", runtime_root.close))
+    elif runtime_name is not None:
+        cleanup_actions.append(
+            (
+                "runtime remove",
+                lambda: _remove_runtime_name(candidate.parent.fd, runtime_name),
+            )
+        )
+    if source_root is not None:
+        cleanup_actions.append(("source close", source_root.close))
+
+    try:
+        _run_cleanup_actions(cleanup_actions, business_error)
+        if document is None:
+            raise OracleError("primary build produced no candidate document")
+        candidate.verify_visible_parent()
+        publish_candidate(candidate, document)
+        print(str(candidate.path))
+    finally:
+        candidate.close()
 
 
 def _parser() -> argparse.ArgumentParser:

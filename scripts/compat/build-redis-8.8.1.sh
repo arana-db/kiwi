@@ -27,7 +27,6 @@ controller_path=$script_directory/oracle_controller.py
 
 python_path=
 for candidate in \
-    /home/alex/miniconda3/bin/python3 \
     /usr/bin/python3 \
     /bin/python3
 do
