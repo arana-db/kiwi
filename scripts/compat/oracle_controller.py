@@ -1273,6 +1273,7 @@ def _git_bytes(
 ) -> bytes:
     source_path = f"/proc/self/fd/{source.fd}"
     git_dir_path = f"/proc/self/fd/{git_dir.fd}"
+    runtime_fd = _runtime_fd_from_path(pathlib.Path(env["HOME"]))
     git_env = dict(env)
     git_env.update(
         {
@@ -1313,7 +1314,7 @@ def _git_bytes(
         term_grace_ms=1_000,
         stdout_limit_bytes=1024 * 1024,
         stderr_limit_bytes=1024 * 1024,
-        extra_fds=(source.fd, git_dir.fd),
+        extra_fds=(runtime_fd, source.fd, git_dir.fd),
     )
     if result.timed_out or result.output_truncated or result.exit_code != 0:
         raise OracleError(
@@ -1619,6 +1620,20 @@ def _sanitized_environment(
     }
 
 
+def _runtime_fd_from_path(path: pathlib.Path) -> int:
+    parts = path.parts
+    if len(parts) < 5 or parts[:4] != (os.sep, "proc", "self", "fd"):
+        raise OracleError(f"runtime path is not held-FD based: {path}")
+    try:
+        runtime_fd = int(parts[4])
+    except ValueError as error:
+        raise OracleError(f"runtime path has an invalid held FD: {path}") from error
+    metadata = os.fstat(runtime_fd)
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise OracleError(f"runtime FD is not a directory: {runtime_fd}")
+    return runtime_fd
+
+
 def _register_tools(
     controller: HeldExecutable,
     python: HeldExecutable,
@@ -1626,6 +1641,7 @@ def _register_tools(
     discovery_cwd: pathlib.Path,
     registry: list[HeldExecutable] | None = None,
 ) -> tuple[list[HeldExecutable], dict[str, HeldExecutable], dict[str, tuple[str, ...]]]:
+    runtime_fd = _runtime_fd_from_path(discovery_cwd)
     tools = registry if registry is not None else []
     if tools:
         raise OracleError("tool registry must be empty before discovery")
@@ -1669,6 +1685,7 @@ def _register_tools(
             term_grace_ms=1_000,
             stdout_limit_bytes=VERSION_OUTPUT_LIMIT,
             stderr_limit_bytes=VERSION_OUTPUT_LIMIT,
+            extra_fds=(runtime_fd,),
             cwd=discovery_cwd,
         )
         path_text = _command_text(result, f"cc {program} discovery").splitlines()[0]
@@ -1715,6 +1732,7 @@ def _tool_evidence(
     version_cwd: pathlib.Path,
     aliases_directory: FrozenToolDirectory,
 ) -> list[dict[str, object]]:
+    runtime_fd = _runtime_fd_from_path(version_cwd)
     evidence = []
     for tool in tools:
         if tool.role.startswith("cc-resource-"):
@@ -1731,7 +1749,7 @@ def _tool_evidence(
                 term_grace_ms=1_000,
                 stdout_limit_bytes=VERSION_OUTPUT_LIMIT,
                 stderr_limit_bytes=VERSION_OUTPUT_LIMIT,
-                extra_fds=tuple(candidate.fd for candidate in tools),
+                extra_fds=(runtime_fd, *(candidate.fd for candidate in tools)),
                 readonly_bind_directories=(aliases_directory,),
                 cwd=version_cwd,
             )
@@ -1827,9 +1845,7 @@ def build_primary(
         else:
             raise OracleError("unable to reserve primary runtime directory")
         runtime_root = candidate.parent.open_directory(runtime_name)
-        runtime = pathlib.Path(
-            f"/proc/self/fd/{candidate.parent.fd}/{runtime_name}"
-        )
+        runtime = pathlib.Path(f"/proc/self/fd/{runtime_root.fd}")
         home = runtime / "home"
         temporary = runtime / "tmp"
         tool_path = runtime / "tools"
@@ -1876,7 +1892,7 @@ def build_primary(
                 term_grace_ms=TERM_GRACE_MS,
                 stdout_limit_bytes=BUILD_OUTPUT_LIMIT,
                 stderr_limit_bytes=BUILD_OUTPUT_LIMIT,
-                extra_fds=(source_fd, *(tool.fd for tool in tools)),
+                extra_fds=(runtime_root.fd, source_fd, *(tool.fd for tool in tools)),
                 readonly_bind_directories=(aliases_directory,),
             )
         finally:

@@ -336,6 +336,87 @@ with controller.HeldExecutable.open("probe", tool) as probe:
 
 #[test]
 #[cfg(target_os = "linux")]
+fn oracle_build_runtime_fd_keeps_command_environment_live_and_cleanup_detects_writes() {
+    let test_dir = TestDir::new("runtime-fd");
+    let body = format!(
+        r#"import os
+import pathlib
+
+root = pathlib.Path({root:?})
+parent = controller.HeldDirectory.open(root)
+os.mkdir("runtime", mode=0o700, dir_fd=parent.fd)
+runtime = parent.open_directory("runtime")
+runtime_path = pathlib.Path(f"/proc/self/fd/{{runtime.fd}}")
+home = runtime_path / "home"
+temporary = runtime_path / "tmp"
+versions = runtime_path / "versions"
+home.mkdir(mode=0o700)
+temporary.mkdir(mode=0o700)
+versions.mkdir(mode=0o700)
+normal = controller.HeldExecutable.open("runtime-normal", pathlib.Path("/usr/bin/python3"))
+dirty = controller.HeldExecutable.open("runtime-dirty", pathlib.Path("/usr/bin/python3"))
+aliases = controller.FrozenToolDirectory.create(
+    runtime_path / "tools", {{"runtime-normal": normal, "runtime-dirty": dirty}}
+)
+env = controller._sanitized_environment(aliases.child_path, home, temporary)
+normal_command = """import os, pathlib
+home = pathlib.Path(os.environ["HOME"])
+temporary = pathlib.Path(os.environ["TMPDIR"])
+assert home.is_dir() and os.access(home, os.W_OK)
+assert temporary.is_dir() and os.access(temporary, os.W_OK)
+marker = temporary / "normal-marker"
+marker.write_text("normal", encoding="utf-8")
+marker.unlink()
+print("runtime normal")
+"""
+dirty_command = """import os, pathlib
+home = pathlib.Path(os.environ["HOME"])
+temporary = pathlib.Path(os.environ["TMPDIR"])
+assert home.is_dir() and os.access(home, os.W_OK)
+assert temporary.is_dir() and os.access(temporary, os.W_OK)
+(temporary / "dirty-marker").write_text("dirty", encoding="utf-8")
+print("runtime dirty")
+"""
+try:
+    controller._tool_evidence(
+        [normal], {{normal.role: ("-I", "-B", "-c", normal_command)}}, env, versions, aliases
+    )
+    controller._empty_directory(temporary, "normal TMPDIR")
+    controller._tool_evidence(
+        [dirty], {{dirty.role: ("-I", "-B", "-c", dirty_command)}}, env, versions, aliases
+    )
+    try:
+        controller._empty_directory(temporary, "dirty TMPDIR")
+    except controller.OracleError:
+        pass
+    else:
+        raise AssertionError("runtime marker escaped the ending empty-directory check")
+    assert (temporary / "dirty-marker").exists()
+finally:
+    controller._run_cleanup_actions(
+        [
+            ("alias remove", aliases.remove_path),
+            ("alias close", aliases.close),
+            ("normal close", normal.close),
+            ("dirty close", dirty.close),
+            (
+                "runtime remove",
+                lambda: controller._remove_runtime_directory(parent.fd, "runtime", runtime),
+            ),
+            ("runtime close", runtime.close),
+        ]
+    )
+    parent.close()
+
+assert not (root / "runtime").exists()
+"#,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 fn oracle_build_readonly_controlled_path_blocks_same_uid_replacement() {
     let test_dir = TestDir::new("readonly-path");
     let body = format!(
