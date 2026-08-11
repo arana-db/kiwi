@@ -123,6 +123,38 @@ fn assert_probe_succeeds(output: Output) {
     );
 }
 
+#[cfg(unix)]
+fn clone_exact_redis(source: &Path) {
+    let clone = Command::new("/usr/bin/git")
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            "--branch",
+            REDIS_TAG,
+            "https://github.com/redis/redis.git",
+        ])
+        .arg(source)
+        .output()
+        .expect("git clone must start");
+    assert!(
+        clone.status.success(),
+        "git clone failed: {}",
+        String::from_utf8_lossy(&clone.stderr)
+    );
+    let checkout = Command::new("/usr/bin/git")
+        .arg("-C")
+        .arg(source)
+        .args(["checkout", "--detach", REDIS_COMMIT])
+        .output()
+        .expect("git checkout must start");
+    assert!(
+        checkout.status.success(),
+        "git checkout failed: {}",
+        String::from_utf8_lossy(&checkout.stderr)
+    );
+}
+
 #[test]
 #[cfg(unix)]
 fn oracle_build_wrapper_rejects_ambient_python_and_controller_selection() {
@@ -188,38 +220,98 @@ import stat
 
 root = pathlib.Path({root:?})
 tool = root / "tool"
-replacement = root / "replacement"
-original_marker = root / "original-marker"
+attacker = root / "attacker.sh"
 replacement_marker = root / "replacement-marker"
-tool.write_text("#!/bin/sh\nprintf original > \"$1\"\n", encoding="utf-8")
-replacement.write_text("#!/bin/sh\nprintf replacement > \"$1\"\nprintf bad > \"$2\"\n", encoding="utf-8")
+tool.write_text("#!/bin/sh\nprintf replacement > \"$1\"\n", encoding="utf-8")
+attacker.write_text(
+    "#!/bin/bash\nset -eu\n"
+    "/usr/bin/chmod 0700 \"$1\"\n"
+    "/usr/bin/rm -f \"$1/probe\"\n"
+    "/usr/bin/cp \"$2\" \"$1/probe\"\n"
+    "\"$1/probe\" \"$3\"\n"
+    "/usr/bin/rm -f \"$1/probe\"\n",
+    encoding="utf-8",
+)
 tool.chmod(0o755)
-replacement.chmod(0o755)
+attacker.chmod(0o755)
 
-with controller.HeldExecutable.open("probe", tool) as held:
-    aliases = controller.FrozenToolDirectory.create(root / "tools", {{"probe": held}})
-    os.replace(replacement, tool)
-    result = controller.run_bounded(
-        held,
-        ["probe", str(original_marker), str(replacement_marker)],
-        env={{"PATH": str(aliases.path), "HOME": str(root / "home"), "TMPDIR": str(root / "tmp")}},
-        timeout_ms=2000,
-        term_grace_ms=100,
-        stdout_limit_bytes=64,
-        stderr_limit_bytes=64,
-    )
-    assert result.exit_code == 0
-    assert original_marker.read_text(encoding="utf-8") == "original"
+with controller.HeldExecutable.open("probe", tool) as probe:
+    aliases = controller.FrozenToolDirectory.create(root / "tools", {{"probe": probe}})
+    with controller.HeldExecutable.open("shell", pathlib.Path("/usr/bin/bash")) as shell:
+        result = controller.run_bounded(
+            shell,
+            ["bash", str(attacker), str(aliases.path), str(tool), str(replacement_marker)],
+            env={{"PATH": str(aliases.path), "HOME": str(root), "TMPDIR": str(root)}},
+            timeout_ms=2000,
+            term_grace_ms=100,
+            stdout_limit_bytes=64,
+            stderr_limit_bytes=4096,
+            readonly_bind_paths=(aliases.path,),
+        )
     assert not replacement_marker.exists()
+    assert result.exit_code != 0
     assert stat.S_IMODE(os.lstat(aliases.path).st_mode) == 0o500
     aliases.verify_frozen()
-    try:
-        os.unlink(aliases.path / "probe")
-    except PermissionError:
-        pass
-    else:
-        raise AssertionError("frozen alias directory allowed recipe replacement")
     aliases.remove()
+"##,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(unix)]
+fn oracle_build_make_uses_the_held_shell_fd_after_path_replacement() {
+    let test_dir = TestDir::new("make-shell");
+    let body = format!(
+        r##"import os
+import pathlib
+
+root = pathlib.Path({root:?})
+shell_path = root / "controlled-shell"
+replacement = root / "replacement-shell"
+original_marker = root / "original-shell"
+replacement_marker = root / "replacement-shell-ran"
+recipe_marker = root / "recipe-ran"
+shell_path.write_text(
+    "#!/usr/bin/bash\nprintf original > \"$ORIGINAL_MARKER\"\nexec /usr/bin/bash \"$@\"\n",
+    encoding="utf-8",
+)
+replacement.write_text(
+    "#!/usr/bin/bash\nprintf replacement > \"$REPLACEMENT_MARKER\"\nexec /usr/bin/bash \"$@\"\n",
+    encoding="utf-8",
+)
+(root / "Makefile").write_text(
+    "all:\n\t@printf recipe > \"$$RECIPE_MARKER\"\n",
+    encoding="utf-8",
+)
+shell_path.chmod(0o755)
+replacement.chmod(0o755)
+assert controller.BUILD_ARGV[3] == "SHELL=/proc/self/fd/{{shell_fd}}"
+with controller.HeldExecutable.open("shell", shell_path) as shell:
+    os.replace(replacement, shell_path)
+    with controller.HeldExecutable.open("make", pathlib.Path("/usr/bin/make")) as make:
+        result = controller.run_bounded(
+            make,
+            ["make", "-C", str(root), f"SHELL=/proc/self/fd/{{shell.fd}}", "-j", "1", "all"],
+            env={{
+                "PATH": "/usr/bin:/bin",
+                "HOME": str(root),
+                "TMPDIR": str(root),
+                "ORIGINAL_MARKER": str(original_marker),
+                "REPLACEMENT_MARKER": str(replacement_marker),
+                "RECIPE_MARKER": str(recipe_marker),
+            }},
+            timeout_ms=3000,
+            term_grace_ms=100,
+            stdout_limit_bytes=4096,
+            stderr_limit_bytes=4096,
+            extra_fds=(shell.fd,),
+        )
+assert result.exit_code == 0
+assert original_marker.read_text(encoding="utf-8") == "original"
+assert recipe_marker.read_text(encoding="utf-8") == "recipe"
+assert not replacement_marker.exists()
 "##,
         root = test_dir.path().to_string_lossy(),
     );
@@ -361,40 +453,80 @@ else:
 }
 
 #[test]
+#[ignore = "external exact checkout; run with --include-ignored"]
+#[cfg(unix)]
+fn oracle_build_rejects_ignored_preexisting_artifacts_before_make() {
+    use std::fs::{File, FileTimes};
+    use std::time::Duration;
+
+    let test_dir = TestDir::new("prebuild-artifacts");
+    let source = test_dir.path().join("source");
+    let metadata = test_dir.path().join("primary-build.json");
+    clone_exact_redis(&source);
+    let artifacts = [
+        source.join("src/redis-cli"),
+        source.join("src/server.o"),
+        source.join("deps/hiredis/libhiredis.a"),
+    ];
+    for artifact in &artifacts {
+        fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+        fs::write(artifact, b"preexisting build artifact").unwrap();
+        File::options()
+            .write(true)
+            .open(artifact)
+            .unwrap()
+            .set_times(
+                FileTimes::new().set_modified(
+                    SystemTime::now()
+                        .checked_add(Duration::from_secs(24 * 60 * 60))
+                        .unwrap(),
+                ),
+            )
+            .unwrap();
+        let ignored = Command::new("/usr/bin/git")
+            .arg("-C")
+            .arg(&source)
+            .arg("check-ignore")
+            .arg(artifact.strip_prefix(&source).unwrap())
+            .status()
+            .unwrap();
+        assert!(ignored.success(), "fixture must be ignored by exact Redis");
+    }
+
+    let output = Command::new("/usr/bin/bash")
+        .arg(build_script_path())
+        .arg("--source")
+        .arg(&source)
+        .arg("--metadata")
+        .arg(&metadata)
+        .env_clear()
+        .env("PATH", "/untrusted")
+        .output()
+        .expect("Redis build wrapper must start");
+    assert!(
+        !output.status.success(),
+        "preexisting artifacts reached make"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("pre-build artifact manifest is not empty"),
+        "unexpected rejection: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!metadata.exists());
+    for artifact in artifacts {
+        assert_eq!(fs::read(artifact).unwrap(), b"preexisting build artifact");
+    }
+}
+
+#[test]
 #[ignore = "real external Redis 8.8.1 build; run with --include-ignored"]
 #[cfg(unix)]
 fn oracle_build_real_redis_8_8_1_produces_valid_primary_evidence_only() {
     let test_dir = TestDir::new("real-redis");
     let source = test_dir.path().join("source");
     let metadata = test_dir.path().join("primary-build.json");
-    let clone = Command::new("/usr/bin/git")
-        .args([
-            "clone",
-            "--depth",
-            "1",
-            "--branch",
-            REDIS_TAG,
-            "https://github.com/redis/redis.git",
-        ])
-        .arg(&source)
-        .output()
-        .expect("git clone must start");
-    assert!(
-        clone.status.success(),
-        "git clone failed: {}",
-        String::from_utf8_lossy(&clone.stderr)
-    );
-    let checkout = Command::new("/usr/bin/git")
-        .arg("-C")
-        .arg(&source)
-        .args(["checkout", "--detach", REDIS_COMMIT])
-        .output()
-        .expect("git checkout must start");
-    assert!(
-        checkout.status.success(),
-        "git checkout failed: {}",
-        String::from_utf8_lossy(&checkout.stderr)
-    );
+    clone_exact_redis(&source);
 
     let output = Command::new("/usr/bin/bash")
         .arg(build_script_path())
@@ -468,6 +600,10 @@ fn rejects_non_exact_schema_source_and_recipe_identity() {
         set_path(&mut fixture, path, value);
         assert_build_rejected(fixture);
     }
+
+    let mut ambient_shell = canonical_build("primary");
+    ambient_shell["recipe"]["argv"][3] = json!("SHELL=/bin/sh");
+    assert_build_rejected(ambient_shell);
 
     let mut fixture = canonical_provenance();
     fixture["schema_version"] = json!("kiwi-redis-oracle-provenance/v2");
@@ -946,7 +1082,7 @@ fn canonical_build(role: &str) -> Value {
             "opt": "-O3 -fno-omit-frame-pointer",
             "jobs": 1,
             "source_date_epoch": 1784834134_u64,
-            "argv": ["make", "-C", "/proc/self/fd/{source_fd}", "BUILD_TLS=no", "MALLOC=libc", "DEBUG=", "DEBUG_FLAGS=", "ENABLE_LTO=", "OPT=-O3 -fno-omit-frame-pointer", "-j", "1", "redis-server"]
+            "argv": ["make", "-C", "/proc/self/fd/{source_fd}", "SHELL=/proc/self/fd/{shell_fd}", "BUILD_TLS=no", "MALLOC=libc", "DEBUG=", "DEBUG_FLAGS=", "ENABLE_LTO=", "OPT=-O3 -fno-omit-frame-pointer", "-j", "1", "redis-server"]
         },
         "tools": required_tools(),
         "artifacts": [

@@ -39,6 +39,7 @@ BUILD_ARGV = [
     "make",
     "-C",
     "/proc/self/fd/{source_fd}",
+    "SHELL=/proc/self/fd/{shell_fd}",
     "BUILD_TLS=no",
     "MALLOC=libc",
     "DEBUG=",
@@ -104,18 +105,123 @@ def _sha256_fd(fd: int) -> str:
     return digest.hexdigest()
 
 
-def _regular_file_evidence(path: pathlib.Path) -> tuple[os.stat_result, str]:
-    before = os.lstat(path)
-    if not stat.S_ISREG(before.st_mode):
-        raise OracleError(f"artifact is not a regular file: {path}")
-    fd = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
-    try:
+class HeldDirectory:
+    """A source root retained and traversed only through no-follow dir FDs."""
+
+    def __init__(self, path: pathlib.Path, fd: int):
+        self.path = path
+        self.fd = fd
+        self.stat = os.fstat(fd)
+        if not stat.S_ISDIR(self.stat.st_mode):
+            raise OracleError(f"held source root is not a directory: {path}")
+
+    @classmethod
+    def open(cls, path: pathlib.Path) -> "HeldDirectory":
+        resolved = path.resolve(strict=True)
+        before = os.stat(resolved, follow_symlinks=False)
+        fd = os.open(
+            resolved, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
+        try:
+            held = cls(resolved, fd)
+            if not _same_identity(before, held.stat):
+                raise OracleError(f"source root changed while it was opened: {resolved}")
+            return held
+        except BaseException:
+            os.close(fd)
+            raise
+
+    @staticmethod
+    def _parts(relative: str) -> list[str]:
+        parts = relative.split("/")
+        if not relative or any(part in {"", ".", ".."} for part in parts):
+            raise OracleError(f"non-canonical source-relative path: {relative!r}")
+        return parts
+
+    def _parent_fd(self, relative: str) -> tuple[int, str]:
+        parts = self._parts(relative)
+        directory_fd = os.dup(self.fd)
+        try:
+            for part in parts[:-1]:
+                next_fd = os.open(
+                    part,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=directory_fd,
+                )
+                os.close(directory_fd)
+                directory_fd = next_fd
+            return directory_fd, parts[-1]
+        except BaseException:
+            os.close(directory_fd)
+            raise
+
+    def lstat(self, relative: str) -> os.stat_result:
+        directory_fd, name = self._parent_fd(relative)
+        try:
+            return os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        finally:
+            os.close(directory_fd)
+
+    def readlink(self, relative: str) -> str:
+        directory_fd, name = self._parent_fd(relative)
+        try:
+            return os.readlink(name, dir_fd=directory_fd)
+        finally:
+            os.close(directory_fd)
+
+    def regular_evidence(self, relative: str) -> tuple[os.stat_result, str]:
+        directory_fd, name = self._parent_fd(relative)
+        try:
+            before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            if not stat.S_ISREG(before.st_mode):
+                raise OracleError(f"artifact is not a regular file: {relative}")
+            fd = os.open(
+                name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=directory_fd,
+            )
+        finally:
+            os.close(directory_fd)
+        try:
+            held = os.fstat(fd)
+            if not _same_identity(before, held):
+                raise OracleError(f"artifact changed while it was opened: {relative}")
+            return held, _sha256_fd(fd)
+        finally:
+            os.close(fd)
+
+    def open_regular(self, relative: str) -> int:
+        directory_fd, name = self._parent_fd(relative)
+        try:
+            before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            fd = os.open(
+                name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=directory_fd,
+            )
+        finally:
+            os.close(directory_fd)
         held = os.fstat(fd)
-        if not _same_identity(before, held):
-            raise OracleError(f"artifact changed while it was opened: {path}")
-        return held, _sha256_fd(fd)
-    finally:
-        os.close(fd)
+        if not stat.S_ISREG(held.st_mode) or not _same_identity(before, held):
+            os.close(fd)
+            raise OracleError(f"regular file changed while it was opened: {relative}")
+        return fd
+
+    def verify_path(self) -> None:
+        current = os.stat(self.path, follow_symlinks=False)
+        if not _same_identity(self.stat, current):
+            raise OracleError(f"source root path changed during build: {self.path}")
+
+    def close(self) -> None:
+        if self.fd >= 0:
+            os.close(self.fd)
+            self.fd = -1
+
+    def __enter__(self) -> "HeldDirectory":
+        return self
+
+    def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
+        self.close()
 
 
 @dataclass
@@ -208,6 +314,86 @@ def _enable_subreaper() -> None:
         raise OracleError(f"failed to enable child subreaper: {os.strerror(error)}")
 
 
+def _write_proc_mapping(path: str, value: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CLOEXEC)
+    try:
+        os.write(fd, value.encode("ascii"))
+    finally:
+        os.close(fd)
+
+
+def _readonly_mount_namespace_setup(
+    bindings: Sequence[tuple[int, bytes]], host_uid: int, host_gid: int
+):
+    clone_newns = 0x00020000
+    clone_newuser = 0x10000000
+    ms_rdonly = 1
+    ms_nosuid = 2
+    ms_nodev = 4
+    ms_remount = 32
+    ms_bind = 4096
+    ms_rec = 16384
+    ms_private = 1 << 18
+    pr_set_securebits = 28
+    pr_set_no_new_privs = 38
+    secure_noroot = 1 | 2
+    secure_no_setuid_fixup = 4 | 8
+    linux_capability_version_3 = 0x20080522
+
+    class CapabilityHeader(ctypes.Structure):
+        _fields_ = [("version", ctypes.c_uint32), ("pid", ctypes.c_int)]
+
+    class CapabilityData(ctypes.Structure):
+        _fields_ = [
+            ("effective", ctypes.c_uint32),
+            ("permitted", ctypes.c_uint32),
+            ("inheritable", ctypes.c_uint32),
+        ]
+
+    libc = ctypes.CDLL(None, use_errno=True)
+
+    def checked(result: int, operation: str) -> None:
+        if result != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, f"{operation}: {os.strerror(error)}")
+
+    checked(libc.unshare(clone_newuser | clone_newns), "unshare user+mount namespace")
+    try:
+        _write_proc_mapping("/proc/self/setgroups", "deny")
+    except FileNotFoundError:
+        pass
+    _write_proc_mapping("/proc/self/uid_map", f"0 {host_uid} 1")
+    _write_proc_mapping("/proc/self/gid_map", f"0 {host_gid} 1")
+    checked(libc.mount(None, b"/", None, ms_rec | ms_private, None), "make mounts private")
+    for directory_fd, target in bindings:
+        checked(libc.mount(target, target, None, ms_bind, None), "bind tool directory")
+        checked(
+            libc.mount(
+                None,
+                target,
+                None,
+                ms_bind | ms_remount | ms_rdonly | ms_nosuid | ms_nodev,
+                None,
+            ),
+            "remount tool directory read-only",
+        )
+        os.close(directory_fd)
+    checked(
+        libc.prctl(
+            pr_set_securebits,
+            secure_noroot | secure_no_setuid_fixup,
+            0,
+            0,
+            0,
+        ),
+        "lock namespace securebits",
+    )
+    header = CapabilityHeader(linux_capability_version_3, 0)
+    data = (CapabilityData * 2)()
+    checked(libc.capset(ctypes.byref(header), ctypes.byref(data)), "drop capabilities")
+    checked(libc.prctl(pr_set_no_new_privs, 1, 0, 0, 0), "set no_new_privs")
+
+
 def _signal_group(pid: int, sig: signal.Signals) -> None:
     try:
         os.killpg(pid, sig)
@@ -245,6 +431,7 @@ def run_bounded(
     stdout_limit_bytes: int,
     stderr_limit_bytes: int,
     extra_fds: Iterable[int] = (),
+    readonly_bind_paths: Sequence[pathlib.Path] = (),
 ) -> RunResult:
     """Run one held executable in a new process group with bounded evidence."""
     if not argv or any(not isinstance(value, str) or not value for value in argv):
@@ -259,18 +446,53 @@ def run_bounded(
     _enable_subreaper()
     started_at = _utc_now()
     started = time.monotonic()
-    passed_fds = tuple(dict.fromkeys((executable.fd, *extra_fds)))
-    process = subprocess.Popen(
-        list(argv),
-        executable=f"/proc/self/fd/{executable.fd}",
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        env=dict(env),
-        close_fds=True,
-        pass_fds=passed_fds,
-        start_new_session=True,
+    readonly_bindings: list[tuple[int, bytes]] = []
+    for path in readonly_bind_paths:
+        resolved = path.resolve(strict=True)
+        directory_fd = os.open(
+            resolved, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+        )
+        metadata = os.fstat(directory_fd)
+        if not stat.S_ISDIR(metadata.st_mode):
+            os.close(directory_fd)
+            raise OracleError(f"read-only bind target is not a directory: {resolved}")
+        readonly_bindings.append((directory_fd, os.fsencode(resolved)))
+    passed_fds = tuple(
+        dict.fromkeys((executable.fd, *extra_fds, *(fd for fd, _ in readonly_bindings)))
     )
+    preexec_fn = None
+    if readonly_bindings:
+        host_uid = os.getuid()
+        host_gid = os.getgid()
+
+        def enter_namespace() -> None:
+            try:
+                _readonly_mount_namespace_setup(readonly_bindings, host_uid, host_gid)
+            except BaseException as error:
+                os.write(2, f"Oracle namespace setup failed: {error}\n".encode("utf-8"))
+                raise
+
+        preexec_fn = enter_namespace
+    try:
+        process = subprocess.Popen(
+            list(argv),
+            executable=f"/proc/self/fd/{executable.fd}",
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=dict(env),
+            close_fds=True,
+            pass_fds=passed_fds,
+            start_new_session=True,
+            preexec_fn=preexec_fn,
+        )
+    finally:
+        for directory_fd, _target in readonly_bindings:
+            try:
+                os.close(directory_fd)
+            except OSError as error:
+                if error.errno != errno.EBADF:
+                    raise
     assert process.stdout is not None and process.stderr is not None
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, ("stdout", stdout_limit_bytes))
@@ -377,7 +599,7 @@ class FrozenToolDirectory:
         for alias, tool in aliases.items():
             if not alias or "/" in alias or alias in {".", ".."}:
                 raise OracleError(f"invalid controlled tool alias: {alias!r}")
-            target = f"/proc/{os.getpid()}/fd/{tool.fd}"
+            target = f"/proc/self/fd/{tool.fd}"
             os.symlink(target, path / alias)
             expected[alias] = target
         directory = cls(path, expected)
@@ -415,30 +637,32 @@ class ArtifactLimits:
     max_total_bytes: int = 1024 * 1024 * 1024
 
 
-def _relative_path(root: pathlib.Path, path: pathlib.Path) -> str:
-    relative = path.relative_to(root).as_posix()
-    if not relative or relative.startswith("/") or "\\" in relative:
-        raise OracleError(f"invalid source-relative artifact path: {relative!r}")
-    if any(part in {"", ".", ".."} for part in relative.split("/")):
-        raise OracleError(f"non-canonical artifact path: {relative!r}")
-    return relative
-
-
-def _tree_entries(root: pathlib.Path) -> dict[str, tuple[object, ...]]:
+def _tree_entries(
+    root: HeldDirectory,
+) -> tuple[dict[str, tuple[object, ...]], set[str]]:
     entries: dict[str, tuple[object, ...]] = {}
-    pending = [root]
+    directories: set[str] = set()
+    pending = [(os.dup(root.fd), "")]
     while pending:
-        directory = pending.pop()
-        with os.scandir(directory) as children:
-            ordered = sorted(children, key=lambda entry: os.fsencode(entry.name), reverse=True)
-        for child in ordered:
-            path = pathlib.Path(child.path)
-            relative = _relative_path(root, path)
+        directory_fd, prefix = pending.pop()
+        try:
+            ordered = sorted(os.listdir(directory_fd), key=os.fsencode, reverse=True)
+        except BaseException:
+            os.close(directory_fd)
+            raise
+        for name in ordered:
+            relative = f"{prefix}/{name}" if prefix else name
             if relative == ".git" or relative.startswith(".git/"):
                 continue
-            metadata = child.stat(follow_symlinks=False)
+            metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
             if stat.S_ISDIR(metadata.st_mode):
-                pending.append(path)
+                child_fd = os.open(
+                    name,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=directory_fd,
+                )
+                directories.add(relative)
+                pending.append((child_fd, relative))
             elif stat.S_ISREG(metadata.st_mode):
                 entries[relative] = (
                     "regular",
@@ -448,17 +672,21 @@ def _tree_entries(root: pathlib.Path) -> dict[str, tuple[object, ...]]:
                     metadata.st_ino,
                 )
             elif stat.S_ISLNK(metadata.st_mode):
-                entries[relative] = ("symlink", metadata.st_mode, os.readlink(path))
+                entries[relative] = (
+                    "symlink",
+                    metadata.st_mode,
+                    os.readlink(name, dir_fd=directory_fd),
+                )
             else:
                 raise OracleError(f"unsupported file type in source tree: {relative}")
-    return entries
+        os.close(directory_fd)
+    return entries, directories
 
 
 def snapshot_tree(root: pathlib.Path) -> dict[str, tuple[object, ...]]:
-    root = root.resolve(strict=True)
-    if not root.is_dir():
-        raise OracleError(f"source root is not a directory: {root}")
-    return _tree_entries(root)
+    with HeldDirectory.open(root) as held:
+        entries, _directories = _tree_entries(held)
+        return entries
 
 
 def _resolve_manifest_symlink(path: str, target: str) -> str:
@@ -480,13 +708,27 @@ def _resolve_manifest_symlink(path: str, target: str) -> str:
 
 
 def scan_artifacts(
-    root: pathlib.Path,
+    root: pathlib.Path | HeldDirectory,
     baseline: Mapping[str, tuple[object, ...]],
     *,
     limits: ArtifactLimits = ArtifactLimits(),
 ) -> list[dict[str, object]]:
-    root = root.resolve(strict=True)
-    current = _tree_entries(root)
+    owned_root = not isinstance(root, HeldDirectory)
+    held = HeldDirectory.open(root) if owned_root else root
+    try:
+        current, _directories = _tree_entries(held)
+        return _scan_artifacts_from_entries(held, baseline, current, limits)
+    finally:
+        if owned_root:
+            held.close()
+
+
+def _scan_artifacts_from_entries(
+    root: HeldDirectory,
+    baseline: Mapping[str, tuple[object, ...]],
+    current: Mapping[str, tuple[object, ...]],
+    limits: ArtifactLimits,
+) -> list[dict[str, object]]:
     changed = [path for path, fingerprint in current.items() if baseline.get(path) != fingerprint]
     changed.sort(key=os.fsencode)
     if not changed:
@@ -498,10 +740,9 @@ def scan_artifacts(
     total_bytes = 0
     changed_set = set(changed)
     for relative in changed:
-        path = root / relative
-        metadata = os.lstat(path)
+        metadata = root.lstat(relative)
         if stat.S_ISREG(metadata.st_mode):
-            metadata, sha256 = _regular_file_evidence(path)
+            metadata, sha256 = root.regular_evidence(relative)
             if metadata.st_size > limits.max_file_bytes:
                 raise OracleError(f"artifact exceeds per-file byte bound: {relative}")
             total_bytes += metadata.st_size
@@ -517,7 +758,7 @@ def scan_artifacts(
                 }
             )
         elif stat.S_ISLNK(metadata.st_mode):
-            target = os.readlink(path)
+            target = root.readlink(relative)
             resolved = _resolve_manifest_symlink(relative, target)
             if resolved not in changed_set:
                 raise OracleError(
@@ -696,18 +937,23 @@ def _empty_directory(path: pathlib.Path, field: str) -> None:
 
 def _git_text(
     git: HeldExecutable,
-    source: pathlib.Path,
+    source: pathlib.Path | HeldDirectory,
     args: Sequence[str],
     env: Mapping[str, str],
 ) -> str:
+    source_path = (
+        f"/proc/self/fd/{source.fd}" if isinstance(source, HeldDirectory) else str(source)
+    )
+    source_fds = (source.fd,) if isinstance(source, HeldDirectory) else ()
     result = run_bounded(
         git,
-        ["git", "-C", str(source), *args],
+        ["git", "-C", source_path, *args],
         env=env,
         timeout_ms=COMMAND_TIMEOUT_MS,
         term_grace_ms=1_000,
         stdout_limit_bytes=1024 * 1024,
         stderr_limit_bytes=1024 * 1024,
+        extra_fds=source_fds,
     )
     if result.timed_out or result.output_truncated or result.exit_code != 0:
         raise OracleError(
@@ -718,7 +964,7 @@ def _git_text(
 
 
 def _validate_source(
-    source: pathlib.Path, git: HeldExecutable, env: Mapping[str, str]
+    source: HeldDirectory, git: HeldExecutable, env: Mapping[str, str]
 ) -> dict[str, object]:
     head = _git_text(git, source, ["rev-parse", "HEAD"], env)
     tag_commit = _git_text(git, source, ["rev-parse", f"{REDIS_TAG}^{{commit}}"], env)
@@ -735,19 +981,48 @@ def _validate_source(
         raise OracleError(f"source origin must equal {REDIS_REPOSITORY}, got {repository!r}")
     if status_output:
         raise OracleError("source checkout must be tracked/untracked clean before build")
-    git_dir = source / ".git"
-    if not git_dir.is_dir() or git_dir.is_symlink():
+    git_dir_metadata = source.lstat(".git")
+    if not stat.S_ISDIR(git_dir_metadata.st_mode):
         raise OracleError("source .git must be a real directory below source root")
+    git_dir = source.path / ".git"
     return {
         "repository": REDIS_REPOSITORY,
         "tag": REDIS_TAG,
         "commit": REDIS_COMMIT,
         "head": head,
         "tag_commit": tag_commit,
-        "root_path": str(source),
+        "root_path": str(source.path),
         "git_dir_path": str(git_dir),
         "tracked_untracked_clean": True,
     }
+
+
+def _validate_pristine_source_tree(
+    source: HeldDirectory,
+    git: HeldExecutable,
+    env: Mapping[str, str],
+) -> dict[str, tuple[object, ...]]:
+    tracked = set(_git_text(git, source, ["ls-files", "--cached"], env).splitlines())
+    if not tracked:
+        raise OracleError("exact source checkout has no tracked files")
+    allowed_directories: set[str] = set()
+    for path in tracked:
+        parts = path.split("/")
+        if not path or any(part in {"", ".", ".."} for part in parts):
+            raise OracleError(f"git returned a non-canonical tracked path: {path!r}")
+        for index in range(1, len(parts)):
+            allowed_directories.add("/".join(parts[:index]))
+
+    entries, directories = _tree_entries(source)
+    extra_entries = sorted(set(entries).difference(tracked), key=os.fsencode)
+    extra_directories = sorted(directories.difference(allowed_directories), key=os.fsencode)
+    if extra_entries or extra_directories:
+        extras = [*extra_entries, *(f"{path}/" for path in extra_directories)]
+        raise OracleError(f"pre-build artifact manifest is not empty: {extras}")
+    missing = sorted(tracked.difference(entries), key=os.fsencode)
+    if missing:
+        raise OracleError(f"tracked source entries are missing: {missing}")
+    return entries
 
 
 def _sanitized_environment(
@@ -862,19 +1137,24 @@ def _recipe() -> dict[str, object]:
     }
 
 
-def _assert_no_checkout_path_in_binary(binary: pathlib.Path, source: pathlib.Path) -> None:
-    marker = str(source).encode("utf-8")
+def _assert_no_checkout_path_in_binary(
+    source_root: HeldDirectory, binary: str
+) -> None:
+    marker = str(source_root.path).encode("utf-8")
     overlap = max(0, len(marker) - 1)
     tail = b""
-    with binary.open("rb", buffering=0) as stream:
+    fd = source_root.open_regular(binary)
+    try:
         while True:
-            chunk = stream.read(1024 * 1024)
+            chunk = os.read(fd, 1024 * 1024)
             if not chunk:
                 break
             data = tail + chunk
             if marker in data:
                 raise OracleError("release redis-server contains checkout path in binary/DWARF")
             tail = data[-overlap:] if overlap else b""
+    finally:
+        os.close(fd)
 
 
 def build_primary(
@@ -902,6 +1182,7 @@ def build_primary(
     if metadata_parent == source or source in metadata_parent.parents:
         raise OracleError("candidate metadata must be outside the source checkout")
 
+    source_root = HeldDirectory.open(source)
     controller = HeldExecutable.from_fd(
         "controller", bootstrap_controller_path, bootstrap_controller_fd
     )
@@ -925,20 +1206,20 @@ def build_primary(
         env = _sanitized_environment(aliases_directory.path, home, temporary)
         tool_evidence = _tool_evidence(tools, versions, env)
         git = next(tool for tool in tools if tool.role == "git")
-        source_evidence = _validate_source(source, git, env)
-        baseline = snapshot_tree(source)
-        if scan_candidates := [path for path in baseline if path == "src/redis-server"]:
-            raise OracleError(f"pre-build artifact manifest is not empty: {scan_candidates}")
+        source_evidence = _validate_source(source_root, git, env)
+        baseline = _validate_pristine_source_tree(source_root, git, env)
 
-        source_fd = os.open(source, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        source_fd = os.dup(source_root.fd)
         started_at = _utc_now()
         try:
             make = next(tool for tool in tools if tool.role == "make")
+            shell = next(tool for tool in tools if tool.role == "shell")
             actual_argv = [
                 "make",
                 "-C",
                 f"/proc/self/fd/{source_fd}",
-                *BUILD_ARGV[3:],
+                f"SHELL=/proc/self/fd/{shell.fd}",
+                *BUILD_ARGV[4:],
             ]
             result = run_bounded(
                 make,
@@ -948,7 +1229,8 @@ def build_primary(
                 term_grace_ms=TERM_GRACE_MS,
                 stdout_limit_bytes=BUILD_OUTPUT_LIMIT,
                 stderr_limit_bytes=BUILD_OUTPUT_LIMIT,
-                extra_fds=(source_fd,),
+                extra_fds=(source_fd, *(tool.fd for tool in tools)),
+                readonly_bind_paths=(aliases_directory.path,),
             )
         finally:
             os.close(source_fd)
@@ -963,9 +1245,9 @@ def build_primary(
         aliases_directory.verify_frozen()
         _empty_directory(home, "HOME")
         _empty_directory(temporary, "TMPDIR")
-        artifacts = scan_artifacts(source, baseline)
+        artifacts = scan_artifacts(source_root, baseline)
         redis_path = source / "src/redis-server"
-        redis_metadata, redis_sha256 = _regular_file_evidence(redis_path)
+        redis_metadata, redis_sha256 = source_root.regular_evidence("src/redis-server")
         if not stat.S_ISREG(redis_metadata.st_mode) or not redis_metadata.st_mode & 0o111:
             raise OracleError("build did not produce executable src/redis-server")
         redis_entry = next(
@@ -980,7 +1262,8 @@ def build_primary(
             raise OracleError("artifact manifest does not contain regular src/redis-server")
         if redis_entry["sha256"] != redis_sha256:
             raise OracleError("src/redis-server changed after artifact manifest capture")
-        _assert_no_checkout_path_in_binary(redis_path, source)
+        _assert_no_checkout_path_in_binary(source_root, "src/redis-server")
+        source_root.verify_path()
         document = {
             "schema_version": BUILD_SCHEMA,
             "source": source_evidence,
@@ -1005,6 +1288,7 @@ def build_primary(
             controller.close()
         if python not in tools:
             python.close()
+        source_root.close()
         shutil.rmtree(runtime)
         if runtime.exists():
             raise OracleError(f"primary runtime cleanup failed: {runtime}")

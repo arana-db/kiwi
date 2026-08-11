@@ -56,10 +56,11 @@ const REQUIRED_TOOL_ROLES: [&str; 9] = [
     "ranlib",
 ];
 
-const BUILD_ARGV: [&str; 12] = [
+const BUILD_ARGV: [&str; 13] = [
     "make",
     "-C",
     "/proc/self/fd/{source_fd}",
+    "SHELL=/proc/self/fd/{shell_fd}",
     "BUILD_TLS=no",
     "MALLOC=libc",
     "DEBUG=",
