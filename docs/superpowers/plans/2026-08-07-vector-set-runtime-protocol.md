@@ -270,7 +270,7 @@ RESP parse to Bytes
 - Modify: `tests/compat/redis-8.8.1/manifest.yaml`
 - Modify: `tools/compat/tests/manifest.rs`
 
-- [ ] **步骤 1：先写协议隔离和 raw frame 失败测试**
+- [x] **步骤 1：先写协议隔离和 raw frame 失败测试**
 
   - `test_protocol_clients_are_function_scoped_and_explicit`
   - `test_resp2_client_is_not_polluted_by_resp3_negotiation`
@@ -281,7 +281,7 @@ RESP parse to Bytes
 
   删除 `test_vector_error_matrix.py` 对 session-scoped `redis_binary_client` 发送 `HELLO 3` 的路径。
 
-- [ ] **步骤 2：实现 frame-aware raw client**
+- [x] **步骤 2：实现 frame-aware raw client**
 
   `raw_resp_client.py` 实现 `encode_command`、`RawRespConnection.connect`、`execute_raw`、`close`；reader 递归消费 Bulk/Array/Map 的完整 frame，不用单次 `recv()` 作为 frame 边界。
 
@@ -290,11 +290,11 @@ RESP parse to Bytes
   - binary FP32 和 NUL element 按 bulk length 编码。
   - required raw 断言比较 Kiwi/Redis 完整 frame，不只比较 redis-py typed value。
 
-- [ ] **步骤 3：登记 operational-limit difference**
+- [x] **步骤 3：登记 operational-limit difference**
 
   对 `VADD`、`VSIM`、`VEMB`、`VREM`、`VISMEMBER` 登记 owner `cmd-vector`、Issue #421、affected `standalone_cache_off; resp2/resp3`、exact Redis source ref 和 remove_when。Manifest validator 必须拒绝缺失 owner/Issue/affected/ref/remove_when 的 difference。
 
-- [ ] **步骤 4：回归**
+- [x] **步骤 4：回归**
 
   ```powershell
   cargo test -p kiwi-compat --test manifest
@@ -304,16 +304,18 @@ RESP parse to Bytes
 
   真实 raw differential 由 Oracle/CI 工作流的 verifier-supervised runner 执行；本 Task 交付的测试不得在 import/collection 时连接 endpoint。
 
+  实际证据：tests-first 阶段先复现 differential 模块 import 时连接 `127.0.0.1:7379` 并导致零收集，再由新增 manifest contract 精确失败于 `VADD must register the Issue #421 limit difference`；加入测试但尚未创建 raw client 时，collection 进一步以 `ModuleNotFoundError: raw_resp_client` 失败。最小实现使用 function-scoped 独立 socket、RESP3 专属 `HELLO 3` 和递归完整 frame reader，移除了 session client 的协议污染以及 collection-time endpoint 探测。确定性 scripted socket 将 HELLO、嵌套 frame、binary FP32 和 NUL element 拆成单 byte `recv()` chunk，本地测试 2/2 通过，单次 `recv()` mutant 稳定失败；临时 Kiwi 进程上的 error matrix 7/7 通过，缺失 endpoint 以及 Kiwi/Oracle 同 endpoint 均非零失败，differential 在端点均不可达时仍离线固定收集 27 个节点。raw fixture 在 setup/teardown 清理完整固定 key 集，逐端要求 `DEL` 返回非负 RESP integer 且第二次删除精确为零；repeated-NOQUANT 前再次显式 reset，防止复跑从新增漂移为更新，错误 cleanup frame 的回归 1/1 通过。manifest 43/43 通过，错误 owner 和把 `VREM` 恢复为 required 的 mutants 均失败。正式 Kiwi 与 exact Redis 8.8.1 双端 raw differential 仍只由后续 verifier-supervised Oracle/CI runner 执行，本 Task 没有提前登记 `wire-differential` evidence。
+
 ## 工作流最终门禁
 
-- [ ] `git diff --check`
-- [ ] `cargo fmt --check`
-- [ ] `cargo clippy -p cmd -p net -p server --all-targets --all-features -- -D warnings`
-- [ ] `cargo test -p cmd`
-- [ ] `cargo test -p net --test storage_command_e2e_tests`
-- [ ] `cargo test -p server`
-- [ ] `cargo test -p kiwi-compat --test manifest`
-- [ ] `python -m pytest tests/python/test_vector_error_matrix.py -vv`
-- [ ] `python -m pytest tests/python/test_vector_set_differential.py --collect-only -q`
-- [ ] 规格 reviewer 确认 admission 位于第一次 payload 深拷贝前，feature/cluster gate 显式转发，under-limit 错误优先级不变。
-- [ ] 代码质量 reviewer 确认无 net-side 默认 limits、无大 payload fixture、无一次 `recv()` frame parser、无全局 Client/StorageCommand ABI 重写。
+- [x] `git diff --check`
+- [x] `cargo fmt --check`
+- [x] `cargo clippy -p cmd -p net -p server --all-targets --all-features -- -D warnings`
+- [x] `cargo test -p cmd`
+- [x] `cargo test -p net --test storage_command_e2e_tests`
+- [x] `cargo test -p server`
+- [x] `cargo test -p kiwi-compat --test manifest`
+- [x] `python -m pytest tests/python/test_vector_error_matrix.py -vv`
+- [x] `python -m pytest tests/python/test_vector_set_differential.py --collect-only -q`
+- [x] 规格 reviewer 确认 admission 位于第一次 payload 深拷贝前，feature/cluster gate 显式转发，under-limit 错误优先级不变。
+- [x] 代码质量 reviewer 确认无 net-side 默认 limits、无大 payload fixture、无一次 `recv()` frame parser、无全局 Client/StorageCommand ABI 重写。

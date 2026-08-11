@@ -36,10 +36,15 @@ than producing a skipped test result. All datasets use a fixed seed.
 
 import os
 import random
+import socket
 import struct
 
 import pytest
 import redis
+
+from raw_resp_client import RawRespConnection
+
+pytestmark = pytest.mark.raw_vector_protocol
 
 KIWI_HOST = os.getenv("KIWI_HOST", "127.0.0.1")
 KIWI_PORT = int(os.getenv("KIWI_PORT", "7379"))
@@ -48,29 +53,32 @@ REDIS8_PORT = int(os.getenv("VECTOR_REDIS_PORT", "6380"))
 SCORE_TOLERANCE = 1e-6
 
 
-def _server_reachable(host, port):
-    client = redis.Redis(
-        host=host, port=port, socket_connect_timeout=1, socket_timeout=1
-    )
+def _endpoints_overlap():
+    kiwi_addresses = {
+        address[:2]
+        for _family, _type, _proto, _canonname, address in socket.getaddrinfo(
+            KIWI_HOST, KIWI_PORT, type=socket.SOCK_STREAM
+        )
+    }
+    redis_addresses = {
+        address[:2]
+        for _family, _type, _proto, _canonname, address in socket.getaddrinfo(
+            REDIS8_HOST, REDIS8_PORT, type=socket.SOCK_STREAM
+        )
+    }
+    return bool(kiwi_addresses & redis_addresses)
+
+
+def _require_distinct_endpoints():
     try:
-        client.ping()
-        return True
-    except (redis.RedisError, OSError):
-        return False
-    finally:
-        client.close()
-
-
-if not _server_reachable(KIWI_HOST, KIWI_PORT):
-    raise RuntimeError(
-        "WP1 trusted Oracle differential requires Kiwi at "
-        f"{KIWI_HOST}:{KIWI_PORT}; endpoint is unreachable"
-    )
-if not _server_reachable(REDIS8_HOST, REDIS8_PORT):
-    raise RuntimeError(
-        "WP1 trusted Oracle differential requires Redis 8.8.1 at "
-        f"{REDIS8_HOST}:{REDIS8_PORT}; endpoint is unreachable"
-    )
+        overlaps = _endpoints_overlap()
+    except OSError as error:
+        pytest.fail(f"trusted Oracle endpoint resolution failed: {error}", pytrace=False)
+    if overlaps:
+        pytest.fail(
+            "Kiwi and Redis 8.8.1 Oracle must resolve to different endpoints",
+            pytrace=False,
+        )
 
 
 TEST_KEY_NAMES = (b"main", b"dense3", b"string", b"missing")
@@ -105,6 +113,7 @@ MAIN_QUERY = [0.5, -0.25, 1.5, 0.125]
 
 @pytest.fixture(params=[2, 3], ids=["resp2", "resp3"])
 def backends(request):
+    _require_distinct_endpoints()
     protocol = request.param
     prefix = f"test_vdiff:p{protocol}:".encode()
     keys = [prefix + name for name in TEST_KEY_NAMES]
@@ -114,12 +123,74 @@ def backends(request):
     reference = redis.Redis(
         host=REDIS8_HOST, port=REDIS8_PORT, decode_responses=False, protocol=protocol
     )
-    for client in (kiwi, reference):
-        client.delete(*keys)
-    yield kiwi, reference, protocol, prefix
-    for client in (kiwi, reference):
-        client.delete(*keys)
-        client.close()
+    clients = (kiwi, reference)
+    try:
+        for client in clients:
+            client.delete(*keys)
+    except (redis.RedisError, OSError) as error:
+        for client in clients:
+            client.close()
+        pytest.fail(f"trusted Oracle endpoint setup failed: {error}", pytrace=False)
+
+    try:
+        yield kiwi, reference, protocol, prefix
+    finally:
+        cleanup_errors = []
+        for client in clients:
+            try:
+                client.delete(*keys)
+            except (redis.RedisError, OSError) as error:
+                cleanup_errors.append(str(error))
+            finally:
+                client.close()
+        if cleanup_errors:
+            pytest.fail(
+                f"trusted Oracle endpoint cleanup failed: {cleanup_errors}",
+                pytrace=False,
+            )
+
+
+@pytest.fixture
+def raw_backends(raw_protocol):
+    _require_distinct_endpoints()
+    kiwi = None
+    reference = None
+    cleanup_errors = []
+    try:
+        kiwi = RawRespConnection.connect(KIWI_HOST, KIWI_PORT, raw_protocol)
+        reference = RawRespConnection.connect(REDIS8_HOST, REDIS8_PORT, raw_protocol)
+        if kiwi.socket.getpeername() == reference.socket.getpeername():
+            pytest.fail(
+                "Kiwi and Redis 8.8.1 Oracle connected to the same peer",
+                pytrace=False,
+            )
+        keys = raw_test_keys(raw_protocol)
+        reset_raw_client_keys(kiwi, keys, "Kiwi setup")
+        reset_raw_client_keys(reference, keys, "Redis setup")
+        yield kiwi, reference, raw_protocol
+    except (OSError, ValueError, EOFError, AssertionError) as error:
+        pytest.fail(f"trusted raw Oracle endpoint failed: {error}", pytrace=False)
+    finally:
+        for endpoint, client in (("Redis teardown", reference), ("Kiwi teardown", kiwi)):
+            if client is None:
+                continue
+            try:
+                reset_raw_client_keys(client, raw_test_keys(raw_protocol), endpoint)
+            except (
+                OSError,
+                ValueError,
+                EOFError,
+                RuntimeError,
+                AssertionError,
+            ) as error:
+                cleanup_errors.append(str(error))
+            finally:
+                client.close()
+        if cleanup_errors:
+            pytest.fail(
+                f"trusted raw Oracle endpoint cleanup failed: {cleanup_errors}",
+                pytrace=False,
+            )
 
 
 def vadd_noquant(client, key, values, element):
@@ -157,6 +228,202 @@ def assert_same_outcome(kiwi, reference, *command):
         f"{command!r}: kiwi={kiwi_outcome!r} != redis={redis_outcome!r}"
     )
     return kiwi_outcome
+
+
+def assert_same_raw(kiwi, reference, *command):
+    kiwi_frame = kiwi.execute_raw(*command)
+    reference_frame = reference.execute_raw(*command)
+    assert kiwi_frame == reference_frame, (
+        f"{command!r}: kiwi={kiwi_frame!r} != redis={reference_frame!r}"
+    )
+    return kiwi_frame
+
+
+def reset_raw_key(kiwi, reference, key):
+    reset_raw_client_keys(kiwi, [key], "Kiwi reset")
+    reset_raw_client_keys(reference, [key], "Redis reset")
+
+
+def delete_raw_keys(client, keys, endpoint):
+    frame = client.execute_raw(b"DEL", *keys)
+    if not frame.startswith(b":") or not frame.endswith(b"\r\n"):
+        raise AssertionError(
+            f"{endpoint} DEL must return a RESP integer frame, got {frame!r}"
+        )
+    try:
+        deleted = int(frame[1:-2])
+    except ValueError as error:
+        raise AssertionError(
+            f"{endpoint} DEL returned an invalid RESP integer: {frame!r}"
+        ) from error
+    if deleted < 0:
+        raise AssertionError(f"{endpoint} DEL returned a negative count: {frame!r}")
+    return deleted
+
+
+def reset_raw_client_keys(client, keys, endpoint):
+    delete_raw_keys(client, keys, endpoint)
+    second = delete_raw_keys(client, keys, endpoint)
+    if second != 0:
+        raise AssertionError(
+            f"{endpoint} DEL must be idempotent; second count was {second}"
+        )
+
+
+def raw_test_keys(protocol):
+    vadd_prefix = f"test_vdiff:raw:vadd:p{protocol}:".encode()
+    return [
+        f"test_vdiff:raw:p{protocol}:values".encode(),
+        f"test_vdiff:raw:p{protocol}:fp32".encode(),
+        f"test_vdiff:raw:p{protocol}:missing-scores".encode(),
+        *(
+            vadd_prefix + suffix
+            for suffix in (
+                b"missing-values",
+                b"missing-fp32",
+                b"invalid-values",
+                b"invalid-fp32",
+                b"repeated",
+                b"option",
+            )
+        ),
+    ]
+
+
+def test_raw_cleanup_requires_a_nonnegative_integer_frame():
+    class ErrorFrameClient:
+        def execute_raw(self, *command):
+            assert command == (b"DEL", b"key")
+            return b"-ERR cleanup disabled\r\n"
+
+    with pytest.raises(AssertionError, match="RESP integer frame"):
+        reset_raw_client_keys(ErrorFrameClient(), [b"key"], "fake endpoint")
+
+
+def assert_zero_vector_raw(raw_backends, kind, payload, element):
+    kiwi, reference, protocol = raw_backends
+    key = f"test_vdiff:raw:p{protocol}:{kind.decode().lower()}".encode()
+    reset_raw_key(kiwi, reference, key)
+    assert_same_raw(
+        kiwi, reference, b"VADD", key, kind, *payload, element, b"NOQUANT"
+    )
+    assert_same_raw(
+        kiwi,
+        reference,
+        b"VADD",
+        key,
+        b"VALUES",
+        b"2",
+        b"1",
+        b"0",
+        b"x",
+        b"NOQUANT",
+    )
+    assert_same_raw(kiwi, reference, b"VEMB", key, element)
+    hits = assert_same_raw(
+        kiwi,
+        reference,
+        b"VSIM",
+        key,
+        b"ELE",
+        element,
+        b"WITHSCORES",
+        b"COUNT",
+        b"2",
+    )
+    assert hits.startswith(b"%" if protocol == 3 else b"*")
+
+
+def test_zero_vector_values_raw_differential(raw_backends):
+    assert_zero_vector_raw(
+        raw_backends, b"VALUES", (b"2", b"0", b"0"), b"zero"
+    )
+
+
+def test_zero_vector_fp32_raw_differential(raw_backends):
+    assert_zero_vector_raw(
+        raw_backends, b"FP32", (struct.pack("<ff", 0.0, 0.0),), b"\x00zero"
+    )
+
+
+def test_vsim_missing_key_withscores_raw_frame(raw_backends):
+    kiwi, reference, protocol = raw_backends
+    key = f"test_vdiff:raw:p{protocol}:missing-scores".encode()
+    reset_raw_key(kiwi, reference, key)
+
+    frame = assert_same_raw(
+        kiwi,
+        reference,
+        b"VSIM",
+        key,
+        b"VALUES",
+        b"1",
+        b"1",
+        b"WITHSCORES",
+    )
+    assert frame == b"*0\r\n"
+
+
+def test_vadd_typed_error_precedence_raw(raw_backends):
+    kiwi, reference, protocol = raw_backends
+    prefix = f"test_vdiff:raw:vadd:p{protocol}:".encode()
+    cases = [
+        (
+            (b"VADD", prefix + b"missing-values", b"VALUES", b"1", b"1"),
+            b"wrong number of arguments",
+        ),
+        (
+            (b"VADD", prefix + b"missing-fp32", b"FP32", b"bad"),
+            b"wrong number of arguments",
+        ),
+        (
+            (
+                b"VADD",
+                prefix + b"invalid-values",
+                b"VALUES",
+                b"1",
+                b"not-a-float",
+            ),
+            b"invalid vector specification",
+        ),
+        (
+            (b"VADD", prefix + b"invalid-fp32", b"FP32", b"bad", b"element"),
+            b"invalid vector specification",
+        ),
+    ]
+    for command, expected in cases:
+        frame = assert_same_raw(kiwi, reference, *command)
+        assert frame.startswith(b"-ERR ")
+        assert expected in frame.lower()
+
+    repeated_key = prefix + b"repeated"
+    reset_raw_key(kiwi, reference, repeated_key)
+    repeated = assert_same_raw(
+        kiwi,
+        reference,
+        b"VADD",
+        repeated_key,
+        b"VALUES",
+        b"1",
+        b"1",
+        b"element",
+        b"NOQUANT",
+        b"NOQUANT",
+    )
+    assert repeated in (b":1\r\n", b"#t\r\n")
+
+    invalid_option = assert_same_raw(
+        kiwi,
+        reference,
+        b"VADD",
+        prefix + b"option",
+        b"VALUES",
+        b"1",
+        b"1",
+        b"element",
+        b"invalid-option",
+    )
+    assert invalid_option == b"-ERR invalid option after element\r\n"
 
 
 def normalized_vemb(reply):

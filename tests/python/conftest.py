@@ -34,7 +34,7 @@ def _enabled(name):
     return os.environ.get(name) == "1"
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def redis_client():
     """
     创建 Redis 客户端连接
@@ -69,8 +69,13 @@ def redis_client():
 
 
 @pytest.fixture(scope="function", autouse=True)
-def isolate_redis_database(redis_client):
+def isolate_redis_database(request):
     """Flush the dedicated CI server before and after every test."""
+    if request.node.get_closest_marker("raw_vector_protocol") is not None:
+        yield
+        return
+
+    redis_client = request.getfixturevalue("redis_client")
     if not _enabled("KIWI_TEST_ISOLATED_SERVER"):
         yield
         return
@@ -112,7 +117,7 @@ def r(redis_clean):
     return redis_clean
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 def redis_binary_client(redis_client):
     """
     创建二进制模式的 Redis 客户端
@@ -123,6 +128,7 @@ def redis_binary_client(redis_client):
         host=os.getenv("KIWI_HOST", "localhost"),
         port=int(os.getenv("KIWI_PORT", "7379")),
         decode_responses=False,  # 不自动解码
+        protocol=2,
         socket_connect_timeout=5,
         socket_timeout=5,
     )
@@ -141,6 +147,43 @@ def redis_binary_client(redis_client):
     
     yield client
     client.close()
+
+
+def _raw_kiwi_connection(protocol):
+    from raw_resp_client import RawRespConnection
+
+    host = os.getenv("KIWI_HOST", "127.0.0.1")
+    port = int(os.getenv("KIWI_PORT", "7379"))
+    try:
+        return RawRespConnection.connect(host, port, protocol)
+    except (OSError, ValueError, EOFError) as error:
+        pytest.fail(
+            f"raw Vector protocol tests require Kiwi at {host}:{port}: {error}",
+            pytrace=False,
+        )
+
+
+@pytest.fixture(scope="function", params=[2, 3], ids=["resp2", "resp3"])
+def raw_protocol(request):
+    return request.param
+
+
+@pytest.fixture(scope="function")
+def raw_kiwi_resp2():
+    client = _raw_kiwi_connection(2)
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+@pytest.fixture(scope="function")
+def raw_kiwi_resp3():
+    client = _raw_kiwi_connection(3)
+    try:
+        yield client
+    finally:
+        client.close()
 
 
 def pytest_configure(config):
@@ -162,4 +205,8 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers", "wrongtype: marks tests as type error tests"
+    )
+    config.addinivalue_line(
+        "markers",
+        "raw_vector_protocol: owns function-scoped raw RESP connections and fails closed",
     )

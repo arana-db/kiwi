@@ -1706,9 +1706,9 @@ docs/sdd/WP-N/
 | WP0 exact-main verification | passed |
 | Required mode | Cache OFF |
 | M7/M8 | frozen |
-| Next safe action | 在 WP8 Runtime/Protocol 独立实现 worktree 为 function-scoped RESP2/RESP3 raw client、VADD raw error precedence 和 manifest difference 写入失败测试并观察 RED |
+| Next safe action | 提交并顺序集成 WP8 Runtime/Protocol Task 1-5，然后在独立 worktree 启动 Trusted Oracle/CI/Security 实施计划 |
 
-PR #417 已修复 WP0 固定提交区间验证；main@688d905fec31b54aec76f36676f55efd8b5cfa17 的 ci run 30801285622 成功，当前 baseline commit 733888fc90ad8ef039947e87b08d7500a405954a 是其后继。WP0 已进入 accepted。PR #356 随后把 Vector Set Phase 1 合入主线，用户通过 D019 授权用 Draft PR #422 聚合 #415、#418、#421 的全量闭环。Storage/Recovery Task 1→7 已完成、集成并通过 exact-ref migration/rollback/snapshot 矩阵；独立 `codex/wp8-runtime-protocol` worktree 已从聚合 Head 建立。Runtime/Protocol Task 1 的无分配 `Bytes` admission 纯函数、Task 2 的 Cmd hook/双层 `GatedCmd` 顺序、Task 3 的 ParsedCommand Bytes 保留/Config 必填传播/真实 TCP storage spy/admission-before-copy 合同，以及 Task 4 的 VADD typed parse outcome、Redis `arity=-5` dispatcher 边界、unknown trailing option 精确错误和 argv-shape heuristic 删除，均已完成 TDD、变异验证、changed-path 回归、规格复审和质量复审；下一安全动作是为 function-scoped RESP2/RESP3 raw client、VADD raw error precedence 和 manifest difference 写入失败测试。
+PR #417 已修复 WP0 固定提交区间验证；main@688d905fec31b54aec76f36676f55efd8b5cfa17 的 ci run 30801285622 成功，当前 baseline commit 733888fc90ad8ef039947e87b08d7500a405954a 是其后继。WP0 已进入 accepted。PR #356 随后把 Vector Set Phase 1 合入主线，用户通过 D019 授权用 Draft PR #422 聚合 #415、#418、#421 的全量闭环。Storage/Recovery Task 1→7 已完成、集成并通过 exact-ref migration/rollback/snapshot 矩阵；独立 `codex/wp8-runtime-protocol` worktree 已从聚合 Head 建立。Runtime/Protocol Task 1 的无分配 `Bytes` admission 纯函数、Task 2 的 Cmd hook/双层 `GatedCmd` 顺序、Task 3 的 ParsedCommand Bytes 保留/Config 必填传播/真实 TCP storage spy/admission-before-copy 合同、Task 4 的 VADD typed parse outcome、Redis `arity=-5` dispatcher 边界、unknown trailing option 精确错误和 argv-shape heuristic 删除，以及 Task 5 的 function-scoped raw RESP2/RESP3 client、完整 frame reader、collection 零联网和五命令 Issue #421 operational-limit governance，均已完成 tests-first、变异验证和 changed-path 回归；正式双端 raw differential 仍由后续 verifier-supervised Trusted Oracle/CI runner 执行。下一安全动作是提交并顺序集成 Runtime/Protocol Task 1-5，然后启动 Trusted Oracle/CI/Security 实施计划。
 
 ## 18. 决策门禁
 

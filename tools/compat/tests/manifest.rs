@@ -404,19 +404,101 @@ fn rejects_blank_known_difference_governance_fields() {
 
 #[test]
 fn rejects_known_difference_governance_fields_when_missing() {
-    for (field, line) in [
-        ("introduced", "        introduced: 2026-08-05\n"),
+    for (field, line, replacement) in [
+        ("owner", "      - owner: cmd-string\n", "      -\n"),
+        (
+            "issue",
+            "        issue: https://github.com/arana-db/kiwi/issues/999\n",
+            "",
+        ),
+        (
+            "reason",
+            "        reason: Redis behavior is not implemented yet\n",
+            "",
+        ),
+        (
+            "remove_when",
+            "        remove_when: wire differential and final-state evidence pass\n",
+            "",
+        ),
+        ("introduced", "        introduced: 2026-08-05\n", ""),
         (
             "affected",
             "        affected: standalone_cache_off; resp2/resp3\n",
+            "",
         ),
         (
             "last_verified_ref",
             "        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10\n",
+            "",
         ),
     ] {
-        let yaml = governed_known_difference_manifest().replace(line, "");
+        let yaml = governed_known_difference_manifest().replace(line, replacement);
         assert_error_contains(&yaml, field);
+    }
+}
+
+#[test]
+fn repository_vector_operational_limits_are_explicitly_governed() {
+    let manifest = parse_valid(include_str!(
+        "../../../tests/compat/redis-8.8.1/manifest.yaml"
+    ));
+    let expected = [
+        (
+            "VADD",
+            &[
+                "max_dimension",
+                "max_vector_bytes",
+                "max_element_bytes",
+                "raw",
+            ][..],
+        ),
+        (
+            "VSIM",
+            &["max_dimension", "max_vector_bytes", "max_element_bytes"][..],
+        ),
+        ("VEMB", &["max_element_bytes"][..]),
+        ("VREM", &["max_element_bytes"][..]),
+        ("VISMEMBER", &["max_element_bytes"][..]),
+    ];
+
+    for (name, reason_terms) in expected {
+        let command = manifest
+            .commands()
+            .iter()
+            .find(|command| command.command() == name)
+            .unwrap_or_else(|| panic!("{name} must be registered"));
+        assert_eq!(command.classification(), Classification::KnownDifference);
+        assert_eq!(
+            command.modes().get(&Mode::StandaloneCacheOff),
+            Some(&Classification::KnownDifference)
+        );
+
+        let difference = command
+            .known_differences()
+            .iter()
+            .find(|difference| difference.issue() == "https://github.com/arana-db/kiwi/issues/421")
+            .unwrap_or_else(|| panic!("{name} must register the Issue #421 limit difference"));
+        assert_eq!(difference.owner(), "cmd-vector");
+        assert_eq!(difference.affected(), "standalone_cache_off; resp2/resp3");
+        assert_eq!(
+            difference.last_verified_ref(),
+            format!("redis-source:{REDIS_COMMIT}")
+        );
+        let reason = difference.reason().to_ascii_lowercase();
+        for term in reason_terms {
+            assert!(
+                reason.contains(term),
+                "{name} Issue #421 reason must mention {term}"
+            );
+        }
+        let removal = difference.remove_when().to_ascii_lowercase();
+        for term in ["raw", "resp2", "resp3", "boundary"] {
+            assert!(
+                removal.contains(term),
+                "{name} Issue #421 removal condition must mention {term}"
+            );
+        }
     }
 }
 
