@@ -1174,6 +1174,51 @@ assert not (root / "oracle-provenance.json").exists()
 
 #[test]
 #[cfg(target_os = "linux")]
+fn oracle_verifier_held_cleanup_rechecks_identity_immediately_before_rmdir() {
+    let test_dir = TestDir::new("verifier-held-cleanup-final-rmdir");
+    let body = format!(
+        r#"import os
+import pathlib
+
+root = pathlib.Path({root:?})
+parent = controller.HeldDirectory.open(root)
+os.mkdir("runtime", mode=0o700, dir_fd=parent.fd)
+runtime = parent.open_directory("runtime")
+moved = root / "held-runtime"
+replacement = root / "runtime"
+output = root / "oracle-provenance.json"
+original_remove_contents = controller._remove_directory_contents
+
+def replace_after_content_removal(directory_fd):
+    original_remove_contents(directory_fd)
+    replacement.rename(moved)
+    replacement.mkdir()
+
+controller._remove_directory_contents = replace_after_content_removal
+cleanup_complete = False
+try:
+    try:
+        controller._remove_runtime_directory(parent.fd, "runtime", runtime)
+        cleanup_complete = True
+    except controller.OracleError:
+        pass
+finally:
+    controller._remove_directory_contents = original_remove_contents
+    runtime.close()
+    parent.close()
+
+assert not cleanup_complete
+assert replacement.is_dir(), "replacement directory was removed by final rmdir"
+assert moved.is_dir(), "held directory was not preserved after cleanup rejection"
+assert not output.exists()
+"#,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 fn oracle_verifier_callback_mount_sandbox_blocks_transient_resource_mutations() {
     let test_dir = TestDir::new("verifier-callback-mount-sandbox");
     let body = format!(
@@ -1907,6 +1952,56 @@ finally:
 for directory in (parent, moved):
     assert not (directory / provenance.name).exists()
     assert not list(directory.glob(".*.provenance-*"))
+"#,
+        parent = parent.to_string_lossy(),
+        moved = moved.to_string_lossy(),
+        provenance = provenance.to_string_lossy(),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_provenance_rollback_preserves_replacement_final() {
+    let test_dir = TestDir::new("verifier-publish-rollback-replacement");
+    let parent = test_dir.path().join("output-parent");
+    let moved = test_dir.path().join("held-output-parent");
+    fs::create_dir(&parent).unwrap();
+    let provenance = parent.join("oracle-provenance.json");
+    let fixture = canonical_provenance();
+    let body = format!(
+        r#"import json
+import pathlib
+
+parent = pathlib.Path({parent:?})
+moved = pathlib.Path({moved:?})
+provenance = pathlib.Path({provenance:?})
+document = json.loads(r'''{document}''')
+target = controller.CandidateTarget.open(provenance)
+original_close = controller.CandidateTarget.close
+replacement = b"replacement-final-must-survive\n"
+
+def replace_final_during_close(self):
+    original_close(self)
+    parent.rename(moved)
+    (moved / provenance.name).rename(moved / "published-original.json")
+    (moved / provenance.name).write_bytes(replacement)
+    parent.mkdir()
+
+controller.CandidateTarget.close = replace_final_during_close
+try:
+    controller.publish_provenance(target, document, close_target=True)
+except controller.OracleError:
+    pass
+else:
+    raise AssertionError("output parent replacement during close was accepted")
+finally:
+    controller.CandidateTarget.close = original_close
+
+assert (moved / provenance.name).read_bytes() == replacement
+assert not list(parent.glob(".*.provenance-*"))
+assert not list(moved.glob(".*.provenance-*"))
 "#,
         parent = parent.to_string_lossy(),
         moved = moved.to_string_lossy(),

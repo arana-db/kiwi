@@ -2015,8 +2015,45 @@ def publish_provenance(
     target = CandidateTarget.open(path) if owned_target else path
     close_after_publication = owned_target or close_target
     published = False
+    completed = False
     rollback_fd = -1
     rollback_identity: os.stat_result | None = None
+    published_fd = -1
+    published_identity: os.stat_result | None = None
+    payload_sha256 = ""
+
+    def rollback_publication() -> None:
+        if rollback_fd < 0 or published_identity is None:
+            raise OracleError("output publication rollback identity is unavailable")
+        try:
+            visible_fd = os.open(
+                target.basename,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=rollback_fd,
+            )
+        except FileNotFoundError as error:
+            raise OracleError(
+                "output publication rollback is ambiguous because final is missing"
+            ) from error
+        try:
+            visible_identity = os.fstat(visible_fd)
+            if not _same_identity(published_identity, visible_identity):
+                raise OracleError(
+                    "output publication rollback refused a replacement final"
+                )
+            if (
+                not stat.S_ISREG(visible_identity.st_mode)
+                or visible_identity.st_size != len(payload)
+                or _sha256_fd(visible_fd) != payload_sha256
+            ):
+                raise OracleError(
+                    "output publication rollback refused changed final content"
+                )
+        finally:
+            os.close(visible_fd)
+        os.unlink(target.basename, dir_fd=rollback_fd)
+        os.fsync(rollback_fd)
+
     try:
         if close_after_publication:
             rollback_fd = os.dup(target.parent.fd)
@@ -2024,6 +2061,7 @@ def publish_provenance(
         if document.get("schema_version") == PROVENANCE_SCHEMA:
             _validate_provenance_timestamp_order(document)
         payload = canonical_json_bytes(document)
+        payload_sha256 = hashlib.sha256(payload).hexdigest()
         if len(payload) > MAX_JSON_BYTES:
             raise OracleError(
                 f"final provenance exceeds {MAX_JSON_BYTES} byte JSON limit"
@@ -2038,7 +2076,6 @@ def publish_provenance(
             0o600,
             dir_fd=target.parent.fd,
         )
-        completed = False
         try:
             view = memoryview(payload)
             while view:
@@ -2047,11 +2084,25 @@ def publish_provenance(
                     raise OracleError("final provenance write made no progress")
                 view = view[written:]
             os.fsync(fd)
+            temporary_identity = os.fstat(fd)
             os.close(fd)
             fd = -1
             target.verify_visible_parent()
             _rename_noreplace(target.parent.fd, temporary, target.basename)
             published = True
+            published_fd = os.open(
+                target.basename,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=target.parent.fd,
+            )
+            published_identity = os.fstat(published_fd)
+            if (
+                not _same_identity(temporary_identity, published_identity)
+                or not stat.S_ISREG(published_identity.st_mode)
+                or published_identity.st_size != len(payload)
+                or _sha256_fd(published_fd) != payload_sha256
+            ):
+                raise OracleError("published provenance differs from its held temporary file")
             os.fsync(target.parent.fd)
             target.verify_visible_parent()
             completed = True
@@ -2062,12 +2113,6 @@ def publish_provenance(
                 os.unlink(temporary, dir_fd=target.parent.fd)
             except FileNotFoundError:
                 pass
-            if published and not completed:
-                try:
-                    os.unlink(target.basename, dir_fd=target.parent.fd)
-                    os.fsync(target.parent.fd)
-                except FileNotFoundError:
-                    pass
     finally:
         if close_after_publication:
             close_error: BaseException | None = None
@@ -2089,19 +2134,19 @@ def publish_provenance(
                         visible.close()
                 except BaseException as error:
                     parent_error = error
-            if close_error is not None or parent_error is not None:
+            if published and (not completed or close_error is not None or parent_error is not None):
                 rollback_error: BaseException | None = None
-                if published:
+                try:
+                    rollback_publication()
+                except BaseException as error:
+                    rollback_error = error
+                if published_fd >= 0:
                     try:
-                        if rollback_fd < 0:
-                            raise OracleError("output publication rollback handle is unavailable")
-                        try:
-                            os.unlink(target.basename, dir_fd=rollback_fd)
-                        except FileNotFoundError:
-                            pass
-                        os.fsync(rollback_fd)
+                        os.close(published_fd)
                     except BaseException as error:
-                        rollback_error = error
+                        if rollback_error is None:
+                            rollback_error = error
+                    published_fd = -1
                 if rollback_fd >= 0:
                     try:
                         os.close(rollback_fd)
@@ -2115,10 +2160,12 @@ def publish_provenance(
                     ) from (close_error or parent_error)
                 if close_error is not None:
                     raise close_error
-                assert parent_error is not None
-                raise OracleError(
-                    f"output-parent identity verification failed after close: {parent_error}"
-                ) from parent_error
+                if parent_error is not None:
+                    raise OracleError(
+                        f"output-parent identity verification failed after close: {parent_error}"
+                    ) from parent_error
+            if published_fd >= 0:
+                os.close(published_fd)
             if rollback_fd >= 0:
                 os.close(rollback_fd)
 
@@ -2184,6 +2231,16 @@ def _remove_held_directory(
         _remove_directory_contents(visible_fd)
     finally:
         os.close(visible_fd)
+    final_fd = os.open(
+        directory_name,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=parent_fd,
+    )
+    try:
+        if not _same_directory_object(os.fstat(held_fd), os.fstat(final_fd)):
+            raise OracleError(f"{label} path changed before final removal")
+    finally:
+        os.close(final_fd)
     os.rmdir(directory_name, dir_fd=parent_fd)
 
 
