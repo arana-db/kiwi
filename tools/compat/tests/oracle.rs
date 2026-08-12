@@ -1822,6 +1822,88 @@ assert not list(provenance.parent.glob(".*.provenance-*"))
 
 #[test]
 #[cfg(target_os = "linux")]
+fn oracle_verifier_borrowed_provenance_target_success_keeps_caller_fd_ownership() {
+    let test_dir = TestDir::new("verifier-borrowed-publish-success");
+    let provenance = test_dir.path().join("oracle-provenance.json");
+    let fixture = canonical_provenance();
+    let body = format!(
+        r#"import json
+import os
+import pathlib
+
+provenance = pathlib.Path({provenance:?})
+document = json.loads(r'''{document}''')
+target = controller.CandidateTarget.open(provenance)
+before = len(os.listdir("/proc/self/fd"))
+controller.publish_provenance(target, document)
+after = len(os.listdir("/proc/self/fd"))
+assert after == before, (before, after)
+assert target.parent.fd >= 0
+os.fstat(target.parent.fd)
+target.verify_visible_parent()
+assert provenance.exists()
+target.close()
+"#,
+        provenance = provenance.to_string_lossy(),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_verifier_borrowed_provenance_target_failure_rolls_back_without_fd_leak() {
+    let test_dir = TestDir::new("verifier-borrowed-publish-failure");
+    let provenance = test_dir.path().join("oracle-provenance.json");
+    let fixture = canonical_provenance();
+    let body = format!(
+        r#"import json
+import os
+import pathlib
+import stat
+
+provenance = pathlib.Path({provenance:?})
+document = json.loads(r'''{document}''')
+target = controller.CandidateTarget.open(provenance)
+before = len(os.listdir("/proc/self/fd"))
+original_fsync = os.fsync
+parent_fsyncs = 0
+
+def fail_first_parent_fsync(fd):
+    global parent_fsyncs
+    if stat.S_ISDIR(os.fstat(fd).st_mode):
+        parent_fsyncs += 1
+        if parent_fsyncs == 1:
+            raise OSError("injected post-rename parent fsync failure")
+    return original_fsync(fd)
+
+os.fsync = fail_first_parent_fsync
+try:
+    controller.publish_provenance(target, document)
+except OSError as error:
+    assert "post-rename parent fsync failure" in str(error)
+else:
+    raise AssertionError("borrowed-target publication failure was accepted")
+finally:
+    os.fsync = original_fsync
+
+after = len(os.listdir("/proc/self/fd"))
+assert after == before, (before, after)
+assert target.parent.fd >= 0
+os.fstat(target.parent.fd)
+target.verify_visible_parent()
+assert not provenance.exists()
+assert not list(provenance.parent.glob(".*.provenance-*"))
+target.close()
+"#,
+        provenance = provenance.to_string_lossy(),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 fn oracle_verifier_provenance_parent_replacement_leaves_no_final_or_temp() {
     let test_dir = TestDir::new("verifier-publish-parent-replace");
     let parent = test_dir.path().join("output-parent");

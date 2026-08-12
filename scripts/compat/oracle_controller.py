@@ -2021,6 +2021,7 @@ def publish_provenance(
     published_fd = -1
     published_identity: os.stat_result | None = None
     payload_sha256 = ""
+    rollback_attempted = False
 
     def rollback_publication() -> None:
         if rollback_fd < 0 or published_identity is None:
@@ -2055,9 +2056,8 @@ def publish_provenance(
         os.fsync(rollback_fd)
 
     try:
-        if close_after_publication:
-            rollback_fd = os.dup(target.parent.fd)
-            rollback_identity = os.fstat(rollback_fd)
+        rollback_fd = os.dup(target.parent.fd)
+        rollback_identity = os.fstat(rollback_fd)
         if document.get("schema_version") == PROVENANCE_SCHEMA:
             _validate_provenance_timestamp_order(document)
         payload = canonical_json_bytes(document)
@@ -2114,13 +2114,21 @@ def publish_provenance(
             except FileNotFoundError:
                 pass
     finally:
+        failure_error = sys.exception()
+        rollback_error: BaseException | None = None
+        close_error: BaseException | None = None
+        parent_error: BaseException | None = None
+        if published and not completed:
+            rollback_attempted = True
+            try:
+                rollback_publication()
+            except BaseException as error:
+                rollback_error = error
         if close_after_publication:
-            close_error: BaseException | None = None
             try:
                 target.close()
             except BaseException as error:
                 close_error = error
-            parent_error: BaseException | None = None
             if published:
                 try:
                     visible = HeldDirectory.open_absolute_nofollow(target.parent_path)
@@ -2134,40 +2142,39 @@ def publish_provenance(
                         visible.close()
                 except BaseException as error:
                     parent_error = error
-            if published and (not completed or close_error is not None or parent_error is not None):
-                rollback_error: BaseException | None = None
-                try:
-                    rollback_publication()
-                except BaseException as error:
-                    rollback_error = error
-                if published_fd >= 0:
+            if published and (close_error is not None or parent_error is not None):
+                if not rollback_attempted:
+                    rollback_attempted = True
                     try:
-                        os.close(published_fd)
+                        rollback_publication()
                     except BaseException as error:
-                        if rollback_error is None:
-                            rollback_error = error
-                    published_fd = -1
-                if rollback_fd >= 0:
-                    try:
-                        os.close(rollback_fd)
-                    except BaseException as error:
-                        if rollback_error is None:
-                            rollback_error = error
-                if rollback_error is not None:
-                    raise OracleError(
-                        "output-parent close/identity verification failed and publication rollback failed: "
-                        f"close={close_error}; identity={parent_error}; rollback={rollback_error}"
-                    ) from (close_error or parent_error)
-                if close_error is not None:
-                    raise close_error
-                if parent_error is not None:
-                    raise OracleError(
-                        f"output-parent identity verification failed after close: {parent_error}"
-                    ) from parent_error
-            if published_fd >= 0:
+                        rollback_error = error
+        if published_fd >= 0:
+            try:
                 os.close(published_fd)
-            if rollback_fd >= 0:
+            except BaseException as error:
+                if rollback_error is None:
+                    rollback_error = error
+            published_fd = -1
+        if rollback_fd >= 0:
+            try:
                 os.close(rollback_fd)
+            except BaseException as error:
+                if rollback_error is None:
+                    rollback_error = error
+            rollback_fd = -1
+        if rollback_error is not None:
+            raise OracleError(
+                "provenance publication cleanup/rollback failed: "
+                f"business={failure_error}; close={close_error}; "
+                f"identity={parent_error}; rollback={rollback_error}"
+            ) from (failure_error or close_error or parent_error or rollback_error)
+        if close_error is not None:
+            raise close_error
+        if parent_error is not None:
+            raise OracleError(
+                f"output-parent identity verification failed after close: {parent_error}"
+            ) from parent_error
 
 
 def _run_cleanup_actions(
