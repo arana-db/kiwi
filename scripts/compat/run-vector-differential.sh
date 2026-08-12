@@ -23,24 +23,58 @@ die() {
     exit 1
 }
 
-validate_collection() (
+script_path=${BASH_SOURCE[0]}
+[[ $script_path == /* ]] || script_path=$PWD/$script_path
+script_directory=${script_path%/*}
+cd -P -- "$script_directory"
+script_directory=$PWD
+repository_root=$(cd -P -- "$script_directory/../.." && pwd)
+
+canonicalize_required_jobs() {
     local registry=$1
+    local canonical=$2
+    local mode=${3:-production}
+    local helper=$repository_root/target/debug/kiwi-required-vector-jobs
+    if [[ $mode == test && -n ${KIWI_COMPAT_TEST_REQUIRED_JOBS_HELPER:-} ]]; then
+        helper=$KIWI_COMPAT_TEST_REQUIRED_JOBS_HELPER
+    fi
+    [[ -x $helper ]] || die "authoritative required-jobs helper is missing: $helper"
+    "$helper" "$registry" >"$canonical" \
+        || die 'required-jobs registry failed authoritative validation'
+    [[ -s $canonical ]] || die 'authoritative required-jobs helper produced no canonical JSON'
+}
+
+validate_collection() (
+    local canonical=$1
     local collected=$2
     local scratch
     scratch=$(mktemp -d "${TMPDIR:-/tmp}/kiwi-vector-collection.XXXXXX")
     trap 'rm -rf -- "$scratch"' EXIT
 
-    sed -n '/^    expected_node_ids:$/,/^    expected_item_count:/p' "$registry" \
-        | sed -n 's/^      - //p' >"$scratch/expected"
+    /usr/bin/python3 -I -B - "$canonical" "$scratch/expected" <<'PY'
+import json
+import pathlib
+import sys
+
+document = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if document.get("schema") != "kiwi-vector-required-jobs/canonical-v1":
+    raise SystemExit("canonical required-jobs schema identity mismatch")
+expected = document.get("expected_node_ids")
+count = document.get("expected_item_count")
+if (
+    not isinstance(expected, list)
+    or not expected
+    or any(not isinstance(node_id, str) or not node_id for node_id in expected)
+    or type(count) is not int
+    or count <= 0
+    or len(expected) != count
+):
+    raise SystemExit("canonical expected node IDs/count drifted")
+pathlib.Path(sys.argv[2]).write_text("\n".join(expected) + "\n", encoding="utf-8")
+PY
     grep '^tests/python/test_vector_set_differential.py::' "$collected" \
         >"$scratch/actual" || true
-    local expected_item_count
-    expected_item_count=$(sed -n 's/^    expected_item_count: //p' "$registry")
-    [[ $expected_item_count =~ ^[1-9][0-9]*$ ]] \
-        || die 'registry expected_item_count is missing or invalid'
-    [[ $(wc -l <"$scratch/expected") -eq $expected_item_count ]] \
-        || die 'registry expected_node_ids/count drift'
-    [[ $(wc -l <"$scratch/actual") -eq $expected_item_count ]] \
+    [[ $(wc -l <"$scratch/actual") -eq $(wc -l <"$scratch/expected") ]] \
         || die 'pytest collected count differs from the registry'
     cmp -s "$scratch/expected" "$scratch/actual" \
         || die 'pytest collected node IDs differ from the registry'
@@ -54,19 +88,19 @@ finish_callback() {
 }
 
 validate_summary() {
-    local registry=$1
+    local canonical=$1
     local summary=$2
-    /usr/bin/python3 -I -B - "$registry" "$summary" <<'PY'
+    /usr/bin/python3 -I -B - "$canonical" "$summary" <<'PY'
 import json
 import pathlib
-import re
 import sys
 
-registry = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r"^    expected_item_count: ([1-9][0-9]*)$", registry, re.MULTILINE)
-if match is None:
-    raise SystemExit("registry expected_item_count is missing")
-expected = int(match.group(1))
+registry = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if registry.get("schema") != "kiwi-vector-required-jobs/canonical-v1":
+    raise SystemExit("canonical required-jobs schema identity mismatch")
+expected = registry.get("expected_item_count")
+if type(expected) is not int or expected <= 0:
+    raise SystemExit("canonical expected_item_count is invalid")
 document = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
 required = {"collected", "passed", "failed", "skipped", "xfailed", "xpassed", "deselected"}
 if set(document) != required:
@@ -82,52 +116,43 @@ PY
 }
 
 validate_raw_coverage() {
-    local registry=$1
+    local canonical=$1
     local coverage=$2
-    /usr/bin/python3 -I -B - "$registry" "$coverage" <<'PY'
+    /usr/bin/python3 -I -B - "$canonical" "$coverage" <<'PY'
 import json
 import pathlib
 import re
 import sys
 
-registry = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+registry = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 coverage_path = pathlib.Path(sys.argv[2])
-commands_match = re.search(r"^    commands: \[([^]]+)\]$", registry, re.MULTILINE)
-raw_cases_match = re.search(
-    r"^    raw_cases:\n(?P<body>.*?)(?=^    expected_node_ids:)",
-    registry,
-    re.MULTILINE | re.DOTALL,
-)
-if commands_match is None or raw_cases_match is None:
-    raise SystemExit("registry commands or raw cases are missing")
-required_commands = {part.strip() for part in commands_match.group(1).split(",")}
+if registry.get("schema") != "kiwi-vector-required-jobs/canonical-v1":
+    raise SystemExit("canonical required-jobs schema identity mismatch")
+commands = registry.get("commands")
+raw_cases = registry.get("raw_cases")
+if not isinstance(commands, list) or not isinstance(raw_cases, dict):
+    raise SystemExit("canonical commands or raw cases are missing")
+required_commands = set(commands)
 expected = set()
-current_command = None
-current_case_id = None
-current_evidence_kind = None
-for line in raw_cases_match.group("body").splitlines():
-    command_match = re.fullmatch(r"      ([A-Z]+):", line)
-    if command_match:
-        current_command = command_match.group(1)
-        current_case_id = None
-        current_evidence_kind = None
-        continue
-    case_match = re.fullmatch(r"        - case_id: ([a-z-]+)", line)
-    if case_match:
-        current_case_id = case_match.group(1)
-        current_evidence_kind = None
-        continue
-    kind_match = re.fullmatch(r"          evidence_kind: (exact-frame|raw-schema)", line)
-    if kind_match:
-        current_evidence_kind = kind_match.group(1)
-        continue
-    node_match = re.fullmatch(r"            - (tests/python/[^ ]+)", line)
-    if node_match:
-        if not current_command or not current_case_id or not current_evidence_kind:
-            raise SystemExit("registry raw case is missing command, case ID, or evidence kind")
-        expected.add(
-            (current_command, current_case_id, current_evidence_kind, node_match.group(1))
-        )
+for command, cases in raw_cases.items():
+    if not isinstance(command, str) or not isinstance(cases, list):
+        raise SystemExit("canonical raw cases are invalid")
+    for case in cases:
+        if not isinstance(case, dict) or set(case) != {"case_id", "evidence_kind", "node_ids"}:
+            raise SystemExit("canonical raw case fields drifted")
+        case_id = case["case_id"]
+        evidence_kind = case["evidence_kind"]
+        node_ids = case["node_ids"]
+        if (
+            not isinstance(case_id, str)
+            or evidence_kind not in {"exact-frame", "raw-schema"}
+            or not isinstance(node_ids, list)
+        ):
+            raise SystemExit("canonical raw case is invalid")
+        for node_id in node_ids:
+            if not isinstance(node_id, str):
+                raise SystemExit("canonical raw case node ID is invalid")
+            expected.add((command, case_id, evidence_kind, node_id))
 if {command for command, _case_id, _kind, _node_id in expected} != required_commands:
     raise SystemExit("registry raw-case command coverage drifted")
 if not coverage_path.is_file():
@@ -171,6 +196,17 @@ if observed != expected:
 PY
 }
 
+validate_registry_artifact() (
+    local registry=$1
+    local validator=$2
+    shift 2
+    local scratch
+    scratch=$(mktemp -d "${TMPDIR:-/tmp}/kiwi-vector-registry.XXXXXX")
+    trap 'rm -rf -- "$scratch"' EXIT
+    canonicalize_required_jobs "$registry" "$scratch/required-jobs.json" test
+    "$validator" "$scratch/required-jobs.json" "$@"
+)
+
 validate_runtime_document() {
     local evidence=$1
     /usr/bin/python3 -I -B - "$evidence" <<'PY'
@@ -202,17 +238,17 @@ PY
 case ${1:-} in
     --validate-collection)
         [[ $# -eq 3 ]] || die 'usage: --validate-collection REGISTRY LOG'
-        validate_collection "$2" "$3"
+        validate_registry_artifact "$2" validate_collection "$3"
         exit 0
         ;;
     --validate-summary)
         [[ $# -eq 3 ]] || die 'usage: --validate-summary REGISTRY SUMMARY'
-        validate_summary "$2" "$3"
+        validate_registry_artifact "$2" validate_summary "$3"
         exit 0
         ;;
     --validate-raw-coverage)
         [[ $# -eq 3 ]] || die 'usage: --validate-raw-coverage REGISTRY EVIDENCE'
-        validate_raw_coverage "$2" "$3"
+        validate_registry_artifact "$2" validate_raw_coverage "$3"
         exit 0
         ;;
     --validate-callback-result)
@@ -240,12 +276,6 @@ else
         || die 'KIWI_COMPAT_REQUIRE_ORACLE=1 is required'
 fi
 
-script_path=${BASH_SOURCE[0]}
-[[ $script_path == /* ]] || script_path=$PWD/$script_path
-script_directory=${script_path%/*}
-cd -P -- "$script_directory"
-script_directory=$PWD
-repository_root=$(cd -P -- "$script_directory/../.." && pwd)
 registry=$repository_root/tests/compat/redis-8.8.1/vector-required-jobs.yaml
 module=tests/python/test_vector_set_differential.py
 
@@ -341,6 +371,10 @@ callback_main() {
         || die 'Oracle callback workdir identity mismatch'
     [[ -x /callback-input/target/debug/kiwi ]] \
         || die 'current-HEAD Kiwi binary is missing from callback input'
+    [[ -x /callback-input/target/debug/kiwi-required-vector-jobs ]] \
+        || die 'authoritative required-jobs helper is missing from callback input'
+    callback_stage=registry-contract
+    canonicalize_required_jobs "$registry" /work/vector-required-jobs.json
 
     local kiwi_port
     kiwi_port=$(/usr/bin/python3 -I -B - <<'PY'
@@ -424,7 +458,8 @@ PY
         || callback_status=$?
     if [[ $callback_status -eq 0 ]]; then
         callback_stage=collection-contract
-        validate_collection "$registry" /work/collect.log || callback_status=$?
+        validate_collection /work/vector-required-jobs.json /work/collect.log \
+            || callback_status=$?
     fi
     if [[ $callback_status -eq 0 ]]; then
         callback_stage=execution
@@ -435,12 +470,13 @@ PY
     fi
     if [[ $callback_status -eq 0 ]]; then
         callback_stage=raw-coverage-contract
-        validate_raw_coverage "$registry" "$KIWI_VECTOR_RAW_COVERAGE" \
+        validate_raw_coverage /work/vector-required-jobs.json "$KIWI_VECTOR_RAW_COVERAGE" \
             || callback_status=$?
     fi
     if [[ $callback_status -eq 0 ]]; then
         callback_stage=summary-contract
-        validate_summary "$registry" /work/run-summary.json || callback_status=$?
+        validate_summary /work/vector-required-jobs.json /work/run-summary.json \
+            || callback_status=$?
     fi
     if [[ $callback_status -eq 0 ]]; then
         callback_stage=complete
@@ -478,6 +514,9 @@ fi
 [[ -z $tracked_status ]] || die 'Kiwi checkout has tracked changes and is not current HEAD'
 
 cd "$repository_root"
+env -u RUSTC_WRAPPER -u CARGO_BUILD_RUSTC_WRAPPER \
+    CARGO_TARGET_DIR="$repository_root/target" \
+    cargo build --locked -p kiwi-compat --bin kiwi-required-vector-jobs
 env -u RUSTC_WRAPPER -u CARGO_BUILD_RUSTC_WRAPPER \
     CARGO_TARGET_DIR="$repository_root/target" \
     cargo build --locked -p server --bin kiwi

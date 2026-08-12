@@ -23,6 +23,16 @@ use std::process::Command;
 
 use serde::Deserialize;
 
+#[cfg(target_os = "linux")]
+fn runner_command(runner: &std::path::Path) -> Command {
+    let mut command = Command::new("/usr/bin/bash");
+    command.arg(runner).env(
+        "KIWI_COMPAT_TEST_REQUIRED_JOBS_HELPER",
+        env!("CARGO_BIN_EXE_kiwi-required-vector-jobs"),
+    );
+    command
+}
+
 #[derive(Deserialize)]
 struct Workflow {
     jobs: BTreeMap<String, Job>,
@@ -104,6 +114,8 @@ fn vector_differential_fast_job_uses_marker_ownership_not_path_ignore() {
     let runner = include_str!("../../../scripts/compat/run-vector-differential.sh");
     for required in [
         "KIWI_COMPAT_REQUIRE_ORACLE",
+        "kiwi-required-vector-jobs",
+        "vector-required-jobs.json",
         "--collect-only",
         "--strict-markers",
         "expected_node_ids",
@@ -117,6 +129,34 @@ fn vector_differential_fast_job_uses_marker_ownership_not_path_ignore() {
     ] {
         assert!(runner.contains(required), "runner is missing {required}");
     }
+    assert!(!runner.contains("sed -n '/^    expected_node_ids:"));
+    assert!(!runner.contains("commands_match = re.search"));
+    assert!(!runner.contains("raw_cases_match = re.search"));
+    let callback_registry = runner
+        .find("canonicalize_required_jobs \"$registry\" /work/vector-required-jobs.json")
+        .expect("callback must invoke the authoritative registry parser");
+    let callback_collection = runner
+        .find("KIWI_VECTOR_PYTEST_SUMMARY=/work/collect-summary.json")
+        .expect("callback must collect the required pytest module");
+    assert!(callback_registry < callback_collection);
+    for validator in [
+        "validate_collection /work/vector-required-jobs.json",
+        "validate_raw_coverage /work/vector-required-jobs.json",
+        "validate_summary /work/vector-required-jobs.json",
+    ] {
+        assert!(
+            runner.contains(validator),
+            "callback validator bypasses canonical JSON: {validator}"
+        );
+    }
+    assert!(
+        runner
+            .find("cargo build --locked -p kiwi-compat --bin kiwi-required-vector-jobs")
+            .expect("outer runner must build the current-HEAD registry helper")
+            < runner
+                .find("scripts/compat/verify-redis-8.8.1.sh")
+                .expect("outer runner must invoke the Oracle verifier")
+    );
 }
 
 #[test]
@@ -136,6 +176,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
     fs::create_dir(&scratch).unwrap();
     let collection = scratch.join("collection.log");
     let summary = scratch.join("summary.json");
+    let passing = r#"{"collected":40,"passed":40,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
     let yaml = fs::read_to_string(&registry).unwrap();
     let node_ids = yaml
         .lines()
@@ -145,9 +186,9 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
     assert_eq!(node_ids.len(), 40);
 
     fs::write(&collection, format!("{}\n", node_ids.join("\n"))).unwrap();
+    fs::write(&summary, passing).unwrap();
     assert!(
-        Command::new("/usr/bin/bash")
-            .arg(&runner)
+        runner_command(&runner)
             .arg("--validate-collection")
             .arg(&registry)
             .arg(&collection)
@@ -155,10 +196,50 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
             .unwrap()
             .success()
     );
+    for (name, mutant) in [
+        (
+            "unknown-field",
+            yaml.replacen(
+                "    test_module:",
+                "    unknown_job_field: true\n    test_module:",
+                1,
+            ),
+        ),
+        (
+            "reversed-protocols",
+            yaml.replacen(
+                "    protocols: [resp2, resp3]",
+                "    protocols: [resp3, resp2]",
+                1,
+            ),
+        ),
+    ] {
+        let mutant_registry = scratch.join(format!("{name}.yaml"));
+        fs::write(&mutant_registry, mutant).unwrap();
+        assert!(
+            !runner_command(&runner)
+                .arg("--validate-collection")
+                .arg(&mutant_registry)
+                .arg(&collection)
+                .status()
+                .unwrap()
+                .success(),
+            "runner accepted {name} registry mutant"
+        );
+        assert!(
+            !runner_command(&runner)
+                .arg("--validate-summary")
+                .arg(&mutant_registry)
+                .arg(&summary)
+                .status()
+                .unwrap()
+                .success(),
+            "summary validator accepted {name} registry mutant"
+        );
+    }
     fs::write(&collection, "27 tests collected\n").unwrap();
     assert!(
-        !Command::new("/usr/bin/bash")
-            .arg(&runner)
+        !runner_command(&runner)
             .arg("--validate-collection")
             .arg(&registry)
             .arg(&collection)
@@ -171,8 +252,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         "tests/python/test_vector_set_differential.py::test_unregistered_node".to_string();
     fs::write(&collection, format!("{}\n", drifted_node_ids.join("\n"))).unwrap();
     assert!(
-        !Command::new("/usr/bin/bash")
-            .arg(&runner)
+        !runner_command(&runner)
             .arg("--validate-collection")
             .arg(&registry)
             .arg(&collection)
@@ -181,11 +261,8 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
             .success()
     );
 
-    let passing = r#"{"collected":40,"passed":40,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
-    fs::write(&summary, passing).unwrap();
     assert!(
-        Command::new("/usr/bin/bash")
-            .arg(&runner)
+        runner_command(&runner)
             .arg("--validate-summary")
             .arg(&registry)
             .arg(&summary)
@@ -203,8 +280,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
     ] {
         fs::write(&summary, mutant).unwrap();
         assert!(
-            !Command::new("/usr/bin/bash")
-                .arg(&runner)
+            !runner_command(&runner)
                 .arg("--validate-summary")
                 .arg(&registry)
                 .arg(&summary)
@@ -214,16 +290,14 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         );
     }
 
-    let unavailable = Command::new("/usr/bin/bash")
-        .arg(&runner)
+    let unavailable = runner_command(&runner)
         .env_clear()
         .env("OSTYPE", "linux-gnu")
         .env("KIWI_COMPAT_REQUIRE_ORACLE", "1")
         .status()
         .unwrap();
     assert!(!unavailable.success());
-    let identity_mismatch = Command::new("/usr/bin/bash")
-        .arg(&runner)
+    let identity_mismatch = runner_command(&runner)
         .arg("--callback")
         .env_clear()
         .env("OSTYPE", "linux-gnu")
@@ -241,8 +315,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
     let valid_runtime = r#"{"build_role":"rebuild","binary_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","binary_identity":{"device":1,"inode":2,"mode":33261,"size":3,"nlink":1},"held_fd":true,"pid":42,"info_redis_versions":["8.8.1"]}"#;
     fs::write(&runtime_evidence, valid_runtime).unwrap();
     assert!(
-        Command::new("/usr/bin/bash")
-            .arg(&runner)
+        runner_command(&runner)
             .arg("--validate-runtime-evidence")
             .arg(&runtime_evidence)
             .status()
@@ -262,8 +335,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
     ] {
         fs::write(&runtime_evidence, mutant).unwrap();
         assert!(
-            !Command::new("/usr/bin/bash")
-                .arg(&runner)
+            !runner_command(&runner)
                 .arg("--validate-runtime-evidence")
                 .arg(&runtime_evidence)
                 .status()
@@ -272,8 +344,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         );
     }
     assert!(
-        !Command::new("/usr/bin/bash")
-            .arg(&runner)
+        !runner_command(&runner)
             .args(["--validate-callback-result", "0", "1"])
             .status()
             .unwrap()
@@ -332,17 +403,42 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         ));
     }
     fs::write(&coverage, &records).unwrap();
-    let validate = |path: &std::path::Path| {
-        Command::new("/usr/bin/bash")
-            .arg(&runner)
+    let validate = |registry_path: &std::path::Path, coverage_path: &std::path::Path| {
+        runner_command(&runner)
             .arg("--validate-raw-coverage")
-            .arg(&registry)
-            .arg(path)
+            .arg(registry_path)
+            .arg(coverage_path)
             .status()
             .unwrap()
             .success()
     };
-    assert!(validate(&coverage));
+    assert!(validate(&registry, &coverage));
+    let yaml = fs::read_to_string(&registry).unwrap();
+    for (name, mutant) in [
+        (
+            "unknown-field",
+            yaml.replacen(
+                "    test_module:",
+                "    unknown_job_field: true\n    test_module:",
+                1,
+            ),
+        ),
+        (
+            "reversed-protocols",
+            yaml.replacen(
+                "    protocols: [resp2, resp3]",
+                "    protocols: [resp3, resp2]",
+                1,
+            ),
+        ),
+    ] {
+        let mutant_registry = scratch.join(format!("{name}.yaml"));
+        fs::write(&mutant_registry, mutant).unwrap();
+        assert!(
+            !validate(&mutant_registry, &coverage),
+            "raw coverage validator accepted {name} registry mutant"
+        );
+    }
 
     let missing_vcard = records
         .lines()
@@ -350,7 +446,7 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         .collect::<Vec<_>>()
         .join("\n");
     fs::write(&coverage, format!("{missing_vcard}\n")).unwrap();
-    assert!(!validate(&coverage));
+    assert!(!validate(&registry, &coverage));
 
     let typed_equivalence = records.replacen(
         &format!(
@@ -366,7 +462,7 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         1,
     );
     fs::write(&coverage, typed_equivalence).unwrap();
-    assert!(!validate(&coverage));
+    assert!(!validate(&registry, &coverage));
 
     let without_populated_vinfo = records
         .lines()
@@ -378,7 +474,7 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         .collect::<Vec<_>>()
         .join("\n");
     fs::write(&coverage, format!("{without_populated_vinfo}\n")).unwrap();
-    assert!(!validate(&coverage));
+    assert!(!validate(&registry, &coverage));
 
     let wrong_evidence_kind = records.replacen(
         "\"case_id\":\"populated\",\"command\":\"VINFO\",\"evidence_kind\":\"raw-schema\"",
@@ -386,7 +482,7 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         1,
     );
     fs::write(&coverage, wrong_evidence_kind).unwrap();
-    assert!(!validate(&coverage));
+    assert!(!validate(&registry, &coverage));
 
     fs::remove_dir_all(&scratch).unwrap();
 }
