@@ -764,6 +764,23 @@ fn repository_required_vector_job_matches_manifest_and_exact_pytest_collection()
         .collect::<BTreeSet<_>>();
     let registry_commands = registry.commands().iter().cloned().collect::<BTreeSet<_>>();
     assert_eq!(registry_commands, manifest_commands);
+    assert_eq!(
+        registry
+            .raw_cases()
+            .keys()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        registry_commands,
+        "every claimed required command must own observed raw RESP cases",
+    );
+    for (command, raw_case) in registry.raw_cases() {
+        assert_eq!(raw_case.len(), 4, "{command} raw-case ownership drifted");
+        assert!(
+            raw_case
+                .iter()
+                .all(|node_id| registry.expected_node_ids().contains(node_id))
+        );
+    }
 
     let node_ids = registry.expected_node_ids().iter().collect::<BTreeSet<_>>();
     assert_eq!(node_ids.len(), registry.expected_item_count());
@@ -775,9 +792,24 @@ fn repository_required_vector_job_matches_manifest_and_exact_pytest_collection()
 }
 
 #[test]
+fn required_vector_registry_rejects_a_command_without_raw_case_ownership() {
+    let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml");
+    let without_vcard = yaml.replace(
+        "      VCARD:\n        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]\n        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]\n        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]\n        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]\n",
+        "",
+    );
+    assert_ne!(
+        without_vcard, yaml,
+        "registry fixture must contain the VCARD raw case"
+    );
+    assert!(RequiredVectorJobs::from_yaml(&without_vcard).is_err());
+}
+
+#[test]
 fn required_vector_registry_rejects_node_count_and_identity_drift() {
     let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml");
-    let count_drift = yaml.replace("expected_item_count: 28", "expected_item_count: 27");
+    let count_drift = yaml.replace("expected_item_count: 29", "expected_item_count: 28");
+    assert_ne!(count_drift, yaml, "registry fixture must contain count 29");
     assert!(RequiredVectorJobs::from_yaml(&count_drift).is_err());
 
     let identity_drift = yaml.replace(

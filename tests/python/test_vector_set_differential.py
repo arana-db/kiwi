@@ -34,6 +34,8 @@ Both configured endpoints are mandatory: unavailable endpoints fail closed rathe
 than producing a skipped test result. All datasets use a fixed seed.
 """
 
+import hashlib
+import json
 import os
 import random
 import socket
@@ -230,13 +232,38 @@ def assert_same_outcome(kiwi, reference, *command):
     return kiwi_outcome
 
 
-def assert_same_raw(kiwi, reference, *command):
+def assert_same_raw(kiwi, reference, *command, coverage=None):
     kiwi_frame = kiwi.execute_raw(*command)
     reference_frame = reference.execute_raw(*command)
     assert kiwi_frame == reference_frame, (
         f"{command!r}: kiwi={kiwi_frame!r} != redis={reference_frame!r}"
     )
+    if coverage is not None:
+        coverage(command[0], kiwi_frame, reference_frame)
     return kiwi_frame
+
+
+def test_raw_comparator_rejects_equal_typed_values_with_different_frames():
+    class FrameClient:
+        def __init__(self, frame):
+            self.frame = frame
+
+        def execute_raw(self, *command):
+            assert command == (b"VISMEMBER", b"key", b"member")
+            return self.frame
+
+        def execute_command(self, *command):
+            assert command == (b"VISMEMBER", b"key", b"member")
+            return True
+
+    with pytest.raises(AssertionError, match="kiwi=.*redis="):
+        assert_same_raw(
+            FrameClient(b":1\r\n"),
+            FrameClient(b"#t\r\n"),
+            b"VISMEMBER",
+            b"key",
+            b"member",
+        )
 
 
 def reset_raw_key(kiwi, reference, key):
@@ -319,14 +346,50 @@ def test_raw_endpoint_separation_and_cleanup_idempotency_guards(monkeypatch):
     assert client.commands == [(b"DEL", b"key"), (b"DEL", b"key")]
 
 
+def raw_coverage_recorder(protocol):
+    path = os.getenv("KIWI_VECTOR_RAW_COVERAGE")
+    node_id = os.getenv("PYTEST_CURRENT_TEST", "").split(" ", 1)[0]
+    if not path and os.getenv("KIWI_COMPAT_REQUIRE_ORACLE") != "1":
+        return lambda _command, _kiwi_frame, _redis_frame: None
+    if not path or not node_id:
+        pytest.fail("required raw coverage destination or pytest node ID is missing")
+
+    def record(command, kiwi_frame, redis_frame):
+        entry = {
+            "command": command.decode("ascii"),
+            "node_id": node_id,
+            "protocol": protocol,
+            "kiwi_frame_sha256": hashlib.sha256(kiwi_frame).hexdigest(),
+            "redis_frame_sha256": hashlib.sha256(redis_frame).hexdigest(),
+        }
+        with open(path, "a", encoding="utf-8") as output:
+            output.write(json.dumps(entry, sort_keys=True) + "\n")
+
+    return record
+
+
 def assert_zero_vector_raw(raw_backends, kind, payload, element):
     kiwi, reference, protocol = raw_backends
     key = f"test_vdiff:raw:p{protocol}:{kind.decode().lower()}".encode()
     reset_raw_key(kiwi, reference, key)
+    coverage = raw_coverage_recorder(protocol)
     assert_same_raw(
-        kiwi, reference, b"VADD", key, kind, *payload, element, b"NOQUANT"
+        kiwi,
+        reference,
+        b"VADD",
+        key,
+        kind,
+        *payload,
+        element,
+        b"NOQUANT",
+        coverage=coverage,
     )
-    assert_same_raw(kiwi, reference, b"VEMB", key, element)
+    assert_same_raw(kiwi, reference, b"VCARD", key, coverage=coverage)
+    assert_same_raw(kiwi, reference, b"VDIM", key, coverage=coverage)
+    assert_same_raw(kiwi, reference, b"VEMB", key, element, coverage=coverage)
+    missing_key = f"test_vdiff:raw:p{protocol}:missing-scores".encode()
+    assert_same_raw(kiwi, reference, b"VINFO", missing_key, coverage=coverage)
+    assert_same_raw(kiwi, reference, b"VISMEMBER", key, element, coverage=coverage)
     hits = assert_same_raw(
         kiwi,
         reference,
@@ -337,8 +400,10 @@ def assert_zero_vector_raw(raw_backends, kind, payload, element):
         b"WITHSCORES",
         b"COUNT",
         b"2",
+        coverage=coverage,
     )
     assert hits.startswith(b"%" if protocol == 3 else b"*")
+    assert_same_raw(kiwi, reference, b"VREM", key, element, coverage=coverage)
 
 
 def test_zero_vector_values_raw_differential(raw_backends):

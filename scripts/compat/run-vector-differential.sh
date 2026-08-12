@@ -81,6 +81,72 @@ for name in ("failed", "skipped", "xfailed", "xpassed", "deselected"):
 PY
 }
 
+validate_raw_coverage() {
+    local registry=$1
+    local coverage=$2
+    /usr/bin/python3 -I -B - "$registry" "$coverage" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+registry = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+coverage_path = pathlib.Path(sys.argv[2])
+commands_match = re.search(r"^    commands: \[([^]]+)\]$", registry, re.MULTILINE)
+raw_cases_match = re.search(
+    r"^    raw_cases:\n(?P<body>.*?)(?=^    expected_node_ids:)",
+    registry,
+    re.MULTILINE | re.DOTALL,
+)
+if commands_match is None or raw_cases_match is None:
+    raise SystemExit("registry commands or raw cases are missing")
+required_commands = {part.strip() for part in commands_match.group(1).split(",")}
+expected = set()
+current_command = None
+for line in raw_cases_match.group("body").splitlines():
+    command_match = re.fullmatch(r"      ([A-Z]+):", line)
+    if command_match:
+        current_command = command_match.group(1)
+        continue
+    node_match = re.fullmatch(r"        - (tests/python/[^ ]+)", line)
+    if node_match and current_command:
+        expected.add((current_command, node_match.group(1)))
+if {command for command, _node_id in expected} != required_commands:
+    raise SystemExit("registry raw-case command coverage drifted")
+if not coverage_path.is_file():
+    raise SystemExit("raw coverage evidence is missing")
+observed = set()
+for line_number, line in enumerate(coverage_path.read_text(encoding="utf-8").splitlines(), 1):
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"raw coverage line {line_number} is invalid JSON: {error}")
+    required_fields = {
+        "command", "node_id", "protocol", "kiwi_frame_sha256", "redis_frame_sha256"
+    }
+    if set(record) != required_fields:
+        raise SystemExit(f"raw coverage line {line_number} fields drifted")
+    command = record["command"]
+    node_id = record["node_id"]
+    protocol = record["protocol"]
+    expected_protocol = 2 if node_id.endswith("[resp2]") else 3 if node_id.endswith("[resp3]") else None
+    if expected_protocol != protocol:
+        raise SystemExit(f"raw coverage line {line_number} protocol/node drifted")
+    kiwi_hash = record["kiwi_frame_sha256"]
+    redis_hash = record["redis_frame_sha256"]
+    if not re.fullmatch(r"[0-9a-f]{64}", kiwi_hash) or kiwi_hash != redis_hash:
+        raise SystemExit(f"raw coverage line {line_number} frame identity drifted")
+    key = (command, node_id)
+    if key in observed:
+        raise SystemExit(f"raw coverage line {line_number} duplicates {key!r}")
+    observed.add(key)
+if observed != expected:
+    missing = sorted(expected - observed)
+    extra = sorted(observed - expected)
+    raise SystemExit(f"raw coverage differs from registry: missing={missing} extra={extra}")
+PY
+}
+
 validate_runtime_document() {
     local evidence=$1
     /usr/bin/python3 -I -B - "$evidence" <<'PY'
@@ -118,6 +184,11 @@ case ${1:-} in
     --validate-summary)
         [[ $# -eq 3 ]] || die 'usage: --validate-summary REGISTRY SUMMARY'
         validate_summary "$2" "$3"
+        exit 0
+        ;;
+    --validate-raw-coverage)
+        [[ $# -eq 3 ]] || die 'usage: --validate-raw-coverage REGISTRY EVIDENCE'
+        validate_raw_coverage "$2" "$3"
         exit 0
         ;;
     --validate-callback-result)
@@ -212,7 +283,7 @@ print_callback_diagnostics() {
     printf 'trusted Vector differential callback failed: stage=%s callback=%s cleanup=%s\n' \
         "${callback_stage:-unknown}" "$callback_status" "$cleanup_status" >&2
     local file
-    for file in kiwi.log collect.log collect-summary.json pytest.log run-summary.json; do
+    for file in kiwi.log collect.log collect-summary.json pytest.log run-summary.json raw-coverage.jsonl; do
         [[ -e /work/$file ]] || continue
         printf '%s\n' "--- /work/$file (first 200 lines, at most 32768 bytes) ---" >&2
         sed -n '1,200p' "/work/$file" | head -c 32768 >&2 || true
@@ -317,6 +388,8 @@ PY
     export KIWI_TEST_REQUIRE_SERVER=1
     export KIWI_TEST_ISOLATED_SERVER=1
     export PYTHONPATH=/callback-input/.oracle-python
+    export KIWI_VECTOR_RAW_COVERAGE=/work/raw-coverage.jsonl
+    : >"$KIWI_VECTOR_RAW_COVERAGE"
 
     local callback_status=0
     cd /callback-input
@@ -335,6 +408,11 @@ PY
             /usr/bin/python3 -m pytest "$module" -v -ra --strict-markers \
             --maxfail=1 -p no:cacheprovider 2>&1 | tee /work/pytest.log \
             || callback_status=${PIPESTATUS[0]}
+    fi
+    if [[ $callback_status -eq 0 ]]; then
+        callback_stage=raw-coverage-contract
+        validate_raw_coverage "$registry" "$KIWI_VECTOR_RAW_COVERAGE" \
+            || callback_status=$?
     fi
     if [[ $callback_status -eq 0 ]]; then
         callback_stage=summary-contract

@@ -142,7 +142,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         .filter_map(|line| line.strip_prefix("      - tests/python/"))
         .map(|line| format!("tests/python/{line}"))
         .collect::<Vec<_>>();
-    assert_eq!(node_ids.len(), 28);
+    assert_eq!(node_ids.len(), 29);
 
     fs::write(&collection, format!("{}\n", node_ids.join("\n"))).unwrap();
     assert!(
@@ -181,7 +181,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
             .success()
     );
 
-    let passing = r#"{"collected":28,"passed":28,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
+    let passing = r#"{"collected":29,"passed":29,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
     fs::write(&summary, passing).unwrap();
     assert!(
         Command::new("/usr/bin/bash")
@@ -194,7 +194,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
             .success()
     );
     for mutant in [
-        passing.replace("\"collected\":28", "\"collected\":0"),
+        passing.replace("\"collected\":29", "\"collected\":0"),
         passing.replace("\"failed\":0", "\"failed\":1"),
         passing.replace("\"skipped\":0", "\"skipped\":1"),
         passing.replace("\"xfailed\":0", "\"xfailed\":1"),
@@ -279,6 +279,81 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
             .unwrap()
             .success()
     );
+
+    fs::remove_dir_all(&scratch).unwrap();
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn vector_differential_runner_requires_observed_raw_coverage_for_every_command() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let runner = root.join("scripts/compat/run-vector-differential.sh");
+    let registry = root.join("tests/compat/redis-8.8.1/vector-required-jobs.yaml");
+    let scratch = std::env::temp_dir().join(format!(
+        "kiwi-vector-raw-coverage-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir(&scratch).unwrap();
+    let coverage = scratch.join("raw-coverage.jsonl");
+    let node_ids = [
+        "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]",
+        "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]",
+        "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]",
+        "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]",
+    ];
+    let commands = [
+        "VADD",
+        "VCARD",
+        "VDIM",
+        "VEMB",
+        "VINFO",
+        "VISMEMBER",
+        "VREM",
+        "VSIM",
+    ];
+    let mut records = String::new();
+    for node_id in node_ids {
+        let protocol = if node_id.ends_with("[resp2]") { 2 } else { 3 };
+        for command in commands {
+            records.push_str(&format!(
+                "{{\"command\":\"{command}\",\"node_id\":\"{node_id}\",\"protocol\":{protocol},\"kiwi_frame_sha256\":\"{}\",\"redis_frame_sha256\":\"{}\"}}\n",
+                "a".repeat(64),
+                "a".repeat(64)
+            ));
+        }
+    }
+    fs::write(&coverage, &records).unwrap();
+    let validate = |path: &std::path::Path| {
+        Command::new("/usr/bin/bash")
+            .arg(&runner)
+            .arg("--validate-raw-coverage")
+            .arg(&registry)
+            .arg(path)
+            .status()
+            .unwrap()
+            .success()
+    };
+    assert!(validate(&coverage));
+
+    let missing_vcard = records
+        .lines()
+        .filter(|line| !(line.contains("\"command\":\"VCARD\"") && line.contains("[resp3]")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&coverage, format!("{missing_vcard}\n")).unwrap();
+    assert!(!validate(&coverage));
+
+    let typed_equivalence = records.replacen(
+        &format!("\"kiwi_frame_sha256\":\"{}\"", "a".repeat(64)),
+        &format!("\"kiwi_frame_sha256\":\"{}\"", "b".repeat(64)),
+        1,
+    );
+    fs::write(&coverage, typed_equivalence).unwrap();
+    assert!(!validate(&coverage));
 
     fs::remove_dir_all(&scratch).unwrap();
 }

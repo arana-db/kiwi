@@ -15,7 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::de::{Error as _, MapAccess, Visitor};
@@ -185,6 +185,7 @@ pub struct RequiredVectorJobs {
     pytest_marker: String,
     protocols: Vec<Protocol>,
     commands: Vec<String>,
+    raw_cases: BTreeMap<String, Vec<String>>,
     expected_node_ids: Vec<String>,
     expected_item_count: usize,
     manifest_profile: Profile,
@@ -242,6 +243,12 @@ impl RequiredVectorJobs {
                 "required Vector command scope must not be empty".to_string(),
             ));
         }
+        if raw_job.raw_cases.keys().collect::<Vec<_>>() != commands.keys().collect::<Vec<_>>() {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "raw-case command ownership must exactly match required Vector commands"
+                    .to_string(),
+            ));
+        }
         let mut node_ids = BTreeMap::new();
         let prefix = format!("{}::", raw_job.test_module);
         for node_id in &raw_job.expected_node_ids {
@@ -261,6 +268,25 @@ impl RequiredVectorJobs {
                 "expected_item_count must be positive and equal expected_node_ids length"
                     .to_string(),
             ));
+        }
+        for (command, raw_node_ids) in &raw_job.raw_cases {
+            let unique = raw_node_ids.iter().collect::<BTreeSet<_>>();
+            if raw_node_ids.is_empty()
+                || unique.len() != raw_node_ids.len()
+                || raw_node_ids
+                    .iter()
+                    .any(|node_id| !node_ids.contains_key(node_id))
+                || !raw_node_ids
+                    .iter()
+                    .any(|node_id| node_id.ends_with("[resp2]"))
+                || !raw_node_ids
+                    .iter()
+                    .any(|node_id| node_id.ends_with("[resp3]"))
+            {
+                return Err(ManifestError::InvalidRequiredJobs(format!(
+                    "raw cases for {command} must be unique registered RESP2/RESP3 node IDs"
+                )));
+            }
         }
         let manifest_profile = Profile::from(raw_job.manifest_profile);
         if manifest_profile != Profile::Redis881StandaloneCacheOff {
@@ -283,6 +309,7 @@ impl RequiredVectorJobs {
             pytest_marker: raw_job.pytest_marker,
             protocols,
             commands: commands.into_keys().collect(),
+            raw_cases: raw_job.raw_cases,
             expected_node_ids: raw_job.expected_node_ids,
             expected_item_count: raw_job.expected_item_count,
             manifest_profile,
@@ -309,6 +336,10 @@ impl RequiredVectorJobs {
 
     pub fn commands(&self) -> &[String] {
         &self.commands
+    }
+
+    pub fn raw_cases(&self) -> &BTreeMap<String, Vec<String>> {
+        &self.raw_cases
     }
 
     pub fn expected_node_ids(&self) -> &[String] {
@@ -532,6 +563,7 @@ struct RawRequiredVectorJob {
     pytest_marker: String,
     protocols: Vec<RawProtocol>,
     commands: Vec<String>,
+    raw_cases: BTreeMap<String, Vec<String>>,
     expected_node_ids: Vec<String>,
     expected_item_count: usize,
     manifest_profile: RawProfile,
