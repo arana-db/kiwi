@@ -44,6 +44,7 @@ const ERR_VADD_EF: &str = "ERR VADD option EF is not supported yet";
 const ERR_VADD_SETATTR: &str = "ERR VADD option SETATTR is not supported yet";
 const ERR_VADD_M: &str = "ERR VADD option M is not supported yet";
 const ERR_VADD_INVALID_OPTION: &str = "ERR invalid option after element";
+const ERR_VADD_WRONG_ARITY: &str = "ERR wrong number of arguments for 'VADD' command";
 
 crate::define_vector_command!(
     VAddCmd,
@@ -71,7 +72,7 @@ impl VAddParseError {
     const fn message(self) -> &'static str {
         match self {
             Self::InvalidVector => ERR_INVALID_VECTOR,
-            Self::MissingElement => "ERR wrong number of arguments for 'vadd' command",
+            Self::MissingElement => ERR_VADD_WRONG_ARITY,
             Self::InvalidOption(message) | Self::ResourceLimit(message) => message,
         }
     }
@@ -148,6 +149,10 @@ impl Cmd for VAddCmd {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
 
+    fn wrong_arity_reply(&self, _command_name: &[u8]) -> RespData {
+        error_reply(ERR_VADD_WRONG_ARITY)
+    }
+
     fn admit_network_request(
         &self,
         argv: &[Bytes],
@@ -169,9 +174,7 @@ impl Cmd for VAddCmd {
         let parsed = match parse_vadd_with_limits(&argv, limits) {
             Ok(parsed) => parsed,
             Err(VAddParseError::MissingElement) => {
-                client.set_reply(error_reply(
-                    "ERR wrong number of arguments for 'vadd' command",
-                ));
+                client.set_reply(error_reply(ERR_VADD_WRONG_ARITY));
                 return;
             }
             Err(error) => {
@@ -481,7 +484,7 @@ mod tests {
 
         assert_eq!(
             client.take_reply(),
-            RespData::Error("ERR wrong number of arguments for 'vadd' command".into())
+            RespData::Error("ERR wrong number of arguments for 'VADD' command".into())
         );
     }
 
@@ -502,7 +505,7 @@ mod tests {
 
         assert_eq!(
             client.take_reply(),
-            RespData::Error("ERR wrong number of arguments for 'vadd' command".into())
+            RespData::Error("ERR wrong number of arguments for 'VADD' command".into())
         );
     }
 
@@ -545,7 +548,7 @@ mod tests {
 
         assert_eq!(
             client.take_reply(),
-            RespData::Error("ERR wrong number of arguments for 'vadd' command".into())
+            RespData::Error("ERR wrong number of arguments for 'VADD' command".into())
         );
     }
 

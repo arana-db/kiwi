@@ -23,6 +23,7 @@ use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
 pub const MANIFEST_SCHEMA: &str = "kiwi-redis-compat/v1";
+pub const REQUIRED_VECTOR_JOBS_SCHEMA: &str = "kiwi-vector-required-jobs/v1";
 pub const REDIS_TAG: &str = "8.8.1";
 pub const REDIS_COMMIT: &str = "77b6c308396c9700672390a210143a8496fb4b10";
 
@@ -174,6 +175,160 @@ impl CompatibilityManifest {
             },
             commands,
         })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RequiredVectorJobs {
+    job_id: String,
+    test_module: String,
+    pytest_marker: String,
+    protocols: Vec<Protocol>,
+    commands: Vec<String>,
+    expected_node_ids: Vec<String>,
+    expected_item_count: usize,
+    manifest_profile: Profile,
+    fast_job_owner: String,
+    fast_job_deselect_marker: String,
+}
+
+impl RequiredVectorJobs {
+    pub fn from_yaml(input: &str) -> Result<Self, ManifestError> {
+        let raw: RawRequiredVectorJobs = yaml_serde::from_str(input)?;
+        if raw.schema != REQUIRED_VECTOR_JOBS_SCHEMA {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required-jobs schema is not kiwi-vector-required-jobs/v1".to_string(),
+            ));
+        }
+        if raw.jobs.len() != 1 {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required-jobs registry must contain exactly one job".to_string(),
+            ));
+        }
+        let raw_job = raw.jobs.into_iter().next().ok_or_else(|| {
+            ManifestError::InvalidRequiredJobs("required job is missing".to_string())
+        })?;
+        if raw_job.job_id != "trusted-vector-differential"
+            || raw_job.test_module != "tests/python/test_vector_set_differential.py"
+            || raw_job.pytest_marker != "raw_vector_protocol"
+        {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required Vector job identity, module, or marker drifted".to_string(),
+            ));
+        }
+        let protocols = raw_job
+            .protocols
+            .into_iter()
+            .map(Protocol::from)
+            .collect::<Vec<_>>();
+        if protocols != [Protocol::Resp2, Protocol::Resp3] {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required Vector protocols must be exactly resp2, resp3".to_string(),
+            ));
+        }
+        let mut commands = BTreeMap::new();
+        for command in raw_job.commands {
+            if !command.starts_with('V')
+                || !command.bytes().all(|byte| (b'A'..=b'Z').contains(&byte))
+                || commands.insert(command.clone(), ()).is_some()
+            {
+                return Err(ManifestError::InvalidRequiredJobs(format!(
+                    "invalid or duplicate required Vector command {command:?}"
+                )));
+            }
+        }
+        if commands.is_empty() {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required Vector command scope must not be empty".to_string(),
+            ));
+        }
+        let mut node_ids = BTreeMap::new();
+        let prefix = format!("{}::", raw_job.test_module);
+        for node_id in &raw_job.expected_node_ids {
+            if !node_id.starts_with(&prefix)
+                || node_id.trim() != node_id
+                || node_ids.insert(node_id.clone(), ()).is_some()
+            {
+                return Err(ManifestError::InvalidRequiredJobs(format!(
+                    "invalid or duplicate expected pytest node ID {node_id:?}"
+                )));
+            }
+        }
+        if raw_job.expected_item_count == 0
+            || raw_job.expected_item_count != raw_job.expected_node_ids.len()
+        {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "expected_item_count must be positive and equal expected_node_ids length"
+                    .to_string(),
+            ));
+        }
+        let manifest_profile = Profile::from(raw_job.manifest_profile);
+        if manifest_profile != Profile::Redis881StandaloneCacheOff {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required Vector manifest profile must be redis_8_8_1_standalone_cache_off"
+                    .to_string(),
+            ));
+        }
+        if raw_job.fast_job.owner != raw_job.job_id
+            || raw_job.fast_job.deselect_marker != raw_job.pytest_marker
+        {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "fast-job ownership must name the required job and its pytest marker".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            job_id: raw_job.job_id,
+            test_module: raw_job.test_module,
+            pytest_marker: raw_job.pytest_marker,
+            protocols,
+            commands: commands.into_keys().collect(),
+            expected_node_ids: raw_job.expected_node_ids,
+            expected_item_count: raw_job.expected_item_count,
+            manifest_profile,
+            fast_job_owner: raw_job.fast_job.owner,
+            fast_job_deselect_marker: raw_job.fast_job.deselect_marker,
+        })
+    }
+
+    pub fn job_id(&self) -> &str {
+        &self.job_id
+    }
+
+    pub fn test_module(&self) -> &str {
+        &self.test_module
+    }
+
+    pub fn pytest_marker(&self) -> &str {
+        &self.pytest_marker
+    }
+
+    pub fn protocols(&self) -> &[Protocol] {
+        &self.protocols
+    }
+
+    pub fn commands(&self) -> &[String] {
+        &self.commands
+    }
+
+    pub fn expected_node_ids(&self) -> &[String] {
+        &self.expected_node_ids
+    }
+
+    pub fn expected_item_count(&self) -> usize {
+        self.expected_item_count
+    }
+
+    pub fn manifest_profile(&self) -> Profile {
+        self.manifest_profile
+    }
+
+    pub fn fast_job_owner(&self) -> &str {
+        &self.fast_job_owner
+    }
+
+    pub fn fast_job_deselect_marker(&self) -> &str {
+        &self.fast_job_deselect_marker
     }
 }
 
@@ -360,6 +515,34 @@ struct RawCompatibilityManifest {
     profile: RawProfile,
     redis: RawRedisBaseline,
     commands: Vec<RawCommandContract>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRequiredVectorJobs {
+    schema: String,
+    jobs: Vec<RawRequiredVectorJob>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRequiredVectorJob {
+    job_id: String,
+    test_module: String,
+    pytest_marker: String,
+    protocols: Vec<RawProtocol>,
+    commands: Vec<String>,
+    expected_node_ids: Vec<String>,
+    expected_item_count: usize,
+    manifest_profile: RawProfile,
+    fast_job: RawFastJobOwnership,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFastJobOwnership {
+    owner: String,
+    deselect_marker: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -658,6 +841,8 @@ pub enum ManifestError {
         actual_tag: String,
         actual_commit: String,
     },
+    #[error("invalid required Vector jobs registry: {0}")]
+    InvalidRequiredJobs(String),
     #[error("commands[{index}].command duplicates commands[{first_index}].command {command:?}")]
     DuplicateCommand {
         command: String,

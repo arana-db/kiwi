@@ -17,8 +17,9 @@
 
 use kiwi_compat::manifest::{
     ArgumentSemantics, Classification, CompatibilityManifest, ErrorSemantics, Mode, Profile,
-    Protocol, REDIS_COMMIT, REDIS_TAG, ReplySchema, TestEvidence, TtlSemantics,
+    Protocol, REDIS_COMMIT, REDIS_TAG, ReplySchema, RequiredVectorJobs, TestEvidence, TtlSemantics,
 };
+use std::collections::BTreeSet;
 
 const VALID_MANIFEST: &str = r#"
 schema: kiwi-redis-compat/v1
@@ -614,7 +615,7 @@ fn loads_the_repository_redis_8_8_1_manifest() {
 }
 
 #[test]
-fn repository_vector_contract_is_explicitly_governed_while_frozen() {
+fn repository_vector_contract_has_required_wire_differential_evidence() {
     let manifest = parse_valid(include_str!(
         "../../../tests/compat/redis-8.8.1/manifest.yaml"
     ));
@@ -626,8 +627,8 @@ fn repository_vector_contract_is_explicitly_governed_while_frozen() {
 
     for command in &vector_commands {
         assert!(
-            !command.tests().contains(&TestEvidence::WireDifferential),
-            "{} must not claim wire-differential evidence while VectorSet is frozen",
+            command.tests().contains(&TestEvidence::WireDifferential),
+            "{} must be owned by the required wire-differential gate",
             command.command()
         );
     }
@@ -715,6 +716,82 @@ fn repository_vector_contract_is_explicitly_governed_while_frozen() {
             "VSIM governance must mention {term}"
         );
     }
+}
+
+#[test]
+fn repository_required_vector_job_matches_manifest_and_exact_pytest_collection() {
+    let manifest = parse_valid(include_str!(
+        "../../../tests/compat/redis-8.8.1/manifest.yaml"
+    ));
+    let registry = RequiredVectorJobs::from_yaml(include_str!(
+        "../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml"
+    ))
+    .expect("required Vector job registry must load");
+
+    assert_eq!(registry.job_id(), "trusted-vector-differential");
+    assert_eq!(
+        registry.test_module(),
+        "tests/python/test_vector_set_differential.py"
+    );
+    assert_eq!(registry.pytest_marker(), "raw_vector_protocol");
+    assert_eq!(registry.protocols(), &[Protocol::Resp2, Protocol::Resp3]);
+    assert_eq!(registry.manifest_profile(), manifest.profile());
+    assert_eq!(registry.fast_job_owner(), registry.job_id());
+    assert_eq!(
+        registry.fast_job_deselect_marker(),
+        registry.pytest_marker()
+    );
+    assert_eq!(
+        registry.expected_item_count(),
+        registry.expected_node_ids().len()
+    );
+    assert!(registry.expected_item_count() > 0);
+
+    let manifest_commands = manifest
+        .commands()
+        .iter()
+        .filter(|command| {
+            command.command().starts_with('V')
+                && (matches!(
+                    command.classification(),
+                    Classification::Required | Classification::KnownDifference
+                ) || matches!(
+                    command.modes().get(&Mode::StandaloneCacheOff),
+                    Some(Classification::Required | Classification::KnownDifference)
+                ))
+        })
+        .map(|command| command.command().to_string())
+        .collect::<BTreeSet<_>>();
+    let registry_commands = registry.commands().iter().cloned().collect::<BTreeSet<_>>();
+    assert_eq!(registry_commands, manifest_commands);
+
+    let node_ids = registry.expected_node_ids().iter().collect::<BTreeSet<_>>();
+    assert_eq!(node_ids.len(), registry.expected_item_count());
+    assert!(
+        registry.expected_node_ids().iter().all(|node_id| {
+            node_id.starts_with("tests/python/test_vector_set_differential.py::")
+        })
+    );
+}
+
+#[test]
+fn required_vector_registry_rejects_node_count_and_identity_drift() {
+    let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml");
+    let count_drift = yaml.replace("expected_item_count: 28", "expected_item_count: 27");
+    assert!(RequiredVectorJobs::from_yaml(&count_drift).is_err());
+
+    let identity_drift = yaml.replace(
+        "test_raw_cleanup_requires_a_nonnegative_integer_frame",
+        "test_unregistered_collection_node",
+    );
+    let registry = RequiredVectorJobs::from_yaml(&identity_drift)
+        .expect("structurally valid node drift must still parse");
+    assert_ne!(
+        registry.expected_node_ids(),
+        RequiredVectorJobs::from_yaml(yaml)
+            .expect("repository registry must parse")
+            .expected_node_ids()
+    );
 }
 
 fn parse_valid(yaml: &str) -> CompatibilityManifest {

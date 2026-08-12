@@ -118,6 +118,10 @@ impl Cmd for GatedCmd {
         self.inner.do_cmd(client, storage);
     }
 
+    fn wrong_arity_reply(&self, command_name: &[u8]) -> RespData {
+        self.inner.wrong_arity_reply(command_name)
+    }
+
     fn clone_box(&self) -> Box<dyn Cmd> {
         Box::new(self.clone())
     }
@@ -788,6 +792,38 @@ mod tests {
             ],
         );
         assert_eq!(error_text(&reply), "ERR invalid vector specification");
+    }
+
+    #[test]
+    fn enabled_vadd_preserves_redis_wrong_arity_casing_through_both_gates() {
+        let table = create_command_table_with_gates(
+            no_requirepass_provider(),
+            CommandTableGates::from_flags(true, true, true),
+        );
+        let cases = [
+            vec![b"vadd".to_vec()],
+            vec![b"vadd".to_vec(), b"k".to_vec()],
+            vec![b"vadd".to_vec(), b"k".to_vec(), b"FP32".to_vec()],
+            vec![
+                b"vadd".to_vec(),
+                b"k".to_vec(),
+                b"FP32".to_vec(),
+                b"bad".to_vec(),
+            ],
+        ];
+
+        for argv in cases {
+            assert_eq!(
+                error_text(&run_command(&table, "vadd", &argv)),
+                "ERR wrong number of arguments for 'VADD' command"
+            );
+        }
+
+        assert_eq!(
+            error_text(&run_command(&table, "set", &[b"set".to_vec()])),
+            "ERR wrong number of arguments for 'set' command",
+            "the VADD exception must not change other command error bytes"
+        );
     }
 
     #[test]

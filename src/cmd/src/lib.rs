@@ -213,16 +213,20 @@ pub trait Cmd: Send + Sync {
 
     fn clone_box(&self) -> Box<dyn Cmd>;
 
+    fn wrong_arity_reply(&self, command_name: &[u8]) -> RespData {
+        RespData::Error(
+            format!(
+                "ERR wrong number of arguments for '{}' command",
+                String::from_utf8_lossy(command_name),
+            )
+            .into(),
+        )
+    }
+
     fn execute(&self, client: &Client, storage: Arc<Storage>) {
         debug!("execute command: {:?}", client.cmd_name());
         if !self.check_arg(client.argv().len()) {
-            client.set_reply(RespData::Error(
-                format!(
-                    "ERR wrong number of arguments for '{}' command",
-                    String::from_utf8_lossy(client.cmd_name().as_slice()),
-                )
-                .into(),
-            ));
+            client.set_reply(self.wrong_arity_reply(client.cmd_name().as_slice()));
             return;
         }
         if self.do_initial(client) {

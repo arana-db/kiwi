@@ -1353,13 +1353,23 @@ async fn storage_command_e2e_vector_admission_preserves_static_gate_order() {
         assert_eq!(reply, RespData::Error(Bytes::copy_from_slice(expected)));
         assert_eq!(requests_sent(&server).await, before);
 
-        let short = send_command(&mut stream, &["VADD", "vectors"]).await;
+        let short = send_command(&mut stream, &["VADD", "vectors", "FP32", "bad"]).await;
         assert_eq!(
             short,
             RespData::Error(Bytes::from_static(
-                b"ERR wrong number of arguments for 'vadd' command"
+                b"ERR wrong number of arguments for 'VADD' command"
             )),
             "generic arity must precede static and resource gates"
+        );
+        assert_eq!(requests_sent(&server).await, before);
+
+        let non_vector = send_command(&mut stream, &["SMISMEMBER", "members"]).await;
+        assert_eq!(
+            non_vector,
+            RespData::Error(Bytes::from_static(
+                b"ERR wrong number of arguments for 'smismember' command"
+            )),
+            "the VADD exception must not change non-Vector error bytes"
         );
         assert_eq!(requests_sent(&server).await, before);
         server.shutdown().await;

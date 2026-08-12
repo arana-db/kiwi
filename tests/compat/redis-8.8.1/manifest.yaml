@@ -83,7 +83,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences:
       - owner: cmd-vector
         issue: https://github.com/arana-db/kiwi/issues/418
@@ -110,7 +110,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences: []
     owner: cmd-vector
   - command: VDIM
@@ -123,7 +123,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences: []
     owner: cmd-vector
   - command: VEMB
@@ -136,7 +136,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences:
       - owner: cmd-vector
         issue: https://github.com/arana-db/kiwi/issues/418
@@ -170,7 +170,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences:
       - owner: cmd-vector
         issue: https://github.com/arana-db/kiwi/issues/418
@@ -190,7 +190,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences:
       - owner: cmd-vector
         issue: https://github.com/arana-db/kiwi/issues/421
@@ -210,7 +210,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences:
       - owner: cmd-vector
         issue: https://github.com/arana-db/kiwi/issues/421
@@ -230,7 +230,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences:
       - owner: cmd-vector
         issue: https://github.com/arana-db/kiwi/issues/418

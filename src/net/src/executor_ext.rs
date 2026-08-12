@@ -64,8 +64,10 @@ impl CmdExecutorNetworkExt for CmdExecutor {
             // Check argument count first
             let argv = exec.client.argv();
             if !exec.cmd.check_arg(argv.len()) {
-                let error_msg = format!("ERR wrong number of arguments for '{}' command", cmd_name);
-                exec.client.set_reply(RespData::Error(error_msg.into()));
+                exec.client.set_reply(
+                    exec.cmd
+                        .wrong_arity_reply(exec.client.cmd_name().as_slice()),
+                );
                 return Ok(());
             }
 

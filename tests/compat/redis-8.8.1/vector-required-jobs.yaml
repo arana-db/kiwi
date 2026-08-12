@@ -1,0 +1,58 @@
+# Copyright (c) 2024-present, arana-db Community.  All rights reserved.
+#
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+schema: kiwi-vector-required-jobs/v1
+jobs:
+  - job_id: trusted-vector-differential
+    test_module: tests/python/test_vector_set_differential.py
+    pytest_marker: raw_vector_protocol
+    protocols: [resp2, resp3]
+    commands: [VADD, VCARD, VDIM, VEMB, VINFO, VISMEMBER, VREM, VSIM]
+    expected_node_ids:
+      - tests/python/test_vector_set_differential.py::test_raw_cleanup_requires_a_nonnegative_integer_frame
+      - tests/python/test_vector_set_differential.py::test_raw_endpoint_separation_and_cleanup_idempotency_guards
+      - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
+      - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
+      - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
+      - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+      - tests/python/test_vector_set_differential.py::test_vsim_missing_key_withscores_raw_frame[resp2]
+      - tests/python/test_vector_set_differential.py::test_vsim_missing_key_withscores_raw_frame[resp3]
+      - tests/python/test_vector_set_differential.py::test_vadd_typed_error_precedence_raw[resp2]
+      - tests/python/test_vector_set_differential.py::test_vadd_typed_error_precedence_raw[resp3]
+      - tests/python/test_vector_set_differential.py::test_vadd_vcard_vdim_vismember_match[resp2]
+      - tests/python/test_vector_set_differential.py::test_vadd_vcard_vdim_vismember_match[resp3]
+      - tests/python/test_vector_set_differential.py::test_repeated_vadd_and_vsim_options_match[resp2]
+      - tests/python/test_vector_set_differential.py::test_repeated_vadd_and_vsim_options_match[resp3]
+      - tests/python/test_vector_set_differential.py::test_vemb_matches_for_every_member[resp2]
+      - tests/python/test_vector_set_differential.py::test_vemb_matches_for_every_member[resp3]
+      - tests/python/test_vector_set_differential.py::test_vsim_variants_match[resp2]
+      - tests/python/test_vector_set_differential.py::test_vsim_variants_match[resp3]
+      - tests/python/test_vector_set_differential.py::test_vrem_replies_and_set_disappears_when_emptied[resp2]
+      - tests/python/test_vector_set_differential.py::test_vrem_replies_and_set_disappears_when_emptied[resp3]
+      - tests/python/test_vector_set_differential.py::test_wrongtype_errors_match[resp2]
+      - tests/python/test_vector_set_differential.py::test_wrongtype_errors_match[resp3]
+      - tests/python/test_vector_set_differential.py::test_missing_key_semantics_match[resp2]
+      - tests/python/test_vector_set_differential.py::test_missing_key_semantics_match[resp3]
+      - tests/python/test_vector_set_differential.py::test_vsim_missing_key_precedes_malformed_and_option_validation[resp2]
+      - tests/python/test_vector_set_differential.py::test_vsim_missing_key_precedes_malformed_and_option_validation[resp3]
+      - tests/python/test_vector_set_differential.py::test_vinfo_field_names_and_types_match[resp2]
+      - tests/python/test_vector_set_differential.py::test_vinfo_field_names_and_types_match[resp3]
+    expected_item_count: 28
+    manifest_profile: redis_8_8_1_standalone_cache_off
+    fast_job:
+      owner: trusted-vector-differential
+      deselect_marker: raw_vector_protocol

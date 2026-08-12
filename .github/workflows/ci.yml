@@ -299,6 +299,58 @@ jobs:
       - name: Run integration tests
         run: bash tests/run_python_integration.sh
 
+  trusted-vector-differential:
+    name: trusted Vector differential
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential protobuf-compiler python3-pip
+
+      - name: Prepare callback Python dependencies
+        run: |
+          /usr/bin/python3 -m pip install --target .oracle-python \
+            'pytest>=7.0.0' 'pytest-timeout>=2.1.0' 'redis>=5.0.0'
+
+      - name: Prepare exact Redis 8.8.1 source
+        run: |
+          mkdir -p "$RUNNER_TEMP/kiwi-oracle"
+          git clone --no-checkout https://github.com/redis/redis.git \
+            "$RUNNER_TEMP/kiwi-oracle/redis-source"
+          git -C "$RUNNER_TEMP/kiwi-oracle/redis-source" checkout --detach \
+            77b6c308396c9700672390a210143a8496fb4b10
+
+      - name: Run required trusted Vector differential
+        run: |
+          KIWI_COMPAT_REQUIRE_ORACLE=1 \
+          KIWI_REDIS_ORACLE_SOURCE="$RUNNER_TEMP/kiwi-oracle/redis-source" \
+          KIWI_REDIS_ORACLE_PRIMARY_METADATA="$RUNNER_TEMP/kiwi-oracle/primary-build.json" \
+          KIWI_REDIS_ORACLE_OUTPUT="$RUNNER_TEMP/kiwi-oracle/oracle-provenance.json" \
+            bash scripts/compat/run-vector-differential.sh
+
+      - name: Upload trusted Oracle provenance
+        uses: actions/upload-artifact@v7
+        with:
+          name: trusted-vector-oracle-provenance
+          retention-days: 7
+          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json
+
   sanitizers:
     name: Sanitizers (${{ matrix.sanitizer }})
     runs-on: ubuntu-latest

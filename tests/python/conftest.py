@@ -23,7 +23,10 @@ pytest 配置文件
 提供测试夹具（fixtures）和通用配置
 """
 
+import json
 import os
+import socket
+from pathlib import Path
 
 import pytest
 import redis
@@ -32,6 +35,50 @@ import redis
 def _enabled(name):
     """Return whether a CI-only test mode is explicitly enabled."""
     return os.environ.get(name) == "1"
+
+
+def _required_vector_mode():
+    return _enabled("KIWI_COMPAT_REQUIRE_ORACLE")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def required_vector_endpoints():
+    """Probe both required endpoints once before any Vector item can run."""
+    if not _required_vector_mode():
+        yield
+        return
+
+    required = (
+        "KIWI_HOST",
+        "KIWI_PORT",
+        "KIWI_REDIS_ORACLE_HOST",
+        "KIWI_REDIS_ORACLE_PORT",
+        "KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE",
+    )
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        pytest.fail(
+            f"required Vector Oracle identity is missing: {', '.join(missing)}",
+            pytrace=False,
+        )
+    if os.environ["KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE"] != "/runtime-evidence.json":
+        pytest.fail("required Vector runtime evidence identity mismatch", pytrace=False)
+    endpoints = (
+        (os.environ.get("KIWI_HOST", "127.0.0.1"), int(os.environ["KIWI_PORT"])),
+        (os.environ["KIWI_REDIS_ORACLE_HOST"], int(os.environ["KIWI_REDIS_ORACLE_PORT"])),
+    )
+    for host, port in endpoints:
+        try:
+            with socket.create_connection((host, port), timeout=0.5) as connection:
+                connection.sendall(b"*1\r\n$4\r\nPING\r\n")
+                if connection.recv(64) != b"+PONG\r\n":
+                    raise OSError("PING did not return +PONG")
+        except OSError as error:
+            pytest.fail(
+                f"required Vector endpoint unavailable at {host}:{port}: {error}",
+                pytrace=False,
+            )
+    yield
 
 
 @pytest.fixture(scope="session")
@@ -210,3 +257,61 @@ def pytest_configure(config):
         "markers",
         "raw_vector_protocol: owns function-scoped raw RESP connections and fails closed",
     )
+
+
+def pytest_collection_modifyitems(items):
+    """Required Vector nodes must remain owned and cannot be softened."""
+    if not _required_vector_mode():
+        return
+
+    vector_items = [
+        item
+        for item in items
+        if item.nodeid.startswith("tests/python/test_vector_set_differential.py::")
+    ]
+    for item in vector_items:
+        if item.get_closest_marker("raw_vector_protocol") is None:
+            raise pytest.UsageError(
+                f"required Vector node lost raw_vector_protocol ownership: {item.nodeid}"
+            )
+        for marker in ("skip", "skipif", "xfail"):
+            if item.get_closest_marker(marker) is not None:
+                raise pytest.UsageError(
+                    f"required Vector node cannot carry {marker}: {item.nodeid}"
+                )
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Publish fail-closed totals for the trusted runner."""
+    if not _required_vector_mode():
+        return
+
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    stats = reporter.stats if reporter is not None else {}
+    summary = {
+        "collected": session.testscollected,
+        "passed": len(stats.get("passed", [])),
+        "failed": len(stats.get("failed", [])) + len(stats.get("error", [])),
+        "skipped": len(stats.get("skipped", [])),
+        "xfailed": len(stats.get("xfailed", [])),
+        "xpassed": len(stats.get("xpassed", [])),
+        "deselected": len(stats.get("deselected", [])),
+    }
+    summary_path = os.environ.get("KIWI_VECTOR_PYTEST_SUMMARY")
+    if not summary_path:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+        return
+
+    try:
+        Path(summary_path).write_text(
+            json.dumps(summary, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+        return
+
+    if summary["collected"] == 0 or any(
+        summary[name]
+        for name in ("failed", "skipped", "xfailed", "xpassed", "deselected")
+    ):
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED

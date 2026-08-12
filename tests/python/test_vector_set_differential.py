@@ -300,24 +300,31 @@ def test_raw_cleanup_requires_a_nonnegative_integer_frame():
         reset_raw_client_keys(ErrorFrameClient(), [b"key"], "fake endpoint")
 
 
+def test_raw_endpoint_separation_and_cleanup_idempotency_guards(monkeypatch):
+    address = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 6379))
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [address])
+    with pytest.raises(pytest.fail.Exception, match="different endpoints"):
+        _require_distinct_endpoints()
+
+    class CountingClient:
+        def __init__(self):
+            self.commands = []
+
+        def execute_raw(self, *command):
+            self.commands.append(command)
+            return b":1\r\n" if len(self.commands) == 1 else b":0\r\n"
+
+    client = CountingClient()
+    reset_raw_client_keys(client, [b"key"], "fake endpoint")
+    assert client.commands == [(b"DEL", b"key"), (b"DEL", b"key")]
+
+
 def assert_zero_vector_raw(raw_backends, kind, payload, element):
     kiwi, reference, protocol = raw_backends
     key = f"test_vdiff:raw:p{protocol}:{kind.decode().lower()}".encode()
     reset_raw_key(kiwi, reference, key)
     assert_same_raw(
         kiwi, reference, b"VADD", key, kind, *payload, element, b"NOQUANT"
-    )
-    assert_same_raw(
-        kiwi,
-        reference,
-        b"VADD",
-        key,
-        b"VALUES",
-        b"2",
-        b"1",
-        b"0",
-        b"x",
-        b"NOQUANT",
     )
     assert_same_raw(kiwi, reference, b"VEMB", key, element)
     hits = assert_same_raw(

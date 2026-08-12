@@ -443,9 +443,7 @@ async fn process_command_batch(
             if !client.is_authenticated() && !cmd.has_flag(CmdFlags::NO_AUTH) {
                 client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
             } else if !cmd.check_arg(command.argv.len()) {
-                client.set_reply(RespData::Error(
-                    format!("ERR wrong number of arguments for '{}' command", cmd_name).into(),
-                ));
+                client.set_reply(cmd.wrong_arity_reply(cmd_name.as_bytes()));
             } else if let Err(reply) =
                 cmd.admit_network_request(&command.argv, vector_admission_limits)
             {
