@@ -142,7 +142,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         .filter_map(|line| line.strip_prefix("      - tests/python/"))
         .map(|line| format!("tests/python/{line}"))
         .collect::<Vec<_>>();
-    assert_eq!(node_ids.len(), 29);
+    assert_eq!(node_ids.len(), 37);
 
     fs::write(&collection, format!("{}\n", node_ids.join("\n"))).unwrap();
     assert!(
@@ -181,7 +181,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
             .success()
     );
 
-    let passing = r#"{"collected":29,"passed":29,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
+    let passing = r#"{"collected":37,"passed":37,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
     fs::write(&summary, passing).unwrap();
     assert!(
         Command::new("/usr/bin/bash")
@@ -194,7 +194,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
             .success()
     );
     for mutant in [
-        passing.replace("\"collected\":29", "\"collected\":0"),
+        passing.replace("\"collected\":37", "\"collected\":0"),
         passing.replace("\"failed\":0", "\"failed\":1"),
         passing.replace("\"skipped\":0", "\"skipped\":1"),
         passing.replace("\"xfailed\":0", "\"xfailed\":1"),
@@ -305,26 +305,31 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]",
         "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]",
     ];
-    let commands = [
-        "VADD",
-        "VCARD",
-        "VDIM",
-        "VEMB",
-        "VINFO",
-        "VISMEMBER",
-        "VREM",
-        "VSIM",
+    let exact_cases = [
+        ("VADD", "zero-vector"),
+        ("VCARD", "zero-vector"),
+        ("VDIM", "zero-vector"),
+        ("VEMB", "zero-vector"),
+        ("VINFO", "missing-key"),
+        ("VISMEMBER", "zero-vector"),
+        ("VREM", "zero-vector"),
+        ("VSIM", "zero-vector"),
     ];
     let mut records = String::new();
     for node_id in node_ids {
         let protocol = if node_id.ends_with("[resp2]") { 2 } else { 3 };
-        for command in commands {
+        for (command, case_id) in exact_cases {
             records.push_str(&format!(
-                "{{\"command\":\"{command}\",\"node_id\":\"{node_id}\",\"protocol\":{protocol},\"kiwi_frame_sha256\":\"{}\",\"redis_frame_sha256\":\"{}\"}}\n",
+                "{{\"case_id\":\"{case_id}\",\"command\":\"{command}\",\"evidence_kind\":\"exact-frame\",\"node_id\":\"{node_id}\",\"protocol\":{protocol},\"kiwi_frame_sha256\":\"{}\",\"redis_frame_sha256\":\"{}\"}}\n",
                 "a".repeat(64),
                 "a".repeat(64)
             ));
         }
+        records.push_str(&format!(
+            "{{\"case_id\":\"populated\",\"command\":\"VINFO\",\"evidence_kind\":\"raw-schema\",\"node_id\":\"{node_id}\",\"protocol\":{protocol},\"kiwi_frame_sha256\":\"{}\",\"redis_frame_sha256\":\"{}\"}}\n",
+            "a".repeat(64),
+            "b".repeat(64)
+        ));
     }
     fs::write(&coverage, &records).unwrap();
     let validate = |path: &std::path::Path| {
@@ -348,11 +353,39 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
     assert!(!validate(&coverage));
 
     let typed_equivalence = records.replacen(
-        &format!("\"kiwi_frame_sha256\":\"{}\"", "a".repeat(64)),
-        &format!("\"kiwi_frame_sha256\":\"{}\"", "b".repeat(64)),
+        &format!(
+            "\"evidence_kind\":\"exact-frame\",\"node_id\":\"{}\",\"protocol\":2,\"kiwi_frame_sha256\":\"{}\"",
+            node_ids[0],
+            "a".repeat(64)
+        ),
+        &format!(
+            "\"evidence_kind\":\"exact-frame\",\"node_id\":\"{}\",\"protocol\":2,\"kiwi_frame_sha256\":\"{}\"",
+            node_ids[0],
+            "b".repeat(64)
+        ),
         1,
     );
     fs::write(&coverage, typed_equivalence).unwrap();
+    assert!(!validate(&coverage));
+
+    let without_populated_vinfo = records
+        .lines()
+        .filter(|line| {
+            !(line.contains("\"command\":\"VINFO\"")
+                && line.contains("\"case_id\":\"populated\"")
+                && line.contains("[resp3]"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&coverage, format!("{without_populated_vinfo}\n")).unwrap();
+    assert!(!validate(&coverage));
+
+    let wrong_evidence_kind = records.replacen(
+        "\"case_id\":\"populated\",\"command\":\"VINFO\",\"evidence_kind\":\"raw-schema\"",
+        "\"case_id\":\"populated\",\"command\":\"VINFO\",\"evidence_kind\":\"exact-frame\"",
+        1,
+    );
+    fs::write(&coverage, wrong_evidence_kind).unwrap();
     assert!(!validate(&coverage));
 
     fs::remove_dir_all(&scratch).unwrap();

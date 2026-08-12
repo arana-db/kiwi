@@ -26,9 +26,10 @@ Out of scope on purpose:
 - Redis' default Q8 quantization path. Phase 1 Kiwi only supports NOQUANT;
   the error contract for omitted/unsupported quantization options is covered
   by test_vector_set_commands.py and not repeated here.
-- VINFO field *values* such as hnsw-m, max-level and vset-uid. Redis 8
-  reports real HNSW internals while Kiwi Phase 1 reports FLAT sentinels with
-  a different meaning; only the field-name set and value types are compared.
+- VINFO HNSW/FLAT payload values for hnsw-m, max-level, vset-uid and
+  hnsw-max-node-uid. Redis 8 reports real HNSW internals while Kiwi Phase 1
+  reports FLAT sentinels with a different meaning. Their raw field encoding,
+  order, container, pair count and value frame types are still compared.
 
 Both configured endpoints are mandatory: unavailable endpoints fail closed rather
 than producing a skipped test result. All datasets use a fixed seed.
@@ -232,14 +233,20 @@ def assert_same_outcome(kiwi, reference, *command):
     return kiwi_outcome
 
 
-def assert_same_raw(kiwi, reference, *command, coverage=None):
+def assert_same_raw(kiwi, reference, *command, coverage=None, case_id="zero-vector"):
     kiwi_frame = kiwi.execute_raw(*command)
     reference_frame = reference.execute_raw(*command)
     assert kiwi_frame == reference_frame, (
         f"{command!r}: kiwi={kiwi_frame!r} != redis={reference_frame!r}"
     )
     if coverage is not None:
-        coverage(command[0], kiwi_frame, reference_frame)
+        coverage(
+            command[0],
+            kiwi_frame,
+            reference_frame,
+            case_id=case_id,
+            evidence_kind="exact-frame",
+        )
     return kiwi_frame
 
 
@@ -263,6 +270,174 @@ def test_raw_comparator_rejects_equal_typed_values_with_different_frames():
             b"VISMEMBER",
             b"key",
             b"member",
+        )
+
+
+def _read_resp_frame(frame, offset=0):
+    line_end = frame.find(b"\r\n", offset)
+    if line_end < 0:
+        raise AssertionError("VINFO raw frame is missing CRLF")
+    line_end += 2
+    prefix = frame[offset : offset + 1]
+    header = frame[offset:line_end]
+    if prefix in b"+-:,#_(":
+        return (prefix, header[1:-2], []), line_end
+    if prefix in b"$!=":
+        try:
+            length = int(header[1:-2])
+        except ValueError as error:
+            raise AssertionError("VINFO raw frame length is invalid") from error
+        if length < 0:
+            return (prefix, None, []), line_end
+        payload_end = line_end + length
+        if frame[payload_end : payload_end + 2] != b"\r\n":
+            raise AssertionError("VINFO raw bulk payload is truncated")
+        return (prefix, frame[line_end:payload_end], []), payload_end + 2
+    if prefix not in b"*%":
+        raise AssertionError(f"VINFO raw frame prefix is unsupported: {prefix!r}")
+    try:
+        count = int(header[1:-2])
+    except ValueError as error:
+        raise AssertionError("VINFO raw container count is invalid") from error
+    child_count = count if prefix == b"*" else count * 2
+    children = []
+    cursor = line_end
+    for _ in range(child_count):
+        child, cursor = _read_resp_frame(frame, cursor)
+        children.append(child)
+    return (prefix, count, children), cursor
+
+
+def parse_vinfo_schema_frame(frame, protocol):
+    expected_prefix = b"*" if protocol == 2 else b"%"
+    assert frame[:1] == expected_prefix, "VINFO container type differs from RESP protocol"
+    expected_header = b"*18\r\n" if protocol == 2 else b"%9\r\n"
+    assert frame.startswith(expected_header), "VINFO pair count differs from Redis"
+    parsed, consumed = _read_resp_frame(frame)
+    assert consumed == len(frame), "VINFO raw frame has trailing bytes"
+    prefix, count, children = parsed
+    assert prefix == expected_prefix, "VINFO container type differs from RESP protocol"
+    expected_count = 18 if protocol == 2 else 9
+    assert count == expected_count, "VINFO pair count differs from Redis"
+    assert len(children) == 18
+    pairs = []
+    for index in range(0, len(children), 2):
+        field_prefix, field_name, field_children = children[index]
+        assert not field_children
+        assert field_prefix == b"+", "VINFO field token must be a simple string"
+        value_prefix, value_payload, value_children = children[index + 1]
+        assert not value_children
+        pairs.append((field_name, value_prefix, value_payload))
+    return pairs
+
+
+def assert_same_vinfo_schema_raw(kiwi, reference, key, protocol, coverage=None):
+    kiwi_frame = kiwi.execute_raw(b"VINFO", key)
+    redis_frame = reference.execute_raw(b"VINFO", key)
+    kiwi_pairs = parse_vinfo_schema_frame(kiwi_frame, protocol)
+    redis_pairs = parse_vinfo_schema_frame(redis_frame, protocol)
+    kiwi_fields = [field for field, _prefix, _payload in kiwi_pairs]
+    redis_fields = [field for field, _prefix, _payload in redis_pairs]
+    assert kiwi_fields == redis_fields, "VINFO field token order differs from Redis"
+    allowed_payload_differences = {
+        b"hnsw-m",
+        b"max-level",
+        b"vset-uid",
+        b"hnsw-max-node-uid",
+    }
+    for (field, kiwi_prefix, kiwi_payload), (_, redis_prefix, redis_payload) in zip(
+        kiwi_pairs, redis_pairs
+    ):
+        assert kiwi_prefix == redis_prefix, (
+            f"VINFO {field!r} value frame type differs from Redis"
+        )
+        if field not in allowed_payload_differences:
+            assert kiwi_payload == redis_payload, (
+                f"VINFO {field.decode('ascii')} value differs from Redis"
+            )
+    if coverage is not None:
+        coverage(
+            b"VINFO",
+            kiwi_frame,
+            redis_frame,
+            case_id="populated",
+            evidence_kind="raw-schema",
+        )
+    return kiwi_frame, redis_frame
+
+
+def _vinfo_schema_frame(protocol, *, hnsw_m, max_level, vset_uid, max_node_uid):
+    header = b"*18\r\n" if protocol == 2 else b"%9\r\n"
+    return header + b"".join(
+        (
+            b"+quant-type\r\n+f32\r\n",
+            b"+hnsw-m\r\n:" + str(hnsw_m).encode() + b"\r\n",
+            b"+vector-dim\r\n:2\r\n",
+            b"+projection-input-dim\r\n:0\r\n",
+            b"+size\r\n:1\r\n",
+            b"+max-level\r\n:" + str(max_level).encode() + b"\r\n",
+            b"+attributes-count\r\n:0\r\n",
+            b"+vset-uid\r\n:" + str(vset_uid).encode() + b"\r\n",
+            b"+hnsw-max-node-uid\r\n:" + str(max_node_uid).encode() + b"\r\n",
+        )
+    )
+
+
+class _RawFrameClient:
+    def __init__(self, frame):
+        self.frame = frame
+
+    def execute_raw(self, *command):
+        assert command == (b"VINFO", b"key")
+        return self.frame
+
+
+@pytest.mark.parametrize("protocol", [2, 3], ids=["resp2", "resp3"])
+def test_vinfo_raw_schema_allows_only_registered_value_payload_differences(protocol):
+    kiwi_frame = _vinfo_schema_frame(
+        protocol, hnsw_m=0, max_level=0, vset_uid=7, max_node_uid=0
+    )
+    redis_frame = _vinfo_schema_frame(
+        protocol, hnsw_m=16, max_level=3, vset_uid=42, max_node_uid=9
+    )
+    assert_same_vinfo_schema_raw(
+        _RawFrameClient(kiwi_frame), _RawFrameClient(redis_frame), b"key", protocol
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutant", "expected"),
+    [
+        ("field-token-prefix", "field token"),
+        ("container", "container"),
+        ("pair-count", "pair count"),
+        ("field-order", "field token order"),
+        ("value-frame-type", "value frame type"),
+        ("unregistered-value", "quant-type"),
+    ],
+)
+def test_vinfo_raw_schema_rejects_unregistered_wire_drift(mutant, expected):
+    reference = _vinfo_schema_frame(
+        3, hnsw_m=16, max_level=3, vset_uid=42, max_node_uid=9
+    )
+    if mutant == "field-token-prefix":
+        kiwi = reference.replace(b"+hnsw-m\r\n", b"$6\r\nhnsw-m\r\n", 1)
+    elif mutant == "container":
+        kiwi = reference.replace(b"%9\r\n", b"*18\r\n", 1)
+    elif mutant == "pair-count":
+        kiwi = reference.replace(b"%9\r\n", b"%8\r\n", 1)
+    elif mutant == "field-order":
+        first = b"+quant-type\r\n+f32\r\n"
+        second = b"+hnsw-m\r\n:16\r\n"
+        kiwi = reference.replace(first + second, second + first, 1)
+    elif mutant == "value-frame-type":
+        kiwi = reference.replace(b":16\r\n", b"$2\r\n16\r\n", 1)
+    else:
+        kiwi = reference.replace(b"+f32\r\n", b"+fp32\r\n", 1)
+
+    with pytest.raises(AssertionError, match=expected):
+        assert_same_vinfo_schema_raw(
+            _RawFrameClient(kiwi), _RawFrameClient(reference), b"key", 3
         )
 
 
@@ -350,13 +525,15 @@ def raw_coverage_recorder(protocol):
     path = os.getenv("KIWI_VECTOR_RAW_COVERAGE")
     node_id = os.getenv("PYTEST_CURRENT_TEST", "").split(" ", 1)[0]
     if not path and os.getenv("KIWI_COMPAT_REQUIRE_ORACLE") != "1":
-        return lambda _command, _kiwi_frame, _redis_frame: None
+        return lambda _command, _kiwi_frame, _redis_frame, **_metadata: None
     if not path or not node_id:
         pytest.fail("required raw coverage destination or pytest node ID is missing")
 
-    def record(command, kiwi_frame, redis_frame):
+    def record(command, kiwi_frame, redis_frame, *, case_id, evidence_kind):
         entry = {
+            "case_id": case_id,
             "command": command.decode("ascii"),
+            "evidence_kind": evidence_kind,
             "node_id": node_id,
             "protocol": protocol,
             "kiwi_frame_sha256": hashlib.sha256(kiwi_frame).hexdigest(),
@@ -388,7 +565,15 @@ def assert_zero_vector_raw(raw_backends, kind, payload, element):
     assert_same_raw(kiwi, reference, b"VDIM", key, coverage=coverage)
     assert_same_raw(kiwi, reference, b"VEMB", key, element, coverage=coverage)
     missing_key = f"test_vdiff:raw:p{protocol}:missing-scores".encode()
-    assert_same_raw(kiwi, reference, b"VINFO", missing_key, coverage=coverage)
+    assert_same_raw(
+        kiwi,
+        reference,
+        b"VINFO",
+        missing_key,
+        coverage=coverage,
+        case_id="missing-key",
+    )
+    assert_same_vinfo_schema_raw(kiwi, reference, key, protocol, coverage=coverage)
     assert_same_raw(kiwi, reference, b"VISMEMBER", key, element, coverage=coverage)
     hits = assert_same_raw(
         kiwi,

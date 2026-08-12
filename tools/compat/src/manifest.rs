@@ -185,12 +185,33 @@ pub struct RequiredVectorJobs {
     pytest_marker: String,
     protocols: Vec<Protocol>,
     commands: Vec<String>,
-    raw_cases: BTreeMap<String, Vec<String>>,
+    raw_cases: BTreeMap<String, Vec<RequiredVectorRawCase>>,
     expected_node_ids: Vec<String>,
     expected_item_count: usize,
     manifest_profile: Profile,
     fast_job_owner: String,
     fast_job_deselect_marker: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RequiredVectorRawCase {
+    case_id: String,
+    evidence_kind: String,
+    node_ids: Vec<String>,
+}
+
+impl RequiredVectorRawCase {
+    pub fn case_id(&self) -> &str {
+        &self.case_id
+    }
+
+    pub fn evidence_kind(&self) -> &str {
+        &self.evidence_kind
+    }
+
+    pub fn node_ids(&self) -> &[String] {
+        &self.node_ids
+    }
 }
 
 impl RequiredVectorJobs {
@@ -269,22 +290,63 @@ impl RequiredVectorJobs {
                     .to_string(),
             ));
         }
-        for (command, raw_node_ids) in &raw_job.raw_cases {
-            let unique = raw_node_ids.iter().collect::<BTreeSet<_>>();
-            if raw_node_ids.is_empty()
-                || unique.len() != raw_node_ids.len()
-                || raw_node_ids
-                    .iter()
-                    .any(|node_id| !node_ids.contains_key(node_id))
-                || !raw_node_ids
-                    .iter()
-                    .any(|node_id| node_id.ends_with("[resp2]"))
-                || !raw_node_ids
-                    .iter()
-                    .any(|node_id| node_id.ends_with("[resp3]"))
-            {
+        for (command, raw_cases) in &raw_job.raw_cases {
+            let case_ids = raw_cases
+                .iter()
+                .map(|raw_case| raw_case.case_id.as_str())
+                .collect::<BTreeSet<_>>();
+            if raw_cases.is_empty() || case_ids.len() != raw_cases.len() {
                 return Err(ManifestError::InvalidRequiredJobs(format!(
-                    "raw cases for {command} must be unique registered RESP2/RESP3 node IDs"
+                    "raw cases for {command} must have unique case IDs"
+                )));
+            }
+            for raw_case in raw_cases {
+                let unique = raw_case.node_ids.iter().collect::<BTreeSet<_>>();
+                let valid_case_id = !raw_case.case_id.is_empty()
+                    && raw_case
+                        .case_id
+                        .bytes()
+                        .all(|byte| byte == b'-' || (b'a'..=b'z').contains(&byte));
+                if !valid_case_id
+                    || !matches!(
+                        raw_case.evidence_kind.as_str(),
+                        "exact-frame" | "raw-schema"
+                    )
+                    || raw_case.node_ids.is_empty()
+                    || unique.len() != raw_case.node_ids.len()
+                    || raw_case
+                        .node_ids
+                        .iter()
+                        .any(|node_id| !node_ids.contains_key(node_id))
+                    || !raw_case
+                        .node_ids
+                        .iter()
+                        .any(|node_id| node_id.ends_with("[resp2]"))
+                    || !raw_case
+                        .node_ids
+                        .iter()
+                        .any(|node_id| node_id.ends_with("[resp3]"))
+                {
+                    return Err(ManifestError::InvalidRequiredJobs(format!(
+                        "raw case {} for {command} must have a valid kind and unique registered RESP2/RESP3 node IDs",
+                        raw_case.case_id
+                    )));
+                }
+            }
+        }
+        for (command, raw_cases) in &raw_job.raw_cases {
+            let actual = raw_cases
+                .iter()
+                .map(|raw_case| (raw_case.case_id.as_str(), raw_case.evidence_kind.as_str()))
+                .collect::<BTreeSet<_>>();
+            let expected = if command == "VINFO" {
+                BTreeSet::from([("missing-key", "exact-frame"), ("populated", "raw-schema")])
+            } else {
+                BTreeSet::from([("zero-vector", "exact-frame")])
+            };
+            if actual != expected {
+                return Err(ManifestError::InvalidRequiredJobs(format!(
+                    "raw evidence cases for {command} drifted"
                 )));
             }
         }
@@ -309,7 +371,23 @@ impl RequiredVectorJobs {
             pytest_marker: raw_job.pytest_marker,
             protocols,
             commands: commands.into_keys().collect(),
-            raw_cases: raw_job.raw_cases,
+            raw_cases: raw_job
+                .raw_cases
+                .into_iter()
+                .map(|(command, cases)| {
+                    (
+                        command,
+                        cases
+                            .into_iter()
+                            .map(|raw_case| RequiredVectorRawCase {
+                                case_id: raw_case.case_id,
+                                evidence_kind: raw_case.evidence_kind,
+                                node_ids: raw_case.node_ids,
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
             expected_node_ids: raw_job.expected_node_ids,
             expected_item_count: raw_job.expected_item_count,
             manifest_profile,
@@ -338,7 +416,7 @@ impl RequiredVectorJobs {
         &self.commands
     }
 
-    pub fn raw_cases(&self) -> &BTreeMap<String, Vec<String>> {
+    pub fn raw_cases(&self) -> &BTreeMap<String, Vec<RequiredVectorRawCase>> {
         &self.raw_cases
     }
 
@@ -563,11 +641,19 @@ struct RawRequiredVectorJob {
     pytest_marker: String,
     protocols: Vec<RawProtocol>,
     commands: Vec<String>,
-    raw_cases: BTreeMap<String, Vec<String>>,
+    raw_cases: BTreeMap<String, Vec<RawRequiredVectorCase>>,
     expected_node_ids: Vec<String>,
     expected_item_count: usize,
     manifest_profile: RawProfile,
     fast_job: RawFastJobOwnership,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRequiredVectorCase {
+    case_id: String,
+    evidence_kind: String,
+    node_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

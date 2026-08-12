@@ -40,7 +40,7 @@ crate::define_vector_command!(
 fn vinfo_reply(info: &VectorInfo) -> RespData {
     let field = |name: &'static str, value: RespData| {
         (
-            RespData::BulkString(Some(Bytes::from_static(name.as_bytes()))),
+            RespData::SimpleString(Bytes::from_static(name.as_bytes())),
             value,
         )
     };
@@ -48,7 +48,7 @@ fn vinfo_reply(info: &VectorInfo) -> RespData {
     RespData::Map(vec![
         field(
             "quant-type",
-            RespData::BulkString(Some(Bytes::from_static(b"fp32"))),
+            RespData::SimpleString(Bytes::from_static(b"f32")),
         ),
         field("hnsw-m", RespData::Integer(0)),
         field("vector-dim", integer(u64::from(info.dimension))),
@@ -84,6 +84,7 @@ impl Cmd for VInfoCmd {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use resp::{RespEncode, RespVersion, encode::RespEncoder};
 
     #[test]
     fn vinfo_reply_has_nine_phase1_fields() {
@@ -98,8 +99,8 @@ mod tests {
         let fields: Vec<(String, RespData)> = pairs
             .into_iter()
             .map(|(name, value)| {
-                let RespData::BulkString(Some(name)) = name else {
-                    panic!("field name must be a bulk string");
+                let RespData::SimpleString(name) = name else {
+                    panic!("field name must be a simple string");
                 };
                 (String::from_utf8(name.to_vec()).expect("utf8 name"), value)
             })
@@ -109,7 +110,7 @@ mod tests {
             vec![
                 (
                     "quant-type".to_string(),
-                    RespData::BulkString(Some(Bytes::from_static(b"fp32")))
+                    RespData::SimpleString(Bytes::from_static(b"f32"))
                 ),
                 ("hnsw-m".to_string(), RespData::Integer(0)),
                 ("vector-dim".to_string(), RespData::Integer(3)),
@@ -121,5 +122,26 @@ mod tests {
                 ("hnsw-max-node-uid".to_string(), RespData::Integer(0)),
             ]
         );
+    }
+
+    #[test]
+    fn populated_vinfo_encodes_redis_field_tokens_and_value_types() {
+        let reply = vinfo_reply(&VectorInfo {
+            dimension: 3,
+            size: 42,
+            generation: 7,
+        });
+        let expected_body = b"+quant-type\r\n+f32\r\n+hnsw-m\r\n:0\r\n+vector-dim\r\n:3\r\n+projection-input-dim\r\n:0\r\n+size\r\n:42\r\n+max-level\r\n:0\r\n+attributes-count\r\n:0\r\n+vset-uid\r\n:7\r\n+hnsw-max-node-uid\r\n:0\r\n";
+
+        for (version, header) in [
+            (RespVersion::RESP2, b"*18\r\n".as_slice()),
+            (RespVersion::RESP3, b"%9\r\n".as_slice()),
+        ] {
+            let mut expected = Vec::from(header);
+            expected.extend_from_slice(expected_body);
+            let mut encoder = RespEncoder::new(version);
+            encoder.encode_resp_data(&reply);
+            assert_eq!(encoder.get_response().as_ref(), expected);
+        }
     }
 }

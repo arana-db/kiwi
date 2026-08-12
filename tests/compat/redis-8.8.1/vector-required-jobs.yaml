@@ -24,47 +24,86 @@ jobs:
     commands: [VADD, VCARD, VDIM, VEMB, VINFO, VISMEMBER, VREM, VSIM]
     raw_cases:
       VADD:
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+        - case_id: zero-vector
+          evidence_kind: exact-frame
+          node_ids:
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
       VCARD:
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+        - case_id: zero-vector
+          evidence_kind: exact-frame
+          node_ids:
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
       VDIM:
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+        - case_id: zero-vector
+          evidence_kind: exact-frame
+          node_ids:
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
       VEMB:
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+        - case_id: zero-vector
+          evidence_kind: exact-frame
+          node_ids:
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
       VINFO:
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+        - case_id: missing-key
+          evidence_kind: exact-frame
+          node_ids:
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+        - case_id: populated
+          evidence_kind: raw-schema
+          node_ids:
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
       VISMEMBER:
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+        - case_id: zero-vector
+          evidence_kind: exact-frame
+          node_ids:
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
       VREM:
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+        - case_id: zero-vector
+          evidence_kind: exact-frame
+          node_ids:
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
       VSIM:
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
-        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+        - case_id: zero-vector
+          evidence_kind: exact-frame
+          node_ids:
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
+            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
     expected_node_ids:
       - tests/python/test_vector_set_differential.py::test_raw_comparator_rejects_equal_typed_values_with_different_frames
+      - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_allows_only_registered_value_payload_differences[resp2]
+      - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_allows_only_registered_value_payload_differences[resp3]
+      - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[field-token-prefix-field token]
+      - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[container-container]
+      - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[pair-count-pair count]
+      - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[field-order-field token order]
+      - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[value-frame-type-value frame type]
+      - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[unregistered-value-quant-type]
       - tests/python/test_vector_set_differential.py::test_raw_cleanup_requires_a_nonnegative_integer_frame
       - tests/python/test_vector_set_differential.py::test_raw_endpoint_separation_and_cleanup_idempotency_guards
       - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]
@@ -93,7 +132,7 @@ jobs:
       - tests/python/test_vector_set_differential.py::test_vsim_missing_key_precedes_malformed_and_option_validation[resp3]
       - tests/python/test_vector_set_differential.py::test_vinfo_field_names_and_types_match[resp2]
       - tests/python/test_vector_set_differential.py::test_vinfo_field_names_and_types_match[resp3]
-    expected_item_count: 29
+    expected_item_count: 37
     manifest_profile: redis_8_8_1_standalone_cache_off
     fast_job:
       owner: trusted-vector-differential

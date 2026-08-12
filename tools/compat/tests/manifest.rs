@@ -694,6 +694,30 @@ fn repository_vector_contract_has_required_wire_differential_evidence() {
             .any(|difference| difference.reason().contains("RAW")),
         "VEMB governance must mention RAW"
     );
+    let vinfo_governance = command("VINFO")
+        .known_differences()
+        .iter()
+        .map(|difference| difference.reason())
+        .collect::<Vec<_>>()
+        .join(" ");
+    for field in ["hnsw-m", "max-level", "vset-uid", "hnsw-max-node-uid"] {
+        assert!(
+            vinfo_governance.contains(field),
+            "VINFO raw-schema payload allowance must be explicitly governed for {field}"
+        );
+    }
+    for invariant in [
+        "field token",
+        "order",
+        "container",
+        "pair count",
+        "frame types",
+    ] {
+        assert!(
+            vinfo_governance.contains(invariant),
+            "VINFO raw-schema invariant must remain exact for {invariant}"
+        );
+    }
     for term in [
         "WITHATTRIBS",
         "EPSILON",
@@ -773,14 +797,27 @@ fn repository_required_vector_job_matches_manifest_and_exact_pytest_collection()
         registry_commands,
         "every claimed required command must own observed raw RESP cases",
     );
-    for (command, raw_case) in registry.raw_cases() {
-        assert_eq!(raw_case.len(), 4, "{command} raw-case ownership drifted");
-        assert!(
+    for (command, raw_cases) in registry.raw_cases() {
+        let expected_case_count = if command == "VINFO" { 2 } else { 1 };
+        assert_eq!(
+            raw_cases.len(),
+            expected_case_count,
+            "{command} raw-case ownership drifted"
+        );
+        assert!(raw_cases.iter().all(|raw_case| {
             raw_case
+                .node_ids()
                 .iter()
                 .all(|node_id| registry.expected_node_ids().contains(node_id))
-        );
+        }));
     }
+    let vinfo_cases = registry.raw_cases().get("VINFO").unwrap();
+    assert!(vinfo_cases.iter().any(|raw_case| {
+        raw_case.case_id() == "missing-key" && raw_case.evidence_kind() == "exact-frame"
+    }));
+    assert!(vinfo_cases.iter().any(|raw_case| {
+        raw_case.case_id() == "populated" && raw_case.evidence_kind() == "raw-schema"
+    }));
 
     let node_ids = registry.expected_node_ids().iter().collect::<BTreeSet<_>>();
     assert_eq!(node_ids.len(), registry.expected_item_count());
@@ -794,10 +831,9 @@ fn repository_required_vector_job_matches_manifest_and_exact_pytest_collection()
 #[test]
 fn required_vector_registry_rejects_a_command_without_raw_case_ownership() {
     let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml");
-    let without_vcard = yaml.replace(
-        "      VCARD:\n        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]\n        - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]\n        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]\n        - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]\n",
-        "",
-    );
+    let start = yaml.find("      VCARD:\n").unwrap();
+    let end = yaml[start..].find("      VDIM:\n").unwrap() + start;
+    let without_vcard = format!("{}{}", &yaml[..start], &yaml[end..]);
     assert_ne!(
         without_vcard, yaml,
         "registry fixture must contain the VCARD raw case"
@@ -806,10 +842,22 @@ fn required_vector_registry_rejects_a_command_without_raw_case_ownership() {
 }
 
 #[test]
+fn required_vector_registry_requires_populated_vinfo_raw_schema_evidence() {
+    let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml");
+    let populated = "        - case_id: populated\n          evidence_kind: raw-schema\n          node_ids:\n            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]\n            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]\n            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]\n            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]\n";
+    let without_populated = yaml.replace(populated, "");
+    assert_ne!(
+        without_populated, yaml,
+        "registry fixture must own populated VINFO"
+    );
+    assert!(RequiredVectorJobs::from_yaml(&without_populated).is_err());
+}
+
+#[test]
 fn required_vector_registry_rejects_node_count_and_identity_drift() {
     let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml");
-    let count_drift = yaml.replace("expected_item_count: 29", "expected_item_count: 28");
-    assert_ne!(count_drift, yaml, "registry fixture must contain count 29");
+    let count_drift = yaml.replace("expected_item_count: 37", "expected_item_count: 36");
+    assert_ne!(count_drift, yaml, "registry fixture must contain count 37");
     assert!(RequiredVectorJobs::from_yaml(&count_drift).is_err());
 
     let identity_drift = yaml.replace(

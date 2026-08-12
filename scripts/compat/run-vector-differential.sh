@@ -103,15 +103,32 @@ if commands_match is None or raw_cases_match is None:
 required_commands = {part.strip() for part in commands_match.group(1).split(",")}
 expected = set()
 current_command = None
+current_case_id = None
+current_evidence_kind = None
 for line in raw_cases_match.group("body").splitlines():
     command_match = re.fullmatch(r"      ([A-Z]+):", line)
     if command_match:
         current_command = command_match.group(1)
+        current_case_id = None
+        current_evidence_kind = None
         continue
-    node_match = re.fullmatch(r"        - (tests/python/[^ ]+)", line)
-    if node_match and current_command:
-        expected.add((current_command, node_match.group(1)))
-if {command for command, _node_id in expected} != required_commands:
+    case_match = re.fullmatch(r"        - case_id: ([a-z-]+)", line)
+    if case_match:
+        current_case_id = case_match.group(1)
+        current_evidence_kind = None
+        continue
+    kind_match = re.fullmatch(r"          evidence_kind: (exact-frame|raw-schema)", line)
+    if kind_match:
+        current_evidence_kind = kind_match.group(1)
+        continue
+    node_match = re.fullmatch(r"            - (tests/python/[^ ]+)", line)
+    if node_match:
+        if not current_command or not current_case_id or not current_evidence_kind:
+            raise SystemExit("registry raw case is missing command, case ID, or evidence kind")
+        expected.add(
+            (current_command, current_case_id, current_evidence_kind, node_match.group(1))
+        )
+if {command for command, _case_id, _kind, _node_id in expected} != required_commands:
     raise SystemExit("registry raw-case command coverage drifted")
 if not coverage_path.is_file():
     raise SystemExit("raw coverage evidence is missing")
@@ -122,11 +139,14 @@ for line_number, line in enumerate(coverage_path.read_text(encoding="utf-8").spl
     except json.JSONDecodeError as error:
         raise SystemExit(f"raw coverage line {line_number} is invalid JSON: {error}")
     required_fields = {
-        "command", "node_id", "protocol", "kiwi_frame_sha256", "redis_frame_sha256"
+        "case_id", "command", "evidence_kind", "node_id", "protocol",
+        "kiwi_frame_sha256", "redis_frame_sha256"
     }
     if set(record) != required_fields:
         raise SystemExit(f"raw coverage line {line_number} fields drifted")
     command = record["command"]
+    case_id = record["case_id"]
+    evidence_kind = record["evidence_kind"]
     node_id = record["node_id"]
     protocol = record["protocol"]
     expected_protocol = 2 if node_id.endswith("[resp2]") else 3 if node_id.endswith("[resp3]") else None
@@ -134,9 +154,13 @@ for line_number, line in enumerate(coverage_path.read_text(encoding="utf-8").spl
         raise SystemExit(f"raw coverage line {line_number} protocol/node drifted")
     kiwi_hash = record["kiwi_frame_sha256"]
     redis_hash = record["redis_frame_sha256"]
-    if not re.fullmatch(r"[0-9a-f]{64}", kiwi_hash) or kiwi_hash != redis_hash:
+    if not re.fullmatch(r"[0-9a-f]{64}", kiwi_hash) or not re.fullmatch(
+        r"[0-9a-f]{64}", redis_hash
+    ):
+        raise SystemExit(f"raw coverage line {line_number} frame hash drifted")
+    if evidence_kind == "exact-frame" and kiwi_hash != redis_hash:
         raise SystemExit(f"raw coverage line {line_number} frame identity drifted")
-    key = (command, node_id)
+    key = (command, case_id, evidence_kind, node_id)
     if key in observed:
         raise SystemExit(f"raw coverage line {line_number} duplicates {key!r}")
     observed.add(key)
