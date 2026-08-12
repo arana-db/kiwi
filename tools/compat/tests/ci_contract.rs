@@ -142,7 +142,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         .filter_map(|line| line.strip_prefix("      - tests/python/"))
         .map(|line| format!("tests/python/{line}"))
         .collect::<Vec<_>>();
-    assert_eq!(node_ids.len(), 37);
+    assert_eq!(node_ids.len(), 40);
 
     fs::write(&collection, format!("{}\n", node_ids.join("\n"))).unwrap();
     assert!(
@@ -181,7 +181,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
             .success()
     );
 
-    let passing = r#"{"collected":37,"passed":37,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
+    let passing = r#"{"collected":40,"passed":40,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
     fs::write(&summary, passing).unwrap();
     assert!(
         Command::new("/usr/bin/bash")
@@ -194,7 +194,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
             .success()
     );
     for mutant in [
-        passing.replace("\"collected\":37", "\"collected\":0"),
+        passing.replace("\"collected\":40", "\"collected\":0"),
         passing.replace("\"failed\":0", "\"failed\":1"),
         passing.replace("\"skipped\":0", "\"skipped\":1"),
         passing.replace("\"xfailed\":0", "\"xfailed\":1"),

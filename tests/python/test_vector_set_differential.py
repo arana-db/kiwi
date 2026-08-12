@@ -281,7 +281,23 @@ def _read_resp_frame(frame, offset=0):
     prefix = frame[offset : offset + 1]
     header = frame[offset:line_end]
     if prefix in b"+-:,#_(":
-        return (prefix, header[1:-2], []), line_end
+        payload = header[1:-2]
+        if prefix == b":":
+            unsigned = payload[1:] if payload.startswith(b"-") else payload
+            canonical = (
+                payload == b"0"
+                or (
+                    unsigned
+                    and unsigned[:1] in b"123456789"
+                    and unsigned.isdigit()
+                )
+            )
+            if not canonical:
+                raise AssertionError("VINFO integer is not a canonical RESP integer")
+            value = int(payload)
+            if not -(2**63) <= value <= 2**63 - 1:
+                raise AssertionError("VINFO integer is not a canonical RESP integer")
+        return (prefix, payload, []), line_end
     if prefix in b"$!=":
         try:
             length = int(header[1:-2])
@@ -306,6 +322,23 @@ def _read_resp_frame(frame, offset=0):
         child, cursor = _read_resp_frame(frame, cursor)
         children.append(child)
     return (prefix, count, children), cursor
+
+
+def test_vinfo_raw_parser_rejects_noncanonical_integer_grammar():
+    invalid_payloads = (
+        b"",
+        b"-",
+        b"+1",
+        b"01",
+        b"-0",
+        b"-01",
+        b"1x",
+        b"9223372036854775808",
+        b"-9223372036854775809",
+    )
+    for payload in invalid_payloads:
+        with pytest.raises(AssertionError, match="canonical RESP integer"):
+            _read_resp_frame(b":" + payload + b"\r\n")
 
 
 def parse_vinfo_schema_frame(frame, protocol):
@@ -413,6 +446,8 @@ def test_vinfo_raw_schema_allows_only_registered_value_payload_differences(proto
         ("pair-count", "pair count"),
         ("field-order", "field token order"),
         ("value-frame-type", "value frame type"),
+        ("hnsw-malformed-integer", "canonical RESP integer"),
+        ("uid-malformed-integer", "canonical RESP integer"),
         ("unregistered-value", "quant-type"),
     ],
 )
@@ -432,6 +467,10 @@ def test_vinfo_raw_schema_rejects_unregistered_wire_drift(mutant, expected):
         kiwi = reference.replace(first + second, second + first, 1)
     elif mutant == "value-frame-type":
         kiwi = reference.replace(b":16\r\n", b"$2\r\n16\r\n", 1)
+    elif mutant == "hnsw-malformed-integer":
+        kiwi = reference.replace(b":16\r\n", b":not-an-integer\r\n", 1)
+    elif mutant == "uid-malformed-integer":
+        kiwi = reference.replace(b":42\r\n", b":+42\r\n", 1)
     else:
         kiwi = reference.replace(b"+f32\r\n", b"+fp32\r\n", 1)
 

@@ -96,6 +96,7 @@ jobs:
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
     expected_node_ids:
       - tests/python/test_vector_set_differential.py::test_raw_comparator_rejects_equal_typed_values_with_different_frames
+      - tests/python/test_vector_set_differential.py::test_vinfo_raw_parser_rejects_noncanonical_integer_grammar
       - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_allows_only_registered_value_payload_differences[resp2]
       - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_allows_only_registered_value_payload_differences[resp3]
       - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[field-token-prefix-field token]
@@ -103,6 +104,8 @@ jobs:
       - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[pair-count-pair count]
       - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[field-order-field token order]
       - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[value-frame-type-value frame type]
+      - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[hnsw-malformed-integer-canonical RESP integer]
+      - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[uid-malformed-integer-canonical RESP integer]
       - tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[unregistered-value-quant-type]
       - tests/python/test_vector_set_differential.py::test_raw_cleanup_requires_a_nonnegative_integer_frame
       - tests/python/test_vector_set_differential.py::test_raw_endpoint_separation_and_cleanup_idempotency_guards
@@ -132,7 +135,7 @@ jobs:
       - tests/python/test_vector_set_differential.py::test_vsim_missing_key_precedes_malformed_and_option_validation[resp3]
       - tests/python/test_vector_set_differential.py::test_vinfo_field_names_and_types_match[resp2]
       - tests/python/test_vector_set_differential.py::test_vinfo_field_names_and_types_match[resp3]
-    expected_item_count: 37
+    expected_item_count: 40
     manifest_profile: redis_8_8_1_standalone_cache_off
     fast_job:
       owner: trusted-vector-differential

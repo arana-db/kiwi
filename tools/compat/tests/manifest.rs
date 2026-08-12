@@ -856,8 +856,8 @@ fn required_vector_registry_requires_populated_vinfo_raw_schema_evidence() {
 #[test]
 fn required_vector_registry_rejects_node_count_and_identity_drift() {
     let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml");
-    let count_drift = yaml.replace("expected_item_count: 37", "expected_item_count: 36");
-    assert_ne!(count_drift, yaml, "registry fixture must contain count 37");
+    let count_drift = yaml.replace("expected_item_count: 40", "expected_item_count: 39");
+    assert_ne!(count_drift, yaml, "registry fixture must contain count 40");
     assert!(RequiredVectorJobs::from_yaml(&count_drift).is_err());
 
     let identity_drift = yaml.replace(
