@@ -62,6 +62,8 @@ const VECTOR_CLUSTER_JOB: &str = "vector-cluster-fail-closed";
 const GRPCURL_URL: &str = "https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_x86_64.tar.gz";
 const GRPCURL_ARCHIVE_SHA256: &str =
     "a926b62a85787ccf73ef8736b3ae554f1242e39d92bb8767a79d6dd23b11d1d5";
+const GRPCURL_OUTPUT: &str = "-o \"$RUNNER_TEMP/grpcurl.tar.gz\"";
+const GRPCURL_CHECKSUM_VERIFY: &str = "| (cd \"$RUNNER_TEMP\" && sha256sum -c -)";
 const GRPCURL_EXTRACT: &str =
     "tar -xzf \"$RUNNER_TEMP/grpcurl.tar.gz\" -C \"$RUNNER_TEMP\" grpcurl";
 
@@ -86,10 +88,40 @@ fn find_only_step(
 
 fn is_pinned_grpcurl_step(step: &Step) -> bool {
     step.run.as_deref().is_some_and(|command| {
-        command.contains(GRPCURL_URL)
-            && command.contains(GRPCURL_ARCHIVE_SHA256)
-            && command.contains(GRPCURL_EXTRACT)
+        let positions = [
+            command.find(GRPCURL_URL),
+            command.find(GRPCURL_OUTPUT),
+            command.find(GRPCURL_ARCHIVE_SHA256),
+            command.find(GRPCURL_CHECKSUM_VERIFY),
+            command.find(GRPCURL_EXTRACT),
+        ];
+        positions.iter().all(Option::is_some)
+            && positions
+                .windows(2)
+                .all(|pair| pair[0].expect("checked") < pair[1].expect("checked"))
+            && command.matches(GRPCURL_CHECKSUM_VERIFY).count() == 1
+            && command.matches(GRPCURL_EXTRACT).count() == 1
     })
+}
+
+fn mutate_grpcurl_command(workflow: &mut Workflow, mutate: impl FnOnce(&str) -> String) {
+    let step = workflow
+        .jobs
+        .get_mut(VECTOR_CLUSTER_JOB)
+        .expect("required Vector cluster job must exist")
+        .steps
+        .iter_mut()
+        .find(|step| {
+            step.run
+                .as_deref()
+                .is_some_and(|command| command.contains(GRPCURL_URL))
+        })
+        .expect("grpcurl preparation step must exist");
+    let command = step
+        .run
+        .as_deref()
+        .expect("grpcurl step must have a command");
+    step.run = Some(mutate(command));
 }
 
 fn validate_vector_cluster_workflow(workflow: &Workflow) -> Result<(), String> {
@@ -190,6 +222,43 @@ fn vector_cluster_workflow_rejects_grpcurl_moved_to_unrelated_job() {
 
     let error = validate_vector_cluster_workflow(&workflow)
         .expect_err("moving grpcurl preparation to another job must fail closed");
+    assert!(error.contains("pinned grpcurl preparation"), "{error}");
+}
+
+#[test]
+fn vector_cluster_workflow_rejects_grpcurl_extraction_before_checksum() {
+    let mut workflow: Workflow =
+        yaml_serde::from_str(include_str!("../../../.github/workflows/ci.yml"))
+            .expect("CI workflow must parse");
+    mutate_grpcurl_command(&mut workflow, |command| {
+        let without_extract = command.replacen(&format!("{GRPCURL_EXTRACT}\n"), "", 1);
+        without_extract.replacen(
+            &format!("{GRPCURL_CHECKSUM_VERIFY}\n"),
+            &format!("{GRPCURL_EXTRACT}\n{GRPCURL_CHECKSUM_VERIFY}\n"),
+            1,
+        )
+    });
+
+    let error = validate_vector_cluster_workflow(&workflow)
+        .expect_err("extracting grpcurl before checksum verification must fail closed");
+    assert!(error.contains("pinned grpcurl preparation"), "{error}");
+}
+
+#[test]
+fn vector_cluster_workflow_rejects_checksum_literal_without_verification() {
+    let mut workflow: Workflow =
+        yaml_serde::from_str(include_str!("../../../.github/workflows/ci.yml"))
+            .expect("CI workflow must parse");
+    mutate_grpcurl_command(&mut workflow, |command| {
+        command.replacen(
+            GRPCURL_CHECKSUM_VERIFY,
+            "| (cd \"$RUNNER_TEMP\" && printf 'checksum verification disabled\\n')",
+            1,
+        )
+    });
+
+    let error = validate_vector_cluster_workflow(&workflow)
+        .expect_err("a checksum literal without sha256sum verification must fail closed");
     assert!(error.contains("pinned grpcurl preparation"), "{error}");
 }
 
